@@ -5,14 +5,13 @@
 //! - HIGH-1: `http.serve` caps request bodies at 10 MiB and returns 413
 //!   Payload Too Large for anything larger (or for a Content-Length that
 //!   advertises more than the cap).
-//! - HIGH-2: `http.serve` uses `recv_timeout` so the accept loop unblocks
-//!   periodically, and bounds concurrent handler threads so a slowloris-style
-//!   burst cannot force unbounded thread spawning. (Library limitation:
-//!   tiny_http 0.12 does not expose per-connection socket timeouts, so a
-//!   partial-headers client will be held open by tiny_http's internal pool
-//!   — the test here instead exercises that a *legitimate* request still
-//!   gets a response in bounded time, and that a follow-up request on a
-//!   fresh connection after the partial-headers attacker still works.)
+//! - HIGH-2: a client that sends part of a request's head and then
+//!   nothing (slowloris) holds up nobody: every connection has a task
+//!   of its own, and a request on another connection is answered. (The
+//!   silent client itself is closed after the time for a head: see
+//!   `http_server_tests`, where the clock is the test's.) The handlers
+//!   that are called at a time are bounded, and a request beyond the
+//!   bound is answered 503.
 //! - HIGH-3: `http.get` / `http.request` configure `timeout_connect` and
 //!   `timeout_global` on the ureq Agent so a bogus / black-holed peer
 //!   does not hang forever.
@@ -31,6 +30,8 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+use crate::port_file::PortFile;
 
 fn silt_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
@@ -64,40 +65,19 @@ fn tmp_silt_file(stem: &str, src: &str) -> PathBuf {
     tmp
 }
 
-/// Grab an ephemeral port from the OS, drop the listener, hand the number
-/// to the silt subprocess.
-fn pick_port() -> u16 {
+/// A port that nobody listens on: one the OS gave and that was given
+/// back. (The servers of these tests listen on port 0 themselves and
+/// tell the test their port: see `PortFile`.)
+fn unbound_port() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = l.local_addr().unwrap().port();
     drop(l);
     port
 }
 
-/// Poll-connect until the silt subprocess has bound the port, or time out.
-fn wait_for_bind(port: u16, max_wait: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < max_wait {
-        if let Ok(s) = TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().unwrap(),
-            Duration::from_millis(200),
-        ) {
-            drop(s);
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
-}
-
-/// Connect to the silt subprocess with a retry loop. `wait_for_bind`
-/// confirms the listener is up via a probe-and-drop cycle, but the
-/// follow-up `TcpStream::connect` from a test can still race the silt
-/// subprocess's accept loop on slow CI runners (Linux occasionally
-/// returned `ECONNREFUSED` between the bind probe drop and the real
-/// connect — see ci flake against med1_handler_error_does_not_leak_vm_error_details).
-/// Retry up to ~2s before giving up, treating `ConnectionRefused` as
-/// transient. Any other error is surfaced immediately so we don't
-/// mask real bugs.
+/// Connect to the silt subprocess. Its listener is bound when the test
+/// has its port, so the connection is queued at once; `ConnectionRefused`
+/// is still retried for a moment, any other error is surfaced.
 fn connect_with_retry(port: u16) -> TcpStream {
     let addr = format!("127.0.0.1:{port}");
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -146,12 +126,23 @@ fn shutdown(mut child: Child) -> (String, String) {
 
 /// Minimal echo-ish silt server: always returns 200 OK with a short body,
 /// regardless of input. Used by HIGH-1 and HIGH-2 tests.
-fn echo_server_src(port: u16) -> String {
+fn echo_server_src(port_path: &str) -> String {
     format!(
         r#"
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 fn main() {{
-  http.serve({port}) {{ _req ->
+  http.serve(bound("{port_path}")) {{ _req ->
     http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
 }}
@@ -165,14 +156,12 @@ fn main() {{
 
 #[test]
 fn high1_http_serve_rejects_oversized_body_with_413() {
-    let port = pick_port();
-    let tmp = tmp_silt_file("high1_body_cap", &echo_server_src(port));
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let tmp = tmp_silt_file("high1_body_cap", &echo_server_src(&port_path));
     let child = spawn_silt(&tmp);
 
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     // 50 MiB body, well above the 10 MiB cap. We send a real (honest)
     // Content-Length so the server knows to reject up front, but we also
@@ -229,31 +218,22 @@ fn high1_http_serve_rejects_oversized_body_with_413() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HIGH-2: accept loop is bounded + legitimate requests still work even
-// when an attacker is sitting on a partial-headers connection.
+// HIGH-2: legitimate requests are served while an attacker is sitting
+// on a connection with half a head.
 // ────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
-    // tiny_http 0.12 does not expose per-connection socket read timeouts,
-    // so an attacker who writes `GET / HTTP/1.1\r\n` then stops is held
-    // open inside tiny_http's internal pool regardless of what we do on
-    // our side. What we *can* verify is:
-    //   1. The accept loop keeps running (recv_timeout, not
-    //      indefinite blocking).
-    //   2. A legitimate follow-up request on a fresh connection still
-    //      gets a response in bounded time.
-    // This guards against a future regression where the slowloris
-    // connection would wedge the *user-visible* accept pipeline.
+    // An attacker writes `GET / HTTP/1.1\r\n` and stops. Its connection
+    // waits in a task of its own; a request on a fresh connection gets
+    // its response.
 
-    let port = pick_port();
-    let tmp = tmp_silt_file("high2_slowloris", &echo_server_src(port));
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let tmp = tmp_silt_file("high2_slowloris", &echo_server_src(&port_path));
     let child = spawn_silt(&tmp);
 
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     // Attacker: open a connection, send partial headers, then sit there.
     let mut attacker = connect_with_retry(port);
@@ -262,10 +242,11 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
         .expect("attacker partial write");
     // DO NOT send the terminating \r\n — just hold the connection.
 
-    // Legitimate client: full request on a new connection, expect 200 fast.
-    let start = Instant::now();
+    // Legitimate client: full request on a new connection, expect 200.
+    // (A server wedged by the attacker gives no answer: the read ends
+    // at its limit with nothing.)
     let mut client = connect_with_retry(port);
-    client.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    client.set_read_timeout(Some(Duration::from_secs(60))).ok();
     client
         .write_all(
             format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
@@ -275,7 +256,6 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
 
     let mut buf = Vec::new();
     let _ = client.read_to_end(&mut buf);
-    let elapsed = start.elapsed();
     let resp = String::from_utf8_lossy(&buf);
 
     // Drop attacker connection (clean shutdown of the test).
@@ -285,12 +265,69 @@ fn high2_http_serve_legitimate_request_works_alongside_slow_attacker() {
     let _ = std::fs::remove_file(&tmp);
 
     assert!(
-        elapsed < Duration::from_secs(10),
-        "legitimate request took {elapsed:?} — accept loop may be wedged by slowloris"
-    );
-    assert!(
         resp.starts_with("HTTP/1.1 200") || resp.contains(" 200 "),
         "expected 200 OK for legitimate request; got:\n{resp}"
+    );
+}
+
+/// A server whose process has no file descriptor left cannot accept:
+/// it says so once, stays, and tries again, so that it serves when
+/// connections have ended. (An accept that failed used to end the
+/// server for good, without a word.)
+#[test]
+#[cfg(unix)]
+fn a_server_without_a_descriptor_left_waits_and_serves_again() {
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let tmp = tmp_silt_file("no_descriptor", &echo_server_src(&port_path));
+    let log = tmp.with_extension("stderr");
+    // 40 descriptors for the process: the server's own few, and some
+    // thirty connections.
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(r#"ulimit -n 40 && exec "$0" run "$1" 2> "$2""#)
+        .arg(silt_bin())
+        .arg(&tmp)
+        .arg(&log)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to spawn silt");
+    let port = port_file.wait();
+
+    // More connections than the server has descriptors for. They
+    // send nothing: the server holds each, waiting for its request.
+    let held: Vec<TcpStream> = (0..60).map(|_| connect_with_retry(port)).collect();
+    let limit = Instant::now() + Duration::from_secs(60);
+    let said = loop {
+        let said = std::fs::read_to_string(&log).unwrap_or_default();
+        if said.contains("http.serve: cannot accept a connection") || Instant::now() >= limit {
+            break said;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // The connections end; the server has descriptors again.
+    drop(held);
+    let mut client = connect_with_retry(port);
+    client.set_read_timeout(Some(Duration::from_secs(60))).ok();
+    client
+        .write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        .expect("client write");
+    let mut answer = Vec::new();
+    let _ = client.read_to_end(&mut answer);
+    let answer = String::from_utf8_lossy(&answer);
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(&log);
+    assert!(
+        said.contains("http.serve: cannot accept a connection") && said.contains("trying again"),
+        "the server did not say that it cannot accept: {said:?}"
+    );
+    assert!(
+        answer.starts_with("HTTP/1.1 200"),
+        "the server did not serve again: {answer:?}\n{said}"
     );
 }
 
@@ -304,7 +341,7 @@ fn high3_http_get_bogus_address_returns_err_in_bounded_time() {
     // listening on it. Connecting should fail fast (ECONNREFUSED on
     // loopback). The key guard is that the silt subprocess exits within
     // the 10s timeout_connect budget we set — not that it hangs forever.
-    let port = pick_port();
+    let port = unbound_port();
     let src = format!(
         r#"
 import http
@@ -359,18 +396,30 @@ fn med1_handler_error_does_not_leak_vm_error_details() {
     //     "call stack", or "at line",
     //   - silt stderr DOES contain the VmError detail (so ops can
     //     debug — the info isn't silently swallowed).
-    let port = pick_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
     let src = format!(
         r#"
 import http
+import io
+import tcp
 import test
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 
 fn private_helper() {{
   test.assert(false, "secret-internal-info")
 }}
 
 fn main() {{
-  http.serve({port}) {{ _req ->
+  http.serve(bound("{port_path}")) {{ _req ->
     private_helper()
     http.Response {{ status: 200, body: "never", headers: #{{}} }}
   }}
@@ -380,10 +429,7 @@ fn main() {{
     let tmp = tmp_silt_file("med1_info_leak", &src);
     let child = spawn_silt(&tmp);
 
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     // Poke the server; read whatever 500 it returns.
     let mut sock = connect_with_retry(port);
@@ -436,14 +482,26 @@ fn main() {{
 #[test]
 fn long_poll_handlers_wait_without_holding_a_thread() {
     const WAITERS: usize = 20;
-    let port = pick_port();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
     let src = format!(
         r#"
 import channel
 import http
+import io
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
 fn main() {{
   let mailbox = channel.new(0)
-  http.serve({port}) {{ req ->
+  http.serve(bound("{port_path}")) {{ req ->
     match req.path {{
       "/wait" -> match channel.receive(mailbox) {{
         channel.Message(text) -> http.Response {{ status: 200, body: text, headers: #{{}} }}
@@ -460,10 +518,7 @@ fn main() {{
     );
     let tmp = tmp_silt_file("long_poll", &src);
     let child = spawn_silt(&tmp);
-    assert!(
-        wait_for_bind(port, Duration::from_secs(10)),
-        "silt http.serve failed to bind 127.0.0.1:{port}"
-    );
+    let port = port_file.wait();
 
     let request = |path: &str| {
         let mut conn = connect_with_retry(port);
@@ -492,6 +547,116 @@ fn main() {{
 
     for (i, resp) in posted.iter().enumerate() {
         assert!(resp.ends_with("posted"), "post {i}: {resp:?}\n{stderr}");
+    }
+    for (i, resp) in released.iter().enumerate() {
+        assert!(resp.ends_with("released"), "waiter {i}: {resp:?}\n{stderr}");
+    }
+}
+
+/// Under load: 168 long polls at once against a server that runs at
+/// most 128 handlers. 128 wait in their handlers (tasks: none holds a
+/// thread), the 40 over the cap are turned away with 503 at once, and
+/// when the mailbox is closed every waiter gets its answer.
+#[test]
+fn the_handler_cap_turns_away_what_is_over_it_and_the_waiters_get_their_answers() {
+    const CAP: usize = 128;
+    const OVER: usize = 40;
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let control_file = PortFile::new();
+    let control_path = control_file.path();
+    let src = format!(
+        r#"
+import channel
+import http
+import io
+import task
+import tcp
+
+-- Listen on a port the system chooses, and tell the test which.
+fn bound(port_file) {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  listener
+}}
+
+fn main() {{
+  let mailbox = channel.new(0)
+  -- A second server, with handlers of its own, to end the wait: the
+  -- first one is at its cap and would turn the request away.
+  let _control = task.spawn {{ ->
+    http.serve(bound("{control_path}")) {{ _req ->
+      channel.close(mailbox)
+      http.Response {{ status: 200, body: "closed", headers: #{{}} }}
+    }}
+  }}
+  http.serve(bound("{port_path}")) {{ _req ->
+    let _ = channel.receive(mailbox)
+    http.Response {{ status: 200, body: "released", headers: #{{}} }}
+  }}
+}}
+"#
+    );
+    let tmp = tmp_silt_file("handler_cap", &src);
+    let child = spawn_silt(&tmp);
+    let port = port_file.wait();
+    let control = control_file.wait();
+
+    let request = |port: u16| {
+        let mut conn = connect_with_retry(port);
+        conn.set_read_timeout(Some(Duration::from_secs(60))).ok();
+        conn.write_all(
+            format!("GET /wait HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .expect("request write");
+        conn
+    };
+    let answer = |mut conn: TcpStream| {
+        let mut buf = Vec::new();
+        let _ = conn.read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+
+    let polls: Vec<TcpStream> = (0..CAP + OVER).map(|_| request(port)).collect();
+    // Each on a thread of its own: those over the cap answer at once,
+    // the others when the mailbox is closed.
+    let answers: Vec<std::thread::JoinHandle<String>> = polls
+        .into_iter()
+        .map(|conn| std::thread::spawn(move || answer(conn)))
+        .collect();
+    // The 40 refusals show that 128 handlers are in their wait.
+    let mut waiting = Vec::new();
+    let mut turned_away = Vec::new();
+    let limit = Instant::now() + Duration::from_secs(30);
+    let mut pending = answers;
+    while turned_away.len() < OVER && Instant::now() < limit {
+        let (done, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|h| h.is_finished());
+        turned_away.extend(done.into_iter().map(|h| h.join().expect("answer")));
+        pending = rest;
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    waiting.append(&mut pending);
+    assert_eq!(turned_away.len(), OVER, "refusals while the cap is reached");
+    assert_eq!(waiting.len(), CAP);
+
+    let closed = answer(request(control));
+    let released: Vec<String> = waiting
+        .into_iter()
+        .map(|h| h.join().expect("answer"))
+        .collect();
+
+    let (_stdout, stderr) = shutdown(child);
+    let _ = std::fs::remove_file(&tmp);
+
+    assert!(closed.ends_with("closed"), "{closed:?}\n{stderr}");
+    for (i, resp) in turned_away.iter().enumerate() {
+        assert!(
+            resp.starts_with("HTTP/1.1 503"),
+            "over the cap {i}: {resp:?}\n{stderr}"
+        );
     }
     for (i, resp) in released.iter().enumerate() {
         assert!(resp.ends_with("released"), "waiter {i}: {resp:?}\n{stderr}");

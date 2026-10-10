@@ -24,15 +24,10 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore};
 
 use silt::value::Value;
 
+use crate::port_file::PortFile;
+
 fn run(input: &str) -> Value {
     silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
-}
-
-fn pick_port() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("local_addr");
-    drop(listener);
-    addr.to_string()
 }
 
 /// A full mTLS PKI generated for a single test.
@@ -120,32 +115,6 @@ fn build_client_config(trust_ca_pem: &str, client_identity: Option<(&str, &str)>
     }
 }
 
-/// Connect to `addr`, retrying for up to 10 seconds. The silt server
-/// runs the full lex/parse/typecheck/compile/VM pipeline on a source
-/// file with ~30KB of hex-embedded PEM before `tcp.listen` binds the
-/// port — ~0.5s in a debug build on a loaded machine — so a fixed
-/// pre-connect sleep is a race (this exact race is what got the mTLS
-/// tests quarantined in d17ff85: the client connected before the bind,
-/// got ECONNREFUSED, and the server then hung in `accept()` forever).
-/// Retrying the *handshake* connection itself, rather than probing
-/// with a throwaway connect, matters: the server accepts exactly one
-/// connection, so a successful probe would be consumed as the mTLS
-/// peer and break the test.
-fn connect_with_retry(addr: &str) -> Result<TcpStream, String> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match TcpStream::connect(addr) {
-            Ok(sock) => return Ok(sock),
-            Err(e) => {
-                if std::time::Instant::now() >= deadline {
-                    return Err(format!("connect: {e} (server not up after 10s)"));
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-        }
-    }
-}
-
 /// Drive a rustls client handshake against `addr`. Returns Ok(()) if
 /// the TLS handshake succeeded (including mTLS cert presentation when
 /// requested), Err(msg) otherwise.
@@ -160,7 +129,7 @@ fn rustls_client_handshake(
         ServerName::try_from(server_name.to_string()).map_err(|e| format!("server name: {e}"))?;
     let mut conn = ClientConnection::new(Arc::new(config), server_name)
         .map_err(|e| format!("client conn: {e}"))?;
-    let mut sock = connect_with_retry(addr)?;
+    let mut sock = TcpStream::connect(addr).map_err(|e| format!("connect: {e}"))?;
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     sock.set_write_timeout(Some(Duration::from_secs(5))).ok();
     // Drive the handshake synchronously. `complete_io` runs both
@@ -177,11 +146,13 @@ fn rustls_client_handshake(
     Ok(())
 }
 
-/// Spawn a silt `tcp.accept_tls_mtls` server on `addr` that reports its
-/// accept result into a shared slot. Returns a JoinHandle; the caller
-/// joins to read the outcome.
+/// Spawn a silt `tcp.accept_tls_mtls` server. It listens on a port the
+/// system chooses and writes the port to `port_path`: the listener is
+/// bound when the test has read it, so the one connection the test
+/// makes is the mTLS peer (the server accepts exactly one). Returns a
+/// JoinHandle; the caller joins to read the server's outcome.
 fn spawn_mtls_server(
-    addr: String,
+    port_path: String,
     server_cert_pem: String,
     server_key_pem: String,
     client_ca_pem: String,
@@ -192,10 +163,23 @@ fn spawn_mtls_server(
         let src = format!(
             r#"
 import bytes
+import io
 import tcp
 
+fn listen_and_tell(port_file) {{
+  match tcp.listen("127.0.0.1:0") {{
+    Ok(listener) -> {{
+      when let Ok(_) = io.write_file(port_file, "{{tcp.local_port(listener)}}\n") else {{
+        panic("cannot write the port")
+      }}
+      Ok(listener)
+    }}
+    Err(e) -> Err(e)
+  }}
+}}
+
 fn main() -> String {{
-  match tcp.listen("{addr}") {{
+  match listen_and_tell("{port_path}") {{
     Ok(listener) -> match bytes.from_hex("{cert_hex}") {{
       Ok(cert) -> match bytes.from_hex("{key_hex}") {{
         Ok(key) -> match bytes.from_hex("{ca_hex}") {{
@@ -260,13 +244,14 @@ fn mtls_accept_rejects_client_without_cert() {
     // cert, the server aborts the handshake with `certificate_required`
     // and `accept_tls_mtls` returns `Err`.
     let pki = generate_pki();
-    let addr = pick_port();
+    let port_file = PortFile::new();
     let server = spawn_mtls_server(
-        addr.clone(),
+        port_file.path(),
         pki.server_cert_pem.clone(),
         pki.server_key_pem.clone(),
         pki.ca_cert_pem.clone(),
     );
+    let addr = format!("127.0.0.1:{}", port_file.wait());
     // Client trusts the server CA but presents *no* client cert. The
     // server-side outcome is what this test locks down: silt returns
     // `Err(_)` because the handshake fails with `certificate_required`
@@ -286,13 +271,14 @@ fn mtls_accept_accepts_client_with_valid_cert() {
     // Happy path: client presents a cert signed by the CA the server
     // trusts. Handshake succeeds on both sides.
     let pki = generate_pki();
-    let addr = pick_port();
+    let port_file = PortFile::new();
     let server = spawn_mtls_server(
-        addr.clone(),
+        port_file.path(),
         pki.server_cert_pem.clone(),
         pki.server_key_pem.clone(),
         pki.ca_cert_pem.clone(),
     );
+    let addr = format!("127.0.0.1:{}", port_file.wait());
     let client_result = rustls_client_handshake(
         &addr,
         "localhost",
@@ -316,13 +302,14 @@ fn mtls_accept_rejects_client_with_wrong_ca_cert() {
     // client verifier rejects the chain and the handshake fails.
     let server_pki = generate_pki();
     let other_pki = generate_pki();
-    let addr = pick_port();
+    let port_file = PortFile::new();
     let server = spawn_mtls_server(
-        addr.clone(),
+        port_file.path(),
         server_pki.server_cert_pem.clone(),
         server_pki.server_key_pem.clone(),
         server_pki.ca_cert_pem.clone(), // server trusts only server_pki's CA
     );
+    let addr = format!("127.0.0.1:{}", port_file.wait());
     // The client trusts the server CA (so server-side cert verifies
     // fine), but its own client cert is signed by a foreign CA. That
     // must be rejected by the server's `WebPkiClientVerifier`. As with

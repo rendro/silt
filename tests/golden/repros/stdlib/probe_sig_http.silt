@@ -6,5 +6,4 @@ fn main() {
   let v_http_request: Int = http.request
   let v_http_segments: Int = http.segments
   let v_http_serve: Int = http.serve
-  let v_http_serve_all: Int = http.serve_all
 }

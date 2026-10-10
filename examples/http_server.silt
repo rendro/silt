@@ -3,6 +3,7 @@ import int
 import json
 import list
 import string
+import tcp
 
 -- A minimal JSON API server demonstrating pattern-matched routing.
 
@@ -21,8 +22,13 @@ fn json_response(status, data) {
 }
 
 fn main() {
-  println("Listening on http://localhost:8080")
-  http.serve(8080) { req ->
+  -- 127.0.0.1: reached from this machine only. "0.0.0.0:8080" would
+  -- serve on every network interface.
+  when let Ok(listener) = tcp.listen("127.0.0.1:8080") else {
+    panic("cannot listen on port 8080")
+  }
+  println("Listening on http://localhost:{tcp.local_port(listener)}")
+  http.serve(listener) { req ->
     let segments = string.split(req.path, "/") |> list.filter { s -> !string.is_empty(s) }
     match (req.method, segments) {
       (http.GET, []) -> http.Response { status: 200, body: "Welcome to silt!", headers: #{} }

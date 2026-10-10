@@ -95,6 +95,7 @@ Built-in HTTP client and server. Pattern matching replaces routing frameworks. R
 ```silt
 import http
 import json
+import tcp
 
 type Todo {
   id: Int,
@@ -103,7 +104,10 @@ type Todo {
 }
 
 fn main() {
-  http.serve(8080) { req ->
+  when let Ok(listener) = tcp.listen("127.0.0.1:8080") else {
+    panic("cannot listen on port 8080")
+  }
+  http.serve(listener) { req ->
     match (req.method, http.segments(req.path)) {
       (http.GET, ["todos"]) -> {
         let todos = [

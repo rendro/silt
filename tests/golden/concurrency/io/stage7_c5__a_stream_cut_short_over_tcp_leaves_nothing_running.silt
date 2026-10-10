@@ -11,7 +11,7 @@ import task
 import tcp
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:38473") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let silent = channel.new(0)
   let _peer = task.spawn { ->
     when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
@@ -19,7 +19,9 @@ fn main() {
     -- Never: the connection stays open.
     channel.receive(silent)
   }
-  when let Ok(conn) = tcp.connect("127.0.0.1:38473") else { panic("cannot connect") }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
   println(stream.tcp_lines(conn) |> stream.first)
   println("main returns")
 }

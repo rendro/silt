@@ -13,6 +13,8 @@ libfuzzer-sys = "0.4"
 [dependencies.silt]
 path = ".."
 default-features = false
+# The reader of HTTP requests is the `http` feature's.
+features = ["http"]
 
 # Disable workspace auto-discovery
 [workspace]
@@ -45,4 +47,9 @@ doc = false
 [[bin]]
 name = "fuzz_compiler"
 path = "fuzz_targets/fuzz_compiler.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_http_request"
+path = "fuzz_targets/fuzz_http_request.rs"
 doc = false

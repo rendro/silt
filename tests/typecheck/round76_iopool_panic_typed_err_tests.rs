@@ -52,7 +52,8 @@ use silt::vm::{Vm, submit_panicking_io_for_test};
 /// factory so we can be certain the routing went through THIS factory
 /// (and therefore through `build_timeout_err` rather than the legacy
 /// untyped `Err(String)` path).
-fn synthetic_typed_factory(msg: &str) -> Value {
+fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
+    let msg = failure.text();
     Value::variant(
         bv::ERR,
         vec![Value::Variant(
