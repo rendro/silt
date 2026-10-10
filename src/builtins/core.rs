@@ -84,7 +84,7 @@ pub(crate) mod result {
             match r.inner {
                 Ok(inner) => match Res::take(inner) {
                     Some(inner) => Ok(inner.whole.clone()),
-                    None => Err(unsound("result.flatten")),
+                    None => Err(unsound("result.flatten", "r")),
                 },
                 Err(_) => Ok(r.whole.clone()),
             }

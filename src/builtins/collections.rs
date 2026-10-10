@@ -771,7 +771,7 @@ pub(crate) mod list {
             let mut total: i64 = 0;
             for item in xs.iter() {
                 let Value::Int(n) = item else {
-                    return Err(unsound("list.sum"));
+                    return Err(unsound("list.sum", "xs"));
                 };
                 total = total
                     .checked_add(n)
@@ -784,7 +784,7 @@ pub(crate) mod list {
             let mut total: f64 = 0.0;
             for item in xs.iter() {
                 let Value::Float(n) = item else {
-                    return Err(unsound("list.sum_float"));
+                    return Err(unsound("list.sum_float", "xs"));
                 };
                 total += n;
             }
@@ -797,7 +797,7 @@ pub(crate) mod list {
             let mut total: i64 = 1;
             for item in xs.iter() {
                 let Value::Int(n) = item else {
-                    return Err(unsound("list.product"));
+                    return Err(unsound("list.product", "xs"));
                 };
                 total = total
                     .checked_mul(n)
@@ -810,7 +810,7 @@ pub(crate) mod list {
             let mut total: f64 = 1.0;
             for item in xs.iter() {
                 let Value::Float(n) = item else {
-                    return Err(unsound("list.product_float"));
+                    return Err(unsound("list.product_float", "xs"));
                 };
                 total *= n;
             }
@@ -880,7 +880,7 @@ pub(crate) mod map {
                         Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
                         _ => None,
                     };
-                    let [k, v] = pair.ok_or_else(|| unsound("map.map"))?;
+                    let [k, v] = pair.ok_or_else(|| unsound("map.map", "f"))?;
                     out.insert(k, v);
                     next()
                 },
@@ -958,7 +958,7 @@ pub(crate) mod map {
                     Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
                     _ => None,
                 };
-                let [key, value] = pair.ok_or_else(|| unsound("map.from_entries"))?;
+                let [key, value] = pair.ok_or_else(|| unsound("map.from_entries", "entries"))?;
                 // Runtime Fn gate on the KEY only (values are never
                 // compared): `map.from_entries` has no `where` bound
                 // that rules a function out as a key, and such keys

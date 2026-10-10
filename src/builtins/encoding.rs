@@ -203,7 +203,7 @@ builtins! {
                 _ => &[],
             };
             let [Value::String(key), Value::String(value)] = pair else {
-                return Err(unsound("encoding.form_encode"));
+                return Err(unsound("encoding.form_encode", "pairs"));
             };
             if at > 0 {
                 out.push('&');

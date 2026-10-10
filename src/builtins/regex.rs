@@ -109,7 +109,7 @@ builtins! {
             },
             |state, item, replacement| {
                 let Value::String(replacement) = replacement else {
-                    return Err(unsound("regex.replace_all_with"));
+                    return Err(unsound("regex.replace_all_with", "f"));
                 };
                 let (start, end) = span(&item);
                 state.out.push_str(&state.text[state.last_end..start]);

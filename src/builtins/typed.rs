@@ -99,15 +99,15 @@ pub(crate) type Map<'a> = &'a Arc<BTreeMap<Value, Value>>;
 /// A `Set` argument.
 pub(crate) type Set<'a> = &'a Arc<BTreeSet<Value>>;
 
-/// The error of a body that finds, inside an argument of the right
-/// kind, a value that the parameter's type does not have: an element
-/// of a `List(Int)` that is no `Int`, a result of a function argument
-/// that is not of the type the function returns. Like arguments that
-/// do not fit a row, no checked program reaches it, and it has one
-/// wording.
-pub(crate) fn unsound(name: &str) -> VmError {
+/// The error of a body that finds, in what it was given for the
+/// parameter `param`, a value that the parameter's type does not have:
+/// an element of a `List(Int)` that is no `Int`, a result of a function
+/// argument that is not of the type the function returns. Like
+/// arguments that do not fit a row, no checked program reaches it, and
+/// it has one wording.
+pub(crate) fn unsound(name: &str, param: &str) -> VmError {
     VmError::type_confusion(format!(
-        "{name} was given a value that its signature does not allow"
+        "{name} was given, for {param}, a value that its signature does not allow"
     ))
 }
 

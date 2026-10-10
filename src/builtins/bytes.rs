@@ -176,7 +176,7 @@ builtins! {
         let mut out = Vec::new();
         for item in xs.to_vec()? {
             let Value::Int(n) = item else {
-                return Err(unsound("bytes.from_list"));
+                return Err(unsound("bytes.from_list", "xs"));
             };
             match u8::try_from(n) {
                 Ok(byte) => out.push(byte),
@@ -220,7 +220,7 @@ builtins! {
         let mut out = Vec::new();
         for part in parts.to_vec()? {
             let Value::Bytes(part) = part else {
-                return Err(unsound("bytes.concat_all"));
+                return Err(unsound("bytes.concat_all", "parts"));
             };
             out.extend_from_slice(&part);
         }
