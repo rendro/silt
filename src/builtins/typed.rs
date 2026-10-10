@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::handle::{TaskHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{FieldType, TypeInfo, bv};
 use crate::value::Value;
@@ -119,6 +119,19 @@ impl<'a> Arg<'a> for &'a Arc<TaskHandle> {
     }
 }
 
+/// A `TcpStream` argument.
+#[cfg(feature = "tcp")]
+pub(crate) type TcpStream<'a> = &'a Arc<TcpStreamHandle>;
+
+impl<'a> Arg<'a> for &'a Arc<TcpStreamHandle> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::TcpStream(stream) => Some(stream),
+            _ => None,
+        }
+    }
+}
+
 /// A `Map` argument.
 pub(crate) type Map<'a> = &'a Arc<BTreeMap<Value, Value>>;
 
@@ -206,6 +219,15 @@ impl<'a> List<'a> {
         match self {
             List::Items(items) => Items::List(items.iter()),
             List::Range(lo, hi) => Items::Range(lo..=hi),
+        }
+    }
+
+    /// The elements as a list to keep: the list itself, or one made
+    /// of a range (an error if it has more elements than a list may).
+    pub(crate) fn shared(self) -> Result<Arc<Vec<Value>>, VmError> {
+        match self {
+            List::Items(items) => Ok(items.clone()),
+            List::Range(..) => self.to_vec().map(Arc::new),
         }
     }
 

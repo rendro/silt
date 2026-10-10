@@ -6,6 +6,7 @@
 
 use crate::typeinfo::bv;
 use crate::value::Value;
+#[cfg(feature = "tcp")]
 use crate::vm::VmError;
 
 pub(crate) fn ok(v: Value) -> Value {
@@ -16,6 +17,7 @@ pub(super) fn err(s: impl Into<String>) -> Value {
     Value::variant(bv::ERR, vec![Value::String(s.into())])
 }
 
+#[cfg(feature = "tcp")]
 pub(super) fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
     match arg {
         Value::Int(n) => Ok(*n),
@@ -99,6 +101,7 @@ pub(crate) fn value_kind(v: &Value) -> &'static str {
 }
 
 /// The `&str` of a `String` argument.
+#[cfg(feature = "tcp")]
 pub(super) fn require_str_borrow<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
     match arg {
         Value::String(s) => Ok(s.as_str()),

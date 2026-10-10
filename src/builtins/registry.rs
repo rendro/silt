@@ -372,7 +372,7 @@ macro_rules! module {
         $(call: $call:expr,)?
         $(steps: $steps:expr,)?
         rows: [$(
-            $row:ident ( $($arg:expr),* $(,)? ) $(. $with:ident ( $($with_arg:expr),* ))*
+            $row:ident ( $($arg:expr),* $(,)? ) $(. $with:ident ( $($with_arg:tt)* ))*
         ),* $(,)?] $(,)?
     ) => {{
         #[allow(unused_mut, unused_assignments)]
@@ -404,7 +404,7 @@ macro_rules! module {
         let rows;
         module!(
             @rows rows, [$($feature)?],
-            [$({ $row ($($arg),*) [$(. $with ($($with_arg),*))*] })*]
+            [$({ $row ($($arg),*) [$(. $with ($($with_arg)*))*] })*]
         );
         build_module(
             $name,
@@ -417,25 +417,48 @@ macro_rules! module {
             rows,
         )
     }};
-    (@rows $slot:ident, [], [$({ $row:ident ($($arg:expr),*) [$($with:tt)*] })*]) => {
-        $slot = vec![$($row($($arg),*) $($with)*),*];
+    (@rows $slot:ident, [], [$({ $($row:tt)* })*]) => {
+        $slot = vec![$(module!(@row [] $($row)*)),*];
     };
-    // The rows of a module with a feature: where it is not built their
-    // bodies are not compiled, and each row is its signature and its
-    // summary.
+    (@rows $slot:ident, [$feature:literal], [$({ $($row:tt)* })*]) => {
+        $slot = vec![$(module!(@row [$feature] $($row)*)),*];
+    };
+    // A function row, `f(signature, summary, body)`: alone, with
+    // `.optional_last()`, or with `.feature("name")`, the cargo feature
+    // the row needs beyond its module's.
+    (@row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr) []) => {
+        module!(@typed [$($of)?] [] $signature, $summary, $body)
+    };
     (
-        @rows $slot:ident, [$feature:literal],
-        [$({ $row:ident ($signature:expr, $summary:expr $(, $body:expr)?) [$($with:tt)*] })*]
+        @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
+        [. optional_last ()]
     ) => {
-        #[cfg(feature = $feature)]
-        {
-            $slot = vec![$($row($signature, $summary $(, $body)?) $($with)*),*];
-        }
-        #[cfg(not(feature = $feature))]
-        {
-            $slot = vec![$(u($signature, $summary) $($with)*),*];
-        }
+        module!(@typed [$($of)?] [] $signature, $summary, $body).optional_last()
     };
+    (
+        @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
+        [. feature ($own:literal)]
+    ) => {
+        module!(@typed [$($of)?] [$own] $signature, $summary, $body)
+            .feature($own, cfg!(feature = $own))
+    };
+    // Any other row: a constant.
+    (@row [$($of:literal)?] $row:ident ($($arg:expr),*) [$($with:tt)*]) => {
+        $row($($arg),*) $($with)*
+    };
+    // A function row of a module with the feature `$of`, with the
+    // feature `$own` of its own: where one of them is not built, its
+    // body is not compiled, and the row is its signature and its summary.
+    (
+        @typed [$($of:literal)?] [$($own:literal)?]
+        $signature:expr, $summary:expr, $body:expr
+    ) => {{
+        #[cfg(all($(feature = $of,)? $(feature = $own,)?))]
+        let row = f($signature, $summary, $body);
+        #[cfg(not(all($(feature = $of,)? $(feature = $own,)?)))]
+        let row = u($signature, $summary);
+        row
+    }};
     (@call $slot:ident, [], [], []) => {};
     (@call $slot:ident, [], [$call:expr], []) => {
         $slot = Some(|vm, name, args| ($call)(vm, name, args).map(crate::vm::Step::Done));
