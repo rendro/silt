@@ -827,7 +827,13 @@ impl TypeChecker {
         let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
         // Infer the body and unify with declared return type
+        let owner = self.frame_owner.take();
+        self.fn_frames.push(unused::FnFrame {
+            owner,
+            params: param_types,
+        });
         let body_type = self.infer_expr(&mut f.body, env);
+        self.fn_frames.pop();
         env.pop();
         let ret_unify_err_count = self.errors.len();
         self.unify(&body_type, &ret_type, f.body.span);
@@ -1202,9 +1208,18 @@ impl TypeChecker {
                             CallForm::Call => arg.span,
                             CallForm::BarePipe => span,
                         };
+                        // A parameter the callee calls as a statement.
+                        let statement = match is_method_call {
+                            true => None,
+                            false => self.statement_unit(callee, i),
+                        };
+                        let passed_on = statement.map(|_| self.frames_sharing(&arg_ty));
                         let reported = self.errors.len();
                         self.unify(&arg_ty, param, at);
                         mismatched |= self.errors.len() > reported;
+                        if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
+                            self.name_statement_unit(statement, reported, passed_on);
+                        }
                     }
                 }
                 // An argument of the wrong type is the one thing wrong
@@ -2231,6 +2246,7 @@ impl TypeChecker {
             }
 
             ExprKind::Lambda { params, body } => {
+                let owner = self.frame_owner.take();
                 env.push();
                 // Soundness: lambda param lists are a single conjunctive
                 // scope too — `|a, a| ...` must be rejected the same way
@@ -2284,7 +2300,12 @@ impl TypeChecker {
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
+                self.fn_frames.push(unused::FnFrame {
+                    owner,
+                    params: param_types.clone(),
+                });
                 let body_type = self.infer_expr(body, env);
+                self.fn_frames.pop();
                 env.pop();
                 let ret_unify_err_count = self.errors.len();
                 self.unify(&body_type, &lambda_ret, body.span);
@@ -3065,6 +3086,11 @@ impl TypeChecker {
                 let is_value = self.is_syntactic_value(value);
                 if is_value {
                     self.enter_level();
+                }
+                if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
+                    (&pattern.kind, &value.kind)
+                {
+                    self.frame_owner = Some(unused::FrameOwner::Local(*name));
                 }
                 let mut val_ty = self.infer_expr(value, env);
 

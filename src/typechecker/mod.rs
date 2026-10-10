@@ -222,10 +222,20 @@ pub struct TypeChecker {
     /// The session's definitions, which the resolver's `Res` slots
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
-    /// The types of the calls that stand as statements and are still
+    /// The calls that stand as statements and whose type is still
     /// unknown (see `unused`), by the level of the variable each is:
     /// the scope that decides it.
-    pub(super) statement_calls: Vec<Vec<Type>>,
+    pub(super) statement_calls: Vec<Vec<unused::StatementCall>>,
+    /// The functions and closures whose body is being checked,
+    /// outermost first, each with its parameters' types.
+    pub(super) fn_frames: Vec<unused::FnFrame>,
+    /// What the next function or closure to be checked is the value of:
+    /// the top-level definition, or the `let` of a block, that names it.
+    pub(super) frame_owner: Option<unused::FrameOwner>,
+    /// The parameters whose function type returns `()` because the body
+    /// calls them as a statement: by the function or closure, the
+    /// parameter's index and the statement.
+    pub(super) statement_units: HashMap<unused::Callee, Vec<(usize, Span)>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// Its name, for diagnostics.
@@ -308,6 +318,9 @@ impl TypeChecker {
             cells: std::collections::HashSet::new(),
             defs: None,
             statement_calls: Vec::new(),
+            fn_frames: Vec::new(),
+            frame_owner: None,
+            statement_units: HashMap::new(),
             module: crate::session::ModuleId(0),
             module_name: intern("main"),
             own_types: HashMap::new(),
@@ -874,9 +887,8 @@ impl TypeChecker {
         self.exit_level();
 
         // A statement leaves no value unused.
-        if self.fix_statement_calls(true) {
-            self.solve_wanted(0);
-        }
+        let fixed = self.fix_statement_calls(true);
+        self.recheck_fixed(&fixed, |checker| checker.solve_wanted(0));
         self.check_unused_values(program);
 
         // Detect unresolved type variables on let-binding values where
@@ -942,6 +954,7 @@ impl TypeChecker {
                 // module's functions have no bodies.
                 (Decl::Fn(f), Some(sig)) => {
                     if !f.is_recovery_stub && !self.signatures_only {
+                        self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);
                     }
                 }
@@ -1057,6 +1070,7 @@ impl TypeChecker {
         }
         self.group_rigid.clear();
         self.settle_bounds();
+        self.forget_local_statement_units();
         self.enter_level();
     }
 
@@ -1073,6 +1087,9 @@ impl TypeChecker {
         env: &mut TypeEnv,
     ) -> bool {
         let is_value = self.is_syntactic_value(value);
+        if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) = (&pattern.kind, &value.kind) {
+            self.frame_owner = Some(unused::FrameOwner::TopLevel(*name));
+        }
         let mut val_ty = self.infer_expr(value, env);
         if let Some(te) = ty {
             // (A type variable the annotation introduces is rigid; a
@@ -1168,6 +1185,7 @@ impl TypeChecker {
         self.solve_wanted(0);
         self.exit_level();
         self.settle_bounds();
+        self.forget_local_statement_units();
     }
 }
 

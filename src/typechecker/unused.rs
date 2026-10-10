@@ -5,15 +5,60 @@
 //! Anything else is an error, and `let _ = ...` is how a value is
 //! discarded on purpose.
 //!
-//! A call whose type nothing decides (`fail()` with
-//! `fn fail() { panic("...") }`, `g()` with `g` a parameter of unknown
-//! type) is a statement, so its type is `()`: the checker fixes it,
-//! before the definition the statement is in is generalised
-//! (`fix_statement_calls`). A value that is not a call (an operator
-//! expression, a literal, a name, a field, a constructor) is unused
-//! whatever its type.
+//! A value that is not a call (an operator expression, a literal, a
+//! name, a field, a constructor) is unused whatever its type.
+//!
+//! A call whose type nothing has decided when the scope it is in is
+//! settled is one of two things (`fix_statement_calls`):
+//! - Its type is the type of something the caller of an enclosing
+//!   function gives that function: a parameter, or data in one
+//!   (`fn count(x) { dbg(x)  1 }` with `dbg` returning what it is
+//!   given, `xs: List(a)`, `ch: Channel(a)`). Then it is a value, and it
+//!   is unused: the same error as with the parameter annotated. Nobody's
+//!   parameter becomes `()` because of a statement.
+//! - Otherwise it is `()`: the result of a function the body was handed
+//!   and calls as a statement (`fn run(f) { f()  "ran" }`), or of a
+//!   call that returns whatever is asked of it (`fail()` that only
+//!   panics). A later error about that `()` names the statement.
 
 use super::*;
+
+/// A call that stands as a statement and whose type is still unknown.
+#[derive(Clone)]
+pub(crate) struct StatementCall {
+    ty: Type,
+    /// The statement.
+    span: Span,
+    /// The functions and closures the statement is in.
+    frames: Vec<FnFrame>,
+}
+
+/// A function or a closure whose body is being checked.
+#[derive(Clone)]
+pub(crate) struct FnFrame {
+    pub(super) owner: Option<FrameOwner>,
+    /// Its parameters' types.
+    pub(super) params: Vec<Type>,
+}
+
+/// What names a function or closure where it is defined.
+#[derive(Clone, Copy)]
+pub(crate) enum FrameOwner {
+    /// A top-level `fn`, or the top-level `let` a closure is the value of.
+    TopLevel(Symbol),
+    /// The `let` of a block a closure is the value of.
+    Local(Symbol),
+}
+
+/// What a call's callee names.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Callee {
+    Def(crate::defs::DefId),
+    Local(Symbol),
+}
+
+/// The label of an error about a `()` that a statement call was given.
+const STATEMENT_UNIT: &str = "`()` because this call is a statement: its value would be unused";
 
 impl TypeChecker {
     /// Note the statement `stmt` of type `ty`, which is not the last of
@@ -24,49 +69,201 @@ impl TypeChecker {
             && let Type::Var(v) = self.apply(ty)
             && self.is_call_like(e)
         {
-            self.await_statement_call(v, ty.clone());
+            let call = StatementCall {
+                ty: ty.clone(),
+                span: e.span,
+                frames: self.fn_frames.clone(),
+            };
+            self.await_statement_call(v, call);
         }
     }
 
-    /// File the type `ty` of a statement call, the unresolved variable
+    /// File a statement call, whose type is the unresolved variable
     /// `v`, under the scope that decides `v`.
-    fn await_statement_call(&mut self, v: TyVar, ty: Type) {
+    fn await_statement_call(&mut self, v: TyVar, call: StatementCall) {
         let level = self.tables.vars.level_of(v) as usize;
         if self.statement_calls.len() <= level {
             self.statement_calls.resize_with(level + 1, Vec::new);
         }
-        self.statement_calls[level].push(ty);
+        self.statement_calls[level].push(call);
     }
 
-    /// Give `()` to the calls that stand as statements and whose type is
-    /// a variable of the scope `exit_level` just left (with `all`, at
-    /// the end of the module: whatever variable it still is). A variable
-    /// of an outer binding waits: a later definition may decide it.
-    /// Returns whether a type was decided: what the scope owes for it
-    /// is to be checked again.
+    /// Decide the calls that stand as statements and whose type is a
+    /// variable of the scope `exit_level` just left (with `all`, at the
+    /// end of the module: whatever variable it still is). A variable of
+    /// an outer binding waits: a later definition may decide it. One
+    /// that a caller supplies stays as it is, and the statement is
+    /// reported; any other is `()`. Returns the statements whose type
+    /// became `()`: what the scope owes for those is to be checked
+    /// again (`recheck_fixed`).
     ///
     /// Only the calls filed under the scopes that ended are looked at:
     /// one that waits for an outer scope is filed under that scope, and
     /// is not read again until it ends.
-    pub(super) fn fix_statement_calls(&mut self, all: bool) -> bool {
+    pub(super) fn fix_statement_calls(&mut self, all: bool) -> Vec<Span> {
         let keep = match all {
             true => 0,
             false => self.tables.vars.level() as usize + 1,
         };
-        let mut fixed = false;
+        let mut fixed = Vec::new();
         while self.statement_calls.len() > keep {
-            for ty in self.statement_calls.pop().unwrap_or_default() {
-                match self.apply(&ty) {
+            for call in self.statement_calls.pop().unwrap_or_default() {
+                match self.apply(&call.ty) {
                     Type::Var(v) if all || self.tables.vars.is_generalizable(v) => {
-                        fixed |= self.unify_types(&ty, &Type::Unit).is_ok();
+                        if self.caller_supplies(v, &call.frames) {
+                            continue;
+                        }
+                        let handed = self.params_mentioning(v, &call.frames);
+                        if self.unify_types(&call.ty, &Type::Unit).is_ok() {
+                            fixed.push(call.span);
+                            for (callee, param) in handed {
+                                let units = self.statement_units.entry(callee).or_default();
+                                units.push((param, call.span));
+                            }
+                        }
                     }
                     // (Its level is below the scopes that ended.)
-                    Type::Var(v) => self.await_statement_call(v, ty),
+                    Type::Var(v) => self.await_statement_call(v, call),
                     _ => {}
                 }
             }
         }
         fixed
+    }
+
+    /// Check again, with `recheck`, what a scope owes for the types of
+    /// the statements `fixed`, which are `()` now; an error that this
+    /// reports inside one of the statements says where the `()` is from.
+    pub(super) fn recheck_fixed(&mut self, fixed: &[Span], recheck: impl FnOnce(&mut Self)) {
+        if fixed.is_empty() {
+            return;
+        }
+        let from = self.errors.len();
+        recheck(self);
+        for d in self.errors.iter_mut().skip(from) {
+            let within =
+                |s: &&Span| s.file == d.span.file && s.start <= d.span.start && d.span.end <= s.end;
+            if let Some(statement) = fixed.iter().find(within) {
+                d.labels.push((*statement, STATEMENT_UNIT.to_string()));
+            }
+        }
+    }
+
+    /// Whether a value of the type `v` is given to one of the functions
+    /// `frames` by its caller: `v` is the type of a parameter, or of
+    /// data in one. (The result of a function a parameter holds is not
+    /// given by the caller: the body gets it by calling.)
+    fn caller_supplies(&self, v: TyVar, frames: &[FnFrame]) -> bool {
+        frames
+            .iter()
+            .flat_map(|frame| &frame.params)
+            .any(|param| holds(&self.apply(param), v))
+    }
+
+    /// The parameters of the functions `frames` whose types mention
+    /// `v`, each with what names its function.
+    fn params_mentioning(&self, v: TyVar, frames: &[FnFrame]) -> Vec<(Callee, usize)> {
+        let mut found = Vec::new();
+        for frame in frames {
+            let Some(callee) = frame.owner.and_then(|owner| self.callee_of(owner)) else {
+                continue;
+            };
+            for (i, param) in frame.params.iter().enumerate() {
+                if free_vars_in(&self.apply(param)).contains(&v) {
+                    found.push((callee, i));
+                }
+            }
+        }
+        found
+    }
+
+    /// What a call names when it calls the function of `owner`.
+    fn callee_of(&self, owner: FrameOwner) -> Option<Callee> {
+        match owner {
+            FrameOwner::Local(name) => Some(Callee::Local(name)),
+            FrameOwner::TopLevel(name) => {
+                let defs = self.defs.as_ref()?;
+                defs.of_module(self.module)
+                    .iter()
+                    .find(|id| {
+                        let def = defs.get(**id);
+                        def.name == name
+                            && matches!(
+                                def.kind,
+                                crate::defs::DefKind::Fn | crate::defs::DefKind::Let
+                            )
+                    })
+                    .map(|id| Callee::Def(*id))
+            }
+        }
+    }
+
+    /// The statement because of which the parameter `param` of the
+    /// function `callee` names takes a function that returns `()`.
+    pub(super) fn statement_unit(&self, callee: &Expr, param: usize) -> Option<Span> {
+        if self.statement_units.is_empty() {
+            return None;
+        }
+        let callee = match (callee.res, &callee.kind) {
+            (Some(crate::defs::Res::Def(id)), _) => Callee::Def(id),
+            (Some(crate::defs::Res::Local), ExprKind::Ident(name)) => Callee::Local(*name),
+            _ => return None,
+        };
+        let units = self.statement_units.get(&callee)?;
+        units
+            .iter()
+            .find(|(i, _)| *i == param)
+            .map(|(_, statement)| *statement)
+    }
+
+    /// Forget what is known of the closures a body bound with `let`:
+    /// the names are the body's.
+    pub(super) fn forget_local_statement_units(&mut self) {
+        self.statement_units
+            .retain(|callee, _| matches!(callee, Callee::Def(_)));
+    }
+
+    /// The parameters of the enclosing functions whose types share a
+    /// variable with `ty`, the type of an argument: what is asked of the
+    /// argument is asked of them.
+    pub(super) fn frames_sharing(&self, ty: &Type) -> Vec<(Callee, usize)> {
+        let vars = free_vars_in(&self.apply(ty));
+        let mut found = Vec::new();
+        for v in vars {
+            for at in self.params_mentioning(v, &self.fn_frames) {
+                if !found.contains(&at) {
+                    found.push(at);
+                }
+            }
+        }
+        found
+    }
+
+    /// An argument was checked against a parameter that returns `()`
+    /// because of `statement`. The errors from `from` on are about that
+    /// `()`: each names the statement, and the help about chaining
+    /// Results, which a mismatch with a Result gets, does not apply. An
+    /// argument that was accepted hands the `()` on to the parameters
+    /// `passed_on` of the enclosing functions.
+    pub(super) fn name_statement_unit(
+        &mut self,
+        statement: Span,
+        from: usize,
+        passed_on: Vec<(Callee, usize)>,
+    ) {
+        if self.errors.len() == from {
+            for (callee, param) in passed_on {
+                let units = self.statement_units.entry(callee).or_default();
+                if !units.contains(&(param, statement)) {
+                    units.push((param, statement));
+                }
+            }
+            return;
+        }
+        for d in self.errors.iter_mut().skip(from) {
+            d.help.clear();
+            d.labels.push((statement, STATEMENT_UNIT.to_string()));
+        }
     }
 
     /// Whether the value of `e` comes from calls alone: a call, a pipe,
@@ -207,6 +404,30 @@ impl TypeChecker {
                 found.push(d);
             }
         });
+    }
+}
+
+/// Whether a value of type `ty` holds one of the type `v`: `v` itself,
+/// or a part of data. A function holds no value of the types it
+/// mentions.
+fn holds(ty: &Type, v: TyVar) -> bool {
+    match ty {
+        Type::Var(w) => *w == v,
+        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => holds(t, v),
+        Type::Map(key, value) => holds(key, v) || holds(value, v),
+        Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().any(|t| holds(t, v)),
+        Type::AnonRecord { fields, .. } => fields.values().any(|t| holds(t, v)),
+        // The caller's type decides the associated type.
+        Type::AssocProj { receiver, .. } => holds(receiver, v),
+        Type::Fun(..)
+        | Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Rigid(_)
+        | Type::Error
+        | Type::Never => false,
     }
 }
 

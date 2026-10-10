@@ -1,0 +1,55 @@
+-- verdict: same
+-- A function the body was handed and calls as a statement returns `()`:
+-- its result is not something the caller gave, so it is no value the
+-- body leaves unused. These all check and run.
+import list
+
+fn run(f) {
+  f()
+  "ran"
+}
+
+fn tap(x, f) {
+  f(x)
+  x
+}
+
+fn twice(f, x) {
+  f(x)
+  f(x)
+}
+
+fn through(f) {
+  run(f)
+}
+
+fn each_twice(xs, f) {
+  xs |> list.each { x ->
+    f(x)
+    f(x)
+  }
+}
+
+fn fail() {
+  panic("failed")
+}
+
+fn main() {
+  println(run { -> println("called") })
+  println(tap(1) { n -> println("tapped {n}") })
+  twice({ n -> println("twice {n}") }, 2)
+  println(through { -> println("through") })
+  each_twice([3, 4]) { n -> println("each {n}") }
+  let local = { g ->
+    g()
+    5
+  }
+  println(local { -> println("local") })
+  match 1 > 2 {
+    true -> {
+      fail()
+      println("unreachable")
+    }
+    false -> println("done")
+  }
+}

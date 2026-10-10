@@ -2,14 +2,27 @@
 -- exit: 1
 -- verdict: same
 -- `run` calls `f` as a statement, so `f` returns `()`: a function that
--- returns a value is not one. The same for a closure bound by a `let`.
+-- returns a value is not one. The error names the statement the `()`
+-- is from, also through a function that hands `f` on (`through`), for a
+-- closure bound by a `let` (`also`), and for a Result (where the help
+-- about chaining Results would not apply).
 fn run(f) {
   f()
   "ran"
 }
 
+fn through(f) {
+  run(f)
+}
+
+fn risky() -> Result(Int, String) {
+  Err("lost")
+}
+
 fn main() {
   println(run { -> 3 })
+  println(run(risky))
+  println(through { -> 4 })
   let also = { g ->
     g()
     1
