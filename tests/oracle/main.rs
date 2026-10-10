@@ -7,6 +7,7 @@
 //! and reported has a line in `skip.txt`; the suite fails on a finding
 //! without one and on a line without its finding (`sweep.rs`).
 
+mod corpora;
 mod generated;
 mod goldens;
 mod oracle;

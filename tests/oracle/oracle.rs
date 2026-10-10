@@ -167,6 +167,11 @@ pub enum Kind {
     InternalError,
     /// A run did not end.
     Hang,
+    /// A run ends the process it is in (an overflow of the native
+    /// stack). The oracle cannot see this from inside: an input that
+    /// does it is known by its line in the skip file, and is run
+    /// through the `silt` command instead (`sweep.rs`).
+    Abort,
     /// The two runs disagree.
     Differs,
     /// A run is not what the input's [`Expect`] says.
@@ -182,6 +187,7 @@ impl Kind {
             Kind::TypeConfusion => "type-confusion",
             Kind::InternalError => "internal-error",
             Kind::Hang => "hang",
+            Kind::Abort => "abort",
             Kind::Differs => "differs",
             Kind::Expectation => "expectation",
         }
@@ -196,7 +202,7 @@ pub struct Finding {
 }
 
 impl Finding {
-    fn new(kind: Kind, detail: impl Into<String>) -> Finding {
+    pub fn new(kind: Kind, detail: impl Into<String>) -> Finding {
         Finding {
             kind,
             detail: detail.into(),

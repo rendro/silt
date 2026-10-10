@@ -482,7 +482,7 @@ fn generated_programs_end_as_the_reference_evaluator_says() {
         .collect();
     let skips = skips();
     let inputs = sample(all, 1, &skips);
-    let mut verdicts = run(&inputs);
+    let mut verdicts = run(&inputs, &skips);
 
     let mut overflows = 0;
     for (input, (verdict, _)) in inputs.iter().zip(&mut verdicts) {

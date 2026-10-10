@@ -95,6 +95,10 @@ Its inputs, by class:
   test computes, or stop at the integer overflow it predicts. A program
   is named by its seed and number, `generated/1/532`, and a finding is
   shown with the smallest program that still has it.
+- the corpora: the seeds of the fuzz targets that read silt source
+  (`fuzz/corpus/`), the examples, and, in a full sweep, the repro
+  corpus (`tests/golden/repros/`). Most of these do not check clean or
+  have no `main` and are not run; what runs must agree with itself.
 
 ```
 cargo nextest run --all-features --test oracle                      # a sample of each class
@@ -114,6 +118,13 @@ reported has a line in `tests/oracle/skip.txt` that names it; the suite
 fails on a finding without a line and on a line whose input has no such
 finding any more, so the line goes with the fix. The inputs the file
 names are part of every sample.
+
+A program that overflows the native stack ends the process it runs in,
+the suite's too. Such an input has a line of the kind `abort`: the
+suite does not run it itself, and a full sweep runs it through the
+`silt` command to see that it still aborts. The name of each input is
+written to stderr before it is examined, so the last names of an
+aborted run say which program it was.
 
 ## A faster local build
 

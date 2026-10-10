@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::oracle::{Compared, Input, Verdict, examine};
+use crate::oracle::{Compared, Finding, Input, Kind, Source, Verdict, examine};
 
 /// The threads of a sweep in the suite: the tests of the binary run
 /// side by side, and a program with tasks starts a worker for each CPU.
@@ -97,9 +97,76 @@ pub fn sample(all: Vec<Input>, step: usize, skips: &[Skip]) -> Vec<Input> {
         .collect()
 }
 
+/// How long the `silt` command may take with a program that is listed
+/// as aborting, before it is taken not to abort any more.
+const ABORT_WAIT: Duration = Duration::from_secs(120);
+
+/// The verdict of an input that the skip file lists as ending the
+/// process it runs in, which therefore is not run in this one. In a
+/// full sweep the `silt` command runs it, and the finding stands while
+/// that ends otherwise than with status 0 or 1; in a sample the line is
+/// taken at its word.
+fn examine_aborting(input: &Input) -> Verdict {
+    let listed = |detail: &str| Verdict::Finding(Finding::new(Kind::Abort, detail));
+    if !full() {
+        return listed("not run here: the skip file says that it ends the process");
+    }
+    let Source::Memory(files) = &input.source else {
+        panic!(
+            "{}: only a program of one file can be listed as aborting",
+            input.name
+        );
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "silt-oracle-{}-{}",
+        std::process::id(),
+        input.name.replace(['/', '\\', '.'], "_")
+    ));
+    std::fs::create_dir_all(&dir).expect("a directory for the program");
+    for (name, text) in files {
+        std::fs::write(dir.join(name), text).expect("write the program");
+    }
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&files[0].0)
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn silt");
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait().expect("wait for silt") {
+            Some(status) => break Some(status),
+            None if start.elapsed() > ABORT_WAIT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    match status {
+        Some(status) if !matches!(status.code(), Some(0 | 1)) => {
+            listed(&format!("`silt run` ends with {status}"))
+        }
+        // The line in the skip file has outlived its finding.
+        _ => Verdict::Passed(Compared::Invariants),
+    }
+}
+
 /// The verdict of each of `inputs`, in their order, and how long it
 /// took to reach (which the report file shows, and nothing judges).
-pub fn run(inputs: &[Input]) -> Vec<(Verdict, Duration)> {
+/// An input that `skips` lists as aborting is not run in this process
+/// ([`examine_aborting`]).
+pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
+    let aborts = |input: &Input| {
+        skips
+            .iter()
+            .any(|skip| skip.input == input.name && skip.kind == Kind::Abort.name())
+    };
     let workers = match std::env::var("SILT_ORACLE_WORKERS") {
         Ok(n) => n.parse().expect("SILT_ORACLE_WORKERS is a number"),
         Err(_) => SUITE_WORKERS,
@@ -114,8 +181,15 @@ pub fn run(inputs: &[Input]) -> Vec<(Verdict, Duration)> {
                     let Some(input) = inputs.get(index) else {
                         break;
                     };
+                    // A program that overflows the native stack takes
+                    // the process with it: its name is the last one
+                    // a thread wrote.
+                    eprintln!("oracle: {}", input.name);
                     let start = Instant::now();
-                    let verdict = examine(input);
+                    let verdict = match aborts(input) {
+                        true => examine_aborting(input),
+                        false => examine(input),
+                    };
                     verdicts.lock().unwrap()[index] = Some((verdict, start.elapsed()));
                 }
             });

@@ -16,12 +16,12 @@ use crate::sweep::{conclude, name_of, repo_root, run, sample, skips};
 const STEP: usize = 4;
 
 /// The directory of the imported repro corpus, whose cases say nothing
-/// of how they run.
-const REPROS: &str = "repros";
+/// of how they run: they are inputs of their own (`corpora.rs`).
+pub const REPROS: &str = "tests/golden/repros";
 
 /// Every case under `root`: each `.silt` file outside a case directory,
 /// and each directory that holds a `main.silt` or is a package.
-fn collect_cases(root: &Path, out: &mut Vec<PathBuf>) {
+pub fn collect_cases(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -31,7 +31,7 @@ fn collect_cases(root: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             if path.join("main.silt").is_file() || is_package_case(&path) {
                 out.push(path);
-            } else if path.file_name().is_none_or(|name| name != REPROS) {
+            } else {
                 collect_cases(&path, out);
             }
         } else if path.extension().is_some_and(|e| e == "silt") {
@@ -95,38 +95,64 @@ fn runs_and_succeeds(source: &str) -> bool {
     qualifies
 }
 
+/// The entry file of `case`, its text, and where its expected stdout
+/// is; `None` for a case whose entry file is not text.
+fn entry_of(case: &Path) -> Option<(PathBuf, String, PathBuf)> {
+    let (entry, expected) = if !case.is_dir() {
+        (case.to_path_buf(), case.with_extension("stdout"))
+    } else if is_package_case(case) {
+        (case.join("src/main.silt"), case.join("case.stdout"))
+    } else {
+        (case.join("main.silt"), case.join("case.stdout"))
+    };
+    let text = std::fs::read_to_string(&entry).ok()?;
+    Some((entry, text, expected))
+}
+
+/// The files of `case`, whose entry file `entry` has the text `text`,
+/// as the golden harness lays them out for the binary.
+fn source_of(case: &Path, entry: PathBuf, text: String) -> Source {
+    if !case.is_dir() {
+        // A single file is run in a directory of its own.
+        let file = entry.file_name().expect("a file").to_string_lossy();
+        Source::Memory(vec![(file.into_owned(), text)])
+    } else if is_package_case(case) {
+        Source::Package(entry)
+    } else {
+        Source::Script(entry)
+    }
+}
+
+/// The case `case` as an input of which nothing is expected; `None`
+/// for a case whose entry file is not text.
+pub fn plain_input(case: &Path) -> Option<Input> {
+    let (entry, text, _) = entry_of(case)?;
+    Some(Input {
+        name: name_of(case),
+        source: source_of(case, entry, text),
+        expect: Expect::default(),
+    })
+}
+
 /// The golden cases that qualify, sorted by name.
 fn inputs() -> Vec<Input> {
     let mut cases = Vec::new();
     collect_cases(&repo_root().join("tests/golden"), &mut cases);
     let mut inputs = Vec::new();
     for case in cases {
-        let (entry, expected) = if !case.is_dir() {
-            (case.clone(), case.with_extension("stdout"))
-        } else if is_package_case(&case) {
-            (case.join("src/main.silt"), case.join("case.stdout"))
-        } else {
-            (case.join("main.silt"), case.join("case.stdout"))
-        };
-        // A case that is not text is no case to run.
-        let Ok(text) = std::fs::read_to_string(&entry) else {
+        let name = name_of(&case);
+        if name.starts_with(REPROS) {
+            continue;
+        }
+        let Some((entry, text, expected)) = entry_of(&case) else {
             continue;
         };
         if !runs_and_succeeds(&text) {
             continue;
         }
-        let source = if !case.is_dir() {
-            // The harness runs a single file in a directory of its own.
-            let file = entry.file_name().expect("a file").to_string_lossy();
-            Source::Memory(vec![(file.into_owned(), text)])
-        } else if is_package_case(&case) {
-            Source::Package(entry)
-        } else {
-            Source::Script(entry)
-        };
         inputs.push(Input {
-            name: name_of(&case),
-            source,
+            name,
+            source: source_of(&case, entry, text),
             expect: Expect {
                 succeeds: true,
                 stdout: std::fs::read_to_string(expected).ok(),
@@ -144,7 +170,7 @@ fn golden_cases_that_run_and_succeed() {
     assert!(all.len() > 1000, "only {} golden cases qualify", all.len());
     for skip in skips
         .iter()
-        .filter(|skip| skip.input.starts_with("tests/golden/"))
+        .filter(|skip| skip.input.starts_with("tests/golden/") && !skip.input.starts_with(REPROS))
     {
         assert!(
             all.iter().any(|input| input.name == skip.input),
@@ -153,6 +179,6 @@ fn golden_cases_that_run_and_succeed() {
         );
     }
     let inputs = sample(all, STEP, &skips);
-    let verdicts = run(&inputs);
+    let verdicts = run(&inputs, &skips);
     conclude("golden cases", &inputs, &verdicts, &skips);
 }
