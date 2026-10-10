@@ -33,3 +33,9 @@ threads-required = 'num-test-threads'
 [[profile.default.overrides]]
 filter = 'test(fmt_property)'
 threads-required = 2
+
+# The differential oracle (tests/oracle) checks and runs its programs on
+# two threads, and a program with tasks starts the scheduler's workers.
+[[profile.default.overrides]]
+filter = 'binary(=oracle)'
+threads-required = 2

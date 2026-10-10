@@ -19,7 +19,7 @@ Never run two test runs at once on one machine: the timing tests of the
 ## One suite, one area
 
 ```
-cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, concurrency
+cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, oracle, concurrency
 SILT_GOLDEN_FILTER=lang/traits/ cargo nextest run --all-features --test golden
 ```
 
@@ -71,6 +71,39 @@ SILT_FMT_FULL=1 SILT_FMT_CORPUS=<dir> SILT_FMT_REPORT=/tmp/fmt.txt \
   cargo test --release --all-features --test heavy every_input -- --nocapture
 SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy random_comments -- --nocapture
 ```
+
+## The differential oracle
+
+`tests/oracle` takes programs that check clean and whose code names no
+builtin that reaches outside the VM (files, the environment, the
+network, arguments, stdin), compiles each, verifies every compiled
+function again, and runs it twice, each run on a VM of its own with its
+output in a buffer. The two runs must agree in output, in the reports
+of failed tasks and in `main`'s value or error, and no run may end in a
+`type_confusion` error, an internal error or a panic
+(`tests/oracle/oracle.rs`). A program that uses tasks, channels,
+streams, the clock or the system's random source is compared only where
+a golden case's exact `.stdout` says what it writes.
+
+Its inputs: the golden cases that are run and must end with status 0.
+
+```
+cargo nextest run --all-features --test oracle                      # a sample of each class
+SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # every input
+```
+
+| Variable | Meaning |
+|---|---|
+| `SILT_ORACLE_FULL=1` | every input of a class instead of its sample |
+| `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
+| `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
+| `SILT_ORACLE_REPORT=<file>` | append the counts, every finding and the verdict of each input to the file |
+
+A finding is a defect of silt, not of the input. One that is known and
+reported has a line in `tests/oracle/skip.txt` that names it; the suite
+fails on a finding without a line and on a line whose input has no such
+finding any more, so the line goes with the fix. The inputs the file
+names are part of every sample.
 
 ## A faster local build
 

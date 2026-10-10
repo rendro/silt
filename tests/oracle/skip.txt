@@ -1,0 +1,10 @@
+# The inputs of the differential oracle (tests/oracle) with a finding
+# that is known and reported, one per line:
+#
+#   <input> | <kind> | <what it is, and where it was reported>
+#
+# <input> is the input's name in the oracle's report, <kind> the kind of
+# its finding (panic, compiler-bug, verifier, type-confusion,
+# internal-error, hang, differs, expectation). The suite fails on a
+# finding that has no line here, and on a line whose input has no such
+# finding any more: remove the line with the fix.
