@@ -1,0 +1,40 @@
+error[type]: type mismatch: expected a, got type a
+ --> rigid_variable_mismatch__type_parameter.silt:5:37
+   |
+ 5 | fn parse(body: String, type a) -> a {
+   |                                     ^ type mismatch: expected a, got type a
+ ::: rigid_variable_mismatch__type_parameter.silt:5:29
+   |
+ 5 | fn parse(body: String, type a) -> a {
+   |                             - the type variable `a` is declared here
+  = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
+
+error[type]: type mismatch: expected b, got a
+ --> rigid_variable_mismatch__type_parameter.silt:8:28
+   |
+ 8 | fn conv(x: a, type b) -> b {
+   |                            ^ type mismatch: expected b, got a
+ ::: rigid_variable_mismatch__type_parameter.silt:8:20
+   |
+ 8 | fn conv(x: a, type b) -> b {
+   |                    - the type variable `b` is declared here
+ ::: rigid_variable_mismatch__type_parameter.silt:8:12
+   |
+ 8 | fn conv(x: a, type b) -> b {
+   |            - the type variable `a` is declared here
+  = note: `b` and `a` are type variables of the annotation: each stands for any type, so the code must check whichever types they are
+
+error[type]: type mismatch: expected a, got b
+ --> rigid_variable_mismatch__type_parameter.silt:11:27
+    |
+ 11 | fn plain(x: a, y: b) -> a {
+    |                           ^ type mismatch: expected a, got b
+ ::: rigid_variable_mismatch__type_parameter.silt:11:13
+    |
+ 11 | fn plain(x: a, y: b) -> a {
+    |             - the type variable `a` is declared here
+ ::: rigid_variable_mismatch__type_parameter.silt:11:19
+    |
+ 11 | fn plain(x: a, y: b) -> a {
+    |                   - the type variable `b` is declared here
+  = note: `a` and `b` are type variables of the annotation: each stands for any type, so the code must check whichever types they are

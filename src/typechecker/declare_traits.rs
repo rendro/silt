@@ -353,10 +353,7 @@ impl TypeChecker {
                                 unreachable!("parser guarantees `type` params use an Ident pattern")
                             }
                         };
-                        let var = param_map
-                            .entry(name)
-                            .or_insert_with(|| self.fresh_var())
-                            .clone();
+                        let var = self.type_param_var(&mut param_map, name, param.pattern.span);
                         Type::type_of(var)
                     }
                     ParamKind::Data => {
@@ -1521,10 +1518,7 @@ impl TypeChecker {
                                 unreachable!("parser guarantees `type` params use an Ident pattern")
                             }
                         };
-                        let var = param_map
-                            .entry(name)
-                            .or_insert_with(|| self.fresh_var())
-                            .clone();
+                        let var = self.type_param_var(&mut param_map, name, param.pattern.span);
                         Type::type_of(var)
                     }
                     ParamKind::Data => {
