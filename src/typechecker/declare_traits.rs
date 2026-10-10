@@ -631,21 +631,17 @@ impl TypeChecker {
     ///   of another module that is named reaches every impl `I` writes
     ///   for traits it does not declare).
     fn impl_in_its_module(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        if self.impl_is_here(ti, target_type) {
+            return true;
+        }
         let Some(defs) = self.defs.clone() else {
             return true;
         };
-        // An unknown trait is reported elsewhere.
         let Some(tr) = self.impl_trait(ti) else {
             return true;
         };
-        let here = |module: crate::session::ModuleId| {
-            module == self.module || (self.is_cell && self.cells.contains(&module))
-        };
         let of_trait = defs.get(tr.id.0).module;
         let of_type = defs.get(target_type.id.0).module;
-        if here(of_trait) || here(of_type) {
-            return true;
-        }
         let named = |module: crate::session::ModuleId| {
             (!module.is_builtin()).then(|| {
                 self.tables
@@ -681,6 +677,24 @@ impl TypeChecker {
             ti.span,
         );
         false
+    }
+
+    /// Whether the impl `ti`, for the type `target_type`, is written
+    /// where it may be: in the module of its trait or of its type (the
+    /// rule `impl_in_its_module` reports). An impl elsewhere is no impl:
+    /// nothing of it is registered, and nothing may count on it.
+    pub(super) fn impl_is_here(&self, ti: &TraitImpl, target_type: TypeRef) -> bool {
+        let Some(defs) = &self.defs else {
+            return true;
+        };
+        // An unknown trait is reported elsewhere.
+        let Some(tr) = self.impl_trait(ti) else {
+            return true;
+        };
+        let here = |module: crate::session::ModuleId| {
+            module == self.module || (self.is_cell && self.cells.contains(&module))
+        };
+        here(defs.get(tr.id.0).module) || here(defs.get(target_type.id.0).module)
     }
 
     /// Register the impl `ti`: its methods for its type, with the types

@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- A Display impl written where it may not be is refused, and is no impl:
+-- the type is shown, printed, bounded and asked `.display()` by its
+-- structure, as without it. One error (there were seven: every use of
+-- the type's Display was refused too, except `.display()` and a
+-- supertrait, which said yes).
+import types.{ Tag }
+
+trait Display for Tag {
+  fn display(self) -> String { "tag" }
+}
+trait SubD: Display { fn sd(self) -> Int }
+type Mine { t: Tag }
+trait SubD for Mine { fn sd(self) -> Int { 1 } }
+fn need_d(x: a) -> Int where a: Display { 1 }
+
+fn main() {
+  let t = Tag { name: "m" }
+  let _ = t.display()
+  let _ = "{t}"
+  println(t)
+  let _ = need_d(t)
+  let _ = need_d([t])
+  let _ = need_d(Mine { t: t })
+  let _ = "{Mine { t: t }}"
+}

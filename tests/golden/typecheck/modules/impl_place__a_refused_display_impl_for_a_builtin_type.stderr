@@ -1,0 +1,5 @@
+error[type]: the impl of trait 'Display' for type 'Int' is written in module 'impl_place__a_refused_display_impl_for_a_builtin_type', which declares neither the trait nor the type; both are builtin, so no module may write it
+ --> impl_place__a_refused_display_impl_for_a_builtin_type.silt:4:1
+   |
+ 4 | trait Display for Int {
+   | ^^^^^^^^^^^^^^^^^^^^^^^ the impl of trait 'Display' for type 'Int' is written in module 'impl_place__a_refused_display_impl_for_a_builtin_type', which declares neither the trait nor the type; both are builtin, so no module may write it

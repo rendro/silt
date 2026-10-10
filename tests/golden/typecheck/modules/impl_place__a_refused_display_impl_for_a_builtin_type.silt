@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- The same for a builtin type: one error, and `Int` keeps its Display.
+trait Display for Int {
+  fn display(self) -> String { "int!" }
+}
+fn need_d(x: a) -> Int where a: Display { 1 }
+fn main() {
+  let _ = 1.display()
+  let _ = "{1}"
+  let _ = need_d(1)
+  let _ = need_d([1])
+  println(2)
+}
