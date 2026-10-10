@@ -1157,8 +1157,9 @@ impl TypeChecker {
                     .expect("the trait declares the method");
                 // A method without `self` is not what a value's `.{name}`
                 // calls, and says nothing of the receiver.
-                let on_type = format!("`SomeType.{name}()`");
-                if self.takes_no_self(method_ty, name, &on_type, span) {
+                let receiver = info.receivers.contains(&name);
+                let on_type = on_type_call("SomeType", name, method_ty);
+                if self.takes_no_self(receiver, name, &on_type, span) {
                     return;
                 }
                 // The trait's parameters are what the receiver's impl
@@ -2199,6 +2200,7 @@ impl TypeChecker {
                 method_type: Type::Error,
                 structural: true,
                 trait_name: None,
+                receiver: true,
                 preds: Vec::new(),
             }),
         }

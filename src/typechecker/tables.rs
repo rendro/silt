@@ -58,6 +58,11 @@ pub(super) struct TraitInfo {
     /// `param_var_ids`. An impl's method has this type, with the impl's
     /// type for `Self` and its trait arguments for the parameters.
     pub(super) methods: Vec<(Symbol, Type)>,
+    /// The methods that take a receiver: those whose first parameter is
+    /// written `self`. This is the one fact of whether `x.m(..)` may
+    /// call a method; a method without `self` is called on a type
+    /// (`Int.make(1)`), whatever its parameters are.
+    pub(super) receivers: std::collections::HashSet<Symbol>,
     /// The bounds each method's own `where` clauses put on its type
     /// variables, with the bound's trait arguments. They are part of the
     /// method's signature: in force in its default body and in every
@@ -110,6 +115,9 @@ pub(crate) struct MethodEntry {
     /// The trait whose impl provides the method. `None` for a
     /// structural trait's method (`structural`), which is no impl's.
     pub(super) trait_name: Option<TraitKey>,
+    /// Whether the method takes a receiver, as its trait declares it
+    /// (`TraitInfo::receivers`).
+    pub(super) receiver: bool,
     /// What every use of the method owes, on the variables of
     /// `method_type`: the `where` clauses of the impl's header
     /// (`trait Greet for Box(a) where a: Greet`) and the bounds the
@@ -455,14 +463,18 @@ impl Tables {
     }
 
     /// Every method a value has, as (the type impls key the value's type
-    /// by, the method's name): those of the impls, and those of the
+    /// by, the method's name): those of the impls that take `self`, and those of the
     /// structural traits (of a builtin type, the traits it is stamped
     /// with; of a type a program declares, all four names).
     pub fn methods(&self) -> Vec<(TypeRef, Symbol)> {
+        // (A method without `self` is called on the type, not on a
+        // value.)
         let mut methods: std::collections::HashSet<(TypeRef, Symbol)> = self
             .impl_methods
-            .keys()
-            .map(|(ty, method, _)| (*ty, *method))
+            .rows
+            .iter()
+            .filter(|(_, entry)| entry.receiver)
+            .map(|((ty, method, _), _)| (*ty, *method))
             .collect();
         let declared = self
             .records

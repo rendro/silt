@@ -295,6 +295,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                         structural: false,
                         trait_name: Some(key),
+                        receiver: true,
                         preds: Vec::new(),
                     },
                 );

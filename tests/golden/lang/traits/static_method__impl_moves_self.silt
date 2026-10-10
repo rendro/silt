@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `make` takes `self` in this impl, but trait `Mk` declares it without
+-- stderr-contains: help: trait `Mk` declares `make` without `self`: it is called on the type (`Int.make(..)`), not on a value; name the parameter as the trait does
+-- stderr-contains: error[type]: method `twice` takes no `self` in this impl, but trait `Mk` declares it with one
+-- stderr-contains: help: trait `Mk` declares `twice` with a receiver: write `self` as its first parameter
+-- An impl writes `self` where its trait does, and only there, also when
+-- the number of parameters is the same.
+trait Mk {
+  fn make(n: Int) -> Self
+  fn twice(self) -> Self
+}
+
+trait Mk for Int {
+  fn make(self) -> Int {
+    self
+  }
+  fn twice(n) -> Int {
+    n * 2
+  }
+}
+
+fn main() {
+  println(Int.make(1))
+}

@@ -297,6 +297,7 @@ impl TypeChecker {
                 supertrait_args: Vec::new(),
                 param_where_clauses: Vec::new(),
                 methods: Vec::new(),
+                receivers: std::collections::HashSet::new(),
                 method_bounds: HashMap::new(),
                 self_var: 0,
                 var_names: Vec::new(),
@@ -331,8 +332,12 @@ impl TypeChecker {
         // An impl's method has the declared type whatever the impl
         // writes, and a default body is checked against it.
         let mut methods: Vec<(Symbol, Type)> = Vec::with_capacity(t.methods.len());
+        let mut receivers: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         let mut method_bounds: HashMap<Symbol, Vec<Pred>> = HashMap::new();
         for m in &t.methods {
+            if writes_self(m) {
+                receivers.insert(m.name);
+            }
             let mut param_map = HashMap::new();
             param_map.insert(self_sym, self_var.clone());
             for (name, ty) in &trait_param_vars {
@@ -487,6 +492,7 @@ impl TypeChecker {
                 supertrait_args,
                 param_where_clauses,
                 methods,
+                receivers,
                 method_bounds,
                 self_var: self_var_id,
                 var_names,
@@ -1494,6 +1500,8 @@ impl TypeChecker {
                 substitute_vars(ty, &mapping)
             });
             let has_declared_type = seeded.is_some();
+            // Whether the trait declares the method with a receiver.
+            let declared_receiver = declared.map(|(info, _)| info.receivers.contains(&method.name));
             let expected = seeded.as_ref().map(|ty| rigidify(ty, &method_rigid));
             let (expected_params, expected_ret) = match &expected {
                 Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
@@ -1551,6 +1559,13 @@ impl TypeChecker {
                 // method of the trait.
                 Some(Type::Fun(declared, _)) if declared.len() != method.params.len() => {
                     self.impl_method_arity(ti, method, declared.len());
+                    written
+                }
+                // And the receiver where the trait declares one, there
+                // only: `self` is no name for a parameter of a method
+                // that is called on the type.
+                Some(_) if declared_receiver.is_some_and(|takes| takes != writes_self(method)) => {
+                    self.impl_method_receiver(ti, method);
                     written
                 }
                 Some(expected) => match self.unify_types(&written, expected) {
@@ -1701,6 +1716,7 @@ impl TypeChecker {
                     method_type: fn_type,
                     structural: false,
                     trait_name: Some(trait_key),
+                    receiver: declared_receiver.unwrap_or_else(|| writes_self(method)),
                     preds: method_constraints.clone(),
                 },
             );
@@ -1762,6 +1778,7 @@ impl TypeChecker {
                         method_type: substitute_vars(ty, &mapping),
                         structural: false,
                         trait_name: Some(trait_key),
+                        receiver: info.receivers.contains(name),
                         preds: method_constraints,
                     },
                 );
@@ -1774,9 +1791,7 @@ impl TypeChecker {
     fn impl_method_arity(&mut self, ti: &TraitImpl, method: &FnDecl, declared: usize) {
         let (name, tr) = (method.name, ti.trait_name);
         let written = method.params.len();
-        let takes_self = method.params.first().is_some_and(
-            |param| matches!(&param.pattern.kind, PatternKind::Ident(n) if resolve(*n) == "self"),
-        );
+        let takes_self = writes_self(method);
         let mut d = Diagnostic::error(
             Code::ArityMismatch,
             method.span,
@@ -1798,6 +1813,38 @@ impl TypeChecker {
             ));
         }
         self.errors.push(d);
+    }
+
+    /// Report the impl method `method`, written with `self` where its
+    /// trait declares none, or without where it declares one (with as
+    /// many parameters as the trait's).
+    fn impl_method_receiver(&mut self, ti: &TraitImpl, method: &FnDecl) {
+        let (name, tr) = (method.name, ti.trait_name);
+        let (message, help) = match writes_self(method) {
+            true => (
+                format!(
+                    "method `{name}` takes `self` in this impl, but trait `{tr}` declares it \
+                     without"
+                ),
+                format!(
+                    "trait `{tr}` declares `{name}` without `self`: it is called on the type \
+                     (`{}.{name}(..)`), not on a value; name the parameter as the trait does",
+                    resolve(ti.target_type)
+                ),
+            ),
+            false => (
+                format!(
+                    "method `{name}` takes no `self` in this impl, but trait `{tr}` declares \
+                     it with one"
+                ),
+                format!(
+                    "trait `{tr}` declares `{name}` with a receiver: write `self` as its first \
+                     parameter"
+                ),
+            ),
+        };
+        self.errors
+            .push(Diagnostic::error(Code::ArityMismatch, method.span, message).with_help(help));
     }
 
     /// Whether `var: tr(args)` follows from the bounds `declared`: it is
@@ -1904,4 +1951,12 @@ impl TypeChecker {
         }
         false
     }
+}
+
+/// Whether the method `method` is written with a receiver: its first
+/// parameter is `self`.
+fn writes_self(method: &FnDecl) -> bool {
+    method.params.first().is_some_and(
+        |param| matches!(&param.pattern.kind, PatternKind::Ident(n) if resolve(*n) == "self"),
+    )
 }

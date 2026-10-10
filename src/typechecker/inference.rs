@@ -47,8 +47,22 @@ enum CallForm {
 
 /// The call to write for a method without `self` where only a type
 /// variable is at hand: on a `type` parameter of that variable.
-pub(super) fn on_type_parameter(var: Symbol, method: Symbol) -> String {
-    format!("`{var}.{method}()`, where `{var}` is a `type {var}` parameter")
+pub(super) fn on_type_parameter(var: Symbol, method: Symbol, method_ty: &Type) -> String {
+    format!(
+        "{}, where `{var}` is a `type {var}` parameter",
+        on_type_call(&resolve(var), method, method_ty)
+    )
+}
+
+/// The call of the method `method`, of the type `method_ty`, on the type
+/// `on`, as a message writes it: `` `Int.empty()` ``, or with `..` for
+/// the method's parameters, `` `Int.make(..)` ``.
+pub(super) fn on_type_call(on: &str, method: Symbol, method_ty: &Type) -> String {
+    let args = match method_ty {
+        Type::Fun(params, _) if !params.is_empty() => "..",
+        _ => "",
+    };
+    format!("`{on}.{method}({args})`")
 }
 
 /// The arity rule of every call form — `f(a, b)`, `a |> f(b)` and
@@ -558,9 +572,14 @@ impl TypeChecker {
             return None;
         }
         if let Some((trait_name, scheme)) = matches.first() {
+            let receiver = self
+                .tables
+                .traits
+                .get(trait_name)
+                .is_none_or(|info| info.receivers.contains(&field));
             let method_ty = self.instantiate_method(scheme, field, span);
-            let on_type = on_type_parameter(r.name, field);
-            return match self.takes_no_self(&method_ty, field, &on_type, span) {
+            let on_type = on_type_parameter(r.name, field, &method_ty);
+            return match self.takes_no_self(receiver, field, &on_type, span) {
                 true => None,
                 false => Some((*trait_name, method_ty)),
             };
@@ -607,18 +626,19 @@ impl TypeChecker {
         None
     }
 
-    /// `value.method` where the method, of the type `method_ty`, has no
-    /// `self`: reported, with `on_type` as the call to write instead
-    /// (`` `Int.empty()` ``). A method without `self` is called on a
-    /// type, never on a value: it has no parameter for the receiver.
+    /// `value.method` where the method has no `self` (`receiver`, the
+    /// fact its trait declares: `TraitInfo::receivers`): reported, with
+    /// `on_type` as the call to write instead (`` `Int.empty()` ``). A
+    /// method without `self` is called on a type, never on a value: none
+    /// of its parameters is for the receiver.
     pub(super) fn takes_no_self(
         &mut self,
-        method_ty: &Type,
+        receiver: bool,
         method_name: Symbol,
         on_type: &str,
         span: Span,
     ) -> bool {
-        let no_self = matches!(method_ty, Type::Fun(params, _) if params.is_empty());
+        let no_self = !receiver;
         if no_self {
             self.error(
                 Code::InvalidMethodCall,
@@ -676,11 +696,11 @@ impl TypeChecker {
         let scheme = self.method_scheme(entry);
         let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
         // A method without `self` has no place for the receiver.
-        let on_type = self
+        let on = self
             .type_name_for_impl(&self.apply(receiver_ty))
-            .map(|ty| format!("`{ty}.{method_name}()`"))
-            .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
-        if self.takes_no_self(&instantiated_ty, method_name, &on_type, span) {
+            .map_or_else(|| "SomeType".to_string(), |ty| ty.to_string());
+        let on_type = on_type_call(&on, method_name, &instantiated_ty);
+        if self.takes_no_self(entry.receiver, method_name, &on_type, span) {
             return Type::Error;
         }
         // Unify the receiver with the method's self param so concrete

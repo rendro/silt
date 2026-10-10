@@ -818,6 +818,22 @@ mod tests {
         assert!(!string.contains(&"head_int".to_string()), "{string:?}");
     }
 
+    /// A method without `self` is called on the type: it is not offered
+    /// after a value, of its type or of an unknown one.
+    #[test]
+    fn a_method_without_self_is_not_offered_after_a_value() {
+        let methods = methods(
+            "trait Mk {\n  fn make(n: Int) -> Self\n  fn twice(self) -> Self\n}\n\
+             trait Mk for Int {\n  fn make(n: Int) -> Int { n }\n  \
+             fn twice(self) -> Int { self * 2 }\n}\nfn main() { 0 }\n",
+        );
+        for receiver in [Some(&Type::Int), None] {
+            let offered = methods_for_receiver(&methods, receiver);
+            assert!(offered.contains(&"twice".to_string()), "{offered:?}");
+            assert!(!offered.contains(&"make".to_string()), "{offered:?}");
+        }
+    }
+
     /// An unknown receiver type offers every method the module knows.
     #[test]
     fn an_unknown_receiver_gets_every_method() {
