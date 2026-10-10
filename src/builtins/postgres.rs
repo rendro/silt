@@ -42,13 +42,18 @@ use crate::typeinfo::{bv, ty};
 use crate::value::Value;
 use crate::vm::{Native, Step, Vm, VmError};
 
-/// Factory: deadline-cancelled postgres op surfaces as `Err(PgTimeout)`
-/// rather than the default `Err(IoUnknown(_))`. Used by every postgres.*
-/// builtin that runs on the I/O pool. The message text is dropped because
-/// `PgTimeout` is a nullary variant; `e.message()` still produces a
-/// helpful string via the trait impl.
-fn pg_timeout_err(_msg: &str) -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(bv::PG_TIMEOUT, vec![])])
+/// The error of a `postgres` function whose operation has no value
+/// of its own: `PgTimeout` when its deadline passed, `PgUnknown` with
+/// the reason when it could not run or panicked.
+fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
+    use crate::vm::IoFailure;
+    let error = match failure {
+        IoFailure::Timeout(_) => Value::variant(bv::PG_TIMEOUT, vec![]),
+        IoFailure::Panicked(why) | IoFailure::Refused(why) => {
+            Value::variant(bv::PG_UNKNOWN, vec![Value::String(why.to_string())])
+        }
+    };
+    Value::variant(bv::ERR, vec![error])
 }
 
 // ── TLS-capable pool/conn wrappers ──────────────────────────────────
@@ -1737,7 +1742,7 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
 /// before it starts or while the task waits for it.
 #[doc(hidden)]
 pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
-    pg_timeout_err(msg)
+    pg_timeout_err(crate::vm::IoFailure::Timeout(msg))
 }
 
 /// Test-only mirror of `parse_connect_opts`'s `max_pool_size`

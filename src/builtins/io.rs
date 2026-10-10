@@ -158,12 +158,13 @@ pub fn call_io_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError>
     })
 }
 
-/// The error of an `io` function for a reason given as text: its
-/// wait timed out, or its operation could not run.
-fn io_unknown_err(msg: &str) -> Value {
+/// The error of an `io` function whose operation has no value of its
+/// own: its wait timed out, or the operation could not run. Either
+/// way `IoUnknown` with the reason.
+fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
     io_err(Value::variant(
         bv::IO_UNKNOWN,
-        vec![Value::String(msg.to_string())],
+        vec![Value::String(failure.text().to_string())],
     ))
 }
 

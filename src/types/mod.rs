@@ -779,6 +779,56 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
     }
 }
 
+/// Whether `at` is the type `general` with a type for each of its
+/// variables, which `stands` then holds. (Where the two differ in
+/// more than that the answer is no: the caller takes it for unknown.)
+pub fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>) -> bool {
+    let mut all = |general: &[Type], at: &[Type]| {
+        general.len() == at.len()
+            && general
+                .iter()
+                .zip(at)
+                .all(|(g, a)| instance_of(g, a, stands))
+    };
+    match (general, at) {
+        (Type::Var(v), _) => match stands.get(v) {
+            Some(known) => known == at,
+            None => {
+                stands.insert(*v, at.clone());
+                true
+            }
+        },
+        (Type::Fun(gp, gr), Type::Fun(ap, ar)) => {
+            all(gp, ap) && all(std::slice::from_ref(&**gr), std::slice::from_ref(&**ar))
+        }
+        (Type::List(g), Type::List(a))
+        | (Type::Range(g), Type::Range(a))
+        | (Type::Set(g), Type::Set(a))
+        | (Type::Channel(g), Type::Channel(a)) => instance_of(g, a, stands),
+        (Type::Tuple(g), Type::Tuple(a)) => all(g, a),
+        (Type::Generic(gn, g), Type::Generic(an, a)) => gn == an && all(g, a),
+        (Type::Map(gk, gv), Type::Map(ak, av)) => {
+            instance_of(gk, ak, stands) && instance_of(gv, av, stands)
+        }
+        (
+            Type::AnonRecord {
+                fields: g,
+                tail: RowTail::Closed,
+            },
+            Type::AnonRecord {
+                fields: a,
+                tail: RowTail::Closed,
+            },
+        ) => {
+            g.len() == a.len()
+                && g.iter()
+                    .zip(a)
+                    .all(|((gn, g), (an, a))| gn == an && instance_of(g, a, stands))
+        }
+        _ => general == at,
+    }
+}
+
 /// Substitute type variables according to a mapping.
 pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
     match ty {

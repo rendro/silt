@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- The statements of a closure's body are checked like any block's.
+import list
+
+fn main() {
+  [1, 2] |> list.each { x ->
+    x * 2
+    println(x)
+  }
+  let f = { n ->
+    "n is {n}"
+    n + 1
+  }
+  println(f(1))
+}

@@ -110,21 +110,11 @@ fn build_all_variants() -> AllVariants {
     let server = std::thread::spawn(move || listener.accept().expect("accept").0);
     let client_stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
     let _server_stream = server.join().expect("server join");
-    let client_stream_clone = client_stream.try_clone().expect("clone client stream");
     // Fresh listener (the original was consumed by .accept()) for the
     // TcpListener Value.
     let fresh_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind 2");
-    let tcp_listener_handle = TcpListenerHandle {
-        id: 1,
-        listener: fresh_listener,
-    };
-    let tcp_stream_handle = TcpStreamHandle {
-        id: 2,
-        inner: parking_lot::Mutex::new(Box::new(client_stream_clone)),
-        closed: std::sync::atomic::AtomicBool::new(false),
-        shutdown_sock: parking_lot::Mutex::new(Some(client_stream)),
-        reader_socket: None,
-    };
+    let tcp_listener_handle = TcpListenerHandle::new(1, fresh_listener);
+    let tcp_stream_handle = TcpStreamHandle::plain(2, client_stream);
 
     let mut record_fields = BTreeMap::new();
     record_fields.insert("x".to_string(), Value::Int(1));
@@ -162,7 +152,7 @@ fn build_all_variants() -> AllVariants {
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
         bytes: Value::Bytes(Arc::new(vec![1, 2, 3])),
         tcp_listener: Value::TcpListener(Arc::new(tcp_listener_handle)),
-        tcp_stream: Value::TcpStream(Arc::new(tcp_stream_handle)),
+        tcp_stream: Value::TcpStream(tcp_stream_handle),
         unit: Value::Unit,
     }
 }

@@ -142,52 +142,6 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
     }
 }
 
-/// Whether `at` is the type `general` with a type for each of its
-/// variables, which `stands` then holds. (Where the two differ in
-/// more than that the answer is no: the caller takes it for unknown.)
-fn instance(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>) -> bool {
-    let mut all = |general: &[Type], at: &[Type]| {
-        general.len() == at.len() && general.iter().zip(at).all(|(g, a)| instance(g, a, stands))
-    };
-    match (general, at) {
-        (Type::Var(v), _) => match stands.get(v) {
-            Some(known) => known == at,
-            None => {
-                stands.insert(*v, at.clone());
-                true
-            }
-        },
-        (Type::Fun(gp, gr), Type::Fun(ap, ar)) => {
-            all(gp, ap) && all(std::slice::from_ref(&**gr), std::slice::from_ref(&**ar))
-        }
-        (Type::List(g), Type::List(a))
-        | (Type::Range(g), Type::Range(a))
-        | (Type::Set(g), Type::Set(a))
-        | (Type::Channel(g), Type::Channel(a)) => instance(g, a, stands),
-        (Type::Tuple(g), Type::Tuple(a)) => all(g, a),
-        (Type::Generic(gn, g), Type::Generic(an, a)) => gn == an && all(g, a),
-        (Type::Map(gk, gv), Type::Map(ak, av)) => {
-            instance(gk, ak, stands) && instance(gv, av, stands)
-        }
-        (
-            Type::AnonRecord {
-                fields: g,
-                tail: RowTail::Closed,
-            },
-            Type::AnonRecord {
-                fields: a,
-                tail: RowTail::Closed,
-            },
-        ) => {
-            g.len() == a.len()
-                && g.iter()
-                    .zip(a)
-                    .all(|((gn, g), (an, a))| gn == an && instance(g, a, stands))
-        }
-        _ => general == at,
-    }
-}
-
 /// Whether initialising a `let` with the value `expr` runs nothing: the
 /// value restriction's syntactic values, and a map or set literal of
 /// them. The top-level names it reads (outside closures) are added to
@@ -718,9 +672,9 @@ impl TypeChecker {
                     continue;
                 };
                 let mut stands: HashMap<TyVar, Type> = HashMap::new();
-                let known = at
-                    .as_ref()
-                    .is_some_and(|at| instance(&scheme.ty, &self.apply(at), &mut stands));
+                let known = at.as_ref().is_some_and(|at| {
+                    crate::types::instance_of(&scheme.ty, &self.apply(at), &mut stands)
+                });
                 for ty in shown {
                     let here = match known {
                         true => crate::types::map_rigid(ty, &mut |r| {

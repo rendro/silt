@@ -13,17 +13,18 @@ timing = { max-threads = 1 }
 filter = 'binary(=concurrency)'
 test-group = 'concurrency'
 
-# The tests of the `heavy` suite that compare measured times: the
-# lexer's scaling ratios (tests/heavy/lexer_scaling.rs), a pasted REPL
-# entry (tests/heavy/repl_paste.rs) and the language server's answer
-# times (tests/heavy/lsp_workspace_perf.rs). Each runs alone: one at a
-# time among themselves (the group), and with no other test beside it
-# (it needs every test thread), so the sweeps of the same binary, which
-# keep every core busy for a minute, are not what it measures. (This
-# override stands before the `fmt_property` one: the first that matches
-# a test decides a setting.)
+# The tests of the `heavy` suite that measure time, or whose run time is
+# what they show: the checker's scaling ratios (tests/heavy/checker_scaling.rs),
+# the lexer's (tests/heavy/lexer_scaling.rs), a pasted REPL entry
+# (tests/heavy/repl_paste.rs), the language server's answer times
+# (tests/heavy/lsp_workspace_perf.rs) and the formatter's 16,000 lines.
+# Each runs alone: one at a time among themselves (the group), and with
+# no other test beside it (it needs every test thread), so the sweeps of
+# the same binary, which keep every core busy for a minute, are not what
+# it measures. (This override stands before the `fmt_property` one: the
+# first that matches a test decides a setting.)
 [[profile.default.overrides]]
-filter = 'binary(=heavy) & (test(/^lexer_scaling::/) | test(/^repl_paste::/) | test(/^lsp_workspace_perf::/))'
+filter = 'binary(=heavy) & (test(/^checker_scaling::/) | test(/^lexer_scaling::/) | test(/^repl_paste::/) | test(/^lsp_workspace_perf::/) | test(=fmt_property_sweep_tests::sixteen_thousand_lines_are_formatted))'
 test-group = 'timing'
 threads-required = 'num-test-threads'
 

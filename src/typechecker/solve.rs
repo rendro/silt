@@ -2109,16 +2109,15 @@ impl TypeChecker {
         }
     }
 
-    /// What to say where `ty` has no method `method` here but a trait of
-    /// a module that is not imported has one.
-    pub(super) fn unreached_help(&self, ty: TypeRef, method: Symbol) -> Option<String> {
-        let t = self.tables.method_table.get(&(ty, method))?.trait_name?;
-        let module = self.unreached(t)?;
-        Some(format!(
-            "trait '{}' of module '{module}' has a method '{method}' for this type; \
-             import '{module}' to call it",
-            t.name
-        ))
+    /// Keep that the type `ty` was reported at `span` to have no method
+    /// `method`: a trait of a module that is not imported may have one,
+    /// which is known once the whole program is checked.
+    pub(super) fn note_unknown_method(&mut self, span: Span, ty: TypeRef, method: Symbol) {
+        self.tables
+            .unknown_methods
+            .entry(self.module)
+            .or_default()
+            .push((span, ty, method));
     }
 
     /// Whether a call of `method` of `ty` is ambiguous here; if so, it is

@@ -846,4 +846,21 @@ pub struct Program {
     /// `let`): they are declared, and what they mean is unknown, so a
     /// use of one is no error of its own. Empty for a text that parses.
     pub unknown: Vec<Symbol>,
+    pub statements: StatementMarks,
+}
+
+/// What the parser saw of statements that the tree does not hold.
+#[derive(Debug, Clone, Default)]
+pub struct StatementMarks {
+    /// The statements that start at a `{` right behind a name on the
+    /// same line, by where they start: `point { x: 1 }`, where the
+    /// parser reads two statements and a record literal with a
+    /// lower-case type name was likely meant (see
+    /// `Parser::at_lowercase_record_literal_brace`).
+    pub brace_after_name: Vec<Span>,
+    /// The statements that start with a parenthesis: the span of the
+    /// statement's expression, which starts behind its own parentheses
+    /// (`(a + 1) * 2`, `(f)()`, `((a))`), and the statement's extent,
+    /// from its first token to its last.
+    pub parenthesised: Vec<(Span, Span)>,
 }

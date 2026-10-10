@@ -1,27 +1,28 @@
-//! Regression tests for the default bind address of `http.serve`.
+//! Where an HTTP server is reached is what `tcp.listen` was told.
 //!
-//! Locks the HIGH-5 fix in `src/builtins/http.rs`:
+//! `http.serve(listener, handler)` serves on a listener the program
+//! bound itself, so the safety of a quick development server lies in
+//! the address it writes:
 //!
-//! - `http.serve(port, handler)` binds `127.0.0.1:<port>` (loopback only),
-//!   so a freshly written server is NOT accidentally exposed on every
-//!   network interface the host has.
-//! - `http.serve_all(port, handler)` is the explicit opt-in for binding
-//!   `0.0.0.0:<port>` (all interfaces).
+//! - `tcp.listen("127.0.0.1:<port>")`: loopback only, not reachable
+//!   from other machines;
+//! - `tcp.listen("0.0.0.0:<port>")`: every interface.
 //!
-//! Picking bind-address verification (via TCP probe against the OS) over
-//! "can an external IP connect" because the test environment may not have
-//! multiple routable interfaces. The bind-address assertion is
-//! deterministic and a strict superset of the user-visible guarantee: a
-//! server that is NOT bound to an interface cannot accept on it.
+//! The tests probe the OS for where the listener accepts, rather than
+//! asking "can an external IP connect": the test environment may not
+//! have several routable interfaces, and a server that is not bound
+//! to an interface cannot accept on it.
 
 #![cfg(feature = "http")]
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::port_file::PortFile;
 
 fn silt_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
@@ -55,34 +56,6 @@ fn tmp_silt_file(stem: &str, src: &str) -> PathBuf {
     tmp
 }
 
-/// Grab an ephemeral port from the OS, drop the listener, hand the number
-/// to the silt subprocess. Bind on 0.0.0.0 so the port is known-free on
-/// every interface (not just loopback).
-fn pick_port() -> u16 {
-    let l = TcpListener::bind("0.0.0.0:0").expect("bind");
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    port
-}
-
-/// Poll-connect on 127.0.0.1 until the silt subprocess has bound the
-/// port, or time out. The caller uses this to synchronise "the server is
-/// now up and accepting".
-fn wait_for_bind(port: u16, max_wait: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < max_wait {
-        if let Ok(s) = TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().unwrap(),
-            Duration::from_millis(200),
-        ) {
-            drop(s);
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
-}
-
 fn spawn_silt(tmp: &PathBuf) -> Child {
     Command::new(silt_bin())
         .arg("run")
@@ -106,14 +79,21 @@ fn shutdown(mut child: Child) -> (String, String) {
     .unwrap_or_default()
 }
 
-/// Minimal server source that uses the given builtin (`serve` or
-/// `serve_all`). Always returns 200 OK.
-fn server_src(builtin: &str, port: u16) -> String {
+/// A server on a listener bound to `host`, on a port the system
+/// chooses and the program writes to `port_path`. Always answers 200.
+fn server_src(host: &str, port_path: &str) -> String {
     format!(
         r#"
 import http
+import io
+import tcp
+
 fn main() {{
-  http.{builtin}({port}) {{ _req ->
+  when let Ok(listener) = tcp.listen("{host}:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  http.serve(listener) {{ _req ->
     http.Response {{ status: 200, body: "ok", headers: #{{}} }}
   }}
 }}
@@ -162,10 +142,10 @@ fn discover_external_ipv4() -> Option<std::net::Ipv4Addr> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HIGH-5 primary lock: `http.serve` binds loopback only, not 0.0.0.0.
+// A listener on 127.0.0.1 is reached on loopback only.
 // ────────────────────────────────────────────────────────────────────────
 
-/// `http.serve(port, handler)` MUST bind 127.0.0.1 only. A developer who
+/// A server on `tcp.listen("127.0.0.1:<port>")` MUST bind 127.0.0.1 only. A developer who
 /// writes a quick server should not silently expose it to the LAN.
 ///
 /// Assertions:
@@ -179,20 +159,15 @@ fn discover_external_ipv4() -> Option<std::net::Ipv4Addr> {
 ///     the server is up and reachable via loopback, and the negative
 ///     half is a no-op rather than a false-negative failure.
 #[test]
-fn http_serve_binds_localhost_only() {
-    let port = pick_port();
-    let tmp = tmp_silt_file("serve_default_localhost", &server_src("serve", port));
+fn a_listener_on_loopback_serves_loopback_only() {
+    let port_file = PortFile::new();
+    let tmp = tmp_silt_file(
+        "serve_default_localhost",
+        &server_src("127.0.0.1", &port_file.path()),
+    );
     let child = spawn_silt(&tmp);
 
-    let bound = wait_for_bind(port, Duration::from_secs(10));
-    if !bound {
-        let (stdout, stderr) = shutdown(child);
-        let _ = std::fs::remove_file(&tmp);
-        panic!(
-            "silt http.serve failed to bind 127.0.0.1:{port}\n\
-             stdout: {stdout}\nstderr: {stderr}"
-        );
-    }
+    let port = port_file.wait();
 
     // (1) Sanity: loopback works.
     assert!(
@@ -218,9 +193,9 @@ fn http_serve_binds_localhost_only() {
             // No routable external IPv4 in this environment (common for
             // containerized/isolated CI). The loopback-success check
             // above is all we can deterministically verify here; the
-            // `http_serve_all_binds_all_interfaces` test below pins down
-            // the opt-in-for-all-interfaces direction and exercises the
-            // same bind-address code path, so regressions are still
+            // test of the unspecified address below pins down the
+            // all-interfaces direction and exercises the same
+            // bind-address code path, so regressions are still
             // caught.
         }
     }
@@ -230,11 +205,11 @@ fn http_serve_binds_localhost_only() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HIGH-5 opt-in lock: `http.serve_all` binds all interfaces.
+// A listener on 0.0.0.0 is reached on all interfaces.
 // ────────────────────────────────────────────────────────────────────────
 
-/// `http.serve_all(port, handler)` must bind 0.0.0.0. If it only bound
-/// loopback, the whole point of the opt-in variant would be defeated.
+/// A server on `tcp.listen("0.0.0.0:<port>")` is reached on every
+/// interface: the address that was written is the one that counts.
 ///
 /// Strategy: the listener is bound on the SAME port on both loopback and
 /// (if available) the LAN IP, so a probe on either address must succeed.
@@ -242,29 +217,21 @@ fn http_serve_binds_localhost_only() {
 /// is that loopback works AND a probe on 0.0.0.0 (which the kernel
 /// rewrites to 127.0.0.1 for outbound connect) succeeds.
 #[test]
-fn http_serve_all_binds_all_interfaces() {
-    let port = pick_port();
-    let tmp = tmp_silt_file("serve_all_interfaces", &server_src("serve_all", port));
+fn a_listener_on_the_unspecified_address_serves_all_interfaces() {
+    let port_file = PortFile::new();
+    let tmp = tmp_silt_file("all_interfaces", &server_src("0.0.0.0", &port_file.path()));
     let child = spawn_silt(&tmp);
 
-    let bound = wait_for_bind(port, Duration::from_secs(10));
-    if !bound {
-        let (stdout, stderr) = shutdown(child);
-        let _ = std::fs::remove_file(&tmp);
-        panic!(
-            "silt http.serve_all failed to bind port {port}\n\
-             stdout: {stdout}\nstderr: {stderr}"
-        );
-    }
+    let port = port_file.wait();
 
     // Loopback must work (0.0.0.0 includes loopback).
     assert!(
         tcp_probe("127.0.0.1", port, Duration::from_secs(2)),
-        "http.serve_all should accept on 127.0.0.1:{port}"
+        "the server should accept on 127.0.0.1:{port}"
     );
 
     // If there is a LAN IP, the listener MUST be reachable there too —
-    // that's the whole opt-in.
+    // that is what the address asks for.
     if let Some(lan_ip) = discover_external_ipv4() {
         let lan = lan_ip.to_string();
         let reachable = tcp_probe(&lan, port, Duration::from_secs(2));
@@ -272,7 +239,7 @@ fn http_serve_all_binds_all_interfaces() {
             let (_stdout, _stderr) = shutdown(child);
             let _ = std::fs::remove_file(&tmp);
             panic!(
-                "http.serve_all did NOT accept on external interface \
+                "the server did NOT accept on external interface \
                  {lan}:{port} — appears bound to loopback only"
             );
         }
@@ -280,7 +247,7 @@ fn http_serve_all_binds_all_interfaces() {
 
     // Extra guard that works even without a LAN IP: send a real HTTP
     // request over loopback and check we get HTTP/1.1 200 back. If
-    // `serve_all` accidentally compiled down to "do nothing" or to a
+    // the server on such a listener came down to "do nothing" or to a
     // listener that isn't actually serving, this will catch it.
     let mut sock = TcpStream::connect(("127.0.0.1", port)).expect("connect loopback");
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -297,6 +264,6 @@ fn http_serve_all_binds_all_interfaces() {
 
     assert!(
         resp_str.starts_with("HTTP/1.1 200") || resp_str.contains(" 200 "),
-        "http.serve_all: expected 200 OK over loopback; got:\n{resp_str}"
+        "the server: expected 200 OK over loopback; got:\n{resp_str}"
     );
 }

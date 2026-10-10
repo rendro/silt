@@ -1,0 +1,35 @@
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:19:3
+    |
+ 19 |   dbg(x)
+    |   ^^^^^^ this value is unused; write `let _ = ...` to discard it
+
+error[type]: this `a` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:24:3
+    |
+ 24 |   dbg(x)
+    |   ^^^^^^ this `a` value is unused; write `let _ = ...` to discard it
+
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:33:3
+    |
+ 33 |   run(n)
+    |   ^^^^^^ this value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:50:3
+    |
+ 50 |   first_or(xs, 0)
+    |   ^^^^^^^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:62:3
+    |
+ 62 |   take(ch)
+    |   ^^^^^^^^ this value is unused; write `let _ = ...` to discard it
+
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:76:5
+    |
+ 76 |     dbg(x)
+    |     ^^^^^^ this value is unused; write `let _ = ...` to discard it

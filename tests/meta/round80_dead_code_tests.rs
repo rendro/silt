@@ -19,7 +19,7 @@ fn tcp_tls_wrappers_observable_behavior_identical() {
         silt::session::testing::run_str(input).expect("runtime error")
     }
 
-    fn pick_port() -> String {
+    fn unbound_addr() -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("local_addr");
         drop(listener);
@@ -30,7 +30,7 @@ fn tcp_tls_wrappers_observable_behavior_identical() {
     // at a closed port so the handshake never starts; the wrapper's
     // `complete_io_handshake` propagates the connect error as
     // `Err(TcpTls(_))`. (Pre-fix this came from `ClientStreamWrapper`.)
-    let unused_port = pick_port();
+    let unused_port = unbound_addr();
     let client_src = format!(
         r#"
 import tcp
@@ -56,34 +56,32 @@ fn main() -> String {{
     // garbage on a real connection so the server's
     // `complete_io_handshake` fails with a TLS alert. Pre-fix the
     // body that produced this error lived in `ServerStreamWrapper`.
-    let addr = pick_port();
-    let server_src = format!(
-        r#"
+    let server_src = r#"
 import bytes
 import tcp
 import task
 import time
 
-fn main() -> String {{
-  match tcp.listen("{addr}") {{
-    Ok(listener) -> {{
-      let server = task.spawn({{ ->
+fn main() -> String {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(listener) -> {
+      let server = task.spawn({ ->
         let bad_cert = bytes.from_string("not a real cert")
         let bad_key = bytes.from_string("not a real key")
-        match tcp.accept_tls(listener, bad_cert, bad_key) {{
+        match tcp.accept_tls(listener, bad_cert, bad_key) {
           Ok(_) -> "wrong: server expected to fail"
           Err(e) -> e.message()
-        }}
-      }})
+        }
+      })
       time.sleep(time.ms(50))
-      let _ = tcp.connect("{addr}")
+      let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
       task.join(server)
-    }}
+    }
     Err(e) -> e.message()
-  }}
-}}
+  }
+}
 "#
-    );
+    .to_string();
     let server_v = run(&server_src);
     let silt::value::Value::String(server_msg) = server_v else {
         panic!("server_v not a string: {server_v:?}");

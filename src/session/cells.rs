@@ -81,6 +81,7 @@ impl CellInfo {
         ast::Program {
             decls: checked.decls[self.cell_imports..].to_vec(),
             unknown: Vec::new(),
+            statements: Default::default(),
         }
     }
 }
@@ -284,6 +285,7 @@ impl Cells {
                 Arc::new(ast::Program {
                     decls: types,
                     unknown: Vec::new(),
+                    statements: Default::default(),
                 })
             }),
         });

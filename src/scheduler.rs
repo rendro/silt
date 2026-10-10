@@ -282,7 +282,10 @@ enum TimerThread {
     /// No deadline has needed it yet.
     Idle,
     Running,
-    /// It could not be started: the threads that wait fire the timer.
+    /// It could not be started: the threads that wait and the workers
+    /// without work fire the timer. (While every worker runs a task
+    /// and no thread waits, nobody does: a deadline is then late by
+    /// as long as that lasts.)
     Unavailable,
 }
 
@@ -487,7 +490,13 @@ impl Scheduler {
     ///
     /// Returns an error if the live-task count has reached the
     /// scheduler's hard task limit.
-    pub(crate) fn submit(&self, id: usize, vm: Vm, handle: Arc<TaskHandle>) -> Result<(), String> {
+    pub(crate) fn submit(
+        &self,
+        id: usize,
+        mut vm: Vm,
+        handle: Arc<TaskHandle>,
+    ) -> Result<(), String> {
+        vm.cancelled = Some(handle.cancel_flag());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -690,17 +699,19 @@ impl Scheduler {
         };
         let wait = Wait::new(vec![sync::Arm::Send(channel.clone(), value)]);
         matches!(
-            self.block_thread(wait, false),
+            self.block_thread(wait, Blocks::Thread),
             Ok(Fired::Arm(_, sync::Outcome::Sent))
         )
     }
 
     /// The calling thread waits for `wait` and gets how it ended. It
     /// counts as a task while it waits, if it does not already (a
-    /// thread after [`Scheduler::enter`], a worker in a slice). `main` says that the
-    /// thread is the program's own: it gets the error when the program
-    /// is deadlocked. The other error is that the program has ended.
-    pub(crate) fn block_thread(&self, wait: Wait, main: bool) -> Result<Fired, VmError> {
+    /// thread after [`Scheduler::enter`], a worker in a slice). `who`
+    /// says whether the thread is the program's own: that one gets
+    /// the error when the program is deadlocked. The other error is
+    /// that the program has ended.
+    pub(crate) fn block_thread(&self, wait: Wait, who: Blocks) -> Result<Fired, VmError> {
+        let main = matches!(who, Blocks::Program { .. });
         let inner = &self.inner;
         let _counted = self.enter();
         let group = inner.group(inner.current_owner());
@@ -750,7 +761,14 @@ impl Scheduler {
                     // counterparty of the wait is missing: it is
                     // reported before the verdict.
                     let _ = report_unjoined_failures(inner);
-                    verdict
+                    // A deadline that is in effect did not end the
+                    // wait: the report says what it bounds.
+                    match who {
+                        Blocks::Program { in_deadline: true } => {
+                            verdict.with_help(DEADLINE_DOES_NOT_BOUND)
+                        }
+                        _ => verdict,
+                    }
                 }
                 None => VmError::new("the VM that ran the program has been dropped".into()),
             }),
@@ -873,9 +891,27 @@ impl Inner {
             if let Some(task) = self.pop(&mut queue) {
                 return Some(task);
             }
+            // Where there is no timer thread, a worker without work is
+            // one of the threads that fire the timer: it sleeps until
+            // the next deadline, not until there is a task. (Whoever
+            // arms a deadline then tells the workers under the queue's
+            // lock, so the look here does not miss it.)
+            let deadline = match *self.timer_lock.lock() {
+                TimerThread::Unavailable => self.parking.timer().real_wait(),
+                TimerThread::Idle | TimerThread::Running => None,
+            };
             queue.sleepers += 1;
-            self.work.wait(&mut queue);
+            match deadline {
+                None => self.work.wait(&mut queue),
+                Some(wait) => {
+                    let _ = self.work.wait_for(&mut queue, wait);
+                }
+            }
             queue.sleepers -= 1;
+            drop(queue);
+            if deadline.is_some() && self.parking.timer().fire_due(&self.parking) > 0 {
+                self.check_all();
+            }
         }
     }
 
@@ -1040,11 +1076,13 @@ impl Inner {
             TimerThread::Running => {
                 self.timer_wake.notify_one();
             }
-            // A thread that waits may wait for longer than up to the
-            // new deadline.
+            // A thread that waits, or a worker without work, may wait
+            // for longer than up to the new deadline.
             _ => {
                 drop(thread);
                 self.poke_threads();
+                drop(self.queue.lock());
+                self.work.notify_all();
             }
         }
     }
@@ -1273,7 +1311,15 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                 Some(id) => format!("task <handle:{id}>"),
                 None => "a thread of the runtime".to_string(),
             };
-            format!("{who} waits {}", on.join(", or "))
+            // A deadline that is in effect for the task does not end
+            // this wait: said, since it is what one may expect of it.
+            let in_deadline = match waiting.sleeper {
+                Sleeper::Task(task) if task.vm.current_deadline.is_some() => {
+                    " (inside a task.deadline, which does not bound this wait)"
+                }
+                _ => "",
+            };
+            format!("{who} waits {}{in_deadline}", on.join(", or "))
         })
         .collect();
     if others.len() > LISTED {
@@ -1554,6 +1600,21 @@ thread_local! {
     static RUNNING_TASK_OWNER: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
+/// Whose thread waits in [`Scheduler::block_thread`].
+#[derive(Clone, Copy)]
+pub(crate) enum Blocks {
+    /// A thread of the runtime.
+    Thread,
+    /// The program's own, which is told of a deadlock; `in_deadline`
+    /// if a `task.deadline` is in effect for its code.
+    Program { in_deadline: bool },
+}
+
+/// What a deadlock report says when a `task.deadline` is in effect for
+/// the code that waits: the deadline is for I/O and sleeps.
+const DEADLINE_DOES_NOT_BOUND: &str =
+    "task.deadline does not bound channel waits; use channel.recv_timeout or a channel.timeout arm";
+
 /// What the report of a failure that nobody joined advises.
 const UNJOINED_FAILURE_HELP: &str =
     "join the task with task.join to handle its error, or cancel it with task.cancel";
@@ -1763,6 +1824,75 @@ fn main() {
         // Its own task is listed, the first owner's two are not.
         assert_eq!(error.help.len(), 1, "{:?}", error.help);
         assert!(took < Duration::from_secs(30), "the verdict took {took:?}");
+    }
+
+    /// Where the timer thread cannot be started, the threads that
+    /// wait and the workers without work fire the timer: sleeps,
+    /// timeouts and timeout channels still end, on the program's own
+    /// thread and in tasks, also while the program's thread computes
+    /// and never waits, and the program ends when its tasks have.
+    #[test]
+    fn without_a_timer_thread_the_waiting_threads_fire_the_timer() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import task
+import time
+
+fn busy(woke) {
+  match channel.try_receive(woke) {
+    channel.Message(_) -> ()
+    _ -> busy(woke)
+  }
+}
+
+fn main() {
+  -- main never waits here: the task's sleep ends all the same.
+  let woke = channel.new(1)
+  let _sleeper = task.spawn { ->
+    time.sleep(time.ms(5))
+    channel.send(woke, ())
+  }
+  busy(woke)
+  println("a task woke while main was busy")
+  time.sleep(time.ms(5))
+  println("main slept")
+  let ch = channel.new(0)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(5))
+    channel.send(ch, 1)
+  }
+  match channel.recv_timeout(ch, time.ms(20000)) {
+    Ok(v) -> println("got {v}")
+    Err(_) -> println("timed out")
+  }
+  task.join(sender)
+  match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(5))]) {
+    (_, channel.Closed) -> println("the timeout channel closed")
+    _ -> println("something else")
+  }
+  println("main returns")
+  let _late = task.spawn { ->
+    time.sleep(time.ms(5))
+    println("a task after main")
+  }
+}
+"#,
+        )
+        .expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
+        *vm.scheduler().inner.timer_lock.lock() = super::TimerThread::Unavailable;
+        let result = vm.run_program(&program);
+        vm.settle();
+        assert_eq!(result.map_err(|e| e.message), Ok(Value::Unit));
+        let printed: Vec<String> = out.0.lock().iter().map(|(text, _)| text.clone()).collect();
+        assert_eq!(
+            printed.concat(),
+            "a task woke while main was busy\nmain slept\ngot 1\nthe timeout channel closed\n\
+             main returns\na task after main\n"
+        );
+        assert!(*vm.scheduler().inner.timer_lock.lock() == super::TimerThread::Unavailable);
     }
 
     #[test]

@@ -1,40 +1,43 @@
-//! `tcp.*` builtin functions: TCP listeners and streams with cooperative
-//! I/O integration.
+//! `tcp.*` builtin functions: TCP listeners and streams.
 //!
-//! Blocking ops (`accept`, `connect`, `read`, `read_exact`, `write`)
-//! follow the same pattern as `io.read_file`: the operation runs on the
-//! I/O pool and the task waits for its value (`Vm::io`), so the
-//! scheduler runs other tasks meanwhile.
+//! The operations that block (`accept`, `connect`, `read`,
+//! `read_exact`, `write`) run on the I/O pool and the task waits for
+//! their value (`Vm::io`), so the scheduler runs other tasks
+//! meanwhile.
 //!
-//! Stream payload type is `Value::Bytes` from PR 1 — read returns Bytes,
-//! write accepts Bytes. The `TcpStreamHandle` wraps `Box<dyn ReadWrite>`
-//! so v0.9 PR 3 can transparently substitute a TLS-wrapped stream behind
-//! the same handle type.
+//! An operation on a connection or a listener can be made to return
+//! when its task stops waiting for it (cancelled, timed out, dropped
+//! at the end of the program): the connection is shut down; the accept
+//! is woken by a connection of the listener to itself. Its thread then
+//! ends instead of blocking for as long as the peer stays silent.
 //!
-//! Listeners are deliberately bare `std::net::TcpListener` — `accept` is
-//! the only blocking op and it locks the listener via the io_pool thread
-//! so concurrent silt tasks do not deadlock.
+//! A plain connection is read and written at the same time: a task
+//! that reads and a task that writes do not wait for each other; a
+//! TLS connection is one object behind one lock
+//! ([`TcpStreamHandle`]).
 
-use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use parking_lot::Mutex;
+use std::sync::atomic::AtomicBool;
 
 use super::common::ok;
-use crate::runtime::handle::{ReadWrite, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
-/// Factory: deadline-cancelled tcp op surfaces as `Err(TcpTimeout)`
-/// rather than the default `Err(IoUnknown(_))`. Used by every tcp.*
-/// builtin that runs on the I/O pool. The message text is dropped because
-/// `TcpTimeout` is a nullary variant; `e.message()` still produces a
-/// helpful string via the trait impl.
-fn tcp_timeout_err(_msg: &str) -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(bv::TCP_TIMEOUT, vec![])])
+/// The error of a `tcp` function whose operation has no value of its
+/// own: `TcpTimeout` when its deadline passed, `TcpUnknown` with the
+/// reason when it could not run or panicked.
+fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
+    use crate::vm::IoFailure;
+    let error = match failure {
+        IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        IoFailure::Panicked(why) | IoFailure::Refused(why) => {
+            Value::variant(bv::TCP_UNKNOWN, vec![Value::String(why.to_string())])
+        }
+    };
+    Value::variant(bv::ERR, vec![error])
 }
 
 /// Dispatch the builtin `trait Error for TcpError` method table.
@@ -56,6 +59,7 @@ pub fn call_tcp_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError
 pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
     match name {
         "listen" => listen(vm, args).map(Step::Done),
+        "local_port" => local_port(args).map(Step::Done),
         "accept" => accept(vm, args),
         "connect" => connect(vm, args),
         "read" => read(vm, args),
@@ -87,9 +91,8 @@ mod tls {
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use parking_lot::Mutex;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
     use rustls::server::WebPkiClientVerifier;
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
@@ -97,9 +100,10 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        ReadWrite, Step, TcpStreamHandle, Value, Vm, VmError, require_bytes, require_listener,
-        require_string, tcp_timeout_err,
+        Accepted, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, Vm, VmError, err,
+        require_bytes, require_listener, require_string, served, tcp_timeout_err,
     };
+    use crate::runtime::handle::ReadWrite;
 
     /// `connect_tls(addr, hostname) -> Result(TcpStream, String)`. Opens a
     /// TCP connection then performs the TLS client handshake using
@@ -133,17 +137,17 @@ mod tls {
             return Err(VmError::new("tcp.accept_tls takes 3 arguments".into()));
         }
         let listener = require_listener(&args[0], "tcp.accept_tls")?.clone();
+        if let Some(served) = served(&listener) {
+            return Ok(Step::Done(served));
+        }
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
         let next_id = vm.next_tcp_id();
-        vm.io("tcp", tcp_timeout_err, move || {
-            match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                Err(e) => Value::variant(
-                    bv::ERR,
-                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
-                ),
-            }
+        let (giving_up, stop) = GivingUp::of(&listener);
+        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+            accepted(do_accept_tls(
+                &listener, &giving_up, &cert_pem, &key_pem, next_id,
+            ))
         })
     }
 
@@ -160,25 +164,38 @@ mod tls {
             return Err(VmError::new("tcp.accept_tls_mtls takes 4 arguments".into()));
         }
         let listener = require_listener(&args[0], "tcp.accept_tls_mtls")?.clone();
+        if let Some(served) = served(&listener) {
+            return Ok(Step::Done(served));
+        }
         let cert_pem = require_bytes(&args[1], "tcp.accept_tls_mtls")?;
         let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
         let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
         let next_id = vm.next_tcp_id();
-        vm.io("tcp", tcp_timeout_err, move || {
-            match do_accept_tls_mtls(
-                &listener.listener,
+        let (giving_up, stop) = GivingUp::of(&listener);
+        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+            accepted(do_accept_tls_mtls(
+                &listener,
+                &giving_up,
                 &cert_pem,
                 &key_pem,
                 &client_ca_pem,
                 next_id,
-            ) {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                Err(e) => Value::variant(
-                    bv::ERR,
-                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
-                ),
-            }
+            ))
         })
+    }
+
+    /// The value of a TLS accept: the connection, or why there is
+    /// none. A server that has taken the listener is the same error
+    /// here as for a plain accept.
+    fn accepted(result: Result<Arc<TcpStreamHandle>, String>) -> Value {
+        match result {
+            Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+            Err(e) if e == SERVED => err(e),
+            Err(e) => Value::variant(
+                bv::ERR,
+                vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
+            ),
+        }
     }
 
     fn do_connect_tls(
@@ -201,28 +218,21 @@ mod tls {
         // once inside rustls we can no longer reach the raw fd through
         // the trait object. Both handles reference the same OS fd, so a
         // `shutdown(Both)` on the clone is observed by the rustls stream.
-        let shutdown_sock = sock.try_clone().ok();
-        let reader_socket = super::raw_socket_of(&sock);
-        let stream = rustls::StreamOwned::new(conn, sock);
-        // StreamOwned owns the connection + socket; once placed in the
-        // trait object the caller can't reach into rustls internals,
-        // matching plain TCP semantics.
-        let mut wrapper = ClientStreamWrapper { inner: stream };
-        // Force the handshake by performing one byte-less read attempt; if
-        // the handshake fails it surfaces here rather than at first read.
-        // We swallow WouldBlock since the TcpStream is blocking by default.
-        wrapper.complete_io_handshake()?;
-        Ok(Arc::new(TcpStreamHandle {
-            id: next_id,
-            inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
-            closed: AtomicBool::new(false),
-            shutdown_sock: Mutex::new(shutdown_sock),
-            reader_socket,
-        }))
+        let socket = sock
+            .try_clone()
+            .map_err(|e| format!("tcp connect {addr}: {e}"))?;
+        TcpStreamHandle::whole(next_id, &socket, move || {
+            let stream = rustls::StreamOwned::new(conn, sock);
+            let mut wrapper = ClientStreamWrapper { inner: stream };
+            // The handshake fails here rather than at the first read.
+            wrapper.complete_io_handshake()?;
+            Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
+        })
     }
 
     fn do_accept_tls(
-        listener: &std::net::TcpListener,
+        listener: &TcpListenerHandle,
+        giving_up: &GivingUp,
         cert_pem: &[u8],
         key_pem: &[u8],
         next_id: usize,
@@ -233,28 +243,26 @@ mod tls {
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .map_err(|e| format!("server config: {e}"))?;
-        let (sock, _addr) = listener.accept().map_err(|e| format!("tcp accept: {e}"))?;
+        let sock = giving_up.accepted(listener)?;
         let conn = ServerConnection::new(Arc::new(config))
             .map_err(|e| format!("server connection setup: {e}"))?;
         // See `do_connect_tls`: clone the fd before handing it to rustls
         // so `tcp.close` can `shutdown(Both)` the underlying socket even
         // while a concurrent read is parked inside `StreamOwned::read`.
-        let shutdown_sock = sock.try_clone().ok();
-        let reader_socket = super::raw_socket_of(&sock);
-        let stream = rustls::StreamOwned::new(conn, sock);
-        let mut wrapper = ServerStreamWrapper { inner: stream };
-        wrapper.complete_io_handshake()?;
-        Ok(Arc::new(TcpStreamHandle {
-            id: next_id,
-            inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
-            closed: AtomicBool::new(false),
-            shutdown_sock: Mutex::new(shutdown_sock),
-            reader_socket,
-        }))
+        let socket = sock.try_clone().map_err(|e| format!("tcp accept: {e}"))?;
+        TcpStreamHandle::whole(next_id, &socket, move || {
+            let stream = rustls::StreamOwned::new(conn, sock);
+            let mut wrapper = ServerStreamWrapper { inner: stream };
+            // The handshake fails here rather than at the first read.
+            wrapper.complete_io_handshake()?;
+            giving_up.handshake_done();
+            Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
+        })
     }
 
     fn do_accept_tls_mtls(
-        listener: &std::net::TcpListener,
+        listener: &TcpListenerHandle,
+        giving_up: &GivingUp,
         cert_pem: &[u8],
         key_pem: &[u8],
         client_ca_pem: &[u8],
@@ -284,21 +292,72 @@ mod tls {
             .with_client_cert_verifier(verifier)
             .with_single_cert(certs, key)
             .map_err(|e| format!("server config: {e}"))?;
-        let (sock, _addr) = listener.accept().map_err(|e| format!("tcp accept: {e}"))?;
+        let sock = giving_up.accepted(listener)?;
         let conn = ServerConnection::new(Arc::new(config))
             .map_err(|e| format!("server connection setup: {e}"))?;
-        let shutdown_sock = sock.try_clone().ok();
-        let reader_socket = super::raw_socket_of(&sock);
-        let stream = rustls::StreamOwned::new(conn, sock);
-        let mut wrapper = ServerStreamWrapper { inner: stream };
-        wrapper.complete_io_handshake()?;
-        Ok(Arc::new(TcpStreamHandle {
-            id: next_id,
-            inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
-            closed: AtomicBool::new(false),
-            shutdown_sock: Mutex::new(shutdown_sock),
-            reader_socket,
-        }))
+        let socket = sock.try_clone().map_err(|e| format!("tcp accept: {e}"))?;
+        TcpStreamHandle::whole(next_id, &socket, move || {
+            let stream = rustls::StreamOwned::new(conn, sock);
+            let mut wrapper = ServerStreamWrapper { inner: stream };
+            // The handshake fails here rather than at the first read.
+            wrapper.complete_io_handshake()?;
+            giving_up.handshake_done();
+            Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
+        })
+    }
+
+    /// How a TLS accept is given up when nobody waits for it any more:
+    /// while it waits for a connection, as a plain accept is; while it
+    /// is in the handshake with a client that sends nothing, by
+    /// shutting that connection down. Either way its thread ends. A
+    /// connection that is given up in its handshake is closed: it was
+    /// no task's yet, and it is not one the next accept could take
+    /// over.
+    #[derive(Clone)]
+    pub(super) struct GivingUp {
+        stopped: Arc<AtomicBool>,
+        /// The connection, while the handshake runs.
+        handshaking: Arc<parking_lot::Mutex<Option<TcpStream>>>,
+    }
+
+    impl GivingUp {
+        fn of(listener: &Arc<TcpListenerHandle>) -> (GivingUp, impl FnOnce() + Send + 'static) {
+            let giving_up = GivingUp {
+                stopped: Arc::new(AtomicBool::new(false)),
+                handshaking: Arc::default(),
+            };
+            let (listener, mine) = (listener.clone(), giving_up.clone());
+            (giving_up, move || {
+                // The flag first: an accept that returns now reads it
+                // under the lock below.
+                listener.stop(&mine.stopped);
+                if let Some(socket) = mine.handshaking.lock().take() {
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                }
+            })
+        }
+
+        /// The next connection of `listener`, noted as in its
+        /// handshake; an error if the accept was given up.
+        fn accepted(&self, listener: &TcpListenerHandle) -> Result<TcpStream, String> {
+            let sock = match listener.accept(&self.stopped, false) {
+                Ok(Accepted::Conn(sock)) => sock,
+                Ok(Accepted::GivenUp) => return Err("tcp accept: given up".into()),
+                Ok(Accepted::Served) => return Err(SERVED.into()),
+                Err(e) => return Err(format!("tcp accept: {e}")),
+            };
+            let mut handshaking = self.handshaking.lock();
+            if self.stopped.load(Ordering::SeqCst) {
+                let _ = sock.shutdown(std::net::Shutdown::Both);
+                return Err("tcp accept: given up".into());
+            }
+            *handshaking = sock.try_clone().ok();
+            Ok(sock)
+        }
+
+        fn handshake_done(&self) {
+            self.handshaking.lock().take();
+        }
     }
 
     fn parse_cert_chain(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
@@ -486,25 +545,13 @@ fn require_stream<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<TcpStrea
     }
 }
 
-/// Cache the OS socket for the inner stream so `tcp.close` on Windows
-/// can issue `CancelIoEx` on it without needing to acquire `inner`'s
-/// mutex (which a parked reader may be holding). On Unix this is also
-/// computed but currently unused.
-fn raw_socket_of(stream: &TcpStream) -> Option<usize> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawSocket;
-        Some(stream.as_raw_socket() as usize)
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        Some(stream.as_raw_fd() as usize)
-    }
-    #[cfg(not(any(windows, unix)))]
-    {
-        None
-    }
+/// The flag of an accept on `listener`, and what gives the accept up.
+fn accept_stop(
+    listener: &Arc<TcpListenerHandle>,
+) -> (Arc<AtomicBool>, impl FnOnce() + Send + 'static) {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let (listener, flag) = (listener.clone(), stopped.clone());
+    (stopped, move || listener.stop(&flag))
 }
 
 // ── Non-blocking ops ───────────────────────────────────────────────────
@@ -514,15 +561,27 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::new("tcp.listen takes 1 argument".into()));
     }
     let addr = require_string(&args[0], "tcp.listen")?;
+    let id = vm.next_tcp_id();
     match TcpListener::bind(addr) {
         Ok(listener) => {
-            let id = vm.next_tcp_id();
-            Ok(ok(Value::TcpListener(Arc::new(TcpListenerHandle {
-                id,
-                listener,
-            }))))
+            let listener = TcpListenerHandle::new(id, listener);
+            listener.widen_backlog();
+            Ok(ok(Value::TcpListener(Arc::new(listener))))
         }
         Err(e) => Ok(tcp_io_err(&e)),
+    }
+}
+
+fn local_port(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new("tcp.local_port takes 1 argument".into()));
+    }
+    let listener = require_listener(&args[0], "tcp.local_port")?;
+    match listener.local_addr() {
+        Ok(addr) => Ok(Value::Int(i64::from(addr.port()))),
+        Err(e) => Err(VmError::new(format!(
+            "tcp.local_port: the listener has no address: {e}"
+        ))),
     }
 }
 
@@ -530,95 +589,7 @@ fn close(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::new("tcp.close takes 1 argument".into()));
     }
-    let s = require_stream(&args[0], "tcp.close")?;
-    if !s.closed.swap(true, Ordering::SeqCst) {
-        // Best-effort flush of anything buffered in the Rust-side writer.
-        // We use `try_lock` so we do not block here — a concurrent
-        // `tcp.read` on another task holds `inner` while parked on the fd,
-        // and calling `lock()` would deadlock until that read returns.
-        // The subsequent `shutdown(Both)` is what kicks the reader loose.
-        if let Some(mut guard) = s.inner.try_lock() {
-            let _ = guard.flush();
-        }
-        // Shut down the underlying fd so any task blocked inside
-        // `TcpStream::read` (possibly holding `inner`) wakes up with EOF
-        // and releases its handle promptly, rather than keeping the fd
-        // pinned until the last `Arc<TcpStreamHandle>` drops. For TLS
-        // streams this skips rustls `close_notify`; we accept a rough
-        // shutdown over a deadlocked or indefinitely-open fd. Errors
-        // (EBADF, ENOTCONN, peer already closed, etc.) are ignored —
-        // close() ergonomically can't surface a partial failure and the
-        // `closed` flag is already set so subsequent ops will error.
-        //
-        // Platform-specific unblock behavior:
-        //   * Unix: `shutdown(Both)` on any fd sharing the underlying
-        //     open-file description delivers EOF to a parked `recv` on
-        //     a sibling clone. We keep the cloned fd alive so buffered
-        //     data in the socket receive queue (if any) can still be
-        //     drained by late readers before they notice the shutdown.
-        //   * Windows: Winsock's `shutdown(SD_BOTH)` does NOT cancel an
-        //     already-in-progress blocking `recv` on a duplicate handle.
-        //     After issuing the shutdown, we also drop our cloned
-        //     `TcpStream` (which invokes `closesocket` on the duplicate
-        //     handle via its `Drop` impl). On Windows this cancels
-        //     pending I/O on the underlying socket, which is what
-        //     unblocks a `recv` parked on a sibling handle held by the
-        //     `inner` stream. Caveat: this also prevents any further
-        //     reads from draining already-buffered receive data on that
-        //     handle — but since the user called `close`, that's the
-        //     intended semantics.
-        // `mut` is required on Windows where we `take()` the handle
-        // out of the slot; on Unix we only call `shutdown` through a
-        // shared ref. The `#[allow]` keeps both cfgs clean.
-        #[allow(unused_mut)]
-        let mut slot = s.shutdown_sock.lock();
-        if let Some(sock) = slot.as_ref() {
-            let _ = sock.shutdown(Shutdown::Both);
-        }
-        // On Windows, the shutdown above is not enough: Winsock's
-        // `shutdown(SD_BOTH)` does NOT cancel an in-progress blocking
-        // `recv` on a duplicate SOCKET handle (created via
-        // `WSADuplicateSocket` aka `TcpStream::try_clone`). The parked
-        // reader is using the SOCKET held by `inner`, NOT this
-        // duplicate, so the duplicate's shutdown has no effect on it.
-        //
-        // The fix is to call `CancelIoEx(inner_socket, NULL)`, which
-        // tells the kernel to cancel pending I/O on the parked
-        // reader's SOCKET. The parked `recv` returns with
-        // `WSAENOTSOCK` / `WSAEINTR` and the task wakes.
-        //
-        // We can't acquire `inner`'s mutex to read its raw socket
-        // because the parked reader is holding it (that's the whole
-        // point: it's parked inside `recv`). Instead we read the
-        // socket value cached on the handle at construction time
-        // (`s.reader_socket`), which never changes for the lifetime
-        // of the handle.
-        //
-        // We then also drop the cloned `TcpStream` (the duplicate
-        // SOCKET) to keep the `closesocket` semantics from round 30
-        // and avoid leaking the duplicate handle.
-        #[cfg(windows)]
-        {
-            if let Some(sock) = s.reader_socket {
-                // SAFETY: `CancelIoEx` is safe to call on any HANDLE,
-                // including a SOCKET. It returns 0/error if the
-                // handle is invalid or no I/O is pending — both of
-                // which are fine ignored outcomes for `close`. We
-                // cast `usize -> HANDLE` (a pointer-sized integer in
-                // both 32- and 64-bit Windows). NULL `lpOverlapped`
-                // means "cancel ALL pending I/O on this handle from
-                // any thread", which is exactly what we want.
-                use std::ptr;
-                use windows_sys::Win32::Foundation::HANDLE;
-                use windows_sys::Win32::System::IO::CancelIoEx;
-                unsafe {
-                    let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
-                }
-            }
-            let _ = slot.take();
-        }
-        drop(slot);
-    }
+    require_stream(&args[0], "tcp.close")?.shut_down();
     Ok(Value::Unit)
 }
 
@@ -626,26 +597,29 @@ fn peer_addr(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::new("tcp.peer_addr takes 1 argument".into()));
     }
-    let _ = require_stream(&args[0], "tcp.peer_addr")?;
-    // peer_addr requires the underlying TcpStream; the trait-object form
-    // hides it. Returning a placeholder Err for now — full support comes
-    // when TLS streams need a uniform peer_addr interface.
-    // For PR 2 alone, this is acceptable since most flows don't need it.
-    Ok(err(
-        "tcp.peer_addr is not yet implemented for trait-object stream handles",
-    ))
+    let stream = require_stream(&args[0], "tcp.peer_addr")?;
+    if stream.is_closed() {
+        return Ok(err_closed());
+    }
+    Ok(match stream.peer_addr() {
+        Ok(addr) => ok(Value::String(addr.to_string())),
+        Err(e) => tcp_io_err(&e),
+    })
 }
 
 fn set_nodelay(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::new("tcp.set_nodelay takes 2 arguments".into()));
     }
-    let _ = require_stream(&args[0], "tcp.set_nodelay")?;
-    let _ = require_bool(&args[1], "tcp.set_nodelay")?;
-    // Same trait-object issue as peer_addr.
-    Ok(err(
-        "tcp.set_nodelay is not yet implemented for trait-object stream handles",
-    ))
+    let stream = require_stream(&args[0], "tcp.set_nodelay")?;
+    let on = require_bool(&args[1], "tcp.set_nodelay")?;
+    if stream.is_closed() {
+        return Ok(err_closed());
+    }
+    Ok(match stream.set_nodelay(on) {
+        Ok(()) => ok(Value::Unit),
+        Err(e) => tcp_io_err(&e),
+    })
 }
 
 // ── Cooperative I/O ops ────────────────────────────────────────────────
@@ -655,24 +629,68 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
         return Err(VmError::new("tcp.accept takes 1 argument".into()));
     }
     let listener = require_listener(&args[0], "tcp.accept")?.clone();
+    if let Some(served) = served(&listener) {
+        return Ok(Step::Done(served));
+    }
+    let op = accept_op(vm, &listener, false);
+    vm.io_wait("tcp", tcp_timeout_err, op)
+}
+
+/// What an accept on a listener that an `http.serve` has to itself
+/// says.
+const SERVED: &str = "the listener is served by http.serve";
+
+/// The error of an accept on a listener that an `http.serve` has to
+/// itself.
+fn served(listener: &TcpListenerHandle) -> Option<Value> {
+    listener.is_served().then(|| err(SERVED))
+}
+
+/// An accept on `listener`, on the I/O pool: the operation of
+/// `tcp.accept`, and of each accept of `http.serve`. Its value is
+/// `Ok(TcpStream)` or `Err(TcpError)`. It is given up when its waiter
+/// goes ([`TcpListenerHandle::stop`]). `server` says that it is the
+/// accept of the `http.serve` that has the listener: it also takes the
+/// other connections that are ready, for the server to take from the
+/// listener ([`TcpListenerHandle::take_kept`]); any other accept ends
+/// with an error when a server takes the listener.
+pub(crate) fn accept_op(
+    vm: &mut Vm,
+    listener: &Arc<TcpListenerHandle>,
+    server: bool,
+) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
-    vm.io("tcp", tcp_timeout_err, move || {
-        match listener.listener.accept() {
-            Ok((stream, _addr)) => {
-                let shutdown_sock = stream.try_clone().ok();
-                let reader_socket = raw_socket_of(&stream);
-                let handle = Arc::new(TcpStreamHandle {
-                    id: next_id,
-                    inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
-                    closed: AtomicBool::new(false),
-                    shutdown_sock: Mutex::new(shutdown_sock),
-                    reader_socket,
-                });
-                Value::variant(bv::OK, vec![Value::TcpStream(handle)])
+    let (stopped, stop) = accept_stop(listener);
+    let (accepting, listener) = (listener.clone(), listener.clone());
+    vm.runtime
+        .io_pool
+        .submit(tcp_timeout_err, move || {
+            match accepting.accept(&stopped, server) {
+                Ok(Accepted::Conn(stream)) => Value::variant(
+                    bv::OK,
+                    vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+                ),
+                // Given up: nobody reads the value.
+                Ok(Accepted::GivenUp) => err_closed(),
+                // A server took the listener while the accept waited.
+                Ok(Accepted::Served) => err(SERVED),
+                Err(e) => tcp_io_err(&e),
             }
-            Err(e) => tcp_io_err(&e),
-        }
-    })
+        })
+        .stop_with(stop)
+        // A connection that came just as the task stopped waiting (it
+        // was cancelled, its deadline passed) reached no task: only
+        // the operation's value holds it. It is a client's, and goes
+        // to the next accept.
+        .unheard_with(move |value| {
+            if let Value::Variant(tag, fields) = value
+                && tag.is(bv::OK)
+                && let [Value::TcpStream(conn)] = &fields[..]
+                && let Some(socket) = conn.socket()
+            {
+                listener.keep(socket);
+            }
+        })
 }
 
 fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
@@ -683,18 +701,10 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     let next_id = vm.next_tcp_id();
     vm.io("tcp", tcp_timeout_err, move || {
         match TcpStream::connect(&addr) {
-            Ok(stream) => {
-                let shutdown_sock = stream.try_clone().ok();
-                let reader_socket = raw_socket_of(&stream);
-                let handle = Arc::new(TcpStreamHandle {
-                    id: next_id,
-                    inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
-                    closed: AtomicBool::new(false),
-                    shutdown_sock: Mutex::new(shutdown_sock),
-                    reader_socket,
-                });
-                Value::variant(bv::OK, vec![Value::TcpStream(handle)])
-            }
+            Ok(stream) => Value::variant(
+                bv::OK,
+                vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+            ),
             Err(e) => tcp_io_err(&e),
         }
     })
@@ -718,13 +728,13 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
         return Ok(Step::Done(r));
     }
-    if stream.closed.load(Ordering::SeqCst) {
+    if stream.is_closed() {
         return Ok(Step::Done(err_closed()));
     }
-    vm.io_started("tcp", tcp_timeout_err, move || {
+    let stop = stopper(&stream);
+    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
         let mut buf = vec![0u8; max];
-        let mut guard = stream.inner.lock();
-        match guard.read(&mut buf) {
+        match stream.read(&mut buf) {
             Ok(n) => {
                 buf.truncate(n);
                 Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))])
@@ -734,7 +744,7 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
                 // read, surface as EOF rather than the platform-specific
                 // cancellation error (Windows: WSACancelBlockingCall /
                 // WSA_OPERATION_ABORTED from CancelIoEx in close()).
-                if stream.closed.load(Ordering::SeqCst) {
+                if stream.is_closed() {
                     Value::variant(bv::OK, vec![Value::Bytes(Arc::new(Vec::new()))])
                 } else {
                     tcp_io_err(&e)
@@ -757,13 +767,13 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
         return Ok(Step::Done(r));
     }
-    if stream.closed.load(Ordering::SeqCst) {
+    if stream.is_closed() {
         return Ok(Step::Done(err_closed()));
     }
-    vm.io_started("tcp", tcp_timeout_err, move || {
+    let stop = stopper(&stream);
+    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
         let mut buf = vec![0u8; n];
-        let mut guard = stream.inner.lock();
-        match guard.read_exact(&mut buf) {
+        match stream.read_exact(&mut buf) {
             Ok(()) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
             Err(e) => tcp_io_err(&e),
         }
@@ -779,17 +789,21 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
         return Ok(Step::Done(r));
     }
-    if stream.closed.load(Ordering::SeqCst) {
+    if stream.is_closed() {
         return Ok(Step::Done(err_closed()));
     }
-    vm.io_started("tcp", tcp_timeout_err, move || {
-        let mut guard = stream.inner.lock();
-        match guard.write_all(&buf) {
-            Ok(()) => match guard.flush() {
-                Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
-                Err(e) => tcp_io_err(&e),
-            },
+    let stop = stopper(&stream);
+    vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+        match stream.write_all(&buf) {
+            Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
             Err(e) => tcp_io_err(&e),
         }
     })
+}
+
+/// What makes an operation on `stream` return when nobody waits for
+/// it any more: the connection is shut down.
+fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() + Send + 'static {
+    let stream = stream.clone();
+    move || stream.shut_down()
 }

@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A call that stands as a statement and whose type nothing decides has
+-- type `()`, and `()` owes what the call's signature asks of that type:
+-- in a function with a full signature, in one without, and in a closure.
+import channel
+import channel.{ Message }
+
+trait Named {
+  fn name(self) -> String
+}
+
+fn next(ch: Channel(a)) -> a where a: Named {
+  match channel.receive(ch) {
+    Message(v) -> v
+    _ -> panic("closed")
+  }
+}
+
+fn annotated(n: Int) -> Int {
+  next(channel.new(1))
+  n
+}
+
+fn inferred(n) {
+  next(channel.new(1))
+  n
+}
+
+fn main() {
+  let closure = { n ->
+    next(channel.new(1))
+    n
+  }
+  println(closure(inferred(annotated(1))))
+}

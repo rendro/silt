@@ -15,6 +15,6 @@ fn main() {
   channel.each(out) { v -> println(v) }
   println("stream done")
   let fresh = channel.new(0)
-  channel.receive(fresh)
+  let _ = channel.receive(fresh)
   println("unreachable")
 }

@@ -597,15 +597,44 @@ impl Session {
         for d in &ordering.cycles {
             push(d, &mut out);
         }
+        // An unknown method that a trait of a module not imported has:
+        // the help that names the module, now that all are checked.
+        let helped = |id: ModuleId, d: &Diagnostic| {
+            let mut d = d.clone();
+            if !self.cells.info.contains_key(&id) {
+                // (Only an error that says a type has no such method:
+                // another error may stand at the same place.)
+                let about_a_method = matches!(
+                    d.code,
+                    Code::UnknownMethod | Code::UnknownField | Code::UnresolvedName
+                );
+                if about_a_method && d.is_error() {
+                    let reach = self.graph.reach(id);
+                    let imports_back = |owner| self.graph.reach(owner).contains(&id);
+                    for (span, help) in typechecker::out_of_reach_helps(
+                        &self.tables,
+                        &self.defs,
+                        id,
+                        &reach,
+                        imports_back,
+                    ) {
+                        if span == d.span && !d.help.contains(&help) {
+                            d.help.push(help);
+                        }
+                    }
+                }
+            }
+            d
+        };
         if let Some(analysis) = self.analyses.get(&entry) {
             for d in &analysis.diagnostics {
-                push(d, &mut out);
+                push(&helped(entry, d), &mut out);
             }
         }
         for &id in ordering.modules.iter().filter(|&&id| id != entry) {
             if let Some(analysis) = self.analyses.get(&id) {
                 for d in analysis.diagnostics.iter().filter(|d| d.is_error()) {
-                    push(d, &mut out);
+                    push(&helped(id, d), &mut out);
                 }
             }
         }

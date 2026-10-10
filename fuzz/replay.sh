@@ -43,18 +43,24 @@ if [ ! -x "$bin" ]; then
   exit 1
 fi
 
-count=$(find "$corpus_dir" -type f -name '*.silt' | wc -l)
+# The committed seeds: silt sources, and for the target that reads
+# HTTP requests, requests.
+seeds() {
+  find "$corpus_dir" -type f \( -name '*.silt' -o -name '*.http' \) "$@"
+}
+
+count=$(seeds | wc -l)
 if [ "$count" -eq 0 ]; then
-  echo "replay.sh: corpus for $target has no .silt seeds — nothing to replay"
+  echo "replay.sh: corpus for $target has no seeds — nothing to replay"
   exit 0
 fi
 
-echo "replay.sh: replaying $count .silt seeds from $corpus_dir"
+echo "replay.sh: replaying $count seeds from $corpus_dir"
 
-# Only replay committed .silt seeds — fuzz/corpus/.gitignore ignores
+# Only replay committed seeds — fuzz/corpus/.gitignore ignores
 # libfuzzer-generated hash-named files so a local `fuzz/local.sh`
 # session does not explode the replay time. 500 per xargs batch
 # keeps each libfuzzer launch under a few seconds.
-find "$corpus_dir" -type f -name '*.silt' -print0 | xargs -0 -n 500 "$bin"
+seeds -print0 | xargs -0 -n 500 "$bin"
 
 echo "replay.sh: $target corpus replay OK ($count files)"

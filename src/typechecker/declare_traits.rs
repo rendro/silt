@@ -636,14 +636,35 @@ impl TypeChecker {
     /// trait or in the module that declares its type. If not, that is
     /// reported, with the modules it may be written in.
     ///
-    /// What this gives: a module that can call a method of the trait on
-    /// a value of the type has the impl's module among the modules it
-    /// imports, so the impl is there, and initialised, whenever it is
-    /// called; and no two modules can each write the impl. A builtin
-    /// trait or type is declared in no module: an impl of `Display` goes
-    /// with its type, an impl for `Int` with its trait. The entries of
-    /// one REPL session count as one module: each is run to its end
-    /// before the next is read.
+    /// A builtin trait or type is declared in no module: an impl of
+    /// `Display` goes with its type, an impl for `Int` with its trait.
+    /// The entries of one REPL session count as one module: each is run
+    /// to its end before the next is read.
+    ///
+    /// What this gives: no two modules can each write the impl, and the
+    /// impl's module is initialised before the impl is called from
+    /// another module. Why, for the impl of trait `T` for type `Y`,
+    /// written in module `I` (`T`'s or `Y`'s):
+    ///
+    /// - A call that names the impl where it is written (`y.m()` with
+    ///   `y: Y`, `Y.m`), in a module `X`: `X` has `T` and `Y` in its
+    ///   types. A type comes into a module's types only through what
+    ///   the module imports, and a method of `T` is selected only where
+    ///   `T`'s module is imported, directly or through imports
+    ///   (`method_entry`). So `X` imports `I`, or is `I`.
+    /// - A call decided where the code runs (`x.m()` with `x: a where
+    ///   a: T`, a default method, the formatter for `Display`), in a
+    ///   module that need not import `Y`'s module. If `I` is `T`'s
+    ///   module, the calling code names `T`, so its module imports `I`,
+    ///   or is `I`. If `I` is `Y`'s module, the call has a value of
+    ///   `Y` in hand: one exists only once code of `Y`'s module made
+    ///   it, or code of a module that imports it; in the second case
+    ///   `I` is complete.
+    /// - What is left is `I` calling its own impl, or handing a value
+    ///   to code outside that does, while `I` is initialised: the order
+    ///   of one module's `let`s, which `init_order` decides (a function
+    ///   of another module that is named reaches every impl `I` writes
+    ///   for traits it does not declare).
     fn impl_in_its_module(&mut self, ti: &TraitImpl, target_type: TypeRef) -> bool {
         let Some(defs) = self.defs.clone() else {
             return true;
@@ -1307,6 +1328,7 @@ impl TypeChecker {
                 target_type,
                 binding.name,
                 resolved.clone(),
+                &self_type,
             ) {
                 Ok(()) => {
                     impl_binding_map.insert(binding.name, resolved);

@@ -2,35 +2,33 @@
 -- requires-feature: http
 -- A server that runs in a task is cancelled before `main` returns,
 -- as the docs tell a program with a server loop to do. The server
--- ends with the task that served: the program ends.
+-- ends with the task that served: the program ends. (The listener is
+-- bound before the server starts, so the first request needs no
+-- waiting: it is queued until the server accepts it.)
 import http
 import task
-import time
+import tcp
 
-fn get(url, tries) {
+fn get(url) {
   match http.get(url) {
     Ok(r) -> "status {r.status}"
-    Err(e) -> match tries {
-      0 -> "error {e.message()}"
-      _ -> {
-        time.sleep(time.ms(20))
-        get(url, tries - 1)
-      }
-    }
+    Err(e) -> "error {e.message()}"
   }
 }
 
 fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}"
   let server = task.spawn { ->
-    http.serve(38471) { req ->
+    http.serve(listener) { req ->
       match req.path {
         "/boom" -> panic("handler fails")
         _ -> http.Response { status: 200, body: "ok", headers: #{} }
       }
     }
   }
-  println(get("http://127.0.0.1:38471/", 200))
-  println(get("http://127.0.0.1:38471/boom", 0))
+  println(get("{url}/"))
+  println(get("{url}/boom"))
   task.cancel(server)
   println("server cancelled")
 }

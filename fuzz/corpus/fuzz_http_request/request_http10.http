@@ -1,0 +1,6 @@
+GET / HTTP/1.0
+Connection: keep-alive
+
+
+HEAD /h HTTP/1.0
+

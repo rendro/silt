@@ -1,0 +1,17 @@
+-- `x.f` calls a method of `t.T` on a value of `y.Y`, and `x` does not
+-- import `y`, which holds the impl. A `Y` is there only once a module
+-- that imports `y` made it (`w`: `y` is complete by then), or `y`
+-- itself did in a `let` of its own: then the function of another
+-- module reaches every impl `y` writes for traits it does not declare,
+-- and the `let` the impls read is set first. The same for `Display`.
+import w
+import x
+import y
+
+fn main() {
+  println(y.own)
+  println(y.own_shown)
+  println(w.early)
+  println(w.early_shown)
+  println(x.f(y.Y { n: 2 }))
+}

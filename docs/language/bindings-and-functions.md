@@ -68,6 +68,32 @@ let result = {
 
 The trade-off: functions that exist only for side effects return `()` (Unit).
 
+Only the last expression of a block is the block's value. An expression that
+stands before it has no one to give its value to, so it must have none: its
+type is `()`, or it never returns (`return`, `panic`). Anything else is an
+error, and `let _ = ...` is how a value is discarded on purpose:
+
+```silt
+import io
+import task
+
+fn main() {
+  let _ = task.spawn { -> println("in the background") }
+  match io.write_file("out.txt", "data") {
+    Ok(_) -> println("saved")
+    Err(e) -> println("not saved: {e.message()}")
+  }
+}
+```
+
+Without the `let _ =`, the first line is rejected: ``this `Handle(())` value
+is unused; write `let _ = ...` to discard it``. A `Result` left unused is how
+an error goes unseen, so its message asks for more: handle it, return it with
+`?`, or discard it with `let _ = ...`. A call whose type nothing else decides
+(`f()` where `f` is a parameter) has type `()` when it stands as a statement.
+The last expression of a block, and of `main`, is its value and is not subject
+to the rule.
+
 ### Immutability as Default (and Only Option)
 
 All bindings are immutable. There is no `mut`, no mutable references, no

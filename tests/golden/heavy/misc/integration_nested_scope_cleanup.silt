@@ -1,9 +1,9 @@
 import io
 fn program() {
   let outer = 100
-  {
+  let _ = {
     let inner = 1
-    {
+    let _ = {
       let deep = 2
       deep
     }

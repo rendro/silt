@@ -1,0 +1,30 @@
+-- timeout: 30
+-- requires-feature: http
+-- An accept that waits on a listener when `http.serve` starts on it is
+-- given up at that moment: its task gets the error that an accept on a
+-- served listener gets, and the server has every client. (The accept
+-- used to stay, and took the next client from the server.)
+import http
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let waiting = task.spawn { ->
+    match tcp.accept(listener) {
+      Ok(_) -> "a connection"
+      Err(e) -> e.message()
+    }
+  }
+  let server = task.spawn { ->
+    http.serve(listener) { _req -> http.Response { status: 200, body: "served", headers: #{} } }
+  }
+  -- Whichever of the two ran first, the accept ends when the server has
+  -- the listener: no client has connected yet.
+  println("the accept: {task.join(waiting)}")
+  match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
+    Ok(r) -> println("the client: {r.status} {r.body}")
+    Err(e) -> println("the client: {e.message()}")
+  }
+  task.cancel(server)
+}

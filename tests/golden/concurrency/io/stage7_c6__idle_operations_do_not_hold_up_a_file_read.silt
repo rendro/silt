@@ -1,0 +1,26 @@
+-- timeout: 20
+-- requires-feature: tcp
+-- Eight tasks each wait in `tcp.accept` on a listener nobody connects
+-- to. A file read does not wait for a thread: the I/O pool gives it
+-- one of its own. (With a pool of at most four threads it waited for
+-- ever. The sleep only lets the accepts start first, which is what
+-- made the old pool fail; nothing here depends on it.)
+import io
+import list
+import string
+import task
+import tcp
+import time
+
+fn main() {
+  let waiting = 1..8 |> list.map { _ ->
+    when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+    task.spawn { -> tcp.accept(listener) }
+  }
+  time.sleep(time.ms(200))
+  when let Ok(text) = io.read_file("stage7_c6__idle_operations_do_not_hold_up_a_file_read.silt") else {
+    panic("cannot read the file")
+  }
+  println("read the file: {string.length(text) > 0}")
+  waiting |> list.each { h -> task.cancel(h) }
+}

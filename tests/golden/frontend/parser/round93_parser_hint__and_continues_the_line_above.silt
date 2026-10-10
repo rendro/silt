@@ -1,0 +1,11 @@
+-- verdict: same
+-- `&&` at the start of a line continues the line above: `b` is
+-- `t && f`, not `t`. (A `-` there does not: see
+-- round93_parser_hint__newline_sensitivity.)
+fn main() {
+  let t = true
+  let f = false
+  let b = t
+    && f
+  println(b)
+}

@@ -1,0 +1,29 @@
+error[type]: type 'Unit' does not implement trait 'Named'
+ --> unused_value__a_call_of_unknown_type_owes_its_bounds.silt:22:8
+    |
+ 22 |   next(channel.new(1))
+    |        ^^^^^^^^^^^^^^ type 'Unit' does not implement trait 'Named'
+ ::: unused_value__a_call_of_unknown_type_owes_its_bounds.silt:22:3
+    |
+ 22 |   next(channel.new(1))
+    |   -------------------- `()` because this call is a statement: its value would be unused
+
+error[type]: type 'Unit' does not implement trait 'Named'
+ --> unused_value__a_call_of_unknown_type_owes_its_bounds.silt:27:8
+    |
+ 27 |   next(channel.new(1))
+    |        ^^^^^^^^^^^^^^ type 'Unit' does not implement trait 'Named'
+ ::: unused_value__a_call_of_unknown_type_owes_its_bounds.silt:27:3
+    |
+ 27 |   next(channel.new(1))
+    |   -------------------- `()` because this call is a statement: its value would be unused
+
+error[type]: type 'Unit' does not implement trait 'Named'
+ --> unused_value__a_call_of_unknown_type_owes_its_bounds.silt:33:10
+    |
+ 33 |     next(channel.new(1))
+    |          ^^^^^^^^^^^^^^ type 'Unit' does not implement trait 'Named'
+ ::: unused_value__a_call_of_unknown_type_owes_its_bounds.silt:33:5
+    |
+ 33 |     next(channel.new(1))
+    |     -------------------- `()` because this call is a statement: its value would be unused

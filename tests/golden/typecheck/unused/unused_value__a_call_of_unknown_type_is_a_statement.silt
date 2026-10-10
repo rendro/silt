@@ -1,0 +1,24 @@
+-- verdict: same
+-- A call that stands as a statement and whose type nothing decides has
+-- type `()`: `fail()` returns whatever its caller asks for, and a
+-- statement asks for nothing. `run` calls its argument as a statement,
+-- so it takes a function that returns `()`.
+fn fail() {
+  panic("failed")
+}
+
+fn run(f) {
+  f()
+  "ran"
+}
+
+fn main() {
+  println(run { -> println("called") })
+  match 1 > 2 {
+    true -> {
+      fail()
+      println("unreachable")
+    }
+    false -> println("done")
+  }
+}

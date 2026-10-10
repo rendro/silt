@@ -1,0 +1,10 @@
+-- cmd: lsp
+-- verdict: same
+-- An unused value and an unused Result, as the editor shows them.
+import io
+
+fn main() {
+  1 + 2
+  io.write_file("out.txt", "data")
+  println("done")
+}

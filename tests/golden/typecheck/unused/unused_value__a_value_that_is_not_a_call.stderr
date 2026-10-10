@@ -1,0 +1,59 @@
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:13:3
+    |
+ 13 |   x
+    |   ^ this value is unused; write `let _ = ...` to discard it
+
+error[type]: this `a` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:14:3
+    |
+ 14 |   pair.first
+    |   ^^^^^^^^^^ this `a` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:20:3
+    |
+ 20 |   n
+    |   ^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:21:3
+    |
+ 21 |   n * 2
+    |   ^^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `String` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:22:3
+    |
+ 22 |   "text"
+    |   ^^^^^^ this `String` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `List(Int)` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:23:3
+    |
+ 23 |   [n, n]
+    |   ^^^^^^ this `List(Int)` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `(Int, String)` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:24:3
+    |
+ 24 |   (n, "n")
+    |   ^^^^^^^^ this `(Int, String)` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Option(Int)` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:25:3
+    |
+ 25 |   Some(n)
+    |   ^^^^^^^ this `Option(Int)` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Pair(Int)` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:26:3
+    |
+ 26 |   Pair { first: n, second: n }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this `Pair(Int)` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Fn(Int) -> Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_value_that_is_not_a_call.silt:27:3
+    |
+ 27 |   { m -> m + n }
+    |   ^^^^^^^^^^^^^^ this `Fn(Int) -> Int` value is unused; write `let _ = ...` to discard it

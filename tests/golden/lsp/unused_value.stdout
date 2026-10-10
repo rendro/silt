@@ -1,0 +1,2 @@
+7:3 error this `Int` value is unused; write `let _ = ...` to discard it
+8:3 error this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`

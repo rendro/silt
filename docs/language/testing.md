@@ -25,6 +25,13 @@ silt test tests/               -- search tests/ directory recursively
 silt test math_test.silt       -- run a single file
 ```
 
+A test file is a module of its own, which imports the module it tests.
+So it cannot write an impl for a type of that module (an impl goes in
+the module of its trait or of its type, see
+[Where an Impl Is Written](traits.md#where-an-impl-is-written)): put
+the impl beside the type, or declare the trait in the test file and
+implement it there, or wrap the value in a type the test file declares.
+
 ## Function Conventions
 
 Within a test file, functions are recognized by their name prefix:

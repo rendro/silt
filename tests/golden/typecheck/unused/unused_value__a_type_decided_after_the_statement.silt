@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- The channel's element type is not known where `take(ch)` stands; the
+-- `send` below decides it, and the Int is unused.
+import channel
+import channel.{ Message }
+
+fn take(ch: Channel(a)) -> a {
+  match channel.receive(ch) {
+    Message(v) -> v
+    _ -> panic("closed")
+  }
+}
+
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 5)
+  take(ch)
+  channel.send(ch, 6)
+  println("done")
+}

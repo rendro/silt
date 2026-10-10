@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A `match` that is a statement is checked as a whole: with arms of
+-- type `()` it is fine, with arms that give a value it leaves one. A
+-- `when let` binds and gives no value.
+import map
+
+fn main() {
+  let m = #{"a": 1}
+  match map.get(m, "a") {
+    Some(n) -> println(n)
+    None -> println("none")
+  }
+  match map.get(m, "a") {
+    Some(n) -> n
+    None -> 0
+  }
+  when let Some(n) = map.get(m, "a") else {
+    return
+  }
+  println(n)
+}

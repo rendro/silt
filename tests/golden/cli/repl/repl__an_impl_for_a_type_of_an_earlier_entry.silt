@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: type P { n: Int }\nlet p = P { n: 1 }\np\ntrait Display for P { fn display(self) -> String { "#{self.n}" } }\np\n[p, P { n: 2 }]\ntrait Sz { fn sz(self) -> Int }\ntrait Sz for P { fn sz(self) -> Int { self.n } }\np.sz()\n:quit\n
+-- The entries of one session count as one module for where an impl is
+-- written: a type of one entry gets its `Display` impl, and an impl of
+-- a trait of another entry, in a later one. A value made before the
+-- impl is shown by it from then on.

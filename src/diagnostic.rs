@@ -11,7 +11,9 @@
 
 use std::fmt::Write as _;
 
-use crate::source::{FileId, SourceMap, SourceName, Span};
+#[cfg(any(test, feature = "lsp"))]
+use crate::source::FileId;
+use crate::source::{SourceMap, SourceName, Span};
 
 // ── Severity, phase, code ───────────────────────────────────────────
 
@@ -191,6 +193,8 @@ codes! {
     DuplicateRecordField = "E0338", Type;
     /// A top-level `let` whose initialiser can reach the `let` itself.
     InitCycle = "E0339", Type;
+    /// A statement whose value nothing uses.
+    UnusedValue = "E0340", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;

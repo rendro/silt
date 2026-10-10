@@ -1,0 +1,11 @@
+GET /1 HTTP/1.1
+Host: x
+
+POST /2 HTTP/1.1
+Host: x
+Content-Length: 2
+
+hiGET /3 HTTP/1.1
+Host: x
+Connection: close
+

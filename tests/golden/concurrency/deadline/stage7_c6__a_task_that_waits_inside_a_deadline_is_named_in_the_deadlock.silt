@@ -1,0 +1,16 @@
+-- exit: 1
+-- repeat: 50
+-- stderr-contains: deadlock on main thread: task.join with no progress possible
+-- stderr-contains: task <handle:0> waits to receive from <channel:0> (inside a task.deadline, which does not bound this wait)
+-- The same in a task: its `task.deadline` does not end its receive,
+-- so the `main` that joins it is deadlocked, and the report says of
+-- the task that its deadline does not bound the wait.
+import channel
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  let waits = task.spawn { -> task.deadline(time.ms(100), { -> channel.receive(never) }) }
+  println(task.join(waits))
+}

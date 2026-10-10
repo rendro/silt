@@ -340,6 +340,8 @@ pub struct Parser<'src> {
     /// count errs on the high side. Checked against
     /// `MAX_EXPR_OPERATIONS` by `check_expr_height`.
     expr_height: usize,
+    /// The program's `StatementMarks`.
+    statements: StatementMarks,
     errors: Vec<Diagnostic>,
     /// What the lexer found wrong with the text; reported with the
     /// parser's own errors.
@@ -439,6 +441,7 @@ impl<'src> Parser<'src> {
             pos: 0,
             header: None,
             expr_height: 0,
+            statements: StatementMarks::default(),
             errors: Vec::new(),
             depth: 0,
             docs: None,
@@ -1004,6 +1007,7 @@ impl<'src> Parser<'src> {
         Program {
             decls,
             unknown: std::mem::take(&mut self.unknown),
+            statements: std::mem::take(&mut self.statements),
         }
     }
 
@@ -2339,11 +2343,11 @@ impl<'src> Parser<'src> {
         let mut stmts = Vec::new();
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
-            if !self.nl_before()
-                && Self::starts_statement(self.peek())
-                && !self.at_lowercase_record_literal_brace()
-            {
-                return Err(self.same_line_err("statement"));
+            if !self.nl_before() && Self::starts_statement(self.peek()) {
+                if !self.at_lowercase_record_literal_brace() {
+                    return Err(self.same_line_err("statement"));
+                }
+                self.statements.brace_after_name.push(self.span());
             }
         }
         Ok(stmts)
@@ -2555,7 +2559,14 @@ impl<'src> Parser<'src> {
             Token::Let => self.parse_let_stmt(),
             Token::When => self.parse_when_stmt(),
             _ => {
+                let start = self.span();
                 let expr = self.parse_expr()?;
+                // The expression's span starts behind parentheses that
+                // are its own; the statement starts at the first.
+                if expr.span.start != start.start {
+                    let extent = self.close(start);
+                    self.statements.parenthesised.push((expr.span, extent));
+                }
                 Ok(Stmt::Expr(expr))
             }
         }

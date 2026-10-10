@@ -14,6 +14,6 @@ fn main() {
     |> stream.collect
   println(squares)
   let fresh = channel.new(0)
-  channel.receive(fresh)
+  let _ = channel.receive(fresh)
   println("unreachable")
 }

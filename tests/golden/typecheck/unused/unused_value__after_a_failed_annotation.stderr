@@ -1,0 +1,19 @@
+error[type]: type mismatch: expected (), got Result(Int, String)
+ --> unused_value__after_a_failed_annotation.silt:13:23
+    |
+ 13 |   let f: Fn() -> () = { -> risky() }
+    |                       ^^^^^^^^^^^^^^ type mismatch: expected (), got Result(Int, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
+
+error[type]: type mismatch: expected (), got Result(Int, String)
+ --> unused_value__after_a_failed_annotation.silt:15:23
+    |
+ 15 |   let g: Fn() -> () = risky
+    |                       ^^^^^ type mismatch: expected (), got Result(Int, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
+
+error[type]: type mismatch: expected Int, got String
+ --> unused_value__after_a_failed_annotation.silt:17:16
+    |
+ 17 |   let n: Int = "three"
+    |                ^^^^^^^ type mismatch: expected Int, got String

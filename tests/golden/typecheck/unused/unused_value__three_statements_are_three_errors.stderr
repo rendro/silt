@@ -1,0 +1,17 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__three_statements_are_three_errors.silt:13:3
+    |
+ 13 |   f()
+    |   ^^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__three_statements_are_three_errors.silt:14:3
+    |
+ 14 |   1 + 2
+    |   ^^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+ --> unused_value__three_statements_are_three_errors.silt:15:3
+    |
+ 15 |   io.write_file("/nonexistent-dir/x.txt", "data")
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
