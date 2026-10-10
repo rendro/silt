@@ -104,6 +104,18 @@ impl TypeChecker {
         self.errors.extend(found);
     }
 
+    /// The type of a statement as the rule reads it: an associated type
+    /// of a known type is the type its impl binds (`<Printer as
+    /// Sink>::Out` is `()` where the impl says `type Out = ()`).
+    fn statement_type(&self, ty: &Type) -> Type {
+        match self.apply(ty) {
+            ty @ Type::AssocProj { .. } => {
+                crate::types::canonical::canonicalize(&self.tables.resolver, &ty)
+            }
+            ty => ty,
+        }
+    }
+
     fn unused_in(&self, expr: &mut Expr, found: &mut Vec<Diagnostic>) {
         resolve::each_expr_mut(expr, &mut |expr| {
             let ExprKind::Block(stmts) = &expr.kind else {
@@ -117,9 +129,15 @@ impl TypeChecker {
                 // (A statement the checker gave no type is in a body it
                 // did not check.)
                 let Some(ty) = &e.ty else { continue };
-                let message = match self.apply(ty) {
+                let message = match self.statement_type(ty) {
                     Type::Unit | Type::Never | Type::Error => continue,
                     Type::Var(_) => {
+                        "this value is unused; write `let _ = ...` to discard it".to_string()
+                    }
+                    // An associated type of a type that is not known
+                    // here (`s.next()` with `s: a where a: Source`): the
+                    // caller's type decides it, so it is a value.
+                    ty @ Type::AssocProj { .. } if !free_vars_in(&ty).is_empty() => {
                         "this value is unused; write `let _ = ...` to discard it".to_string()
                     }
                     ty if ty.is_builtin("Result") => {

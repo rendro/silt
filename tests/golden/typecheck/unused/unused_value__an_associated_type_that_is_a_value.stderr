@@ -1,0 +1,11 @@
+error[type]: this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+ --> unused_value__an_associated_type_that_is_a_value.silt:34:3
+    |
+ 34 |   Disk { name: "a" }.next()
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^ this `Result` is unused: an error in it would go unseen; handle it, return it with `?`, or write `let _ = ...`
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__an_associated_type_that_is_a_value.silt:35:3
+    |
+ 35 |   Counter { n: 1 }.next()
+    |   ^^^^^^^^^^^^^^^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- The rule reads an associated type as the type the impl binds it to: a
+-- Result gets the Result message, an Int is named as an Int.
+type Disk {
+  name: String,
+}
+
+type Counter {
+  n: Int,
+}
+
+trait Source {
+  type Item
+  fn next(self) -> Self::Item
+}
+
+trait Source for Disk {
+  type Item = Result(Int, String)
+  fn next(self) -> Result(Int, String) {
+    Err("lost")
+  }
+}
+
+trait Source for Counter {
+  type Item = Int
+  fn next(self) -> Int {
+    self.n
+  }
+}
+
+fn main() {
+  Disk { name: "a" }.next()
+  Counter { n: 1 }.next()
+  println("done")
+}
