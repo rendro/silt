@@ -59,9 +59,9 @@ impl TypeChecker {
 
             // (b) Supertrait obligation: implementing a trait on a type
             // requires every supertrait to also be implemented for the
-            // same type. The structural traits (Display/Equal/Hash/Compare)
-            // are in `trait_impl_set` for the types that have them, so
-            // `trait Ordered: Equal { ... }` followed by
+            // same type. A structural supertrait (Display/Equal/Hash/
+            // Compare) is the judgement's to answer (`head_has_trait`),
+            // so `trait Ordered: Equal { ... }` followed by
             // `trait Ordered for MyType { ... }` holds when MyType has
             // Equal by its structure.
             //
@@ -80,11 +80,7 @@ impl TypeChecker {
                 .cloned()
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
-                if !self
-                    .tables
-                    .trait_impl_set
-                    .contains(&(*supertrait, *type_name))
-                {
+                if !self.head_has_trait(*supertrait, *type_name) {
                     self.error(Code::MissingTraitImpl,
                         format!(
                             "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"

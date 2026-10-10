@@ -286,19 +286,13 @@ impl TypeChecker {
             }
         }
 
-        // The structural traits of the type: `Display`, `Equal`,
-        // `Compare`, `Hash`. The stamp is provisional:
-        // `enforce_structural_gate` takes a trait away again from a type
-        // whose fields or payloads lack it (a record that holds a
-        // function has no `Equal`), with the reason. No impl is made:
-        // the VM has each natively, over the structure of the value.
+        // The methods of the structural traits (`Display`, `Equal`,
+        // `Compare`, `Hash`) are names every type has. Whether the type
+        // has the trait is the structural judgement's to say, where a
+        // method is called, an operator used or a bound owed
+        // (`structure_gap`): no impl is made and nothing is stamped. The
+        // VM has each trait natively, over the structure of the value.
         let dummy_span = td.span;
-        for trait_name in STRUCTURAL_TRAIT_NAMES {
-            self.tables
-                .trait_impl_set
-                .insert((TraitKey::builtin(trait_name), ty));
-        }
-        // The methods of the structural traits.
         let builtin_methods: &[(&str, Type)] = &[
             (
                 "display",

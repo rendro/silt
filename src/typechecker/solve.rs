@@ -1444,13 +1444,14 @@ impl TypeChecker {
         {
             return true;
         }
+        // (A method `display` of another trait is no `Display` impl.)
         trait_name.is_builtin("Display")
             && !self.display_written.contains(&head)
             && self
                 .tables
                 .method_table
                 .get(&(head, intern("display")))
-                .is_none_or(|entry| entry.structural)
+                .is_none_or(|entry| entry.structural || entry.trait_name != Some(trait_name))
     }
 
     /// What a message says of a type that lacks the structural trait

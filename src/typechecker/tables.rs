@@ -148,17 +148,6 @@ pub struct Tables {
         HashMap<crate::session::ModuleId, Vec<(crate::source::Span, TypeRef, Symbol)>>,
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set: std::collections::HashSet<(TraitKey, TypeRef)>,
-    /// Round 93: `(trait_name, canonical type name)` pairs for which a
-    /// user-declared record / enum CANNOT soundly support the built-in
-    /// trait because some field / variant payload does not satisfy it
-    /// (computed structurally and recursively). Value = full diagnostic
-    /// message naming the offending field and its type. Every pair here
-    /// had its pre-stamped `trait_impl_set` entry and structural
-    /// `method_table` entry removed by `enforce_structural_gate`.
-    /// Consulted by the operator-operand checks in `inference.rs` and to
-    /// enrich "unknown method" diagnostics at `.equal()` / `.compare()`
-    /// / `.hash()` call sites.
-    pub(super) structural_negatives: HashMap<(TraitKey, TypeRef), String>,
     /// GAP-2: Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
@@ -370,7 +359,6 @@ impl Tables {
             self.impl_preds.remove(&key);
             self.impl_trait_args.remove(&key);
             self.impl_self_types.remove(&key);
-            self.structural_negatives.remove(&key);
         }
         for id in rows.schemes {
             self.schemes.remove(&id);

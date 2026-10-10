@@ -243,10 +243,11 @@ impl TypeChecker {
     }
 
     /// `recv.method` where `method` is the method of a builtin
-    /// structural trait (`compare`, `equal`, `hash`, `display`) and the
-    /// receiver's type has no entry for it in the method table: the
-    /// type has the method when it has the trait by its structure,
-    /// which the access owes.
+    /// structural trait (`compare`, `equal`, `hash`, `display`) and no
+    /// impl of the trait is written for the receiver's type: the type
+    /// has the method when it has the trait by its structure, which the
+    /// access owes. The other operand of `compare` and `equal` is of
+    /// the receiver's type.
     pub(super) fn structural_method(
         &mut self,
         recv: &Type,
@@ -543,6 +544,14 @@ impl TypeChecker {
             && self.ambiguous_method_call(head, method_name, span)
         {
             return Type::Error;
+        }
+        // A method of a structural trait: the type has it when it has
+        // the trait by its structure, which the call owes. The entry
+        // only says that the name is the trait's.
+        if entry.structural
+            && let Some(method_ty) = self.structural_method(receiver_ty, method_name, span)
+        {
+            return method_ty;
         }
         self.method_trait = self.entry_trait(entry, method_name);
         // What the impl and the method ask of the receiver's parts and

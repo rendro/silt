@@ -1,0 +1,23 @@
+error[type]: type 'Held' implements 'Ranked' but does not implement supertrait 'Equal'
+ --> structural_trait__one_answer_for_a_method_a_supertrait_a_bound_and_an_operator.silt:26:1
+    |
+ 26 | trait Ranked for Held {
+    | ^^^^^^^^^^^^^^^^^^^^^^^ type 'Held' implements 'Ranked' but does not implement supertrait 'Equal'
+
+error[type]: type 'Held' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
+ --> structural_trait__one_answer_for_a_method_a_supertrait_a_bound_and_an_operator.silt:43:11
+    |
+ 43 |   println(h.equal(h))
+    |           ^^^^^^^ type 'Held' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
+
+error[type]: type 'Held' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
+ --> structural_trait__one_answer_for_a_method_a_supertrait_a_bound_and_an_operator.silt:44:16
+    |
+ 44 |   println(same(h, h))
+    |                ^ type 'Held' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
+
+error[type]: type 'Held' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
+ --> structural_trait__one_answer_for_a_method_a_supertrait_a_bound_and_an_operator.silt:45:11
+    |
+ 45 |   println(h == h)
+    |           ^^^^^^ type 'Held' does not implement trait 'Equal': field 'f' is of type 'Fn(Int) -> Int', which does not
