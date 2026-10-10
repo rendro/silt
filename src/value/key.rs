@@ -24,6 +24,13 @@ fn cmp_record_field(
 /// The order of a list that holds the elements `items` and the list
 /// of the Ints from `lo` to `hi`: element by element, and a list that
 /// ends first is the lesser.
+///
+/// Never inlined: comparing a value nested a million levels deep comes
+/// through `List`'s `eq` and `cmp` once a level, and with this loop
+/// inside them each level kept 112 bytes of the native stack where the
+/// comparison of two slices alone keeps none (it is their last call).
+/// tests/lang/deep_value_stack_tests.rs runs at that depth.
+#[inline(never)]
 fn cmp_items_ints(items: &[Value], lo: i64, hi: i64) -> Ordering {
     for (item, n) in items.iter().zip(lo..=hi) {
         let ordering = item.cmp(&Value::Int(n));
