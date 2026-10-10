@@ -2,52 +2,92 @@
 //!
 //! A list is a run of the elements of a buffer that lists share: the
 //! tail of a list, or any part of it, is a list of the same buffer, and
-//! taking it copies no element. A clone is a count.
+//! taking it copies no element. The list a range expression `a..b`
+//! makes holds its two ends and no element at all. A clone is a count.
 //!
 //! How a list is stored is this file's own. The rest of silt has its
 //! length, its elements by index and in order, and its parts
 //! ([`List::len`], [`List::get`], [`List::iter`], [`List::slice`]), and
-//! nothing that tells one way of storing a list from another.
+//! nothing that tells one way of storing a list from another. What
+//! would otherwise visit every element of a list that holds none is
+//! asked here, and answered from the two ends ([`List::contains`],
+//! [`List::position`], [`List::sum_ints`]).
 
 use std::fmt;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use super::Value;
 
+/// The most elements a list that holds none (`a..b`) may have when it
+/// is made a list that holds them: reversed, written out, encoded.
+/// Prevents exhausting memory with `(1..1_000_000_000) |> list.reverse`.
+pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
+
 /// A list.
 #[derive(Clone)]
-pub struct List {
-    /// The buffer the elements are in.
-    buf: Arc<[Value]>,
-    /// Where in the buffer the list begins.
-    start: usize,
-    len: usize,
+pub struct List(Stored);
+
+#[derive(Clone)]
+enum Stored {
+    /// `len` elements of `buf` from `start`.
+    Items {
+        buf: Arc<[Value]>,
+        start: usize,
+        len: usize,
+    },
+    /// The Ints from `lo` to `hi`, both included: `lo <= hi`, and at
+    /// most [`MAX_LEN`] of them.
+    Ints { lo: i64, hi: i64 },
 }
 
-/// An element of a list, as reading the list gives it: read where it
-/// is (it is a `&Value`), or taken as a value of its own
-/// ([`Item::into_value`]).
-pub struct Item<'a>(&'a Value);
+/// The most elements a list has: what its length, a `usize`, counts.
+/// (All the Ints there are, from the least to the greatest, are one
+/// more than that where a `usize` has 64 bits.)
+const MAX_LEN: u64 = usize::MAX as u64;
 
-impl Item<'_> {
-    /// The element as a value of its own.
-    pub fn into_value(self) -> Value {
-        self.0.clone()
-    }
+/// A list's elements as they are stored, for the walks of a value this
+/// module's siblings do (its key, its text).
+pub(super) enum Elements<'a> {
+    Items(&'a [Value]),
+    /// The Ints from the first to the second, both included; never
+    /// empty.
+    Ints(i64, i64),
 }
 
-impl fmt::Debug for Item<'_> {
+/// What [`List::sum_ints`] gives.
+pub enum IntSum {
+    Sum(i64),
+    /// The sum is no `Int`.
+    Overflow,
+    /// An element is no `Int`.
+    NotInts,
+}
+
+/// Why a list could not be made, or its elements written out: it has
+/// too many. Its text is the runtime error's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TooLong {
+    lo: i64,
+    hi: i64,
+    /// The most elements there may be.
+    most: u64,
+}
+
+impl fmt::Display for TooLong {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl Deref for Item<'_> {
-    type Target = Value;
-
-    fn deref(&self) -> &Value {
-        self.0
+        let TooLong { lo, hi, most } = *self;
+        let len = hi as i128 - lo as i128 + 1;
+        if most == MAX_LEN {
+            write!(
+                f,
+                "range {lo}..{hi} has {len} elements: a list has at most {most}"
+            )
+        } else {
+            write!(
+                f,
+                "range {lo}..{hi} has {len} elements; materializing more than {most} is not allowed"
+            )
+        }
     }
 }
 
@@ -57,25 +97,52 @@ impl List {
         List::from(Vec::new())
     }
 
+    /// The list of the Ints from `lo` to `hi`, both included: what the
+    /// range expression `lo..hi` makes. It is empty if `hi` is less
+    /// than `lo`.
+    pub fn ints(lo: i64, hi: i64) -> Result<List, TooLong> {
+        if hi < lo {
+            return Ok(List::new());
+        }
+        // Its length is one more than the difference of the ends.
+        let counted = usize::try_from(hi.abs_diff(lo))
+            .ok()
+            .and_then(|difference| difference.checked_add(1));
+        match counted {
+            Some(_) => Ok(List(Stored::Ints { lo, hi })),
+            None => Err(TooLong {
+                lo,
+                hi,
+                most: MAX_LEN,
+            }),
+        }
+    }
+
     pub fn len(&self) -> usize {
-        self.len
+        match &self.0 {
+            Stored::Items { len, .. } => *len,
+            Stored::Ints { lo, hi } => hi.abs_diff(*lo) as usize + 1,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
     /// The element at `index`, counted from 0.
-    pub fn get(&self, index: usize) -> Option<Item<'_>> {
-        self.as_slice().get(index).map(Item)
+    pub fn get(&self, index: usize) -> Option<Value> {
+        match self.elements() {
+            Elements::Items(items) => items.get(index).cloned(),
+            Elements::Ints(lo, _) => (index < self.len()).then(|| Value::Int(nth(lo, index))),
+        }
     }
 
-    pub fn first(&self) -> Option<Item<'_>> {
+    pub fn first(&self) -> Option<Value> {
         self.get(0)
     }
 
-    pub fn last(&self) -> Option<Item<'_>> {
-        self.get(self.len.checked_sub(1)?)
+    pub fn last(&self) -> Option<Value> {
+        self.get(self.len().checked_sub(1)?)
     }
 
     /// The elements in order.
@@ -83,38 +150,144 @@ impl List {
         Iter {
             list: self,
             next: 0,
-            end: self.len,
+            end: self.len(),
         }
     }
 
     /// The elements from `from` up to, not including, `to`, as a list:
     /// no element is copied. A bound past the end is the end.
     pub fn slice(&self, from: usize, to: usize) -> List {
-        let to = to.min(self.len);
+        let to = to.min(self.len());
         let from = from.min(to);
-        List {
-            buf: self.buf.clone(),
-            start: self.start + from,
-            len: to - from,
+        if from == to {
+            return List::new();
+        }
+        List(match &self.0 {
+            Stored::Items { buf, start, .. } => Stored::Items {
+                buf: buf.clone(),
+                start: start + from,
+                len: to - from,
+            },
+            Stored::Ints { lo, .. } => Stored::Ints {
+                lo: nth(*lo, from),
+                hi: nth(*lo, to - 1),
+            },
+        })
+    }
+
+    /// The elements, each a value of its own. A list that holds none
+    /// may have too many for that.
+    pub fn to_vec(&self) -> Result<Vec<Value>, TooLong> {
+        self.writable()?;
+        Ok(match self.elements() {
+            Elements::Items(items) => items.to_vec(),
+            Elements::Ints(lo, hi) => (lo..=hi).map(Value::Int).collect(),
+        })
+    }
+
+    /// Whether the elements may be written out one by one ([`List::to_vec`],
+    /// the text of the list): a list that holds its elements always, one
+    /// that holds none (`a..b`) up to 10,000,000 of them.
+    pub fn writable(&self) -> Result<(), TooLong> {
+        match self.0 {
+            Stored::Ints { lo, hi } if hi.abs_diff(lo) >= MAX_RANGE_MATERIALIZE as u64 => {
+                Err(TooLong {
+                    lo,
+                    hi,
+                    most: MAX_RANGE_MATERIALIZE as u64,
+                })
+            }
+            _ => Ok(()),
         }
     }
 
-    /// The elements, each a value of its own.
-    pub fn to_vec(&self) -> Vec<Value> {
-        self.as_slice().to_vec()
+    /// Whether `value` is an element.
+    pub fn contains(&self, value: &Value) -> bool {
+        self.position(value).is_some()
     }
 
-    /// The elements where they are: for the walks of a value this
-    /// module's siblings do (its key, its text).
-    pub(super) fn as_slice(&self) -> &[Value] {
-        &self.buf[self.start..self.start + self.len]
+    /// The index of the first element equal to `value`.
+    pub fn position(&self, value: &Value) -> Option<usize> {
+        match self.elements() {
+            Elements::Items(items) => items.iter().position(|item| item == value),
+            Elements::Ints(lo, hi) => match value {
+                Value::Int(n) if (lo..=hi).contains(n) => Some(n.abs_diff(lo) as usize),
+                _ => None,
+            },
+        }
+    }
+
+    /// Whether an element is a function, or has one inside it
+    /// ([`Value::contains_fn`]).
+    pub fn contains_fn(&self) -> bool {
+        match self.elements() {
+            Elements::Items(items) => items.iter().any(Value::contains_fn),
+            Elements::Ints(..) => false,
+        }
+    }
+
+    /// The sum of the elements of a list of Ints.
+    pub fn sum_ints(&self) -> IntSum {
+        match self.elements() {
+            Elements::Items(items) => {
+                let mut sum: i64 = 0;
+                for item in items {
+                    let Value::Int(n) = item else {
+                        return IntSum::NotInts;
+                    };
+                    let Some(next) = sum.checked_add(*n) else {
+                        return IntSum::Overflow;
+                    };
+                    sum = next;
+                }
+                IntSum::Sum(sum)
+            }
+            // Half of the count times the sum of the ends. (A product
+            // that an `i128` does not hold is no `Int` halved either.)
+            Elements::Ints(lo, hi) => {
+                let count = hi as i128 - lo as i128 + 1;
+                let twice = (lo as i128 + hi as i128).checked_mul(count);
+                match twice.map(|twice| i64::try_from(twice / 2)) {
+                    Some(Ok(sum)) => IntSum::Sum(sum),
+                    _ => IntSum::Overflow,
+                }
+            }
+        }
+    }
+
+    /// The elements as they are stored.
+    pub(super) fn elements(&self) -> Elements<'_> {
+        match &self.0 {
+            Stored::Items { buf, start, len } => Elements::Items(&buf[*start..*start + *len]),
+            Stored::Ints { lo, hi } => Elements::Ints(*lo, *hi),
+        }
+    }
+
+    /// The first and the last element of a list of Ints, each one more
+    /// than the one before: such a list is equal to the range of its
+    /// ends, however it is stored.
+    pub(super) fn ascending_ints(&self) -> Option<(i64, i64)> {
+        match self.elements() {
+            Elements::Ints(lo, hi) => Some((lo, hi)),
+            Elements::Items([Value::Int(lo), rest @ ..]) => {
+                let mut last = *lo;
+                for item in rest {
+                    match item {
+                        Value::Int(n) if last.checked_add(1) == Some(*n) => last = *n,
+                        _ => return None,
+                    }
+                }
+                Some((*lo, last))
+            }
+            Elements::Items(_) => None,
+        }
     }
 }
 
-impl fmt::Debug for List {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.as_slice()).finish()
-    }
+/// The Int `index` places after `lo` in a list of Ints that has it:
+/// the sum is an Int, though `index` alone may be more than one holds.
+fn nth(lo: i64, index: usize) -> i64 {
+    lo.wrapping_add(index as i64)
 }
 
 impl Default for List {
@@ -126,11 +299,11 @@ impl Default for List {
 impl From<Vec<Value>> for List {
     fn from(items: Vec<Value>) -> List {
         let len = items.len();
-        List {
+        List(Stored::Items {
             buf: Arc::from(items),
             start: 0,
             len,
-        }
+        })
     }
 }
 
@@ -147,10 +320,10 @@ pub struct Iter<'a> {
     end: usize,
 }
 
-impl<'a> Iterator for Iter<'a> {
-    type Item = Item<'a>;
+impl Iterator for Iter<'_> {
+    type Item = Value;
 
-    fn next(&mut self) -> Option<Item<'a>> {
+    fn next(&mut self) -> Option<Value> {
         if self.next == self.end {
             return None;
         }
@@ -166,7 +339,7 @@ impl<'a> Iterator for Iter<'a> {
 }
 
 impl DoubleEndedIterator for Iter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
+    fn next_back(&mut self) -> Option<Value> {
         if self.next == self.end {
             return None;
         }
@@ -178,7 +351,7 @@ impl DoubleEndedIterator for Iter<'_> {
 impl ExactSizeIterator for Iter<'_> {}
 
 impl<'a> IntoIterator for &'a List {
-    type Item = Item<'a>;
+    type Item = Value;
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Iter<'a> {
@@ -186,8 +359,8 @@ impl<'a> IntoIterator for &'a List {
     }
 }
 
-/// The elements of a list in order, each a value of its own, for as
-/// long as the iterator is kept: it holds the list.
+/// The elements of a list in order, for as long as the iterator is
+/// kept: it holds the list.
 pub struct IntoIter {
     list: List,
     next: usize,
@@ -197,7 +370,7 @@ impl Iterator for IntoIter {
     type Item = Value;
 
     fn next(&mut self) -> Option<Value> {
-        let item = self.list.get(self.next)?.into_value();
+        let item = self.list.get(self.next)?;
         self.next += 1;
         Some(item)
     }

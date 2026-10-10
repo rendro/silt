@@ -132,10 +132,7 @@ fn generic_and_option_signatures() {
             let Value::List(xs) = &args[0] else {
                 return Err(VmError::new("expected a list".into()));
             };
-            xs.first()
-                .map(|x| x.into_value())
-                .into_value()
-                .map_err(VmError::new)
+            xs.first().into_value().map_err(VmError::new)
         });
     let source = r#"
 import h

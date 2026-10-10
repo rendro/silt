@@ -802,9 +802,9 @@ ops! {
     /// Functional record update: the record under the top values with
     /// them as the named fields. The result has the base's type.
     RecordUpdate { fields: Strs("fields of a record update") } => pops fields.len() + 1, pushes 1;
-    /// Create a lazy range (inclusive) from two ints on the stack.
+    /// The list of the Ints from the first to the second of the two Ints on the stack, both included.
     MakeRange => pops 2, pushes 1;
-    /// Concatenate two lists/ranges on the stack into a single list.
+    /// Concatenate two lists on the stack into a single list.
     ListConcat => pops 2, pushes 1;
 
     // ── Field access ───────────────────────────────────────────

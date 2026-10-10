@@ -659,10 +659,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
 /// `Todo.decode(...)` route to impls of `Int` / `Todo`.
 ///
 /// The mapping mirrors [`canonical_name`] applied to each `Value`
-/// variant's corresponding [`Type`] — in particular `Value::Range(..)`
-/// is a `List`, because the type system collapses `Range(t)` to
-/// `List(t)` and the compiler keys `for Range(a)` impls under `List`.
-/// Every function-shaped value (a closure, a builtin, a host function, a
+/// variant's corresponding [`Type`]. Every function-shaped value (a closure, a builtin, a host function, a
 /// variant constructor) is an `Fn`: the typechecker types each as
 /// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
 pub fn dispatch_type_for_value(val: &Value) -> TypeId {
@@ -676,7 +673,6 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
         Value::Bool(_) => builtin(Type::Bool),
         Value::String(_) => builtin(Type::String),
         Value::List(_) => builtin(Type::List(Box::new(Type::Unit))),
-        Value::Range(..) => builtin(Type::Range(Box::new(Type::Unit))),
         Value::Map(_) => builtin(Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
         Value::Set(_) => builtin(Type::Set(Box::new(Type::Unit))),
         Value::Tuple(_) => builtin(Type::Tuple(vec![])),
@@ -1147,15 +1143,6 @@ mod tests {
 
     fn builtin_id(name: &str) -> TypeId {
         TypeRef::builtin(name).id
-    }
-
-    #[test]
-    fn dispatch_type_for_value_range_is_list() {
-        // The whole-stack invariant: a Range receiver dispatches under
-        // the type the compiler keys `for List(a)` impls by.
-        let v = Value::Range(1, 5);
-        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
-        assert_eq!(dispatch_type_name(&v), "List");
     }
 
     #[test]

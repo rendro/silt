@@ -17,29 +17,8 @@ mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub use fmt::{Shown, Written};
-pub use list::{IntoIter, Item, Iter, List};
-
-/// Maximum number of elements that may be materialized from a range into a
-/// list, JSON array, or similar eager collection.  Prevents accidental OOM
-/// when a user writes something like `(1..1_000_000_000) |> list.reverse`.
-pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
-
-/// Return the number of elements in the inclusive range `lo..=hi`, or an error
-/// string if the count exceeds [`MAX_RANGE_MATERIALIZE`].
-pub(crate) fn checked_range_len(lo: i64, hi: i64) -> Result<usize, String> {
-    if lo > hi {
-        return Ok(0);
-    }
-    let len = (hi as i128 - lo as i128 + 1) as u128;
-    if len > MAX_RANGE_MATERIALIZE as u128 {
-        Err(format!(
-            "range {}..{} has {} elements; materializing more than {} is not allowed",
-            lo, hi, len, MAX_RANGE_MATERIALIZE,
-        ))
-    } else {
-        Ok(len as usize)
-    }
-}
+pub(crate) use list::MAX_RANGE_MATERIALIZE;
+pub use list::{IntSum, IntoIter, Iter, List, TooLong};
 
 #[derive(Clone)]
 pub enum Value {
@@ -48,7 +27,6 @@ pub enum Value {
     Bool(bool),
     String(String),
     List(List),
-    Range(i64, i64), // inclusive on both ends: start..end
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
     Tuple(Vec<Value>),
@@ -109,8 +87,7 @@ impl Value {
 
 impl Value {
     /// The value's kind, as an error names it: the name of the `Value`
-    /// variant. A range is a "Range", not a "List", though the two are
-    /// one type to a program: the error shows what the value is.
+    /// variant.
     ///
     /// Not for method dispatch: that is
     /// `crate::types::canonical::dispatch_type_for_value`.
@@ -121,7 +98,6 @@ impl Value {
             Value::Bool(_) => "Bool",
             Value::String(_) => "String",
             Value::List(_) => "List",
-            Value::Range(..) => "Range",
             Value::Map(_) => "Map",
             Value::Set(_) => "Set",
             Value::Tuple(_) => "Tuple",
@@ -175,7 +151,12 @@ impl Value {
                 | Value::VariantConstructor(..) => {
                     return true;
                 }
-                Value::List(items) => pending.extend(items.as_slice()),
+                Value::List(items) => {
+                    // (A list that holds no element holds no function.)
+                    if let list::Elements::Items(items) = items.elements() {
+                        pending.extend(items);
+                    }
+                }
                 Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
                 Value::Set(items) => pending.extend(items.iter()),
                 Value::Map(entries) => {
@@ -189,20 +170,5 @@ impl Value {
             }
         }
         false
-    }
-
-    /// Get the length of a list or range, if applicable.
-    pub fn collection_len(&self) -> Option<usize> {
-        match self {
-            Value::List(xs) => Some(xs.len()),
-            Value::Range(lo, hi) => {
-                if hi >= lo {
-                    (*hi as i128 - *lo as i128 + 1).try_into().ok()
-                } else {
-                    Some(0)
-                }
-            }
-            _ => None,
-        }
     }
 }

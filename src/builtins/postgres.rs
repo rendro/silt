@@ -740,7 +740,9 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
             )),
         },
         "VList" => match payload.first() {
-            Some(Value::List(xs)) => list_to_array_param(&xs.to_vec()),
+            Some(Value::List(xs)) => {
+                list_to_array_param(&xs.to_vec().map_err(|too_long| too_long.to_string())?)
+            }
             other => Err(format!(
                 "postgres: VList payload must be List, got {other:?}"
             )),
@@ -2288,7 +2290,7 @@ mod tests {
         let Value::List(rows) = rows else {
             panic!("expected rows list, got {rows:?}");
         };
-        let rows = rows.to_vec();
+        let rows = rows.to_vec().expect("a list of rows");
         assert_eq!(rows.len(), 1, "expected 1 row, got {}", rows.len());
         // Each row is a `Map<Value::String, Value>`.
         let Value::Map(row_map) = &rows[0] else {

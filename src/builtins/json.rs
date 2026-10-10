@@ -9,7 +9,7 @@ use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
-use crate::value::{Value, checked_range_len};
+use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
 // ── Field types for JSON / TOML parsing ──────────────────────────────
@@ -159,16 +159,9 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::String(s) => serde_json::Value::String(s.clone()),
         Value::List(xs) => {
+            xs.writable()?;
             let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_json(&x)).collect();
             serde_json::Value::Array(items?)
-        }
-        Value::Range(lo, hi) => {
-            checked_range_len(*lo, *hi).map_err(VmError::new)?;
-            serde_json::Value::Array(
-                (*lo..=*hi)
-                    .map(|i| serde_json::Value::Number(i.into()))
-                    .collect(),
-            )
         }
         Value::Map(m) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> = m

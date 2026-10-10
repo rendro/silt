@@ -110,6 +110,7 @@ impl Vm {
         value: &Value,
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
+        value.writable()?;
         if !self.global_slots.any_shown() {
             let text = self.display_value(value);
             return then(self, text);

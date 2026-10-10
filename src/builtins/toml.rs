@@ -153,21 +153,9 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
         Value::Bool(b) => ::toml::Value::Boolean(*b),
         Value::String(s) => ::toml::Value::String(s.clone()),
         Value::List(xs) => {
+            xs.writable()?;
             let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_toml(&x)).collect();
             ::toml::Value::Array(items?)
-        }
-        Value::Range(lo, hi) => {
-            let mut items = Vec::new();
-            let mut i = *lo;
-            while i <= *hi {
-                items.push(::toml::Value::Integer(i));
-                // Guard against overflow on inclusive range termination.
-                if i == i64::MAX {
-                    break;
-                }
-                i += 1;
-            }
-            ::toml::Value::Array(items)
         }
         Value::Map(m) => {
             let mut table = ::toml::map::Map::new();

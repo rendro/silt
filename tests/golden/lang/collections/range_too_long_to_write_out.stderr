@@ -1,0 +1,81 @@
+  PASS range_too_long_to_write_out.silt::test_a_range_of_the_most_elements_is_reversed
+  FAIL range_too_long_to_write_out.silt::test_println
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:27:3
+        |
+     27 |   println(long())
+        |   ^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_interpolation
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:31:11
+        |
+     31 |   let _ = "{long()}"
+        |           ^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_inside_a_record
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:35:3
+        |
+     35 |   println(Holder { name: "h", over: long() })
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_string_from
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:39:11
+        |
+     39 |   let _ = string.from((1, long()))
+        |           ^^^^^^^^^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_display_method
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:43:11
+        |
+     43 |   let _ = long().display()
+        |           ^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_inspect
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:47:11
+        |
+     47 |   let _ = io.inspect([long()])
+        |           ^^^^^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_reverse
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:51:11
+        |
+     51 |   let _ = list.reverse(long())
+        |           ^^^^^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_spread
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:55:11
+        |
+     55 |   let _ = [..long(), 1]
+        |           ^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_json
+    error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     --> range_too_long_to_write_out.silt:59:11
+        |
+     59 |   let _ = json.stringify(long())
+        |           ^^^^^^^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+  FAIL range_too_long_to_write_out.silt::test_all_the_ints_there_are
+    error[runtime]: range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: a list has at most 18446744073709551615
+     --> range_too_long_to_write_out.silt:63:11
+        |
+     63 |   let _ = -9223372036854775807 - 1..9223372036854775807
+        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: a list has at most 18446744073709551615
+  FAIL range_too_long_to_write_out.silt::test_length_of_more_than_an_int_counts
+    error[runtime]: list.length overflow: the list has more elements than an Int counts
+     --> range_too_long_to_write_out.silt:67:11
+        |
+     67 |   let _ = list.length(0..9223372036854775807)
+        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ list.length overflow: the list has more elements than an Int counts
+  FAIL range_too_long_to_write_out.silt::test_sum_that_is_no_int
+    error[runtime]: list.sum overflow
+     --> range_too_long_to_write_out.silt:71:11
+        |
+     71 |   let _ = list.sum(1..9223372036854775807)
+        |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ list.sum overflow
+  FAIL range_too_long_to_write_out.silt::test_an_assertion_shows_the_ends
+    error[runtime]: assertion failed: [0, 1, 2, ..., 10000000] != []
+     --> range_too_long_to_write_out.silt:75:3
+        |
+     75 |   test.assert_eq(long(), [])
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed: [0, 1, 2, ..., 10000000] != []
+
+14 tests: 1 passed, 13 failed, 0 skipped

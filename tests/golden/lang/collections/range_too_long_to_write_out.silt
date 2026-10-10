@@ -1,0 +1,76 @@
+-- cmd: test
+-- exit: 1
+-- A range of more than 10,000,000 elements is a list like any other
+-- until its elements are wanted all at once: its text, then, is a
+-- runtime error, as its reverse and its JSON are. (As a value of its
+-- own kind it printed `0..10000000`.)
+import io
+import json
+import list
+import string
+import test
+
+type Holder {
+  name: String,
+  over: List(Int),
+}
+
+fn long() -> List(Int) {
+  0..10000000
+}
+
+fn test_a_range_of_the_most_elements_is_reversed() {
+  test.assert_eq(list.head(list.reverse(1..10000000)), Some(10000000))
+}
+
+fn test_println() {
+  println(long())
+}
+
+fn test_interpolation() {
+  let _ = "{long()}"
+}
+
+fn test_inside_a_record() {
+  println(Holder { name: "h", over: long() })
+}
+
+fn test_string_from() {
+  let _ = string.from((1, long()))
+}
+
+fn test_display_method() {
+  let _ = long().display()
+}
+
+fn test_inspect() {
+  let _ = io.inspect([long()])
+}
+
+fn test_reverse() {
+  let _ = list.reverse(long())
+}
+
+fn test_spread() {
+  let _ = [..long(), 1]
+}
+
+fn test_json() {
+  let _ = json.stringify(long())
+}
+
+fn test_all_the_ints_there_are() {
+  let _ = -9223372036854775807 - 1..9223372036854775807
+}
+
+fn test_length_of_more_than_an_int_counts() {
+  let _ = list.length(0..9223372036854775807)
+}
+
+fn test_sum_that_is_no_int() {
+  let _ = list.sum(1..9223372036854775807)
+}
+
+fn test_an_assertion_shows_the_ends() {
+  test.assert_eq(long(), [])
+}

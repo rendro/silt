@@ -658,7 +658,6 @@ impl Vm {
             Value::Bool(true) => "true".to_string(),
             Value::Bool(false) => "false".to_string(),
             Value::Float(f) => f.to_string(),
-            Value::Range(lo, hi) => format!("{lo}..{hi}"),
             _ => format!("{val}"),
         }
     }

@@ -31,7 +31,7 @@ use parking_lot::Mutex;
 use super::common::{READ_AT_ONCE, ok};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
-use super::typed::{Arg, Chan, Elements, List, builtins, unsound};
+use super::typed::{Arg, Chan, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
@@ -548,7 +548,7 @@ builtins! {
     // ── Sources ───────────────────────────────────────────────────────────
 
     fn from_list(vm, xs: List) -> Result<Step, VmError> {
-        let mut items = xs.elements();
+        let mut items = xs.clone().into_iter();
         stage(vm, "stream.from_list", vec![], DEFAULT_CAPACITY, move |_| {
             Ok(match items.next() {
                 Some(value) => Next::Emit(value),
@@ -830,7 +830,7 @@ builtins! {
     fn flat_map(vm, ch: Chan, f: &Value) -> Result<Step, VmError> {
         let (in_ch, fn_val) = (ch.clone(), f.clone());
         // What is left of the list the function returned last.
-        let mut items: Option<Elements> = None;
+        let mut items: Option<crate::value::IntoIter> = None;
         stage(
             vm,
             "stream.flat_map",
@@ -840,7 +840,7 @@ builtins! {
                 match got {
                     Got::Value(_, v) => return Ok(Next::Call(fn_val.clone(), vec![v])),
                     Got::Returned(returned) => match List::take(&returned) {
-                        Some(xs) => items = Some(xs.elements()),
+                        Some(xs) => items = Some(xs.clone().into_iter()),
                         None => return Err(unsound("stream.flat_map", "f")),
                     },
                     Got::End => return Ok(Next::Done(Value::Unit)),

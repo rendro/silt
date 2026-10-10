@@ -7,7 +7,7 @@ use crate::builtins::registry::registry;
 use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
+use crate::value::{List, MAX_RANGE_MATERIALIZE, Value};
 
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
@@ -818,7 +818,7 @@ impl Vm {
                 let end = self.pop();
                 let start = self.pop();
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
-                    self.push(Value::Range(*a, *b));
+                    self.push(Value::List(List::ints(*a, *b)?));
                 } else {
                     return Err(VmError::type_confusion(format!(
                         "range `a..b` requires two Int operands, got {} and {}",
@@ -830,42 +830,24 @@ impl Vm {
             Instr::ListConcat => {
                 let b = self.pop();
                 let a = self.pop();
-                let mut result = match a {
-                    Value::List(xs) => xs.to_vec(),
-                    Value::Range(lo, hi) => {
-                        checked_range_len(lo, hi).map_err(VmError::new)?;
-                        (lo..=hi).map(Value::Int).collect()
-                    }
-                    _ => {
-                        return Err(VmError::type_confusion(
-                            "ListConcat: left operand is not a list or range",
-                        ));
-                    }
+                let (Value::List(a), Value::List(b)) = (a, b) else {
+                    return Err(VmError::type_confusion(
+                        "ListConcat: an operand is not a list",
+                    ));
                 };
-                // Pre-check combined size BEFORE materializing `b` to avoid
-                // allocating ~800MB when two near-limit operands are concatenated.
-                let b_len = match &b {
-                    Value::List(xs) => xs.len(),
-                    Value::Range(lo, hi) => checked_range_len(*lo, *hi).map_err(VmError::new)?,
-                    _ => {
-                        return Err(VmError::type_confusion(
-                            "ListConcat: right operand is not a list or range",
-                        ));
-                    }
-                };
-                if result.len() + b_len > MAX_RANGE_MATERIALIZE {
+                // Both sizes are checked before an element of either is
+                // made: two operands near the limit would make a list
+                // of 800 MB.
+                a.writable()?;
+                b.writable()?;
+                if a.len() + b.len() > MAX_RANGE_MATERIALIZE {
                     return Err(VmError::new(format!(
                         "concatenated list exceeds maximum size of {} elements",
                         MAX_RANGE_MATERIALIZE
                     )));
                 }
-                match b {
-                    Value::List(xs) => result.extend(xs),
-                    Value::Range(lo, hi) => {
-                        result.extend((lo..=hi).map(Value::Int));
-                    }
-                    _ => unreachable!(),
-                }
+                let mut result = a.to_vec()?;
+                result.extend(b);
                 self.push(Value::list(result));
             }
             Instr::GetField { name } => {
@@ -932,12 +914,12 @@ impl Vm {
             }
             Instr::TestListMin { len: min_len } => {
                 let val = self.peek();
-                let result = val.collection_len().is_some_and(|len| len >= min_len);
+                let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
                 self.push(Value::Bool(result));
             }
             Instr::TestListExact { len } => {
                 let val = self.peek();
-                let result = val.collection_len() == Some(len);
+                let result = matches!(val, Value::List(xs) if xs.len() == len);
                 self.push(Value::Bool(result));
             }
             Instr::TestIntRange { lo, hi } => {
@@ -993,69 +975,41 @@ impl Vm {
                 }
             }
             Instr::DestructList { index } => {
-                let val = self.peek().clone();
-                match val {
-                    Value::List(ref xs) => {
-                        let elem = xs.get(index).ok_or_else(|| {
-                            VmError::type_confusion(format!(
-                                "list destructure: expected at least {} elements, got {}",
-                                index + 1,
-                                xs.len()
-                            ))
-                        })?;
-                        self.push(elem.into_value());
-                    }
-                    Value::Range(lo, hi) => {
-                        let i = lo
-                            .checked_add(index as i64)
-                            .ok_or_else(|| VmError::type_confusion("range index overflow"))?;
-                        if i > hi {
-                            return Err(VmError::type_confusion("range index out of bounds"));
-                        }
-                        self.push(Value::Int(i));
-                    }
-                    _ => {
+                let element = match self.peek() {
+                    Value::List(xs) => xs.get(index).ok_or_else(|| {
+                        VmError::type_confusion(format!(
+                            "list destructure: expected at least {} elements, got {}",
+                            index + 1,
+                            xs.len()
+                        ))
+                    })?,
+                    other => {
                         return Err(VmError::type_confusion(format!(
                             "list destructure: expected list, got {}",
-                            self.user_facing_type_name(&val)
+                            self.user_facing_type_name(other)
                         )));
                     }
-                }
+                };
+                self.push(element);
             }
             Instr::DestructListRest { start } => {
-                let val = self.peek().clone();
-                match val {
-                    Value::List(ref xs) => {
-                        if start > xs.len() {
-                            return Err(VmError::type_confusion(format!(
-                                "list destructure: rest pattern start {} exceeds list length {}",
-                                start,
-                                xs.len()
-                            )));
-                        }
-                        self.push(Value::List(xs.slice(start, xs.len())));
-                    }
-                    Value::Range(lo, hi) => {
-                        let new_lo = lo
-                            .checked_add(start as i64)
-                            .ok_or_else(|| VmError::type_confusion("range index overflow"))?;
-                        let exceeds = match hi.checked_add(1) {
-                            Some(hi_plus_1) => new_lo > hi_plus_1,
-                            None => false, // hi == i64::MAX; new_lo can never exceed hi+1
-                        };
-                        if exceeds {
-                            self.push(Value::list(Vec::new()));
-                        } else {
-                            self.push(Value::Range(new_lo, hi));
-                        }
-                    }
-                    _ => {
+                let rest = match self.peek() {
+                    Value::List(xs) if start <= xs.len() => xs.slice(start, xs.len()),
+                    Value::List(xs) => {
                         return Err(VmError::type_confusion(format!(
-                            "list destructure: expected list, got {}",
-                            self.user_facing_type_name(&val)
+                            "list destructure: rest pattern start {} exceeds list length {}",
+                            start,
+                            xs.len()
                         )));
                     }
-                }
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "list destructure: expected list, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(Value::List(rest));
             }
             Instr::DestructRecordField { name } => {
                 let name = self.chunk().string(name).to_owned();

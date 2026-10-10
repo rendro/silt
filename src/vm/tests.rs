@@ -2235,9 +2235,9 @@ fn test_scheduler_multiple_tasks() {
         // Values are returned directly (10, 20, 30) — order may vary
         let mut vals: Vec<i64> = items
             .iter()
-            .map(|v| match *v {
+            .map(|v| match v {
                 Value::Int(n) => n,
-                ref other => panic!("expected Int, got {:?}", other),
+                other => panic!("expected Int, got {:?}", other),
             })
             .collect();
         vals.sort();
@@ -2832,12 +2832,12 @@ mod type_confusion {
 
     #[test]
     fn spread_of_a_value_that_is_no_list() {
-        confused("left operand is not a list or range", |e| {
+        confused("ListConcat: an operand is not a list", |e| {
             push(e, Value::Int(1));
             push(e, Value::list(vec![]));
             e.emit(Asm::ListConcat, span()).unwrap();
         });
-        confused("right operand is not a list or range", |e| {
+        confused("ListConcat: an operand is not a list", |e| {
             push(e, Value::list(vec![]));
             push(e, Value::Int(1));
             e.emit(Asm::ListConcat, span()).unwrap();
@@ -2898,10 +2898,13 @@ mod type_confusion {
                 e.emit(Asm::DestructList { index: 1 }, span()).unwrap();
             },
         );
-        confused("range index out of bounds", |e| {
-            push(e, Value::Range(1, 2));
-            e.emit(Asm::DestructList { index: 5 }, span()).unwrap();
-        });
+        confused(
+            "list destructure: expected at least 6 elements, got 2",
+            |e| {
+                push(e, Value::List(crate::value::List::ints(1, 2).unwrap()));
+                e.emit(Asm::DestructList { index: 5 }, span()).unwrap();
+            },
+        );
         confused("list destructure: expected list, got Int", |e| {
             push(e, Value::Int(1));
             e.emit(Asm::DestructListRest { start: 0 }, span()).unwrap();

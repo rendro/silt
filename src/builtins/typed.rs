@@ -183,95 +183,14 @@ impl<'a> Arg<'a> for &'a Arc<BTreeSet<Value>> {
     }
 }
 
-/// A `List`: a list's elements, or the range of Ints that stands for
-/// them. (A range is a list to the checker. The value of its own goes
-/// in step V3, and this with it: a `List` is then the elements.)
-#[derive(Clone, Copy)]
-pub(crate) enum List<'a> {
-    Items(&'a crate::value::List),
-    Range(i64, i64),
-}
+/// A `List` argument.
+pub(crate) type List<'a> = &'a crate::value::List;
 
-/// The elements of a list, one after the other, a range's without
-/// making a list of them.
-pub(crate) enum Items<'a> {
-    List(crate::value::Iter<'a>),
-    Range(std::ops::RangeInclusive<i64>),
-}
-
-impl Iterator for Items<'_> {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Value> {
-        match self {
-            Items::List(items) => items.next().map(crate::value::Item::into_value),
-            Items::Range(range) => range.next().map(Value::Int),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Items::List(items) => items.size_hint(),
-            Items::Range(range) => range.size_hint(),
-        }
-    }
-}
-
-/// The elements of a list that outlive the call they were an argument
-/// of ([`List::elements`]).
-pub(crate) enum Elements {
-    List(crate::value::IntoIter),
-    Range(std::ops::RangeInclusive<i64>),
-}
-
-impl Iterator for Elements {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Value> {
-        match self {
-            Elements::List(items) => items.next(),
-            Elements::Range(range) => range.next().map(Value::Int),
-        }
-    }
-}
-
-impl<'a> Arg<'a> for List<'a> {
+impl<'a> Arg<'a> for &'a crate::value::List {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::List(items) => Some(List::Items(items)),
-            Value::Range(lo, hi) => Some(List::Range(*lo, *hi)),
+            Value::List(list) => Some(list),
             _ => None,
-        }
-    }
-}
-
-impl<'a> List<'a> {
-    pub(crate) fn iter(self) -> Items<'a> {
-        match self {
-            List::Items(items) => Items::List(items.iter()),
-            List::Range(lo, hi) => Items::Range(lo..=hi),
-        }
-    }
-
-    /// The elements, to be taken one after the other beyond the call
-    /// (by a stream's stage): no list is made of a range, however long
-    /// it is.
-    pub(crate) fn elements(self) -> Elements {
-        match self {
-            List::Items(items) => Elements::List(items.clone().into_iter()),
-            List::Range(lo, hi) => Elements::Range(lo..=hi),
-        }
-    }
-
-    /// The elements, each a value of its own. A range of more elements
-    /// than a list may have is an error.
-    pub(crate) fn to_vec(self) -> Result<Vec<Value>, VmError> {
-        match self {
-            List::Items(items) => Ok(items.to_vec()),
-            List::Range(lo, hi) => {
-                crate::value::checked_range_len(lo, hi).map_err(VmError::new)?;
-                Ok((lo..=hi).map(Value::Int).collect())
-            }
         }
     }
 }

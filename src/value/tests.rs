@@ -286,11 +286,6 @@ fn display_empty_list() {
 }
 
 #[test]
-fn display_range() {
-    assert_eq!(format!("{}", Value::Range(1, 10)), "1..10");
-}
-
-#[test]
 fn display_tuple() {
     let tuple = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
     assert_eq!(format!("{}", tuple), "(1, x)");
@@ -364,32 +359,49 @@ fn display_builtin_fn() {
 
 // ── Lists ──────────────────────────────────────────────────────
 
-fn ints(items: impl IntoIterator<Item = i64>) -> List {
+/// The list that holds the Ints `items`.
+fn made(items: impl IntoIterator<Item = i64>) -> List {
     items.into_iter().map(Value::Int).collect()
+}
+
+/// The list of the Ints from `lo` to `hi`, which holds none.
+fn ints(lo: i64, hi: i64) -> List {
+    List::ints(lo, hi).expect("a list")
+}
+
+fn elements(list: &List) -> Vec<Value> {
+    list.to_vec().expect("few elements")
+}
+
+/// Each way of storing the Ints from 0 to 9.
+fn both() -> [List; 2] {
+    [made(0..10), ints(0, 9)]
 }
 
 #[test]
 fn a_part_of_a_list_is_the_list_of_its_elements() {
-    let xs = ints(0..10);
-    let part = xs.slice(3, 7);
-    assert_eq!(part.len(), 4);
-    assert_eq!(part.to_vec(), ints(3..7).to_vec());
-    assert_eq!(*part.get(0).unwrap(), Value::Int(3));
-    assert_eq!(*part.last().unwrap(), Value::Int(6));
-    assert!(part.get(4).is_none());
-    // A part of a part counts from the part's beginning.
-    let inner = part.slice(1, 3);
-    assert_eq!(inner.to_vec(), ints(4..6).to_vec());
-    assert_eq!(xs.len(), 10);
+    for xs in both() {
+        let part = xs.slice(3, 7);
+        assert_eq!(part.len(), 4);
+        assert_eq!(elements(&part), elements(&made(3..7)));
+        assert_eq!(part.get(0), Some(Value::Int(3)));
+        assert_eq!(part.first(), Some(Value::Int(3)));
+        assert_eq!(part.last(), Some(Value::Int(6)));
+        assert_eq!(part.get(4), None);
+        // A part of a part counts from the part's beginning.
+        assert_eq!(elements(&part.slice(1, 3)), elements(&made(4..6)));
+        assert_eq!(xs.len(), 10);
+    }
 }
 
 #[test]
 fn a_bound_of_a_part_past_the_end_is_the_end() {
-    let xs = ints(0..4);
-    assert_eq!(xs.slice(2, 99).to_vec(), ints(2..4).to_vec());
-    assert!(xs.slice(4, 4).is_empty());
-    assert!(xs.slice(99, 100).is_empty());
-    assert!(xs.slice(3, 1).is_empty());
+    for xs in both() {
+        assert_eq!(elements(&xs.slice(8, 99)), elements(&made(8..10)));
+        assert!(xs.slice(10, 10).is_empty());
+        assert!(xs.slice(99, 100).is_empty());
+        assert!(xs.slice(3, 1).is_empty());
+    }
     assert!(List::new().slice(0, 1).is_empty());
     assert!(List::new().first().is_none());
     assert!(List::new().last().is_none());
@@ -397,24 +409,176 @@ fn a_bound_of_a_part_past_the_end_is_the_end() {
 
 #[test]
 fn a_list_is_read_from_both_ends() {
-    let part = ints(0..6).slice(1, 5);
-    let forward: Vec<Value> = part.iter().map(Item::into_value).collect();
-    let backward: Vec<Value> = part.iter().rev().map(Item::into_value).collect();
-    assert_eq!(forward, ints(1..5).to_vec());
-    assert_eq!(backward, ints((1..5).rev()).to_vec());
-    assert_eq!(part.iter().len(), 4);
-    let owned: Vec<Value> = part.into_iter().collect();
-    assert_eq!(owned, forward);
+    for xs in both() {
+        let part = xs.slice(1, 5);
+        let forward: Vec<Value> = part.iter().collect();
+        let backward: Vec<Value> = part.iter().rev().collect();
+        assert_eq!(forward, elements(&made(1..5)));
+        assert_eq!(backward, elements(&made((1..5).rev())));
+        assert_eq!(part.iter().len(), 4);
+        let owned: Vec<Value> = part.into_iter().collect();
+        assert_eq!(owned, forward);
+    }
 }
 
 #[test]
-fn a_part_is_equal_ordered_and_hashed_as_its_elements() {
-    let part = Value::List(ints(0..6).slice(2, 5));
-    let made = Value::list(ints(2..5).to_vec());
-    assert_eq!(part, made);
-    assert_eq!(part.cmp(&made), Ordering::Equal);
-    assert_eq!(hash_of(&part), hash_of(&made));
-    assert_eq!(part.to_string(), "[2, 3, 4]");
-    assert_eq!(format!("{part:?}"), "[2, 3, 4]");
-    assert!(part < Value::list(ints(2..6).to_vec()));
+fn a_list_is_equal_ordered_and_hashed_by_its_elements_however_it_is_stored() {
+    let stored = [
+        Value::List(made(0..6).slice(2, 5)),
+        Value::List(made(2..5)),
+        Value::List(ints(2, 4)),
+        Value::List(ints(0, 9).slice(2, 5)),
+    ];
+    for a in &stored {
+        assert_eq!(a.to_string(), "[2, 3, 4]");
+        assert_eq!(format!("{a:?}"), "[2, 3, 4]");
+        assert_eq!(a.format_silt(), "[2, 3, 4]");
+        for b in &stored {
+            assert_eq!(a, b);
+            assert_eq!(a.cmp(b), Ordering::Equal);
+            assert_eq!(hash_of(a), hash_of(b));
+        }
+        // A list that goes on is the greater, one that begins higher
+        // too, however each is stored.
+        for longer in [made(2..6), ints(2, 5)] {
+            assert_eq!(a.cmp(&Value::List(longer.clone())), Ordering::Less);
+            assert_eq!(Value::List(longer).cmp(a), Ordering::Greater);
+        }
+        for higher in [made(3..4), ints(3, 3)] {
+            assert_eq!(a.cmp(&Value::List(higher.clone())), Ordering::Less);
+            assert_eq!(Value::List(higher).cmp(a), Ordering::Greater);
+        }
+        assert_ne!(
+            *a,
+            Value::list(vec![Value::Int(2), Value::Int(3), Value::Int(5)])
+        );
+    }
+    // One element, and none.
+    assert_eq!(Value::List(ints(7, 7)), Value::List(made(7..8)));
+    assert_eq!(
+        hash_of(&Value::List(ints(7, 7))),
+        hash_of(&Value::List(made(7..8)))
+    );
+    assert_eq!(Value::List(ints(5, 1)), Value::List(List::new()));
+    assert_eq!(
+        hash_of(&Value::List(ints(5, 1))),
+        hash_of(&Value::List(List::new()))
+    );
+    // Lists that differ hash apart (these two did not, when a range
+    // over the cap was hashed by its ends and a list by its elements).
+    assert_ne!(
+        hash_of(&Value::List(made(0..5))),
+        hash_of(&Value::List(made([0, 1, 2, 3, 5])))
+    );
+}
+
+#[test]
+fn a_list_of_the_ints_between_two_ends_holds_none_of_them() {
+    let all = ints(1, i64::MAX);
+    assert_eq!(all.len(), i64::MAX as usize);
+    assert_eq!(all.get(0), Some(Value::Int(1)));
+    assert_eq!(all.last(), Some(Value::Int(i64::MAX)));
+    assert_eq!(all.get(i64::MAX as usize), None);
+    assert!(all.contains(&Value::Int(77)));
+    assert!(!all.contains(&Value::Int(0)));
+    assert!(!all.contains(&Value::Unit));
+    assert_eq!(all.position(&Value::Int(77)), Some(76));
+    assert_eq!(all.position(&Value::Int(0)), None);
+    let rest = all.slice(1, all.len());
+    assert_eq!(rest.first(), Some(Value::Int(2)));
+    assert_eq!(rest.len(), i64::MAX as usize - 1);
+    let end = all.slice(all.len() - 2, all.len());
+    assert_eq!(elements(&end), elements(&made([i64::MAX - 1, i64::MAX])));
+    // Its hash and its order are read off its ends.
+    assert_eq!(
+        hash_of(&Value::List(all.clone())),
+        hash_of(&Value::List(ints(1, i64::MAX)))
+    );
+    assert_ne!(
+        hash_of(&Value::List(all.clone())),
+        hash_of(&Value::List(rest.clone()))
+    );
+    assert!(Value::List(all.clone()) < Value::List(rest));
+    assert!(Value::List(all.slice(0, 5)) < Value::List(all.clone()));
+    // The least Int, and the greatest, as ends.
+    let low = ints(i64::MIN, i64::MIN + 8);
+    assert_eq!(low.len(), 9);
+    assert_eq!(low.slice(9, 9).len(), 0);
+    assert_eq!(low.last(), Some(Value::Int(i64::MIN + 8)));
+}
+
+#[test]
+fn a_list_has_at_most_as_many_elements_as_its_length_counts() {
+    // More elements than an Int counts, by one: a list.
+    let naturals = ints(0, i64::MAX);
+    assert_eq!(naturals.len(), 1 << 63);
+    assert_eq!(naturals.last(), Some(Value::Int(i64::MAX)));
+    // All the Ints but the greatest: the index of an element can be
+    // more than an Int holds.
+    let most = ints(i64::MIN, i64::MAX - 1);
+    assert_eq!(most.len(), usize::MAX);
+    assert_eq!(most.get(usize::MAX - 1), Some(Value::Int(i64::MAX - 1)));
+    assert_eq!(most.get(usize::MAX), None);
+    assert_eq!(most.position(&Value::Int(5)), Some((1 << 63) + 5));
+    let upper = most.slice((1 << 63) + 5, usize::MAX);
+    assert_eq!(upper.first(), Some(Value::Int(5)));
+    assert_eq!(upper.last(), Some(Value::Int(i64::MAX - 1)));
+    // All the Ints there are: one too many.
+    let too_long = List::ints(i64::MIN, i64::MAX).expect_err("one too many");
+    assert_eq!(
+        too_long.to_string(),
+        "range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: \
+         a list has at most 18446744073709551615"
+    );
+    assert!(List::ints(i64::MAX, i64::MIN).expect("empty").is_empty());
+}
+
+#[test]
+fn the_elements_of_a_long_list_that_holds_none_are_not_made() {
+    let cap = MAX_RANGE_MATERIALIZE as i64;
+    assert_eq!(ints(1, cap).writable(), Ok(()));
+    let long = ints(0, cap);
+    assert_eq!(
+        long.to_vec().expect_err("too long").to_string(),
+        "range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed"
+    );
+    assert_eq!(long.writable(), long.to_vec().map(|_| ()));
+    // A value that holds such a list is not written out for a program;
+    // a host that formats it gets the ends.
+    let holder = Value::Tuple(vec![Value::Int(1), Value::List(long.clone())]);
+    assert_eq!(holder.writable(), long.writable());
+    assert_eq!(holder.to_string(), "(1, [0, 1, 2, ..., 10000000])");
+    assert_eq!(holder.format_silt(), "(1, [0, 1, 2, ..., 10000000])");
+    assert_eq!(format!("{holder:?}"), "(1, [0, 1, 2, ..., 10000000])");
+    // A list that holds its elements is written out whatever its
+    // length.
+    assert_eq!(Value::List(made(0..4)).writable(), Ok(()));
+}
+
+#[test]
+fn the_sum_of_a_list_of_ints() {
+    let sum = |list: &List| match list.sum_ints() {
+        IntSum::Sum(sum) => Ok(sum),
+        IntSum::Overflow => Err("overflow"),
+        IntSum::NotInts => Err("not ints"),
+    };
+    for xs in both() {
+        assert_eq!(sum(&xs), Ok(45));
+    }
+    assert_eq!(sum(&List::new()), Ok(0));
+    assert_eq!(sum(&ints(-5, 5)), Ok(0));
+    assert_eq!(sum(&ints(-7, -3)), Ok(-25));
+    assert_eq!(sum(&ints(1, 4_294_967_295)), Ok(9_223_372_034_707_292_160));
+    assert_eq!(sum(&ints(1, 4_294_967_296)), Err("overflow"));
+    assert_eq!(sum(&ints(1, i64::MAX)), Err("overflow"));
+    assert_eq!(sum(&ints(i64::MIN, -2)), Err("overflow"));
+    assert_eq!(sum(&ints(i64::MIN + 1, i64::MAX)), Ok(0));
+    assert_eq!(sum(&ints(i64::MIN + 1, i64::MAX - 1)), Ok(-i64::MAX));
+    assert_eq!(sum(&ints(i64::MIN, i64::MAX - 1)), Err("overflow"));
+    assert_eq!(sum(&ints(i64::MIN, i64::MAX - 2)), Err("overflow"));
+    assert_eq!(sum(&made([i64::MAX, 1])), Err("overflow"));
+    assert_eq!(
+        sum(&[Value::Int(1), Value::Unit].into_iter().collect()),
+        Err("not ints")
+    );
 }

@@ -176,8 +176,9 @@ fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
 }
 
 builtins! {
-    fn inspect(x: &Value) -> String {
-        x.format_silt()
+    fn inspect(x: &Value) -> Result<String, VmError> {
+        x.writable()?;
+        Ok(x.format_silt())
     }
 
     fn read_file(vm, path: &str) -> Result<Step, VmError> {

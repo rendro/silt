@@ -3,7 +3,7 @@
 //! An error that names the kind of a value names it with
 //! `Value::kind`: a TitleCase name for every `Value` variant, never a
 //! generic word ("value"), an article ("a function") or a lowercase
-//! form ("range"). `Vm::user_facing_type_name` differs from it only
+//! form ("tuple"). `Vm::user_facing_type_name` differs from it only
 //! by four deliberate
 //! aliases (`Record` → record name, `Variant` → parent enum / tag,
 //! `VariantConstructor` / `TypeDescriptor` / `PrimitiveDescriptor` →
@@ -50,7 +50,6 @@ struct AllVariants {
     bool_: Value,
     string: Value,
     list: Value,
-    range: Value,
     map: Value,
     set: Value,
     tuple: Value,
@@ -102,7 +101,6 @@ fn build_all_variants() -> AllVariants {
         bool_: Value::Bool(true),
         string: Value::String("hi".to_string()),
         list: Value::list(vec![Value::Int(1)]),
-        range: Value::Range(0, 5),
         map: Value::Map(Arc::new({
             let mut m = BTreeMap::new();
             m.insert(Value::String("k".into()), Value::Int(1));
@@ -142,7 +140,6 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
     f(&av.bool_, "Bool");
     f(&av.string, "String");
     f(&av.list, "List");
-    f(&av.range, "Range");
     f(&av.map, "Map");
     f(&av.set, "Set");
     f(&av.tuple, "Tuple");
@@ -176,8 +173,8 @@ fn kind_is_titlecase_for_all_value_variants() {
 #[test]
 fn user_facing_type_name_titlecase_aligned_with_kind() {
     // Pre-fix `user_facing_type_name` returned lowercase + indefinite-
-    // article forms ("range", "tuple", "a function", "a channel", ...)
-    // for values whose kind is TitleCase ("Range", "Tuple",
+    // article forms ("tuple", "a function", "a channel", ...)
+    // for values whose kind is TitleCase ("Tuple",
     // "Fn", "Channel", ...). Post-fix the two paths agree byte-for-byte
     // except for four deliberate aliases that carry semantic content:
     //
@@ -204,7 +201,7 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
             "user_facing_type_name regressed to indefinite-article \
              form for {v:?}: {ufn:?}"
         );
-        // No lowercase head (catches "range", "tuple"). The very first
+        // No lowercase head (catches "tuple"). The very first
         // character must be uppercase or a backtick (descriptor form
         // begins with TitleCase head).
         let first = ufn.chars().next().unwrap_or(' ');

@@ -1,0 +1,37 @@
+-- A range holds its two ends and no element, so what can be answered
+-- from the ends is: of a range of nine quintillion elements as of one
+-- of nine. (`list.sum` of it added four billion elements one by one
+-- before it found the overflow; `list.index_of` of an Int that is not
+-- there read it to its end.)
+import list
+
+fn main() {
+  let big = 1..9223372036854775807
+  println(list.length(big))
+  println(list.head(big))
+  println(list.last(big))
+  println(list.get(big, 41))
+  println(list.get(big, 9223372036854775806))
+  println(list.get(big, 9223372036854775807))
+  println(list.contains(big, 12345678901234))
+  println(list.contains(big, 0))
+  println(list.index_of(big, 12345678901234))
+  println(list.index_of(big, -5))
+  println(list.take(big, 4))
+  println(list.take(list.drop(big, 9223372036854775804), 99))
+  println(list.length(list.tail(big)))
+  println(big == big)
+  println(big == list.tail(big))
+  println(big < list.tail(big))
+  println(big.hash() == (1..9223372036854775807).hash())
+  println(big.hash() == list.tail(big).hash())
+  match big {
+    [a, b, ..rest] -> println("{a}, {b}, then {list.length(rest)} more")
+    _ -> println("no match")
+  }
+
+  -- Sums are of the ends too.
+  println(list.sum(1..100000000))
+  println(list.sum(-3000000000..3000000001))
+  println(list.sum(5..4))
+}

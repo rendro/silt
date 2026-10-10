@@ -266,7 +266,8 @@ fn bfs(graph, start, goal) {
 
 The `..` operator creates an inclusive range. `1..10` includes both 1 and 10.
 Ranges are lazy — they don't allocate memory until iterated, so `1..1000000`
-is cheap. All `list.*` functions work on ranges directly.
+is cheap. A range is a list: all `list.*` functions work on it, and
+`println(1..3)` prints `[1, 2, 3]`.
 
 ```silt
 1..10 |> list.map { n -> n * n } |> list.each { n -> println("{n}") }

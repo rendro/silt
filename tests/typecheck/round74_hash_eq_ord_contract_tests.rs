@@ -1,11 +1,9 @@
-//! Regression tests for round-74 audit fix: `Value::Hash` violated the
-//! Hash/Eq contract for the cross-discriminant equal pair List↔Range —
-//! incompatible with `PartialEq`, which considers
-//! `List([1,2,3]) == Range(1,3)`.
+//! The list a range makes (`1..3`, which holds no element) and the list
+//! of the same elements made any other way are equal, so they hash alike
+//! and are ordered as equal.
 //!
 //! Rust's contract: `a == b` ⇒ `hash(a) == hash(b)` AND `a.cmp(&b) ==
-//! Equal`. This test pins down each cross-discriminant equal pair and
-//! asserts all three predicates.
+//! Equal`. These tests assert all three for each such pair.
 
 use silt::typeinfo::bv;
 use std::cmp::Ordering;
@@ -26,6 +24,11 @@ fn builtin(name: &str) -> Value {
         .value()
 }
 
+/// The list `lo..hi` makes: it holds no element.
+fn range(lo: i64, hi: i64) -> Value {
+    Value::List(silt::value::List::ints(lo, hi).expect("a list"))
+}
+
 fn hash_of(v: &Value) -> u64 {
     let mut h = DefaultHasher::new();
     v.hash(&mut h);
@@ -36,10 +39,8 @@ fn hash_of(v: &Value) -> u64 {
 
 #[test]
 fn list_range_equal_pairs_hash_equal() {
-    // Range(1,3) materializes to [1,2,3]; PartialEq returns true (line
-    // ~1729-1730), so Hash and Ord must agree.
     let list = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
-    let range = Value::Range(1, 3);
+    let range = range(1, 3);
     assert_eq!(list, range);
     assert_eq!(range, list);
     assert_eq!(hash_of(&list), hash_of(&range));
@@ -51,7 +52,7 @@ fn list_range_equal_pairs_hash_equal() {
 fn list_range_empty_hash_equal() {
     // Empty range (lo > hi) equals empty list per PartialEq.
     let list = Value::list(vec![]);
-    let range = Value::Range(5, 4);
+    let range = range(5, 4);
     assert_eq!(list, range);
     assert_eq!(hash_of(&list), hash_of(&range));
     assert_eq!(list.cmp(&range), Ordering::Equal);
@@ -60,7 +61,7 @@ fn list_range_empty_hash_equal() {
 #[test]
 fn list_range_single_element_hash_equal() {
     let list = Value::list(vec![Value::Int(42)]);
-    let range = Value::Range(42, 42);
+    let range = range(42, 42);
     assert_eq!(list, range);
     assert_eq!(hash_of(&list), hash_of(&range));
     assert_eq!(list.cmp(&range), Ordering::Equal);
@@ -74,16 +75,14 @@ fn list_range_unequal_pairs_ord_consistent() {
         Value::Int(3),
         Value::Int(2), // out of order — not a range
     ]);
-    let range = Value::Range(1, 3);
+    let range = range(1, 3);
     assert_ne!(list, range);
     assert_ne!(list.cmp(&range), Ordering::Equal);
 }
 
 // ── HashMap / HashSet round-trip ───────────────────────────────────
 
-/// Inserting an equal-but-cross-discriminant pair into a HashSet must
-/// recognize the duplicate. Pre-fix, the discriminant difference made
-/// the second insert hash to a different bucket and slip through.
+/// A `HashSet` takes the two for one value.
 #[test]
 fn hashset_dedup_across_list_range() {
     use std::collections::HashSet;
@@ -93,11 +92,11 @@ fn hashset_dedup_across_list_range() {
         Value::Int(2),
         Value::Int(3),
     ]));
-    s.insert(Value::Range(1, 3));
+    s.insert(range(1, 3));
     assert_eq!(
         s.len(),
         1,
-        "HashSet must dedup List([1,2,3]) and Range(1,3) — they're equal"
+        "HashSet must dedup [1, 2, 3] and 1..3 — they're equal"
     );
 }
 

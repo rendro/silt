@@ -1,7 +1,93 @@
 use std::fmt;
 
-use super::Value;
+use super::list::Elements;
+use super::{List, TooLong, Value};
 use crate::typeinfo::ty;
+
+/// What the formatters write of a list.
+enum Part<'a> {
+    Item(&'a Value),
+    /// The elements between the third and the last of a list that
+    /// cannot be written out.
+    Gap,
+}
+
+/// The parts of `xs` in the order they are written: its elements. Of a
+/// list that cannot be written out ([`List::writable`]) they are its
+/// first three elements, the gap and its last element: a program is
+/// refused the text of such a list ([`Value::writable`]), and a host
+/// that formats the value all the same gets this.
+fn list_parts(xs: &List, mut write: impl FnMut(Part<'_>) -> fmt::Result) -> fmt::Result {
+    match xs.elements() {
+        Elements::Items(items) => items.iter().try_for_each(|item| write(Part::Item(item))),
+        Elements::Ints(lo, hi) if xs.writable().is_ok() => {
+            (lo..=hi).try_for_each(|n| write(Part::Item(&Value::Int(n))))
+        }
+        Elements::Ints(lo, hi) => {
+            (lo..lo + 3).try_for_each(|n| write(Part::Item(&Value::Int(n))))?;
+            write(Part::Gap)?;
+            write(Part::Item(&Value::Int(hi)))
+        }
+    }
+}
+
+/// `[`, the parts of `xs` as `item` writes them, with `, ` between
+/// them, and `]`.
+fn write_list(
+    f: &mut fmt::Formatter<'_>,
+    xs: &List,
+    mut item: impl FnMut(&Value, &mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str("[")?;
+    let mut first = true;
+    list_parts(xs, |part| {
+        if !std::mem::take(&mut first) {
+            f.write_str(", ")?;
+        }
+        match part {
+            Part::Item(value) => item(value, f),
+            Part::Gap => f.write_str("..."),
+        }
+    })?;
+    f.write_str("]")
+}
+
+impl fmt::Debug for List {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_list(f, self, |item, f| write!(f, "{item:?}"))
+    }
+}
+
+impl Value {
+    /// Whether the value can be written out: `Err` if a list in it
+    /// cannot ([`List::writable`]). Showing a value to a program
+    /// (`println`, interpolation, `io.inspect`) asks this first, and
+    /// the error is the program's.
+    pub fn writable(&self) -> Result<(), TooLong> {
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::List(items) => {
+                    items.writable()?;
+                    if let Elements::Items(items) = items.elements() {
+                        pending.extend(items);
+                    }
+                }
+                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(_, fields) => pending.extend(fields.values()),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -11,7 +97,6 @@ impl fmt::Debug for Value {
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "\"{s}\""),
             Value::List(xs) => xs.fmt(f),
-            Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
             Value::Map(m) => f.debug_map().entries(m.iter()).finish(),
             Value::Set(s) => {
                 write!(f, "#[")?;
@@ -83,10 +168,14 @@ impl Value {
             Value::Bool(b) => format!("{b}"),
             Value::String(s) => format!("\"{s}\""),
             Value::List(xs) => {
-                let items: Vec<String> = xs.iter().map(|v| v.format_silt()).collect();
-                format!("[{}]", items.join(", "))
+                struct Inspected<'a>(&'a List);
+                impl fmt::Display for Inspected<'_> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        write_list(f, self.0, |item, f| f.write_str(&item.format_silt()))
+                    }
+                }
+                Inspected(xs).to_string()
             }
-            Value::Range(lo, hi) => format!("{lo}..{hi}"),
             Value::Map(m) => {
                 let items: Vec<String> = m
                     .iter()
@@ -295,17 +384,7 @@ impl Value {
             Value::Float(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "{s}"),
-            Value::List(xs) => {
-                write!(f, "[")?;
-                for (i, v) in xs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    v.show(f, written)?;
-                }
-                write!(f, "]")
-            }
-            Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
+            Value::List(xs) => write_list(f, xs, |item, f| item.show(f, written)),
             Value::Map(m) => {
                 write!(f, "#{{")?;
                 for (i, (k, v)) in m.iter().enumerate() {

@@ -85,6 +85,13 @@ impl std::fmt::Display for VmError {
 
 impl std::error::Error for VmError {}
 
+/// A list of too many elements to be made, or to be written out.
+impl From<crate::value::TooLong> for VmError {
+    fn from(too_long: crate::value::TooLong) -> VmError {
+        VmError::new(too_long.to_string())
+    }
+}
+
 /// Render a filtered view of a call stack as human-readable lines, applying
 /// the same head/tail truncation used by `silt run`.  Synthetic frames
 /// (`<script>`, `<call:...>`) are dropped, but `<module:...>` frames are
