@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: env.remove: the name of a variable is not empty and holds no `=` and no NUL character, got ""
+-- stderr-not-contains: panicked
+-- env.remove refuses what env.set refuses.
+import env
+import string
+
+fn main() {
+  env.remove("")
+  println(string.length("not reached"))
+}

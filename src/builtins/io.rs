@@ -422,6 +422,19 @@ pub(crate) mod env {
         }
     }
 
+    /// Refuses a name that no variable of the environment can have:
+    /// the empty one, one with `=` or one with a NUL character. (The
+    /// standard library panics on them.)
+    fn variable_name(name: &str, variable: &str) -> Result<(), VmError> {
+        match variable.is_empty() || variable.contains(['=', '\0']) {
+            true => Err(VmError::new(format!(
+                "{name}: the name of a variable is not empty and holds no `=` and no NUL \
+                 character, got {variable:?}"
+            ))),
+            false => Ok(()),
+        }
+    }
+
     builtins! {
         fn get(key: &str) -> Option<Value> {
             std::env::var(key).ok().map(Value::String)
@@ -429,6 +442,12 @@ pub(crate) mod env {
 
         fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
             own_thread_only(vm, "env.set")?;
+            variable_name("env.set", key)?;
+            if value.contains('\0') {
+                return Err(VmError::new(format!(
+                    "env.set: the value of a variable holds no NUL character, got {value:?}"
+                )));
+            }
             // SAFETY: Only reachable from the main thread (guarded above).
             unsafe { std::env::set_var(key, value) };
             Ok(())
@@ -436,6 +455,7 @@ pub(crate) mod env {
 
         fn remove(vm, name: &str) -> Result<(), VmError> {
             own_thread_only(vm, "env.remove")?;
+            variable_name("env.remove", name)?;
             // Idempotent by contract: std::env::remove_var does not
             // error when the variable was not set, so we don't need to
             // pre-check with env::var. SAFETY: main thread (guarded).
