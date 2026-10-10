@@ -556,6 +556,10 @@ impl Asked<'_> {
                 "textDocument/hover",
                 json!({"textDocument": doc, "position": at()?}),
             ),
+            "signature" => (
+                "textDocument/signatureHelp",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
             "rename" => {
                 let position = at()?;
                 let name = words
@@ -674,6 +678,23 @@ impl Asked<'_> {
                     )
                 })
                 .collect(),
+            // The signature, and the parameter that is being written.
+            "signature" => {
+                let signature = &result["signatures"][0];
+                let Some(label) = signature["label"].as_str() else {
+                    return "(nothing)\n".to_string();
+                };
+                let active = result["activeParameter"].as_u64().unwrap_or(0);
+                let parameter = match &signature["parameters"][active as usize]["label"] {
+                    Value::String(text) => text.clone(),
+                    Value::Array(range) => {
+                        let at = |i: usize| range[i].as_u64().unwrap_or(0) as usize;
+                        label.get(at(0)..at(1)).unwrap_or("").to_string()
+                    }
+                    _ => "(none)".to_string(),
+                };
+                return format!("{label}\nargument {}: {parameter}\n", active + 1);
+            }
             // The text, line by line as it is.
             "hover" => {
                 return match result["contents"]["value"].as_str() {

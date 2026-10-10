@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A zero-width space in front of a `fn`: the function is read.
+​fn a() -> Int {
+  1
+}
+
+fn main() {
+  println("{a()}")
+}

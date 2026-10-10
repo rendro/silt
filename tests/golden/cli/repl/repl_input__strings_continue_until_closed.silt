@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: let s = "two\nlines"\ns\n"path\\"\n"hello\" still\nopen"\n"three\\\" open\nclosed"\n"four\\\\"\n:quit\n
+-- A string that is not closed goes on in the next line. A quote behind
+-- a backslash closes nothing, one behind two backslashes does: `"path\\"`
+-- and `"four\\\\"` are read at once, `"hello\"` and `"three\\\"` are open.

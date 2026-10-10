@@ -9,6 +9,7 @@ mod checker_scaling;
 mod fmt_property;
 mod fmt_property_sweep_tests;
 mod integration;
+mod lexer_scaling;
 mod lsp_workspace_perf;
 #[path = "../support/port_file.rs"]
 mod port_file;
@@ -18,5 +19,6 @@ mod quiet_tests;
 #[path = "../lsp/rename_sweep.rs"]
 mod rename_sweep;
 mod rename_sweep_examples;
+mod repl_paste;
 #[path = "../lsp/support.rs"]
 mod support;

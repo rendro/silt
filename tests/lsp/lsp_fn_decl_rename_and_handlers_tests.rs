@@ -111,7 +111,10 @@ fn apply_all_edits(source: &str, edits: &[Value]) -> String {
 /// Parse silt source via the public lib API. Returns true iff parsing
 /// produces no errors.
 fn parses_clean(source: &str) -> bool {
-    let tokens = match silt::lexer::Lexer::new(silt::source::FileId::default(), source).tokenize() {
+    let tokens = match silt::lexer::Lexer::new(silt::source::FileId::default(), source)
+        .tokenize()
+        .checked()
+    {
         Ok(t) => t,
         Err(_) => return false,
     };

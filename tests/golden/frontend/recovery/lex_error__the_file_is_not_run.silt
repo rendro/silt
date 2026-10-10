@@ -1,0 +1,12 @@
+-- cmd: run
+-- exit: 1
+-- stderr-contains: error[lex]: unexpected character: '@'
+-- A file with a lex error is never run, though everything `main` needs
+-- was read: the error is in a function nothing calls.
+fn unused() {
+  1 @ 2
+}
+
+fn main() {
+  println("not printed")
+}

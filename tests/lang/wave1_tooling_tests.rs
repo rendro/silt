@@ -704,8 +704,8 @@ fn lsp_survives_a_request_whose_handler_fails() {
 // ── `silt test --filter` ─────────────────────────────────────────────
 
 /// The same when the files are discovered in a directory. A file that
-/// has no test for the filter is left alone, also when it does not
-/// parse.
+/// has no test for the filter is left alone; one that does not parse
+/// cannot be asked for its tests, and is reported.
 #[test]
 fn filter_selects_files_by_their_parsed_tests() {
     let mut project = Project::new(
@@ -723,12 +723,16 @@ fn filter_selects_files_by_their_parsed_tests() {
         ],
     );
     let out = project.silt(&["test", "--filter", "spaced"]);
-    assert_eq!(out.code, Some(0), "{out:#?}");
+    assert_eq!(out.code, Some(1), "{out:#?}");
     assert!(out.stderr.contains("a_test.silt::test_spaced"), "{out:#?}");
     assert!(!out.stderr.contains("test_other"), "{out:#?}");
-    assert!(!out.stderr.contains("c_test.silt"), "{out:#?}");
     assert!(
-        out.stderr.contains("1 test: 1 passed, 0 failed, 0 skipped"),
+        out.stderr.contains("error[parse]") && out.stderr.contains("c_test.silt:1:"),
+        "{out:#?}"
+    );
+    assert!(
+        out.stderr
+            .contains("1 test: 1 passed, 0 failed, 0 skipped (1 file failed to compile)"),
         "{out:#?}"
     );
 }

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A character the lexer rejects between the variants of an enum is of
+-- none of them: the variants are known.
+type E {
+  A,
+  B(Int) @,
+}
+
+fn main() {
+  let e = A
+  match e {
+    A -> println("a")
+    B(_) -> println("b")
+  }
+}

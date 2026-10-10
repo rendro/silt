@@ -11,6 +11,7 @@ use silt::parser::Parser;
 fn parse_errors(input: &str) -> Vec<String> {
     let tokens = Lexer::new(silt::source::FileId::default(), input)
         .tokenize()
+        .checked()
         .expect("lexer error");
     match Parser::new(tokens, input).parse_program() {
         Err(e) => vec![e.message.clone()],

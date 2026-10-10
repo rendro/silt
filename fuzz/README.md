@@ -4,8 +4,8 @@ silt ships seven libfuzzer targets:
 
 | Target             | Exercises                                          |
 |--------------------|----------------------------------------------------|
-| `fuzz_lexer`       | `Lexer::tokenize` + span/offset invariants         |
-| `fuzz_parser`      | `Parser::parse_program` (must not panic)           |
+| `fuzz_lexer`       | `Lexer::tokenize` on any text, lex errors included + span/offset invariants |
+| `fuzz_parser`      | the parser on any tokens, the lexer's Error tokens included (must not panic) + AST invariants of what parses |
 | `fuzz_formatter`   | `format::format`: never refused, a fixed point     |
 | `fuzz_roundtrip`   | parse → format → parse (must preserve structure)   |
 | `fuzz_typechecker` | the session's analysis + diagnostic well-formedness |

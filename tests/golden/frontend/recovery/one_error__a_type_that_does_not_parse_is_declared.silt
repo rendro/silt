@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A type that does not parse is declared all the same, and what it
+-- is is unknown: its uses are no "unknown type" errors.
+type P {
+  x: Int,
+  y: 
+}
+
+fn g(p: P) -> Int {
+  p.x
+}
+
+fn main() {
+  println("{g(P { x: 1, y: 2 })}")
+}

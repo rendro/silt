@@ -1,0 +1,15 @@
+error[parse]: expected '}' or ',' to continue enum variant list, found Rect
+ --> failed_enum__the_types_of_its_fields_stay_what_they_are.silt:14:3
+    |
+ 14 |   Rect(Int, Int, Point)
+    |   ^^^^ expected '}' or ',' to continue enum variant list, found Rect
+ ::: failed_enum__the_types_of_its_fields_stay_what_they_are.silt:12:12
+    |
+ 12 | type Shape {
+    |            - the enum variant list starts here
+
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> failed_enum__the_types_of_its_fields_stay_what_they_are.silt:18:13
+    |
+ 18 |   a + p.x + "s"
+    |             ^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"

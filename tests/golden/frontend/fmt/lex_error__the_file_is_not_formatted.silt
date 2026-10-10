@@ -1,0 +1,12 @@
+-- cmd: fmt
+-- exit: 1
+-- stderr-contains: error[lex]: unexpected character: '@'
+-- A file with a lex error is never formatted: it is left as it is,
+-- badly spaced lines and all.
+fn unused() {
+      1 @ 2
+}
+
+fn   main(  ) {
+  println( "x" )
+}

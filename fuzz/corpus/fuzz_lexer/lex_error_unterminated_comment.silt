@@ -1,0 +1,8 @@
+fn first() -> Int {
+  1
+}
+
+{- a comment {- nested -} that never ends
+fn main() {
+  first()
+}

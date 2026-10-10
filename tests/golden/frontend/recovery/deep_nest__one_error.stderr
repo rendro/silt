@@ -1,0 +1,5 @@
+error[parse]: expected expression, found fn
+ --> deep_nest__one_error.silt:6:11
+   |
+ 6 |   let f = fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) …
+   |           ^^ expected expression, found fn

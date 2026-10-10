@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A quote too many (behind the `0` of `count`): the strings behind it
+-- are read as code and the code between them as strings, and the
+-- backslashes of what were escapes stand outside every string. Silt
+-- has no backslash there, so the quotes are off: the first error is
+-- reported, and nothing that is made of the text behind it.
+fn main() {
+  let count = 0"
+  let a = "one \{ two"
+  let b = "three \" four \\ five"
+  let c: Int = a
+  println("{count} {a} {b} {c}")
+}

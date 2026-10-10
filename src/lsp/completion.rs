@@ -552,7 +552,7 @@ impl Server {
     /// Background (round 81 DX-G4): when the cursor sits at a partial
     /// `xs.|`, the parser's `expect_ident()` after the `.` errors out,
     /// and `parse_let_stmt`'s `?` propagates the failure all the way to
-    /// `parse_fn_decl_recovering`, which salvages a *recovery stub* for
+    /// `parse_fn_decl`, which leaves a *recovery stub* for
     /// the enclosing function — an `FnDecl` with an empty body. Every
     /// prior `let` in that function disappears from the AST, which means
     /// `locals_at_offset` returns nothing for the receiver `xs` and the

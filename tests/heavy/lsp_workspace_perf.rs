@@ -116,3 +116,53 @@ fn highlight_stays_in_the_document_and_references_are_walked_once() {
          the workspace was walked again"
     );
 }
+
+/// Signature help reads the document's tokens, which are made once for
+/// each text: the first request of a megabyte of text lexes it (170 ms
+/// in a debug build here), and the requests behind it read what is
+/// kept (6 ms). A server that lexes for each request answers every one
+/// in the time of the first.
+#[test]
+fn signature_help_lexes_a_document_once() {
+    let mut text = String::new();
+    let mut n = 0;
+    while text.len() < 1 << 20 {
+        text.push_str(&format!(
+            "fn f{n}(a: Int, b: Int) -> Int {{\n  a + b + {n}\n}}\n\n"
+        ));
+        n += 1;
+    }
+    text.push_str("fn main() {\n  f1(1, 2)\n}\n");
+    let line = text.lines().count() as u32 - 2;
+    let mut client = LspClient::spawn();
+    let uri = "file:///silt_lsp_perf/signature.silt";
+    client.did_open(uri, &text);
+    client.recv_until_within(ANSWER_TIMEOUT, "the diagnostics", |msg| {
+        msg.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
+    });
+    // Behind the comma of `f1(1, 2)`.
+    let at = json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": 8}});
+    let mut times = Vec::new();
+    for _ in 0..7 {
+        let (elapsed, response) = timed(&mut client, "textDocument/signatureHelp", at.clone());
+        assert_eq!(
+            response["result"]["signatures"][0]["label"], "fn f1(a: Int, b: Int) -> Int",
+            "{response}"
+        );
+        assert_eq!(response["result"]["activeParameter"], 1, "{response}");
+        times.push(elapsed);
+    }
+    client.shutdown();
+    let first = times.remove(0);
+    times.sort();
+    let later = times[times.len() / 2];
+    eprintln!(
+        "signature help in {} bytes: the first {first:?}, later {later:?}",
+        text.len()
+    );
+    assert!(
+        later * 3 < first,
+        "signature help took {later:?} (the first request {first:?}, all later: {times:?}): \
+         the document is lexed for each request"
+    );
+}

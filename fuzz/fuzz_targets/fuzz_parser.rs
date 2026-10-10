@@ -6,22 +6,20 @@ use silt::parser::Parser;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
-        if let Ok(tokens) = Lexer::new(silt::source::FileId::default(), s).tokenize() {
-            // The parser must never panic — errors are fine.
-            if let Ok(program) = Parser::new(tokens.clone(), s).parse_program() {
-                // If parsing succeeds, structural invariants on the AST
-                // must hold: no span past the source end, non-empty decl
-                // list for non-trivial source, and decl count bounded by
-                // token count. Catches silent AST-corruption bugs that
-                // the old panic-only driver missed.
-                check_parser_invariants(s, &tokens, &program).unwrap_or_else(|err| {
-                    panic!("Parser invariant violated: {err}");
-                });
-            }
-            // Recovery path is the LSP's primary consumer (see
-            // src/lsp/locals.rs, src/lsp/definitions.rs, src/lsp/ast_walk.rs).
-            // Must also be panic-free on arbitrary input.
-            let _ = Parser::new(tokens, s).parse_program_recovering();
+        // The parser must never panic, whatever the tokens (the lexer's
+        // Error tokens among them): it is the language server's parser
+        // too, and reads every text that is being typed.
+        let lexed = Lexer::new(silt::source::FileId::default(), s).tokenize();
+        let (program, errors) = Parser::new(lexed.clone(), s).parse_program_recovering();
+        if errors.is_empty() {
+            // If parsing succeeds, structural invariants on the AST
+            // must hold: no span past the source end, non-empty decl
+            // list for non-trivial source, and decl count bounded by
+            // token count. Catches silent AST-corruption bugs that
+            // the old panic-only driver missed.
+            check_parser_invariants(s, &lexed, &program).unwrap_or_else(|err| {
+                panic!("Parser invariant violated: {err}");
+            });
         }
     }
 });

@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '\'
+ --> quotes_off__a_backslash_outside_a_string_ends_the_reporting.silt:10:16
+    |
+ 10 |   let a = "one \{ two"
+    |                ^ unexpected character: '\'

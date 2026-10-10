@@ -838,9 +838,14 @@ pub enum Decl {
 
 // ── Program ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Program {
     pub decls: Vec<Decl>,
+    /// The names that declarations which did not parse would have bound
+    /// (a type and its variants, a trait, what an `import` brings, a
+    /// `let`): they are declared, and what they mean is unknown, so a
+    /// use of one is no error of its own. Empty for a text that parses.
+    pub unknown: Vec<Symbol>,
     pub statements: StatementMarks,
 }
 

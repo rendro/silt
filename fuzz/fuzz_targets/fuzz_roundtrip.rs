@@ -8,7 +8,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
         // If the source lexes and parses successfully...
         let file = silt::source::FileId::default();
-        let tokens = match Lexer::new(file, s).tokenize() {
+        let tokens = match Lexer::new(file, s).tokenize().checked() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -20,6 +20,7 @@ fuzz_target!(|data: &[u8]| {
         let formatted = silt::format::format(file, s).expect("a program is formatted");
         let tokens2 = Lexer::new(file, &formatted)
             .tokenize()
+            .checked()
             .expect("Formatted code must lex");
         Parser::new(tokens2, &formatted)
             .parse_program()

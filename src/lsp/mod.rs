@@ -749,9 +749,7 @@ pub(crate) mod testing {
             crate::source::SourceName::Path("main.silt".into()),
             source.into(),
         );
-        crate::session::parse_text(file, source)
-            .0
-            .expect("the source lexes")
+        crate::session::parse_text(file, source).0
     }
 }
 

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A byte-order mark in the middle of a file, in front of an `import`:
+-- the import is read, and the uses of the module are no errors.
+fn first() -> Int {
+  1
+}
+﻿import list
+
+fn main() {
+  println("{list.length([1])} {list.length([2])} {first()}")
+}
