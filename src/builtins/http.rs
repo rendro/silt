@@ -559,19 +559,14 @@ impl Got {
     }
 }
 
-/// The read half of a connection, for the reader of its requests. It
-/// notes when bytes have come: a request has begun to arrive.
+/// The read half of a connection, for the reader of its requests.
 #[cfg(feature = "http")]
-struct Reads(Arc<TcpStreamHandle>, Arc<AtomicBool>);
+struct Reads(Arc<TcpStreamHandle>);
 
 #[cfg(feature = "http")]
 impl std::io::Read for Reads {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.0.read(buf)?;
-        if read > 0 {
-            self.1.store(true, Ordering::SeqCst);
-        }
-        Ok(read)
+        self.0.read(buf)
     }
 }
 
@@ -614,7 +609,12 @@ const TEXT: &str = "text/plain; charset=UTF-8";
 /// A response of the server's own: a status, and a word as its body.
 #[cfg(feature = "http")]
 fn plain_response(vm: &Vm, status: u16, why: &str, reply: Reply) -> Vec<u8> {
-    let headers = [("Content-Type".to_string(), TEXT.to_string())];
+    let mut headers = vec![("Content-Type".to_string(), TEXT.to_string())];
+    // The methods that are allowed are those of `Method`.
+    if status == 405 {
+        let allowed = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS";
+        headers.push(("Allow".to_string(), allowed.to_string()));
+    }
     response_bytes(vm, status, &headers, why.as_bytes(), reply)
 }
 
@@ -675,7 +675,8 @@ struct Conn {
     /// Reads the requests; it holds what was read beyond the end of
     /// one. Locked by the operation that reads.
     reader: Arc<Mutex<wire::Reader<Reads>>>,
-    /// Bytes of the request that is being waited for have come.
+    /// Bytes of the request that is being waited for have come, as
+    /// the reader says ([`wire::Reader::begun`]).
     begun: Arc<AtomicBool>,
     /// How many requests the task has served since it last gave way
     /// (see [`Conn::TURN`]).
@@ -793,11 +794,6 @@ impl Conn {
     fn read(&mut self, vm: &mut Vm) -> Step {
         // The task waits: its turn is over.
         self.served = 0;
-        // What was read already and is no whole request is its
-        // beginning.
-        if let Some(reader) = self.reader.try_lock() {
-            self.begun.store(reader.has_bytes(), Ordering::SeqCst);
-        }
         let got: Arc<Mutex<Option<Got>>> = Arc::default();
         let body_follows: Arc<Cell<()>> = Cell::new();
         let (reader, stream, stopped) = (
@@ -1042,9 +1038,11 @@ impl crate::vm::Native for Conn {
 
     fn abandon(&mut self, vm: &mut Vm) {
         // The task ends in the middle: the handler failed, or the task
-        // was stopped with the server or with the program. A request
-        // that is in flight is answered; nothing here waits, so the
-        // answer is what the system takes at once.
+        // was stopped with the server, or dropped with the VM. A
+        // request that is in flight is answered; nothing here waits,
+        // so the answer is what the system takes at once. (A program
+        // that fails under `silt run` ends as a process: nothing runs
+        // here then, and its connections are just closed.)
         let unavailable = Reply::LAST;
         match std::mem::replace(&mut self.state, ConnState::Ended) {
             ConnState::Calling { reply, called } => {
@@ -1142,14 +1140,12 @@ impl Serve {
         }
         let mut child = vm.spawn_child();
         child.spawned = true;
-        let begun = Arc::new(AtomicBool::new(false));
+        let reader = wire::Reader::new(Reads(stream.clone()));
+        let begun = reader.begun();
         child.push_native_frame(Box::new(Conn {
             server: self.server.clone(),
             handle: handle.clone(),
-            reader: Arc::new(Mutex::new(wire::Reader::new(Reads(
-                stream.clone(),
-                begun.clone(),
-            )))),
+            reader: Arc::new(Mutex::new(reader)),
             begun,
             served: 0,
             stream,

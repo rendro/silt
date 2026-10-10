@@ -200,7 +200,7 @@ The handler receives a `Request` and must return a `Response` whose
 |---|---|
 | The handler fails, or returns a status that is none | `500`. The failure is written to stderr and nothing of it is sent. The connection stays usable. |
 | 128 handlers are being called already | `503` at once. That includes a request that would have released the ones that wait: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
-| The method is none of `Method`'s (e.g. `TRACE`) | `405` |
+| The method is none of `Method`'s (e.g. `TRACE`) | `405`, with an `Allow` header that names the seven |
 | The method is `HEAD` | the handler is called; its response is sent without the body, with the length the body has |
 
 ### What the server reads and sends
@@ -229,20 +229,42 @@ one. There is no `Server` header.
 | The body of a request | 10 MiB | `413`, connection closed |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
+| What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A 10 MiB body in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
+| The trailers of a chunked body | 64 KiB | `431`, connection closed |
 | Handlers being called | 128 | `503` |
-| Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | `408` if part of the request has come, and the connection closed; a connection that sent nothing is closed without a word |
+| Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | `408` if part of the request has come, and the connection closed; a connection that sent nothing, or only an empty line, is closed without a word |
 | Time for the body of a request to arrive after its head | 5 min | `408`, connection closed |
 | Time for a response to be taken by the client | 5 min | connection closed |
 | Time the server goes on reading (and dropping) what a client still sends after a refusal or a `408`, so that the answer reaches it | 5 s | connection closed |
 
-A request whose length is not certain is refused with `400`, never
-guessed at: `Content-Length` together with `Transfer-Encoding`;
+A request that two readers could take differently is refused with `400`,
+never guessed at: `Content-Length` together with `Transfer-Encoding`;
 `Content-Length` twice, or not a plain number; a transfer coding other
 than `chunked`; a chunk size that is no hexadecimal number or does not
-fit; a line of the head that ends in a bare LF, or a CR that ends no
-line; whitespace before the colon of a header; a header that goes on in
-the next line. After a refusal the connection is closed, and what
-followed the refused request on it is not served.
+fit; a control byte in a chunk's line or in a trailer; a line of the head
+that ends in a bare LF, or a CR that ends no line; whitespace before the
+colon of a header; a header that goes on in the next line; an HTTP/1.1
+request without a `Host` header, and any request with two. After a
+refusal the connection is closed, and what followed the refused request
+on it is not served.
+
+An `Expect` header that asks for anything but `100-continue` is answered
+`417`, and the connection closed.
+
+### What the handler gets
+
+- `req.headers` has the names as the client sent them: a lookup is
+  case-sensitive, and `Content-Type` and `content-type` are two keys. Of
+  a header sent twice under the same spelling the last one stays.
+- `req.body` is a `String`: bytes of a body that are not UTF-8 are
+  replaced (U+FFFD), so a binary upload does not arrive intact.
+- `req.path` and `req.query` are the request target as sent, cut at the
+  first `?`: nothing is decoded or normalised. A target in absolute form
+  (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
+  `#fragment` stays where it is.
+- A handler that cancels its own server still has its response sent.
+- If the program fails while requests are in flight, it ends as a
+  process: their connections are closed without an answer.
 
 Every connection that waits for a request has one I/O operation in
 flight, of the 4,096 a program can have (see
@@ -253,7 +275,9 @@ flight, of the 4,096 a program can have (see
 While `http.serve` serves a listener, the listener is the server's alone:
 
 - `tcp.accept`, `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
-  `Err(TcpUnknown("the listener is served by http.serve"))` at once.
+  `Err(TcpUnknown("the listener is served by http.serve"))` at once. An
+  accept that was already waiting on the listener when the server started
+  returns the same error at that moment: the server has every client.
 - A second `http.serve` on it is a runtime error.
 
 When the task that serves has been cancelled, the server ends:

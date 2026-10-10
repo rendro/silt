@@ -19,6 +19,8 @@
 //! - Nothing here panics on any input.
 
 use std::io::{self, Read};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 // ── The limits of the server ─────────────────────────────────────
@@ -44,6 +46,14 @@ pub const METHOD_MAX: usize = 32;
 /// The longest line of a chunked body (a chunk size with its
 /// extensions). Beyond it: 400.
 pub const CHUNK_LINE_MAX: usize = 4 * 1024;
+
+/// The most bytes of a chunked body that are not the body: the chunk
+/// sizes, their extensions and the line ends. Beyond it: 400. A body
+/// of the largest size in chunks of a hundred bytes is within it; a
+/// body cut into single bytes, or padded with extensions, cannot make
+/// the server read many times what it is given. (The trailers have
+/// the limit of a head, [`HEAD_MAX`].)
+pub const CHUNK_FRAMING_MAX: usize = 1024 * 1024;
 
 /// The most handlers that are called at a time. A request beyond it
 /// is answered 503.
@@ -123,6 +133,10 @@ pub struct Reader<R> {
     stream: R,
     /// Read from the stream and not yet used.
     buf: Vec<u8>,
+    /// Whether bytes of a request that is not read yet have come
+    /// ([`Reader::has_begun`]), for who waits for the reader
+    /// elsewhere.
+    begun: Arc<AtomicBool>,
 }
 
 /// Either a value or the end of reading this request.
@@ -133,18 +147,27 @@ impl<R: Read> Reader<R> {
         Reader {
             stream,
             buf: Vec::new(),
+            begun: Arc::default(),
         }
     }
 
-    /// Whether bytes were read that no request has used yet: the next
-    /// request has begun to arrive.
-    pub fn has_bytes(&self) -> bool {
-        !self.buf.is_empty()
+    /// Whether the next request has begun to arrive: bytes were read
+    /// that no request has used. An empty line before a request is
+    /// not its beginning.
+    pub fn has_begun(&self) -> bool {
+        !matches!(&self.buf[..], [] | [b'\r'] | [b'\r', b'\n'])
+    }
+
+    /// [`Reader::has_begun`] as of the reader's last read, for who
+    /// cannot ask the reader while it reads.
+    pub fn begun(&self) -> Arc<AtomicBool> {
+        self.begun.clone()
     }
 
     /// Take in bytes of the connection that were read elsewhere.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+        self.begun.store(self.has_begun(), Ordering::SeqCst);
     }
 
     /// The next request, or its refusal, if all of it is among the
@@ -163,6 +186,7 @@ impl<R: Read> Reader<R> {
         let mut ahead = Reader {
             stream: io::empty(),
             buf: self.buf.clone(),
+            begun: Arc::default(),
         };
         let mut never_waits = |waits: bool| match waits {
             true => Err(io::Error::other("the client waits")),
@@ -171,6 +195,7 @@ impl<R: Read> Reader<R> {
         match ahead.next(&mut never_waits) {
             next @ (Next::Request(_) | Next::Refused(_)) => {
                 self.buf = ahead.buf;
+                self.begun.store(self.has_begun(), Ordering::SeqCst);
                 Some(next)
             }
             Next::End | Next::Broken(_) => None,
@@ -190,8 +215,18 @@ impl<R: Read> Reader<R> {
     }
 
     fn request(&mut self, before_body: &mut dyn FnMut(bool) -> io::Result<()>) -> Step<Request> {
+        self.begun.store(self.has_begun(), Ordering::SeqCst);
         let head = self.head()?;
         let framing = framing(&head)?;
+        // A request names the host it is for, once: with none or two,
+        // two readers could take it for different ones. (HTTP/1.0 had
+        // no such header.)
+        let hosts = head.headers.iter();
+        let hosts = hosts.filter(|(name, _)| name.eq_ignore_ascii_case("host"));
+        let hosts = hosts.count();
+        if hosts > 1 || (hosts == 0 && head.minor >= 1) {
+            return Err(Next::Refused(refused(400, "Bad Request")));
+        }
         let waits = expects_continue(&head)?;
         let mut announce = |reader: &Self| {
             // What is here already was sent without waiting.
@@ -240,6 +275,7 @@ impl<R: Read> Reader<R> {
                 Ok(0) => return Ok(false),
                 Ok(n) => {
                     self.buf.extend_from_slice(&chunk[..n]);
+                    self.begun.store(self.has_begun(), Ordering::SeqCst);
                     return Ok(true);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -362,8 +398,10 @@ impl<R: Read> Reader<R> {
                 let mut line: Vec<u8> = self.buf.drain(..=end).collect();
                 line.pop();
                 // A line ends with CRLF: a bare LF is not its end, and
-                // a CR within it is not either.
-                if line.pop() != Some(b'\r') || line.contains(&b'\r') {
+                // a CR within it is not either, nor any other control
+                // byte (a tab may stand in it).
+                let control = |byte: &u8| (*byte < b' ' && *byte != b'\t') || *byte == 0x7f;
+                if line.pop() != Some(b'\r') || line.iter().any(control) {
                     return Err(Next::Refused(BAD_CHUNKS));
                 }
                 return Ok(line);
@@ -383,8 +421,15 @@ impl<R: Read> Reader<R> {
     /// (read and dropped) up to an empty line.
     fn chunked(&mut self) -> Step<Vec<u8>> {
         let mut body = Vec::new();
+        // The bytes that are not the body: each chunk's line with its
+        // line end, and the line end after its bytes.
+        let mut framing = 0;
         loop {
             let line = self.line(CHUNK_LINE_MAX, BAD_CHUNKS)?;
+            framing += line.len() + 4;
+            if framing > CHUNK_FRAMING_MAX {
+                return Err(Next::Refused(BAD_CHUNKS));
+            }
             let digits = match line.iter().position(|byte| *byte == b';') {
                 Some(extensions) => &line[..extensions],
                 None => &line[..],
@@ -718,21 +763,23 @@ mod tests {
 
     #[test]
     fn a_body_of_a_given_length() {
-        let request = one(b"POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello");
+        let request = one(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
         assert_eq!(request.body, b"hello");
     }
 
     #[test]
     fn a_body_in_chunks_with_extensions_and_trailers() {
-        let request = one(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\
-              5;name=value\r\nhello\r\n1\r\n \r\n6\r\nworld!\r\n0\r\nTrailer: dropped\r\n\r\n");
+        let request = one(
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n\
+              5;name=value\r\nhello\r\n1\r\n \r\n6\r\nworld!\r\n0\r\nTrailer: dropped\r\n\r\n",
+        );
         assert_eq!(request.body, b"hello world!");
     }
 
     #[test]
     fn requests_sent_without_waiting_come_in_order() {
         let (requests, last, _) = read_all(
-            b"GET /1 HTTP/1.1\r\n\r\nPOST /2 HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /3 HTTP/1.1\r\n\r\n",
+            b"GET /1 HTTP/1.1\r\nHost: x\r\n\r\nPOST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhiGET /3 HTTP/1.1\r\nHost: x\r\n\r\n",
             3,
         );
         assert!(matches!(last, Next::End));
@@ -772,7 +819,7 @@ mod tests {
             );
         }
         // A method of the longest length is one.
-        let longest = format!("{} / HTTP/1.1\r\n\r\n", "M".repeat(METHOD_MAX));
+        let longest = format!("{} / HTTP/1.1\r\nHost: x\r\n\r\n", "M".repeat(METHOD_MAX));
         assert_eq!(one(longest.as_bytes()).method.len(), METHOD_MAX);
     }
 
@@ -790,7 +837,7 @@ mod tests {
         let mut reader = Reader::new(Never);
         assert!(reader.buffered().is_none());
         reader.feed(
-            b"GET /1 HTTP/1.1\r\n\r\nPOST /2 HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /3 HT",
+            b"GET /1 HTTP/1.1\r\nHost: x\r\n\r\nPOST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhiGET /3 HT",
         );
         let mut targets = Vec::new();
         while let Some(Next::Request(request)) = reader.buffered() {
@@ -799,14 +846,14 @@ mod tests {
         assert_eq!(targets, ["/1", "/2"]);
         // The third is not all there, twice over; then it is.
         assert!(reader.buffered().is_none());
-        reader.feed(b"TP/1.1\r\nContent-Length: 3\r\n\r\nab");
+        reader.feed(b"TP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nab");
         assert!(reader.buffered().is_none());
         reader.feed(b"c");
         assert!(
             matches!(reader.buffered(), Some(Next::Request(request)) if request.body == b"abc")
         );
         // A refusal is there as soon as it is certain.
-        reader.feed(b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n");
+        reader.feed(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n\r\n");
         assert!(matches!(
             reader.buffered(),
             Some(Next::Refused(Refused { status: 400, .. }))
@@ -814,25 +861,96 @@ mod tests {
         // A client that waits to be told is not served from here: the
         // answer to it is written by who reads the connection.
         let mut reader = Reader::new(Never);
-        reader.feed(b"POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n");
+        reader.feed(
+            b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n",
+        );
         assert!(reader.buffered().is_none());
+    }
+
+    /// The framing of a chunked body has a bound of its own: a body
+    /// cut small enough, or padded with extensions, is refused when
+    /// what is not body goes beyond it, and not read on.
+    #[test]
+    fn the_framing_of_chunks_is_bounded() {
+        let head: &[u8] = b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+        // One byte to a chunk: seven bytes on the wire, six of them
+        // framing as it is counted (the size, two line ends, one more
+        // for the line end after the bytes).
+        let chunks = |n: usize| {
+            let mut bytes = head.to_vec();
+            for _ in 0..n {
+                bytes.extend_from_slice(b"1\r\nx\r\n");
+            }
+            bytes
+        };
+        let within = CHUNK_FRAMING_MAX / 5 - 1;
+        let mut whole = chunks(within);
+        whole.extend_from_slice(b"0\r\n\r\n");
+        match read_all(&whole, 64 * 1024) {
+            (requests, Next::End, _) => assert_eq!(requests[0].body.len(), within),
+            other => panic!("{:?}", other.1),
+        }
+        // More chunks than fit, and no end to them.
+        let endless = chunks(CHUNK_FRAMING_MAX / 5 + 1);
+        assert!(matches!(
+            read_all(&endless, 64 * 1024),
+            (requests, Next::Refused(Refused { status: 400, .. }), _) if requests.is_empty()
+        ));
+        // A few bytes of body, and extensions as long as a line may be.
+        let mut padded = head.to_vec();
+        let extension = "e".repeat(CHUNK_LINE_MAX - 8);
+        for _ in 0..CHUNK_FRAMING_MAX / CHUNK_LINE_MAX + 1 {
+            padded.extend_from_slice(format!("1;{extension}\r\nx\r\n").as_bytes());
+        }
+        assert!(matches!(
+            read_all(&padded, 64 * 1024),
+            (requests, Next::Refused(Refused { status: 400, .. }), _) if requests.is_empty()
+        ));
+    }
+
+    /// HTTP/1.0 had no Host header: a request without one is served.
+    #[test]
+    fn a_request_names_its_host_once() {
+        assert_eq!(one(b"GET / HTTP/1.0\r\n\r\n").headers.len(), 0);
+        assert_eq!(one(b"GET / HTTP/1.0\r\nHost: a\r\n\r\n").headers.len(), 1);
+        assert_eq!(one(b"GET / HTTP/1.1\r\nhOsT: a\r\n\r\n").headers.len(), 1);
+    }
+
+    /// What tells a request that has begun from a connection that has
+    /// sent nothing: an empty line before a request is nothing.
+    #[test]
+    fn an_empty_line_is_no_beginning() {
+        let mut reader = Reader::new(io::empty());
+        let begun = reader.begun();
+        for (bytes, has) in [
+            (&b"\r"[..], false),
+            (b"\n", false),
+            (b"G", true),
+            (b"ET / HTTP/1.1\r\nHost: x\r\n\r\n", true),
+        ] {
+            reader.feed(bytes);
+            assert_eq!(reader.has_begun(), has, "{bytes:?}");
+            assert_eq!(begun.load(Ordering::SeqCst), has, "{bytes:?}");
+        }
+        assert!(matches!(reader.buffered(), Some(Next::Request(_))));
+        assert!(!reader.has_begun() && !begun.load(Ordering::SeqCst));
     }
 
     #[test]
     fn who_wants_the_connection_closed() {
-        assert!(one(b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n").close);
-        assert!(one(b"GET / HTTP/1.1\r\nConnection: Keep-Alive, Close\r\n\r\n").close);
+        assert!(one(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").close);
+        assert!(one(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: Keep-Alive, Close\r\n\r\n").close);
         assert!(one(b"GET / HTTP/1.0\r\n\r\n").close);
         assert!(!one(b"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n").close);
-        assert!(!one(b"GET / HTTP/1.1\r\n\r\n").close);
+        assert!(!one(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").close);
         assert!(one(b"GET / HTTP/1.0\r\n\r\n").http10);
-        assert!(!one(b"GET / HTTP/1.1\r\n\r\n").http10);
+        assert!(!one(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").http10);
     }
 
     #[test]
     fn one_empty_line_before_a_request_is_passed_over() {
         let (requests, last, _) = read_all(
-            b"POST /1 HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi\r\nGET /2 HTTP/1.1\r\n\r\n",
+            b"POST /1 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi\r\nGET /2 HTTP/1.1\r\nHost: x\r\n\r\n",
             4,
         );
         assert!(matches!(last, Next::End));
@@ -840,7 +958,10 @@ mod tests {
         assert_eq!(requests[1].target, "/2");
         // Empty lines without end are no request.
         assert_eq!(refusal(&b"\r\n".repeat(40)), 400);
-        assert_eq!(refusal(b"\r\n\r\n\r\nGET / HTTP/1.1\r\n\r\n"), 400);
+        assert_eq!(
+            refusal(b"\r\n\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n"),
+            400
+        );
     }
 
     #[test]
@@ -869,22 +990,26 @@ mod tests {
             assert!(matches!(next, Next::Request(request) if request.body == b"ok"));
             told
         };
-        let head: &[u8] = b"POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n";
+        let head: &[u8] =
+            b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n";
         assert_eq!(told(vec![head, b"ok"]), [true]);
         let chunked: &[u8] =
-            b"POST / HTTP/1.1\r\nExpect: 100-Continue\r\nTransfer-Encoding: chunked\r\n\r\n";
+            b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-Continue\r\nTransfer-Encoding: chunked\r\n\r\n";
         assert_eq!(told(vec![chunked, b"2\r\nok\r\n0\r\n\r\n"]), [true]);
         // A client that did not wait is not told.
         assert_eq!(
             told(vec![
-                b"POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nok"
+                b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nok"
             ]),
             [false]
         );
         // One that expects nothing is not, and HTTP/1.0 knows no such
         // answer.
         assert_eq!(
-            told(vec![b"POST / HTTP/1.1\r\nContent-Length: 2\r\n\r\n", b"ok"]),
+            told(vec![
+                b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n",
+                b"ok"
+            ]),
             [false]
         );
         assert_eq!(
@@ -896,7 +1021,7 @@ mod tests {
         );
         // Without a body nothing is announced.
         let mut reader = Reader::new(Waits(vec![
-            b"GET / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
         ]));
         let mut announced = 0;
         let next = reader.next(&mut |_| {
@@ -907,7 +1032,9 @@ mod tests {
         assert_eq!(announced, 0);
         // An expectation the server cannot meet.
         assert_eq!(
-            refusal(b"POST / HTTP/1.1\r\nExpect: something\r\nContent-Length: 2\r\n\r\nok"),
+            refusal(
+                b"POST / HTTP/1.1\r\nHost: x\r\nExpect: something\r\nContent-Length: 2\r\n\r\nok"
+            ),
             417
         );
         // The answer cannot be written: the connection is broken.
@@ -919,18 +1046,18 @@ mod tests {
     #[test]
     fn the_limits() {
         // The head.
-        let mut long = b"GET / HTTP/1.1\r\nX: ".to_vec();
+        let mut long = b"GET / HTTP/1.1\r\nHost: x\r\nX: ".to_vec();
         long.extend(std::iter::repeat_n(b'a', HEAD_MAX));
         long.extend_from_slice(b"\r\n\r\n");
         assert_eq!(refusal(&long), 431);
-        let mut under = b"GET / HTTP/1.1\r\nX: ".to_vec();
+        let mut under = b"GET / HTTP/1.1\r\nHost: x\r\nX: ".to_vec();
         under.extend(std::iter::repeat_n(b'a', HEAD_MAX - 100));
         under.extend_from_slice(b"\r\n\r\n");
-        assert_eq!(one(&under).headers[0].1.len(), HEAD_MAX - 100);
+        assert_eq!(one(&under).headers[1].1.len(), HEAD_MAX - 100);
         // The headers.
         let many = |n: usize| {
-            let mut bytes = b"GET / HTTP/1.1\r\n".to_vec();
-            for i in 0..n {
+            let mut bytes = b"GET / HTTP/1.1\r\nHost: x\r\n".to_vec();
+            for i in 1..n {
                 bytes.extend_from_slice(format!("H{i}: v\r\n").as_bytes());
             }
             bytes.extend_from_slice(b"\r\n");
@@ -940,16 +1067,19 @@ mod tests {
         assert_eq!(refusal(&many(HEADERS_MAX + 1)), 431);
         // The body: by its declared length, without reading it.
         let declared = format!(
-            "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
             BODY_MAX + 1
         );
         assert_eq!(refusal(declared.as_bytes()), 413);
         assert_eq!(
-            refusal(b"POST / HTTP/1.1\r\nContent-Length: 99999999999999999999999999\r\n\r\n"),
+            refusal(
+                b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999999999999999999999\r\n\r\n"
+            ),
             413
         );
         // The body in chunks: when the chunk that goes over is announced.
-        let mut chunks = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        let mut chunks =
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
         let half = BODY_MAX / 2 + 1;
         for _ in 0..2 {
             chunks.extend_from_slice(format!("{half:x}\r\n").as_bytes());
@@ -961,15 +1091,16 @@ mod tests {
             (requests, Next::Refused(Refused { status: 413, .. }), _) if requests.is_empty()
         ));
         // A body of exactly the limit is taken.
-        let mut exact =
-            format!("POST / HTTP/1.1\r\nContent-Length: {BODY_MAX}\r\n\r\n").into_bytes();
+        let mut exact = format!("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: {BODY_MAX}\r\n\r\n")
+            .into_bytes();
         exact.extend(std::iter::repeat_n(b'c', BODY_MAX));
         match read_all(&exact, 64 * 1024) {
             (requests, Next::End, _) => assert_eq!(requests[0].body.len(), BODY_MAX),
             other => panic!("{:?}", other.1),
         }
         // The trailers.
-        let mut trailers = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n".to_vec();
+        let mut trailers =
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n".to_vec();
         for _ in 0..(HEAD_MAX / 10 + 10) {
             trailers.extend_from_slice(b"T: 123456\r\n");
         }
@@ -983,72 +1114,82 @@ mod tests {
     fn a_request_of_uncertain_length_is_refused() {
         for request in [
             // Two lengths, the same or not.
-            &b"POST / HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\nabcd"[..],
-            b"POST / HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\nabcd",
-            b"POST / HTTP/1.1\r\nContent-Length: 4, 4\r\n\r\nabcd",
+            &b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\nabcd"[..],
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\nabcd",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4, 4\r\n\r\nabcd",
             // A length and a coding.
-            b"POST / HTTP/1.1\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n",
             // No plain number.
-            b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n",
-            b"POST / HTTP/1.1\r\nContent-Length: +4\r\n\r\nabcd",
-            b"POST / HTTP/1.1\r\nContent-Length: 0x4\r\n\r\nabcd",
-            b"POST / HTTP/1.1\r\nContent-Length: 4 4\r\n\r\nabcd",
-            b"POST / HTTP/1.1\r\nContent-Length:\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: +4\r\n\r\nabcd",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0x4\r\n\r\nabcd",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4 4\r\n\r\nabcd",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length:\r\n\r\n",
             // A coding that is not plain `chunked`, or twice.
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: xchunked\r\n\r\n0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: identity\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: xchunked\r\n\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: identity\r\n\r\n",
             // A coding in HTTP/1.0.
             b"POST / HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
             // Chunk sizes that are no size.
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n-1\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0x5\r\nhello\r\n0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1ffffffffffffffff\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5 5\r\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n-1\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0x5\r\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1ffffffffffffffff\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5 5\r\nhello\r\n0\r\n\r\n",
             // A chunk that is not followed by a line end, a bare LF.
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloXX0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloXX0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\nhello\r\n0\r\n\r\n",
+            // No host, or two: which one is it for?
+            b"GET / HTTP/1.1\r\n\r\n",
+            b"GET / HTTP/1.1\r\nX: y\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: a\r\nhost: a\r\n\r\n",
+            b"GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n",
+            // A control byte in a chunk's line or in a trailer.
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5;a=\x00\r\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5;a=\x7f\r\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: a\x01b\r\n\r\n",
             // A CR within a chunk's line.
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5;a=\rb\r\nhello\r\n0\r\n\r\n",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: a\rb\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5;a=\rb\r\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: a\rb\r\n\r\n",
             // A bare LF in a trailer.
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: a\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: a\n\r\n",
             // Lines of the head that end in a bare LF; a CR that ends
             // no line.
             b"GET / HTTP/1.1\nHost: x\n\n",
             b"GET / HTTP/1.1\r\nHost: x\n\r\n",
             b"GET / HTTP/1.1\r\nHost: x\r\n\n",
             b"GET / HTTP/1.1\nHost: x\r\n\r\n",
-            b"POST / HTTP/1.1\r\nContent-Length: 4\nX: y\r\n\r\nabcd",
-            b"GET / HTTP/1.1\r\nX: a\rb\r\n\r\n",
-            b"\nGET / HTTP/1.1\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\nX: y\r\n\r\nabcd",
+            b"GET / HTTP/1.1\r\nHost: x\r\nX: a\rb\r\n\r\n",
+            b"\nGET / HTTP/1.1\r\nHost: x\r\n\r\n",
             // Whitespace before the colon of a header; a header that
             // goes on in the next line.
-            b"POST / HTTP/1.1\r\nContent-Length : 4\r\n\r\nabcd",
-            b"POST / HTTP/1.1\r\nTransfer-Encoding : chunked\r\n\r\n0\r\n\r\n",
-            b"GET / HTTP/1.1\r\nX: a\r\n b\r\n\r\n",
-            b"GET / HTTP/1.1\r\n X: a\r\n\r\n",
+            b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length : 4\r\n\r\nabcd",
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding : chunked\r\n\r\n0\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\nX: a\r\n b\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\n X: a\r\n\r\n",
             // A head that is no head.
             b"GET\r\n\r\n",
-            b"GET  / HTTP/1.1\r\n\r\n",
+            b"GET  / HTTP/1.1\r\nHost: x\r\n\r\n",
             b"GET / HTTP/1.1 \r\n\r\n",
-            b"GET /a b HTTP/1.1\r\n\r\n",
-            b"GET / HTTP/1.1\r\n: x\r\n\r\n",
-            b"GET / HTTP/1.1\r\nX: a\x00b\r\n\r\n",
+            b"GET /a b HTTP/1.1\r\nHost: x\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\n: x\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\nX: a\x00b\r\n\r\n",
             b"GET / HTTP/2.0\r\n\r\n",
-            b"GET / HTTP/1.1\r\nNo colon\r\n\r\n",
-            b"GET / HTTP/1.1\r\nBad Name: x\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\nNo colon\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: x\r\nBad Name: x\r\n\r\n",
             b"\x00\x01\x02\x03\r\n\r\n",
         ] {
             assert_eq!(refusal(request), 400, "{}", String::from_utf8_lossy(request));
         }
         // A size of sixteen digits fits a number and not the limit.
         assert_eq!(
-            refusal(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\n"),
+            refusal(b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\n"),
             413
         );
     }
@@ -1058,13 +1199,13 @@ mod tests {
     #[test]
     fn a_request_cut_short_is_the_end() {
         let whole: &[u8] =
-            b"POST /p HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+            b"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
         for cut in 0..whole.len() {
             let (requests, last, _) = read_all(&whole[..cut], 3);
             assert!(requests.is_empty(), "cut at {cut}");
             assert!(matches!(last, Next::End), "cut at {cut}: {last:?}");
         }
-        let whole: &[u8] = b"POST /p HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
+        let whole: &[u8] = b"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello";
         for cut in 0..whole.len() {
             let (requests, last, _) = read_all(&whole[..cut], 3);
             assert!(

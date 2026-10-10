@@ -312,14 +312,14 @@ fn the_headers_of_a_response() {
 fn requests_on_one_connection_are_answered_in_order() {
     let server = Server::new(ECHO);
     let mut client = server.connect();
-    client.send(b"GET /1 HTTP/1.1\r\n\r\n");
+    client.send(b"GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().body, "GET /1 []");
-    client.send(b"POST /2 HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc");
+    client.send(b"POST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc");
     assert_eq!(client.response().body, "POST /2 [abc]");
     // Five at once, in one write, a body among them.
     client.send(
-        b"GET /3 HTTP/1.1\r\n\r\nPUT /4 HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /5 HTTP/1.1\r\n\r\n\
-          DELETE /6 HTTP/1.1\r\n\r\nGET /7 HTTP/1.1\r\nConnection: close\r\n\r\nGET /never HTTP/1.1\r\n\r\n",
+        b"GET /3 HTTP/1.1\r\nHost: x\r\n\r\nPUT /4 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhiGET /5 HTTP/1.1\r\nHost: x\r\n\r\n\
+          DELETE /6 HTTP/1.1\r\nHost: x\r\n\r\nGET /7 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\nGET /never HTTP/1.1\r\nHost: x\r\n\r\n",
     );
     let bodies: Vec<String> = (0..4).map(|_| client.response().body).collect();
     assert_eq!(
@@ -338,12 +338,12 @@ fn a_body_in_chunks_reaches_the_handler_whole() {
     let server = Server::new(ECHO);
     let mut client = server.connect();
     client.send(
-        b"POST /chunks HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\
+        b"POST /chunks HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n\
           5\r\nhello\r\n1;ext=1\r\n \r\n6\r\nworld!\r\n0\r\nTrailer: dropped\r\n\r\n",
     );
     assert_eq!(client.response().body, "POST /chunks [hello world!]");
     // The connection goes on after the trailers.
-    client.send(b"GET /next HTTP/1.1\r\n\r\n");
+    client.send(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().body, "GET /next []");
 }
 
@@ -354,7 +354,9 @@ fn a_body_in_chunks_reaches_the_handler_whole() {
 fn a_client_that_waits_for_100_continue_is_told_to_go_on() {
     let server = Server::new(ECHO);
     let mut client = server.connect();
-    client.send(b"POST /wait HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n");
+    client.send(
+        b"POST /wait HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+    );
     let mut line = String::new();
     client.0.read_line(&mut line).expect("the interim response");
     assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
@@ -366,7 +368,8 @@ fn a_client_that_waits_for_100_continue_is_told_to_go_on() {
         (200, "POST /wait [body]")
     );
     // An expectation the server cannot meet.
-    let refused = server.ask(b"POST / HTTP/1.1\r\nExpect: a-miracle\r\nContent-Length: 4\r\n\r\n");
+    let refused =
+        server.ask(b"POST / HTTP/1.1\r\nHost: x\r\nExpect: a-miracle\r\nContent-Length: 4\r\n\r\n");
     assert_eq!(refused.status, 417);
 }
 
@@ -393,7 +396,7 @@ fn http_1_0_is_closed_unless_it_asks_to_be_kept() {
 fn head_gets_the_head_and_no_body() {
     let server = Server::new(ECHO);
     let mut client = server.connect();
-    client.send(b"HEAD /h HTTP/1.1\r\n\r\nGET /after HTTP/1.1\r\n\r\n");
+    client.send(b"HEAD /h HTTP/1.1\r\nHost: x\r\n\r\nGET /after HTTP/1.1\r\nHost: x\r\n\r\n");
     let (status, headers) = client.head();
     assert_eq!(status, 200);
     // The length of the body that a GET would have got.
@@ -409,14 +412,18 @@ fn head_gets_the_head_and_no_body() {
 fn a_method_silt_has_no_variant_for_is_405() {
     let server = Server::new(ECHO);
     let mut client = server.connect();
-    client.send(b"TRACE /t HTTP/1.1\r\nContent-Length: 2\r\n\r\nxx");
+    client.send(b"TRACE /t HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nxx");
     let response = client.response();
     assert_eq!(
         (response.status, response.body.as_str()),
         (405, "Method Not Allowed")
     );
+    assert_eq!(
+        response.header("Allow"),
+        Some("GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+    );
     // Its body was read: the connection goes on.
-    client.send(b"OPTIONS /o HTTP/1.1\r\n\r\n");
+    client.send(b"OPTIONS /o HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().body, "OPTIONS /o []");
 }
 
@@ -427,18 +434,18 @@ fn a_method_silt_has_no_variant_for_is_405() {
 fn a_handler_that_fails_is_500_and_the_connection_goes_on() {
     let server = Server::new(ECHO);
     let mut client = server.connect();
-    client.send(b"GET /fail HTTP/1.1\r\n\r\n");
+    client.send(b"GET /fail HTTP/1.1\r\nHost: x\r\n\r\n");
     let failed = client.response();
     assert_eq!(
         (failed.status, failed.body.as_str()),
         (500, "Internal Server Error")
     );
     assert_eq!(failed.header("Connection"), None);
-    client.send(b"GET /fail HTTP/1.1\r\n\r\nGET /fine HTTP/1.1\r\n\r\n");
+    client.send(b"GET /fail HTTP/1.1\r\nHost: x\r\n\r\nGET /fine HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().status, 500);
     assert_eq!(client.response().body, "GET /fine []");
     // One that asked for the end of the connection gets it.
-    client.send(b"GET /fail HTTP/1.1\r\nConnection: close\r\n\r\n");
+    client.send(b"GET /fail HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     let last = client.response();
     assert_eq!(last.status, 500);
     assert_eq!(last.header("Connection"), Some("close"));
@@ -463,13 +470,13 @@ fn a_status_that_is_none_is_500() {
     );
     let mut client = server.connect();
     for path in ["/100", "/0", "/1000"] {
-        client.send(format!("GET {path} HTTP/1.1\r\n\r\n").as_bytes());
+        client.send(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes());
         assert_eq!(client.response().status, 500, "{path}");
     }
-    client.send(b"GET /599 HTTP/1.1\r\n\r\n");
+    client.send(b"GET /599 HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().status, 599);
     // 204 has no body and no length.
-    client.send(b"GET /204 HTTP/1.1\r\n\r\nGET /599 HTTP/1.1\r\n\r\n");
+    client.send(b"GET /204 HTTP/1.1\r\nHost: x\r\n\r\nGET /599 HTTP/1.1\r\nHost: x\r\n\r\n");
     let (status, headers) = client.head();
     assert_eq!(status, 204);
     assert!(
@@ -594,7 +601,7 @@ fn a_request_beyond_a_limit_is_refused() {
 
     // The head.
     let head = |value: usize| {
-        let mut request = b"GET / HTTP/1.1\r\nX: ".to_vec();
+        let mut request = b"GET / HTTP/1.1\r\nHost: x\r\nX: ".to_vec();
         request.extend(std::iter::repeat_n(b'a', value));
         request.extend_from_slice(b"\r\n\r\n");
         request
@@ -603,14 +610,14 @@ fn a_request_beyond_a_limit_is_refused() {
     refused(&head(HEAD_MAX), 431);
     // One that never ends is refused when it is too long, not read on.
     refused(&vec![b'A'; HEAD_MAX + 1][..], 400);
-    let mut endless = b"GET / HTTP/1.1\r\n".to_vec();
+    let mut endless = b"GET / HTTP/1.1\r\nHost: x\r\n".to_vec();
     endless.extend(std::iter::repeat_n(b'a', HEAD_MAX));
     refused(&endless, 431);
 
     // The headers.
     let headers = |n: usize| {
-        let mut request = b"GET / HTTP/1.1\r\n".to_vec();
-        for i in 0..n {
+        let mut request = b"GET / HTTP/1.1\r\nHost: x\r\n".to_vec();
+        for i in 1..n {
             request.extend_from_slice(format!("H{i}: v\r\n").as_bytes());
         }
         request.extend_from_slice(b"\r\n");
@@ -622,18 +629,19 @@ fn a_request_beyond_a_limit_is_refused() {
     // The body, by its declared length: refused before a byte of it
     // is sent.
     let declared = format!(
-        "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+        "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
         BODY_MAX + 1
     );
     refused(declared.as_bytes(), 413);
-    let mut exact = format!("POST / HTTP/1.1\r\nContent-Length: {BODY_MAX}\r\n\r\n").into_bytes();
+    let mut exact =
+        format!("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: {BODY_MAX}\r\n\r\n").into_bytes();
     exact.extend(std::iter::repeat_n(b'b', BODY_MAX));
     assert_eq!(server.ask(&exact).body, BODY_MAX.to_string());
 
     // The body in chunks: refused when the chunk that goes beyond is
     // announced.
     let half = BODY_MAX / 2;
-    let mut chunks = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+    let mut chunks = b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
     for _ in 0..2 {
         chunks.extend_from_slice(format!("{half:x}\r\n").as_bytes());
         chunks.extend(std::iter::repeat_n(b'c', half));
@@ -652,26 +660,32 @@ fn a_request_beyond_a_limit_is_refused() {
 #[test]
 fn a_request_of_uncertain_length_is_refused_and_nothing_after_it_is_served() {
     let server = Server::new(ECHO);
-    let after: &[u8] = b"GET /smuggled HTTP/1.1\r\n\r\n";
+    let after: &[u8] = b"GET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n";
     for request in [
-        &b"POST / HTTP/1.1\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"[..],
-        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 26\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length: 26\r\nContent-Length: 0\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length: +0\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length: zero\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length: 0, 26\r\n\r\n",
-        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffffff\r\n",
-        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0x0\r\n\r\n",
-        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\n\r\n",
-        b"POST / HTTP/1.1\r\nTransfer-Encoding: xchunked\r\n\r\n0\r\n\r\n",
-        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked, identity\r\n\r\n0\r\n\r\n",
+        &b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"[..],
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nContent-Length: 26\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 26\r\nContent-Length: 0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: +0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: zero\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0, 26\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffffff\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0x0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: xchunked\r\n\r\n0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, identity\r\n\r\n0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0;a=\x00\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nT: \x01\r\n\r\n",
+        // Which host it is for is not certain either: none, or two.
+        b"GET / HTTP/1.1\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+        b"GET / HTTP/1.0\r\nHost: a\r\nhost: b\r\n\r\n",
         b"GET / HTTP/1.1\nHost: x\n\n",
         b"GET / HTTP/1.1\r\nHost: x\n\r\n",
-        b"GET / HTTP/1.1\r\nX: a\rb\r\n\r\n",
-        b"POST / HTTP/1.1\r\nContent-Length : 0\r\n\r\n",
-        b"POST / HTTP/1.1\r\nX: a\r\n Content-Length: 26\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: x\r\nX: a\rb\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length : 0\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nX: a\r\n Content-Length: 26\r\n\r\n",
     ] {
         let what = String::from_utf8_lossy(request).into_owned();
         let mut client = server.connect();
@@ -683,7 +697,7 @@ fn a_request_of_uncertain_length_is_refused_and_nothing_after_it_is_served() {
     }
     // The server still serves.
     assert_eq!(
-        server.ask(b"GET /fine HTTP/1.1\r\n\r\n").body,
+        server.ask(b"GET /fine HTTP/1.1\r\nHost: x\r\n\r\n").body,
         "GET /fine []"
     );
 }
@@ -701,7 +715,7 @@ fn what_is_no_request_is_not_served() {
     );
     // Cut short at every byte, and the connection closed.
     let whole: &[u8] =
-        b"POST /cut HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        b"POST /cut HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
     for cut in 0..whole.len() {
         let mut client = server.connect();
         client.send(&whole[..cut]);
@@ -740,7 +754,10 @@ fn what_is_no_request_is_not_served() {
     assert_eq!(client.response().status, 400);
     assert_eq!(client.rest(), b"");
 
-    assert_eq!(server.ask(b"GET /fine HTTP/1.1\r\n\r\n").body, "fine");
+    assert_eq!(
+        server.ask(b"GET /fine HTTP/1.1\r\nHost: x\r\n\r\n").body,
+        "fine"
+    );
     assert_eq!(server.err.contents(), "");
 }
 
@@ -766,12 +783,12 @@ fn an_idle_connection_is_closed_after_the_time_for_a_head() {
     let clock = TestClock::default();
     let server = Server::on(ECHO, Some(clock.clone()));
     let mut client = server.connect();
-    client.send(b"GET /1 HTTP/1.1\r\n\r\n");
+    client.send(b"GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().body, "GET /1 []");
     // Not before: whenever the server began to wait, less than the
     // time has passed, and the connection still serves.
     clock.advance(REQUEST_TIME - Duration::from_secs(1));
-    client.send(b"GET /2 HTTP/1.1\r\n\r\n");
+    client.send(b"GET /2 HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(client.response().body, "GET /2 []");
     advance_until(
         &clock,
@@ -779,13 +796,16 @@ fn an_idle_connection_is_closed_after_the_time_for_a_head() {
         "an idle connection is never closed",
         || client.is_closed(),
     );
-    // A connection that never sent anything likewise.
+    // A connection that never sent anything likewise, and one that
+    // sent an empty line and no request.
     let mut silent = server.connect();
+    let mut empty = server.connect();
+    empty.send(b"\r\n");
     advance_until(
         &clock,
         REQUEST_TIME,
         "a silent connection is never closed",
-        || silent.is_closed(),
+        || silent.is_closed() && empty.is_closed(),
     );
 }
 
@@ -797,7 +817,7 @@ fn a_head_that_trickles_in_does_not_get_more_time() {
     let clock = TestClock::default();
     let server = Server::on(ECHO, Some(clock.clone()));
     let mut client = server.connect();
-    client.send(b"GET /slow HTTP/1.1\r\n");
+    client.send(b"GET /slow HTTP/1.1\r\nHost: x\r\n");
     let mut sent = 0;
     let patience = Instant::now() + PATIENCE;
     while !client.has_word() {
@@ -834,7 +854,9 @@ fn a_body_that_does_not_come_is_not_waited_for() {
     // The head has been read when the server says that the body may
     // come.
     let head_is_read = |client: &mut Client| {
-        client.send(b"POST /body HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n");
+        client.send(
+            b"POST /body HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+        );
         let mut line = String::new();
         client.0.read_line(&mut line).expect("the interim response");
         assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
@@ -874,7 +896,7 @@ fn a_response_that_is_not_taken_is_given_up() {
         Some(clock.clone()),
     );
     let mut client = server.connect();
-    client.send(b"GET /big HTTP/1.1\r\n\r\n");
+    client.send(b"GET /big HTTP/1.1\r\nHost: x\r\n\r\n");
     let (status, headers) = client.head();
     assert_eq!(status, 200);
     assert!(headers.contains(&format!("Content-Length: {LENGTH}")));
@@ -909,7 +931,7 @@ fn after_a_refusal_the_client_is_heard_out_for_a_time() {
     let mut client = server.connect();
     // Refused on its head; megabytes of a body follow, which the
     // server takes although it has answered.
-    client.send(b"POST /big HTTP/1.1\r\nContent-Length: 99999999999\r\n\r\n");
+    client.send(b"POST /big HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999999\r\n\r\n");
     let body = vec![b'x'; 64 * 1024];
     for _ in 0..64 {
         client.send(&body);
@@ -935,7 +957,7 @@ fn after_a_refusal_the_client_is_heard_out_for_a_time() {
     );
     // One that stops sending is done with at once.
     let mut client = server.connect();
-    client.send(b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n");
+    client.send(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n\r\n");
     assert_eq!(client.response().status, 400);
     assert_eq!(client.rest(), b"");
 }

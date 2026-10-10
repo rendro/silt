@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::common::ok;
-use crate::runtime::handle::{TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
@@ -100,8 +100,8 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        Step, TcpListenerHandle, TcpStreamHandle, Value, Vm, VmError, require_bytes,
-        require_listener, require_string, served, tcp_timeout_err,
+        Accepted, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, Vm, VmError, err,
+        require_bytes, require_listener, require_string, served, tcp_timeout_err,
     };
     use crate::runtime::handle::ReadWrite;
 
@@ -145,13 +145,9 @@ mod tls {
         let next_id = vm.next_tcp_id();
         let (giving_up, stop) = GivingUp::of(&listener);
         vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-            match do_accept_tls(&listener, &giving_up, &cert_pem, &key_pem, next_id) {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                Err(e) => Value::variant(
-                    bv::ERR,
-                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
-                ),
-            }
+            accepted(do_accept_tls(
+                &listener, &giving_up, &cert_pem, &key_pem, next_id,
+            ))
         })
     }
 
@@ -176,25 +172,30 @@ mod tls {
         let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
         let next_id = vm.next_tcp_id();
         let (giving_up, stop) = GivingUp::of(&listener);
-        vm.io_stoppable(
-            "tcp",
-            tcp_timeout_err,
-            stop,
-            move || match do_accept_tls_mtls(
+        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+            accepted(do_accept_tls_mtls(
                 &listener,
                 &giving_up,
                 &cert_pem,
                 &key_pem,
                 &client_ca_pem,
                 next_id,
-            ) {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                Err(e) => Value::variant(
-                    bv::ERR,
-                    vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
-                ),
-            },
-        )
+            ))
+        })
+    }
+
+    /// The value of a TLS accept: the connection, or why there is
+    /// none. A server that has taken the listener is the same error
+    /// here as for a plain accept.
+    fn accepted(result: Result<Arc<TcpStreamHandle>, String>) -> Value {
+        match result {
+            Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+            Err(e) if e == SERVED => err(e),
+            Err(e) => Value::variant(
+                bv::ERR,
+                vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
+            ),
+        }
     }
 
     fn do_connect_tls(
@@ -340,8 +341,9 @@ mod tls {
         /// handshake; an error if the accept was given up.
         fn accepted(&self, listener: &TcpListenerHandle) -> Result<TcpStream, String> {
             let sock = match listener.accept(&self.stopped, false) {
-                Ok(Some(sock)) => sock,
-                Ok(None) => return Err("tcp accept: given up".into()),
+                Ok(Accepted::Conn(sock)) => sock,
+                Ok(Accepted::GivenUp) => return Err("tcp accept: given up".into()),
+                Ok(Accepted::Served) => return Err(SERVED.into()),
                 Err(e) => return Err(format!("tcp accept: {e}")),
             };
             let mut handshaking = self.handshaking.lock();
@@ -634,24 +636,28 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
     vm.io_wait("tcp", tcp_timeout_err, op)
 }
 
+/// What an accept on a listener that an `http.serve` has to itself
+/// says.
+const SERVED: &str = "the listener is served by http.serve";
+
 /// The error of an accept on a listener that an `http.serve` has to
 /// itself.
 fn served(listener: &TcpListenerHandle) -> Option<Value> {
-    listener
-        .is_served()
-        .then(|| err("the listener is served by http.serve"))
+    listener.is_served().then(|| err(SERVED))
 }
 
 /// An accept on `listener`, on the I/O pool: the operation of
 /// `tcp.accept`, and of each accept of `http.serve`. Its value is
 /// `Ok(TcpStream)` or `Err(TcpError)`. It is given up when its waiter
-/// goes ([`TcpListenerHandle::stop`]). With `all_ready` it also takes
-/// the other connections that are ready, for the caller to take from
-/// the listener ([`TcpListenerHandle::take_kept`]).
+/// goes ([`TcpListenerHandle::stop`]). `server` says that it is the
+/// accept of the `http.serve` that has the listener: it also takes the
+/// other connections that are ready, for the server to take from the
+/// listener ([`TcpListenerHandle::take_kept`]); any other accept ends
+/// with an error when a server takes the listener.
 pub(crate) fn accept_op(
     vm: &mut Vm,
     listener: &Arc<TcpListenerHandle>,
-    all_ready: bool,
+    server: bool,
 ) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
     let (stopped, stop) = accept_stop(listener);
@@ -659,13 +665,15 @@ pub(crate) fn accept_op(
     vm.runtime
         .io_pool
         .submit(tcp_timeout_err, move || {
-            match accepting.accept(&stopped, all_ready) {
-                Ok(Some(stream)) => Value::variant(
+            match accepting.accept(&stopped, server) {
+                Ok(Accepted::Conn(stream)) => Value::variant(
                     bv::OK,
                     vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
                 ),
                 // Given up: nobody reads the value.
-                Ok(None) => err_closed(),
+                Ok(Accepted::GivenUp) => err_closed(),
+                // A server took the listener while the accept waited.
+                Ok(Accepted::Served) => err(SERVED),
                 Err(e) => tcp_io_err(&e),
             }
         })

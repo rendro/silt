@@ -110,7 +110,8 @@ tries again, a second or more later.
 A listener is also what [`http.serve`](http.md#httpserve) serves on.
 While it does, the listener is the server's alone: `tcp.accept`,
 `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
-`Err(TcpUnknown("the listener is served by http.serve"))` at once. When
+`Err(TcpUnknown("the listener is served by http.serve"))` at once, and
+so does an accept that was waiting on it when the server started. When
 the task that serves has been cancelled, the listener is the program's
 again: the next `tcp.accept` gets the next client.
 

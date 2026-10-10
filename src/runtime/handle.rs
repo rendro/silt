@@ -74,6 +74,18 @@ pub struct TcpListenerHandle {
     served: Mutex<Option<Served>>,
 }
 
+/// What an accept on a listener came to.
+pub enum Accepted {
+    Conn(std::net::TcpStream),
+    /// The accept was given up ([`TcpListenerHandle::stop`] with its
+    /// flag): nobody waits for it.
+    GivenUp,
+    /// An `http.serve` has the listener to itself: no other accept
+    /// takes a connection from it, also not one that was waiting when
+    /// the server started.
+    Served,
+}
+
 /// The mark of an `http.serve` on its listener.
 struct Served {
     /// Which call of `http.serve` it is.
@@ -148,6 +160,16 @@ impl TcpListenerHandle {
         }
         let token = TOKENS.fetch_add(1, AtomicOrdering::Relaxed);
         *served = Some(Served { token, cancelled });
+        drop(served);
+        // An accept that waits on the listener gives way: the one in
+        // the system's call is woken as one that is given up is, and
+        // those that wait their turn look again. Each ends with
+        // [`Accepted::Served`].
+        let current = self.accepting.lock().current.clone();
+        if let Some(current) = current {
+            self.stop(&current);
+        }
+        self.turn.notify_all();
         Some(token)
     }
 
@@ -159,29 +181,32 @@ impl TcpListenerHandle {
         }
     }
 
-    /// The next connection; `None` if the accept was given up
-    /// ([`TcpListenerHandle::stop`] with the same flag). A client's
-    /// connection is never lost to an accept that was given up: it is
+    /// The next connection, for the accept whose flag is `stopped`.
+    /// A client's connection is never lost to an accept that was
+    /// given up, or that a server has taken the listener from: it is
     /// kept for the next one.
     ///
-    /// With `all_ready`, the connections that are ready besides the
-    /// one returned are accepted too, without waiting, and kept
-    /// ([`TcpListenerHandle::take_kept`]): a server takes a burst of
-    /// connections off the system's queue in one go, not one for each
-    /// time its task comes round.
-    pub fn accept(
-        &self,
-        stopped: &Arc<AtomicBool>,
-        all_ready: bool,
-    ) -> std::io::Result<Option<std::net::TcpStream>> {
+    /// `server` says that the accept is the one of the `http.serve`
+    /// that has the listener. Such an accept also takes the
+    /// connections that are ready besides the one it returns, without
+    /// waiting, and keeps them ([`TcpListenerHandle::take_kept`]): a
+    /// server takes a burst of connections off the system's queue in
+    /// one go, not one for each time its task comes round. Any other
+    /// accept ends with [`Accepted::Served`] while a server has the
+    /// listener.
+    pub fn accept(&self, stopped: &Arc<AtomicBool>, server: bool) -> std::io::Result<Accepted> {
+        let foreign = |listener: &Self| !server && listener.is_served();
         {
             let mut accepting = self.accepting.lock();
             loop {
+                if foreign(self) {
+                    return Ok(Accepted::Served);
+                }
                 if stopped.load(AtomicOrdering::SeqCst) {
-                    return Ok(None);
+                    return Ok(Accepted::GivenUp);
                 }
                 if let Some(stream) = accepting.kept.pop_front() {
-                    return Ok(Some(stream));
+                    return Ok(Accepted::Conn(stream));
                 }
                 if accepting.current.is_none() {
                     break;
@@ -198,9 +223,9 @@ impl TcpListenerHandle {
                     let mut accepting = self.accepting.lock();
                     let wake = accepting.wakes.iter().position(|addr| *addr == peer);
                     let Some(wake) = wake else {
-                        if stopped.load(AtomicOrdering::SeqCst) {
-                            // A client's, and nobody waits for this
-                            // accept: it is the next accept's.
+                        if stopped.load(AtomicOrdering::SeqCst) || foreign(self) {
+                            // A client's, and this accept is not to
+                            // have it: it is the next accept's.
                             accepting.kept.push_back(stream);
                             break Ok(None);
                         }
@@ -220,12 +245,17 @@ impl TcpListenerHandle {
                 Err(e) => break Err(e),
             }
         };
-        if all_ready && matches!(result, Ok(Some(_))) {
+        if server && matches!(result, Ok(Some(_))) {
             self.keep_the_ready();
         }
         self.accepting.lock().current = None;
         self.turn.notify_all();
-        result
+        Ok(match result? {
+            Some(stream) => Accepted::Conn(stream),
+            // A server took the listener while this accept waited.
+            None if foreign(self) => Accepted::Served,
+            None => Accepted::GivenUp,
+        })
     }
 
     /// Accept the connections that are ready, without waiting, and
@@ -783,10 +813,10 @@ mod tests {
             .collect();
         let flag = Arc::new(AtomicBool::new(false));
         let first = listener.accept(&flag, false).expect("accept");
-        assert!(first.is_some());
+        assert!(matches!(first, Accepted::Conn(_)));
         assert!(listener.take_kept().is_none());
         let second = listener.accept(&flag, true).expect("accept");
-        assert!(second.is_some());
+        assert!(matches!(second, Accepted::Conn(_)));
         let mut kept = Vec::new();
         while let Some(conn) = listener.take_kept() {
             kept.push(conn);
@@ -805,5 +835,51 @@ mod tests {
             .expect("the client's connection");
         conn.read_exact(&mut byte).expect("a read that waits");
         assert_eq!(&byte, b"x");
+    }
+
+    /// An accept that waits in the system's call when an `http.serve`
+    /// takes the listener gives way at that moment, and so does one
+    /// that waits its turn behind it: the server owns every client
+    /// from then on.
+    #[test]
+    fn a_server_takes_the_listener_from_the_accepts_that_wait() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let listener = Arc::new(TcpListenerHandle::new(0, listener));
+        let waiting: Vec<_> = (0..2)
+            .map(|_| {
+                let listener = listener.clone();
+                std::thread::spawn(move || {
+                    let flag = Arc::new(AtomicBool::new(false));
+                    listener.accept(&flag, false).expect("accept")
+                })
+            })
+            .collect();
+        // One of them is in the call, or about to be.
+        while listener.accepting.lock().current.is_none() {
+            std::thread::yield_now();
+        }
+        let token = listener.serve(None).expect("nobody serves it yet");
+        for accept in waiting {
+            assert!(matches!(accept.join().expect("joined"), Accepted::Served));
+        }
+        // The next client is the server's, and no connection that woke
+        // an accept is taken for one.
+        let mut client = TcpStream::connect(addr).expect("connect");
+        let flag = Arc::new(AtomicBool::new(false));
+        let Accepted::Conn(mut conn) = listener.accept(&flag, true).expect("accept") else {
+            panic!("the server's accept got no connection");
+        };
+        use std::io::{Read, Write};
+        client.write_all(b"x").expect("write");
+        let mut byte = [0u8; 1];
+        conn.read_exact(&mut byte).expect("the client's byte");
+        assert!(listener.take_kept().is_none());
+        // Any other accept is told, at once.
+        assert!(matches!(
+            listener.accept(&flag, false).expect("accept"),
+            Accepted::Served
+        ));
+        listener.served_no_more(token);
     }
 }
