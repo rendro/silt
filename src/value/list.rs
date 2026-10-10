@@ -7,8 +7,9 @@
 //!
 //! How a list is stored is this file's own. The rest of silt has its
 //! length, its elements by index and in order, and its parts
-//! ([`List::len`], [`List::get`], [`List::iter`], [`List::slice`]), and
-//! nothing that tells one way of storing a list from another. What
+//! ([`List::len`], [`List::get`], [`List::iter`], [`List::slice`]), the
+//! list of its elements and another's ([`List::concat`]), and nothing
+//! that tells one way of storing a list from another. What
 //! would otherwise visit every element of a list that holds none is
 //! asked here, and answered from the two ends ([`List::contains`],
 //! [`List::position`], [`List::sum_ints`], [`List::product_ints`],
@@ -184,6 +185,28 @@ impl List {
         Ok(match self.elements() {
             Elements::Items(items) => items.to_vec(),
             Elements::Ints(lo, hi) => (lo..=hi).map(Value::Int).collect(),
+        })
+    }
+
+    /// The elements of the list and then those of `other`, as one
+    /// list that holds them: a list that holds none may have too many
+    /// for that.
+    pub fn concat(&self, other: &List) -> Result<List, TooLong> {
+        self.writable()?;
+        other.writable()?;
+        if other.is_empty() {
+            return Ok(self.clone());
+        }
+        if self.is_empty() {
+            return Ok(other.clone());
+        }
+        Ok(match (self.elements(), other.elements()) {
+            // (The elements of both are there: one pass over the two,
+            // into the buffer the list keeps.)
+            (Elements::Items(first), Elements::Items(second)) => {
+                first.iter().chain(second).cloned().collect()
+            }
+            _ => self.iter().chain(other.iter()).collect(),
         })
     }
 

@@ -647,6 +647,47 @@ fn a_part_of_a_list_is_the_list_of_its_elements() {
     }
 }
 
+/// Two lists as one: the elements of the first and then those of the
+/// second, however each is stored, and a part of a list as well as a
+/// whole one. A list that holds no element is made one that holds
+/// them, if they are few enough.
+#[test]
+fn two_lists_as_one_list() {
+    for xs in both() {
+        for ys in [made(10..13), ints(10, 12)] {
+            let joined = xs.concat(&ys).expect("few enough elements");
+            assert_eq!(joined.len(), 13);
+            assert_eq!(elements(&joined), elements(&made(0..13)));
+            assert_eq!(xs.len(), 10);
+            // Parts of lists.
+            let parts = xs
+                .slice(8, 10)
+                .concat(&ys.slice(1, 2))
+                .expect("three elements");
+            assert_eq!(
+                elements(&parts),
+                [Value::Int(8), Value::Int(9), Value::Int(11)]
+            );
+        }
+        let none = List::new();
+        assert_eq!(
+            elements(&xs.concat(&none).expect("the list")),
+            elements(&xs)
+        );
+        assert_eq!(
+            elements(&none.concat(&xs).expect("the list")),
+            elements(&xs)
+        );
+        assert!(none.concat(&none).expect("no element").is_empty());
+    }
+    let cap = MAX_RANGE_MATERIALIZE as i64;
+    let long = ints(1, cap + 1);
+    let short = made(0..1);
+    assert!(long.concat(&short).is_err());
+    assert!(short.concat(&long).is_err());
+    assert!(long.concat(&List::new()).is_err());
+}
+
 #[test]
 fn a_bound_of_a_part_past_the_end_is_the_end() {
     for xs in both() {

@@ -7,7 +7,7 @@ use crate::builtins::registry::registry;
 use crate::bytecode::{Instr, Op, VmClosure};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{List, MAX_RANGE_MATERIALIZE, Record, Value};
+use crate::value::{List, Record, Value};
 
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
@@ -815,20 +815,7 @@ impl Vm {
                         "ListConcat: an operand is not a list",
                     ));
                 };
-                // Both sizes are checked before an element of either is
-                // made: two operands near the limit would make a list
-                // of 800 MB.
-                a.writable()?;
-                b.writable()?;
-                if a.len() + b.len() > MAX_RANGE_MATERIALIZE {
-                    return Err(VmError::new(format!(
-                        "concatenated list exceeds maximum size of {} elements",
-                        MAX_RANGE_MATERIALIZE
-                    )));
-                }
-                let mut result = a.to_vec()?;
-                result.extend(b);
-                self.push(Value::list(result));
+                self.push(crate::builtins::collections::concat(&a, &b)?);
             }
             Instr::GetField { index } => {
                 let target = self.pop();

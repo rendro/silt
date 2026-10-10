@@ -119,6 +119,23 @@ fn set_acc(acc: &mut Value, _item: Value, result: Value) -> Flow {
     next()
 }
 
+/// The list of the elements of `xs` and then those of `ys`:
+/// `list.concat(xs, ys)`, and `[..xs, ..ys]`.
+///
+/// Both sizes are checked before an element of either is made: two
+/// operands near the limit would make a list of 800 MB.
+pub(crate) fn concat(xs: List, ys: List) -> Result<Value, VmError> {
+    xs.writable()?;
+    ys.writable()?;
+    if xs.len() + ys.len() > MAX_RANGE_MATERIALIZE {
+        return Err(VmError::new(format!(
+            "concatenated list exceeds maximum size of {} elements",
+            MAX_RANGE_MATERIALIZE
+        )));
+    }
+    Ok(Value::List(xs.concat(ys)?))
+}
+
 fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
     Ok(Value::list(std::mem::take(out)))
 }
@@ -618,16 +635,8 @@ pub(crate) mod list {
             Ok(items)
         }
 
-        fn concat(xs: List, ys: List) -> Result<Vec<Value>, VmError> {
-            let mut result = xs.to_vec()?;
-            result.extend(ys.to_vec()?);
-            if result.len() > MAX_RANGE_MATERIALIZE {
-                return Err(VmError::new(format!(
-                    "concatenated list exceeds maximum size of {} elements",
-                    MAX_RANGE_MATERIALIZE
-                )));
-            }
-            Ok(result)
+        fn concat(xs: List, ys: List) -> Result<Value, VmError> {
+            super::concat(xs, ys)
         }
 
         fn get(xs: List, i: i64) -> Result<Option<Value>, VmError> {
