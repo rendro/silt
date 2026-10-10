@@ -744,10 +744,7 @@ impl Server {
     pub(super) fn workspace_symbols_matching(&self, query: &str) -> Vec<SymbolInformation> {
         let query = query.to_lowercase();
         let mut results = Vec::new();
-        let mut uris: Vec<&Uri> = self.documents.keys().collect();
-        uris.sort_by_key(|uri| uri.as_str());
-        for uri in uris {
-            let doc = &self.documents[uri];
+        for (uri, doc) in &self.documents {
             let mut symbols = match self.checked(doc) {
                 Some((session, module)) => checked_symbols(session, module, uri, &doc.source),
                 None => match &doc.program {

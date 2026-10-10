@@ -12,7 +12,7 @@
 //! the session's checked module (the AST with its types), its top-level
 //! definitions and its local bindings.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -208,7 +208,7 @@ impl Server {
     /// with one diagnostic that says so: the client has applied the edit
     /// already, so answering its next requests from the previous analysis
     /// would hand it positions for a text it no longer has.
-    pub(super) fn analyse_pending_with(&mut self, analyse: fn(&mut Self, &HashSet<Uri>)) {
+    pub(super) fn analyse_pending_with(&mut self, analyse: fn(&mut Self, &BTreeSet<Uri>)) {
         self.deadline = None;
         if self.pending.is_empty() && self.disk_events.is_empty() {
             return;
@@ -240,7 +240,7 @@ impl Server {
 
     /// Analyse every open document, after the documents `pending` changed
     /// (or closed), and publish what changed.
-    fn analyse(&mut self, pending: &HashSet<Uri>) {
+    fn analyse(&mut self, pending: &BTreeSet<Uri>) {
         // The texts the sessions get: every open document's, and the disk
         // text of a document just closed.
         let mut texts: Vec<(PathBuf, Arc<str>)> = Vec::new();
@@ -282,7 +282,7 @@ impl Server {
         for (uri, doc) in self.documents.iter().filter(|(_, doc)| doc.open) {
             uris_by_key.insert(doc.key.clone(), uri.clone());
         }
-        let mut diagnostics: HashMap<Uri, Vec<Diagnostic>> = HashMap::new();
+        let mut diagnostics: BTreeMap<Uri, Vec<Diagnostic>> = BTreeMap::new();
         let mut analysed: Vec<(Uri, ModuleRef)> = Vec::new();
         for (dir, uris) in &by_project {
             // A session is made again when the project's manifest or
@@ -350,10 +350,7 @@ impl Server {
                 self.publish_diagnostics(uri.clone(), Vec::new());
             }
         }
-        let mut uris: Vec<&Uri> = diagnostics.keys().collect();
-        uris.sort_by_key(|u| u.as_str());
-        for uri in uris {
-            let list = &diagnostics[uri];
+        for (uri, list) in &diagnostics {
             if previous.get(uri) != Some(list) || pending.contains(uri) {
                 self.publish_diagnostics(uri.clone(), list.clone());
             }
@@ -562,5 +559,58 @@ mod tests {
         let doc = server.documents.get(&uri).expect("document is stored");
         assert_eq!(&*doc.source.text, "fn main() { 3 }");
         assert!(doc.program.is_some());
+    }
+
+    fn published_uris(client: &Connection) -> Vec<Uri> {
+        client
+            .receiver
+            .try_iter()
+            .filter_map(|msg| match msg {
+                Message::Notification(notif) if notif.method == PublishDiagnostics::METHOD => {
+                    let params: PublishDiagnosticsParams =
+                        serde_json::from_value(notif.params).expect("publishDiagnostics params");
+                    Some(params.uri)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The open documents are analysed in the order of their URIs,
+    /// whatever the order they were opened in: the session enters their
+    /// modules in that order. What an analysis publishes, what a failed
+    /// one reports and what closing clears follow the same order.
+    #[test]
+    fn documents_are_analysed_in_the_order_of_their_uris() {
+        let (connection, client) = Connection::memory();
+        let mut server = Server::new(connection);
+        let uri =
+            |name: &str| Uri::from_str(&format!("file:///silt_lsp_order/{name}.silt")).unwrap();
+        let opened = ["h", "c", "f", "a", "e", "b", "g", "d"];
+        let mut sorted: Vec<Uri> = opened.iter().map(|name| uri(name)).collect();
+        sorted.sort();
+
+        for name in opened {
+            server.update_document(uri(name), format!("fn {name}() {{ missing }}\n"));
+        }
+        server.analyse_pending();
+        let ids: Vec<ModuleId> = sorted
+            .iter()
+            .map(|uri| server.documents[uri].module.as_ref().expect("analysed").id)
+            .collect();
+        assert!(ids.is_sorted(), "the modules were entered as {ids:?}");
+        assert_eq!(published_uris(&client), sorted);
+
+        for name in opened {
+            server.update_document(uri(name), format!("fn {name}() {{ 1 }}\n"));
+        }
+        server.analyse_pending_with(|_, _| panic!("deliberate panic in a test"));
+        assert_eq!(published_uris(&client), sorted);
+
+        for name in opened {
+            server.close_document(uri(name));
+        }
+        server.analyse_pending();
+        assert_eq!(published_uris(&client), sorted);
     }
 }
