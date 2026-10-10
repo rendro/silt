@@ -21,7 +21,7 @@ cargo build --release --features postgres
 
 Pair the builtins below with a silt-side `pg.silt` package that
 declares the companion types (`PgPool`, `PgTx`, `PgError`, `Value`,
-`QueryResult`, `ExecResult`, `PgCursor`, and `Notification`). The
+`QueryResult`, `ExecResult`, and `PgCursor`). The
 built-in functions reference those types by name; the typechecker
 unifies them against whatever your `pg.silt` library defines.
 
@@ -35,11 +35,11 @@ unifies them against whatever your `pg.silt` library defines.
 | `execute` | `(a, String, List(Value)) -> Result(ExecResult, PgError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
 | `transact` | `(PgPool, Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
 | `close` | `(PgPool) -> ()` | Drop the pool; future ops on it error |
-| `stream` | `(a, String, List(Value)) -> Result(Channel(b), PgError)` | Stream rows through a bounded channel (backpressured) |
+| `stream` | `(a, String, List(Value)) -> Result(Channel(Result(Map(String, Value), PgError)), PgError)` | Stream rows through a bounded channel (backpressured) |
 | `cursor` | `(PgTx, String, List(Value), Int) -> Result(PgCursor, PgError)` | Declare a server-side cursor with batch size |
 | `cursor_next` | `(PgCursor) -> Result(List(Map(String, Value)), PgError)` | Fetch the next batch of rows from a cursor |
 | `cursor_close` | `(PgCursor) -> Result((), PgError)` | Release a cursor and its underlying connection |
-| `listen` | `(PgPool, String) -> Result(Channel(a), PgError)` | LISTEN on a channel; delivers async notifications |
+| `listen` | `(PgPool, String) -> Result(Channel(Notification), PgError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PgError)` | NOTIFY a channel with a payload |
 | `uuidv7` | `() -> String` | Generate a time-ordered UUIDv7 (RFC 9562) |
 
@@ -79,8 +79,9 @@ cleans up).
 ## LISTEN / NOTIFY
 
 `postgres.listen(pool, "channel_name")` returns a `Channel` that
-delivers a `Notification` record for every NOTIFY on that PostgreSQL
-channel. The underlying worker owns a dedicated connection, so LISTEN
+delivers a `postgres.Notification` record for every NOTIFY on that
+PostgreSQL channel: its `channel`, its `payload`, and `pid`, the process
+id of the session that sent it. The underlying worker owns a dedicated connection, so LISTEN
 does not consume a slot from the regular query pool.
 `postgres.notify(target, channel, payload)` sends a single NOTIFY.
 
@@ -89,7 +90,7 @@ does not consume a slot from the regular query pool.
 ```text
 -- Pair with a user-side `pg.silt` that declares the Value ADT
 -- (VInt/VStr/VBool/VFloat/VNull/VList), PgPool, PgTx, PgError,
--- QueryResult, ExecResult, PgCursor, and Notification.
+-- QueryResult, ExecResult, and PgCursor.
 import pg
 import postgres
 

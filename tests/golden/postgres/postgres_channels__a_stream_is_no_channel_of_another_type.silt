@@ -1,0 +1,30 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: Cents
+-- The element type of the channel that `postgres.stream` gives is the
+-- signature's, not the caller's to choose: it was a type variable that
+-- nothing decided, so this annotation checked, and the pattern below it
+-- took a row apart as a `Cents`.
+import channel
+import postgres
+
+type Cents { Cents(Int) }
+
+fn total(pool: postgres.PgPool) -> Int {
+  match postgres.stream(pool, "SELECT amount FROM payments", []) {
+    Ok(ch) -> {
+      let typed: Channel(Cents) = ch
+      match channel.receive(typed) {
+        channel.Message(Cents(n)) -> n
+        _ -> 0
+      }
+    }
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  println(1)
+}

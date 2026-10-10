@@ -471,6 +471,7 @@ pub(super) fn modules() -> Vec<Module> {
             page: "postgres.md",
             types: "\
                 pub type PgError { PgConnect(String), PgTls(String), PgAuthFailed(String), PgQuery(String, String), PgTypeMismatch(String, String, String), PgNoSuchColumn(String), PgClosed, PgTimeout, PgTxnAborted, PgUnknown(String) }\n\
+                pub type Notification { channel: String, payload: String, pid: Int }\n\
             ",
             opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("Value", 0)],
             error: "PgError" => postgres::error_text,
@@ -481,11 +482,11 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn execute(conn: a, sql: String, params: List(Value)) -> Result(ExecResult, PgError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
                 f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
                 f("fn close(pool: PgPool) -> ()", "Drop the pool; future ops on it error", postgres::close),
-                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(b), PgError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
+                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(Result(Map(String, Value), PgError)), PgError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
                 f("fn cursor(tx: PgTx, sql: String, params: List(Value), batch_size: Int) -> Result(PgCursor, PgError)", "Declare a server-side cursor with batch size", postgres::cursor),
                 f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, Value)), PgError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
                 f("fn cursor_close(cursor: PgCursor) -> Result((), PgError)", "Release a cursor and its underlying connection", postgres::cursor_close),
-                f("fn listen(pool: PgPool, channel: String) -> Result(Channel(a), PgError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
+                f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PgError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
                 f("fn notify(conn: a, channel: String, payload: String) -> Result((), PgError)", "NOTIFY a channel with a payload", postgres::notify),
                 f("fn uuidv7() -> String", "Generate a time-ordered UUIDv7 (RFC 9562)", postgres::uuidv7),
             ],

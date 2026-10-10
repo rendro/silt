@@ -807,6 +807,90 @@ mod tests {
         }
     }
 
+    /// The result of a row holds no type variable that nothing decides:
+    /// each one occurs in a parameter (a value's type, or a `type a`
+    /// parameter). A free one would let a caller write any type for
+    /// what the builtin gives (`Channel(Cents)` for a channel of rows)
+    /// and take the value apart as that type. The rows that have one on
+    /// purpose are listed, each with what decides its variable.
+    #[test]
+    fn a_type_variable_of_a_result_is_one_of_a_parameter() {
+        use crate::ast::{TypeExpr, TypeExprKind};
+        const DECIDED_BY_USE: &[(&str, &str)] = &[
+            ("channel.new", "the channel is empty: what is sent on it"),
+            (
+                "channel.timeout",
+                "nothing is ever sent on it: it only closes",
+            ),
+            ("set.new", "the set is empty: what is put in it"),
+        ];
+        fn variables(ty: &TypeExpr, out: &mut Vec<String>) {
+            match &ty.kind {
+                TypeExprKind::Named { name, .. } => {
+                    let name = resolve(*name);
+                    if name.starts_with(|c: char| c.is_lowercase()) {
+                        out.push(name);
+                    }
+                }
+                TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+                    args.iter().for_each(|arg| variables(arg, out));
+                }
+                TypeExprKind::Function(params, result) => {
+                    params.iter().for_each(|param| variables(param, out));
+                    variables(result, out);
+                }
+                TypeExprKind::AnonRecord { fields, .. } => {
+                    fields.iter().for_each(|(_, field)| variables(field, out));
+                }
+                TypeExprKind::SelfType | TypeExprKind::AssocProj { .. } => {}
+            }
+        }
+        let registry = registry();
+        let rows = registry
+            .modules
+            .iter()
+            .flat_map(|m| m.rows.iter().chain(&m.message))
+            .chain(&registry.prelude);
+        let mut free = Vec::new();
+        let mut listed = Vec::new();
+        for row in rows.filter(|row| !row.is_constant()) {
+            let program = parse(&row.header());
+            let [Decl::Fn(f)] = program.decls.as_slice() else {
+                panic!("{} is no signature", row.qualified());
+            };
+            let mut given = Vec::new();
+            for param in &f.params {
+                match (&param.kind, &param.pattern.kind, &param.ty) {
+                    (ParamKind::Type, PatternKind::Ident(name), _) => given.push(resolve(*name)),
+                    (_, _, Some(ty)) => variables(ty, &mut given),
+                    _ => {}
+                }
+            }
+            let mut result = Vec::new();
+            if let Some(ty) = &f.return_type {
+                variables(ty, &mut result);
+            }
+            if result.iter().all(|v| given.contains(v)) {
+                continue;
+            }
+            match DECIDED_BY_USE
+                .iter()
+                .any(|(name, _)| *name == row.qualified())
+            {
+                true => listed.push(row.qualified()),
+                false => free.push(row.signature),
+            }
+        }
+        assert!(
+            free.is_empty(),
+            "a result with a variable nothing decides: {free:#?}"
+        );
+        // Every listed row is one that needs its place in the list
+        // (they are in the order of the registry).
+        let names: Vec<&str> = DECIDED_BY_USE.iter().map(|(name, _)| *name).collect();
+        assert_eq!(listed, names);
+    }
+
     /// An error enum's `message` is a row of the enum, found by the
     /// enum's type and by its own id, and its body gives what the
     /// module says its variants read as.
