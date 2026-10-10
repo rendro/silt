@@ -1483,10 +1483,7 @@ mod tests {
 
     #[test]
     fn test_string_simple() {
-        assert_eq!(
-            lex(r#""hello""#),
-            vec![Token::StringLit("hello".into())]
-        );
+        assert_eq!(lex(r#""hello""#), vec![Token::StringLit("hello".into())]);
     }
 
     #[test]
@@ -1615,10 +1612,7 @@ mod tests {
     fn test_triple_quoted_no_interpolation() {
         let input = "\"\"\"{name} and {age}\"\"\"";
         let tokens = lex(input);
-        assert_eq!(
-            tokens,
-            vec![Token::StringLit("{name} and {age}".into()),]
-        );
+        assert_eq!(tokens, vec![Token::StringLit("{name} and {age}".into()),]);
     }
 
     #[test]
