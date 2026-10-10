@@ -967,7 +967,8 @@ builtins! {
             return Err(VmError::new("stream.chunks: n must be positive".into()));
         };
         let in_ch = ch.clone();
-        let mut buffer: Vec<Value> = Vec::with_capacity(n);
+        // (It grows as values arrive: `n` may be any number.)
+        let mut buffer: Vec<Value> = Vec::new();
         let mut ended = false;
         stage(
             vm,
@@ -984,7 +985,7 @@ builtins! {
                         if buffer.len() < n {
                             Next::Take(0)
                         } else {
-                            let chunk = std::mem::replace(&mut buffer, Vec::with_capacity(n));
+                            let chunk = std::mem::take(&mut buffer);
                             Next::Emit(Value::List(Arc::new(chunk)))
                         }
                     }

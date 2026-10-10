@@ -1,0 +1,11 @@
+-- `stream.chunks(s, n)` gathers `n` values in a list that grows as they
+-- arrive: a size larger than the stream is one chunk of all of it. (The
+-- list was made for `n` values at once: a panic of the standard library
+-- for 9223372036854775807, and "memory allocation failed" for less.)
+import stream
+
+fn main() {
+  println(stream.collect(stream.chunks(stream.from_range(1, 3), 9223372036854775807)))
+  println(stream.collect(stream.chunks(stream.from_range(1, 3), 100000000000)))
+  println(stream.collect(stream.chunks(stream.from_range(1, 5), 2)))
+}
