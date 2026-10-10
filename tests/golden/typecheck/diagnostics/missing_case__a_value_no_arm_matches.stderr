@@ -70,17 +70,17 @@ error[type]: non-exhaustive match: `P { on: true, kind: None }` is not covered
  97 |   match p {
     |         ^ non-exhaustive match: `P { on: true, kind: None }` is not covered
 
-error[type]: non-exhaustive match: in P.kind: missing variant None
+error[type]: non-exhaustive match: `P { kind: None, .. }` is not covered
  --> missing_case__a_value_no_arm_matches.silt:104:9
      |
  104 |   match p {
-     |         ^ non-exhaustive match: in P.kind: missing variant None
+     |         ^ non-exhaustive match: `P { kind: None, .. }` is not covered
 
-error[type]: non-exhaustive match: `{ a: false, .. }` is not covered
+error[type]: non-exhaustive match: `{ a: false }` is not covered
  --> missing_case__a_value_no_arm_matches.silt:110:9
      |
  110 |   match r {
-     |         ^ non-exhaustive match: `{ a: false, .. }` is not covered
+     |         ^ non-exhaustive match: `{ a: false }` is not covered
 
 error[type]: non-exhaustive match: `(Dot, [Some(false), .._])` is not covered
  --> missing_case__a_value_no_arm_matches.silt:116:9

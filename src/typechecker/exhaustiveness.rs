@@ -605,9 +605,9 @@ impl TypeChecker {
 
     /// What the rows of a non-exhaustive match on a value of type `ty`
     /// leave out, for the diagnostic: the variants of an enum no row
-    /// names, the values of a `Bool`, the first field of a record whose
-    /// own patterns leave something out, and otherwise a value no row
-    /// matches (`Some(None)`, `(true, false)`, `[_, _, .._]`, `2`).
+    /// names, the values of a `Bool`, and otherwise a value no row
+    /// matches (`Some(None)`, `(true, false)`, `[_, _, .._]`, `2`,
+    /// `R { p: false, .. }`).
     fn missing_description(&self, rows: &[&Pat], ty: &Type) -> std::string::String {
         const UNSPECIFIC: &str = "not all patterns are covered";
         match ty {
@@ -626,7 +626,7 @@ impl TypeChecker {
                     format!("missing {}", values.join(", "))
                 }
             }
-            Type::Generic(name, type_args) => {
+            Type::Generic(name, _) => {
                 if let Some(enum_info) = self.tables.enums.get(name) {
                     // A variant no row names is missing. Of a variant
                     // some rows name, a value they leave out is shown;
@@ -678,45 +678,18 @@ impl TypeChecker {
                     } else {
                         parts.join("; ")
                     }
-                } else if let Some(rec_info) = self.tables.records.get(name) {
-                    // A record type as a signature names it.
-                    let mapping: HashMap<TyVar, Type> = self
-                        .tables
-                        .record_param_var_ids
-                        .get(name)
-                        .filter(|ids| ids.len() == type_args.len())
-                        .map(|ids| ids.iter().copied().zip(type_args.iter().cloned()).collect())
-                        .unwrap_or_default();
-                    let fields: Vec<(Symbol, Type)> = rec_info
-                        .fields
-                        .iter()
-                        .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                        .collect();
-                    let rec_name = self.show_type(&Type::Generic(*name, Vec::new()));
-                    let mut expanded = Vec::new();
-                    for row in rows {
-                        expand_or(vec![*row], &mut expanded);
-                    }
-                    for (fname, fty) in &fields {
-                        // The patterns the rows give this field, each field
-                        // looked at alone.
-                        let column: Vec<&Pat> =
-                            specialize(&expanded, &CtorId::Record(vec![*fname]), 1)
-                                .into_iter()
-                                .map(|row| row[0])
-                                .collect();
-                        let child = self.missing_description(&column, fty);
-                        if child != UNSPECIFIC {
-                            return format!("in {rec_name}.{fname}: {child}");
-                        }
-                    }
-                    // No field leaves something out alone: the fields
-                    // do together.
+                } else if self.tables.records.contains_key(name) {
+                    // A value of the record no row matches, whole; where
+                    // none can be written (the rows test strings, say),
+                    // that the record is not covered.
                     match self.uncovered_by(rows) {
                         Some(value) if value.says_something() => {
                             format!("`{}` is not covered", self.show_witness(&value, ty))
                         }
-                        _ => format!("not all patterns of {rec_name} are covered"),
+                        _ => {
+                            let rec_name = self.show_type(&Type::Generic(*name, Vec::new()));
+                            format!("not all patterns of {rec_name} are covered")
+                        }
                     }
                 } else {
                     UNSPECIFIC.into()
@@ -733,7 +706,9 @@ impl TypeChecker {
 
     /// The value `value` of type `ty` as a pattern would write it. A
     /// part nothing is said of is `_`; a list of which only the first
-    /// elements are said ends in `.._`, a record in `..`.
+    /// elements are said ends in `.._`; a declared record that leaves
+    /// fields out ends in `..`, an anonymous one names the fields it
+    /// tests.
     fn show_witness(&self, value: &Witness, ty: &Type) -> std::string::String {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
         let (ctor, fields) = match value {
@@ -779,53 +754,88 @@ impl TypeChecker {
                 format!("[{}]", shown.join(", "))
             }
             CtorId::Variant(enum_ty, i) => {
-                let Some(variant) = self
-                    .tables
-                    .enums
-                    .get(enum_ty)
-                    .and_then(|e| e.variants.get(*i))
-                else {
+                let Some(info) = self.tables.enums.get(enum_ty) else {
+                    return "_".into();
+                };
+                let Some(variant) = info.variants.get(*i) else {
                     return "_".into();
                 };
                 if fields.is_empty() {
                     return variant.name.to_string();
                 }
+                // The payloads' types at the type's arguments, so that a
+                // record in `Option(R)` is shown as an `R`.
+                let mapping: HashMap<TyVar, Type> = match &ty {
+                    Type::Generic(_, args) if args.len() == info.param_var_ids.len() => info
+                        .param_var_ids
+                        .iter()
+                        .copied()
+                        .zip(args.iter().cloned())
+                        .collect(),
+                    _ => HashMap::new(),
+                };
                 let shown: Vec<_> = fields
                     .iter()
                     .enumerate()
                     .map(|(i, field)| {
-                        self.show_witness(field, variant.field_types.get(i).unwrap_or(&unknown))
+                        let field_ty = variant
+                            .field_types
+                            .get(i)
+                            .map_or(unknown.clone(), |t| substitute_vars(t, &mapping));
+                        self.show_witness(field, &field_ty)
                     })
                     .collect();
                 format!("{}({})", variant.name, shown.join(", "))
             }
             CtorId::Record(names) => {
-                let (type_name, declared) = match &ty {
-                    Type::Generic(name, _) => (
-                        self.show_type(&Type::Generic(*name, Vec::new())) + " ",
-                        self.tables.records.get(name).map(|info| &info.fields),
-                    ),
-                    _ => (std::string::String::new(), None),
+                // A declared record keeps its name, and says `..` when
+                // it leaves fields out; an anonymous record pattern
+                // names the fields it tests and no others.
+                let declared: Option<(std::string::String, Vec<(Symbol, Type)>)> = match &ty {
+                    Type::Generic(name, args) => self.tables.records.get(name).map(|info| {
+                        let mapping: HashMap<TyVar, Type> = self
+                            .tables
+                            .record_param_var_ids
+                            .get(name)
+                            .filter(|ids| ids.len() == args.len())
+                            .map(|ids| ids.iter().copied().zip(args.iter().cloned()).collect())
+                            .unwrap_or_default();
+                        let fields = info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect();
+                        (self.show_type(&Type::Generic(*name, Vec::new())), fields)
+                    }),
+                    _ => None,
                 };
-                let all = match &ty {
-                    Type::AnonRecord { fields, .. } => Some(fields.len()),
-                    _ => declared.map(Vec::len),
+                let anon_fields = match &ty {
+                    Type::AnonRecord { fields, .. } => Some(fields),
+                    _ => None,
                 };
                 let mut shown: Vec<std::string::String> = names
                     .iter()
                     .zip(fields)
-                    .filter(|(_, field)| **field != Witness::Any)
+                    .filter(|(_, field)| field.says_something())
                     .map(|(name, field)| {
                         let field_ty = declared
-                            .and_then(|fields| fields.iter().find(|(n, _)| n == name))
-                            .map_or(&unknown, |(_, t)| t);
+                            .as_ref()
+                            .and_then(|(_, fields)| fields.iter().find(|(n, _)| n == name))
+                            .map(|(_, t)| t)
+                            .or_else(|| anon_fields.and_then(|fields| fields.get(name)))
+                            .unwrap_or(&unknown);
                         format!("{name}: {}", self.show_witness(field, field_ty))
                     })
                     .collect();
-                if all != Some(shown.len()) {
-                    shown.push("..".into());
+                match declared {
+                    Some((type_name, all)) => {
+                        if shown.len() < all.len() {
+                            shown.push("..".into());
+                        }
+                        format!("{type_name} {{ {} }}", shown.join(", "))
+                    }
+                    None => format!("{{ {} }}", shown.join(", ")),
                 }
-                format!("{type_name}{{ {} }}", shown.join(", "))
             }
         }
     }
