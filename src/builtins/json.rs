@@ -159,7 +159,7 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::String(s) => serde_json::Value::String(s.clone()),
         Value::List(xs) => {
-            let items: Result<Vec<_>, _> = xs.iter().map(value_to_json).collect();
+            let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_json(&x)).collect();
             serde_json::Value::Array(items?)
         }
         Value::Range(lo, hi) => {
@@ -358,7 +358,7 @@ fn json_to_record_list(
             }
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
+    Ok(Value::variant(bv::OK, vec![Value::list(records)]))
 }
 
 fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
@@ -445,7 +445,7 @@ fn json_to_typed_value(
                 for item in arr.iter() {
                     values.push(json_to_typed_value(vm, item, inner)?);
                 }
-                Ok(Value::List(Arc::new(values)))
+                Ok(Value::list(values))
             }
             _ => Err(mismatch("List", json_type_name(json))),
         },

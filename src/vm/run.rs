@@ -23,7 +23,7 @@ use crate::runtime::sync::Wait;
 /// a bound alike): this is the backstop at the execution site, where
 /// `PartialEq for Value` would answer with `Arc::ptr_eq` on closures and
 /// name-equality on builtins (src/value/key.rs). The recursion is
-/// `Vm::value_contains_fn` (src/vm/mod.rs). Channel / Handle /
+/// `Value::contains_fn` (src/value/mod.rs). Channel / Handle /
 /// TcpListener / TcpStream are deliberately NOT rejected: they are
 /// equatable by identity at runtime and have `Equal` in the checker,
 /// keeping the runtime and compile-time
@@ -38,11 +38,7 @@ use crate::runtime::sync::Wait;
 /// tests/lang/round96_eq_fn_runtime_tests.rs and
 /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {
-    if Vm::value_contains_fn(val) {
-        Some("Fn")
-    } else {
-        None
-    }
+    if val.contains_fn() { Some("Fn") } else { None }
 }
 
 /// What running one instruction did.
@@ -756,7 +752,7 @@ impl Vm {
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
-                self.push(Value::List(Arc::new(elements)));
+                self.push(Value::list(elements));
             }
             Instr::MakeMap { pairs } => {
                 let total = pairs * 2;
@@ -835,7 +831,7 @@ impl Vm {
                 let b = self.pop();
                 let a = self.pop();
                 let mut result = match a {
-                    Value::List(xs) => xs.as_ref().clone(),
+                    Value::List(xs) => xs.to_vec(),
                     Value::Range(lo, hi) => {
                         checked_range_len(lo, hi).map_err(VmError::new)?;
                         (lo..=hi).map(Value::Int).collect()
@@ -864,13 +860,13 @@ impl Vm {
                     )));
                 }
                 match b {
-                    Value::List(xs) => result.extend(xs.iter().cloned()),
+                    Value::List(xs) => result.extend(xs),
                     Value::Range(lo, hi) => {
                         result.extend((lo..=hi).map(Value::Int));
                     }
                     _ => unreachable!(),
                 }
-                self.push(Value::List(Arc::new(result)));
+                self.push(Value::list(result));
             }
             Instr::GetField { name } => {
                 let name = self.chunk().string(name).to_owned();
@@ -1007,7 +1003,7 @@ impl Vm {
                                 xs.len()
                             ))
                         })?;
-                        self.push(elem.clone());
+                        self.push(elem.into_value());
                     }
                     Value::Range(lo, hi) => {
                         let i = lo
@@ -1037,7 +1033,7 @@ impl Vm {
                                 xs.len()
                             )));
                         }
-                        self.push(Value::List(Arc::new(xs[start..].to_vec())));
+                        self.push(Value::List(xs.slice(start, xs.len())));
                     }
                     Value::Range(lo, hi) => {
                         let new_lo = lo
@@ -1048,7 +1044,7 @@ impl Vm {
                             None => false, // hi == i64::MAX; new_lo can never exceed hi+1
                         };
                         if exceeds {
-                            self.push(Value::List(Arc::new(Vec::new())));
+                            self.push(Value::list(Vec::new()));
                         } else {
                             self.push(Value::Range(new_lo, hi));
                         }

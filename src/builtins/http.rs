@@ -1386,7 +1386,7 @@ builtins! {
         }
         Ok(out
             .into_iter()
-            .map(|(key, values)| (key, Value::List(Arc::new(values))))
+            .map(|(key, values)| (key, Value::list(values)))
             .collect())
     }
 }

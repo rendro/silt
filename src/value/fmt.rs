@@ -10,7 +10,7 @@ impl fmt::Debug for Value {
             Value::Float(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "\"{s}\""),
-            Value::List(xs) => f.debug_list().entries(xs.iter()).finish(),
+            Value::List(xs) => xs.fmt(f),
             Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
             Value::Map(m) => f.debug_map().entries(m.iter()).finish(),
             Value::Set(s) => {

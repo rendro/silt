@@ -456,7 +456,7 @@ fn wrap_v_null() -> Value {
     Value::variant(bv::V_NULL, vec![])
 }
 fn wrap_v_list(xs: Vec<Value>) -> Value {
-    Value::variant(bv::V_LIST, vec![Value::List(Arc::new(xs))])
+    Value::variant(bv::V_LIST, vec![Value::list(xs)])
 }
 
 /// Convert a Postgres column cell to a silt-side wrapped `VXxx` `Value`.
@@ -740,7 +740,7 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
             )),
         },
         "VList" => match payload.first() {
-            Some(Value::List(xs)) => list_to_array_param(xs),
+            Some(Value::List(xs)) => list_to_array_param(&xs.to_vec()),
             other => Err(format!(
                 "postgres: VList payload must be List, got {other:?}"
             )),
@@ -844,7 +844,7 @@ fn row_to_map(row: &postgres::Row) -> Value {
 fn make_query_result(rows: Vec<Value>) -> Value {
     let row_count = rows.len() as i64;
     let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert("rows".to_string(), Value::List(Arc::new(rows)));
+    fields.insert("rows".to_string(), Value::list(rows));
     fields.insert("row_count".to_string(), Value::Int(row_count));
     Value::builtin_record(ty::QUERY_RESULT, fields)
 }
@@ -852,7 +852,7 @@ fn make_query_result(rows: Vec<Value>) -> Value {
 fn make_exec_result(affected: u64, returning: Vec<Value>) -> Value {
     let mut fields: BTreeMap<String, Value> = BTreeMap::new();
     fields.insert("affected".to_string(), Value::Int(affected as i64));
-    fields.insert("returning".to_string(), Value::List(Arc::new(returning)));
+    fields.insert("returning".to_string(), Value::list(returning));
     Value::builtin_record(ty::EXEC_RESULT, fields)
 }
 
@@ -1503,7 +1503,7 @@ fn do_cursor_next(cursor_id: u64) -> Value {
         }
     };
     if entry.exhausted {
-        return ok(Value::List(Arc::new(Vec::new())));
+        return ok(Value::list(Vec::new()));
     }
     let cell = match lookup_tx(entry.tx_id) {
         Some(c) => c,
@@ -1528,7 +1528,7 @@ fn do_cursor_next(cursor_id: u64) -> Value {
             if (n as u64) < entry.batch_size {
                 update_cursor_exhausted(cursor_id, true);
             }
-            ok(Value::List(Arc::new(mapped)))
+            ok(Value::list(mapped))
         }
         Err(e) => err(pg_error_to_variant(&e)),
     }
@@ -2288,6 +2288,7 @@ mod tests {
         let Value::List(rows) = rows else {
             panic!("expected rows list, got {rows:?}");
         };
+        let rows = rows.to_vec();
         assert_eq!(rows.len(), 1, "expected 1 row, got {}", rows.len());
         // Each row is a `Map<Value::String, Value>`.
         let Value::Map(row_map) = &rows[0] else {

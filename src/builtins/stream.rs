@@ -986,13 +986,13 @@ builtins! {
                             Next::Take(0)
                         } else {
                             let chunk = std::mem::take(&mut buffer);
-                            Next::Emit(Value::List(Arc::new(chunk)))
+                            Next::Emit(Value::list(chunk))
                         }
                     }
                     Got::End if buffer.is_empty() => Next::Done(Value::Unit),
                     Got::End => {
                         ended = true;
-                        Next::Emit(Value::List(Arc::new(std::mem::take(&mut buffer))))
+                        Next::Emit(Value::list(std::mem::take(&mut buffer)))
                     }
                     Got::Returned(_) | Got::Io(_) => return unexpected(),
                 })
@@ -1037,7 +1037,7 @@ builtins! {
                     Got::Start | Got::Emitted => Next::Take(0),
                     // Functions are not comparable: the stage fails, and the
                     // sink at the end of the pipeline raises the error.
-                    Got::Value(_, v) if Vm::value_contains_fn(&v) => {
+                    Got::Value(_, v) if v.contains_fn() => {
                         return Err(VmError::new(
                             "stream.dedup: type 'Fn' does not implement Equal".to_string(),
                         ));
@@ -1136,7 +1136,7 @@ builtins! {
                     out.push(v);
                     Next::Take(0)
                 }
-                Got::End => Next::Done(Value::List(Arc::new(std::mem::take(&mut out)))),
+                Got::End => Next::Done(Value::list(std::mem::take(&mut out))),
                 _ => return unexpected(),
             })
         })

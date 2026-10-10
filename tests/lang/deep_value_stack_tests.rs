@@ -1,6 +1,6 @@
 //! Comparing, ordering and hashing values nested a million and a half
 //! levels deep, in a release build, as base did up to two million: the
-//! checks the VM makes before it compares (`Vm::value_contains_fn`) walk
+//! checks the VM makes before it compares (`Value::contains_fn`) walk
 //! a worklist, so the native stack they need does not depend on how the
 //! compiler inlined them. A debug build's frames are far larger, so the
 //! test runs only in release (`cargo test --release`).

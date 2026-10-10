@@ -10,12 +10,14 @@ use crate::typeinfo::{Tag, TypeInfo};
 mod convert;
 mod fmt;
 mod key;
+mod list;
 
 #[cfg(test)]
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub use fmt::{Shown, Written};
+pub use list::{IntoIter, Item, Iter, List};
 
 /// Maximum number of elements that may be materialized from a range into a
 /// list, JSON array, or similar eager collection.  Prevents accidental OOM
@@ -45,7 +47,7 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     String(String),
-    List(Arc<Vec<Value>>),
+    List(List),
     Range(i64, i64), // inclusive on both ends: start..end
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
@@ -88,6 +90,11 @@ pub enum Value {
 }
 
 impl Value {
+    /// The list of `items`.
+    pub fn list(items: Vec<Value>) -> Value {
+        Value::List(List::from(items))
+    }
+
     /// The variant `tag` (a [`Tag`], or a builtin variant of
     /// [`crate::typeinfo::bv`]) with the fields `fields`.
     pub fn variant(tag: impl Into<Tag>, fields: Vec<Value>) -> Value {
@@ -141,6 +148,49 @@ impl Value {
 }
 
 impl Value {
+    /// Whether the value is a function, or has one inside it: the one
+    /// answer of the run time to whether a value can be compared,
+    /// ordered or hashed. The checker rejects those of a value that
+    /// holds a function (`Equal`, `Compare` and `Hash` are decided by
+    /// structure); where its answer does not reach (a key a callback
+    /// gave to `list.sort_by`), this stands behind it: two functions
+    /// would be ordered by their addresses, differently from run to
+    /// run. A channel, a handle and a connection are equal by
+    /// identity, and are not functions.
+    ///
+    /// Asked by the VM's `compare` (src/vm/arithmetic.rs), the gate of
+    /// `==` and `!=` (src/vm/run.rs), the `equal`, `compare` and
+    /// `hash` methods (src/vm/dispatch.rs) and the collection builtins
+    /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by
+    /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
+    pub fn contains_fn(&self) -> bool {
+        // A worklist, not recursion: values nest as deep as a program
+        // builds them.
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::HostFn(_)
+                | Value::VariantConstructor(..) => {
+                    return true;
+                }
+                Value::List(items) => pending.extend(items.as_slice()),
+                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(_, fields) => pending.extend(fields.values()),
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Get the length of a list or range, if applicable.
     pub fn collection_len(&self) -> Option<usize> {
         match self {

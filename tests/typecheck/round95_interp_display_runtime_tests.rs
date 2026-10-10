@@ -114,7 +114,7 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
         Value::Int(1),
         Value::String("x".into()),
         Value::Bool(true),
-        Value::List(Arc::new(vec![Value::Int(1)])),
+        Value::list(vec![Value::Int(1)]),
         Value::Unit,
     ] {
         assert!(

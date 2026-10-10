@@ -38,7 +38,7 @@ fn hash_of(v: &Value) -> u64 {
 fn list_range_equal_pairs_hash_equal() {
     // Range(1,3) materializes to [1,2,3]; PartialEq returns true (line
     // ~1729-1730), so Hash and Ord must agree.
-    let list = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+    let list = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     let range = Value::Range(1, 3);
     assert_eq!(list, range);
     assert_eq!(range, list);
@@ -50,7 +50,7 @@ fn list_range_equal_pairs_hash_equal() {
 #[test]
 fn list_range_empty_hash_equal() {
     // Empty range (lo > hi) equals empty list per PartialEq.
-    let list = Value::List(Arc::new(vec![]));
+    let list = Value::list(vec![]);
     let range = Value::Range(5, 4);
     assert_eq!(list, range);
     assert_eq!(hash_of(&list), hash_of(&range));
@@ -59,7 +59,7 @@ fn list_range_empty_hash_equal() {
 
 #[test]
 fn list_range_single_element_hash_equal() {
-    let list = Value::List(Arc::new(vec![Value::Int(42)]));
+    let list = Value::list(vec![Value::Int(42)]);
     let range = Value::Range(42, 42);
     assert_eq!(list, range);
     assert_eq!(hash_of(&list), hash_of(&range));
@@ -69,11 +69,11 @@ fn list_range_single_element_hash_equal() {
 #[test]
 fn list_range_unequal_pairs_ord_consistent() {
     // List doesn't materialize to range: should NOT be Equal.
-    let list = Value::List(Arc::new(vec![
+    let list = Value::list(vec![
         Value::Int(1),
         Value::Int(3),
         Value::Int(2), // out of order — not a range
-    ]));
+    ]);
     let range = Value::Range(1, 3);
     assert_ne!(list, range);
     assert_ne!(list.cmp(&range), Ordering::Equal);
@@ -88,11 +88,11 @@ fn list_range_unequal_pairs_ord_consistent() {
 fn hashset_dedup_across_list_range() {
     use std::collections::HashSet;
     let mut s: HashSet<Value> = HashSet::new();
-    s.insert(Value::List(Arc::new(vec![
+    s.insert(Value::list(vec![
         Value::Int(1),
         Value::Int(2),
         Value::Int(3),
-    ])));
+    ]));
     s.insert(Value::Range(1, 3));
     assert_eq!(
         s.len(),

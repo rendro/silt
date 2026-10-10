@@ -162,7 +162,7 @@ impl Vm {
                 // can launder such values past the typechecker's
                 // concrete-operand gate, and `PartialEq for Value` would
                 // silently answer with `Arc::ptr_eq` identity.
-                if Self::value_contains_fn(receiver) || Self::value_contains_fn(&extra_args[0]) {
+                if receiver.contains_fn() || extra_args[0].contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Equal".into(),
                     )));
@@ -184,7 +184,7 @@ impl Vm {
                 // `Arc::as_ptr` — an ASLR-nondeterministic result for a
                 // polymorphic `fn cmp(a: x, b: x) -> Int { a.compare(b) }`
                 // laundering a container of functions past the typechecker.
-                if Self::value_contains_fn(receiver) || Self::value_contains_fn(other) {
+                if receiver.contains_fn() || other.contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Compare".into(),
                     )));
@@ -252,7 +252,7 @@ impl Vm {
                 // constant discriminant tag ("not meaningfully
                 // hashable", src/value/key.rs), so two distinct closures
                 // would hash identically and collide silently.
-                if Self::value_contains_fn(receiver) {
+                if receiver.contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Hash".into(),
                     )));

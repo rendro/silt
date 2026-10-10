@@ -2,7 +2,7 @@
 //! `env.*`).
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::typed::builtins;
@@ -242,7 +242,7 @@ pub(crate) mod fs {
                 });
                 names.collect::<std::io::Result<Vec<Value>>>()
             });
-            result(names, path, |names| Value::List(Arc::new(names)))
+            result(names, path, Value::list)
         }
 
         fn mkdir(path: &str) -> Value {
@@ -371,7 +371,7 @@ pub(crate) mod fs {
                 let shown = absolute.as_deref().unwrap_or(path).to_string_lossy();
                 out.push(Value::String(shown.into_owned()));
             }
-            fs_ok(Value::List(Arc::new(out)))
+            fs_ok(Value::list(out))
         }
 
         fn glob(pattern: &str) -> Value {
@@ -400,7 +400,7 @@ pub(crate) mod fs {
                     Err(e) => return io_result_err(e.error(), pattern),
                 }
             }
-            fs_ok(Value::List(Arc::new(out)))
+            fs_ok(Value::list(out))
         }
     }
 }

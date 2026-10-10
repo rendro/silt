@@ -153,7 +153,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
         Value::Bool(b) => ::toml::Value::Boolean(*b),
         Value::String(s) => ::toml::Value::String(s.clone()),
         Value::List(xs) => {
-            let items: Result<Vec<_>, _> = xs.iter().map(value_to_toml).collect();
+            let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_toml(&x)).collect();
             ::toml::Value::Array(items?)
         }
         Value::Range(lo, hi) => {
@@ -410,7 +410,7 @@ fn toml_to_record_list(
             }
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
+    Ok(Value::variant(bv::OK, vec![Value::list(records)]))
 }
 
 fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Value, VmError> {
@@ -490,7 +490,7 @@ fn toml_to_typed_value(
                 for item in arr.iter() {
                     values.push(toml_to_typed_value(vm, item, inner)?);
                 }
-                Ok(Value::List(Arc::new(values)))
+                Ok(Value::list(values))
             }
             _ => Err(mismatch("List", toml_type_name(tv))),
         },

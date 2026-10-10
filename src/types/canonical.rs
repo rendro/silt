@@ -1160,7 +1160,7 @@ mod tests {
 
     #[test]
     fn dispatch_type_for_value_list_is_list() {
-        let v = Value::List(std::sync::Arc::new(vec![]));
+        let v = Value::list(vec![]);
         assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
     }
 

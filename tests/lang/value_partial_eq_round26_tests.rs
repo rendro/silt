@@ -150,7 +150,7 @@ fn partial_eq_reflexivity_every_variant() {
         Value::Int(42),
         Value::Float(1.5),
         Value::String("hi".into()),
-        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)])),
+        Value::list(vec![Value::Int(1), Value::Int(2)]),
         Value::Range(1, 5),
         Value::Tuple(vec![Value::Int(1), Value::String("x".into())]),
         Value::variant(bv::OK, vec![Value::Int(1)]),

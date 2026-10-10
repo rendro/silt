@@ -3,8 +3,6 @@
 //! program imports one like any module; calls are typechecked against
 //! the declared signatures and run the Rust closure.
 
-use std::sync::Arc;
-
 use silt::diagnostic::{Code, Diagnostic};
 use silt::session::HostModule;
 use silt::session::testing::{check_with_host, run_with_host};
@@ -73,11 +71,11 @@ fn host_function_is_a_value() {
         "import list\nimport mylib\nfn main() { let f = mylib.double\n [1, 2, 3] |> list.map(f) }";
     assert_eq!(
         run(source, mylib()),
-        Ok(Value::List(Arc::new(vec![
+        Ok(Value::list(vec![
             Value::Int(2),
             Value::Int(4),
             Value::Int(6)
-        ])))
+        ]))
     );
 }
 
@@ -134,7 +132,10 @@ fn generic_and_option_signatures() {
             let Value::List(xs) = &args[0] else {
                 return Err(VmError::new("expected a list".into()));
             };
-            xs.first().cloned().into_value().map_err(VmError::new)
+            xs.first()
+                .map(|x| x.into_value())
+                .into_value()
+                .map_err(VmError::new)
         });
     let source = r#"
 import h
@@ -281,10 +282,10 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
             Ok(Value::String("three".into()))
         })
         .function("fn evens() -> List(Int)", |_: &[Value]| {
-            Ok(Value::List(Arc::new(vec![
+            Ok(Value::list(vec![
                 Value::Int(2),
                 Value::String("four".into()),
-            ])))
+            ]))
         })
         .function("fn maybe() -> Option(String)", |_: &[Value]| {
             Ok(Value::variant(bv::SOME, vec![Value::Int(1)]))

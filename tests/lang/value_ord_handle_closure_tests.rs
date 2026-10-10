@@ -197,7 +197,7 @@ fn ord_discriminant_ordering_preserved() {
         Ordering::Less
     );
     assert_eq!(
-        Value::String("".into()).cmp(&Value::List(Arc::new(vec![]))),
+        Value::String("".into()).cmp(&Value::list(vec![])),
         Ordering::Less
     );
 }

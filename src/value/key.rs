@@ -101,7 +101,7 @@ impl PartialEq for Value {
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
             (Value::Unit, Value::Unit) => true,
-            (Value::List(a), Value::List(b)) => a == b,
+            (Value::List(a), Value::List(b)) => a.as_slice() == b.as_slice(),
             (Value::Range(a1, a2), Value::Range(b1, b2)) => {
                 // Two ranges are equal iff they materialize to the same
                 // sequence. Empty ranges (`lo > hi`) are all equal to each
@@ -119,8 +119,8 @@ impl PartialEq for Value {
             // Range vs List: the typechecker gives `Range(..)` the type
             // `List(Int)`, so the two sides share a Silt type and must have
             // a defined equality. Walk the range and list element-wise.
-            (Value::List(list), Value::Range(lo, hi)) => list_eq_range(list.as_ref(), *lo, *hi),
-            (Value::Range(lo, hi), Value::List(list)) => list_eq_range(list.as_ref(), *lo, *hi),
+            (Value::List(list), Value::Range(lo, hi)) => list_eq_range(list.as_slice(), *lo, *hi),
+            (Value::Range(lo, hi), Value::List(list)) => list_eq_range(list.as_slice(), *lo, *hi),
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
             // The typechecker lets a nominal record and an anonymous
@@ -242,10 +242,10 @@ impl Ord for Value {
             // consistency with PartialEq when the typechecker hands both
             // sides the same `List(Int)` type.
             (Value::List(list), Value::Range(lo, hi)) => {
-                cmp_list_range(list.as_ref(), *lo, *hi, true)
+                cmp_list_range(list.as_slice(), *lo, *hi, true)
             }
             (Value::Range(lo, hi), Value::List(list)) => {
-                cmp_list_range(list.as_ref(), *lo, *hi, false)
+                cmp_list_range(list.as_slice(), *lo, *hi, false)
             }
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),

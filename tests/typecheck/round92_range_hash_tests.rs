@@ -76,7 +76,7 @@ fn range_hash_at_cap_boundary_completes() {
 
 #[test]
 fn small_list_range_equal_pairs_still_hash_equal() {
-    let list = Value::List(Arc::new((1..=5).map(Value::Int).collect()));
+    let list = Value::list((1..=5).map(Value::Int).collect());
     let range = Value::Range(1, 5);
     assert_eq!(list, range, "PartialEq: List([1..5]) == Range(1,5)");
     assert_eq!(
@@ -93,7 +93,7 @@ fn empty_ranges_hash_equal_to_each_other_and_empty_list() {
     // (empty ranges take the len == 0 path).
     let a = Value::Range(5, 4);
     let b = Value::Range(100, 2);
-    let empty = Value::List(Arc::new(vec![]));
+    let empty = Value::list(vec![]);
     assert_eq!(a, b);
     assert_eq!(a, empty);
     assert_eq!(hash_of(&a), hash_of(&b));
@@ -135,7 +135,7 @@ fn nested_huge_range_hash_completes_promptly() {
         Value::Int(1),
         Value::Range(0, 4_000_000_000),
     ]));
-    let _ = hash_of(&Value::List(Arc::new(vec![Value::Range(0, i64::MAX)])));
+    let _ = hash_of(&Value::list(vec![Value::Range(0, i64::MAX)]));
     let _ = hash_of(&Value::variant(
         bv::SOME,
         vec![Value::Range(i64::MIN, i64::MAX)],

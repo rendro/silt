@@ -151,7 +151,7 @@ impl Vm {
 
     /// Order two container-shaped operands element-wise via `Value::cmp`,
     /// first rejecting any operand that transitively contains a
-    /// function-shaped leaf (`Vm::value_contains_fn`, src/vm/mod.rs).
+    /// function-shaped leaf (`Value::contains_fn`, src/value/mod.rs).
     ///
     /// The checker rejects ordering a value that holds a function
     /// (`Compare` is decided by structure): this is the backstop at the
@@ -161,7 +161,7 @@ impl Vm {
     /// reach this helper: they fall to `compare()`'s catch-all arm and
     /// keep its "cannot compare Fn and Fn" wording.
     fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
-        if Self::value_contains_fn(a) || Self::value_contains_fn(b) {
+        if a.contains_fn() || b.contains_fn() {
             return Err(VmError::type_confusion(
                 "type 'Fn' does not implement Compare",
             ));

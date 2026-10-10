@@ -188,14 +188,14 @@ impl<'a> Arg<'a> for &'a Arc<BTreeSet<Value>> {
 /// in step V3, and this with it: a `List` is then the elements.)
 #[derive(Clone, Copy)]
 pub(crate) enum List<'a> {
-    Items(&'a Arc<Vec<Value>>),
+    Items(&'a crate::value::List),
     Range(i64, i64),
 }
 
 /// The elements of a list, one after the other, a range's without
 /// making a list of them.
 pub(crate) enum Items<'a> {
-    List(std::slice::Iter<'a, Value>),
+    List(crate::value::Iter<'a>),
     Range(std::ops::RangeInclusive<i64>),
 }
 
@@ -204,7 +204,7 @@ impl Iterator for Items<'_> {
 
     fn next(&mut self) -> Option<Value> {
         match self {
-            Items::List(items) => items.next().cloned(),
+            Items::List(items) => items.next().map(crate::value::Item::into_value),
             Items::Range(range) => range.next().map(Value::Int),
         }
     }
@@ -220,8 +220,7 @@ impl Iterator for Items<'_> {
 /// The elements of a list that outlive the call they were an argument
 /// of ([`List::elements`]).
 pub(crate) enum Elements {
-    /// The list, and how many of its elements were taken.
-    List(Arc<Vec<Value>>, usize),
+    List(crate::value::IntoIter),
     Range(std::ops::RangeInclusive<i64>),
 }
 
@@ -230,11 +229,7 @@ impl Iterator for Elements {
 
     fn next(&mut self) -> Option<Value> {
         match self {
-            Elements::List(items, taken) => {
-                let item = items.get(*taken)?.clone();
-                *taken += 1;
-                Some(item)
-            }
+            Elements::List(items) => items.next(),
             Elements::Range(range) => range.next().map(Value::Int),
         }
     }
@@ -263,7 +258,7 @@ impl<'a> List<'a> {
     /// it is.
     pub(crate) fn elements(self) -> Elements {
         match self {
-            List::Items(items) => Elements::List(items.clone(), 0),
+            List::Items(items) => Elements::List(items.clone().into_iter()),
             List::Range(lo, hi) => Elements::Range(lo..=hi),
         }
     }
@@ -272,7 +267,7 @@ impl<'a> List<'a> {
     /// than a list may have is an error.
     pub(crate) fn to_vec(self) -> Result<Vec<Value>, VmError> {
         match self {
-            List::Items(items) => Ok((**items).clone()),
+            List::Items(items) => Ok(items.to_vec()),
             List::Range(lo, hi) => {
                 crate::value::checked_range_len(lo, hi).map_err(VmError::new)?;
                 Ok((lo..=hi).map(Value::Int).collect())
@@ -359,7 +354,7 @@ impl Ret for String {
 /// A `List`.
 impl Ret for Vec<Value> {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::List(Arc::new(self))))
+        Ok(Step::Done(Value::list(self)))
     }
 }
 

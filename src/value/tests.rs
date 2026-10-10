@@ -55,8 +55,8 @@ fn hash_eq_string_values() {
 
 #[test]
 fn hash_eq_list_values() {
-    let a = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]));
-    let b = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]));
+    let a = Value::list(vec![Value::Int(1), Value::Int(2)]);
+    let b = Value::list(vec![Value::Int(1), Value::Int(2)]);
     assert_eq!(a, b);
     assert_eq!(hash_of(&a), hash_of(&b));
 }
@@ -81,17 +81,17 @@ fn hash_eq_variant_values() {
 
 #[test]
 fn empty_list_eq() {
-    let a = Value::List(Arc::new(vec![]));
-    let b = Value::List(Arc::new(vec![]));
+    let a = Value::list(vec![]);
+    let b = Value::list(vec![]);
     assert_eq!(a, b);
 }
 
 #[test]
 fn nested_list_eq() {
-    let inner1 = Value::List(Arc::new(vec![Value::Int(1)]));
-    let inner2 = Value::List(Arc::new(vec![Value::Int(1)]));
-    let a = Value::List(Arc::new(vec![inner1]));
-    let b = Value::List(Arc::new(vec![inner2]));
+    let inner1 = Value::list(vec![Value::Int(1)]);
+    let inner2 = Value::list(vec![Value::Int(1)]);
+    let a = Value::list(vec![inner1]);
+    let b = Value::list(vec![inner2]);
     assert_eq!(a, b);
 }
 
@@ -275,13 +275,13 @@ fn display_unit() {
 
 #[test]
 fn display_list() {
-    let list = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+    let list = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     assert_eq!(format!("{}", list), "[1, 2, 3]");
 }
 
 #[test]
 fn display_empty_list() {
-    let list = Value::List(Arc::new(vec![]));
+    let list = Value::list(vec![]);
     assert_eq!(format!("{}", list), "[]");
 }
 
@@ -360,4 +360,61 @@ fn display_builtin_fn() {
         ),
         "<builtin:println>"
     );
+}
+
+// ── Lists ──────────────────────────────────────────────────────
+
+fn ints(items: impl IntoIterator<Item = i64>) -> List {
+    items.into_iter().map(Value::Int).collect()
+}
+
+#[test]
+fn a_part_of_a_list_is_the_list_of_its_elements() {
+    let xs = ints(0..10);
+    let part = xs.slice(3, 7);
+    assert_eq!(part.len(), 4);
+    assert_eq!(part.to_vec(), ints(3..7).to_vec());
+    assert_eq!(*part.get(0).unwrap(), Value::Int(3));
+    assert_eq!(*part.last().unwrap(), Value::Int(6));
+    assert!(part.get(4).is_none());
+    // A part of a part counts from the part's beginning.
+    let inner = part.slice(1, 3);
+    assert_eq!(inner.to_vec(), ints(4..6).to_vec());
+    assert_eq!(xs.len(), 10);
+}
+
+#[test]
+fn a_bound_of_a_part_past_the_end_is_the_end() {
+    let xs = ints(0..4);
+    assert_eq!(xs.slice(2, 99).to_vec(), ints(2..4).to_vec());
+    assert!(xs.slice(4, 4).is_empty());
+    assert!(xs.slice(99, 100).is_empty());
+    assert!(xs.slice(3, 1).is_empty());
+    assert!(List::new().slice(0, 1).is_empty());
+    assert!(List::new().first().is_none());
+    assert!(List::new().last().is_none());
+}
+
+#[test]
+fn a_list_is_read_from_both_ends() {
+    let part = ints(0..6).slice(1, 5);
+    let forward: Vec<Value> = part.iter().map(Item::into_value).collect();
+    let backward: Vec<Value> = part.iter().rev().map(Item::into_value).collect();
+    assert_eq!(forward, ints(1..5).to_vec());
+    assert_eq!(backward, ints((1..5).rev()).to_vec());
+    assert_eq!(part.iter().len(), 4);
+    let owned: Vec<Value> = part.into_iter().collect();
+    assert_eq!(owned, forward);
+}
+
+#[test]
+fn a_part_is_equal_ordered_and_hashed_as_its_elements() {
+    let part = Value::List(ints(0..6).slice(2, 5));
+    let made = Value::list(ints(2..5).to_vec());
+    assert_eq!(part, made);
+    assert_eq!(part.cmp(&made), Ordering::Equal);
+    assert_eq!(hash_of(&part), hash_of(&made));
+    assert_eq!(part.to_string(), "[2, 3, 4]");
+    assert_eq!(format!("{part:?}"), "[2, 3, 4]");
+    assert!(part < Value::list(ints(2..6).to_vec()));
 }

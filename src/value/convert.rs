@@ -52,7 +52,9 @@ impl HostShape {
             | (HostShape::String, Value::String(_))
             | (HostShape::Bytes, Value::Bytes(_))
             | (HostShape::Unit, Value::Unit) => true,
-            (HostShape::List(item), Value::List(items)) => items.iter().all(|v| item.admits(v)),
+            (HostShape::List(item), Value::List(items)) => {
+                items.as_slice().iter().all(|v| item.admits(v))
+            }
             (HostShape::List(item), Value::Range(..)) => item.admits(&Value::Int(0)),
             (HostShape::Set(item), Value::Set(items)) => items.iter().all(|v| item.admits(v)),
             (HostShape::Map(k, v), Value::Map(entries)) => entries
@@ -234,7 +236,7 @@ impl IntoValue for () {
 impl FromValue for Vec<Value> {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
-            Value::List(xs) => Ok(xs.as_ref().clone()),
+            Value::List(xs) => Ok(xs.to_vec()),
             Value::Range(lo, hi) => {
                 checked_range_len(*lo, *hi)?;
                 Ok((*lo..=*hi).map(Value::Int).collect())
@@ -246,7 +248,7 @@ impl FromValue for Vec<Value> {
 
 impl IntoValue for Vec<Value> {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::List(Arc::new(self)))
+        Ok(Value::list(self))
     }
 }
 

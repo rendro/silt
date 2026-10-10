@@ -28,7 +28,7 @@ fn string(s: &str) -> Value {
 /// part in the match as the empty one.
 fn groups(caps: &regex::Captures) -> Value {
     let groups = caps.iter().map(|m| string(m.map_or("", |m| m.as_str())));
-    Value::List(Arc::new(groups.collect()))
+    Value::list(groups.collect())
 }
 
 builtins! {

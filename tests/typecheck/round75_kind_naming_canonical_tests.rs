@@ -101,7 +101,7 @@ fn build_all_variants() -> AllVariants {
         float: Value::Float(1.5),
         bool_: Value::Bool(true),
         string: Value::String("hi".to_string()),
-        list: Value::List(Arc::new(vec![Value::Int(1)])),
+        list: Value::list(vec![Value::Int(1)]),
         range: Value::Range(0, 5),
         map: Value::Map(Arc::new({
             let mut m = BTreeMap::new();

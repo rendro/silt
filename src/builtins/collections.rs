@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
+use crate::value::{Item, MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
 
 impl List<'_> {
@@ -44,21 +44,15 @@ fn none() -> Value {
 /// bound on the builtin signatures because that would reject currently
 /// working programs (e.g. sorting tuples via `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
 ///
-/// The contains-a-fn walk delegates to `Vm::value_contains_fn`
-/// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every
-/// execution-site Compare/Equal/Hash gate (operator, dispatch, and
-/// builtin surfaces). Do not re-inline a local copy of the walker
-/// here: a new container `Value` variant added to one copy but not the
-/// other would silently split gate behavior between the operator and
-/// builtin surfaces. Single-definition is pinned by
-/// tests/meta/value_contains_fn_dedup_lock_tests.rs.
-fn ensure_no_fn<'a>(
+/// The walk is `Value::contains_fn` (src/value/mod.rs), the one answer
+/// of the run time for every such gate (operator, method and builtin).
+fn ensure_no_fn(
     fn_name: &str,
     trait_name: &str,
-    vals: impl IntoIterator<Item = &'a Value>,
+    vals: impl IntoIterator<Item = impl std::ops::Deref<Target = Value>>,
 ) -> Result<(), VmError> {
     for v in vals {
-        if Vm::value_contains_fn(v) {
+        if v.contains_fn() {
             return Err(VmError::new(format!(
                 "{fn_name}: type 'Fn' does not implement {trait_name}"
             )));
@@ -126,7 +120,7 @@ fn set_acc(acc: &mut Value, _item: Value, result: Value) -> Flow {
 }
 
 fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
-    Ok(Value::List(Arc::new(std::mem::take(out))))
+    Ok(Value::list(std::mem::take(out)))
 }
 
 fn as_set(out: &mut Vec<Value>) -> Result<Value, VmError> {
@@ -160,7 +154,7 @@ fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
             if out.len().saturating_add(inner.len()) > MAX_RANGE_MATERIALIZE {
                 return Err(too_long("list.flat_map"));
             }
-            out.extend(inner.iter().cloned());
+            out.extend(inner);
         }
         Value::Range(lo, hi) => {
             // Check that this range fits the cap before materializing
@@ -437,7 +431,7 @@ pub(crate) mod list {
                         a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                     });
                     let sorted = std::mem::take(keyed).into_iter().map(|(_, item)| item);
-                    Ok(Value::List(Arc::new(sorted.collect())))
+                    Ok(Value::list(sorted.collect()))
                 },
             ))
         }
@@ -478,7 +472,7 @@ pub(crate) mod list {
                 |groups| {
                     let groups = std::mem::take(groups).into_iter();
                     Ok(Value::Map(Arc::new(
-                        groups.map(|(k, v)| (k, Value::List(Arc::new(v)))).collect(),
+                        groups.map(|(k, v)| (k, Value::list(v))).collect(),
                     )))
                 },
             ))
@@ -554,7 +548,7 @@ pub(crate) mod list {
             let mut result = Vec::new();
             for item in xs.iter() {
                 match item {
-                    Value::List(inner) => result.extend(inner.iter().cloned()),
+                    Value::List(inner) => result.extend(inner),
                     Value::Range(lo, hi) => {
                         checked_range_len(lo, hi).map_err(VmError::new)?;
                         result.extend((lo..=hi).map(Value::Int));
@@ -577,17 +571,15 @@ pub(crate) mod list {
 
         fn tail(xs: List) -> Value {
             match xs {
-                List::Items(items) => {
-                    Value::List(Arc::new(items.get(1..).unwrap_or_default().to_vec()))
-                }
-                List::Range(lo, hi) if lo >= hi => Value::List(Arc::new(Vec::new())),
+                List::Items(items) => Value::List(items.slice(1, items.len())),
+                List::Range(lo, hi) if lo >= hi => Value::list(Vec::new()),
                 List::Range(lo, hi) => Value::Range(lo + 1, hi),
             }
         }
 
         fn last(xs: List) -> Option<Value> {
             match xs {
-                List::Items(items) => items.last().cloned(),
+                List::Items(items) => items.last().map(Item::into_value),
                 List::Range(lo, hi) => (lo <= hi).then_some(Value::Int(hi)),
             }
         }
@@ -606,9 +598,9 @@ pub(crate) mod list {
             // Fn elements would sort by Arc pointer address (ASLR-
             // nondeterministic) — reject like the operator gates do.
             ensure_no_fn("list.sort", "Compare", items.iter())?;
-            let mut sorted = (**items).clone();
+            let mut sorted = items.to_vec();
             sorted.sort();
-            Ok(Value::List(Arc::new(sorted)))
+            Ok(Value::list(sorted))
         }
 
         fn unique(xs: List) -> Result<Value, VmError> {
@@ -620,8 +612,8 @@ pub(crate) mod list {
             // name) instead of erroring like `f == g` does.
             ensure_no_fn("list.unique", "Equal", items.iter())?;
             let mut seen = BTreeSet::new();
-            let unique = items.iter().filter(|x| seen.insert(*x)).cloned().collect();
-            Ok(Value::List(Arc::new(unique)))
+            let unique = items.iter().map(Item::into_value);
+            Ok(Value::list(unique.filter(|x| seen.insert(x.clone())).collect()))
         }
 
         fn contains(xs: List, elem: &Value) -> Result<bool, VmError> {
@@ -629,8 +621,9 @@ pub(crate) mod list {
                 List::Items(items) => {
                     // Fn membership would silently answer via Arc identity
                     // (`list.contains([f], g)` -> false) instead of erroring.
-                    ensure_no_fn("list.contains", "Equal", items.iter().chain([elem]))?;
-                    Ok(items.contains(elem))
+                    ensure_no_fn("list.contains", "Equal", items.iter())?;
+                    ensure_no_fn("list.contains", "Equal", [elem])?;
+                    Ok(items.iter().any(|item| *item == *elem))
                 }
                 List::Range(lo, hi) => {
                     ensure_no_fn("list.contains", "Equal", [elem])?;
@@ -680,7 +673,7 @@ pub(crate) mod list {
         fn get(xs: List, i: i64) -> Result<Option<Value>, VmError> {
             let index = natural("list.get", "index", i)?;
             Ok(match xs {
-                List::Items(items) => items.get(index).cloned(),
+                List::Items(items) => items.get(index).map(Item::into_value),
                 List::Range(lo, hi) => lo
                     .checked_add(i)
                     .filter(|at| *at <= hi)
@@ -701,20 +694,18 @@ pub(crate) mod list {
         fn take(xs: List, n: i64) -> Result<Value, VmError> {
             let count = natural("list.take", "count", n)?;
             Ok(match xs {
-                List::Items(items) => {
-                    Value::List(Arc::new(items[..count.min(items.len())].to_vec()))
-                }
+                List::Items(items) => Value::List(items.slice(0, count)),
                 // (Taking no element is the empty list wherever the
                 // range begins: `lo + 0 - 1` is no Int for the least
                 // one.)
-                List::Range(..) if n == 0 => Value::List(Arc::new(Vec::new())),
+                List::Range(..) if n == 0 => Value::list(Vec::new()),
                 List::Range(lo, hi) => {
                     let new_hi = lo
                         .checked_add(n)
                         .and_then(|end| end.checked_sub(1))
                         .map_or(hi, |end| end.min(hi));
                     match new_hi < lo {
-                        true => Value::List(Arc::new(Vec::new())),
+                        true => Value::list(Vec::new()),
                         false => Value::Range(lo, new_hi),
                     }
                 }
@@ -724,12 +715,10 @@ pub(crate) mod list {
         fn drop(xs: List, n: i64) -> Result<Value, VmError> {
             let count = natural("list.drop", "count", n)?;
             Ok(match xs {
-                List::Items(items) => {
-                    Value::List(Arc::new(items[count.min(items.len())..].to_vec()))
-                }
+                List::Items(items) => Value::List(items.slice(count, items.len())),
                 List::Range(lo, hi) => match lo.checked_add(n).filter(|new_lo| *new_lo <= hi) {
                     Some(new_lo) => Value::Range(new_lo, hi),
-                    None => Value::List(Arc::new(Vec::new())),
+                    None => Value::list(Vec::new()),
                 },
             })
         }

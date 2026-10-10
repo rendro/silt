@@ -20,8 +20,6 @@
 //! percent-encoding and does not belong in this primitive. A future
 //! `form` module can build on top of `encoding.url_encode` if needed.
 
-use std::sync::Arc;
-
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
 use super::common::{err, nibble_to_hex, ok};
@@ -242,6 +240,6 @@ builtins! {
             };
             out.push(Value::Tuple(vec![Value::String(key), Value::String(val)]));
         }
-        ok(Value::List(Arc::new(out)))
+        ok(Value::list(out))
     }
 }
