@@ -677,6 +677,9 @@ struct Conn {
     reader: Arc<Mutex<wire::Reader<Reads>>>,
     /// Bytes of the request that is being waited for have come.
     begun: Arc<AtomicBool>,
+    /// How many requests the task has served since it last gave way
+    /// (see [`Conn::TURN`]).
+    served: usize,
     state: ConnState,
     /// Another task goes on with the connection (see
     /// [`Conn::go_on_in_a_new_task`]): this one leaves it open.
@@ -722,6 +725,16 @@ impl Conn {
     /// is dropped.
     const END: Go = Go::Step(Step::Done(Value::Unit));
 
+    /// How many requests a connection serves before its task gives
+    /// way to the others. A connection whose requests are there
+    /// already (sent without waiting for the answers, or as fast as
+    /// they are answered) never has to wait, and a request is few
+    /// steps of the VM but a parse and two system calls: counted in
+    /// steps like a task that computes, such a connection would hold
+    /// its worker for milliseconds. Its turn is counted in requests,
+    /// whoever answers them: the handler or the server itself.
+    const TURN: usize = 8;
+
     /// The next request, if it need not be waited for: it is among
     /// the bytes read already, or with those that are there to be
     /// read. `None` if it has to be waited for.
@@ -743,6 +756,7 @@ impl Conn {
 
     /// Do what a read gave asks for: call the handler, or answer.
     fn serve(&mut self, vm: &mut Vm, got: Got) -> Go {
+        self.served += 1;
         match got {
             Got::Request(request, reply) => match self.server.call() {
                 Some(called) => {
@@ -777,6 +791,8 @@ impl Conn {
     /// deadline that passes ends the task's wait, and with it the
     /// read: the connection is shut down (see `IoOp`'s `Drop`).
     fn read(&mut self, vm: &mut Vm) -> Step {
+        // The task waits: its turn is over.
+        self.served = 0;
         // What was read already and is no whole request is its
         // beginning.
         if let Some(reader) = self.reader.try_lock() {
@@ -903,6 +919,7 @@ impl Conn {
             stream: self.stream.clone(),
             reader: self.reader.clone(),
             begun: self.begun.clone(),
+            served: 0,
             state: ConnState::Answering {
                 bytes: plain_response(vm, 500, wire::reason(500), reply),
                 then: reply.then(),
@@ -925,6 +942,13 @@ impl Conn {
             // A task that was cancelled (the server has ended)
             // serves no further request.
             ConnState::Next if self.handle.is_cancelled() => Conn::END,
+            // Its turn is over: the other tasks have theirs before the
+            // next request of this connection.
+            ConnState::Next if self.served >= Conn::TURN => {
+                self.served = 0;
+                self.state = ConnState::Next;
+                Go::Step(Step::Yield)
+            }
             ConnState::Next => match self.at_hand() {
                 Some(got) => self.serve(vm, got),
                 None => Go::Step(self.read(vm)),
@@ -1007,18 +1031,13 @@ impl crate::vm::Native for Conn {
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        /// How many steps in a row need no waiting (requests that
-        /// were read already, answered by the server itself) before
-        /// the task gives way to the others.
-        const BURST: usize = 16;
         let mut input = Some(input);
-        for _ in 0..BURST {
+        loop {
             match self.go(vm, input.take().unwrap_or(Value::Unit))? {
                 Go::Step(step) => return Ok(step),
                 Go::Again => {}
             }
         }
-        Ok(Step::Yield)
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
@@ -1132,6 +1151,7 @@ impl Serve {
                 begun.clone(),
             )))),
             begun,
+            served: 0,
             stream,
             state: ConnState::Next,
             handed_on: false,

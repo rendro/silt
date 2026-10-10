@@ -63,6 +63,7 @@ impl Clock for TestClock {
 struct Server {
     port: u16,
     control: u16,
+    out: Buffer,
     err: Buffer,
     running: Option<thread::JoinHandle<Result<Value, String>>>,
 }
@@ -96,7 +97,14 @@ fn main() {{
 }}
 "#
         );
-        let program = compile_str(&source).unwrap_or_else(|errors| panic!("{errors:?}"));
+        Server::program(&source, clock)
+    }
+
+    /// Run `source`, which prints the port it serves on and the port
+    /// of a listener that the test connects to when it is done, on
+    /// one line.
+    fn program(source: &str, clock: Option<TestClock>) -> Server {
+        let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
         let (out, err) = (Buffer::new(), Buffer::new());
         let mut io = HostIo::new(out.clone(), err.clone());
         if let Some(clock) = clock {
@@ -111,7 +119,7 @@ fn main() {{
         let limit = Instant::now() + PATIENCE;
         let ports = loop {
             let printed = out.contents();
-            if let Some(line) = printed.strip_suffix('\n') {
+            if let Some((line, _)) = printed.split_once('\n') {
                 break line.to_string();
             }
             assert!(
@@ -125,6 +133,7 @@ fn main() {{
         Server {
             port: ports.next().expect("the port"),
             control: ports.next().expect("the control port"),
+            out,
             err,
             running: Some(running),
         }
@@ -469,6 +478,99 @@ fn a_status_that_is_none_is_500() {
     );
     assert_eq!(client.response().body, "odd");
     assert_eq!(server.err.contents().matches("out of range").count(), 3);
+}
+
+/// A connection whose requests are all there already does not keep
+/// its worker: its task gives way after a few requests, whoever
+/// answers them.
+///
+/// Shown by counting, not by a clock. 64 connections each have 200
+/// requests waiting, and a task that is queued behind all of them
+/// says when it runs. With turns of [`TURN`] requests it runs after
+/// some 500 requests; if a connection kept its worker until the VM
+/// took it away (after about 160 requests), it would run after
+/// 10,000.
+#[test]
+fn a_connection_gives_way_after_a_few_requests() {
+    /// The turn of a connection (`Conn::TURN`).
+    const TURN: usize = 8;
+    const CONNECTIONS: usize = 64;
+    const REQUESTS: usize = 200;
+    let source = format!(
+        r#"
+import channel
+import http
+import list
+import task
+import tcp
+
+fn main() {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(control) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  let gate = channel.new(0)
+  let at_the_gate = channel.new({CONNECTIONS})
+  let log = channel.new(100000)
+  let server = task.spawn {{ ->
+    http.serve(listener) {{ req ->
+      match req.path {{
+        "/gate" -> {{
+          channel.send(at_the_gate, ())
+          let _ = channel.receive(gate)
+        }}
+        _ -> channel.send(log, "served")
+      }}
+      http.Response {{ status: 200, body: "ok", headers: #{{}} }}
+    }}
+  }}
+  println("{{tcp.local_port(listener)}} {{tcp.local_port(control)}}")
+  -- Every connection waits at the gate, its other requests behind it.
+  1..{CONNECTIONS} |> list.each {{ _ ->
+    let _ = channel.receive(at_the_gate)
+  }}
+  channel.close(gate)
+  let _ = task.spawn {{ -> channel.send(log, "the other task") }}
+  let before = loop served = 0 {{
+    match channel.receive(log) {{
+      channel.Message("served") -> loop(served + 1)
+      _ -> served
+    }}
+  }}
+  println("{{before}}")
+  let _ = tcp.accept(control)
+  task.cancel(server)
+}}
+"#
+    );
+    let server = Server::program(&source, None);
+    let mut requests = b"GET /gate HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
+    for _ in 0..REQUESTS {
+        requests.extend_from_slice(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
+    }
+    let clients: Vec<Client> = (0..CONNECTIONS)
+        .map(|_| {
+            let mut client = server.connect();
+            client.send(&requests);
+            client
+        })
+        .collect();
+    let limit = Instant::now() + PATIENCE;
+    let served_before = loop {
+        let printed = server.out.contents();
+        let mut lines = printed.lines().skip(1);
+        if let (Some(count), true) = (lines.next(), printed.ends_with('\n')) {
+            break count.parse::<usize>().expect("a count");
+        }
+        assert!(Instant::now() < limit, "the other task never ran");
+        thread::sleep(Duration::from_millis(2));
+    };
+    drop(clients);
+    eprintln!("{served_before} requests were served before the other task ran");
+    // A turn each for the connections ahead of it, and room for the
+    // turns that other workers take meanwhile.
+    assert!(
+        served_before <= CONNECTIONS * TURN * 5,
+        "{served_before} requests were served before another task ran"
+    );
 }
 
 // ── Limits ──────────────────────────────────────────────────────────
