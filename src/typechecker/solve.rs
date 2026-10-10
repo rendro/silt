@@ -354,25 +354,12 @@ impl TypeChecker {
             Type::Var(_) => unreachable!("a selection waits while its receiver is unknown"),
             // The receiver became an annotation variable: it has the
             // methods of its bounds, and nothing else.
-            Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
-                [(trait_name, scheme)] => {
-                    let method_ty = self.instantiate_method(scheme, field, span);
-                    let on_type = on_type_parameter(r.name, field);
-                    if !self.takes_no_self(&method_ty, field, &on_type, span) {
-                        self.deferred_method_traits.insert(span, *trait_name);
-                        self.unify_deferred_method(&result_ty, &method_ty, span);
-                    }
+            Type::Rigid(r) => {
+                if let Some((trait_name, method_ty)) = self.bound_method(*r, field, span) {
+                    self.deferred_method_traits.insert(span, trait_name);
+                    self.unify_deferred_method(&result_ty, &method_ty, span);
                 }
-                _ => self.error(
-                    Code::UnknownMethod,
-                    format!(
-                        "no field or method '{field}' on a value of type `{}`: the \
-                         bounds of the type variable provide none, or more than one",
-                        r.name
-                    ),
-                    span,
-                ),
-            },
+            }
             Type::AnonRecord { fields: af, tail } => {
                 if let Some(field_ty) = af.get(&field) {
                     let ft = field_ty.clone();

@@ -523,6 +523,80 @@ impl TypeChecker {
         (!visible_declares).then_some(first)
     }
 
+    /// The method `field` of a value whose type is the annotation
+    /// variable `r`, with the trait that declares it; `None` when there
+    /// is none, which is reported. An annotation variable has the
+    /// methods of its bounds, and nothing else: no field, no method of a
+    /// trait the declaration does not promise. This is the one answer,
+    /// whether the receiver was known where the call is written or
+    /// became known later.
+    pub(super) fn bound_method(
+        &mut self,
+        r: RigidId,
+        field: Symbol,
+        span: Span,
+    ) -> Option<(TraitKey, Type)> {
+        let matches = self.bound_methods(r, field);
+        if matches.len() > 1 {
+            let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
+            self.ambiguous_method(
+                field,
+                &format!("a value of type `{}`", r.name),
+                &traits,
+                span,
+            );
+            return None;
+        }
+        if let Some((trait_name, scheme)) = matches.first() {
+            let method_ty = self.instantiate_method(scheme, field, span);
+            let on_type = on_type_parameter(r.name, field);
+            return match self.takes_no_self(&method_ty, field, &on_type, span) {
+                true => None,
+                false => Some((*trait_name, method_ty)),
+            };
+        }
+        // One of its bounds names an unknown trait (reported): the
+        // method may be that trait's.
+        if self.unknown_bounds.contains(&r.var) {
+            return None;
+        }
+        let bounds: Vec<TraitKey> = self
+            .bounds
+            .get(&r.var)
+            .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
+            .unwrap_or_default();
+        if bounds.is_empty() {
+            self.errors.push(
+                Diagnostic::error(
+                    Code::UnknownMethod,
+                    span,
+                    format!(
+                        "no field or method '{field}' on a value of type `{}`: \
+                         the type variable has no trait bound",
+                        r.name
+                    ),
+                )
+                .with_help(format!(
+                    "a value of type `{0}` has only the methods its bounds \
+                     promise: add `where {0}: SomeTrait`",
+                    r.name
+                )),
+            );
+        } else {
+            let bounds = bounds
+                .iter()
+                .map(|s| format!("{s}"))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            self.error(
+                Code::UnknownMethod,
+                format!("no method '{field}' found in trait constraints ({bounds})"),
+                span,
+            );
+        }
+        None
+    }
+
     /// `value.method` where the method, of the type `method_ty`, has no
     /// `self`: reported, with `on_type` as the call to write instead
     /// (`` `Int.empty()` ``). A method without `self` is called on a
@@ -1959,79 +2033,16 @@ impl TypeChecker {
                         self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
-                    Type::Rigid(r) => {
-                        // An annotation variable has the methods of its
-                        // bounds, and nothing else: no field, no method
-                        // of a trait the declaration does not promise.
-                        let trait_names: Vec<TraitKey> = self
-                            .bounds
-                            .get(&r.var)
-                            .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
-                            .unwrap_or_default();
-                        let matches = self.bound_methods(*r, field);
-                        if matches.len() > 1 {
-                            let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-                            self.ambiguous_method(
-                                field,
-                                &format!("a value of type `{}`", r.name),
-                                &traits,
-                                span,
-                            );
-                            Type::Error
-                        } else if let Some((trait_name, scheme)) = matches.first() {
+                    Type::Rigid(r) => match self.bound_method(*r, field, span) {
+                        Some((trait_name, method_ty)) => {
                             self.last_field_access_was_method = true;
-                            self.method_trait = Some(*trait_name);
-                            let instantiated = self.instantiate_method(scheme, field, span);
-                            let resolved = match self.takes_no_self(
-                                &instantiated,
-                                field,
-                                &on_type_parameter(r.name, field),
-                                span,
-                            ) {
-                                true => Type::Error,
-                                false => self.apply(&instantiated),
-                            };
+                            self.method_trait = Some(trait_name);
+                            let resolved = self.apply(&method_ty);
                             expr.ty = Some(resolved.clone());
                             return resolved;
-                        } else if self.unknown_bounds.contains(&r.var) {
-                            // One of its bounds names an unknown trait
-                            // (reported): the method may be that trait's.
-                            Type::Error
-                        } else if trait_names.is_empty() {
-                            self.errors.push(
-                                Diagnostic::error(
-                                    Code::UnknownMethod,
-                                    span,
-                                    format!(
-                                        "no field or method '{field}' on a value of type `{}`: \
-                                         the type variable has no trait bound",
-                                        r.name
-                                    ),
-                                )
-                                .with_help(format!(
-                                    "a value of type `{0}` has only the methods its bounds \
-                                     promise: add `where {0}: SomeTrait`",
-                                    r.name
-                                )),
-                            );
-                            Type::Error
-                        } else {
-                            // Method not found on any constrained trait — error
-                            let traits_str = trait_names
-                                .iter()
-                                .map(|s| format!("{s}"))
-                                .collect::<Vec<_>>()
-                                .join(" + ");
-                            self.error(
-                                Code::UnknownMethod,
-                                format!(
-                                    "no method '{field}' found in trait constraints ({traits_str})"
-                                ),
-                                span,
-                            );
-                            Type::Error
                         }
-                    }
+                        None => Type::Error,
+                    },
                     Type::Var(_) => {
                         // A method only another module's private trait
                         // provides cannot be called here, whatever the

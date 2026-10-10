@@ -1,0 +1,47 @@
+error[type]: ambiguous method 'show' on type 'Int': provided by traits Alpha, Zeta
+ --> ambiguous_method__one_wording.silt:34:3
+    |
+ 34 |   7.show()
+    |   ^^^^^^ ambiguous method 'show' on type 'Int': provided by traits Alpha, Zeta
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+
+error[type]: ambiguous method 'show' on a value of type `b`: provided by traits Alpha, Zeta
+ --> ambiguous_method__one_wording.silt:38:3
+    |
+ 38 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `b`: provided by traits Alpha, Zeta
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+
+error[type]: ambiguous method 'show' on a value whose type is not known: provided by traits Alpha, Zeta
+ --> ambiguous_method__one_wording.silt:42:3
+    |
+ 42 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value whose type is not known: provided by traits Alpha, Zeta
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+
+error[type]: ambiguous method 'show' on a value of type `b`: provided by traits Alpha, Zeta
+ --> ambiguous_method__one_wording.silt:50:18
+    |
+ 50 |   let f = { y -> first(y).show() }
+    |                  ^^^^^^^^^^^^^ ambiguous method 'show' on a value of type `b`: provided by traits Alpha, Zeta
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+
+error[type]: no method 'show' found in trait constraints (Other)
+ --> ambiguous_method__one_wording.silt:55:18
+    |
+ 55 |   let f = { y -> first(y).show() }
+    |                  ^^^^^^^^^^^^^ no method 'show' found in trait constraints (Other)
+
+error[type]: ambiguous method 'show' on `type b`: provided by traits Alpha, Zeta
+ --> ambiguous_method__one_wording.silt:60:3
+    |
+ 60 |   b.show(b)
+    |   ^^^^^^ ambiguous method 'show' on `type b`: provided by traits Alpha, Zeta
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+
+error[type]: ambiguous method 'show' on type 'Int': provided by traits Alpha, Zeta
+ --> ambiguous_method__one_wording.silt:64:3
+    |
+ 64 |   Int.show(7)
+    |   ^^^^^^^^ ambiguous method 'show' on type 'Int': provided by traits Alpha, Zeta
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
