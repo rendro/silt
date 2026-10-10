@@ -225,6 +225,8 @@ silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dep
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-run the command when a file of the program (a module it imports, `silt.toml` or `silt.lock`) changes. A run that is still going, such as a server, is stopped first.
 
+`silt check` checks a file as a module: a file needs no `main` to check (a library module, a file of types and traits, a test file), and a `main` it has must take no parameters. `silt run` starts a program at `main`, so it asks for one.
+
 `silt repl` checks each input as `silt check` checks a file, and runs it. It sees the directory it was started in as a script does: `import shapes` loads `shapes.silt` beside it, or `src/shapes.silt` and the dependencies of the package there. An input sees what the inputs before it define; an input with an error is dropped and changes nothing. Defining a function or a `let` again makes a new definition for the inputs after it: code from earlier inputs keeps the definition it was written against. Errors are shown at `<repl:n>:line:col`, the `n`th input. A module is read the first time an input imports it and kept for the session: edits to its file are seen after a restart. In a package, the REPL updates `silt.lock` as `silt run` does.
 
 ### Staying up to date

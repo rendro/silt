@@ -1,4 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: program has no main()
--- stderr-contains: = note: add one as the entry point
+-- stderr-contains: 'helper' is bound twice at the top level
+-- stderr-contains: = note: a top-level name can be bound only once
+fn helper() { 1 }
+fn helper() { 2 }

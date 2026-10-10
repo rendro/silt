@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 0
+pub fn double(x: Int) -> Int {
+  x * 2
+}

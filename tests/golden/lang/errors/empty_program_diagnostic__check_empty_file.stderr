@@ -1,6 +1,0 @@
-error[compile]: program has no main() function
- --> empty_program_diagnostic__check_empty_file.silt:1:1
-   |
- 1 | -- cmd: check
-   | ^ program has no main() function
-  = note: add one as the entry point

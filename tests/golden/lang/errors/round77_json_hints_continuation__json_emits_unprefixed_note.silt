@@ -1,4 +1,6 @@
 -- cmd: check --format json
 -- exit: 1
--- A program with no main: the note "add one as the entry point" is a
--- JSON hint, not part of the message.
+-- A name bound twice: the note "a top-level name can be bound only
+-- once" is a JSON hint, not part of the message.
+fn helper() { 1 }
+fn helper() { 2 }

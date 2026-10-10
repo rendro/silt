@@ -1,4 +1,4 @@
 -- cmd: check
--- exit: 1
--- stderr-contains: error[compile]: program has no main() function
+-- exit: 0
+-- A file is checked as a module, which needs no `main`: `run` asks for one.
 fn helper() { 42 }

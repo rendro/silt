@@ -36,10 +36,8 @@ use crate::typechecker::{self, ModuleContext, Tables};
 use crate::types::Type;
 use crate::value::{HostFn, HostShape};
 
-pub use entry::{
-    ENTRY_POINT, TestFn, TestKind, looks_like_library_module, looks_like_test_file, selected_tests,
-    test_functions, test_kind,
-};
+pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
+use entry::{looks_like_library_module, looks_like_test_file};
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
 pub use packages::{LockPolicy, Package, Packages, ProjectSetup};

@@ -151,11 +151,17 @@ impl Verdict {
     }
 }
 
-/// Whether `message` is one of the entry-point diagnostics, which only
-/// `run` and `check` give: they are about starting the program at
-/// `main`, which `test` and the LSP never do.
-fn is_entry_point_message(message: &str) -> bool {
+/// Whether `message` says that the program has no `main`. Only `run`
+/// asks for one: `check`, `test` and the LSP take the file as a module.
+fn is_missing_main(message: &str) -> bool {
     message.starts_with("program has no main() function")
+}
+
+/// Whether `message` is one of the entry-point diagnostics: they are
+/// about starting the program at `main`, which `test` and the LSP never
+/// do.
+fn is_entry_point_message(message: &str) -> bool {
+    is_missing_main(message)
         || message.starts_with("the entry point 'main' must take no parameters")
 }
 
@@ -163,17 +169,17 @@ fn is_entry_point_message(message: &str) -> bool {
 fn agrees(door: Door, check: &Verdict, other: &Verdict) -> bool {
     match (check, other) {
         (Verdict::Diagnostics(a), Verdict::Diagnostics(b)) => {
-            if matches!(door, Door::Test | Door::Lsp) {
-                let strip = |s: &BTreeSet<Key>| -> BTreeSet<Key> {
-                    s.iter()
-                        .filter(|k| !is_entry_point_message(&k.message))
-                        .cloned()
-                        .collect()
-                };
-                strip(a) == strip(b)
-            } else {
-                a == b
-            }
+            let left_out: fn(&str) -> bool = match door {
+                Door::Test | Door::Lsp => is_entry_point_message,
+                _ => is_missing_main,
+            };
+            let strip = |s: &BTreeSet<Key>| -> BTreeSet<Key> {
+                s.iter()
+                    .filter(|k| !left_out(&k.message))
+                    .cloned()
+                    .collect()
+            };
+            strip(a) == strip(b)
         }
         _ => false,
     }

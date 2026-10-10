@@ -4,7 +4,7 @@
 use std::process;
 
 use silt::diagnostic::{Diagnostic, SourceView};
-use silt::session::{Entry, LockPolicy, looks_like_library_module, looks_like_test_file};
+use silt::session::{Entry, LockPolicy};
 
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
@@ -112,18 +112,12 @@ pub(crate) fn dispatch(args: &[String]) {
 
 pub(crate) fn check_file(path: &str, format: OutputFormat) {
     silt::intern::reset();
-    // `silt check` reports what `silt run` reports before it runs: the
-    // session's analysis and the compile step. A library module or a
-    // test file has no `main` on purpose, so it is compiled for its tests
-    // and not asked for one.
+    // `silt check` checks the file as a module: the session's analysis
+    // and the compile step, as the language server does. A module needs
+    // no `main`; `silt run` asks for one. A `main` the file binds must be
+    // able to start, and so must its test functions.
     let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
-    let target = match &session.graph().module(session.module_of(file)).ast {
-        Some(ast) if looks_like_library_module(ast) || looks_like_test_file(ast) => {
-            Entry::Tests { filter: None }
-        }
-        _ => Entry::Main,
-    };
-    let compiled = session.compile(file, target);
+    let compiled = session.compile(file, Entry::Tests { filter: None });
     let errors = door_diagnostics(&mut session, file, &compiled);
 
     let files = ProgramFiles::new(path, session.sources());

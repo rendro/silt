@@ -190,10 +190,12 @@ What is compared, per door:
   case (what an editor's problem list shows after opening the entry
   file). A session that publishes nothing for the entry file is a failed
   verdict.
-- The entry-point diagnostics (`program has no main() function`, `the
-  entry point 'main' must take no parameters`) belong to starting the
-  program, so they are compared between `check` and `run` only, and left
-  out when `test` and the LSP are compared with `check`.
+- `program has no main() function` is `run`'s alone (`check`, `test` and
+  the LSP take the file as a module, which needs no `main`): it is left
+  out when a door is compared with `check`. `the entry point 'main' must
+  take no parameters` belongs to starting the program, so it is compared
+  between `check` and `run` only, and left out when `test` and the LSP
+  are compared with `check`.
 
 `check` is the reference: every other door is compared with it. The mark
 says how they compare:
