@@ -1,10 +1,9 @@
 //! Numeric builtin functions (`int.*`, `float.*`, `math.*`).
 
-use super::common::{require_int, require_string, value_kind};
+use super::typed::builtins;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::Vm;
-use crate::vm::VmError;
+use crate::vm::{Step, Vm, VmError};
 
 /// Locate the byte offset of the first character in `s` that could not
 /// plausibly be part of a numeric literal (base-10 int or decimal float).
@@ -78,109 +77,18 @@ fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Valu
     Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(offset)])
 }
 
-/// Dispatch the builtin `trait Error for ParseError` method table.
-/// Routed through `dispatch_builtin`'s "ParseError" module arm, mirroring
-/// `call_io_error_trait`. Scaffolding lives in
-/// `super::dispatch_error_trait`; this site just supplies the
-/// variant → message rendering.
-pub fn call_parse_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("ParseError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("ParseEmpty", []) => "cannot parse empty string".to_string(),
-            ("ParseInvalidDigit", [Value::Int(offset)]) => {
-                format!("invalid digit at byte {offset}")
-            }
-            ("ParseOverflow", []) => "number too large".to_string(),
-            ("ParseUnderflow", []) => "number too small".to_string(),
-            _ => return None,
-        })
+/// What `ParseError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("ParseEmpty", []) => "cannot parse empty string".to_string(),
+        ("ParseInvalidDigit", [Value::Int(offset)]) => {
+            format!("invalid digit at byte {offset}")
+        }
+        ("ParseOverflow", []) => "number too large".to_string(),
+        ("ParseUnderflow", []) => "number too small".to_string(),
+        _ => return None,
     })
-}
-
-/// Dispatch `int.<name>(args)`.
-pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "parse" => {
-            if args.len() != 1 {
-                return Err(VmError::new("int.parse takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "int.parse")?;
-            match s.trim().parse::<i64>() {
-                Ok(n) => Ok(Value::variant(bv::OK, vec![Value::Int(n)])),
-                Err(e) => Ok(Value::variant(
-                    bv::ERR,
-                    vec![classify_int_parse_error(&e, &s)],
-                )),
-            }
-        }
-        "abs" => {
-            if args.len() != 1 {
-                return Err(VmError::new("int.abs takes 1 argument".into()));
-            }
-            let n = require_int(&args[0], "int.abs")?;
-            match n.checked_abs() {
-                Some(v) => Ok(Value::Int(v)),
-                None => Err(VmError::new(format!("integer overflow: abs({n})"))),
-            }
-        }
-        "min" => {
-            if args.len() != 2 {
-                return Err(VmError::new("int.min takes 2 arguments".into()));
-            }
-            let a = require_int(&args[0], "int.min")?;
-            let b = require_int(&args[1], "int.min")?;
-            Ok(Value::Int(a.min(b)))
-        }
-        "max" => {
-            if args.len() != 2 {
-                return Err(VmError::new("int.max takes 2 arguments".into()));
-            }
-            let a = require_int(&args[0], "int.max")?;
-            let b = require_int(&args[1], "int.max")?;
-            Ok(Value::Int(a.max(b)))
-        }
-        "clamp" => {
-            if args.len() != 3 {
-                return Err(VmError::new("int.clamp takes 3 arguments".into()));
-            }
-            let x = require_int(&args[0], "int.clamp")?;
-            let lo = require_int(&args[1], "int.clamp")?;
-            let hi = require_int(&args[2], "int.clamp")?;
-            if lo > hi {
-                return Err(VmError::new(format!(
-                    "int.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
-                )));
-            }
-            Ok(Value::Int(x.clamp(lo, hi)))
-        }
-        "to_float" => {
-            if args.len() != 1 {
-                return Err(VmError::new("int.to_float takes 1 argument".into()));
-            }
-            let n = require_int(&args[0], "int.to_float")?;
-            Ok(float_value(n as f64))
-        }
-        "to_string" => {
-            if args.len() != 1 {
-                return Err(VmError::new("int.to_string takes 1 argument".into()));
-            }
-            let n = require_int(&args[0], "int.to_string")?;
-            Ok(Value::String(n.to_string()))
-        }
-        _ => Err(VmError::new(format!("unknown int function: {name}"))),
-    }
-}
-
-/// Extract an f64 from a Float or Int value.
-fn extract_float(val: &Value, fn_name: &str) -> Result<f64, VmError> {
-    match val {
-        Value::Float(f) => Ok(*f),
-        Value::Int(n) => Ok(*n as f64),
-        other => Err(VmError::new(format!(
-            "{fn_name} requires a number, got {}",
-            value_kind(other)
-        ))),
-    }
 }
 
 /// Build a `Float` from a finite `f64`. `-0.0` becomes `0.0`: every
@@ -204,14 +112,57 @@ pub(crate) fn checked_float(f: f64, msg: impl FnOnce() -> String) -> Result<Valu
     }
 }
 
-/// Dispatch `float.<name>(args)`.
-pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "parse" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.parse takes 1 argument".into()));
+/// `int.*`
+pub(crate) mod int {
+    use super::*;
+
+    builtins! {
+        fn parse(s: &str) -> Value {
+            match s.trim().parse::<i64>() {
+                Ok(n) => Value::variant(bv::OK, vec![Value::Int(n)]),
+                Err(e) => Value::variant(bv::ERR, vec![classify_int_parse_error(&e, s)]),
             }
-            let s = require_string(&args[0], "float.parse")?;
+        }
+
+        fn abs(n: i64) -> Result<i64, VmError> {
+            n.checked_abs()
+                .ok_or_else(|| VmError::new(format!("integer overflow: abs({n})")))
+        }
+
+        fn min(a: i64, b: i64) -> i64 {
+            a.min(b)
+        }
+
+        fn max(a: i64, b: i64) -> i64 {
+            a.max(b)
+        }
+
+        fn clamp(x: i64, lo: i64, hi: i64) -> Result<i64, VmError> {
+            if lo > hi {
+                return Err(VmError::new(format!(
+                    "int.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
+                )));
+            }
+            Ok(x.clamp(lo, hi))
+        }
+
+        fn to_float(n: i64) -> f64 {
+            n as f64
+        }
+
+        fn to_string(n: i64) -> String {
+            n.to_string()
+        }
+    }
+}
+
+/// `float.*`
+pub(crate) mod float {
+    use super::*;
+    use crate::builtins::typed::Called;
+
+    builtins! {
+        fn parse(s: &str) -> Value {
             match s.trim().parse::<f64>() {
                 // Rust also parses `"inf"`, `"NaN"` and out-of-range
                 // literals such as `"1e400"` (to ±infinity). None of them
@@ -228,141 +179,30 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     } else {
                         Value::variant(bv::PARSE_OVERFLOW, vec![])
                     };
-                    Ok(Value::variant(bv::ERR, vec![err]))
+                    Value::variant(bv::ERR, vec![err])
                 }
-                Ok(n) => Ok(Value::variant(bv::OK, vec![float_value(n)])),
-                Err(e) => Ok(Value::variant(
-                    bv::ERR,
-                    vec![classify_float_parse_error(&e, &s)],
-                )),
+                Ok(n) => Value::variant(bv::OK, vec![float_value(n)]),
+                Err(e) => Value::variant(bv::ERR, vec![classify_float_parse_error(&e, s)]),
             }
         }
-        "round" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.round takes 1 argument".into()));
-            }
-            match &args[0] {
-                Value::Float(f) => {
-                    let result = f.round();
-                    Ok(float_value(result))
-                }
-                other => Err(VmError::new(format!(
-                    "float.round requires Float, got {}",
-                    value_kind(other)
-                ))),
-            }
+
+        fn round(f: f64) -> f64 {
+            f.round()
         }
-        "ceil" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.ceil takes 1 argument".into()));
-            }
-            match &args[0] {
-                Value::Float(f) => {
-                    let result = f.ceil();
-                    Ok(float_value(result))
-                }
-                other => Err(VmError::new(format!(
-                    "float.ceil requires Float, got {}",
-                    value_kind(other)
-                ))),
-            }
+
+        fn ceil(f: f64) -> f64 {
+            f.ceil()
         }
-        "floor" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.floor takes 1 argument".into()));
-            }
-            match &args[0] {
-                Value::Float(f) => {
-                    let result = f.floor();
-                    Ok(float_value(result))
-                }
-                other => Err(VmError::new(format!(
-                    "float.floor requires Float, got {}",
-                    value_kind(other)
-                ))),
-            }
+
+        fn floor(f: f64) -> f64 {
+            f.floor()
         }
-        "abs" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.abs takes 1 argument".into()));
-            }
-            match &args[0] {
-                Value::Float(f) => {
-                    let result = f.abs();
-                    Ok(float_value(result))
-                }
-                other => Err(VmError::new(format!(
-                    "float.abs requires Float, got {}",
-                    value_kind(other)
-                ))),
-            }
+
+        fn abs(f: f64) -> f64 {
+            f.abs()
         }
-        "to_string" => {
-            // Accepts (Float) or (Float, Int). The documented 2-arg form
-            // formats with a fixed number of decimal places; the 1-arg form
-            // uses the shortest round-trippable representation (Rust's
-            // default `Display` for `f64`). The typechecker signature
-            // declares the `decimals` parameter optional (`optional_last`
-            // on its row in the builtin registry), so both forms reach
-            // here.
-            if args.is_empty() || args.len() > 2 {
-                return Err(VmError::new(
-                    "float.to_string takes 1 or 2 arguments".into(),
-                ));
-            }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                other => {
-                    return Err(VmError::new(format!(
-                        "float.to_string requires Float, got {}",
-                        value_kind(other)
-                    )));
-                }
-            };
-            if args.len() == 1 {
-                // Shortest round-trippable representation. Force a decimal
-                // point for whole-number floats so the result always parses
-                // as a float (e.g. `3.0` instead of `3`).
-                let s = if f.fract() == 0.0 {
-                    format!("{f:.1}")
-                } else {
-                    format!("{f}")
-                };
-                return Ok(Value::String(s));
-            }
-            let decimals = require_int(&args[1], "float.to_string")?;
-            if decimals < 0 {
-                return Err(VmError::new(
-                    "float.to_string: decimals must be non-negative".into(),
-                ));
-            }
-            // Rust's `{:.prec$}` formatter backs precision with a u16 and
-            // panics with "Formatting argument out of range" for any value
-            // above `u16::MAX` (65535). `catch_builtin_panic` would turn
-            // that panic into a VmError, but std's panic handler still
-            // prints a noisy `thread 'main' panicked at ...` line to
-            // stderr, and the surfaced message is opaque to silt users.
-            // Reject out-of-range precision up front with a clean error.
-            let prec = u16::try_from(decimals).map_err(|_| {
-                VmError::new(format!(
-                    "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
-                ))
-            })?;
-            Ok(Value::String(format!("{:.prec$}", f, prec = prec as usize)))
-        }
-        "to_int" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.to_int takes 1 argument".into()));
-            }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                other => {
-                    return Err(VmError::new(format!(
-                        "float.to_int requires Float, got {}",
-                        value_kind(other)
-                    )));
-                }
-            };
+
+        fn to_int(f: f64) -> Result<i64, VmError> {
             // B7 fix: `as i64` saturates for out-of-range finite floats,
             // silently clamping e.g. 1e20 to i64::MAX. Reject such values
             // explicitly so callers see a clear runtime error.
@@ -380,62 +220,87 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "float.to_int: value out of i64 range: {f}"
                 )));
             }
-            Ok(Value::Int(f as i64))
+            Ok(f as i64)
         }
-        "min" => {
-            if args.len() != 2 {
-                return Err(VmError::new("float.min takes 2 arguments".into()));
-            }
-            let a = extract_float(&args[0], "float.min")?;
-            let b = extract_float(&args[1], "float.min")?;
-            Ok(float_value(a.min(b)))
+
+        fn min(a: f64, b: f64) -> f64 {
+            a.min(b)
         }
-        "max" => {
-            if args.len() != 2 {
-                return Err(VmError::new("float.max takes 2 arguments".into()));
-            }
-            let a = extract_float(&args[0], "float.max")?;
-            let b = extract_float(&args[1], "float.max")?;
-            Ok(float_value(a.max(b)))
+
+        fn max(a: f64, b: f64) -> f64 {
+            a.max(b)
         }
-        "clamp" => {
-            // float.clamp(x, lo, hi) -> Float. Raises if lo > hi.
-            if args.len() != 3 {
-                return Err(VmError::new("float.clamp takes 3 arguments".into()));
-            }
-            let x = extract_float(&args[0], "float.clamp")?;
-            let lo = extract_float(&args[1], "float.clamp")?;
-            let hi = extract_float(&args[2], "float.clamp")?;
+
+        fn clamp(x: f64, lo: f64, hi: f64) -> Result<f64, VmError> {
             if lo > hi {
                 return Err(VmError::new(format!(
                     "float.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
                 )));
             }
-            Ok(float_value(x.clamp(lo, hi)))
+            Ok(x.clamp(lo, hi))
         }
-        _ => Err(VmError::new(format!("unknown float function: {name}"))),
+    }
+
+    /// `float.to_string(f)` and `float.to_string(f, decimals)`: the
+    /// second parameter may be left out, which no typed body can say
+    /// (the row has `optional_last`; the conventions step makes it two
+    /// functions). The one-argument form is the shortest representation
+    /// that reads back as the same float; with `decimals`, that many
+    /// decimal places.
+    pub(crate) fn to_string(_vm: &mut Vm, args: &[Value]) -> Called {
+        let (f, decimals) = match args {
+            [Value::Float(f)] => (*f, None),
+            [Value::Float(f), Value::Int(decimals)] => (*f, Some(*decimals)),
+            _ => return None,
+        };
+        let Some(decimals) = decimals else {
+            // Force a decimal point for whole-number floats so the
+            // result always parses as a float (`3.0` instead of `3`).
+            let s = if f.fract() == 0.0 {
+                format!("{f:.1}")
+            } else {
+                format!("{f}")
+            };
+            return Some(Ok(Step::Done(Value::String(s))));
+        };
+        if decimals < 0 {
+            return Some(Err(VmError::new(
+                "float.to_string: decimals must be non-negative".into(),
+            )));
+        }
+        // Rust's `{:.prec$}` formatter backs precision with a u16 and
+        // panics with "Formatting argument out of range" for any value
+        // above `u16::MAX` (65535). `catch_builtin_panic` would turn
+        // that panic into a VmError, but std's panic handler still
+        // prints a noisy `thread 'main' panicked at ...` line to
+        // stderr, and the surfaced message is opaque to silt users.
+        // Reject out-of-range precision up front with a clean error.
+        let Ok(prec) = u16::try_from(decimals) else {
+            return Some(Err(VmError::new(format!(
+                "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
+            ))));
+        };
+        Some(Ok(Step::Done(Value::String(format!(
+            "{:.prec$}",
+            f,
+            prec = prec as usize
+        )))))
     }
 }
 
-/// Dispatch `math.<name>(args)`.
-pub fn call_math(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "sqrt" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.sqrt takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.sqrt")?;
+/// `math.*`
+pub(crate) mod math {
+    use super::*;
+
+    builtins! {
+        fn sqrt(f: f64) -> Result<f64, VmError> {
             if f < 0.0 {
                 return Err(VmError::new(format!("math.sqrt of a negative number: {f}")));
             }
-            Ok(float_value(f.sqrt()))
+            Ok(f.sqrt())
         }
-        "pow" => {
-            if args.len() != 2 {
-                return Err(VmError::new("math.pow takes 2 arguments".into()));
-            }
-            let base = extract_float(&args[0], "math.pow")?;
-            let exp = extract_float(&args[1], "math.pow")?;
+
+        fn pow(base: f64, exp: f64) -> Result<Value, VmError> {
             let result = base.powf(exp);
             if result.is_nan() {
                 return Err(VmError::new(format!(
@@ -449,104 +314,70 @@ pub fn call_math(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
             }
             checked_float(result, || format!("math.pow overflow: {base} ^ {exp}"))
         }
-        "log" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.log takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.log")?;
+
+        fn log(f: f64) -> Result<f64, VmError> {
             if f <= 0.0 {
                 return Err(VmError::new(format!(
                     "math.log of a number that is not positive: {f}"
                 )));
             }
-            Ok(float_value(f.ln()))
+            Ok(f.ln())
         }
-        "log10" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.log10 takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.log10")?;
+
+        fn log10(f: f64) -> Result<f64, VmError> {
             if f <= 0.0 {
                 return Err(VmError::new(format!(
                     "math.log10 of a number that is not positive: {f}"
                 )));
             }
-            Ok(float_value(f.log10()))
+            Ok(f.log10())
         }
-        "sin" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.sin takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.sin")?;
-            Ok(float_value(f.sin()))
+
+        fn sin(f: f64) -> f64 {
+            f.sin()
         }
-        "cos" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.cos takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.cos")?;
-            Ok(float_value(f.cos()))
+
+        fn cos(f: f64) -> f64 {
+            f.cos()
         }
-        "tan" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.tan takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.tan")?;
+
+        fn tan(f: f64) -> Result<Value, VmError> {
             checked_float(f.tan(), || format!("math.tan overflow: {f}"))
         }
-        "asin" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.asin takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.asin")?;
+
+        fn asin(f: f64) -> Result<f64, VmError> {
             if !(-1.0..=1.0).contains(&f) {
                 return Err(VmError::new(format!(
                     "math.asin of a number outside -1..1: {f}"
                 )));
             }
-            Ok(float_value(f.asin()))
+            Ok(f.asin())
         }
-        "acos" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.acos takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.acos")?;
+
+        fn acos(f: f64) -> Result<f64, VmError> {
             if !(-1.0..=1.0).contains(&f) {
                 return Err(VmError::new(format!(
                     "math.acos of a number outside -1..1: {f}"
                 )));
             }
-            Ok(float_value(f.acos()))
+            Ok(f.acos())
         }
-        "atan" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.atan takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.atan")?;
-            Ok(float_value(f.atan()))
+
+        fn atan(f: f64) -> f64 {
+            f.atan()
         }
-        "atan2" => {
-            if args.len() != 2 {
-                return Err(VmError::new("math.atan2 takes 2 arguments".into()));
-            }
-            let y = extract_float(&args[0], "math.atan2")?;
-            let x = extract_float(&args[1], "math.atan2")?;
-            Ok(float_value(y.atan2(x)))
+
+        fn atan2(y: f64, x: f64) -> f64 {
+            y.atan2(x)
         }
-        "exp" => {
-            if args.len() != 1 {
-                return Err(VmError::new("math.exp takes 1 argument".into()));
-            }
-            let f = extract_float(&args[0], "math.exp")?;
+
+        fn exp(f: f64) -> Result<Value, VmError> {
             checked_float(f.exp(), || format!("math.exp overflow: {f}"))
         }
-        "random" => {
-            if !args.is_empty() {
-                return Err(VmError::new("math.random takes 0 arguments".into()));
-            }
-            Ok(float_value(vm.runtime.random()))
+
+        fn random(vm) -> f64 {
+            vm.runtime.random()
         }
-        _ => Err(VmError::new(format!("unknown math function: {name}"))),
     }
 }
 
@@ -555,7 +386,11 @@ mod tests {
     use super::*;
 
     fn to_int(f: f64) -> Result<Value, VmError> {
-        call_float("to_int", &[Value::Float(f)])
+        let mut vm = Vm::new(crate::vm::HostIo::process());
+        match float::to_int(&mut vm, &[Value::Float(f)]).expect("a Float is the argument")? {
+            Step::Done(value) => Ok(value),
+            _ => panic!("float.to_int gives a value"),
+        }
     }
 
     // ── float.to_int: B7 out-of-range regression ──────────────────

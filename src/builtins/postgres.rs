@@ -35,10 +35,11 @@ use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
 use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 
-use super::common::{ok, value_kind};
+use super::common::ok;
+use super::typed::{Arg, List, Map, Ret, builtins};
 use crate::runtime::sync::{Channel, Close};
 use crate::scheduler::Scheduler;
-use crate::typeinfo::{bv, ty};
+use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
 use crate::vm::{Native, Step, Vm, VmError};
 
@@ -703,7 +704,7 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
     let Value::Variant(tag, payload) = v else {
         return Err(format!(
             "postgres requires Value variant (VInt/VStr/...), got {}",
-            value_kind(v)
+            v.kind()
         ));
     };
     if !tag.of(ty::PG_VALUE) {
@@ -869,69 +870,115 @@ fn make_cursor_handle(id: u64) -> Value {
     Value::variant(bv::PG_CURSOR, vec![Value::Int(id as i64)])
 }
 
-fn extract_cursor_id(v: &Value) -> Result<u64, Value> {
-    let Value::Variant(tag, payload) = v else {
-        return Err(other_error(format!(
-            "postgres requires PgCursor, got {}",
-            value_kind(v)
-        )));
-    };
-    if !tag.is(bv::PG_CURSOR) {
-        return Err(other_error(format!(
-            "postgres requires PgCursor, got {tag}"
-        )));
-    }
-    match payload.first() {
-        Some(Value::Int(n)) if *n >= 0 => Ok(*n as u64),
-        _ => Err(other_error(
-            "postgres: malformed PgCursor variant payload".to_string(),
-        )),
+// ── The arguments ───────────────────────────────────────────────────
+
+/// The id in a handle: the variant `tag` with one `Int` that is no
+/// less than 0.
+fn handle_id(value: &Value, tag: BuiltinVariant) -> Option<u64> {
+    match value {
+        Value::Variant(name, payload) if name.is(tag) => match payload.as_slice() {
+            [Value::Int(id)] => u64::try_from(*id).ok(),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
-fn extract_pool_id(v: &Value) -> Result<u64, VmError> {
-    let Value::Variant(tag, payload) = v else {
-        return Err(VmError::new(format!(
-            "postgres requires PgPool, got {}",
-            value_kind(v)
-        )));
-    };
-    if !tag.is(bv::PG_POOL) {
-        return Err(VmError::new(format!("postgres requires PgPool, got {tag}")));
-    }
-    match payload.first() {
-        Some(Value::Int(n)) if *n >= 0 => Ok(*n as u64),
-        _ => Err(VmError::new(
-            "postgres: malformed PgPool variant payload".into(),
-        )),
+/// A `PgPool` argument: the id of the pool.
+#[derive(Clone, Copy)]
+struct PoolHandle(u64);
+
+impl<'a> Arg<'a> for PoolHandle {
+    fn take(value: &'a Value) -> Option<Self> {
+        handle_id(value, bv::PG_POOL).map(PoolHandle)
     }
 }
 
-fn extract_tx_id(v: &Value) -> Result<u64, VmError> {
-    let Value::Variant(tag, payload) = v else {
-        return Err(VmError::new(format!(
-            "postgres requires PgTx, got {}",
-            value_kind(v)
-        )));
-    };
-    if !tag.is(bv::PG_TX) {
-        return Err(VmError::new(format!("postgres requires PgTx, got {tag}")));
-    }
-    match payload.first() {
-        Some(Value::Int(n)) if *n >= 0 => Ok(*n as u64),
-        _ => Err(VmError::new(
-            "postgres: malformed PgTx variant payload".into(),
-        )),
+impl PoolHandle {
+    /// The pool, or the `PgError` of one that is closed.
+    fn open(self) -> Result<Arc<PgPool>, Value> {
+        lookup_pool(self.0).ok_or_else(|| {
+            pg_connect(format!(
+                "postgres: pool handle {} is not registered (closed or never opened)",
+                self.0
+            ))
+        })
     }
 }
 
-fn extract_pool(v: &Value) -> Result<Arc<PgPool>, Value> {
-    let id = extract_pool_id(v).map_err(|e| other_error(e.message))?;
-    lookup_pool(id).ok_or_else(|| {
-        pg_connect(format!(
-            "postgres: pool handle {id} is not registered (closed or never opened)"
-        ))
-    })
+/// A `PgTx` argument: the id of the transaction.
+#[derive(Clone, Copy)]
+struct TxHandle(u64);
+
+impl<'a> Arg<'a> for TxHandle {
+    fn take(value: &'a Value) -> Option<Self> {
+        handle_id(value, bv::PG_TX).map(TxHandle)
+    }
+}
+
+impl TxHandle {
+    /// The transaction's connection, or the `PgError` of one that has
+    /// ended.
+    fn open(self) -> Result<Arc<Mutex<PinnedConn>>, Value> {
+        lookup_tx(self.0).ok_or_else(|| {
+            pg_connect(format!(
+                "postgres: tx handle {} is not registered (transaction ended)",
+                self.0
+            ))
+        })
+    }
+}
+
+/// A `PgCursor` argument: the id of the cursor.
+#[derive(Clone, Copy)]
+struct CursorHandle(u64);
+
+impl<'a> Arg<'a> for CursorHandle {
+    fn take(value: &'a Value) -> Option<Self> {
+        handle_id(value, bv::PG_CURSOR).map(CursorHandle)
+    }
+}
+
+/// The options argument of `connect_with`, a `Map(String, Int)`: its
+/// entries.
+struct Opts<'a>(Vec<(&'a str, i64)>);
+
+impl<'a> Arg<'a> for Opts<'a> {
+    fn take(value: &'a Value) -> Option<Self> {
+        let entries = <Map as Arg>::take(value)?.iter();
+        let entries = entries.map(|(key, value)| Some((<&str>::take(key)?, i64::take(value)?)));
+        entries.collect::<Option<_>>().map(Opts)
+    }
+}
+
+/// The parameters of a statement, or the `PgError` of a value that
+/// is none.
+fn sql_params(params: List) -> Result<Vec<SqlParam>, Value> {
+    let params = params.iter().map(|param| value_to_sql_param(&param));
+    params.collect::<Result<_, _>>().map_err(other_error)
+}
+
+/// The `PgError` a function ends with before its operation starts: a
+/// body's `Err`, which is the function's `Err(error)`.
+struct Failed(Value);
+
+impl From<Value> for Failed {
+    fn from(error: Value) -> Self {
+        Failed(error)
+    }
+}
+
+/// What a function gives that starts an operation, if it gets that
+/// far.
+type Started = Result<Result<Step, VmError>, Failed>;
+
+impl<T: Ret> Ret for Result<T, Failed> {
+    fn ret(self) -> Result<Step, VmError> {
+        match self {
+            Ok(done) => done.ret(),
+            Err(Failed(error)) => Ok(Step::Done(err(error))),
+        }
+    }
 }
 
 /// Target of a query or execute: either a pool (pulls a fresh conn) or
@@ -941,32 +988,23 @@ enum ExecutorRef {
     Tx(Arc<Mutex<PinnedConn>>),
 }
 
-/// Dispatch a query/execute target value to a concrete executor. On
-/// mismatch (unknown variant or unregistered handle), returns a silt
-/// `Err` value ready to be wrapped by the caller.
-fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
-    let Value::Variant(tag, _) = v else {
-        return Err(other_error(format!(
-            "postgres requires PgPool or PgTx, got {}",
-            value_kind(v)
-        )));
-    };
-    match tag {
-        _ if tag.is(bv::PG_POOL) => extract_pool(v).map(ExecutorRef::Pool),
-        _ if tag.is(bv::PG_TX) => {
-            let id = extract_tx_id(v).map_err(|e| other_error(e.message))?;
-            match lookup_tx(id) {
-                Some(cell) => Ok(ExecutorRef::Tx(cell)),
-                None => Err(pg_connect(format!(
-                    "postgres: tx handle {id} is not registered (transaction ended)"
-                ))),
-            }
-        }
-        other => Err(other_error(format!(
-            "postgres requires PgPool or PgTx, got {}",
-            other.name()
-        ))),
+/// The executor that `conn` is, the argument of a function that takes
+/// a pool or a transaction: the `PgError` if it is neither, or is one
+/// that is closed.
+fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
+    if let Some(pool) = PoolHandle::take(conn) {
+        return pool.open().map(ExecutorRef::Pool);
     }
+    if let Some(tx) = TxHandle::take(conn) {
+        return tx.open().map(ExecutorRef::Tx);
+    }
+    Err(other_error(format!(
+        "postgres requires PgPool or PgTx, got {}",
+        match conn {
+            Value::Variant(tag, _) => tag.name(),
+            other => other.kind(),
+        }
+    )))
 }
 
 // ── Blocking workers (run inside io_pool) ───────────────────────────
@@ -1665,76 +1703,37 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
 
 // ── trait Error for PgError ─────────────────────────────────────────
 
-/// Dispatch the builtin `trait Error for PgError` method table.
-/// Scaffolding lives in `super::dispatch_error_trait`; this site just
-/// supplies the variant → message rendering.
-pub fn call_pg_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    super::dispatch_error_trait("PgError", name, args, |tag, fields| {
-        Some(match (tag, fields) {
-            ("PgConnect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
-            ("PgTls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
-            ("PgAuthFailed", [Value::String(m)]) => {
-                format!("postgres authentication failed: {m}")
+/// What `PgError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("PgConnect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
+        ("PgTls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
+        ("PgAuthFailed", [Value::String(m)]) => {
+            format!("postgres authentication failed: {m}")
+        }
+        ("PgQuery", [Value::String(msg), Value::String(sqlstate)]) => {
+            if sqlstate.is_empty() {
+                format!("postgres query error: {msg}")
+            } else {
+                format!("postgres query error [{sqlstate}]: {msg}")
             }
-            ("PgQuery", [Value::String(msg), Value::String(sqlstate)]) => {
-                if sqlstate.is_empty() {
-                    format!("postgres query error: {msg}")
-                } else {
-                    format!("postgres query error [{sqlstate}]: {msg}")
-                }
-            }
-            ("PgTypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
-                format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}")
-            }
-            ("PgNoSuchColumn", [Value::String(col)]) => {
-                format!("postgres: no such column `{col}`")
-            }
-            ("PgClosed", []) => "postgres connection closed".to_string(),
-            ("PgTimeout", []) => "postgres operation timed out".to_string(),
-            ("PgTxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
-            ("PgUnknown", [Value::String(m)]) => m.clone(),
-            _ => return None,
-        })
+        }
+        ("PgTypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
+            format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}")
+        }
+        ("PgNoSuchColumn", [Value::String(col)]) => {
+            format!("postgres: no such column `{col}`")
+        }
+        ("PgClosed", []) => "postgres connection closed".to_string(),
+        ("PgTimeout", []) => "postgres operation timed out".to_string(),
+        ("PgTxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
+        ("PgUnknown", [Value::String(m)]) => m.clone(),
+        _ => return None,
     })
 }
 
-// ── Public dispatch ─────────────────────────────────────────────────
-
-pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
-    match name {
-        "transact" => transact(args),
-        "connect" => connect(vm, args),
-        "connect_with" => connect_with(vm, args),
-        "query" => query(vm, args),
-        "execute" => execute(vm, args),
-        "close" => close(vm, args).map(Step::Done),
-        "stream" => stream(vm, args).map(Step::Done),
-        "cursor" => cursor_open(vm, args),
-        "cursor_next" => cursor_next(vm, args),
-        "cursor_close" => cursor_close(vm, args),
-        "listen" => listen(vm, args),
-        "notify" => notify(vm, args),
-        "uuidv7" => uuidv7(vm, args).map(Step::Done),
-        other => Err(VmError::new(format!("unknown postgres function: {other}"))),
-    }
-}
-
-fn connect(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new(
-            "postgres.connect takes 1 argument (url)".into(),
-        ));
-    }
-    let Value::String(url) = &args[0] else {
-        return Err(VmError::new(format!(
-            "postgres.connect requires String, got {}",
-            value_kind(&args[0])
-        )));
-    };
-
-    let url = url.clone();
-    vm.io("postgres", pg_timeout_err, move || do_connect(url))
-}
+// ── The functions ───────────────────────────────────────────────────
 
 /// Test-only re-export of `pg_timeout_err` so integration tests can
 /// lock the typed-timeout shape without needing a live DB. Returns the
@@ -1747,214 +1746,236 @@ pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
 
 /// Test-only mirror of `parse_connect_opts`'s `max_pool_size`
 /// extraction so integration tests can lock the shape without a live
-/// DB. Returns `Ok(Some(n))` if the opts map carries a valid
-/// `max_pool_size` key, `Ok(None)` if the key is absent, `Err` if the
-/// shape is invalid.
+/// DB. `None` if `opts` is no `Map(String, Int)`, as the argument of
+/// `connect_with` is; else `Ok(Some(n))` if the map carries a valid
+/// `max_pool_size` key, `Ok(None)` if the key is absent, `Err` if its
+/// value is none a pool can have.
 #[doc(hidden)]
-pub fn read_max_pool_size_for_tests(opts: &Value) -> Result<Option<u32>, String> {
-    let parsed = parse_connect_opts(opts)?;
-    Ok(parsed.max_pool_size)
+pub fn read_max_pool_size_for_tests(opts: &Value) -> Option<Result<Option<u32>, String>> {
+    let opts = Opts::take(opts)?;
+    Some(parse_connect_opts(&opts).map(|parsed| parsed.max_pool_size))
 }
 
-/// Parse a silt-side `#{ "key": Int }` options map into the Rust
-/// `ConnectOpts` struct. Unknown keys are ignored so options-bag
-/// additions stay backwards-compatible.
-fn parse_connect_opts(v: &Value) -> Result<ConnectOpts, String> {
-    let Value::Map(m) = v else {
-        return Err(format!(
-            "postgres.connect_with requires Map, got {} (e.g. #{{}})",
-            value_kind(v)
-        ));
-    };
+/// The options of `connect_with` as the Rust `ConnectOpts` struct.
+/// Unknown keys are ignored so options-bag additions stay
+/// backwards-compatible.
+fn parse_connect_opts(opts: &Opts) -> Result<ConnectOpts, String> {
     let mut out = ConnectOpts::default();
-    for (k, val) in m.iter() {
-        let Value::String(key) = k else {
-            return Err(format!(
-                "postgres.connect_with requires String, got {}",
-                value_kind(k)
-            ));
-        };
-        match key.as_str() {
-            "max_pool_size" => {
-                let Value::Int(n) = val else {
-                    return Err(format!(
-                        "postgres.connect_with requires Int, got {}",
-                        value_kind(val)
-                    ));
-                };
-                if *n <= 0 {
-                    return Err(format!(
-                        "postgres.connect_with: max_pool_size must be > 0, got {n}"
-                    ));
-                }
-                // r2d2 takes u32. Clamp to avoid a silent wrap.
-                let clamped: u32 = (*n).min(i64::from(u32::MAX)) as u32;
-                out.max_pool_size = Some(clamped);
+    for &(key, n) in &opts.0 {
+        if key == "max_pool_size" {
+            if n <= 0 {
+                return Err(format!(
+                    "postgres.connect_with: max_pool_size must be > 0, got {n}"
+                ));
             }
-            _ => {
-                // Unknown keys: ignore so we can add fields later
-                // without breaking callers. Silently accepted.
-            }
+            // r2d2 takes u32. Clamp to avoid a silent wrap.
+            out.max_pool_size = Some(u32::try_from(n).unwrap_or(u32::MAX));
         }
     }
     Ok(out)
 }
 
-fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new(
-            "postgres.connect_with takes 2 arguments (url, opts)".into(),
-        ));
+builtins! {
+    fn connect(vm, url: &str) -> Result<Step, VmError> {
+        let url = url.to_string();
+        vm.io("postgres", pg_timeout_err, move || do_connect(url))
     }
-    let Value::String(url) = &args[0] else {
-        return Err(VmError::new(format!(
-            "postgres.connect_with requires String, got {}",
-            value_kind(&args[0])
-        )));
-    };
-    let opts = match parse_connect_opts(&args[1]) {
-        Ok(o) => o,
-        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
-    };
 
-    let url = url.clone();
-    vm.io("postgres", pg_timeout_err, move || {
-        do_connect_with(url, opts)
-    })
-}
-
-fn query(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 3 {
-        return Err(VmError::new(
-            "postgres.query takes 3 arguments (target, sql, params)".into(),
-        ));
+    fn connect_with(vm, url: &str, opts: Opts) -> Started {
+        let opts = parse_connect_opts(&opts).map_err(other_error)?;
+        let url = url.to_string();
+        Ok(vm.io("postgres", pg_timeout_err, move || do_connect_with(url, opts)))
     }
-    let target = match resolve_executor(&args[0]) {
-        Ok(t) => t,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-    let Value::String(sql) = &args[1] else {
-        return Err(VmError::new(format!(
-            "postgres.query requires String, got {}",
-            value_kind(&args[1])
-        )));
-    };
-    let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(format!(
-            "postgres.query requires List, got {}",
-            value_kind(&args[2])
-        )));
-    };
-    let params: Vec<SqlParam> = match params_list
-        .iter()
-        .map(value_to_sql_param)
-        .collect::<Result<Vec<_>, String>>()
-    {
-        Ok(p) => p,
-        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
-    };
 
-    let sql = sql.clone();
-    vm.io("postgres", pg_timeout_err, move || {
-        do_query(target, sql, params)
-    })
-}
+    fn query(vm, conn: &Value, sql: &str, params: List) -> Started {
+        let target = resolve_executor(conn)?;
+        let params = sql_params(params)?;
+        let sql = sql.to_string();
+        Ok(vm.io("postgres", pg_timeout_err, move || do_query(target, sql, params)))
+    }
 
-fn execute(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 3 {
-        return Err(VmError::new(
-            "postgres.execute takes 3 arguments (target, sql, params)".into(),
-        ));
+    fn execute(vm, conn: &Value, sql: &str, params: List) -> Started {
+        let target = resolve_executor(conn)?;
+        let params = sql_params(params)?;
+        let sql = sql.to_string();
+        Ok(vm.io("postgres", pg_timeout_err, move || do_execute(target, sql, params)))
     }
-    let target = match resolve_executor(&args[0]) {
-        Ok(t) => t,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-    let Value::String(sql) = &args[1] else {
-        return Err(VmError::new(format!(
-            "postgres.execute requires String, got {}",
-            value_kind(&args[1])
-        )));
-    };
-    let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(format!(
-            "postgres.execute requires List, got {}",
-            value_kind(&args[2])
-        )));
-    };
-    let params: Vec<SqlParam> = match params_list
-        .iter()
-        .map(value_to_sql_param)
-        .collect::<Result<Vec<_>, String>>()
-    {
-        Ok(p) => p,
-        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
-    };
 
-    let sql = sql.clone();
-    vm.io("postgres", pg_timeout_err, move || {
-        do_execute(target, sql, params)
-    })
-}
+    // `postgres.transact(pool, callback)` — pins a single pooled
+    // connection for the callback's lifetime.
+    //
+    // Lifecycle
+    // ---------
+    // 1. The call: check out a conn from the pool,
+    //    run `BEGIN`, register the conn in the tx registry, mint a `PgTx`
+    //    handle. The builtin goes on as a frame ([`Transact`]) that calls
+    //    the callback with the handle.
+    //
+    // 2. Completion, when the callback has returned:
+    //    - `Ok(_)` → `COMMIT` on the pinned conn.
+    //    - `Err(_)` → `ROLLBACK`.
+    //    - a non-Result value → `COMMIT`, wrap as `Ok`.
+    //
+    //    An error of the program inside the callback drops the frame,
+    //    which rolls back.
+    //
+    //    The pinned conn is dropped after commit/rollback, returning it
+    //    to the pool. COMMIT errors are surfaced as the function's Err;
+    //    the callback's return value is discarded in that edge case.
+    //
+    // There is no nested transaction: a `PgTx` is no `PgPool`. `SAVEPOINT`
+    // by hand does it.
+    fn transact(pool: PoolHandle, f: &Value) -> Result<Step, Failed> {
+        let pool = pool.open()?;
+        let mut conn = pool.get().map_err(|e| pool_error_value(&e))?;
+        conn.client_mut()
+            .batch_execute("BEGIN")
+            .map_err(|e| pg_error_to_variant(&e))?;
+        Ok(Step::Run(Box::new(Transact {
+            tx_id: Some(insert_tx(conn)),
+            callback: Some(f.clone()),
+        })))
+    }
 
-/// `postgres.transact(pool_or_tx, callback)` — pins a single pooled
-/// connection for the callback's lifetime.
-///
-/// Lifecycle
-/// ---------
-/// 1. The call (args[0] is a `PgPool`): check out a conn from the pool,
-///    run `BEGIN`, register the conn in the tx registry, mint a `PgTx`
-///    handle. The builtin goes on as a frame ([`Transact`]) that calls
-///    the callback with the handle.
-///
-/// 2. Completion, when the callback has returned:
-///    - `Ok(_)` → `COMMIT` on the pinned conn.
-///    - `Err(_)` → `ROLLBACK`.
-///    - a non-Result value → `COMMIT`, wrap as `Ok`.
-///
-///    An error of the program inside the callback drops the frame,
-///    which rolls back.
-///
-///    The pinned conn is dropped after commit/rollback, returning it
-///    to the pool. COMMIT errors are surfaced as the function's Err;
-///    the callback's return value is discarded in that edge case.
-///
-/// Nested transact is not supported — calling it with a `PgTx` returns
-/// an Err telling the caller to use `SAVEPOINT` manually. That's
-/// reserved for a v2 nested-tx API.
-fn transact(args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new(
-            "postgres.transact takes 2 arguments (pool, callback)".into(),
-        ));
+    // `postgres.stream(target, sql, params)` — returns a bounded silt
+    // `Channel` of `Result(Map(String, Value), PgError)` row wrappers.
+    //
+    // The caller does not wait for the worker, which is
+    // long-lived: it produces many rows over time, not a single result.
+    // We submit it to the io_pool and return the channel immediately,
+    // without parking the caller. Backpressure is via the channel's
+    // bounded capacity; cancellation is via `channel.close` (checked
+    // between rows).
+    fn stream(vm, conn: &Value, sql: &str, params: List) -> Result<Value, Failed> {
+        let target = resolve_executor(conn)?;
+        let params = sql_params(params)?;
+
+        // Mint the channel up-front so we can hand the caller an owned
+        // Arc while the worker holds its own clone.
+        let ch_id = vm.next_channel_id();
+        let channel = Channel::new(ch_id, STREAM_CHANNEL_CAPACITY);
+        let worker_channel = channel.clone();
+
+        // Fire-and-forget: submit to io_pool. The completion's return
+        // value is unused (we return the channel, not a completion).
+        let sql = sql.to_string();
+        let scheduler = vm.scheduler().clone();
+        let op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
+            do_stream_worker(target, sql, params, worker_channel, scheduler);
+            Value::Unit
+        });
+        op.detach();
+
+        Ok(ok(Value::Channel(channel)))
     }
-    // Nested transact: the outer caller already handed us a PgTx.
-    // We don't model SAVEPOINTs yet — surface an Err so the caller
-    // can fall back to raw SQL.
-    if let Value::Variant(tag, _) = &args[0]
-        && tag.is(bv::PG_TX)
-    {
-        return Ok(Step::Done(err(other_error(
-            "postgres.transact: nested transactions are not supported — \
-             issue SAVEPOINT manually via postgres.execute on the PgTx"
-                .to_string(),
-        ))));
+
+    // (A cursor lives inside a transaction: `tx` is a `PgTx`.)
+    fn cursor(vm, tx: TxHandle, sql: &str, params: List, batch_size: i64) -> Started {
+        let cell = tx.open()?;
+        let Ok(batch_size @ 1..) = u64::try_from(batch_size) else {
+            return Err(other_error("postgres.cursor: batch_size must be >= 1".to_string()).into());
+        };
+        let params = sql_params(params)?;
+        let sql = sql.to_string();
+        Ok(vm.io("postgres", pg_timeout_err, move || {
+            do_cursor_open(tx.0, cell, sql, params, batch_size)
+        }))
     }
-    let pool = match extract_pool(&args[0]) {
-        Ok(p) => p,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-    let mut conn = match pool.get() {
-        Ok(c) => c,
-        Err(e) => return Ok(Step::Done(err(pool_error_value(&e)))),
-    };
-    if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
-        return Ok(Step::Done(err(pg_error_to_variant(&e))));
+
+    fn cursor_next(vm, cursor: CursorHandle) -> Result<Step, VmError> {
+        vm.io("postgres", pg_timeout_err, move || do_cursor_next(cursor.0))
     }
-    Ok(Step::Run(Box::new(Transact {
-        tx_id: Some(insert_tx(conn)),
-        callback: Some(args[1].clone()),
-    })))
+
+    fn cursor_close(vm, cursor: CursorHandle) -> Result<Step, VmError> {
+        vm.io("postgres", pg_timeout_err, move || do_cursor_close(cursor.0))
+    }
+
+    fn close(pool: PoolHandle) {
+        remove_pool(pool.0);
+    }
+
+    // A fresh UUID v7 (RFC 9562). Time-ordered: first 48 bits are Unix
+    // timestamp in ms, remainder is random. Good for B-tree primary keys
+    // (monotonic inserts) while being unguessable. Returned as a
+    // lowercase hyphenated string.
+    fn uuidv7(vm) -> String {
+        super::uuid::now_v7(vm).to_string()
+    }
+
+    // `postgres.listen(pool, channel_name)` — open a notification
+    // listener. Returns `Result(Channel, PgError)`. On success the channel
+    // yields `Notification` records until the underlying conn dies or the
+    // caller calls `channel.close`.
+    //
+    // The LISTEN statement is issued synchronously inside this function (on
+    // the io_pool) so LISTEN errors — e.g. an invalid channel name that
+    // somehow slipped past the identifier validator, or a pool checkout
+    // failure — surface as an immediate `Err(PgError)` rather than a
+    // channel that silently closes. The long-lived worker is spawned only
+    // after LISTEN succeeds.
+    fn listen(vm, pool: PoolHandle, channel: &str) -> Started {
+        let pool = pool.open()?;
+        if !is_valid_ident(channel) {
+            return Err(other_error(format!(
+                "postgres.listen: channel name {channel:?} must be a valid SQL identifier \
+                 (letters, digits, underscore; cannot start with digit)"
+            ))
+            .into());
+        }
+
+        // Mint the silt-side channel up front so we can hand the caller an
+        // owned Arc synchronously.
+        let ch_id = vm.next_channel_id();
+        let worker_channel = Channel::new(ch_id, LISTEN_CHANNEL_CAPACITY);
+
+        // LISTEN happens on the io_pool so it doesn't block the VM thread,
+        // but we still wait for its completion before returning so LISTEN
+        // errors propagate cleanly. Use the same entry-guard dance as
+        // query/execute to park-and-resume the scheduled task.
+        if let Some(r) = vm.deadline_exceeded_with(pg_timeout_err) {
+            return Ok(Ok(Step::Done(r)));
+        }
+
+        // Blocking work we submit to io_pool: checkout + LISTEN. On success
+        // we spawn the long-lived worker and return the silt channel; on
+        // failure we return the PgError without spawning. We need a handle
+        // to the io_pool inside the closure so it can spawn the worker
+        // itself — `runtime` is an `Arc<Runtime>` so the clone is cheap.
+        let runtime = vm.runtime.clone();
+        let channel_name = channel.to_string();
+        let work = move || -> Value {
+            let mut conn = match pool.get() {
+                Ok(c) => c,
+                Err(e) => return err(pool_error_value(&e)),
+            };
+            let listen_sql = format!("LISTEN {channel_name}");
+            if let Err(e) = conn.client_mut().batch_execute(&listen_sql) {
+                return err(pg_error_to_variant(&e));
+            }
+            // LISTEN ok — spawn the long-lived worker onto the io_pool.
+            // The worker owns `conn` for its whole lifetime; on exit the
+            // conn drops back into the pool.
+            let worker_ch = worker_channel.clone();
+            let scheduler = runtime.scheduler.clone();
+            let op = runtime.io_pool.submit(pg_timeout_err, move || {
+                do_listen_worker(conn, channel_name, worker_ch, scheduler);
+                Value::Unit
+            });
+            op.detach();
+            ok(Value::Channel(worker_channel))
+        };
+
+        Ok(vm.io_started("postgres", pg_timeout_err, work))
+    }
+
+    // Fires a NOTIFY, on a pool or in a transaction. Uses
+    // `SELECT pg_notify($1, $2)` so channel names are bind-parameter
+    // safe.
+    fn notify(vm, conn: &Value, channel: &str, payload: &str) -> Started {
+        let target = resolve_executor(conn)?;
+        let (channel, payload) = (channel.to_string(), payload.to_string());
+        Ok(vm.io("postgres", pg_timeout_err, move || do_notify(target, channel, payload)))
+    }
 }
 
 /// A transaction whose callback is running.
@@ -2054,308 +2075,6 @@ fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
             Value::Unit
         }
     }
-}
-
-/// `postgres.stream(target, sql, params)` — returns a bounded silt
-/// `Channel` of `Result(Map(String, Value), PgError)` row wrappers.
-///
-/// The caller does not wait for the worker, which is
-/// long-lived: it produces many rows over time, not a single result.
-/// We submit it to the io_pool and return the channel immediately,
-/// without parking the caller. Backpressure is via the channel's
-/// bounded capacity; cancellation is via `channel.close` (checked
-/// between rows).
-fn stream(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 3 {
-        return Err(VmError::new(
-            "postgres.stream takes 3 arguments (target, sql, params)".into(),
-        ));
-    }
-    let target = match resolve_executor(&args[0]) {
-        Ok(t) => t,
-        Err(v) => return Ok(err(v)),
-    };
-    let Value::String(sql) = &args[1] else {
-        return Err(VmError::new(format!(
-            "postgres.stream requires String, got {}",
-            value_kind(&args[1])
-        )));
-    };
-    let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(format!(
-            "postgres.stream requires List, got {}",
-            value_kind(&args[2])
-        )));
-    };
-    let params: Vec<SqlParam> = match params_list
-        .iter()
-        .map(value_to_sql_param)
-        .collect::<Result<Vec<_>, String>>()
-    {
-        Ok(p) => p,
-        Err(msg) => return Ok(err(other_error(msg))),
-    };
-
-    // Mint the channel up-front so we can hand the caller an owned
-    // Arc while the worker holds its own clone.
-    let ch_id = vm.next_channel_id();
-    let channel = Channel::new(ch_id, STREAM_CHANNEL_CAPACITY);
-    let worker_channel = channel.clone();
-
-    // Fire-and-forget: submit to io_pool. The completion's return
-    // value is unused (we return the channel, not a completion).
-    let sql = sql.clone();
-    let scheduler = vm.scheduler().clone();
-    let op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
-        do_stream_worker(target, sql, params, worker_channel, scheduler);
-        Value::Unit
-    });
-    op.detach();
-
-    Ok(ok(Value::Channel(channel)))
-}
-
-fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 4 {
-        return Err(VmError::new(
-            "postgres.cursor takes 4 arguments (tx, sql, params, batch_size)".into(),
-        ));
-    }
-    // Cursors require a PgTx — reject PgPool here up front.
-    let tx_id = match &args[0] {
-        Value::Variant(tag, _) if tag.is(bv::PG_TX) => match extract_tx_id(&args[0]) {
-            Ok(id) => id,
-            Err(e) => {
-                return Ok(Step::Done(err(other_error(e.message))));
-            }
-        },
-        Value::Variant(tag, _) if tag.is(bv::PG_POOL) => {
-            return Ok(Step::Done(err(other_error(
-                "postgres.cursor requires PgTx, got PgPool (cursors live inside a transaction)"
-                    .to_string(),
-            ))));
-        }
-        other => {
-            return Ok(Step::Done(err(other_error(format!(
-                "postgres.cursor requires PgTx, got {}",
-                value_kind(other)
-            )))));
-        }
-    };
-    let cell = match lookup_tx(tx_id) {
-        Some(c) => c,
-        None => {
-            return Ok(Step::Done(err(pg_connect(format!(
-                "postgres: tx handle {tx_id} is not registered (transaction ended)"
-            )))));
-        }
-    };
-    let Value::String(sql) = &args[1] else {
-        return Err(VmError::new(format!(
-            "postgres.cursor requires String, got {}",
-            value_kind(&args[1])
-        )));
-    };
-    let Value::List(params_list) = &args[2] else {
-        return Err(VmError::new(format!(
-            "postgres.cursor requires List, got {}",
-            value_kind(&args[2])
-        )));
-    };
-    let batch_size = match &args[3] {
-        Value::Int(n) if *n >= 1 => *n as u64,
-        Value::Int(_) => {
-            return Ok(Step::Done(err(other_error(
-                "postgres.cursor: batch_size must be >= 1".to_string(),
-            ))));
-        }
-        other => {
-            return Err(VmError::new(format!(
-                "postgres.cursor requires Int, got {}",
-                value_kind(other)
-            )));
-        }
-    };
-    let params: Vec<SqlParam> = match params_list
-        .iter()
-        .map(value_to_sql_param)
-        .collect::<Result<Vec<_>, String>>()
-    {
-        Ok(p) => p,
-        Err(msg) => return Ok(Step::Done(err(other_error(msg)))),
-    };
-
-    let sql = sql.clone();
-    vm.io("postgres", pg_timeout_err, move || {
-        do_cursor_open(tx_id, cell, sql, params, batch_size)
-    })
-}
-
-fn cursor_next(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new(
-            "postgres.cursor_next takes 1 argument (cursor)".into(),
-        ));
-    }
-    let cursor_id = match extract_cursor_id(&args[0]) {
-        Ok(id) => id,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-
-    vm.io("postgres", pg_timeout_err, move || {
-        do_cursor_next(cursor_id)
-    })
-}
-
-fn cursor_close(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new(
-            "postgres.cursor_close takes 1 argument (cursor)".into(),
-        ));
-    }
-    let cursor_id = match extract_cursor_id(&args[0]) {
-        Ok(id) => id,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-
-    vm.io("postgres", pg_timeout_err, move || {
-        do_cursor_close(cursor_id)
-    })
-}
-
-fn close(_vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new(
-            "postgres.close takes 1 argument (pool)".into(),
-        ));
-    }
-    let id = extract_pool_id(&args[0])?;
-    let _ = remove_pool(id);
-    Ok(Value::Unit)
-}
-
-/// `postgres.uuidv7() -> String` — generate a fresh UUID v7 (RFC 9562).
-/// Time-ordered: first 48 bits are Unix timestamp in ms, remainder is
-/// random. Good for B-tree primary keys (monotonic inserts) while being
-/// unguessable. Returned as a lowercase hyphenated string.
-fn uuidv7(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
-    if !args.is_empty() {
-        return Err(VmError::new("postgres.uuidv7 takes no arguments".into()));
-    }
-    Ok(Value::String(super::uuid::now_v7(vm).to_string()))
-}
-
-/// `postgres.listen(pool, channel_name)` — open a notification
-/// listener. Returns `Result(Channel, PgError)`. On success the channel
-/// yields `Notification` records until the underlying conn dies or the
-/// caller calls `channel.close`.
-///
-/// The LISTEN statement is issued synchronously inside this function (on
-/// the io_pool) so LISTEN errors — e.g. an invalid channel name that
-/// somehow slipped past the identifier validator, or a pool checkout
-/// failure — surface as an immediate `Err(PgError)` rather than a
-/// channel that silently closes. The long-lived worker is spawned only
-/// after LISTEN succeeds.
-fn listen(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 2 {
-        return Err(VmError::new(
-            "postgres.listen takes 2 arguments (pool, channel_name)".into(),
-        ));
-    }
-    let pool = match extract_pool(&args[0]) {
-        Ok(p) => p,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-    let Value::String(channel_name) = &args[1] else {
-        return Err(VmError::new(format!(
-            "postgres.listen requires String, got {}",
-            value_kind(&args[1])
-        )));
-    };
-    if !is_valid_ident(channel_name) {
-        return Ok(Step::Done(err(other_error(format!(
-            "postgres.listen: channel name {channel_name:?} must be a valid SQL identifier \
-             (letters, digits, underscore; cannot start with digit)"
-        )))));
-    }
-
-    // Mint the silt-side channel up front so we can hand the caller an
-    // owned Arc synchronously.
-    let ch_id = vm.next_channel_id();
-    let channel = Channel::new(ch_id, LISTEN_CHANNEL_CAPACITY);
-
-    // LISTEN happens on the io_pool so it doesn't block the VM thread,
-    // but we still wait for its completion before returning so LISTEN
-    // errors propagate cleanly. Use the same entry-guard dance as
-    // query/execute to park-and-resume the scheduled task.
-    if let Some(r) = vm.deadline_exceeded_with(pg_timeout_err) {
-        return Ok(Step::Done(r));
-    }
-
-    // Blocking work we submit to io_pool: checkout + LISTEN. On success
-    // we spawn the long-lived worker and return the silt channel; on
-    // failure we return the PgError without spawning. We need a handle
-    // to the io_pool inside the closure so it can spawn the worker
-    // itself — `runtime` is an `Arc<Runtime>` so the clone is cheap.
-    let worker_channel = channel.clone();
-    let runtime = vm.runtime.clone();
-    let channel_name_owned = channel_name.clone();
-    let work = move || -> Value {
-        let mut conn = match pool.get() {
-            Ok(c) => c,
-            Err(e) => return err(pool_error_value(&e)),
-        };
-        let listen_sql = format!("LISTEN {channel_name_owned}");
-        if let Err(e) = conn.client_mut().batch_execute(&listen_sql) {
-            return err(pg_error_to_variant(&e));
-        }
-        // LISTEN ok — spawn the long-lived worker onto the io_pool.
-        // The worker owns `conn` for its whole lifetime; on exit the
-        // conn drops back into the pool.
-        let worker_ch = worker_channel.clone();
-        let scheduler = runtime.scheduler.clone();
-        let op = runtime.io_pool.submit(pg_timeout_err, move || {
-            do_listen_worker(conn, channel_name_owned, worker_ch, scheduler);
-            Value::Unit
-        });
-        op.detach();
-        ok(Value::Channel(worker_channel))
-    };
-
-    vm.io_started("postgres", pg_timeout_err, work)
-}
-
-/// `postgres.notify(executor, channel_name, payload)` — fire a NOTIFY.
-/// Accepts either a pool or tx executor. Uses `SELECT pg_notify($1, $2)`
-/// so channel names are bind-parameter safe.
-fn notify(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 3 {
-        return Err(VmError::new(
-            "postgres.notify takes 3 arguments (executor, channel_name, payload)".into(),
-        ));
-    }
-    let target = match resolve_executor(&args[0]) {
-        Ok(t) => t,
-        Err(v) => return Ok(Step::Done(err(v))),
-    };
-    let Value::String(channel_name) = &args[1] else {
-        return Err(VmError::new(format!(
-            "postgres.notify requires String, got {}",
-            value_kind(&args[1])
-        )));
-    };
-    let Value::String(payload) = &args[2] else {
-        return Err(VmError::new(format!(
-            "postgres.notify requires String, got {}",
-            value_kind(&args[2])
-        )));
-    };
-
-    let channel_name = channel_name.clone();
-    let payload = payload.clone();
-    vm.io("postgres", pg_timeout_err, move || {
-        do_notify(target, channel_name, payload)
-    })
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -2551,8 +2270,8 @@ mod tests {
         };
         assert_eq!(tag.name(), "Ok", "connect failed: {result:?}");
         let handle = payload.first().cloned().expect("pool handle");
-        let pool_id = extract_pool_id(&handle).expect("pool id");
-        let pool = lookup_pool(pool_id).expect("registered");
+        let handle = PoolHandle::take(&handle).expect("a pool handle");
+        let pool = handle.open().expect("registered");
 
         let q = do_query(ExecutorRef::Pool(pool), "SELECT 1".to_string(), Vec::new());
         let Value::Variant(qtag, qpayload) = &q else {
@@ -2584,6 +2303,6 @@ mod tests {
         assert_eq!(vtag.name(), "VInt");
         assert_eq!(vpayload.first(), Some(&Value::Int(1)));
 
-        let _ = remove_pool(pool_id);
+        let _ = remove_pool(handle.0);
     }
 }

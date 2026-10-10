@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: env.set: the value of a variable holds no NUL character
+-- stderr-not-contains: panicked
+-- A value with a NUL character cannot be in the environment.
+import env
+import string
+
+fn main() {
+  env.set("D2_FIX_X", "a{string.from_char_code(0)}b")
+  println(string.length("not reached"))
+}

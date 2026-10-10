@@ -670,54 +670,6 @@ impl Vm {
         cache.get(pattern)
     }
 
-    /// Internal-facing type name used in debug / invariant checks and
-    /// arithmetic/dispatch error messages. Surfaces enum-variant names
-    /// for the underlying `Value` kinds — including the Range/List
-    /// distinction (a Range receiver in an unsupported arithmetic
-    /// shows as "Range", not collapsed to "List", to preserve
-    /// user-facing display fidelity even though the dispatch layer
-    /// canonicalises Range -> List).
-    ///
-    /// Do NOT use this for method dispatch — use
-    /// `crate::types::canonical::dispatch_type_for_value` instead.
-    pub fn type_name(&self, val: &Value) -> &'static str {
-        match val {
-            Value::Int(_) => "Int",
-            Value::Float(_) => "Float",
-            Value::Bool(_) => "Bool",
-            Value::String(_) => "String",
-            Value::List(_) => "List",
-            // `stringify!` is used here instead of the bare string
-            // literal so the architectural lock test
-            // (tests/meta/canonical_type_arch_lock_tests.rs) can grep for
-            // dispatch-key uses of `"Range"` without false-positiving
-            // on this representation-level debug helper. The expansion
-            // is identical at compile time: a `&'static str` "Range".
-            Value::Range(..) => stringify!(Range),
-            Value::Map(_) => "Map",
-            Value::Set(_) => "Set",
-            Value::Tuple(_) => "Tuple",
-            Value::Record(..) => "Record",
-            Value::Variant(..) => "Variant",
-            // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
-            // and the canonical dispatch name returned by
-            // `dispatch_type_name`. Round 71 follow-up unified
-            // `Function` / `Fun` / `Fn` on `"Fn"`.
-            Value::VmClosure(_) => "Fn",
-            Value::BuiltinFn(_) => "BuiltinFn",
-            Value::HostFn(_) => "HostFn",
-            Value::VariantConstructor(..) => "VariantConstructor",
-            Value::TypeDescriptor(_) => "TypeDescriptor",
-            Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
-            Value::Channel(_) => "Channel",
-            Value::Handle(_) => "Handle",
-            Value::Bytes(_) => "Bytes",
-            Value::TcpListener(_) => "TcpListener",
-            Value::TcpStream(_) => "TcpStream",
-            Value::Unit => "Unit",
-        }
-    }
-
     /// Whether a runtime value's type has a Display impl — the single
     /// runtime-side oracle for the string-interpolation Display gate
     /// (`Op::DisplayValue`, src/vm/run.rs) and the polymorphic
@@ -825,16 +777,7 @@ impl Vm {
     /// and function-shaped values in surface-syntax terms rather than
     /// leaking internal `Value` variant names.
     ///
-    /// **Round 75 — TitleCase alignment with `type_name`.** Pre-fix this
-    /// helper drifted from its sibling `type_name`: it returned lowercase
-    /// surface words ("range", "tuple") and indefinite-article forms
-    /// ("a function", "a channel", "a TCP listener") while `type_name`
-    /// returned TitleCase ("Range", "Tuple", "Fn", "Channel",
-    /// "TcpListener"). Two error-rendering paths produced different
-    /// strings for the same value — exactly the dual-shape drift that
-    /// "one way to do things" forbids.
-    ///
-    /// Post-fix the helper mirrors `type_name` exactly except for the
+    /// It is the value's kind ([`Value::kind`]) except for the
     /// **deliberate aliases** that carry semantic content into the
     /// diagnostic:
     ///   - `Record(name, _)` → the record's own type name
@@ -844,9 +787,8 @@ impl Vm {
     ///   - `TypeDescriptor(name)` / `PrimitiveDescriptor(name)` →
     ///     ``"TypeDescriptor `name`"`` / ``"PrimitiveDescriptor `name`"``.
     ///
-    /// All other variants delegate to `type_name` so the two paths
-    /// produce byte-identical output. The `pub` visibility is required
-    /// by `tests/typecheck/round75_kind_naming_canonical_tests.rs`, which pins
+    /// The `pub` visibility is required by
+    /// `tests/typecheck/round75_kind_naming_canonical_tests.rs`, which pins
     /// the alignment matrix.
     pub fn user_facing_type_name(&self, val: &Value) -> String {
         match val {
@@ -864,10 +806,8 @@ impl Vm {
             Value::PrimitiveDescriptor(name) => {
                 format!("PrimitiveDescriptor `{name}`")
             }
-            // All other variants delegate to `type_name` for canonical
-            // TitleCase wording. Drift is impossible because the same
-            // arms are read from the same source.
-            _ => self.type_name(val).to_string(),
+            // All other variants: the kind.
+            _ => val.kind().to_string(),
         }
     }
 }

@@ -3,8 +3,8 @@
 //! One test binary; each module was a separate test crate before.
 
 mod canonical_type_equality_phase_b_tests;
+mod error_enum_message_rows_tests;
 mod range_type_tests;
-mod round73_error_trait_dispatch_table_tests;
 mod round73_postgres_typed_timeout_tests;
 mod round74_hash_eq_ord_contract_tests;
 mod round74_infinite_type_canonical_form_tests;

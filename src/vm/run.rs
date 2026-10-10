@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::builtins::registry::registry;
 use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
@@ -449,6 +450,17 @@ impl Vm {
             let step = self.shown(&receiver)?;
             return self.enter_step(step);
         }
+        // `message` of a builtin error enum (`IoError`, ...): the row
+        // of the enum, found by the type's id, called as any builtin.
+        if method_name == "message"
+            && let Value::Variant(tag, _) = &receiver
+            && let Some(module) = registry().error_module(tag.ty().id)
+            && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
+        {
+            let args = self.stack.split_off(receiver_slot);
+            let entered = self.enter_row(row, &args)?;
+            return Ok(self.entered(entered));
+        }
         // A builtin trait's method the type has natively (display,
         // equal, compare, hash).
         match self.dispatch_trait_method(&receiver, method_name, &self.stack[receiver_slot + 1..]) {
@@ -590,8 +602,8 @@ impl Vm {
                     //
                     // The rejected set is sourced from the single predicate
                     // `value_implements_display` (below) so the runtime gate
-                    // and the surface-name reporting cannot drift from the
-                    // `type_name` oracle. Parity is locked by
+                    // and the surface-name reporting cannot drift from
+                    // `Value::kind`. Parity is locked by
                     // tests/typecheck/round95_interp_display_runtime_tests.rs.
                     _ if !Self::value_implements_display(&val) => {
                         // Report the canonical surface name so the runtime
@@ -602,11 +614,11 @@ impl Vm {
                         // collapse to their canonical name via
                         // `dispatch_type_name`; the descriptor values
                         // (whose canonical name is the *carried* type name)
-                        // fall back to their `type_name` so the diagnostic
+                        // fall back to their kind so the diagnostic
                         // names the descriptor kind, not the reflected type.
                         let name = match &val {
                             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
-                                self.type_name(&val).to_string()
+                                val.kind().to_string()
                             }
                             _ => crate::types::canonical::dispatch_type_name(&val),
                         };
@@ -713,14 +725,9 @@ impl Vm {
                 let result = self.pop();
                 return Ok(DispatchResult::Return(result));
             }
-            Instr::CallBuiltin { name, argc } => {
-                // The name stays where it is, in the function's constants,
-                // which the function's closure keeps while the builtin
-                // has the VM.
-                let closure = self.frame().closure.clone();
-                let name = closure.function.chunk().string(name);
+            Instr::CallBuiltin { builtin, argc } => {
                 let args = self.stack.split_off(self.stack.len() - argc);
-                let entered = self.enter_builtin(name, &args)?;
+                let entered = self.enter_builtin(builtin, &args)?;
                 return Ok(self.entered(entered));
             }
             Instr::MakeClosure { f, captures } => {

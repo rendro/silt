@@ -1,0 +1,12 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: env.set: the name of a variable is not empty and holds no `=` and no NUL character
+-- stderr-not-contains: panicked
+-- A name with a NUL character is no variable's.
+import env
+import string
+
+fn main() {
+  env.set("A{string.from_char_code(0)}B", "1")
+  println(string.length("not reached"))
+}

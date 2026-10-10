@@ -111,6 +111,26 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
         {
             docs.insert(name.to_string(), globals.to_string());
         }
+        // A function of a feature that is not built (its module's, or
+        // its own): what it is, and what it needs. The checker does not
+        // know it, so this is all an editor can say of it.
+        for module in &registry.modules {
+            let off = module.rows.iter().filter(|row| !row.enabled);
+            for row in off.filter(|row| !row.is_constant()) {
+                let name = format!("{}.{}", module.name, row.name);
+                let feature = match module.enabled {
+                    true => row.feature,
+                    false => module.feature,
+                };
+                let Some(feature) = feature else { continue };
+                let needs = crate::module::needs_feature(&format!("`{name}`"), feature);
+                let text = format!(
+                    "```silt\n{}\n```\n\n{}\n\n{needs}.",
+                    row.signature, row.summary
+                );
+                docs.insert(name, text);
+            }
+        }
         docs
     })
 }

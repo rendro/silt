@@ -4,7 +4,7 @@
 //! over the standard LSP JSON-RPC transport (stdin/stdout).
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -79,7 +79,11 @@ pub use rename::is_valid_silt_ident;
 
 struct Server {
     connection: Connection,
-    documents: HashMap<Uri, Document>,
+    /// The open documents and the indexed workspace files. A walk over
+    /// them, the projects, the pending documents or the published
+    /// diagnostics is in the order of their keys, so what the server
+    /// answers does not change from one run to the next.
+    documents: BTreeMap<Uri, Document>,
     /// Cached builtin type signatures: "module.func" → type string.
     builtin_sigs: HashMap<String, String>,
     /// Whether the client reads a signature's parameters as offsets
@@ -92,9 +96,9 @@ struct Server {
     builtin_docs: &'static HashMap<String, String>,
     /// The projects of the open documents, by project directory, each
     /// with its session.
-    projects: HashMap<PathBuf, project::Project>,
+    projects: BTreeMap<PathBuf, project::Project>,
     /// The documents changed or closed since the last analysis.
-    pending: HashSet<Uri>,
+    pending: BTreeSet<Uri>,
     /// When the scheduled analysis runs, if one is scheduled.
     deadline: Option<Instant>,
     /// Whether the client reports file changes on disk
@@ -109,7 +113,7 @@ struct Server {
     root: Option<PathBuf>,
     /// The diagnostics last published, per URI. The pull-based
     /// `textDocument/diagnostic` handler answers from it.
-    published: HashMap<Uri, Vec<Diagnostic>>,
+    published: BTreeMap<Uri, Vec<Diagnostic>>,
     /// What references and rename learned about the workspace, kept
     /// until the next analysis (a document or a file changed).
     def_uses: Option<workspace::DefUses>,
@@ -119,17 +123,17 @@ impl Server {
     fn new(connection: Connection) -> Self {
         Server {
             connection,
-            documents: HashMap::new(),
+            documents: BTreeMap::new(),
             builtin_sigs: typechecker::builtin_type_signatures(),
             label_offsets: false,
             builtin_docs: crate::builtins::registry::docs::builtin_docs(),
-            projects: HashMap::new(),
-            pending: HashSet::new(),
+            projects: BTreeMap::new(),
+            pending: BTreeSet::new(),
             deadline: None,
             watching: false,
             disk_events: Vec::new(),
             root: None,
-            published: HashMap::new(),
+            published: BTreeMap::new(),
             def_uses: None,
         }
     }

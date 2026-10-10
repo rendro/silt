@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::builtins::registry::BuiltinId;
 use crate::bytecode;
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
@@ -54,7 +55,8 @@ pub enum Value {
     /// A variant: which variant of which enum, and its fields.
     Variant(Tag, Vec<Value>),
     VmClosure(Arc<bytecode::VmClosure>),
-    BuiltinFn(String),
+    /// A builtin function: its row of the builtin registry.
+    BuiltinFn(BuiltinId),
     /// A function of a host module an embedder declared to the session
     /// (see `session::HostModule`), installed by the program that
     /// imports the module.
@@ -95,6 +97,46 @@ impl Value {
     /// A record of the builtin record type `ty` (`ty::DATE`).
     pub fn builtin_record(ty: crate::defs::TypeId, fields: BTreeMap<String, Value>) -> Value {
         Value::Record(crate::typeinfo::builtin_type(ty).clone(), Arc::new(fields))
+    }
+}
+
+impl Value {
+    /// The value's kind, as an error names it: the name of the `Value`
+    /// variant. A range is a "Range", not a "List", though the two are
+    /// one type to a program: the error shows what the value is.
+    ///
+    /// Not for method dispatch: that is
+    /// `crate::types::canonical::dispatch_type_for_value`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Value::Int(_) => "Int",
+            Value::Float(_) => "Float",
+            Value::Bool(_) => "Bool",
+            Value::String(_) => "String",
+            Value::List(_) => "List",
+            Value::Range(..) => "Range",
+            Value::Map(_) => "Map",
+            Value::Set(_) => "Set",
+            Value::Tuple(_) => "Tuple",
+            Value::Record(..) => "Record",
+            Value::Variant(..) => "Variant",
+            // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
+            // and the canonical dispatch name returned by
+            // `dispatch_type_name`. Round 71 follow-up unified
+            // `Function` / `Fun` / `Fn` on `"Fn"`.
+            Value::VmClosure(_) => "Fn",
+            Value::BuiltinFn(_) => "BuiltinFn",
+            Value::HostFn(_) => "HostFn",
+            Value::VariantConstructor(..) => "VariantConstructor",
+            Value::TypeDescriptor(_) => "TypeDescriptor",
+            Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
+            Value::Channel(_) => "Channel",
+            Value::Handle(_) => "Handle",
+            Value::Bytes(_) => "Bytes",
+            Value::TcpListener(_) => "TcpListener",
+            Value::TcpStream(_) => "TcpStream",
+            Value::Unit => "Unit",
+        }
     }
 }
 

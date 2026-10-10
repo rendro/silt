@@ -60,9 +60,15 @@ pub const BUILTIN_GENERIC_CONTAINER_NAMES: &[&str] = &["List", "Map", "Set", "Ch
 
 /// Names of silt's builtin global free functions, callable without a
 /// module prefix: `print(...)`, not `io.print(...)`. Used as a value,
-/// each is a `BuiltinFn` constant. Alphabetic.
+/// each is a `BuiltinFn` constant. They are the prelude's rows of the
+/// builtin registry. Alphabetic.
 pub fn builtin_free_function_names() -> &'static [&'static str] {
-    &["panic", "print", "println"]
+    static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names: Vec<&'static str> = registry().prelude.iter().map(|row| row.name).collect();
+        names.sort_unstable();
+        names
+    })
 }
 
 /// The record and enum types the builtin modules declare, built or not:
@@ -188,16 +194,6 @@ pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
             .map(|row| row.name)
             .collect()
     })
-}
-
-/// The value of the builtin module constant `qualified` (`math.pi`);
-/// `None` for any other name.
-pub fn builtin_constant_value(qualified: &str) -> Option<crate::value::Value> {
-    let (module, name) = qualified.split_once('.')?;
-    match &registry().row(module, name)?.body {
-        crate::builtins::registry::Body::Const(value) => Some(value.clone()),
-        _ => None,
-    }
 }
 
 /// The diagnostic for an `import` at `span` whose module file, at

@@ -1,545 +1,305 @@
 //! String builtin functions (`string.*`).
 
-use std::sync::Arc;
+use super::typed::{List, builtins};
+use crate::value::{MAX_RANGE_MATERIALIZE, Value};
+use crate::vm::{Step, VmError};
 
-use super::common::{require_int, require_string, value_kind};
-use crate::typeinfo::bv;
-use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
-use crate::vm::{Step, Vm, VmError};
-
-/// Dispatch `string.<name>(args)`.
-pub(crate) fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
-    match name {
-        // (A value is shown as its `Display` impl says, which may be
-        // the program's code: a step, not a value at once.)
-        "from" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.from takes 1 argument".into()));
-            }
-            vm.shown(&args[0])
-        }
-        _ => value(name, args).map(Step::Done),
+/// The one character `pad` is, for `string.<name>`.
+fn pad_char(name: &str, pad: &str) -> Result<char, VmError> {
+    let mut chars = pad.chars();
+    let Some(first) = chars.next() else {
+        return Err(VmError::new(format!(
+            "string.{name}: pad must be a non-empty 1-character string, got \"\""
+        )));
+    };
+    if chars.next().is_some() {
+        let count = pad.chars().count();
+        return Err(VmError::new(format!(
+            "string.{name}: pad must be a 1-character string, got {pad:?} ({count} characters)"
+        )));
     }
+    Ok(first)
 }
 
-/// `string.<name>(args)` for the functions that give their value at
-/// once.
-fn value(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "split" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.split takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.split")?;
-            let sep = require_string(&args[1], "string.split")?;
-            let parts: Vec<Value> = s
-                .split(sep.as_str())
-                .map(|p| Value::String(p.to_string()))
-                .collect();
-            Ok(Value::List(Arc::new(parts)))
-        }
-        "trim" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.trim takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.trim")?;
-            Ok(Value::String(s.trim().to_string()))
-        }
-        "trim_start" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.trim_start takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.trim_start")?;
-            Ok(Value::String(s.trim_start().to_string()))
-        }
-        "trim_end" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.trim_end takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.trim_end")?;
-            Ok(Value::String(s.trim_end().to_string()))
-        }
-        "contains" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.contains takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.contains")?;
-            let sub = require_string(&args[1], "string.contains")?;
-            Ok(Value::Bool(s.contains(sub.as_str())))
-        }
-        "replace" => {
-            if args.len() != 3 {
-                return Err(VmError::new("string.replace takes 3 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.replace")?;
-            let from = require_string(&args[1], "string.replace")?;
-            let to = require_string(&args[2], "string.replace")?;
-            // Cap the worst-case result length. Without this, a call like
-            // `s.replace("", long_to)` inserts `to` at every byte boundary,
-            // producing `(|s| + 1) * |to| + |s|` bytes and can trivially
-            // blow out RAM. Sibling builtins (`string.repeat`,
-            // `string.pad_left`, `string.pad_right`) cap at
-            // `MAX_RANGE_MATERIALIZE`; mirror that exactly.
-            let s_len = s.len() as u128;
-            let from_len = from.len() as u128;
-            let to_len = to.len() as u128;
-            let result_len: u128 = if from_len == 0 {
-                // Rust inserts `to` between every byte (including both ends):
-                // result = (|s| + 1) * |to| + |s|.
-                s_len
-                    .saturating_add(1)
-                    .saturating_mul(to_len)
-                    .saturating_add(s_len)
+/// The characters that pad `s` to `width`, for `string.<name>`: none
+/// if it is that wide already.
+fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError> {
+    let pad = pad_char(name, pad)?;
+    if width < 0 {
+        return Err(VmError::new(format!(
+            "string.{name}: negative width {width}"
+        )));
+    }
+    if width as u128 > MAX_RANGE_MATERIALIZE as u128 {
+        return Err(VmError::new(format!(
+            "string.{name}: width {width} exceeds maximum of {MAX_RANGE_MATERIALIZE}"
+        )));
+    }
+    let missing = (width as usize).saturating_sub(s.chars().count());
+    Ok(std::iter::repeat_n(pad, missing).collect())
+}
+
+/// The byte offset of the character at index `chars` of `s`, the end
+/// of `s` included; `None` beyond it.
+fn byte_offset(s: &str, chars: usize) -> Option<usize> {
+    s.char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(s.len()))
+        .nth(chars)
+}
+
+/// The character index of the byte offset `at` of `s`, as `Some`; or
+/// `None`.
+fn char_index(s: &str, at: Option<usize>) -> Option<Value> {
+    at.map(|at| Value::Int(s[..at].chars().count() as i64))
+}
+
+/// Whether `s` has a character and all of them are `of`.
+fn all(s: &str, of: impl Fn(char) -> bool) -> bool {
+    !s.is_empty() && s.chars().all(of)
+}
+
+builtins! {
+    // (A value is shown as its `Display` impl says, which may be the
+    // program's code: a step, not a value at once.)
+    fn from(vm, x: &Value) -> Result<Step, VmError> {
+        vm.shown(x)
+    }
+
+    fn split(s: &str, separator: &str) -> Vec<Value> {
+        s.split(separator)
+            .map(|part| Value::String(part.to_string()))
+            .collect()
+    }
+
+    fn trim(s: &str) -> String {
+        s.trim().to_string()
+    }
+
+    fn trim_start(s: &str) -> String {
+        s.trim_start().to_string()
+    }
+
+    fn trim_end(s: &str) -> String {
+        s.trim_end().to_string()
+    }
+
+    fn contains(s: &str, sub: &str) -> bool {
+        s.contains(sub)
+    }
+
+    fn replace(s: &str, from: &str, to: &str) -> Result<String, VmError> {
+        // Cap the worst-case result length. Without this, a call like
+        // `s.replace("", long_to)` inserts `to` at every byte boundary,
+        // producing `(|s| + 1) * |to| + |s|` bytes and can trivially
+        // blow out RAM. Sibling builtins (`string.repeat`,
+        // `string.pad_left`, `string.pad_right`) cap at
+        // `MAX_RANGE_MATERIALIZE`; mirror that exactly.
+        let s_len = s.len() as u128;
+        let from_len = from.len() as u128;
+        let to_len = to.len() as u128;
+        let result_len: u128 = if from_len == 0 {
+            // Rust inserts `to` between every byte (including both ends):
+            // result = (|s| + 1) * |to| + |s|.
+            s_len
+                .saturating_add(1)
+                .saturating_mul(to_len)
+                .saturating_add(s_len)
+        } else {
+            // Count occurrences to compute the exact result length:
+            // result = |s| + occurrences * (|to| - |from|).
+            let occurrences = s.matches(from).count() as u128;
+            if to_len >= from_len {
+                s_len.saturating_add(occurrences.saturating_mul(to_len - from_len))
             } else {
-                // Count occurrences to compute the exact result length:
-                // result = |s| + occurrences * (|to| - |from|).
-                let occurrences = s.matches(from.as_str()).count() as u128;
-                if to_len >= from_len {
-                    s_len.saturating_add(occurrences.saturating_mul(to_len - from_len))
-                } else {
-                    let shrink = occurrences.saturating_mul(from_len - to_len);
-                    s_len.saturating_sub(shrink)
-                }
-            };
-            if result_len > MAX_RANGE_MATERIALIZE as u128 {
-                return Err(VmError::new(format!(
-                    "string.replace: result would exceed maximum string size ({} bytes > {} limit)",
-                    result_len, MAX_RANGE_MATERIALIZE
-                )));
+                let shrink = occurrences.saturating_mul(from_len - to_len);
+                s_len.saturating_sub(shrink)
             }
-            Ok(Value::String(s.replace(from.as_str(), to.as_str())))
+        };
+        if result_len > MAX_RANGE_MATERIALIZE as u128 {
+            return Err(VmError::new(format!(
+                "string.replace: result would exceed maximum string size ({} bytes > {} limit)",
+                result_len, MAX_RANGE_MATERIALIZE
+            )));
         }
-        "join" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.join takes 2 arguments".into()));
-            }
-            let sep = require_string(&args[1], "string.join")?;
-            let strs: Vec<String> = match &args[0] {
-                Value::List(xs) => xs.iter().map(|v| v.to_string()).collect(),
-                Value::Range(lo, hi) => {
-                    checked_range_len(*lo, *hi).map_err(VmError::new)?;
-                    (*lo..=*hi).map(|i| i.to_string()).collect()
-                }
-                other => {
-                    return Err(VmError::new(format!(
-                        "string.join requires List or Range, got {}",
-                        value_kind(other)
-                    )));
-                }
-            };
-            Ok(Value::String(strs.join(sep.as_str())))
+        Ok(s.replace(from, to))
+    }
+
+    fn join(xs: List, sep: &str) -> Result<String, VmError> {
+        let shown: Vec<String> = xs.to_vec()?.iter().map(Value::to_string).collect();
+        Ok(shown.join(sep))
+    }
+
+    fn length(s: &str) -> i64 {
+        s.chars().count() as i64
+    }
+
+    fn byte_length(s: &str) -> i64 {
+        s.len() as i64
+    }
+
+    fn to_upper(s: &str) -> String {
+        s.to_uppercase()
+    }
+
+    fn to_lower(s: &str) -> String {
+        s.to_lowercase()
+    }
+
+    fn starts_with(s: &str, prefix: &str) -> bool {
+        s.starts_with(prefix)
+    }
+
+    fn ends_with(s: &str, suffix: &str) -> bool {
+        s.ends_with(suffix)
+    }
+
+    fn chars(s: &str) -> Vec<Value> {
+        s.chars().map(|c| Value::String(c.to_string())).collect()
+    }
+
+    fn repeat(s: &str, n: i64) -> Result<String, VmError> {
+        if n < 0 {
+            return Err(VmError::new(format!("string.repeat: negative count {n}")));
         }
-        "length" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.length takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.length")?;
-            Ok(Value::Int(s.chars().count() as i64))
+        let result_len = (n as u128) * (s.len() as u128);
+        if result_len > MAX_RANGE_MATERIALIZE as u128 {
+            return Err(VmError::new(format!(
+                "string.repeat: result would exceed maximum string size ({} bytes > {} limit)",
+                result_len, MAX_RANGE_MATERIALIZE
+            )));
         }
-        "byte_length" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.byte_length takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.byte_length")?;
-            Ok(Value::Int(s.len() as i64))
+        Ok(s.repeat(n as usize))
+    }
+
+    // (A character index, as `string.slice` takes them: not a byte's.)
+    fn index_of(s: &str, needle: &str) -> Option<Value> {
+        char_index(s, s.find(needle))
+    }
+
+    fn last_index_of(s: &str, needle: &str) -> Option<Value> {
+        char_index(s, s.rfind(needle))
+    }
+
+    fn split_at(s: &str, idx: i64) -> Result<Value, VmError> {
+        if idx < 0 {
+            return Err(VmError::new(format!(
+                "string.split_at: negative index {idx}"
+            )));
         }
-        "to_upper" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.to_upper takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.to_upper")?;
-            Ok(Value::String(s.to_uppercase()))
+        // Character indexing (consistent with string.index_of /
+        // string.slice): every index up to the length is a boundary.
+        let Some(boundary) = usize::try_from(idx).ok().and_then(|idx| byte_offset(s, idx)) else {
+            return Err(VmError::new(format!(
+                "string.split_at: index {idx} out of bounds (length {})",
+                s.chars().count()
+            )));
+        };
+        let (left, right) = s.split_at(boundary);
+        Ok(Value::Tuple(vec![
+            Value::String(left.to_string()),
+            Value::String(right.to_string()),
+        ]))
+    }
+
+    fn lines(s: &str) -> Vec<Value> {
+        // Split on '\n' only. A trailing '\n' must NOT produce an empty
+        // final element (matches user expectation: "a\nb\n".lines() ==
+        // ["a", "b"]). Also strip a trailing '\r' from each line to
+        // normalise \r\n line endings. Empty input yields [] (matches
+        // Rust's str::lines and Python's str.splitlines).
+        if s.is_empty() {
+            return Vec::new();
         }
-        "to_lower" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.to_lower takes 1 argument".into()));
+        let mut lines: Vec<Value> = Vec::new();
+        let mut iter = s.split('\n').peekable();
+        while let Some(part) = iter.next() {
+            // If this is the final empty segment that comes from a
+            // trailing '\n', drop it.
+            if part.is_empty() && iter.peek().is_none() && s.ends_with('\n') {
+                break;
             }
-            let s = require_string(&args[0], "string.to_lower")?;
-            Ok(Value::String(s.to_lowercase()))
+            let trimmed = part.strip_suffix('\r').unwrap_or(part);
+            lines.push(Value::String(trimmed.to_string()));
         }
-        "starts_with" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.starts_with takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.starts_with")?;
-            let prefix = require_string(&args[1], "string.starts_with")?;
-            Ok(Value::Bool(s.starts_with(prefix.as_str())))
+        lines
+    }
+
+    // A predicate: an offset that is not in the string is `false`, not
+    // an error. Character indexing, consistent with string.index_of /
+    // string.slice.
+    fn starts_with_at(s: &str, offset: i64, prefix: &str) -> bool {
+        usize::try_from(offset)
+            .ok()
+            .and_then(|offset| byte_offset(s, offset))
+            .is_some_and(|at| s[at..].starts_with(prefix))
+    }
+
+    fn slice(s: &str, start: i64, end: i64) -> Result<String, VmError> {
+        if let Some(negative) = [start, end].into_iter().find(|index| *index < 0) {
+            return Err(VmError::new(format!(
+                "string.slice: negative index {negative}"
+            )));
         }
-        "ends_with" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.ends_with takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.ends_with")?;
-            let suffix = require_string(&args[1], "string.ends_with")?;
-            Ok(Value::Bool(s.ends_with(suffix.as_str())))
+        let chars: Vec<char> = s.chars().collect();
+        let start = (start as usize).min(chars.len());
+        let end = (end as usize).min(chars.len());
+        Ok(match start > end {
+            true => String::new(),
+            false => chars[start..end].iter().collect(),
+        })
+    }
+
+    fn pad_left(s: &str, width: i64, pad: &str) -> Result<String, VmError> {
+        Ok(padding("pad_left", s, width, pad)? + s)
+    }
+
+    fn pad_right(s: &str, width: i64, pad: &str) -> Result<String, VmError> {
+        Ok(s.to_string() + &padding("pad_right", s, width, pad)?)
+    }
+
+    fn char_code(s: &str) -> Result<i64, VmError> {
+        match s.chars().next() {
+            Some(c) => Ok(c as i64),
+            None => Err(VmError::new("string.char_code: empty string".into())),
         }
-        "chars" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.chars takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.chars")?;
-            let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
-            Ok(Value::List(Arc::new(chars)))
+    }
+
+    fn from_char_code(code: i64) -> Result<String, VmError> {
+        // Reject negatives and values outside u32 range before casting,
+        // then let char::from_u32 catch surrogates and >0x10FFFF values.
+        // Unchecked `as u32` would silently wrap (e.g. 4294967337 -> 41 = ')').
+        match u32::try_from(code).ok().and_then(char::from_u32) {
+            Some(c) => Ok(c.to_string()),
+            None => Err(VmError::new(format!("invalid code point {code}"))),
         }
-        "repeat" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.repeat takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.repeat")?;
-            let n_val = require_int(&args[1], "string.repeat")?;
-            if n_val < 0 {
-                return Err(VmError::new(format!(
-                    "string.repeat: negative count {n_val}"
-                )));
-            }
-            let result_len = (n_val as u128) * (s.len() as u128);
-            if result_len > MAX_RANGE_MATERIALIZE as u128 {
-                return Err(VmError::new(format!(
-                    "string.repeat: result would exceed maximum string size ({} bytes > {} limit)",
-                    result_len, MAX_RANGE_MATERIALIZE
-                )));
-            }
-            Ok(Value::String(s.repeat(n_val as usize)))
-        }
-        "index_of" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.index_of takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.index_of")?;
-            let needle = require_string(&args[1], "string.index_of")?;
-            match s.find(needle.as_str()) {
-                Some(byte_pos) => {
-                    let char_pos = s[..byte_pos].chars().count();
-                    Ok(Value::variant(bv::SOME, vec![Value::Int(char_pos as i64)]))
-                }
-                None => Ok(Value::variant(bv::NONE, Vec::new())),
-            }
-        }
-        "last_index_of" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "string.last_index_of takes 2 arguments".into(),
-                ));
-            }
-            let s = require_string(&args[0], "string.last_index_of")?;
-            let needle = require_string(&args[1], "string.last_index_of")?;
-            match s.rfind(needle.as_str()) {
-                Some(byte_pos) => {
-                    // Match string.index_of: return a CHARACTER index (not byte).
-                    let char_pos = s[..byte_pos].chars().count();
-                    Ok(Value::variant(bv::SOME, vec![Value::Int(char_pos as i64)]))
-                }
-                None => Ok(Value::variant(bv::NONE, Vec::new())),
-            }
-        }
-        "split_at" => {
-            if args.len() != 2 {
-                return Err(VmError::new("string.split_at takes 2 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.split_at")?;
-            let idx_val = require_int(&args[1], "string.split_at")?;
-            if idx_val < 0 {
-                return Err(VmError::new(format!(
-                    "string.split_at: negative index {idx_val}"
-                )));
-            }
-            // Character indexing (consistent with string.index_of / string.slice).
-            // With char indices every valid index is a UTF-8 boundary; we still
-            // keep the boundary check defensively so the error surface stays
-            // useful if anyone later migrates this to byte offsets.
-            let mut char_byte_boundary: Option<usize> = None;
-            let mut seen = 0i64;
-            if idx_val == 0 {
-                char_byte_boundary = Some(0);
-            } else {
-                for (byte_pos, _) in s.char_indices() {
-                    if seen == idx_val {
-                        char_byte_boundary = Some(byte_pos);
-                        break;
-                    }
-                    seen += 1;
-                }
-                if char_byte_boundary.is_none() && seen == idx_val {
-                    // idx_val == char count: split at end-of-string.
-                    char_byte_boundary = Some(s.len());
-                }
-            }
-            let Some(boundary) = char_byte_boundary else {
-                return Err(VmError::new(format!(
-                    "string.split_at: index {idx_val} out of bounds (length {})",
-                    s.chars().count()
-                )));
-            };
-            if !s.is_char_boundary(boundary) {
-                return Err(VmError::new(format!(
-                    "string.split_at: index {idx_val} is not on a UTF-8 character boundary"
-                )));
-            }
-            let (left, right) = s.split_at(boundary);
-            Ok(Value::Tuple(vec![
-                Value::String(left.to_string()),
-                Value::String(right.to_string()),
-            ]))
-        }
-        "lines" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.lines takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.lines")?;
-            // Split on '\n' only. A trailing '\n' must NOT produce an empty
-            // final element (matches user expectation: "a\nb\n".lines() ==
-            // ["a", "b"]). Also strip a trailing '\r' from each line to
-            // normalise \r\n line endings. Empty input yields [] (matches
-            // Rust's str::lines and Python's str.splitlines).
-            if s.is_empty() {
-                return Ok(Value::List(Arc::new(Vec::new())));
-            }
-            let mut lines: Vec<Value> = Vec::new();
-            let mut iter = s.split('\n').peekable();
-            while let Some(part) = iter.next() {
-                // If this is the final empty segment that comes from a
-                // trailing '\n', drop it.
-                if part.is_empty() && iter.peek().is_none() && s.ends_with('\n') {
-                    break;
-                }
-                let trimmed = part.strip_suffix('\r').unwrap_or(part);
-                lines.push(Value::String(trimmed.to_string()));
-            }
-            Ok(Value::List(Arc::new(lines)))
-        }
-        "starts_with_at" => {
-            if args.len() != 3 {
-                return Err(VmError::new(
-                    "string.starts_with_at takes 3 arguments".into(),
-                ));
-            }
-            let s = require_string(&args[0], "string.starts_with_at")?;
-            let offset_val = require_int(&args[1], "string.starts_with_at")?;
-            let prefix = require_string(&args[2], "string.starts_with_at")?;
-            // Predicate: out-of-range offset returns false rather than
-            // panicking (contract with string.starts_with is a boolean).
-            if offset_val < 0 {
-                return Ok(Value::Bool(false));
-            }
-            // Character indexing, consistent with string.index_of /
-            // string.slice. Convert the char offset to a byte offset; if the
-            // char offset is past the end of the string, return false.
-            let offset_usize = offset_val as usize;
-            let mut byte_offset: Option<usize> = None;
-            if offset_usize == 0 {
-                byte_offset = Some(0);
-            } else {
-                let mut seen = 0usize;
-                for (bpos, _) in s.char_indices() {
-                    if seen == offset_usize {
-                        byte_offset = Some(bpos);
-                        break;
-                    }
-                    seen += 1;
-                }
-                if byte_offset.is_none() && seen == offset_usize {
-                    byte_offset = Some(s.len());
-                }
-            }
-            let Some(bpos) = byte_offset else {
-                return Ok(Value::Bool(false));
-            };
-            Ok(Value::Bool(s[bpos..].starts_with(prefix.as_str())))
-        }
-        "slice" => {
-            if args.len() != 3 {
-                return Err(VmError::new("string.slice takes 3 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.slice")?;
-            let start_val = require_int(&args[1], "string.slice")?;
-            let end_val = require_int(&args[2], "string.slice")?;
-            if start_val < 0 {
-                return Err(VmError::new(format!(
-                    "string.slice: negative index {start_val}"
-                )));
-            }
-            if end_val < 0 {
-                return Err(VmError::new(format!(
-                    "string.slice: negative index {end_val}"
-                )));
-            }
-            let chars: Vec<char> = s.chars().collect();
-            let start = (start_val as usize).min(chars.len());
-            let end = (end_val as usize).min(chars.len());
-            if start > end {
-                Ok(Value::String(String::new()))
-            } else {
-                Ok(Value::String(chars[start..end].iter().collect()))
-            }
-        }
-        "pad_left" => {
-            if args.len() != 3 {
-                return Err(VmError::new("string.pad_left takes 3 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.pad_left")?;
-            let width_val = require_int(&args[1], "string.pad_left")?;
-            let pad = require_string(&args[2], "string.pad_left")?;
-            let pad_char = {
-                let mut chars = pad.chars();
-                let Some(first) = chars.next() else {
-                    return Err(VmError::new(
-                        "string.pad_left: pad must be a non-empty 1-character string, got \"\""
-                            .into(),
-                    ));
-                };
-                if chars.next().is_some() {
-                    let count = pad.chars().count();
-                    return Err(VmError::new(format!(
-                        "string.pad_left: pad must be a 1-character string, got {pad:?} ({count} characters)"
-                    )));
-                }
-                first
-            };
-            if width_val < 0 {
-                return Err(VmError::new(format!(
-                    "string.pad_left: negative width {width_val}"
-                )));
-            }
-            if width_val as u128 > MAX_RANGE_MATERIALIZE as u128 {
-                return Err(VmError::new(format!(
-                    "string.pad_left: width {width_val} exceeds maximum of {MAX_RANGE_MATERIALIZE}"
-                )));
-            }
-            let width = width_val as usize;
-            if s.chars().count() >= width {
-                Ok(Value::String(s.clone()))
-            } else {
-                let padding: String = (0..width - s.chars().count()).map(|_| pad_char).collect();
-                Ok(Value::String(format!("{padding}{s}")))
-            }
-        }
-        "pad_right" => {
-            if args.len() != 3 {
-                return Err(VmError::new("string.pad_right takes 3 arguments".into()));
-            }
-            let s = require_string(&args[0], "string.pad_right")?;
-            let width_val = require_int(&args[1], "string.pad_right")?;
-            let pad = require_string(&args[2], "string.pad_right")?;
-            let pad_char = {
-                let mut chars = pad.chars();
-                let Some(first) = chars.next() else {
-                    return Err(VmError::new(
-                        "string.pad_right: pad must be a non-empty 1-character string, got \"\""
-                            .into(),
-                    ));
-                };
-                if chars.next().is_some() {
-                    let count = pad.chars().count();
-                    return Err(VmError::new(format!(
-                        "string.pad_right: pad must be a 1-character string, got {pad:?} ({count} characters)"
-                    )));
-                }
-                first
-            };
-            if width_val < 0 {
-                return Err(VmError::new(format!(
-                    "string.pad_right: negative width {width_val}"
-                )));
-            }
-            if width_val as u128 > MAX_RANGE_MATERIALIZE as u128 {
-                return Err(VmError::new(format!(
-                    "string.pad_right: width {width_val} exceeds maximum of {MAX_RANGE_MATERIALIZE}"
-                )));
-            }
-            let width = width_val as usize;
-            if s.chars().count() >= width {
-                Ok(Value::String(s.clone()))
-            } else {
-                let padding: String = (0..width - s.chars().count()).map(|_| pad_char).collect();
-                Ok(Value::String(format!("{s}{padding}")))
-            }
-        }
-        "char_code" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.char_code takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.char_code")?;
-            match s.chars().next() {
-                Some(c) => Ok(Value::Int(c as i64)),
-                None => Err(VmError::new("string.char_code: empty string".into())),
-            }
-        }
-        "from_char_code" => {
-            if args.len() != 1 {
-                return Err(VmError::new(
-                    "string.from_char_code takes 1 argument".into(),
-                ));
-            }
-            let n = require_int(&args[0], "string.from_char_code")?;
-            // Reject negatives and values outside u32 range before casting,
-            // then let char::from_u32 catch surrogates and >0x10FFFF values.
-            // Unchecked `as u32` would silently wrap (e.g. 4294967337 -> 41 = ')').
-            match u32::try_from(n).ok().and_then(char::from_u32) {
-                Some(c) => Ok(Value::String(c.to_string())),
-                None => Err(VmError::new(format!("invalid code point {n}"))),
-            }
-        }
-        "is_empty" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_empty takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_empty")?;
-            Ok(Value::Bool(s.is_empty()))
-        }
-        "is_alpha" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_alpha takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_alpha")?;
-            Ok(Value::Bool(
-                !s.is_empty() && s.chars().all(|c| c.is_alphabetic()),
-            ))
-        }
-        "is_digit" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_digit takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_digit")?;
-            Ok(Value::Bool(
-                !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
-            ))
-        }
-        "is_upper" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_upper takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_upper")?;
-            Ok(Value::Bool(
-                !s.is_empty() && s.chars().all(|c| c.is_uppercase()),
-            ))
-        }
-        "is_lower" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_lower takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_lower")?;
-            Ok(Value::Bool(
-                !s.is_empty() && s.chars().all(|c| c.is_lowercase()),
-            ))
-        }
-        "is_alnum" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_alnum takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_alnum")?;
-            Ok(Value::Bool(
-                !s.is_empty() && s.chars().all(|c| c.is_alphanumeric()),
-            ))
-        }
-        "is_whitespace" => {
-            if args.len() != 1 {
-                return Err(VmError::new("string.is_whitespace takes 1 argument".into()));
-            }
-            let s = require_string(&args[0], "string.is_whitespace")?;
-            Ok(Value::Bool(
-                !s.is_empty() && s.chars().all(|c| c.is_whitespace()),
-            ))
-        }
-        _ => Err(VmError::new(format!("unknown string function: {name}"))),
+    }
+
+    fn is_empty(s: &str) -> bool {
+        s.is_empty()
+    }
+
+    fn is_alpha(s: &str) -> bool {
+        all(s, char::is_alphabetic)
+    }
+
+    fn is_digit(s: &str) -> bool {
+        all(s, |c| c.is_ascii_digit())
+    }
+
+    fn is_upper(s: &str) -> bool {
+        all(s, char::is_uppercase)
+    }
+
+    fn is_lower(s: &str) -> bool {
+        all(s, char::is_lowercase)
+    }
+
+    fn is_alnum(s: &str) -> bool {
+        all(s, char::is_alphanumeric)
+    }
+
+    fn is_whitespace(s: &str) -> bool {
+        all(s, char::is_whitespace)
     }
 }

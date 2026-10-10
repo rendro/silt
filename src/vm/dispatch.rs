@@ -4,20 +4,7 @@ use std::panic::AssertUnwindSafe;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::builtins;
-use crate::typeinfo::Tag;
 use crate::value::{HostFn, Value};
-
-/// Write `text` to the host's stdout for `print` / `println`. A failure
-/// is a runtime error.
-fn write_stdout(vm: &Vm, text: &str) -> Result<(), VmError> {
-    vm.runtime.io.out(text).map_err(|e| {
-        VmError::new(format!(
-            "cannot write to stdout: {}",
-            crate::diagnostic::io_error_text(&e)
-        ))
-    })
-}
 
 /// Call the host function `host` while catching panics that escape it.
 ///
@@ -39,7 +26,7 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
                 "{}: its signature returns {}, but it returned {} {shown}",
                 host.name,
                 host.returns,
-                builtins::value_kind(&value)
+                value.kind()
             )))
         }
         Ok(Err(e)) => Err(VmError {
@@ -69,15 +56,14 @@ fn decode_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-/// Run a builtin module dispatch arm under `catch_unwind`, converting any
+/// Run a builtin of `module` under `catch_unwind`, converting any
 /// panic that escapes the builtin into a clean `VmError`. This mirrors
 /// [`invoke_host_fn`] for host functions — a panic in a builtin
 /// would otherwise tear down the current scheduler worker thread.
 ///
-/// Intended to wrap each arm of the module-name match in `dispatch_builtin`.
 /// Callers that capture `&mut Vm` (or other non-`UnwindSafe` state) should
 /// wrap the closure in [`AssertUnwindSafe`] before passing it here.
-fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError>
+pub(super) fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError>
 where
     F: FnOnce() -> Result<T, VmError> + std::panic::UnwindSafe,
 {
@@ -108,69 +94,6 @@ pub(super) fn resume_native(
                 "builtin module '{module}' panicked: {msg}"
             )))
         }
-    }
-}
-
-/// Uniform signature shared by every `call_<x>_error_trait` helper.
-type ErrorTraitFn = fn(&str, &[Value]) -> Result<Value, VmError>;
-
-/// Round-73 BLOAT-3: dispatch table for built-in `trait Error` impls.
-///
-/// Each `(enum_name, fn_ptr)` entry corresponds to a previous match
-/// arm in `dispatch_builtin` of the form
-/// `"<Enum>" => catch_builtin_panic("<Enum>",
-///   AssertUnwindSafe(|| <module>::call_<x>_error_trait(func, args)))`.
-///
-/// PgError / TcpError stay cfg-gated by being conditionally included
-/// in the table — the gate must match the gate on the corresponding
-/// `call_*_error_trait` symbol.
-static ERROR_TRAIT_DISPATCH: &[(&str, ErrorTraitFn)] = &[
-    ("IoError", builtins::io::call_io_error_trait),
-    ("JsonError", builtins::json::call_json_error_trait),
-    ("TomlError", builtins::toml::call_toml_error_trait),
-    ("ParseError", builtins::numeric::call_parse_error_trait),
-    ("HttpError", builtins::http::call_http_error_trait),
-    ("RegexError", builtins::regex::call_regex_error_trait),
-    #[cfg(feature = "postgres")]
-    ("PgError", builtins::postgres::call_pg_error_trait),
-    #[cfg(feature = "tcp")]
-    ("TcpError", builtins::tcp::call_tcp_error_trait),
-    ("TimeError", builtins::time::call_time_error_trait),
-    ("BytesError", builtins::bytes::call_bytes_error_trait),
-    (
-        "ChannelError",
-        builtins::concurrency::call_channel_error_trait,
-    ),
-];
-
-/// Look up the `trait Error` dispatch helper for a given builtin enum
-/// name. Returns `None` for any name not in the table (including
-/// cfg-gated names whose feature is disabled).
-pub(crate) fn error_trait_dispatch(enum_name: &str) -> Option<ErrorTraitFn> {
-    ERROR_TRAIT_DISPATCH
-        .iter()
-        .find(|(n, _)| *n == enum_name)
-        .map(|(_, f)| *f)
-}
-
-/// Render a stdlib error variant via its `Error::message()`
-/// implementation, returning `None` when the tag isn't a stdlib-error
-/// variant (or rendering fails for any reason — caller falls back to
-/// the default constructor-form render).
-///
-/// Used by `Value::Display` to collapse the dual shape between
-/// `format!("{e}")` and `e.message()` for stdlib error enums per the
-/// silt "explicit over implicit / one way" principle. User-defined
-/// enums are not affected: only a variant of a builtin error enum is
-/// rendered so, whatever its name.
-pub fn render_stdlib_error_message(tag: &Tag, fields: &[Value]) -> Option<String> {
-    let ty = tag.ty();
-    crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
-    let dispatch_fn = error_trait_dispatch(&ty.name)?;
-    let variant_value = Value::Variant(tag.clone(), fields.to_vec());
-    match dispatch_fn("message", &[variant_value]).ok()? {
-        Value::String(s) => Some(s),
-        _ => None,
     }
 }
 
@@ -213,11 +136,11 @@ impl Vm {
                     // function-shaped values collapse to "Fn" via
                     // `dispatch_type_name`; the descriptor values
                     // (whose canonical name is the *carried* type name)
-                    // fall back to `type_name` so the diagnostic names
+                    // fall back to their kind so the diagnostic names
                     // the descriptor kind, not the reflected type.
                     let name = match receiver {
                         Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
-                            self.type_name(receiver).to_string()
+                            receiver.kind().to_string()
                         }
                         _ => crate::types::canonical::dispatch_type_name(receiver),
                     };
@@ -298,8 +221,8 @@ impl Vm {
                     _ => {
                         return Some(Err(VmError::new(format!(
                             "compare() not supported between {} and {}",
-                            self.type_name(receiver),
-                            self.type_name(other)
+                            receiver.kind(),
+                            other.kind()
                         ))));
                     }
                 };
@@ -366,103 +289,7 @@ impl Vm {
                     _ => None,
                 }
             }
-            // `trait Error` of the builtin error enums (`IoError`, ...):
-            // native, through the enum's dispatch helper.
-            "message" => {
-                let Value::Variant(tag, _) = receiver else {
-                    return None;
-                };
-                let ty = tag.ty();
-                crate::defs::builtin_types().get(ty.id.0.0 as usize)?;
-                let dispatch = error_trait_dispatch(&ty.name)?;
-                let mut args = Vec::with_capacity(1 + extra_args.len());
-                args.push(receiver.clone());
-                args.extend(extra_args.iter().cloned());
-                Some(catch_builtin_panic(
-                    &ty.name,
-                    AssertUnwindSafe(|| dispatch("message", &args)),
-                ))
-            }
             _ => None,
-        }
-    }
-
-    // ── Builtin dispatch ──────────────────────────────────────────
-
-    /// Call the builtin `name`. A host clock that has panicked, in
-    /// this call or on one of the runtime's threads, fails the call:
-    /// the readings the builtin got since are not real, and the waits
-    /// it was woken from have not ended.
-    pub(super) fn dispatch_builtin(&mut self, name: &str, args: &[Value]) -> Result<Step, VmError> {
-        let step = self.dispatch_builtin_unchecked(name, args)?;
-        match self.runtime.io.clock_failure() {
-            Some(failure) => Err(VmError::new(failure)),
-            None => Ok(step),
-        }
-    }
-
-    fn dispatch_builtin_unchecked(&mut self, name: &str, args: &[Value]) -> Result<Step, VmError> {
-        if let Some((module, func)) = name.split_once('.') {
-            // A builtin module's function: the body of its row in the
-            // builtin registry. A panic inside it becomes a clean
-            // `VmError` instead of tearing down the current scheduler
-            // worker thread, as for a host function (`invoke_host_fn`).
-            #[cfg(test)]
-            if module == "__test_panic_builtin" {
-                // The test harness uses this name to verify that
-                // `catch_builtin_panic` converts a panic into a `VmError`.
-                return catch_builtin_panic(
-                    "__test_panic_builtin",
-                    AssertUnwindSafe(|| {
-                        let _ = (&*self, func, args);
-                        panic!("synthetic builtin panic for test")
-                    }),
-                );
-            }
-            match builtins::registry::registry().module(module) {
-                Some(entry) if entry.enabled => match entry.row(func) {
-                    Some(row) => {
-                        catch_builtin_panic(entry.name, AssertUnwindSafe(|| row.call(self, args)))
-                    }
-                    None => Err(VmError::new(format!("unknown {module} function: {func}"))),
-                },
-                _ => Err(VmError::new(format!("unknown builtin namespace: {module}"))),
-            }
-        } else {
-            match name {
-                "println" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new(format!(
-                            "println takes 1 argument, got {}",
-                            args.len()
-                        )));
-                    }
-                    self.show(&args[0], |vm, mut text| {
-                        text.push('\n');
-                        write_stdout(vm, &text)?;
-                        Ok(Step::Done(Value::Unit))
-                    })
-                }
-                "print" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new(format!(
-                            "print takes 1 argument, got {}",
-                            args.len()
-                        )));
-                    }
-                    self.show(&args[0], |vm, text| {
-                        write_stdout(vm, &text)?;
-                        Ok(Step::Done(Value::Unit))
-                    })
-                }
-                "panic" => match args.first() {
-                    Some(msg) => {
-                        self.show(msg, |_, text| Err(VmError::new(format!("panic: {text}"))))
-                    }
-                    None => Err(VmError::new("panic: ".into())),
-                },
-                _ => Err(VmError::new(format!("unknown builtin: {name}"))),
-            }
         }
     }
 }

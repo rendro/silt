@@ -1,0 +1,21 @@
+-- `task.spawn` and `task.spawn_until` take any function of no
+-- parameters, as their signatures say: a builtin function is one, and
+-- the task's value is what it returns. (It was the runtime error
+-- "task.spawn requires a function argument", though `task.deadline` ran
+-- the same function.)
+import io
+import math
+import task
+import time
+import uuid
+
+fn main() {
+  println(task.join(task.spawn(uuid.nil)))
+  println(task.join(task.spawn_until(time.ms(5000), uuid.nil)))
+  println(task.deadline(time.ms(5000), uuid.nil))
+  -- A builtin that waits for I/O is a task's body like any other (the
+  -- input is empty here: the end of it is the task's value).
+  println(io.inspect(task.join(task.spawn(io.read_line))))
+  let random = task.join(task.spawn(math.random))
+  println(random >= 0.0 && random < 1.0)
+}

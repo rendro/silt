@@ -23,6 +23,10 @@
 //!   A function constant that captures values is only the operand of a
 //!   `MakeClosure` that captures as many, each from a slot below the
 //!   height or from an upvalue the function has.
+//! - A builtin that is called (`CallBuiltin`) or used as a value (a
+//!   constant) is a function row of the builtin registry that is built,
+//!   and a call gives it as many arguments as the row has parameters
+//!   (one fewer where its last may be left out).
 //! - `CallMethod` has a receiver.
 //! - The height is the same on every path into an instruction, with one
 //!   exception. Where paths arrive with different heights, the frame is
@@ -37,6 +41,7 @@
 
 use std::fmt;
 
+use crate::builtins::registry::{BuiltinId, Row, registry};
 use crate::value::Value;
 
 use super::ops::{ConstKind, Effect, Flow, Instr, Operand, decode};
@@ -53,6 +58,22 @@ pub struct VerifyError {
 impl fmt::Display for VerifyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "at offset {}: {}", self.at, self.what)
+    }
+}
+
+/// The row of the builtin `id` that `op` names: a function that is
+/// built.
+fn builtin(op: &str, id: BuiltinId) -> Result<&'static Row, String> {
+    match registry().builtin(id) {
+        Some(row) if row.enabled && !row.is_constant() => Ok(row),
+        Some(row) => Err(format!(
+            "`{op}` names the builtin {}, which is no function of this build",
+            row.qualified()
+        )),
+        None => Err(format!(
+            "`{op}` names the builtin {}, and there is none",
+            id.0
+        )),
     }
 }
 
@@ -237,6 +258,9 @@ fn check(
                 Value::VmClosure(closure) => {
                     closure.function.upvalue_count() == closure.upvalues.len()
                 }
+                // A builtin function as a value is one that can be
+                // called.
+                Value::BuiltinFn(id) => return builtin(op, *id).map(|_| ()),
                 _ => true,
             },
             ConstKind::Str => matches!(value, Value::String(_)),
@@ -270,6 +294,7 @@ fn check(
             )),
             Operand::Upvalue(_) => Ok(()),
             Operand::Const(k, kind) => constant(k, kind),
+            Operand::Builtin(id) => builtin(op, id).map(|_| ()),
             Operand::Strs(names) => names
                 .iter(chunk.code())
                 .try_for_each(|k| constant(k, ConstKind::Str)),
@@ -308,6 +333,23 @@ fn check(
         }
         Instr::CallMethod { argc: 0, .. } | Instr::TailCallMethod { argc: 0, .. } => {
             return fail(format!("`{op}` has no receiver"));
+        }
+        Instr::CallBuiltin { builtin: id, argc } => {
+            // (The operand was checked above: it is a row.)
+            if let Ok(row) = builtin(op, id) {
+                let most = row.params.len();
+                let least = most - usize::from(row.optional_last && most > 0);
+                if !(least..=most).contains(&argc) {
+                    return fail(format!(
+                        "`{op}` calls {} with {argc} arguments, and it takes {}",
+                        row.qualified(),
+                        match least == most {
+                            true => most.to_string(),
+                            false => format!("{least} or {most}"),
+                        }
+                    ));
+                }
+            }
         }
         _ => {}
     }
@@ -661,6 +703,85 @@ mod tests {
         assert_eq!(
             rejected(code, vec![]),
             "at offset 1: no instruction is encoded here"
+        );
+    }
+
+    #[test]
+    fn bad_16_builtin_that_is_no_function() {
+        use crate::builtins::registry::registry;
+        // A call of a builtin with a number no row has.
+        let code = vec![op(Op::CallBuiltin), 0xff, 0xff, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 0: `CallBuiltin` names the builtin 65535, and there is none"
+        );
+        // A call of a row that is a constant.
+        let [lo, hi] = registry()
+            .named("math.pi")
+            .expect("math.pi")
+            .id
+            .0
+            .to_le_bytes();
+        let code = vec![op(Op::CallBuiltin), lo, hi, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 0: `CallBuiltin` names the builtin math.pi, which is no function of this build"
+        );
+        // A builtin function as a value is checked the same way.
+        let gone = Value::BuiltinFn(crate::builtins::registry::BuiltinId(0xffff));
+        let code = vec![op(Op::Constant), 0, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code.clone(), vec![gone]),
+            "at offset 0: `Constant` names the builtin 65535, and there is none"
+        );
+        let pi = Value::BuiltinFn(registry().named("math.pi").expect("math.pi").id);
+        assert_eq!(
+            rejected(code.clone(), vec![pi]),
+            "at offset 0: `Constant` names the builtin math.pi, which is no function of this build"
+        );
+        let abs = registry().named("int.abs").expect("int.abs").value();
+        verify(&Function::unverified(0, 0, code, vec![abs])).unwrap();
+        // A call of a function is fine.
+        let [lo, hi] = registry()
+            .named("math.random")
+            .expect("math.random")
+            .id
+            .0
+            .to_le_bytes();
+        let code = vec![op(Op::CallBuiltin), lo, hi, 0, op(Op::Return)];
+        verify(&Function::unverified(0, 0, code, vec![])).unwrap();
+    }
+
+    #[test]
+    fn bad_17_builtin_called_with_arguments_it_has_no_parameters_for() {
+        use crate::builtins::registry::registry;
+        let call = |name: &str, argc: u8| {
+            let [lo, hi] = registry().named(name).expect(name).id.0.to_le_bytes();
+            let mut code = vec![op(Op::Unit); usize::from(argc)];
+            code.extend([op(Op::CallBuiltin), lo, hi, argc, op(Op::Return)]);
+            Function::unverified(0, 0, code, vec![])
+        };
+        assert_eq!(
+            rejected_fn(call("int.abs", 2)),
+            "at offset 2: `CallBuiltin` calls int.abs with 2 arguments, and it takes 1"
+        );
+        assert_eq!(
+            rejected_fn(call("list.map", 1)),
+            "at offset 1: `CallBuiltin` calls list.map with 1 arguments, and it takes 2"
+        );
+        assert_eq!(
+            rejected_fn(call("println", 0)),
+            "at offset 0: `CallBuiltin` calls println with 0 arguments, and it takes 1"
+        );
+        verify(&call("int.abs", 1)).unwrap();
+        // A row whose last parameter may be left out.
+        verify(&call("channel.new", 0)).unwrap();
+        verify(&call("channel.new", 1)).unwrap();
+        verify(&call("test.assert_eq", 2)).unwrap();
+        verify(&call("test.assert_eq", 3)).unwrap();
+        assert_eq!(
+            rejected_fn(call("test.assert_eq", 1)),
+            "at offset 1: `CallBuiltin` calls test.assert_eq with 1 arguments, and it takes 2 or 3"
         );
     }
 

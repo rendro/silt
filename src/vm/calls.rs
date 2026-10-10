@@ -1,9 +1,12 @@
 //! Calling a value: a closure gets a frame, a builtin runs or gets a
 //! frame of its own (see [`Native`]).
 
+use std::panic::AssertUnwindSafe;
+
+use crate::builtins::registry::{BuiltinId, Row, registry};
 use crate::value::Value;
 
-use super::dispatch::invoke_host_fn;
+use super::dispatch::{catch_builtin_panic, invoke_host_fn};
 use super::runtime::{CallFrame, Frame, Native, Step};
 use super::{Vm, VmError};
 
@@ -132,7 +135,7 @@ impl Vm {
                 self.stack.extend(args);
                 self.call_value(callee, argc, func_slot)
             }
-            Value::BuiltinFn(name) => self.enter_builtin(&name, &args),
+            Value::BuiltinFn(id) => self.enter_builtin(id, &args),
             Value::HostFn(host) => invoke_host_fn(&host, &args).map(Entered::Value),
             Value::VariantConstructor(tag) => {
                 let arity = tag.arity();
@@ -151,18 +154,49 @@ impl Vm {
         }
     }
 
-    /// Call the builtin `name` with `args`.
-    pub(super) fn enter_builtin(&mut self, name: &str, args: &[Value]) -> Result<Entered, VmError> {
-        match self.dispatch_builtin(name, args) {
-            Ok(Step::Done(value)) => Ok(Entered::Value(value)),
-            Ok(Step::Run(native)) => {
+    /// Call the builtin `id`, a row of the builtin registry, with
+    /// `args`: the row's body. A panic inside it becomes a clean
+    /// `VmError` instead of tearing down the current scheduler worker
+    /// thread, as for a host function (`invoke_host_fn`). A host clock
+    /// that has panicked, in this call or on one of the runtime's
+    /// threads, fails the call: the readings the builtin got since are
+    /// not real, and the waits it was woken from have not ended.
+    pub(super) fn enter_builtin(
+        &mut self,
+        id: BuiltinId,
+        args: &[Value],
+    ) -> Result<Entered, VmError> {
+        match registry().builtin(id) {
+            Some(row) => self.enter_row(row, args),
+            None => Err(VmError::new(format!(
+                "internal VM error: a call of the builtin {}, and there is none",
+                id.0
+            ))),
+        }
+    }
+
+    /// Call the builtin that is `row`.
+    pub(super) fn enter_row(&mut self, row: &Row, args: &[Value]) -> Result<Entered, VmError> {
+        // (What a panic is reported under: the module, or the name of a
+        // function of the prelude.)
+        let owner = match row.module {
+            "" => row.name,
+            module => module,
+        };
+        let step = catch_builtin_panic(owner, AssertUnwindSafe(|| row.call(self, args)))?;
+        if let Some(failure) = self.runtime.io.clock_failure() {
+            return Err(VmError::new(failure));
+        }
+        match step {
+            Step::Done(value) => Ok(Entered::Value(value)),
+            Step::Run(native) => {
                 self.push_native_frame(native);
                 Ok(Entered::Native)
             }
-            Ok(Step::Call { .. } | Step::Park(_) | Step::Yield) => Err(VmError::new(format!(
-                "internal VM error: the builtin '{name}' calls or waits without a frame"
+            Step::Call { .. } | Step::Park(_) | Step::Yield => Err(VmError::new(format!(
+                "internal VM error: the builtin '{}' calls or waits without a frame",
+                row.qualified()
             ))),
-            Err(e) => Err(e),
         }
     }
 }

@@ -325,11 +325,11 @@ pub mod ty {
     pub const QUERY_RESULT: TypeId = TypeId(DefId(30));
     pub const EXEC_RESULT: TypeId = TypeId(DefId(31));
     pub const ANON_RECORD: TypeId = TypeId(DefId(32));
+    pub const NOTIFICATION: TypeId = TypeId(DefId(33));
 
-    /// The types of the run time's own marker values, which no program
-    /// can name: ids past any definition.
+    /// The type of the run time's own marker value, which no program
+    /// can name: an id past any definition.
     pub const MAP_ERROR: TypeId = TypeId(DefId(u32::MAX - 1));
-    pub const NOTIFICATION: TypeId = TypeId(DefId(u32::MAX - 3));
 }
 
 /// The variants of the builtin enums, and of the builtin handle types a
@@ -465,6 +465,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "QueryResult",
     "ExecResult",
     "<anon>",
+    "Notification",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -500,6 +501,7 @@ const BUILTIN_RECORDS: &[&str] = &[
     "Request",
     "QueryResult",
     "ExecResult",
+    "Notification",
 ];
 
 /// The description of every builtin type, indexed by id.
@@ -542,31 +544,19 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
     })
 }
 
-/// The run time's own marker types (see [`ty::MAP_ERROR`]).
+/// The run time's own marker type (see [`ty::MAP_ERROR`]).
 fn marker_types() -> &'static [Arc<TypeInfo>] {
     static TYPES: OnceLock<Vec<Arc<TypeInfo>>> = OnceLock::new();
     TYPES.get_or_init(|| {
-        let variant = |id: TypeId, name: &str, arity: u16| {
-            Arc::new(TypeInfo {
-                id,
+        let name = "__MapMapTypeError__";
+        vec![Arc::new(TypeInfo {
+            id: ty::MAP_ERROR,
+            name: name.to_string(),
+            shape: Shape::Enum(vec![VariantInfo {
                 name: name.to_string(),
-                shape: Shape::Enum(vec![VariantInfo {
-                    name: name.to_string(),
-                    arity,
-                }]),
-            })
-        };
-        let record = |id: TypeId, name: &str| {
-            Arc::new(TypeInfo {
-                id,
-                name: name.to_string(),
-                shape: Shape::Record(Vec::new()),
-            })
-        };
-        vec![
-            variant(ty::MAP_ERROR, "__MapMapTypeError__", 0),
-            record(ty::NOTIFICATION, "Notification"),
-        ]
+                arity: 0,
+            }]),
+        })]
     })
 }
 

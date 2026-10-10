@@ -15,45 +15,10 @@
 //! casing or formatting accepted by the underlying parser (hyphenated,
 //! braced, urn-prefixed, simple/32-char).
 
-use super::common::{err, ok, require_string};
+use super::common::{err, ok};
+use super::typed::builtins;
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
-
-/// Dispatch `uuid.<name>(args)`.
-pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "v4" => v4(args),
-        "v7" => v7(vm, args),
-        "parse" => parse(args),
-        "nil" => nil(args),
-        "is_valid" => is_valid(args),
-        _ => Err(VmError::new(format!("unknown uuid function: {name}"))),
-    }
-}
-
-// ── Generators ─────────────────────────────────────────────────────────
-
-/// `uuid.v4() -> String` — generate a random (version 4) UUID. Random
-/// bits come from the OS CSPRNG via the `getrandom` crate. Returned as
-/// the canonical lowercase hyphenated form.
-fn v4(args: &[Value]) -> Result<Value, VmError> {
-    if !args.is_empty() {
-        return Err(VmError::new("uuid.v4 takes no arguments".into()));
-    }
-    Ok(Value::String(::uuid::Uuid::new_v4().to_string()))
-}
-
-/// `uuid.v7() -> String` — generate a time-ordered (version 7) UUID
-/// per RFC 9562. The first 48 bits encode a Unix millisecond timestamp,
-/// the remaining bits are random, so two v7 UUIDs minted in order
-/// compare correctly via lexicographic string comparison. Good for
-/// B-tree primary keys.
-fn v7(vm: &Vm, args: &[Value]) -> Result<Value, VmError> {
-    if !args.is_empty() {
-        return Err(VmError::new("uuid.v7 takes no arguments".into()));
-    }
-    Ok(Value::String(now_v7(vm).to_string()))
-}
+use crate::vm::Vm;
 
 /// A version 7 UUID whose timestamp is the host clock's time. The VM's
 /// counter keeps the UUIDs minted within a millisecond in order.
@@ -66,41 +31,46 @@ pub(crate) fn now_v7(vm: &Vm) -> ::uuid::Uuid {
     ))
 }
 
-// ── Parse / validate / nil ─────────────────────────────────────────────
+builtins! {
+    // ── Generators ─────────────────────────────────────────────────────
 
-/// `uuid.parse(s: String) -> Result(String, String)` — validate and
-/// canonicalize a UUID string. Accepts any form the underlying parser
-/// understands (hyphenated, simple/32-char, braced, urn-prefixed) and
-/// returns the lowercase hyphenated canonical form on success. Returns
-/// `Err(msg)` on malformed input.
-fn parse(args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("uuid.parse takes 1 argument".into()));
+    /// A random (version 4) UUID. Random bits come from the OS CSPRNG
+    /// via the `getrandom` crate. Returned as the canonical lowercase
+    /// hyphenated form.
+    fn v4() -> String {
+        ::uuid::Uuid::new_v4().to_string()
     }
-    let s = require_string(&args[0], "uuid.parse")?;
-    match ::uuid::Uuid::parse_str(&s) {
-        Ok(u) => Ok(ok(Value::String(u.hyphenated().to_string()))),
-        Err(e) => Ok(err(format!("invalid uuid: {e}"))),
-    }
-}
 
-/// `uuid.nil() -> String` — the all-zero UUID,
-/// `"00000000-0000-0000-0000-000000000000"`. Useful as a sentinel
-/// value where a `None`-style Option(String) would be overkill.
-fn nil(args: &[Value]) -> Result<Value, VmError> {
-    if !args.is_empty() {
-        return Err(VmError::new("uuid.nil takes no arguments".into()));
+    /// A time-ordered (version 7) UUID per RFC 9562. The first 48 bits
+    /// encode a Unix millisecond timestamp, the remaining bits are
+    /// random, so two v7 UUIDs minted in order compare correctly via
+    /// lexicographic string comparison. Good for B-tree primary keys.
+    fn v7(vm) -> String {
+        now_v7(vm).to_string()
     }
-    Ok(Value::String(::uuid::Uuid::nil().hyphenated().to_string()))
-}
 
-/// `uuid.is_valid(s: String) -> Bool` — predicate form of `parse`. Does
-/// not allocate the `Result` wrapper, suitable for hot-path checks
-/// where the caller only cares whether the input parses.
-fn is_valid(args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new("uuid.is_valid takes 1 argument".into()));
+    // ── Parse / validate / nil ─────────────────────────────────────────
+
+    /// Validates and canonicalizes a UUID string. Accepts any form the
+    /// underlying parser understands (hyphenated, simple/32-char,
+    /// braced, urn-prefixed) and returns the lowercase hyphenated
+    /// canonical form on success, `Err(msg)` on malformed input.
+    fn parse(s: &str) -> Value {
+        match ::uuid::Uuid::parse_str(s) {
+            Ok(u) => ok(Value::String(u.hyphenated().to_string())),
+            Err(e) => err(format!("invalid uuid: {e}")),
+        }
     }
-    let s = require_string(&args[0], "uuid.is_valid")?;
-    Ok(Value::Bool(::uuid::Uuid::parse_str(&s).is_ok()))
+
+    /// The all-zero UUID, `"00000000-0000-0000-0000-000000000000"`.
+    /// Useful as a sentinel value where a `None`-style Option(String)
+    /// would be overkill.
+    fn nil() -> String {
+        ::uuid::Uuid::nil().hyphenated().to_string()
+    }
+
+    /// Predicate form of `parse`.
+    fn is_valid(s: &str) -> bool {
+        ::uuid::Uuid::parse_str(s).is_ok()
+    }
 }

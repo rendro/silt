@@ -1,0 +1,9 @@
+10:11 error `tcp.connect_tls` is not part of this build of silt: it needs the cargo feature `tcp-tls`\nhelp: rebuild silt with `--features tcp-tls`
+> hover 10:16
+```silt
+fn connect_tls(addr: String, hostname: String) -> Result(TcpStream, TcpError)
+```
+
+Open a TCP connection then complete the TLS client handshake against `hostname`
+
+`tcp.connect_tls` is not part of this build of silt: it needs the cargo feature `tcp-tls`.

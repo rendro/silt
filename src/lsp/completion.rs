@@ -152,7 +152,9 @@ impl Server {
 
         // User-defined names from the current document
         if let Some(doc) = doc {
-            for (name, def) in &doc.definitions {
+            let mut definitions: Vec<_> = doc.definitions.iter().collect();
+            definitions.sort_by_key(|(name, _)| resolve(**name));
+            for (name, def) in definitions {
                 let kind = match &def.ty {
                     Some(Type::Fun(..)) => CompletionItemKind::FUNCTION,
                     _ => CompletionItemKind::VARIABLE,
@@ -352,29 +354,7 @@ impl Server {
             }
         }
 
-        // 3. A record type's name as the prefix (`Point.|`): offer its
-        //    fields even though the prefix is not a value binding.
-        if receiver_ty.is_none()
-            && let Some(fields) = checked
-                .record_fields
-                .iter()
-                .find(|(ty, _)| resolve(ty.name) == prefix)
-                .map(|(_, fields)| fields)
-        {
-            for (name, field_ty) in fields {
-                let label = resolve(*name);
-                if emitted_field_labels.insert(label.clone()) {
-                    items.push(CompletionItem {
-                        label,
-                        kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(format!("{field_ty}")),
-                        ..CompletionItem::default()
-                    });
-                }
-            }
-        }
-
-        // 4. Method completions: the methods the checker knows for the
+        // 3. Method completions: the methods the checker knows for the
         //    receiver type's canonical name, or every method it knows
         //    when the type is unknown.
         let methods = methods_for_receiver(&checked.methods, receiver_ty.as_ref());

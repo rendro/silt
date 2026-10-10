@@ -23,6 +23,14 @@ use silt::bytecode::{Function, VmClosure};
 use silt::runtime::handle::TaskHandle;
 use silt::value::Value;
 
+/// The builtin function `name` (`println`, `list.map`) as a value.
+fn builtin(name: &str) -> Value {
+    silt::builtins::registry::registry()
+        .named(name)
+        .unwrap_or_else(|| panic!("the builtin {name}"))
+        .value()
+}
+
 // ── TaskHandle ─────────────────────────────────────────────────────
 
 /// Two distinct `TaskHandle` values (different `id`s) must compare
@@ -127,8 +135,8 @@ fn ord_vmclosure_same_arc_equal() {
 /// Two `BuiltinFn` values with different names must order non-Equal.
 #[test]
 fn ord_builtin_fn_distinct_names_not_equal() {
-    let a = Value::BuiltinFn("println".into());
-    let b = Value::BuiltinFn("print".into());
+    let a = builtin("println");
+    let b = builtin("print");
     assert_ne!(a.cmp(&b), Ordering::Equal);
     assert_eq!(a.cmp(&b).reverse(), b.cmp(&a));
 }
@@ -137,9 +145,9 @@ fn ord_builtin_fn_distinct_names_not_equal() {
 #[test]
 fn btreeset_of_distinct_builtin_fns_retains_all() {
     let mut s = BTreeSet::new();
-    s.insert(Value::BuiltinFn("println".into()));
-    s.insert(Value::BuiltinFn("print".into()));
-    s.insert(Value::BuiltinFn("map".into()));
+    s.insert(builtin("println"));
+    s.insert(builtin("print"));
+    s.insert(builtin("list.map"));
     assert_eq!(s.len(), 3);
 }
 

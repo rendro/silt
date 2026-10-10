@@ -1,0 +1,28 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: Notification
+-- The channel that `postgres.listen` gives carries `Notification`
+-- records and nothing a caller names instead.
+import channel
+import postgres
+
+type Cents { Cents(Int) }
+
+fn total(pool: postgres.PgPool) -> Int {
+  match postgres.listen(pool, "payments") {
+    Ok(ch) -> {
+      let typed: Channel(Cents) = ch
+      match channel.receive(typed) {
+        channel.Message(Cents(n)) -> n
+        _ -> 0
+      }
+    }
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  println(1)
+}

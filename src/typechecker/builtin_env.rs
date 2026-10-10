@@ -254,7 +254,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     }
 
     checker.registry_rows = true;
-    for decl in registry::parse(registry::PRELUDE_FNS).decls {
+    for decl in registry::parse(&registry.prelude_text()).decls {
         if let Decl::Fn(f) = decl {
             checker.register_fn_decl(&f, env);
         }

@@ -1,23 +1,20 @@
-//! Round-73 BLOAT-3 (L6) regression lock: the 11 byte-near-identical
-//! per-enum `catch_builtin_panic` arms in `dispatch_builtin` were
-//! collapsed onto a single dispatch-table lookup
-//! (`ERROR_TRAIT_DISPATCH`) keyed by enum name.
+//! `.message()` of a builtin error enum is a row of the builtin
+//! registry, found by the enum's type (`Registry::error_module`).
 //!
-//! Behavioural lock: every typed-error enum registered in
-//! `builtin_error_enum_variants_with_arity` has its `.message()`
-//! dispatch routed through the table and produces a typed message (no
-//! "unknown builtin namespace: <X>" leak). The test iterates the
-//! registry, so a newly registered enum without a table entry fails.
+//! Behavioural lock: every error enum of
+//! `builtin_error_enum_variants_with_arity` has a `.message()` that
+//! gives a text. The test iterates the registry, so a newly registered
+//! enum whose module says nothing of its variants fails.
 
 use silt::module::builtin_error_enum_variants_with_arity;
 
 // ── Behavioural lock ────────────────────────────────────────────────
 
-/// Calling `.message()` on every registered enum's first variant must
-/// dispatch through the table and return a non-empty `String` (i.e.
-/// the typed-message helper actually ran).
+/// Calling `.message()` on a variant of every registered enum gives a
+/// non-empty `String`: the enum has a row, and its module a text for
+/// the variant.
 #[test]
-fn every_registry_enum_message_routes_through_table() {
+fn every_builtin_error_enum_has_a_message_row() {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
@@ -27,7 +24,7 @@ fn every_registry_enum_message_routes_through_table() {
 
     fn temp_silt_file(prefix: &str, content: &str) -> PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join("silt_round73_error_trait_dispatch_table");
+        let dir = std::env::temp_dir().join("silt_error_enum_message_rows");
         fs::create_dir_all(&dir).unwrap();
         let name = format!("{prefix}_{n}.silt");
         let path = dir.join(name);
@@ -35,8 +32,7 @@ fn every_registry_enum_message_routes_through_table() {
         path
     }
 
-    // One known-good variant per enum is enough to exercise the
-    // dispatch table.
+    // One known-good variant per enum is enough to exercise its row.
     fn ctor_call_for(_enum_name: &str, variant: &str, _arity: usize) -> Option<String> {
         match variant {
             "ParseEmpty" | "ChannelTimeout" => Some(variant.to_string()),
@@ -70,22 +66,19 @@ fn every_registry_enum_message_routes_through_table() {
             .find_map(|(v, a)| ctor_call_for(enum_name, v, *a).map(|c| (*v, c)));
         let (variant, call) = chosen.unwrap_or_else(|| {
             panic!(
-                "round-73 BLOAT-3 test: no variant of {enum_name} has a \
-                 constructor template in `ctor_call_for`. Add one — \
-                 every registered stdlib error enum must be exercised \
-                 here to lock the dispatch-table wiring."
+                "no variant of {enum_name} has a constructor template in \
+                 `ctor_call_for`. Add one: every registered stdlib error \
+                 enum is exercised here."
             )
         });
         let module = silt::module::builtin_variant_module(variant)
             .expect("every stdlib error variant belongs to a module");
 
         // The script prints the raw `.message()` output. We don't pin
-        // the exact wording (that's a typed-message detail owned by the
-        // per-module `call_*_error_trait` helper) — we only require the
-        // dispatch path produced *some* non-empty string and exited
-        // cleanly. A regression in the table (wrong fn pointer, missing
-        // entry) would surface as either a non-zero exit, an "unknown
-        // builtin namespace" error, or empty stdout.
+        // the exact wording (that is the module's `error_text`) — we
+        // only require that the call gave *some* non-empty string and
+        // exited cleanly. An enum with no text would surface as a
+        // non-zero exit or empty stdout.
         let src = format!(
             "import {module}\n\
              fn main() {{\n\
@@ -104,9 +97,8 @@ fn every_registry_enum_message_routes_through_table() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
-            "`silt run` failed for {enum_name}.{variant} — the \
-             round-73 BLOAT-3 dispatch table must wire up every \
-             registered enum's `.message()`.\nsrc:\n{src}\n\
+            "`silt run` failed for {enum_name}.{variant}: every \
+             registered enum has a `.message()`.\nsrc:\n{src}\n\
              stdout: {stdout}\nstderr: {stderr}"
         );
         // The stdout should be non-empty (the typed message). println
@@ -115,15 +107,8 @@ fn every_registry_enum_message_routes_through_table() {
         let trimmed = stdout.trim();
         assert!(
             !trimmed.is_empty(),
-            "{enum_name}.{variant}.message() produced empty stdout — \
-             the table entry's fn pointer is likely returning the \
-             wrong shape. Full stdout: {stdout:?}, stderr: {stderr:?}"
-        );
-        assert!(
-            !stderr.contains("unknown builtin namespace"),
-            "{enum_name}.{variant}.message() leaked the dispatch \
-             fallback wording 'unknown builtin namespace' — the table \
-             lookup did not find the entry.\nstderr: {stderr}"
+            "{enum_name}.{variant}.message() produced empty stdout. \
+             Full stdout: {stdout:?}, stderr: {stderr:?}"
         );
     }
 }

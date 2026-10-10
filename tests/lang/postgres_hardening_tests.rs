@@ -100,8 +100,8 @@ fn map_with(pairs: &[(&str, Value)]) -> Value {
 /// optional tunable (meaning: fall through to r2d2's defaults).
 #[test]
 fn connect_with_empty_opts_parses() {
-    let got = read_max_pool_size_for_tests(&empty_map_value()).expect("empty ok");
-    assert_eq!(got, None);
+    let got = read_max_pool_size_for_tests(&empty_map_value()).expect("a map");
+    assert_eq!(got, Ok(None));
 }
 
 /// `connect_with(url, #{"max_pool_size": 32})` is accepted and the
@@ -109,8 +109,8 @@ fn connect_with_empty_opts_parses() {
 #[test]
 fn connect_with_max_pool_size_parses() {
     let opts = map_with(&[("max_pool_size", Value::Int(32))]);
-    let got = read_max_pool_size_for_tests(&opts).expect("ok");
-    assert_eq!(got, Some(32u32));
+    let got = read_max_pool_size_for_tests(&opts).expect("a map");
+    assert_eq!(got, Ok(Some(32u32)));
 }
 
 /// Zero / negative pool sizes are rejected — a pool of size 0 would
@@ -125,34 +125,20 @@ fn connect_with_zero_max_pool_size_rejected() {
     // (more likely) something entirely different that happened to
     // contain "greater". Anchor on the full unique substring.
     let opts = map_with(&[("max_pool_size", Value::Int(0))]);
-    let err = read_max_pool_size_for_tests(&opts).expect_err("zero rejected");
+    let err = read_max_pool_size_for_tests(&opts)
+        .expect("a map")
+        .expect_err("zero rejected");
     assert!(
         err.contains("postgres.connect_with: max_pool_size must be > 0, got 0"),
         "err: {err}",
     );
 
     let opts = map_with(&[("max_pool_size", Value::Int(-1))]);
-    let err = read_max_pool_size_for_tests(&opts).expect_err("neg rejected");
+    let err = read_max_pool_size_for_tests(&opts)
+        .expect("a map")
+        .expect_err("neg rejected");
     assert!(
         err.contains("postgres.connect_with: max_pool_size must be > 0, got -1"),
-        "err: {err}",
-    );
-}
-
-/// Wrong shape — passing a String for `max_pool_size` — yields an
-/// error that mentions the field name and that it must be an Int.
-#[test]
-fn connect_with_wrong_type_rejected() {
-    // Round 79 follow-up: round 75's canonical-form refactor
-    // ("<fn> requires <Kind>, got <kind>") replaced the prior
-    // bespoke phrasing here. The current emitting site is
-    // src/builtins/postgres.rs:1815 → "postgres.connect_with
-    // requires Int, got <kind>". Updated lock asserts both the
-    // canonical prefix and that the rejected kind appears.
-    let opts = map_with(&[("max_pool_size", Value::String("lots".to_string()))]);
-    let err = read_max_pool_size_for_tests(&opts).expect_err("wrong type rejected");
-    assert!(
-        err.contains("postgres.connect_with requires Int") && err.contains("got String"),
         "err: {err}",
     );
 }
@@ -165,25 +151,19 @@ fn connect_with_unknown_keys_ignored() {
         ("max_pool_size", Value::Int(15)),
         ("future_option_we_do_not_know_yet", Value::Int(99)),
     ]);
-    let got = read_max_pool_size_for_tests(&opts).expect("unknown key ignored");
-    assert_eq!(got, Some(15u32));
+    let got = read_max_pool_size_for_tests(&opts).expect("a map");
+    assert_eq!(got, Ok(Some(15u32)));
 }
 
-/// The opts argument must be a Map; passing anything else is a type
-/// error (the typechecker should catch this before runtime, but the
-/// Rust layer still double-checks).
+/// Options that are no `Map(String, Int)` are not the argument's kind:
+/// the checker lets no program pass them, and a call that gets them all
+/// the same is the one error of arguments that do not fit (locked in
+/// `builtins::registry`), not an error of this function.
 #[test]
-fn connect_with_non_map_opts_rejected() {
-    // Lock the canonical "<fn> requires <Kind>, got <kind>" wording
-    // (round 75 standardisation across require_*) plus the unique
-    // `(e.g. #{})` hint that distinguishes this site from the generic
-    // `require_map` helper. Updated round 79 from the pre-round-75
-    // phrase `"opts must be a Map"` which the wording refactor retired.
-    let err = read_max_pool_size_for_tests(&Value::Int(1)).expect_err("Int rejected");
-    assert!(
-        err.contains("postgres.connect_with requires Map") && err.contains("(e.g. #{})"),
-        "err: {err}"
-    );
+fn connect_with_opts_of_another_kind_are_not_the_argument() {
+    let opts = map_with(&[("max_pool_size", Value::String("lots".to_string()))]);
+    assert_eq!(read_max_pool_size_for_tests(&opts), None);
+    assert_eq!(read_max_pool_size_for_tests(&Value::Int(1)), None);
 }
 
 // ── LOW-2: redact_pg_message strips DETAIL / WHERE / HINT ──────────
