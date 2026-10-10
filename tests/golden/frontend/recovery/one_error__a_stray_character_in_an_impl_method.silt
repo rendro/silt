@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A method of an impl that does not parse in its body leaves its
+-- header to the impl: the calls of the method are no errors.
+trait T {
+  fn m(self) -> Int
+}
+
+trait T for Int {
+  fn m(self) -> Int { self @ }
+}
+
+fn main() {
+  println("{1.m()} {2.m()}")
+}

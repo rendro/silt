@@ -439,10 +439,7 @@ impl Session {
     /// that failed or that close a cycle: those are poisoned.
     fn check(&mut self, id: ModuleId, ordering: &Ordering) -> ModuleAnalysis {
         let module = self.graph.module(id);
-        let mut ast = module
-            .ast
-            .clone()
-            .unwrap_or(ast::Program { decls: Vec::new() });
+        let mut ast = module.ast.clone().unwrap_or_default();
         let mut imported: HashMap<Symbol, Imported<'_>> = HashMap::new();
         let mut bugs = Vec::new();
         for import in &module.imports {

@@ -1134,11 +1134,19 @@ impl TypeChecker {
                         else {
                             continue;
                         };
-                        self.check_method_body(method, &sig, env);
+                        // (A parser-recovery stub's empty body is not
+                        // user code, here as for a function.)
+                        if !method.is_recovery_stub {
+                            self.check_method_body(method, &sig, env);
+                        }
                     }
                 }
                 Decl::Trait(t) => {
-                    for method in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
+                    for method in t
+                        .methods
+                        .iter_mut()
+                        .filter(|m| !m.is_signature_only && !m.is_recovery_stub)
+                    {
                         let Some(sig) = self.default_method_sig(t.name, method.name) else {
                             continue;
                         };

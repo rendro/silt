@@ -356,9 +356,15 @@ pub struct Parser<'src> {
     /// failed last, behind its name: it stands in for the function (see
     /// `parse_fn_decl`).
     fn_stub: Option<FnDecl>,
+    /// Whether the function declaration that failed last failed in its
+    /// body: the header that `fn_stub` holds is whole.
+    fn_header_whole: bool,
     /// Whether a declaration (or a REPL entry's statements) failed and
     /// was skipped: the program is not all of the text.
     skipped: bool,
+    /// The names that the declarations which failed would have bound
+    /// (`Program::unknown`).
+    unknown: Vec<Symbol>,
     depth: usize,
     /// The comments of the source, when the parser is asked to attach
     /// documentation (see `with_docs`): each top-level declaration and
@@ -423,7 +429,9 @@ impl<'src> Parser<'src> {
             more_errors: lexed.more_errors,
             cut_short,
             fn_stub: None,
+            fn_header_whole: false,
             skipped: false,
+            unknown: Vec::new(),
             tokens,
             delim_depth,
             starts_line,
@@ -770,6 +778,10 @@ impl<'src> Parser<'src> {
                 return Err(self.unclosed_list_err(what, open, close));
             }
             items.push(elem(self)?);
+            // Text the lexer rejected behind an element is of none. (In
+            // the place of an element it is the element that is wrong:
+            // `f(@)` is not `f()`.)
+            self.skip_rejected();
             if self.at(&Token::Comma) {
                 self.advance();
             } else if self.at(close) {
@@ -864,7 +876,15 @@ impl<'src> Parser<'src> {
     /// so that uses of its name are not errors of their own.
     pub fn parse_program_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
         let mut decls = Vec::new();
-        while !self.at(&Token::Eof) {
+        loop {
+            // Text the lexer rejected in front of a declaration is not
+            // the declaration's: the item starts behind it. (It is of
+            // the item when the item fails: one mistake, one error.)
+            let item = self.pos;
+            self.skip_rejected();
+            if self.at(&Token::Eof) {
+                break;
+            }
             let start = self.pos;
             let is_fn = self.at(&Token::Fn)
                 || self.at(&Token::Pub)
@@ -884,7 +904,8 @@ impl<'src> Parser<'src> {
                     // What is skipped is of the failed declaration.
                     self.skipped = true;
                     self.synchronize(start);
-                    self.report(start..self.pos, e);
+                    self.names_of_failed(start..self.pos);
+                    self.report(item..self.pos, e);
                 }
             }
         }
@@ -942,7 +963,7 @@ impl<'src> Parser<'src> {
             // inside a string can open the string that is not closed.
             self.errors.clear();
             errors.truncate(1);
-            return (Program { decls }, errors);
+            return (self.program(decls), errors);
         }
         errors.append(&mut self.errors);
         errors.sort_by_key(|error| error.span.start);
@@ -975,7 +996,15 @@ impl<'src> Parser<'src> {
                 ),
             ));
         }
-        (Program { decls }, errors)
+        (self.program(decls), errors)
+    }
+
+    /// The program of `decls`, with the names of what failed.
+    fn program(&mut self, decls: Vec<Decl>) -> Program {
+        Program {
+            decls,
+            unknown: std::mem::take(&mut self.unknown),
+        }
     }
 
     /// The same-line check after a top-level declaration. Only a token
@@ -1033,6 +1062,154 @@ impl<'src> Parser<'src> {
                 kind => open = behind(open, kind),
             }
             first = false;
+            self.advance();
+        }
+    }
+
+    /// Step over the text the lexer rejected (`Token::Error`): where an
+    /// item, a member or an element of a list starts or ends, it stands
+    /// between them and is of none; the lexer's error is its error.
+    fn skip_rejected(&mut self) {
+        while self.at(&Token::Error) {
+            self.advance();
+        }
+    }
+
+    /// Record the names that the declaration of the tokens `failed`,
+    /// which did not parse, would have bound (`Program::unknown`): they
+    /// are declared, and what they mean is unknown, so a use of one is
+    /// no "undefined" error of its own. A type's name and the names of
+    /// its variants; a trait's name; the names an `import` brings; the
+    /// names of a `let`. (A function has its recovery stub; an impl
+    /// binds no name.)
+    fn names_of_failed(&mut self, failed: std::ops::Range<usize>) {
+        let tokens = &self.tokens[failed];
+        let name = |tok: &Tok| match tok.kind {
+            Token::Ident(name) => Some(name),
+            _ => None,
+        };
+        let upper =
+            |name: Symbol| intern::resolve(name).starts_with(|c: char| c.is_ascii_uppercase());
+        let rest = match tokens.first().map(|tok| &tok.kind) {
+            Some(Token::Pub) => &tokens[1..],
+            _ => tokens,
+        };
+        let mut names = Vec::new();
+        match rest.first().map(|tok| &tok.kind) {
+            Some(Token::Type) => {
+                names.extend(rest.get(1).and_then(name));
+                // The variants of an enum: the upper-case names that
+                // stand behind a comma or the brace in its braces. (A
+                // type among a variant's fields that is taken for one
+                // is no harm: a name that is declared is what it is.)
+                let mut depth = 0;
+                for (i, tok) in rest.iter().enumerate() {
+                    match tok.kind {
+                        Token::LBrace => depth += 1,
+                        Token::RBrace => depth -= 1,
+                        Token::Ident(variant)
+                            if depth == 1
+                                && upper(variant)
+                                && matches!(rest[i - 1].kind, Token::LBrace | Token::Comma) =>
+                        {
+                            names.push(variant);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // A trait declaration, not an impl (`trait T for X`).
+            Some(Token::Trait) => {
+                let header = rest.iter().take_while(|tok| tok.kind != Token::LBrace);
+                let is_impl = header.clone().any(
+                    |tok| matches!(tok.kind, Token::Ident(word) if intern::resolve(word) == "for"),
+                );
+                if !is_impl {
+                    names.extend(rest.get(1).and_then(name));
+                }
+            }
+            // `import m`, `import m as n`, `import m.{ a, b }`: every
+            // name of the line.
+            Some(Token::Import) => names.extend(rest.iter().filter_map(name)),
+            // The names of the pattern, in front of `=` or `:`.
+            Some(Token::Let) => names.extend(
+                rest.iter()
+                    .take_while(|tok| !matches!(tok.kind, Token::Eq | Token::Colon))
+                    .filter_map(name)
+                    .filter(|name| !upper(*name)),
+            ),
+            _ => {}
+        }
+        self.unknown.extend(names);
+    }
+
+    /// A method of the body of a trait or an impl. One that fails in its
+    /// body leaves its recovery stub (see `parse_fn_decl`): its error is
+    /// recorded here, it is skipped to its end, and the body goes on
+    /// with the next member, so one method that does not parse does not
+    /// take the trait or the impl and its other methods with it. (One
+    /// that fails in its header is not known well enough to stand: the
+    /// trait or the impl fails with it.) Returns whether the body goes
+    /// on.
+    fn parse_method(&mut self, methods: &mut Vec<FnDecl>) -> Result<bool> {
+        let start = self.pos;
+        self.fn_stub = None;
+        match self.parse_fn_decl() {
+            Ok(method) => {
+                methods.push(method);
+                Ok(true)
+            }
+            Err(e) => {
+                let Some(mut stub) = self.fn_stub.take().filter(|_| self.fn_header_whole) else {
+                    return Err(e);
+                };
+                // (The stub of a top-level function has no where
+                // clauses; a method's are part of what its trait or its
+                // impl says of it. They are not kept: the stub is not
+                // checked against anything.)
+                stub.where_clauses = Vec::new();
+                methods.push(stub);
+                self.skipped = true;
+                let goes_on = self.skip_member(start);
+                self.report(start..self.pos, e);
+                Ok(goes_on)
+            }
+        }
+    }
+
+    /// Skip to where the next member of a trait or impl body starts,
+    /// behind the member that began at token `start` and failed where
+    /// the parser stands: outside every brace the member opened, to a
+    /// `fn` or `type` that starts a line or to the brace that closes
+    /// the body. Returns false when a declaration keyword at the margin
+    /// comes first: the body is not closed (it is being typed), and the
+    /// declaration is the file's.
+    fn skip_member(&mut self, start: usize) -> bool {
+        let behind = |open: usize, kind: &Token| match kind {
+            Token::LBrace | Token::HashBrace => open + 1,
+            Token::RBrace => open.saturating_sub(1),
+            _ => open,
+        };
+        let mut open = self.tokens[start..self.pos]
+            .iter()
+            .fold(0, |open, tok| behind(open, &tok.kind));
+        loop {
+            match self.peek() {
+                Token::Eof => return false,
+                Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Let
+                    if self.nl_before() && self.at_margin() =>
+                {
+                    return false;
+                }
+                Token::RBrace if open == 0 => return true,
+                Token::Fn | Token::Type if open == 0 && self.nl_before() => return true,
+                kind => open = behind(open, kind),
+            }
             self.advance();
         }
     }
@@ -1198,12 +1375,14 @@ impl<'src> Parser<'src> {
     /// return type, which are entered in `decl` as they are read, then
     /// its where clauses, its body, and whether it has none.
     fn parse_fn_rest(&mut self, decl: &mut FnDecl) -> Result<(Vec<WhereClause>, Expr, bool)> {
+        self.fn_header_whole = false;
         decl.params = self.parse_fn_params()?;
         if self.peek() == &Token::Arrow {
             self.advance();
             decl.return_type = Some(self.parse_type_expr()?);
         }
         let where_clauses = self.parse_where_clauses_opt()?;
+        self.fn_header_whole = true;
         if self.at(&Token::LBrace) {
             Ok((where_clauses, self.parse_block()?, false))
         } else {
@@ -1646,16 +1825,26 @@ impl<'src> Parser<'src> {
             let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
             let mut assoc_types: Vec<crate::ast::AssocTypeDecl> = Vec::new();
-            while !self.at(&Token::RBrace) {
+            let mut closed = true;
+            loop {
+                self.skip_rejected();
+                if self.at(&Token::RBrace) {
+                    break;
+                }
                 if self.at(&Token::Type) {
                     let assoc = self.parse_assoc_type_decl()?;
                     assoc_types.push(assoc);
                     continue;
                 }
-                methods.push(self.parse_fn_decl()?);
+                if !self.parse_method(&mut methods)? {
+                    closed = false;
+                    break;
+                }
             }
             self.current_trait_name = prev_trait;
-            self.expect(&Token::RBrace)?;
+            if closed {
+                self.expect(&Token::RBrace)?;
+            }
             if let Some(error) = qualified_name_error {
                 return Err(error);
             }
@@ -1774,16 +1963,26 @@ impl<'src> Parser<'src> {
             let prev_trait = self.current_trait_name.replace(name);
             let mut methods = Vec::new();
             let mut assoc_type_bindings: Vec<crate::ast::AssocTypeBinding> = Vec::new();
-            while !self.at(&Token::RBrace) {
+            let mut closed = true;
+            loop {
+                self.skip_rejected();
+                if self.at(&Token::RBrace) {
+                    break;
+                }
                 if self.at(&Token::Type) {
                     let binding = self.parse_assoc_type_binding()?;
                     assoc_type_bindings.push(binding);
                     continue;
                 }
-                methods.push(self.parse_fn_decl()?);
+                if !self.parse_method(&mut methods)? {
+                    closed = false;
+                    break;
+                }
             }
             self.current_trait_name = prev_trait;
-            self.expect(&Token::RBrace)?;
+            if closed {
+                self.expect(&Token::RBrace)?;
+            }
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_module,
                 trait_name: name,
@@ -4717,6 +4916,83 @@ fn main() {
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert_eq!(errs[0].notes, ["'café' is written in 2 more places"]);
         assert_eq!(fn_names(&prog), ["a?", "b?"]);
+    }
+
+    #[test]
+    fn test_rejected_text_between_items_members_and_elements_is_of_none() {
+        // In front of a declaration, behind a field of a type, a
+        // variant of an enum, a method of a trait, an element of a
+        // list: the lexer's errors are the only ones, and nothing is
+        // skipped.
+        let source = "@ fn a() { [1 $, 2] }\ntype P { x: Int @ }\ntype E { A @, B }\n\
+                      trait T {\n  fn m(self) -> Int $\n  fn n(self) -> Int\n}\n~ import list\n";
+        let lexed = Lexer::new(crate::source::FileId::default(), source).tokenize();
+        let mut parser = Parser::new(lexed, source);
+        let (prog, errs) = parser.parse_program_recovering();
+        assert!(
+            errs.iter()
+                .all(|e| e.phase() == crate::diagnostic::Phase::Lex),
+            "{errs:?}"
+        );
+        assert_eq!(errs.len(), 6);
+        assert_eq!(prog.decls.len(), 5);
+        assert!(!parser.skipped_a_declaration());
+        assert!(prog.unknown.is_empty());
+        let Decl::Trait(t) = &prog.decls[3] else {
+            panic!("a trait");
+        };
+        assert_eq!(t.methods.len(), 2);
+    }
+
+    #[test]
+    fn test_a_declaration_that_fails_leaves_its_names() {
+        let names = |source: &str| {
+            let (prog, errs) = parse_recovering(source);
+            assert_eq!(errs.len(), 1, "{source}: {errs:?}");
+            let mut names: Vec<String> = prog.unknown.iter().map(|n| n.to_string()).collect();
+            names.sort();
+            names.join(" ")
+        };
+        assert_eq!(names("type P {\n  x: Int,\n  y:\n}\n"), "P");
+        assert_eq!(
+            names("pub type E {\n  A,\n  B(,\n  C(Int),\n}\n"),
+            "A B C E"
+        );
+        assert_eq!(names("trait T {\n  fn m(self) ->\n}\n"), "T");
+        assert_eq!(names("trait T for Int {\n  fn m(self) ->\n}\n"), "");
+        assert_eq!(names("import geo.{ mk, area, 5 }\n"), "area geo mk");
+        // Rejected text in the place of an element is the element.
+        let (prog, errs) = parse_recovering("fn f() { g(@) }\nfn h() { 1 }\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(fn_names(&prog), ["f?", "h"]);
+        assert_eq!(names("let (a, b) = )\n"), "a b");
+        assert_eq!(names("fn f( {\n}\n"), "");
+    }
+
+    #[test]
+    fn test_a_method_that_fails_in_its_body_is_a_stub_of_its_impl() {
+        let (prog, errs) = parse_recovering(
+            "trait T for Int {\n  fn a(self) -> Int { self + }\n  fn b(self) -> Int { 2 }\n}\n\
+             fn after() { 1 }\n",
+        );
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        let Decl::TraitImpl(ti) = &prog.decls[0] else {
+            panic!("an impl");
+        };
+        let stubs: Vec<bool> = ti.methods.iter().map(|m| m.is_recovery_stub).collect();
+        assert_eq!(stubs, [true, false]);
+        assert_eq!(fn_names(&prog), ["after"]);
+        // One that fails in its header takes the impl with it.
+        let (prog, errs) =
+            parse_recovering("trait T for Int {\n  fn a(self) -> { 1 }\n}\nfn after() { 1 }\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(prog.decls.len(), 1);
+        // A body that is not closed ends at a declaration at the margin.
+        let (prog, errs) =
+            parse_recovering("trait T for Int {\n  fn a(self) -> Int { f(1,\n\nfn after() { 1 }\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(prog.decls.len(), 2);
+        assert_eq!(fn_names(&prog), ["after"]);
     }
 
     #[test]

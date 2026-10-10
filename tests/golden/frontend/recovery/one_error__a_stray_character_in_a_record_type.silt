@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A character the lexer rejects between the fields of a type is of
+-- none of them: the type is whole, and its uses are no errors.
+type P {
+  x: Int,
+  y: Int @
+}
+
+fn g(p: P) -> Int {
+  p.x
+}
+
+fn h(p: P) -> Int {
+  p.y
+}
+
+fn main() {
+  println("{g(P { x: 1, y: 2 })}")
+}

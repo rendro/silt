@@ -1,0 +1,5 @@
+error[lex]: unexpected character: U+200B (invisible)
+ --> one_error__a_zero_width_space_in_front_of_a_function.silt:4:1
+   |
+ 4 | ​fn a() -> Int {
+   | ^ unexpected character: U+200B (invisible)

@@ -324,6 +324,12 @@ pub fn resolve_module(
         &mut scope,
         &mut diagnostics,
     );
+    // What a declaration that did not parse would have bound is
+    // declared, and what it means is unknown: a use of it is no error.
+    for name in &program.unknown {
+        scope.values.entry(*name).or_insert(Binding::Poisoned);
+        scope.types.entry(*name).or_insert(Binding::Poisoned);
+    }
     let mut resolver = Resolver {
         defs,
         kind,

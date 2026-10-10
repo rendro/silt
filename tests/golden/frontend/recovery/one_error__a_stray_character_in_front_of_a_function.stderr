@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '@'
+ --> one_error__a_stray_character_in_front_of_a_function.silt:5:1
+   |
+ 5 | @ fn a() -> Int {
+   | ^ unexpected character: '@'

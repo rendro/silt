@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A character the lexer rejects in front of a top-level `let`: the
+-- `let` is read.
+$ let k = 1
+
+fn main() {
+  println("{k}")
+}
