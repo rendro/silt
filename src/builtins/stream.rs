@@ -24,7 +24,6 @@
 //! Every stage and every sink is one `Pipe`: a frame that does the
 //! waiting, around a function (`Logic`) that says what comes next.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -32,7 +31,7 @@ use parking_lot::Mutex;
 use super::common::ok;
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
-use super::typed::{Arg, Chan, List, builtins, unsound};
+use super::typed::{Arg, Chan, Elements, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
@@ -549,23 +548,13 @@ builtins! {
     // ── Sources ───────────────────────────────────────────────────────────
 
     fn from_list(vm, xs: List) -> Result<Step, VmError> {
-        let xs = xs.shared()?;
-        let mut next = 0;
-        stage(
-            vm,
-            "stream.from_list",
-            vec![],
-            DEFAULT_CAPACITY,
-            move |_| {
-                Ok(match xs.get(next) {
-                    Some(value) => {
-                        next += 1;
-                        Next::Emit(value.clone())
-                    }
-                    None => Next::Done(Value::Unit),
-                })
-            },
-        )
+        let mut items = xs.elements();
+        stage(vm, "stream.from_list", vec![], DEFAULT_CAPACITY, move |_| {
+            Ok(match items.next() {
+                Some(value) => Next::Emit(value),
+                None => Next::Done(Value::Unit),
+            })
+        })
     }
 
     fn from_range(vm, lo: i64, hi: i64) -> Result<Step, VmError> {
@@ -827,7 +816,8 @@ builtins! {
 
     fn flat_map(vm, ch: Chan, f: &Value) -> Result<Step, VmError> {
         let (in_ch, fn_val) = (ch.clone(), f.clone());
-        let mut items: VecDeque<Value> = VecDeque::new();
+        // What is left of the list the function returned last.
+        let mut items: Option<Elements> = None;
         stage(
             vm,
             "stream.flat_map",
@@ -837,14 +827,14 @@ builtins! {
                 match got {
                     Got::Value(_, v) => return Ok(Next::Call(fn_val.clone(), vec![v])),
                     Got::Returned(returned) => match List::take(&returned) {
-                        Some(xs) => items.extend(xs.iter()),
+                        Some(xs) => items = Some(xs.elements()),
                         None => return Err(unsound("stream.flat_map", "f")),
                     },
                     Got::End => return Ok(Next::Done(Value::Unit)),
                     Got::Start | Got::Emitted => {}
                     Got::Io(_) => return unexpected(),
                 }
-                Ok(match items.pop_front() {
+                Ok(match items.as_mut().and_then(Iterator::next) {
                     Some(item) => Next::Emit(item),
                     None => Next::Take(0),
                 })

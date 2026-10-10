@@ -217,6 +217,29 @@ impl Iterator for Items<'_> {
     }
 }
 
+/// The elements of a list that outlive the call they were an argument
+/// of ([`List::elements`]).
+pub(crate) enum Elements {
+    /// The list, and how many of its elements were taken.
+    List(Arc<Vec<Value>>, usize),
+    Range(std::ops::RangeInclusive<i64>),
+}
+
+impl Iterator for Elements {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        match self {
+            Elements::List(items, taken) => {
+                let item = items.get(*taken)?.clone();
+                *taken += 1;
+                Some(item)
+            }
+            Elements::Range(range) => range.next().map(Value::Int),
+        }
+    }
+}
+
 impl<'a> Arg<'a> for List<'a> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
@@ -235,12 +258,13 @@ impl<'a> List<'a> {
         }
     }
 
-    /// The elements as a list to keep: the list itself, or one made
-    /// of a range (an error if it has more elements than a list may).
-    pub(crate) fn shared(self) -> Result<Arc<Vec<Value>>, VmError> {
+    /// The elements, to be taken one after the other beyond the call
+    /// (by a stream's stage): no list is made of a range, however long
+    /// it is.
+    pub(crate) fn elements(self) -> Elements {
         match self {
-            List::Items(items) => Ok(items.clone()),
-            List::Range(..) => self.to_vec().map(Arc::new),
+            List::Items(items) => Elements::List(items.clone(), 0),
+            List::Range(lo, hi) => Elements::Range(lo..=hi),
         }
     }
 

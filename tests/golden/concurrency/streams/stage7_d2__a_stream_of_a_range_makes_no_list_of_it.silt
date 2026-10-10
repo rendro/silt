@@ -1,0 +1,12 @@
+-- A stream of a list's elements takes them one after the other: a
+-- range that has more elements than a list may have is a stream like
+-- any other, as an argument of `stream.from_list` and as what the
+-- function of a `stream.flat_map` returns.
+import stream
+
+fn main() {
+  println(stream.collect(stream.from_list(1..1000000000000) |> stream.take(2)))
+  let nested = stream.from_range(1, 2) |> stream.flat_map { x -> x..1000000000000 }
+  println(stream.collect(nested |> stream.take(3)))
+  println(stream.collect(stream.from_list([1, 2, 3]) |> stream.flat_map { x -> [x, x * 10] }))
+}
