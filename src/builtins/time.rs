@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
-use super::common::value_kind;
 use super::typed::{Arg, builtins};
 use crate::bytecode::record_type_matches;
 use crate::defs::TypeId;
@@ -285,18 +284,6 @@ pub(crate) struct Duration(pub(crate) i64);
 impl<'a> Arg<'a> for Duration {
     fn take(value: &'a Value) -> Option<Self> {
         int(record(value, ty::DURATION)?, "ns").map(Duration)
-    }
-}
-
-/// The nanoseconds of a `Duration` value, for the builtins whose
-/// bodies are not typed (`channel`, `task`).
-pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
-    match Duration::take(v) {
-        Some(Duration(ns)) => Ok(ns),
-        None => Err(VmError::new(format!(
-            "expected Duration, got {}",
-            value_kind(v)
-        ))),
     }
 }
 

@@ -18,6 +18,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::runtime::handle::TaskHandle;
+use crate::runtime::sync::Channel;
 use crate::typeinfo::{FieldType, TypeInfo, bv};
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
@@ -88,6 +90,30 @@ impl<'a> Arg<'a> for &'a Arc<Vec<u8>> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::Bytes(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+}
+
+/// A `Channel` argument.
+pub(crate) type Chan<'a> = &'a Arc<Channel>;
+
+impl<'a> Arg<'a> for &'a Arc<Channel> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Channel(channel) => Some(channel),
+            _ => None,
+        }
+    }
+}
+
+/// A `Handle` argument: a task's.
+pub(crate) type Handle<'a> = &'a Arc<TaskHandle>;
+
+impl<'a> Arg<'a> for &'a Arc<TaskHandle> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Handle(handle) => Some(handle),
             _ => None,
         }
     }
