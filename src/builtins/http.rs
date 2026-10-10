@@ -638,10 +638,18 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
 
 /// The task of one connection: read a request, call the handler with
 /// it, send what the handler returns, and go on with the next request
-/// while the connection is kept. The reading and the sending block, so
-/// they run on the I/O pool and the task waits for them like for any
-/// I/O; the handler itself may wait as long as it likes (a long poll)
-/// without holding a thread.
+/// while the connection is kept.
+///
+/// What is there to be read, and what the system takes of a response
+/// at once, is read and written where the task runs, without waiting
+/// ([`TcpStreamHandle::read_now`], [`TcpStreamHandle::write_now`]): a
+/// request that has arrived is answered without a thread changing
+/// hands. Whatever has to be waited for (a request that has not come,
+/// a body, a client that takes its response slowly) is an operation of
+/// the I/O pool that the task waits for like for any I/O, with the
+/// server's time limit as the deadline of the wait. The handler itself
+/// may wait as long as it likes (a long poll) without holding a
+/// thread.
 #[cfg(feature = "http")]
 struct Conn {
     server: Arc<Server>,
@@ -682,8 +690,68 @@ enum ConnState {
     Ended,
 }
 
+/// What a step of a connection's task comes to.
+#[cfg(feature = "http")]
+enum Go {
+    /// A step of the task's frame: it waits, calls or ends.
+    Step(Step),
+    /// Nothing to wait for: the state it left is gone on with.
+    Again,
+}
+
 #[cfg(feature = "http")]
 impl Conn {
+    /// The end of the task: the connection is closed when the frame
+    /// is dropped.
+    const END: Go = Go::Step(Step::Done(Value::Unit));
+
+    /// The next request, if it need not be waited for: it is among
+    /// the bytes read already, or with those that are there to be
+    /// read. `None` if it has to be waited for.
+    fn at_hand(&mut self) -> Option<Got> {
+        let mut reader = self.reader.try_lock()?;
+        if let Some(next) = reader.buffered() {
+            return Some(Got::of(next));
+        }
+        let mut read = [0u8; 8 * 1024];
+        match self.stream.read_now(&mut read)? {
+            // The client has closed the connection.
+            0 => Some(Got::End),
+            n => {
+                reader.feed(&read[..n]);
+                reader.buffered().map(Got::of)
+            }
+        }
+    }
+
+    /// Do what a read gave asks for: call the handler, or answer.
+    fn serve(&mut self, vm: &mut Vm, got: Got) -> Go {
+        match got {
+            Got::Request(request, reply) => match self.server.call() {
+                Some(called) => {
+                    self.state = ConnState::Calling { reply, called };
+                    Go::Step(vm.call(self.server.handler.clone(), [request]))
+                }
+                // As many handlers as the server calls at a time are
+                // being called.
+                None => {
+                    let bytes = plain_response(vm, 503, wire::reason(503), reply);
+                    self.send(vm, bytes, reply.then())
+                }
+            },
+            Got::Answered(status, why, reply) => {
+                let bytes = plain_response(vm, status, why, reply);
+                self.send(vm, bytes, reply.then())
+            }
+            Got::Refused(status, why) => {
+                let bytes = plain_response(vm, status, why, Reply::LAST);
+                self.send(vm, bytes, Then::Drain)
+            }
+            // Nothing more comes.
+            Got::End => Conn::END,
+        }
+    }
+
     /// Read the next request: the task waits for it.
     ///
     /// The wait has a deadline, [`wire::REQUEST_TIME`] for the head,
@@ -727,21 +795,44 @@ impl Conn {
         Step::Park(wait)
     }
 
-    /// Send `bytes`: the task waits until the client has taken them,
-    /// for at most [`wire::TRANSFER_TIME`].
-    fn send(&mut self, vm: &mut Vm, bytes: Vec<u8>, then: Then) -> Step {
+    /// Send `bytes`, and go on with `then`. What the system takes at
+    /// once is written here; if that is not all of it, the task waits
+    /// until the client has taken the rest, for at most
+    /// [`wire::TRANSFER_TIME`].
+    fn send(&mut self, vm: &mut Vm, bytes: Vec<u8>, then: Then) -> Go {
+        let written = self.stream.write_now(&bytes);
+        if written == bytes.len() {
+            return self.sent(vm, then);
+        }
+        // A task that was cancelled meanwhile (the server has ended)
+        // waits for nothing more.
+        if self.handle.is_cancelled() {
+            return Conn::END;
+        }
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
         let op = vm
             .runtime
             .io_pool
             .submit(not_served, move || {
-                Value::Bool(stream.write_all(&bytes).is_ok())
+                Value::Bool(stream.write_all(&bytes[written..]).is_ok())
             })
             .stop_with(move || stopped.shut_down());
         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
             .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
         self.state = ConnState::Sending { op, then };
-        Step::Park(wait)
+        Go::Step(Step::Park(wait))
+    }
+
+    /// A response has been sent.
+    fn sent(&mut self, vm: &mut Vm, then: Then) -> Go {
+        match then {
+            Then::Next => {
+                self.state = ConnState::Next;
+                Go::Again
+            }
+            Then::Close => Conn::END,
+            Then::Drain => Go::Step(self.drain(vm)),
+        }
     }
 
     /// The server has said its last word on the connection, a refusal,
@@ -803,17 +894,18 @@ impl Conn {
 }
 
 #[cfg(feature = "http")]
-impl crate::vm::Native for Conn {
-    fn name(&self) -> &str {
-        "http.serve"
-    }
-
-    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        // Every way out that is not a wait or a call ends the task:
-        // the connection is closed when the frame is dropped.
-        let end = Ok(Step::Done(Value::Unit));
-        match std::mem::replace(&mut self.state, ConnState::Ended) {
-            ConnState::Next => Ok(self.read(vm)),
+impl Conn {
+    /// Go on from the state the task is in. `input` is what the
+    /// handler returned, where it was called.
+    fn go(&mut self, vm: &mut Vm, input: Value) -> Result<Go, VmError> {
+        Ok(match std::mem::replace(&mut self.state, ConnState::Ended) {
+            // A task that was cancelled (the server has ended)
+            // serves no further request.
+            ConnState::Next if self.handle.is_cancelled() => Conn::END,
+            ConnState::Next => match self.at_hand() {
+                Some(got) => self.serve(vm, got),
+                None => Go::Step(self.read(vm)),
+            },
             ConnState::Reading { op, got, in_body } => match vm.woken()? {
                 // The head is there: the body has its own time.
                 Fired::Arm(1, _) if !in_body => {
@@ -824,76 +916,72 @@ impl crate::vm::Native for Conn {
                         got,
                         in_body: true,
                     };
-                    Ok(Step::Park(wait))
+                    Go::Step(Step::Park(wait))
                 }
                 Fired::Arm(..) => {
                     drop(op);
                     let got = got.lock().take();
                     match got {
-                        Some(Got::Request(request, reply)) => match self.server.call() {
-                            Some(called) => {
-                                self.state = ConnState::Calling { reply, called };
-                                Ok(vm.call(self.server.handler.clone(), [request]))
-                            }
-                            // As many handlers as the server calls at a
-                            // time are being called.
-                            None => {
-                                let bytes = plain_response(vm, 503, wire::reason(503), reply);
-                                Ok(self.send(vm, bytes, reply.then()))
-                            }
-                        },
-                        Some(Got::Answered(status, why, reply)) => {
-                            let bytes = plain_response(vm, status, why, reply);
-                            Ok(self.send(vm, bytes, reply.then()))
-                        }
-                        Some(Got::Refused(status, why)) => {
-                            let bytes = plain_response(vm, status, why, Reply::LAST);
-                            Ok(self.send(vm, bytes, Then::Drain))
-                        }
-                        // Nothing more comes, or nothing could read it.
-                        Some(Got::End) | None => end,
+                        Some(got) => self.serve(vm, got),
+                        // Nothing could read it.
+                        None => Conn::END,
                     }
                 }
                 // The request did not come in time.
-                Fired::Deadline => end,
+                Fired::Deadline => Conn::END,
             },
             ConnState::Calling { reply, called } => {
                 // The handler has returned.
                 drop(called);
                 let bytes = handler_response(vm, &input, reply);
-                // A task that was cancelled meanwhile (the server has
-                // ended) waits for nothing more: the response goes out
-                // as far as the system takes it at once.
-                if self.handle.is_cancelled() {
-                    self.stream.write_now(&bytes);
-                    return end;
-                }
-                Ok(self.send(vm, bytes, reply.then()))
+                self.send(vm, bytes, reply.then())
             }
-            ConnState::Answering { bytes, then } => Ok(self.send(vm, bytes, then)),
+            ConnState::Answering { bytes, then } => self.send(vm, bytes, then),
             ConnState::Sending { op, then } => {
                 let sent = matches!(vm.woken()?, Fired::Arm(..))
                     && matches!(op.take(), Some(Value::Bool(true)));
                 drop(op);
-                match (sent, then) {
-                    (true, Then::Next) => Ok(self.read(vm)),
-                    (true, Then::Drain) => Ok(self.drain(vm)),
-                    // The client did not take the response, or the
-                    // connection ends with it.
-                    (false, _) | (true, Then::Close) => end,
+                match sent {
+                    true => self.sent(vm, then),
+                    // The client did not take the response.
+                    false => Conn::END,
                 }
             }
             // The client has stopped sending, or its time is over.
             ConnState::Draining(op) => {
                 vm.woken()?;
                 drop(op);
-                end
+                Conn::END
             }
-            ConnState::Ended => Err(VmError::new(
-                "internal VM error: the task of an HTTP connection was resumed after its end"
-                    .into(),
-            )),
+            ConnState::Ended => {
+                return Err(VmError::new(
+                    "internal VM error: the task of an HTTP connection was resumed after its end"
+                        .into(),
+                ));
+            }
+        })
+    }
+}
+
+#[cfg(feature = "http")]
+impl crate::vm::Native for Conn {
+    fn name(&self) -> &str {
+        "http.serve"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        /// How many steps in a row need no waiting (requests that
+        /// were read already, answered by the server itself) before
+        /// the task gives way to the others.
+        const BURST: usize = 16;
+        let mut input = Some(input);
+        for _ in 0..BURST {
+            match self.go(vm, input.take().unwrap_or(Value::Unit))? {
+                Go::Step(step) => return Ok(step),
+                Go::Again => {}
+            }
         }
+        Ok(Step::Yield)
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
@@ -911,7 +999,7 @@ impl crate::vm::Native for Conn {
                 };
                 let Some(e) = failure else {
                     let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
-                    self.stream.write_now(&bytes);
+                    let _ = self.stream.write_now(&bytes);
                     return;
                 };
                 // The failure is handled here: it is logged, and not
@@ -927,14 +1015,16 @@ impl crate::vm::Native for Conn {
                     .err(&format!("http.serve: handler error: {e}\n"));
                 if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
                     let bytes = plain_response(vm, 500, wire::reason(500), unavailable);
-                    self.stream.write_now(&bytes);
+                    let _ = self.stream.write_now(&bytes);
                 }
             }
             // The answer that a task took over and could not send.
-            ConnState::Answering { bytes, .. } => self.stream.write_now(&bytes),
+            ConnState::Answering { bytes, .. } => {
+                let _ = self.stream.write_now(&bytes);
+            }
             ConnState::Reading { in_body: true, .. } => {
                 let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
-                self.stream.write_now(&bytes);
+                let _ = self.stream.write_now(&bytes);
             }
             // Nothing is in flight: between requests, or the response
             // is on its way.

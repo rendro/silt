@@ -135,6 +135,41 @@ impl<R: Read> Reader<R> {
         }
     }
 
+    /// Take in bytes of the connection that were read elsewhere.
+    pub fn feed(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
+    /// The next request, or its refusal, if all of it is among the
+    /// bytes that were read already: nothing is read for it. `None`
+    /// if more bytes are needed (or the client waits for `100
+    /// Continue`); the reader is as it was then, and
+    /// [`Reader::next`] reads on.
+    pub fn buffered(&mut self) -> Option<Next> {
+        /// Beyond this the bytes are not looked through twice.
+        const LOOKED_AT: usize = 64 * 1024;
+        if self.buf.is_empty() || self.buf.len() > LOOKED_AT {
+            return None;
+        }
+        // Read from a copy with nothing behind it: what it gives is
+        // what a read of the connection would have given first.
+        let mut ahead = Reader {
+            stream: io::empty(),
+            buf: self.buf.clone(),
+        };
+        let mut never_waits = |waits: bool| match waits {
+            true => Err(io::Error::other("the client waits")),
+            false => Ok(()),
+        };
+        match ahead.next(&mut never_waits) {
+            next @ (Next::Request(_) | Next::Refused(_)) => {
+                self.buf = ahead.buf;
+                Some(next)
+            }
+            Next::End | Next::Broken(_) => None,
+        }
+    }
+
     /// The next request. `before_body` is called once when the head
     /// of a request has been read and its body is about to be: with
     /// `true` if the client waits for `100 Continue` before it sends
@@ -600,6 +635,36 @@ mod tests {
         }
     }
 
+    /// [`read_all`], with every request that is among the bytes read
+    /// already taken from there ([`Reader::buffered`]), as the server
+    /// does.
+    fn read_all_buffered_first(bytes: &[u8], piece: usize) -> (Vec<Request>, Next) {
+        struct Pieces<'a>(&'a [u8], usize);
+        impl Read for Pieces<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let n = self.0.len().min(self.1).min(buf.len());
+                buf[..n].copy_from_slice(&self.0[..n]);
+                self.0 = &self.0[n..];
+                Ok(n)
+            }
+        }
+        // Some of it comes to the reader from elsewhere.
+        let fed = bytes.len().min(piece);
+        let mut reader = Reader::new(Pieces(&bytes[fed..], piece.max(1)));
+        reader.feed(&bytes[..fed]);
+        let mut requests = Vec::new();
+        loop {
+            let next = match reader.buffered() {
+                Some(next) => next,
+                None => reader.next(&mut |_| Ok(())),
+            };
+            match next {
+                Next::Request(request) => requests.push(request),
+                last => return (requests, last),
+            }
+        }
+    }
+
     /// The one request of `bytes`, however it arrives.
     fn one(bytes: &[u8]) -> Request {
         let mut read = None;
@@ -702,6 +767,48 @@ mod tests {
         // A method of the longest length is one.
         let longest = format!("{} / HTTP/1.1\r\n\r\n", "M".repeat(METHOD_MAX));
         assert_eq!(one(longest.as_bytes()).method.len(), METHOD_MAX);
+    }
+
+    /// A request that is among the bytes read already is taken from
+    /// them, and one that is not all there leaves the reader as it
+    /// was.
+    #[test]
+    fn a_request_that_was_read_already_needs_no_read() {
+        struct Never;
+        impl Read for Never {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("the reader reads")
+            }
+        }
+        let mut reader = Reader::new(Never);
+        assert!(reader.buffered().is_none());
+        reader.feed(
+            b"GET /1 HTTP/1.1\r\n\r\nPOST /2 HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /3 HT",
+        );
+        let mut targets = Vec::new();
+        while let Some(Next::Request(request)) = reader.buffered() {
+            targets.push(request.target);
+        }
+        assert_eq!(targets, ["/1", "/2"]);
+        // The third is not all there, twice over; then it is.
+        assert!(reader.buffered().is_none());
+        reader.feed(b"TP/1.1\r\nContent-Length: 3\r\n\r\nab");
+        assert!(reader.buffered().is_none());
+        reader.feed(b"c");
+        assert!(
+            matches!(reader.buffered(), Some(Next::Request(request)) if request.body == b"abc")
+        );
+        // A refusal is there as soon as it is certain.
+        reader.feed(b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n");
+        assert!(matches!(
+            reader.buffered(),
+            Some(Next::Refused(Refused { status: 400, .. }))
+        ));
+        // A client that waits to be told is not served from here: the
+        // answer to it is written by who reads the connection.
+        let mut reader = Reader::new(Never);
+        reader.feed(b"POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n");
+        assert!(reader.buffered().is_none());
     }
 
     #[test]
@@ -986,14 +1093,18 @@ mod tests {
     #[test]
     fn the_fuzz_seeds_read_the_same_however_they_arrive() {
         let seeds = concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/fuzz_http_request");
+        let ended = |last: Next| match last {
+            Next::Refused(refused) => Some(refused.status),
+            Next::End => None,
+            other => panic!("{other:?}"),
+        };
         let outcome = |bytes: &[u8], piece: usize| {
             let (requests, last, _) = read_all(bytes, piece);
-            let refused = match last {
-                Next::Refused(refused) => Some(refused.status),
-                Next::End => None,
-                other => panic!("{other:?}"),
-            };
-            (requests, refused)
+            (requests, ended(last))
+        };
+        let buffered_first = |bytes: &[u8], piece: usize| {
+            let (requests, last) = read_all_buffered_first(bytes, piece);
+            (requests, ended(last))
         };
         let mut read = 0;
         for seed in std::fs::read_dir(seeds).expect("the seeds") {
@@ -1010,6 +1121,9 @@ mod tests {
             );
             for piece in [1, 7] {
                 assert_eq!(outcome(&bytes, piece), whole, "{named}");
+            }
+            for piece in [1, 7, 30, 4096] {
+                assert_eq!(buffered_first(&bytes, piece), whole, "{named}");
             }
             read += 1;
         }

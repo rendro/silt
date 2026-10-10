@@ -445,23 +445,66 @@ impl TcpStreamHandle {
     }
 
     /// Write what of `bytes` the system takes at once, without waiting
-    /// for anything: the last word on a plain connection from a place
-    /// that cannot wait (a task that is being dropped). Nothing if a
-    /// write is in flight, or the connection is closed.
-    pub fn write_now(&self, bytes: &[u8]) {
+    /// for anything, and say how much that was: for a writer that
+    /// must not wait where it is (a worker of the scheduler, a task
+    /// that is being dropped). Nothing if a write is in flight, or the
+    /// connection is closed or not a plain one.
+    pub fn write_now(&self, bytes: &[u8]) -> usize {
         use std::io::Write;
         if self.is_closed() {
-            return;
+            return 0;
         }
-        if let TcpIo::Plain {
+        let TcpIo::Plain {
             socket, writing, ..
         } = &self.io
-            && let Some(_turn) = writing.try_lock()
-            && socket.set_nonblocking(true).is_ok()
-        {
-            let _ = (&*socket).write(bytes);
-            let _ = socket.set_nonblocking(false);
+        else {
+            return 0;
+        };
+        let Some(_turn) = writing.try_lock() else {
+            return 0;
+        };
+        if socket.set_nonblocking(true).is_err() {
+            return 0;
         }
+        let mut written = 0;
+        while written < bytes.len() {
+            match (&*socket).write(&bytes[written..]) {
+                Ok(0) => break,
+                Ok(n) => written += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+        let _ = socket.set_nonblocking(false);
+        written
+    }
+
+    /// Read what is there on a plain connection, without waiting for
+    /// anything: `Some(0)` at its end, `None` if nothing is there (or
+    /// a read is in flight, or the connection is closed or not a plain
+    /// one).
+    pub fn read_now(&self, buf: &mut [u8]) -> Option<usize> {
+        use std::io::Read;
+        if self.is_closed() {
+            return None;
+        }
+        let TcpIo::Plain {
+            socket, reading, ..
+        } = &self.io
+        else {
+            return None;
+        };
+        let _turn = reading.try_lock()?;
+        socket.set_nonblocking(true).ok()?;
+        let read = loop {
+            match (&*socket).read(buf) {
+                Ok(n) => break Some(n),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break None,
+            }
+        };
+        let _ = socket.set_nonblocking(false);
+        read
     }
 
     /// Say that nothing more is written on a plain connection: the
