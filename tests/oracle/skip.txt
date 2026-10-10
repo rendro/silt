@@ -5,7 +5,7 @@
 #
 # <input> is the input's name in the oracle's report, <kind> the kind of
 # its finding (panic, compiler-bug, verifier, type-confusion,
-# internal-error, hang, abort, differs, expectation). The suite fails on
+# internal-error, hang, abort, slow, differs, expectation). The suite fails on
 # a finding that has no line here, and on a line whose input has no such
 # finding any more: remove the line with the fix.
 #
@@ -13,6 +13,11 @@
 # suite does not run it in its own: a full sweep (SILT_ORACLE_FULL=1)
 # runs it through the `silt` command and fails when that ends with
 # status 0 or 1.
+#
+# An input of the kind `slow` takes minutes for the steps of its budget.
+# The suite does not judge time and does not run it, in no sweep:
+# nothing notices when the program has become fast, so look at these
+# lines when the cost they name is gone.
 
 # Showing, comparing, hashing or dropping a value nested 100,000 levels
 # and more overflows the native stack of a debug build (stage 7 step V3:
@@ -24,9 +29,7 @@ tests/golden/repros/compiler_vm/deep_nest_eq_1000000.silt | abort | deep value: 
 tests/golden/repros/compiler_vm/deep_nest_lt_1000000.silt | abort | deep value: < overflows the native stack (V3)
 tests/golden/repros/compiler_vm/deep_nest_set_1000000.silt | abort | deep value: hashing overflows the native stack (V3)
 
-# NOT defects: two programs that loop for ever and one that is slow (a
-# list built by copying, 8,000 long). The oracle has no step budget yet
-# and takes a run of 60 s for hung; these lines go when it has one.
-tests/golden/repros/lang_design/cross_x4_loop_nobind.silt | hang | endless `loop { loop() }`: needs the step budget
-tests/golden/repros/compiler_vm/mx_loop_nobind_nomatch.silt | hang | endless `loop { loop() }`: needs the step budget
-tests/golden/repros/compiler_vm/deep_build_8000.silt | hang | slow, not hung (over 60 s in a debug build): needs the step budget
+# A cons list of 8,000 built and walked in a loop: 209 s in a debug
+# build, 72 s in release (1,000 / 2,000 / 4,000 take 1.6 / 7 / 33 s:
+# each step copies the list so far; stage 7 step V3).
+tests/golden/repros/compiler_vm/deep_build_8000.silt | slow | a loop over a cons list copies it at every step (V3)

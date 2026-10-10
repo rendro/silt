@@ -9,11 +9,18 @@
 //!    ([`stays_inside`]) is not run: the oracle's programs read and
 //!    write nothing but their output.
 //! 4. It is run twice, each run on a VM of its own whose output goes
-//!    into buffers. The two runs must agree: the same output, the same
-//!    failures of tasks that nobody joined, the same value of `main` or
-//!    the same error.
+//!    into buffers: once in slices of 2000 steps and once in slices of
+//!    one step, where the program is stopped and resumed after every
+//!    instruction and every step of a builtin that calls back into it
+//!    (`Vm::set_time_slice`). The two runs must agree: the same output,
+//!    the same failures of tasks that nobody joined, the same value of
+//!    `main` or the same error.
 //! 5. No run may end in a `type_confusion` error, in an internal error
-//!    or in a panic, and no task of it either.
+//!    or in a panic, and no task of it either; and every run ends.
+//!
+//! Each run has a step budget (`Vm::set_step_budget`). A program that
+//! uses it up in either run is cut short: it was held to step 5 as far
+//! as it ran, and nothing of it is compared ([`Verdict::Cut`]).
 //!
 //! What is compared in step 4 depends on the builtins the program's
 //! code names. The runtime runs tasks on several threads and reads the
@@ -71,6 +78,19 @@ pub const UNORDERED: &[&str] = &["task", "channel", "stream", "time"];
 /// The builtins that draw from the system's random source.
 pub const RANDOM: &[&str] = &["uuid.v4", "uuid.v7", "crypto.random_bytes"];
 
+/// The builtins that wait for the clock: a run of a program that names
+/// one may take as long as the program likes.
+pub const TIMED: &[&str] = &[
+    "time.sleep",
+    "channel.timeout",
+    "channel.recv_timeout",
+    "task.deadline",
+    "task.spawn_until",
+];
+
+/// The slices of the two runs.
+const SLICES: [usize; 2] = [2000, 1];
+
 /// Whether the builtin `name` (`list.map`, `println`) touches nothing
 /// outside the VM that runs it.
 pub fn stays_inside(name: &str) -> bool {
@@ -84,10 +104,20 @@ pub fn stays_inside(name: &str) -> bool {
 /// the `silt` command gives its main thread.
 const STACK_BYTES: usize = 256 * 1024 * 1024;
 
-/// How long a run may take before it counts as hung. No program of the
-/// oracle's inputs comes near it; a run that does is a finding
-/// ([`Kind::Hang`]), and its thread is left behind.
-const WATCHDOG: Duration = Duration::from_secs(60);
+/// How long a run may take before it counts as hung. A run does a
+/// bounded number of steps (its budget), so one that is still there
+/// then waits for something that does not come, or sits in a builtin:
+/// a finding ([`Kind::Hang`]), unless it is the clock the program
+/// waits for ([`Cut::Waiting`]). The run's thread is left behind.
+///
+/// The time is two minutes and what the steps take on a machine that
+/// does 200,000 of them in a second, a tenth of what a debug build does
+/// at slice 1. (A step is not a unit of time: one that copies a long
+/// list takes as long as the list is. The slowest program the oracle
+/// runs takes under a minute a run; see `slow` in the skip file.)
+fn watchdog(steps: u64) -> Duration {
+    Duration::from_secs(120 + steps / 200_000)
+}
 
 /// The directory the files of an in-memory program are in.
 const MEMORY_DIR: &str = "/silt-oracle";
@@ -123,6 +153,11 @@ pub struct Input {
     /// What the input is called in reports and in the skip file.
     pub name: String,
     pub source: Source,
+    /// Whether a program that uses tasks or the clock reads the
+    /// system's clock, as a golden case does, whose timing is part of
+    /// what it shows. Otherwise it reads a clock that leaps
+    /// ([`Leaping`]), and its sleeps and timeouts take no time.
+    pub real_time: bool,
     pub expect: Expect,
 }
 
@@ -173,6 +208,10 @@ pub enum Kind {
     /// does it is known by its line in the skip file, and is run
     /// through the `silt` command instead (`sweep.rs`).
     Abort,
+    /// A run takes minutes for the steps of its budget. The oracle does
+    /// not judge time: an input that does it is known by its line in
+    /// the skip file, and is not run (`sweep.rs`).
+    Slow,
     /// The two runs disagree.
     Differs,
     /// A run is not what the input's [`Expect`] says.
@@ -189,6 +228,7 @@ impl Kind {
             Kind::InternalError => "internal-error",
             Kind::Hang => "hang",
             Kind::Abort => "abort",
+            Kind::Slow => "slow",
             Kind::Differs => "differs",
             Kind::Expectation => "expectation",
         }
@@ -221,10 +261,33 @@ pub enum Compared {
     Invariants,
 }
 
+/// Why the runs of a program were not compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Cut {
+    /// A run used its step budget up.
+    OutOfSteps,
+    /// A run was still waiting for the clock when the watchdog looked:
+    /// the program names a builtin of [`TIMED`], and nothing says that
+    /// it ends.
+    Waiting,
+}
+
+impl fmt::Display for Cut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cut::OutOfSteps => write!(f, "out of steps"),
+            Cut::Waiting => write!(f, "waiting for the clock"),
+        }
+    }
+}
+
 /// What the oracle makes of an input.
 #[derive(Debug, Clone)]
 pub enum Verdict {
     NotRun(NotRun),
+    /// The runs were held to step 5 as far as they went, and not
+    /// compared.
+    Cut(Cut),
     Passed(Compared),
     Finding(Finding),
 }
@@ -241,6 +304,7 @@ enum End {
     Error {
         message: String,
         type_confusion: bool,
+        out_of_steps: bool,
         /// Everything of the error: place and call stack too.
         whole: String,
     },
@@ -253,6 +317,7 @@ enum End {
 struct TaskFailure {
     message: String,
     type_confusion: bool,
+    out_of_steps: bool,
 }
 
 /// What a run left behind.
@@ -355,17 +420,52 @@ fn failures_of(owner: u64) -> Vec<TaskFailure> {
         failed.entry(failure.owner).or_default().push(TaskFailure {
             message: failure.error.message.clone(),
             type_confusion: failure.error.type_confusion,
+            out_of_steps: failure.error.out_of_steps,
         });
     }
     for (owner, count) in taken.not_kept {
         failed.entry(owner).or_default().push(TaskFailure {
             message: format!("{count} more tasks failed"),
             type_confusion: false,
+            out_of_steps: false,
         });
     }
     let mut failures = failed.remove(&owner).unwrap_or_default();
     failures.sort();
     failures
+}
+
+/// 2026-01-01T12:00:00Z, the time of day of the oracle's own clocks.
+const NOON: Duration = Duration::from_secs(1_767_268_800);
+
+/// A clock that leaps: each reading is a second after the one before,
+/// and a sleep is over at once. The runtime's threads look at the clock
+/// every millisecond while a deadline is pending on it, so a task's
+/// sleep and a timeout end at their next look, however long they are.
+/// It never goes back, which is all a program may count on.
+#[derive(Default)]
+struct Leaping(Mutex<Duration>);
+
+impl Leaping {
+    fn passed(&self, more: Duration) -> Duration {
+        let mut passed = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        *passed = passed.saturating_add(more);
+        *passed
+    }
+}
+
+impl Clock for Leaping {
+    fn now(&self) -> Duration {
+        NOON.saturating_add(self.passed(Duration::ZERO))
+    }
+
+    fn monotonic(&self) -> Duration {
+        self.passed(Duration::from_secs(1))
+    }
+
+    fn sleep(&self, duration: Duration) {
+        self.passed(duration);
+    }
 }
 
 /// A clock that stands still: the time a program reads when it names
@@ -374,8 +474,7 @@ struct Still;
 
 impl Clock for Still {
     fn now(&self) -> Duration {
-        // 2026-01-01T12:00:00Z
-        Duration::from_secs(1_767_268_800)
+        NOON
     }
 
     fn monotonic(&self) -> Duration {
@@ -385,20 +484,21 @@ impl Clock for Still {
     fn sleep(&self, _duration: Duration) {}
 }
 
-/// Put `input` through the oracle. The work is done on a thread with
-/// the native stack of the `silt` command's main thread.
-pub fn examine(input: &Input) -> Verdict {
+/// Put `input` through the oracle, each run with a budget of `steps`
+/// steps. The work is done on a thread with the native stack of the
+/// `silt` command's main thread.
+pub fn examine(input: &Input, steps: u64) -> Verdict {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(STACK_BYTES)
-            .spawn_scoped(scope, || examine_here(input))
+            .spawn_scoped(scope, || examine_here(input, steps))
             .expect("a thread for the oracle")
             .join()
             .unwrap_or_else(|panic| Verdict::Finding(Finding::new(Kind::Panic, panic_text(&panic))))
     })
 }
 
-fn examine_here(input: &Input) -> Verdict {
+fn examine_here(input: &Input, steps: u64) -> Verdict {
     let prepared = catch_unwind(AssertUnwindSafe(|| prepare(&input.source)));
     let (program, builtins) = match prepared {
         Ok(Ok(prepared)) => prepared,
@@ -408,30 +508,48 @@ fn examine_here(input: &Input) -> Verdict {
             return Verdict::Finding(Finding::new(Kind::Panic, detail));
         }
     };
+    let names = |set: &[&str]| builtins.iter().any(|name| set.contains(&name.as_str()));
     let unordered = builtins
         .iter()
         .any(|name| UNORDERED.contains(&module_of(name)));
-    let random = builtins.iter().any(|name| RANDOM.contains(&name.as_str()));
-    let compared = match unordered || random {
+    let compared = match unordered || names(RANDOM) {
         true if input.expect.stdout.is_none() => Compared::Invariants,
         _ => Compared::Everything,
     };
+    let time = match (unordered, input.real_time) {
+        (false, _) => Time::Still,
+        (true, true) => Time::System,
+        (true, false) => Time::Leaping,
+    };
+    // A run that waits for the clock when the watchdog looks is the
+    // program's doing, unless the program is known to end.
+    let may_wait = names(TIMED) && !input.expect.succeeds;
 
     let program = Arc::new(program);
-    let first = run(&program, unordered);
-    let second = run(&program, unordered);
-    for (which, ran) in [("first", &first), ("second", &second)] {
-        if let Some(finding) = broken(ran) {
-            let detail = format!("{which} run: {}", finding.detail);
-            return Verdict::Finding(Finding::new(finding.kind, detail));
+    let mut runs = Vec::new();
+    for slice in SLICES {
+        let ran = run(&program, time, slice, steps);
+        match broken(&ran) {
+            Some(finding) if finding.kind == Kind::Hang && may_wait => {
+                return Verdict::Cut(Cut::Waiting);
+            }
+            Some(finding) => {
+                let detail = format!("the run at slice {slice}: {}", finding.detail);
+                return Verdict::Finding(Finding::new(finding.kind, detail));
+            }
+            None => runs.push(ran),
         }
     }
-    if let Some(finding) = unexpected(&input.expect, &first, &second) {
+    if runs.iter().any(Run::out_of_steps) {
+        return Verdict::Cut(Cut::OutOfSteps);
+    }
+    if let Some(finding) = unexpected(&input.expect, &runs) {
         return Verdict::Finding(finding);
     }
     if compared == Compared::Everything
-        && let Some(detail) = difference(&first, &second)
+        && let Some(detail) = difference(&runs[0], &runs[1])
     {
+        let detail = format!("slice {} against slice {}: {detail}", SLICES[0], SLICES[1]);
         return Verdict::Finding(Finding::new(Kind::Differs, detail));
     }
     Verdict::Passed(compared)
@@ -540,19 +658,32 @@ fn verify_all(
     Ok(())
 }
 
-/// Run `program` as `silt run` does, on a thread and a VM of its own:
-/// `main`, then its tasks to their end, or, when `main` failed, no
-/// further (the command ends its process there). `unordered` says that
-/// the program names a builtin of [`UNORDERED`]: it reads the system's
-/// clock instead of [`Still`], and it may have tasks, whose failures
-/// are taken when it has ended.
-fn run(program: &Arc<Program>, unordered: bool) -> Run {
+/// The clock of a run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Time {
+    /// [`Still`]: the program names no builtin of [`UNORDERED`].
+    Still,
+    /// The system's.
+    System,
+    /// [`Leaping`].
+    Leaping,
+}
+
+/// Run `program` as `silt run` does, on a thread and a VM of its own,
+/// in slices of `slice` steps and for at most `steps` steps: `main`,
+/// then its tasks to their end, or, when `main` failed, no further (the
+/// command ends its process there). A program on another clock than
+/// [`Time::Still`] may have tasks, whose failures are taken when it has
+/// ended.
+fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
     let (stdout, stderr) = (Buffer::new(), Buffer::new());
     let io = HostIo::new(stdout.clone(), stderr.clone());
-    let io = match unordered {
-        true => io,
-        false => io.clock(Still),
+    let io = match time {
+        Time::Still => io.clock(Still),
+        Time::System => io,
+        Time::Leaping => io.clock(Leaping::default()),
     };
+    let tasks = time != Time::Still;
     let program = program.clone();
     let (ended, end) = mpsc::sync_channel(1);
     let thread = std::thread::Builder::new()
@@ -560,12 +691,14 @@ fn run(program: &Arc<Program>, unordered: bool) -> Run {
         .spawn(move || {
             silt::scheduler::collect_unjoined_failures();
             let owner = NEXT_OWNER.fetch_add(1, Ordering::SeqCst);
-            if unordered {
+            if tasks {
                 GATE.enter();
             }
             let end = catch_unwind(AssertUnwindSafe(|| {
                 let mut vm = Vm::new(io);
                 vm.set_task_owner(owner);
+                vm.set_time_slice(slice);
+                vm.set_step_budget(steps);
                 let end = match vm.run_program(&program) {
                     Ok(value) => End::Value {
                         shown: format!("{value:?}"),
@@ -574,6 +707,7 @@ fn run(program: &Arc<Program>, unordered: bool) -> Run {
                     Err(error) => End::Error {
                         message: error.message.clone(),
                         type_confusion: error.type_confusion,
+                        out_of_steps: error.out_of_steps,
                         whole: format!("{error:?}"),
                     },
                 };
@@ -584,7 +718,7 @@ fn run(program: &Arc<Program>, unordered: bool) -> Run {
                 end
             }));
             let end = end.unwrap_or_else(|panic| End::Panic(panic_text(&panic)));
-            let failures = match unordered {
+            let failures = match tasks {
                 true => {
                     GATE.leave();
                     failures_of(owner)
@@ -594,13 +728,13 @@ fn run(program: &Arc<Program>, unordered: bool) -> Run {
             let _ = ended.send((end, failures));
         })
         .expect("a thread for the run");
-    let (end, failures) = match end.recv_timeout(WATCHDOG) {
+    let (end, failures) = match end.recv_timeout(watchdog(steps)) {
         Ok(ended) => {
             let _ = thread.join();
             ended
         }
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            if unordered {
+            if tasks {
                 GATE.hung();
             }
             (End::Hang, Vec::new())
@@ -618,6 +752,20 @@ fn run(program: &Arc<Program>, unordered: bool) -> Run {
     }
 }
 
+impl Run {
+    /// Whether the run, or a task of it, was ended by the step budget.
+    fn out_of_steps(&self) -> bool {
+        let main = matches!(
+            self.end,
+            End::Error {
+                out_of_steps: true,
+                ..
+            }
+        );
+        main || self.failures.iter().any(|failure| failure.out_of_steps)
+    }
+}
+
 /// Whether `value` is the `Err(..)` of a `Result`: a `main` that
 /// returns one has failed.
 fn is_err(value: &Value) -> bool {
@@ -629,10 +777,7 @@ fn broken(run: &Run) -> Option<Finding> {
     let finding = |kind, detail: &str| Some(Finding::new(kind, detail));
     match &run.end {
         End::Panic(text) => return finding(Kind::Panic, text),
-        End::Hang => {
-            let detail = format!("no end after {} s", WATCHDOG.as_secs());
-            return finding(Kind::Hang, &detail);
-        }
+        End::Hang => return finding(Kind::Hang, "no end within the watchdog's time"),
         End::Error {
             message,
             type_confusion: true,
@@ -655,11 +800,11 @@ fn broken(run: &Run) -> Option<Finding> {
     None
 }
 
-/// What of the two runs is not as `expect` says.
-fn unexpected(expect: &Expect, first: &Run, second: &Run) -> Option<Finding> {
-    for (which, run) in [("first", first), ("second", second)] {
+/// What of the runs is not as `expect` says.
+fn unexpected(expect: &Expect, runs: &[Run]) -> Option<Finding> {
+    for (slice, run) in SLICES.iter().zip(runs) {
         let wrong = |detail: String| {
-            let detail = format!("{which} run: {detail}");
+            let detail = format!("the run at slice {slice}: {detail}");
             Some(Finding::new(Kind::Expectation, detail))
         };
         if expect.succeeds {
@@ -805,6 +950,7 @@ mod tests {
         with_failure.failures.push(TaskFailure {
             message: "division by zero".to_string(),
             type_confusion: false,
+            out_of_steps: false,
         });
         let failures = difference(&base, &with_failure).unwrap();
         assert!(failures.contains("failed unjoined differ"), "{failures}");
@@ -814,6 +960,7 @@ mod tests {
         failed.end = End::Error {
             message: "division by zero".to_string(),
             type_confusion: false,
+            out_of_steps: false,
             whole: String::new(),
         };
         assert!(difference(&base, &failed).is_some());

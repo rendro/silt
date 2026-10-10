@@ -12,9 +12,6 @@ use std::path::{Path, PathBuf};
 use crate::oracle::{Expect, Input, Source};
 use crate::sweep::{conclude, name_of, repo_root, run, sample, skips};
 
-/// Without `SILT_ORACLE_FULL`, every n-th case is run.
-const STEP: usize = 4;
-
 /// The directory of the imported repro corpus, whose cases say nothing
 /// of how they run: they are inputs of their own (`corpora.rs`).
 pub const REPROS: &str = "tests/golden/repros";
@@ -130,6 +127,7 @@ pub fn plain_input(case: &Path) -> Option<Input> {
     Some(Input {
         name: name_of(case),
         source: source_of(case, entry, text),
+        real_time: false,
         expect: Expect::default(),
     })
 }
@@ -153,6 +151,7 @@ fn inputs() -> Vec<Input> {
         inputs.push(Input {
             name,
             source: source_of(&case, entry, text),
+            real_time: true,
             expect: Expect {
                 succeeds: true,
                 stdout: std::fs::read_to_string(expected).ok(),
@@ -178,7 +177,7 @@ fn golden_cases_that_run_and_succeed() {
             skip.input
         );
     }
-    let inputs = sample(all, STEP, &skips);
+    let inputs = sample(all, 1, &skips);
     let verdicts = run(&inputs, &skips);
     conclude("golden cases", &inputs, &verdicts, &skips);
 }

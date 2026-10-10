@@ -17,7 +17,7 @@
 use silt::Value;
 
 use crate::oracle::{Expect, Input, Source, Verdict, examine};
-use crate::sweep::{conclude, full, run, sample, skips};
+use crate::sweep::{conclude, full, run, sample, skips, steps};
 
 /// How many programs a run generates.
 const PROGRAMS: usize = 400;
@@ -353,11 +353,17 @@ fn input(name: String, expr: &Expr) -> Input {
     Input {
         name,
         source: Source::Memory(vec![("main.silt".to_string(), program(expr))]),
+        real_time: false,
         expect: Expect {
             end: Some(end),
             ..Expect::default()
         },
     }
+}
+
+/// The oracle's verdict on `input`, within the sweep's step budget.
+fn examine_within(input: &Input) -> Verdict {
+    examine(input, steps())
 }
 
 /// The expressions `expr` can be cut down to in one step: one of its
@@ -486,10 +492,11 @@ fn generated_programs_end_as_the_reference_evaluator_says() {
 
     let mut overflows = 0;
     for (input, (verdict, _)) in inputs.iter().zip(&mut verdicts) {
-        // Every program of the subset checks clean and names `list`
-        // alone: one that is not run is a defect of the generator.
+        // Every program of the subset checks clean, names `list` alone
+        // and ends within a few hundred steps: one that is not run, or
+        // not to its end, is a defect of the generator.
         assert!(
-            !matches!(verdict, Verdict::NotRun(_)),
+            !matches!(verdict, Verdict::NotRun(_) | Verdict::Cut(_)),
             "{} was not run ({verdict:?}):\n{}",
             input.name,
             source_of(input)
@@ -500,14 +507,16 @@ fn generated_programs_end_as_the_reference_evaluator_says() {
             let number: usize = input.name.rsplit('/').next().unwrap().parse().unwrap();
             let kind = finding.kind;
             let smallest = minimise(exprs[number].clone(), |candidate| {
-                let again = examine(&self::input(input.name.clone(), candidate));
+                let again = examine_within(&self::input(input.name.clone(), candidate));
                 matches!(again, Verdict::Finding(finding) if finding.kind == kind)
             });
             let end = match eval(&smallest, &mut Vec::new()) {
                 Ok(n) => format!("main returns {n}"),
                 Err(message) => format!("a runtime error: {message}"),
             };
-            if let Verdict::Finding(again) = examine(&self::input(input.name.clone(), &smallest)) {
+            if let Verdict::Finding(again) =
+                examine_within(&self::input(input.name.clone(), &smallest))
+            {
                 finding.detail = again.detail;
             }
             finding.detail.push_str(&format!(
@@ -584,7 +593,7 @@ fn the_reference_evaluator_follows_scopes_and_stops_at_an_overflow() {
 
     // The VM agrees on each, and the text is a program that checks.
     for expr in [shadowed, piped, untaken, taken] {
-        let verdict = examine(&input("selfcheck".to_string(), &expr));
+        let verdict = examine_within(&input("selfcheck".to_string(), &expr));
         assert!(
             matches!(verdict, Verdict::Passed(_)),
             "{verdict:?}\n{}",
@@ -608,7 +617,7 @@ fn a_program_that_ends_otherwise_than_expected_is_a_finding_and_is_minimised() {
     );
     let mut wrong = input("selfcheck".to_string(), &expr);
     wrong.expect.end = Some(Ok(Value::Int(35)));
-    match examine(&wrong) {
+    match examine_within(&wrong) {
         Verdict::Finding(finding) => {
             assert_eq!(finding.kind.name(), "expectation");
             assert!(

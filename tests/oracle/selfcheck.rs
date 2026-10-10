@@ -1,14 +1,21 @@
 //! The oracle on programs whose verdict is known: what it runs, what it
 //! leaves alone, and that it sees what it is there to see.
 
-use crate::oracle::{Compared, Expect, Input, Kind, NotRun, Source, Verdict, examine};
+use crate::oracle::{Compared, Cut, Expect, Input, Kind, NotRun, Source, Verdict, examine};
+
+/// The step budget of these programs' runs.
+const STEPS: u64 = 100_000;
 
 fn verdict_with(text: &str, expect: Expect) -> Verdict {
-    examine(&Input {
-        name: "selfcheck".to_string(),
-        source: Source::Memory(vec![("main.silt".to_string(), text.to_string())]),
-        expect,
-    })
+    examine(
+        &Input {
+            name: "selfcheck".to_string(),
+            source: Source::Memory(vec![("main.silt".to_string(), text.to_string())]),
+            real_time: true,
+            expect,
+        },
+        STEPS,
+    )
 }
 
 fn verdict(text: &str) -> Verdict {
@@ -173,4 +180,37 @@ fn two_runs_that_write_different_output_are_a_finding() {
         end: None,
     };
     assert_finding(verdict_with(text, own), Kind::Expectation, "stdout");
+}
+
+/// A program that does not end is cut short by the step budget: no
+/// finding, and nothing compared.
+#[test]
+fn a_program_that_does_not_end_is_cut_short() {
+    let endless = verdict("fn main() {\n  loop {\n    loop()\n  }\n}\n");
+    assert!(
+        matches!(endless, Verdict::Cut(Cut::OutOfSteps)),
+        "{endless:?}"
+    );
+    // So is one whose task does not end, joined or not.
+    let spin = "import task\nfn spin() {\n  loop {\n    loop()\n  }\n}\n";
+    for main in [
+        "fn main() {\n  task.join(task.spawn(spin))\n}\n",
+        "fn main() {\n  let h = task.spawn(spin)\n  1\n}\n",
+    ] {
+        let cut = verdict(&format!("{spin}{main}"));
+        assert!(
+            matches!(cut, Verdict::Cut(Cut::OutOfSteps)),
+            "{main}: {cut:?}"
+        );
+    }
+}
+
+/// A program that prints while it loops writes more at slice 2000 than
+/// at slice 1 before its steps are used up: that is no difference of
+/// the two runs.
+#[test]
+fn what_a_program_wrote_before_it_was_cut_short_is_not_compared() {
+    let counting = "fn main() {\n  loop i = 0 {\n    println(i)\n    loop(i + 1)\n  }\n}\n";
+    let cut = verdict(counting);
+    assert!(matches!(cut, Verdict::Cut(Cut::OutOfSteps)), "{cut:?}");
 }

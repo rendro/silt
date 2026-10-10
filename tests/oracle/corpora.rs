@@ -13,7 +13,12 @@ use std::path::Path;
 
 use crate::goldens::{REPROS, collect_cases, plain_input};
 use crate::oracle::{Expect, Input, Source};
-use crate::sweep::{conclude, full, name_of, repo_root, run, sample, skips};
+use crate::sweep::{conclude, name_of, repo_root, run, sample, skips};
+
+/// Without `SILT_ORACLE_FULL`, every n-th repro is run: the corpus has
+/// programs that take a minute (lists and values built by copying),
+/// and the sample has none of them.
+const REPRO_STEP: usize = 7;
 
 /// The `.silt` files of the directory `dir`, sorted, each an input of
 /// its own.
@@ -34,6 +39,7 @@ fn files_of(dir: &Path, inputs: &mut Vec<Input>) {
         inputs.push(Input {
             name: name_of(&file),
             source: Source::Memory(vec![("main.silt".to_string(), text)]),
+            real_time: false,
             expect: Expect::default(),
         });
     }
@@ -93,22 +99,15 @@ fn fuzz_corpora_and_examples() {
     conclude("fuzz corpora and examples", &inputs, &verdicts, &skips);
 }
 
-/// Only in a full sweep, until the oracle has a step budget: the
-/// corpus has programs that do not end, and each costs two runs of the
-/// watchdog's 60 s.
 #[test]
 fn repro_corpus() {
-    if !full() {
-        eprintln!("skipped: set SILT_ORACLE_FULL=1 to run it");
-        return;
-    }
     let mut cases = Vec::new();
     collect_cases(&repo_root().join(REPROS), &mut cases);
     let all: Vec<Input> = cases.iter().filter_map(|case| plain_input(case)).collect();
     assert!(all.len() > 1000, "only {} repros", all.len());
     check_skips(&all, &[REPROS]);
     let skips = skips();
-    let inputs = sample(all, 1, &skips);
+    let inputs = sample(all, REPRO_STEP, &skips);
     let verdicts = run(&inputs, &skips);
     conclude("repro corpus", &inputs, &verdicts, &skips);
 }

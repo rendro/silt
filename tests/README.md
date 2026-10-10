@@ -78,12 +78,18 @@ SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy random_c
 builtin that reaches outside the VM (files, the environment, the
 network, arguments, stdin), compiles each, verifies every compiled
 function again, and runs it twice, each run on a VM of its own with its
-output in a buffer. The two runs must agree in output, in the reports
-of failed tasks and in `main`'s value or error, and no run may end in a
-`type_confusion` error, an internal error or a panic
+output in a buffer: once in slices of 2000 steps, and once in slices of
+one step, where the program is stopped and resumed after every
+instruction (`Vm::set_time_slice`). The two runs must agree in output,
+in the failures of tasks that nobody joined and in `main`'s value or
+error, and no run, and no task of one, may end in a `type_confusion`
+error, an internal error or a panic, or not end
 (`tests/oracle/oracle.rs`). A program that uses tasks, channels,
 streams, the clock or the system's random source is compared only where
 a golden case's exact `.stdout` says what it writes.
+
+Each run has a step budget (`Vm::set_step_budget`). A program that uses
+it up is cut short: it is counted, and nothing of it is compared.
 
 Its inputs, by class:
 
@@ -94,23 +100,25 @@ Its inputs, by class:
   a pipe, tuples), and must return what a reference evaluator in the
   test computes, or stop at the integer overflow it predicts. A program
   is named by its seed and number, `generated/1/532`, and a finding is
-  shown with the smallest program that still has it.
+  shown with the smallest program that still has it;
 - the corpora: the seeds of the fuzz targets that read silt source
-  (`fuzz/corpus/`), the examples, and, in a full sweep, the repro
-  corpus (`tests/golden/repros/`). Most of these do not check clean or
-  have no `main` and are not run; what runs must agree with itself.
+  (`fuzz/corpus/`), the examples, and the repro corpus
+  (`tests/golden/repros/`, every seventh program unless the sweep is
+  full). Most of these do not check clean or have no `main` and are not
+  run; what runs must agree with itself.
 
 ```
-cargo nextest run --all-features --test oracle                      # a sample of each class
-SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # every input
+cargo nextest run --all-features --test oracle                      # the suite: about a minute
+SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # every input, a larger budget
 ```
 
-CI runs the sample with the `heavy` suite on every push, and every
-input once a day (the `oracle` job of `.github/workflows/fuzz-nightly.yml`).
+CI runs the suite with the `heavy` suite on every push, and the full
+sweep once a day (the `oracle` job of `.github/workflows/fuzz-nightly.yml`).
 
 | Variable | Meaning |
 |---|---|
-| `SILT_ORACLE_FULL=1` | every input of a class instead of its sample |
+| `SILT_ORACLE_FULL=1` | every input of a class instead of its sample, 20,000,000 steps a run instead of 1,000,000, and 10,000 generated programs instead of 400 |
+| `SILT_ORACLE_STEPS=<n>` | the step budget of each run |
 | `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
 | `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
 | `SILT_ORACLE_REPORT=<file>` | append the counts, every finding and the verdict of each input to the file |
@@ -122,12 +130,14 @@ fails on a finding without a line and on a line whose input has no such
 finding any more, so the line goes with the fix. The inputs the file
 names are part of every sample.
 
-A program that overflows the native stack ends the process it runs in,
-the suite's too. Such an input has a line of the kind `abort`: the
-suite does not run it itself, and a full sweep runs it through the
-`silt` command to see that it still aborts. The name of each input is
-written to stderr before it is examined, so the last names of an
-aborted run say which program it was.
+Two kinds of line are not looked at by running the program in the
+suite. A program that overflows the native stack ends the process it
+runs in, the suite's too: its line has the kind `abort`, and a full
+sweep runs it through the `silt` command to see that it still aborts.
+A program that takes minutes for the steps of its budget has the kind
+`slow` and is not run at all. The name of each input is written to
+stderr before it is examined, so the last names of an aborted run say
+which program it was.
 
 ## A faster local build
 

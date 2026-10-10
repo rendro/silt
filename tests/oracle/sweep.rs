@@ -3,7 +3,8 @@
 //!
 //! | Variable | Meaning |
 //! |---|---|
-//! | `SILT_ORACLE_FULL=1` | every input of a class instead of its sample |
+//! | `SILT_ORACLE_FULL=1` | every input of a class instead of its sample, and the large step budget |
+//! | `SILT_ORACLE_STEPS=<n>` | the step budget of each run |
 //! | `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
 //! | `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
 //! | `SILT_ORACLE_REPORT=<file>` | append the counts, every finding and the verdict of each input to the file |
@@ -15,7 +16,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::oracle::{Compared, Finding, Input, Kind, Source, Verdict, examine};
+use crate::oracle::{Compared, Cut, Finding, Input, Kind, Source, Verdict, examine};
 
 /// The threads of a sweep in the suite: the tests of the binary run
 /// side by side, and a program with tasks starts a worker for each CPU.
@@ -35,6 +36,22 @@ pub fn name_of(path: &Path) -> String {
 /// Whether `SILT_ORACLE_FULL` asks for every input.
 pub fn full() -> bool {
     std::env::var_os("SILT_ORACLE_FULL").is_some_and(|v| v != "0")
+}
+
+/// The steps a run may take: in the suite, enough for all but the
+/// programs that measure speed; in a full sweep, what such a program
+/// takes at slice 1 within the watchdog's time. A program that needs
+/// more is cut short and counted.
+const STEPS: u64 = 1_000_000;
+const STEPS_FULL: u64 = 20_000_000;
+
+/// The step budget of each run.
+pub fn steps() -> u64 {
+    match std::env::var("SILT_ORACLE_STEPS") {
+        Ok(steps) => steps.parse().expect("SILT_ORACLE_STEPS is a number"),
+        Err(_) if full() => STEPS_FULL,
+        Err(_) => STEPS,
+    }
 }
 
 /// One line of the skip file: an input whose finding is known and
@@ -160,17 +177,19 @@ fn examine_aborting(input: &Input) -> Verdict {
 /// The verdict of each of `inputs`, in their order, and how long it
 /// took to reach (which the report file shows, and nothing judges).
 /// An input that `skips` lists as aborting is not run in this process
-/// ([`examine_aborting`]).
+/// ([`examine_aborting`]), and one that it lists as slow is not run at
+/// all.
 pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
-    let aborts = |input: &Input| {
+    let listed = |input: &Input, kind: Kind| {
         skips
             .iter()
-            .any(|skip| skip.input == input.name && skip.kind == Kind::Abort.name())
+            .any(|skip| skip.input == input.name && skip.kind == kind.name())
     };
     let workers = match std::env::var("SILT_ORACLE_WORKERS") {
         Ok(n) => n.parse().expect("SILT_ORACLE_WORKERS is a number"),
         Err(_) => SUITE_WORKERS,
     };
+    let steps = steps();
     let verdicts: Mutex<Vec<Option<(Verdict, Duration)>>> = Mutex::new(vec![None; inputs.len()]);
     let next = AtomicUsize::new(0);
     std::thread::scope(|scope| {
@@ -186,9 +205,13 @@ pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
                     // a thread wrote.
                     eprintln!("oracle: {}", input.name);
                     let start = Instant::now();
-                    let verdict = match aborts(input) {
-                        true => examine_aborting(input),
-                        false => examine(input),
+                    let verdict = if listed(input, Kind::Abort) {
+                        examine_aborting(input)
+                    } else if listed(input, Kind::Slow) {
+                        let detail = "not run: the skip file says that it takes minutes";
+                        Verdict::Finding(Finding::new(Kind::Slow, detail))
+                    } else {
+                        examine(input, steps)
                     };
                     verdicts.lock().unwrap()[index] = Some((verdict, start.elapsed()));
                 }
@@ -208,6 +231,7 @@ pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
 /// no such finding any more is to be removed.
 pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], skips: &[Skip]) {
     let mut not_run: BTreeMap<String, usize> = BTreeMap::new();
+    let mut cut: BTreeMap<Cut, usize> = BTreeMap::new();
     let mut passed: BTreeMap<Compared, usize> = BTreeMap::new();
     let mut listed = Vec::new();
     let mut new = Vec::new();
@@ -217,6 +241,10 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
         let finding = match verdict {
             Verdict::NotRun(why) => {
                 *not_run.entry(why.to_string()).or_default() += 1;
+                None
+            }
+            Verdict::Cut(why) => {
+                *cut.entry(*why).or_default() += 1;
                 None
             }
             Verdict::Passed(compared) => {
@@ -243,13 +271,20 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
         }
     }
 
-    let mut report = format!("oracle, {what}: {} inputs\n", inputs.len());
+    let mut report = format!(
+        "oracle, {what}: {} inputs, {} steps a run\n",
+        inputs.len(),
+        steps()
+    );
     let count = |compared| passed.get(&compared).copied().unwrap_or(0);
     report.push_str(&format!(
         "  passed, everything compared: {}\n  passed, invariants only: {}\n",
         count(Compared::Everything),
         count(Compared::Invariants),
     ));
+    for (why, count) in &cut {
+        report.push_str(&format!("  cut short, {why}: {count}\n"));
+    }
     for (why, count) in &not_run {
         report.push_str(&format!("  not run, {why}: {count}\n"));
     }
@@ -276,6 +311,7 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
         for (input, (verdict, took)) in inputs.iter().zip(verdicts) {
             let verdict = match verdict {
                 Verdict::NotRun(why) => format!("not run, {why}"),
+                Verdict::Cut(why) => format!("cut short, {why}"),
                 Verdict::Passed(compared) => format!("passed, {compared:?}"),
                 Verdict::Finding(finding) => format!("FINDING, {}", finding.kind.name()),
             };
