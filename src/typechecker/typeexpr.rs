@@ -139,6 +139,24 @@ impl TypeChecker {
         self.named_trait(ti.trait_res, ti.trait_name)
     }
 
+    /// The type variable a `type a` parameter introduces (or names, when
+    /// an earlier parameter's annotation wrote `a`): where it is written
+    /// is kept, as for a variable of an annotation (`var_written`).
+    pub(super) fn type_param_var(
+        &mut self,
+        names: &mut HashMap<Symbol, Type>,
+        name: Symbol,
+        span: Span,
+    ) -> Type {
+        if let Some(known) = names.get(&name) {
+            return known.clone();
+        }
+        let (ty, var) = self.fresh_tv();
+        self.var_written.insert(var, span);
+        names.insert(name, ty.clone());
+        ty
+    }
+
     /// The type the impl `ti` is for, as impls are keyed: the canonical
     /// head of its target (`Range` is `List`, an alias is the type it
     /// stands for).
@@ -242,7 +260,8 @@ impl TypeChecker {
                             );
                             return Type::Error;
                         }
-                        let tv = self.fresh_var();
+                        let (tv, var) = self.fresh_tv();
+                        self.var_written.insert(var, te.span);
                         param_vars.insert(*name, tv.clone());
                         return tv;
                     }

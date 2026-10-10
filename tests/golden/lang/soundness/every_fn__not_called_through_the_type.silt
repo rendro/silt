@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: method `describe` of the impl for every `Fn` is called on a value: write `x.describe(..)`, not `Fn.describe`
+-- stderr-contains: method `describe` of the impl for every `Tuple` is called on a value: write `x.describe(..)`, not `Tuple.describe`
+-- The impl for every function is found by the receiver. Written through
+-- the type its method would take a `self` of any type: refused.
+trait D { fn describe(self) -> String }
+trait D for Fn { fn describe(self) -> String { "fn" } }
+trait D for Tuple { fn describe(self) -> String { "tuple" } }
+trait D for Int { fn describe(self) -> String { "int" } }
+fn main() {
+  println(Fn.describe(5))
+  println(Fn.describe((1, 2)))
+  println(Tuple.describe({ x -> x }))
+}

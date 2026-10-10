@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- A Display impl whose `display` has another signature than the trait's
+-- is reported once, at the impl: every question about the type's
+-- Display after it gets the impl's answer and no error of its own.
+import string
+
+type D {
+  n: Int,
+}
+
+trait Display for D {
+  fn display(self) -> Int {
+    1
+  }
+}
+
+fn show(x: a) -> String where a: Display {
+  x.display()
+}
+
+fn main() {
+  println(D { n: 1 })
+  println([D { n: 1 }])
+  println("{D { n: 1 }}")
+  println(D { n: 1 }.display())
+  println(show(D { n: 2 }))
+  println(D.display(D { n: 3 }))
+  println(string.from(D { n: 4 }))
+}

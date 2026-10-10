@@ -1,4 +1,4 @@
-main.silt: setup error:
+main.silt: the file's top-level code failed:
 error[runtime]: division by zero
  --> helper.silt:1:17
    |
@@ -9,4 +9,4 @@ call stack:
   -> boom  at helper.silt:1:17
   -> <module:crasher>  at crasher.silt:2:17
 
-0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)
+0 tests: 0 passed, 0 failed, 0 skipped (the top-level code of 1 file failed)

@@ -111,8 +111,8 @@ operator -- silt's parser rejects it. Use `list.get(xs, i)`,
 Trailing closures must start on the same line as the function call:
 
 ```silt
-xs |> list.map { x -> x + 1 }       -- OK
-xs |> list.map { x ->                -- OK: { on same line
+let ys = xs |> list.map { x -> x + 1 } -- OK
+let zs = xs |> list.map { x ->        -- OK: { on same line
   x + 1
 }
 ```

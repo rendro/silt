@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: not all patterns are covered
+-- stderr-contains: non-exhaustive match: `(true, 11)` is not covered
 -- Port of repros/typechecker_arch/ex_range_pat.silt, two statements on one line split.
 fn f(n: Int) -> Int {
   match n {

@@ -1,0 +1,29 @@
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__the_other_operand_is_of_the_receivers_type.silt:13:19
+    |
+ 13 |   println(1.equal("a"))
+    |                   ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected P, got Int
+ --> structural_method__the_other_operand_is_of_the_receivers_type.silt:14:19
+    |
+ 14 |   println(p.equal(2))
+    |                   ^ type mismatch: expected P, got Int
+
+error[type]: type mismatch: expected P, got String
+ --> structural_method__the_other_operand_is_of_the_receivers_type.silt:15:21
+    |
+ 15 |   println(p.compare("x"))
+    |                     ^^^ type mismatch: expected P, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__the_other_operand_is_of_the_receivers_type.silt:16:21
+    |
+ 16 |   println([1].equal(["a"]))
+    |                     ^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__the_other_operand_is_of_the_receivers_type.silt:17:25
+    |
+ 17 |   println(Some(1).equal(Some("a")))
+    |                         ^^^^^^^^^ type mismatch: expected Int, got String

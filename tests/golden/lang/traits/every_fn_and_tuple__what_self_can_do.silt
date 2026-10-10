@@ -1,0 +1,42 @@
+-- What an impl for every function or every tuple can do: hand `self` on,
+-- call the impl's other methods on it, return it as `Self` (the
+-- receiver's own type for the caller).
+type Cents { Cents(Int) }
+trait Keep {
+  fn keep(self) -> Self
+  fn name(self) -> String
+  fn both(self) -> String
+  fn pick(self, o: Self) -> Self
+  fn twice(self) -> String { "{self.name()} {self.name()}" }
+}
+trait Keep for Fn {
+  fn keep(self) -> Self { self }
+  fn name(self) -> String { "fn" }
+  fn both(self) -> String { "{self.name()}+{self.keep().name()}" }
+  fn pick(self, o: Self) -> Self { o }
+}
+trait Keep for Tuple {
+  fn keep(self) -> Self { self }
+  fn name(self) -> String { "tuple" }
+  fn both(self) -> String { self.name() }
+  fn pick(self, o: Self) -> Self { o }
+}
+fn cents(n: Int) -> Cents { Cents(n) }
+fn other(n: Int) -> Cents { Cents(n + 1) }
+fn k(x: a) -> a where a: Keep { x.keep() }
+fn main() {
+  let f = cents.keep()
+  let Cents(n) = f(3)
+  println(n)
+  println(cents.both())
+  println(cents.twice())
+  let g = cents.pick(other)
+  println(g(1))
+  let (a, b) = (1, "x").keep()
+  println("{a} {b}")
+  println((1, 2).pick((3, 4)))
+  let h = k(cents)
+  println(h(9))
+  println(k((1, 2)))
+  println({ x -> x + 1 }.name())
+}

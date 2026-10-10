@@ -14,4 +14,4 @@
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:1> failed and was never joined: panic: the second top-level task
       = help: join the task with task.join to handle its error, or cancel it with task.cancel
 
-2 tests: 2 passed, 0 failed, 0 skipped (1 file failed to compile)
+2 tests: 2 passed, 0 failed, 0 skipped (a top-level task of 1 file failed)

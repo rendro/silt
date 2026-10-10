@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `Fn` is not callable
+-- stderr-contains: in an impl for `Fn`, `self` is some function: it is not known to implement trait 'Display'
+-- stderr-contains: type mismatch: expected (_, _), got Tuple
+-- stderr-contains: in an impl for `Tuple`, `self` is some tuple: it is not known to implement trait 'Display'
+-- What an impl for every function or tuple cannot do with `self`: call
+-- it, take it apart, show it.
+trait Use { fn call(self) -> Int
+  fn first(self) -> Int
+  fn show(self) -> String }
+trait Use for Fn {
+  fn call(self) -> Int { self(1) }
+  fn first(self) -> Int { 1 }
+  fn show(self) -> String { "{self}" }
+}
+trait Use for Tuple {
+  fn call(self) -> Int { 1 }
+  fn first(self) -> Int {
+    let (a, _) = self
+    a
+  }
+  fn show(self) -> String { "{self}" }
+}
+fn main() { println(1) }

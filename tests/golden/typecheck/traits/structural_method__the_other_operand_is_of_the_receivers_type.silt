@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- `equal` and `compare` take a value of the receiver's type: comparing
+-- an Int with a String, or a record with a number, is a type mismatch
+-- and not a `false` (or an error when the program runs).
+type P {
+  n: Int,
+}
+
+fn main() {
+  let p = P { n: 1 }
+  println(1.equal("a"))
+  println(p.equal(2))
+  println(p.compare("x"))
+  println([1].equal(["a"]))
+  println(Some(1).equal(Some("a")))
+  println(1.equal(1))
+  println(p.compare(P { n: 2 }))
+}

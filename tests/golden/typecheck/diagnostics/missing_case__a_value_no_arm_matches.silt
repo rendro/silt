@@ -1,0 +1,141 @@
+-- cmd: check
+-- exit: 1
+-- What a match leaves out is said by a value no arm matches: a variant
+-- no arm names is missing, of a variant some arms name the case left
+-- out is shown, and tuples, lists, integers and records get a value too.
+-- Strings cannot be listed: a variant tested by one is covered in part.
+import list
+
+type Shape {
+  Circle(Int),
+  Rect(Int, Int),
+  Dot,
+}
+
+type P {
+  on: Bool,
+  kind: Option(Int),
+}
+
+fn partly(o: Option(Option(Int))) -> Int {
+  match o {
+    Some(Some(n)) -> n
+    None -> 0
+  }
+}
+
+fn shape(s: Shape) -> Int {
+  match s {
+    Circle(0) -> 0
+    Rect(w, 1) -> w
+  }
+}
+
+fn tuple(t: (Bool, Bool)) -> Int {
+  match t {
+    (true, true) -> 1
+    (false, _) -> 2
+  }
+}
+
+fn lists(xs: List(Int)) -> Int {
+  match xs {
+    [] -> 0
+    [a] -> a
+  }
+}
+
+fn heads(xs: List(Bool)) -> Int {
+  match xs {
+    [true, ..rest] -> list.length(rest)
+    [] -> 1
+  }
+}
+
+fn ints(n: Int) -> Int {
+  match n {
+    0 -> 0
+    1 -> 1
+  }
+}
+
+fn ranges(n: Int) -> Int {
+  match n {
+    0..10 -> 1
+    11..20 -> 1
+  }
+}
+
+fn second(n: Int, b: Bool) -> Int {
+  match (n, b) {
+    (_, true) -> 1
+    (0, false) -> 2
+  }
+}
+
+fn result(r: Result(Int, String)) -> Int {
+  match r {
+    Ok(1) -> 1
+    Err(_) -> 0
+  }
+}
+
+fn strings(o: Option(String)) -> Int {
+  match o {
+    Some("a") -> 1
+    None -> 2
+  }
+}
+
+fn text(s: String) -> Int {
+  match s {
+    "a" -> 0
+  }
+}
+
+fn record(p: P) -> Int {
+  match p {
+    P { on: true, kind: Some(_) } -> 1
+    P { on: false, .. } -> 2
+  }
+}
+
+fn field(p: P) -> Int {
+  match p {
+    P { kind: Some(_), .. } -> 1
+  }
+}
+
+fn anon(r: { a: Bool, b: Int }) -> Int {
+  match r {
+    { a: true, b: _ } -> 1
+  }
+}
+
+fn nested(t: (Shape, List(Option(Bool)))) -> Int {
+  match t {
+    (Circle(_), _) -> 1
+    (Rect(_, _), []) -> 1
+    (Dot, [Some(true), ..rest]) -> list.length(rest)
+    (Rect(_, _), [_, ..rest]) -> list.length(rest)
+    (Dot, []) -> 2
+  }
+}
+
+fn main() {
+  println(partly(None))
+  println(shape(Dot))
+  println(tuple((true, false)))
+  println(lists([]))
+  println(heads([]))
+  println(ints(0))
+  println(ranges(0))
+  println(second(0, true))
+  println(result(Ok(1)))
+  println(strings(None))
+  println(text("a"))
+  println(record(P { on: true, kind: None }))
+  println(field(P { on: true, kind: None }))
+  println(anon({ a: true, b: 1 }))
+  println(nested((Dot, [])))
+}

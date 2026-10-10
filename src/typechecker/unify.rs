@@ -648,10 +648,7 @@ impl TypeChecker {
             );
             // A method of the record is not a field of it: what reads
             // a record's fields calls a field.
-            if let Some(method) = missing
-                .iter()
-                .find(|f| self.tables.method_table.contains_key(&(*name, intern(f))))
-            {
+            if let Some(method) = missing.iter().find(|f| self.has_method(*name, intern(f))) {
                 fault.help = Some(format!(
                     "'{method}' is a method of `{shown}`, and what is asked for here is a record with a field '{method}': a value whose fields are read is a record, and `x.{method}(..)` on it calls a field; annotate it, `p: {shown}`"
                 ));
@@ -697,8 +694,87 @@ impl TypeChecker {
             d.help.extend(fault.help);
             if let Some((got, expected)) = &fault.apart {
                 Self::add_ok_wrap_fix(&mut d, got, expected);
+                d = self.name_annotation_variables(d, expected, got);
             }
             self.errors.push(d);
+        }
+    }
+
+    /// A mismatch of which one side (or each) is an annotation variable
+    /// says which variable that is and shows where it was written: `a`
+    /// in "expected a, got Int" is not a type the reader can look up.
+    fn name_annotation_variables(
+        &self,
+        mut d: Diagnostic,
+        expected: &Type,
+        got: &Type,
+    ) -> Diagnostic {
+        let mut named: Vec<RigidId> = Vec::new();
+        for ty in [expected, got] {
+            if let Type::Rigid(r) = ty
+                && !named.contains(r)
+            {
+                named.push(*r);
+            }
+        }
+        for r in &named {
+            if let Some(written) = self.var_written.get(&r.var) {
+                d = d.with_label(
+                    *written,
+                    format!("the type variable `{}` is declared here", r.name),
+                );
+            }
+        }
+        // The `self` of an impl for every function or every tuple.
+        if let Some((r, what, parts)) = named.iter().find_map(|r| {
+            let (what, parts) = self.shape_vars.get(&r.var)?;
+            Some((r, *what, *parts))
+        }) {
+            return d.with_note(format!(
+                "in an impl for `{}`, `self` is some {what}: {parts} are not known",
+                r.name
+            ));
+        }
+        match named.as_slice() {
+            [] => d,
+            [r] => d.with_note(format!(
+                "`{}` is a type variable of the annotation: it stands for any type, so the \
+                 code must check whichever type that is",
+                r.name
+            )),
+            [r, s, ..] => d.with_note(format!(
+                "`{}` and `{}` are type variables of the annotation: each stands for any \
+                 type, so the code must check whichever types they are",
+                r.name, s.name
+            )),
+        }
+    }
+
+    /// A projection from the `self` of an impl for every function or
+    /// every tuple (`Self::Item` in `trait T for Tuple`), as a
+    /// projection from a function or a tuple: the impl's own binding is
+    /// what it reduces to, whatever function or tuple `self` is.
+    fn of_shape_self(&self, ty: Type) -> Type {
+        let Type::AssocProj {
+            receiver,
+            trait_name,
+            assoc_name,
+        } = &ty
+        else {
+            return ty;
+        };
+        let stand_in = match &**receiver {
+            Type::Rigid(r) => match self.shape_vars.get(&r.var) {
+                Some(("function", _)) => Type::Fun(Vec::new(), Box::new(Type::Unit)),
+                Some(_) => Type::Tuple(Vec::new()),
+                None => return ty,
+            },
+            _ => return ty,
+        };
+        Type::AssocProj {
+            receiver: Box::new(stand_in),
+            trait_name: *trait_name,
+            assoc_name: *assoc_name,
         }
     }
 
@@ -725,12 +801,14 @@ impl TypeChecker {
         // is an AssocProj — keeps the cost out of the hot unification
         // path for normal types.
         let t1 = if matches!(&t1, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&t1))
+            let t1 = self.of_shape_self(self.apply(&t1));
+            crate::types::canonical::canonicalize(&self.tables.resolver, &t1)
         } else {
             t1
         };
         let t2 = if matches!(&t2, Type::AssocProj { .. }) {
-            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&t2))
+            let t2 = self.of_shape_self(self.apply(&t2));
+            crate::types::canonical::canonicalize(&self.tables.resolver, &t2)
         } else {
             t2
         };
@@ -754,6 +832,17 @@ impl TypeChecker {
             // An annotation variable is itself only, or a variable the
             // group being inferred has made the same.
             (Type::Rigid(r1), Type::Rigid(r2)) if r1 == r2 || self.same_in_group(*r1, *r2) => {}
+
+            // Two variables: the newer one becomes the older one. A
+            // variable that many uses are unified with (a parameter
+            // without an annotation, a `let` whose type is still open)
+            // then stays the one the others resolve to in one step;
+            // bound the other way round, each use would add a link to
+            // a chain every later `apply` walks.
+            (Type::Var(v1), Type::Var(v2)) => {
+                let (newer, older) = (*v1.max(v2), *v1.min(v2));
+                self.bind(newer, Type::Var(older), out);
+            }
 
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if occurs_in(*v, t) {
@@ -808,36 +897,6 @@ impl TypeChecker {
                     self.unify_into(r1, r2, out);
                 }
             }
-
-            // `trait T for Fn { ... }` registers a self_type of
-            // `Generic("Fn", [])` because `Fn` is variadic — the parser
-            // accepts only `Named`/`Generic` as impl targets, with no
-            // surface form to express "any function type". A receiver
-            // dispatched into this impl arrives as `Type::Fun(_, _)`,
-            // which has no element-level constraints to match against
-            // the empty Generic args. Treat the bare-`Fn` Generic as a
-            // wildcard for any function shape so user impls dispatch.
-            // `canonical_head` collapses `Fun → Fn` at
-            // registration time, so the deprecated surface alias is
-            // covered by the same arm.
-            (Type::Fun(_, _), Type::Generic(name, args))
-            | (Type::Generic(name, args), Type::Fun(_, _))
-                if args.is_empty() && name.is_builtin("Fn") => {}
-
-            // `trait T for Tuple { ... }` likewise registers a self_type
-            // of `Generic("Tuple", [])` — tuples are variadic, so unlike
-            // List/Map/Set/Channel there is no fresh-var element shape
-            // `register_trait_impl` could synthesize for the bare target.
-            // Treat the bare-`Tuple` Generic as a wildcard for any tuple
-            // shape so direct receiver dispatch (`(1, 2).pretty()`)
-            // matches the where-bound path, which already dispatched via
-            // the head-keyed obligation. Bare `Tuple` is rejected as a
-            // type annotation (`resolve_type_expr`'s uppercase fallback
-            // errors "unknown type"), so this arm is reachable only via
-            // trait-impl self-types, mirroring the `Fn` arm above.
-            (Type::Tuple(_), Type::Generic(name, args))
-            | (Type::Generic(name, args), Type::Tuple(_))
-                if args.is_empty() && name.is_builtin("Tuple") => {}
 
             (Type::List(a), Type::List(b)) => {
                 self.unify_into(a, b, out);

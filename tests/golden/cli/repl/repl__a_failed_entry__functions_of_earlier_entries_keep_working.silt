@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stderr-contains: type mismatch: expected String, got Int
+-- stdin: type U { U(Int) }\nfn f() -> String { "{U(1)}" }\nf()\ntrait Display for U { fn display(self) -> String { 3 } }\nf()\nfn g() -> String { "{U(2)}" }\ng()\ntype U { U(Int), V }\n"{U(1)}"\n:quit\n
+-- A function of an earlier entry that shows the type runs as before after
+-- the failed impl, and a later one checks.

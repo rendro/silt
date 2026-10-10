@@ -1,4 +1,0 @@
--- cmd: check
--- exit: 1
--- stderr-contains: program has no main() function
-fn helper() { 1 }

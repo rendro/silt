@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stderr-contains: type mismatch: expected Int, got String
+-- stdin: type U { U(Int) }\ntrait Mine { fn equal(self, o: Self) -> Int\n  fn hash(self) -> String\n  fn display(self) -> Int }\nU(1).equal(U(1))\ntrait Mine for U { fn equal(self, o: Self) -> Int { "bad" }\n  fn hash(self) -> String { "h" }\n  fn display(self) -> Int { 1 } }\nU(1).equal(U(1))\nU(1) == U(1)\n#{ U(1): 1 }\n"{U(1)}"\nU(1).display()\nfn need_e(x: a) -> Int where a: Equal { 1 }\nneed_e(U(1))\n:quit\n
+-- A trait of the session with methods named `equal`, `hash` and `display`:
+-- its failed impl changes nothing of what those names mean for the type.

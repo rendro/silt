@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: missing variant Some
+-- stderr-contains: non-exhaustive match: `Some(_)` is covered only in part
 -- Port of repros/type_soundness/ex7.silt, two statements on one line split.
 fn p(x: Int, o: Option(Int)) -> Int {
   match o {

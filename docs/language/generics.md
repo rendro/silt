@@ -30,7 +30,7 @@ unambiguous when they must be visible**. Readers should never have to ask
    inferred. There is no `fn<T>` binder syntax and no turbofish.
 
 ```silt
-fn map(xs: List(a), f: Fn(a) -> b) -> List(b)
+fn map(xs: List(a), f: Fn(a) -> b) -> List(b) { ... }
 --             ↑              ↑         ↑
 --        a binds here   b binds here   both already in scope
 ```
@@ -183,7 +183,7 @@ Bounds on multiple variables separate with `,`:
 
 ```silt
 fn merge(a: Map(k, v), b: Map(k, v)) -> Map(k, v)
-  where k: Hash + Equal, v: Clone
+  where k: Hash + Equal, v: Display
 { ... }
 ```
 
@@ -253,12 +253,12 @@ are grouped contiguously when there are multiple:
 
 ```silt
 -- Correct
-fn parse(body: String, type a) -> Result(a, DecodeError)
-fn cast(x: a, type b) -> b
-fn convert(x: a, type b, type c) -> (b, c)
+fn parse(body: String, type a) -> Result(a, DecodeError) { ... }
+fn cast(x: a, type b) -> b { ... }
+fn convert(x: a, type b, type c) -> (b, c) { ... }
 
 -- Incorrect — type param before data, won't parse
-fn broken(type a, body: String) -> Result(a, DecodeError)
+fn broken(type a, body: String) -> Result(a, DecodeError) { ... }
 ```
 
 The reason is **pipe ergonomics**. Silt's `|>` operator inserts the
@@ -268,8 +268,8 @@ of pipelines:
 
 ```silt
 let resp = http.get(url)?
-resp.body -- extract the response body (a String)
-
+-- resp.body is the response body, a String
+let done = resp.body
   |> json.parse(Todo) -- works: parse(body, Todo)
   |> result.map_ok(process)
 ```
@@ -329,7 +329,7 @@ let todo: Todo = json.parse(body, Todo)
 
 ```silt
 let r = (int.parse("42") as Result(Int, int.ParseError))?
-[] as List(Int)
+let none = [] as List(Int)
 ```
 
 Silt has **no turbofish** (`::<T>`), **no `fn<T>` binder syntax**, and
@@ -376,6 +376,9 @@ argument" — is a core simplicity bet.
 A `where` clause lets a generic function call trait methods:
 
 ```silt
+import list
+import string
+
 fn shout(items: List(a)) -> List(String) where a: Display {
   items |> list.map { x -> x.display() |> string.to_upper }
 }
@@ -433,7 +436,8 @@ trait HashTable(k) where k: Hash + Equal {
 }
 
 trait HashTable(String) for MyStore { ... }   -- OK, String has Hash + Equal
-trait HashTable(Function) for OtherStore { ... }  -- error: Function does not implement Hash
+trait HashTable(Fn(Int) -> Int) for OtherStore { ... }
+-- error: type 'Fn' does not implement trait 'Hash'
 ```
 
 Supertraits can also reference the enclosing trait's params. The args
@@ -548,8 +552,8 @@ fn default(type a) -> a where a: Default {
 }
 
 fn main() {
-  let n = default(Int) -- 0 — generic path
-  let m = Int.default() -- 0 — concrete path
+  println(default(Int)) -- 0
+  println(Int.default()) -- 0
 }
 ```
 
@@ -566,6 +570,9 @@ The rules:
   `fn f(type a) -> a { a.default() }` without `where a: Default`
   rejects at the call to `a.default()` — the compiler can't prove an
   impl exists.
+- **A method without `self` is called on a type, never on a value.**
+  `x.default()` on a value `x: a` is an error that names the call to
+  write: `a.default()`, with a `type a` parameter.
 - **Ambiguity across traits is rejected.** If both `Foo` and `Bar`
   declare a method `build` and `a` is constrained to `Foo + Bar`,
   calling `a.build()` errors with "ambiguous method 'build' on `type a`:
@@ -736,36 +743,36 @@ trait Sub for Wrap {
 ### Collection operations
 
 ```silt
-fn map(xs: List(a), f: Fn(a) -> b) -> List(b)
+fn map(xs: List(a), f: Fn(a) -> b) -> List(b) { ... }
 
-fn filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)
+fn filter(xs: List(a), f: Fn(a) -> Bool) -> List(a) { ... }
 
-fn fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
+fn fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b { ... }
 
-fn group_by(xs: List(a), key: Fn(a) -> k) -> Map(k, List(a)) where k: Hash + Equal
+fn group_by(xs: List(a), key: Fn(a) -> k) -> Map(k, List(a)) where k: Hash + Equal { ... }
 ```
 
 ### Option and Result combinators
 
 ```silt
-fn map(opt: Option(a), f: Fn(a) -> b) -> Option(b)
+fn map(opt: Option(a), f: Fn(a) -> b) -> Option(b) { ... }
 
-fn and_then(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b)
+fn and_then(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b) { ... }
 
-fn map_ok(r: Result(a, e), f: Fn(a) -> b) -> Result(b, e)
+fn map_ok(r: Result(a, e), f: Fn(a) -> b) -> Result(b, e) { ... }
 
-fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f)
+fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f) { ... }
 ```
 
 ### Type-directed decoding
 
 ```silt
-fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode
-fn from_toml(content: String, type a) -> Result(a, DecodeError) where a: Decode
+fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode { ... }
+fn from_toml(content: String, type a) -> Result(a, DecodeError) where a: Decode { ... }
 
 -- call sites
 let config = from_toml(raw, AppConfig)?
-body |> json.parse(Todo)
+let todo = body |> json.parse(Todo)
 ```
 
 The stdlib follows the same shape: `json.parse(src, T)` and `toml.parse(src, T)`
@@ -797,12 +804,14 @@ The same pattern adapts to fallible conversions by changing the trait
 method's return type to `Result(b, e)` for whatever error type the
 caller wants. (`Convert(Int) for String` and `Convert(Float) for
 String` would *want* to coexist, but see the
-"Parameterized trait declarations" subsection below for the current
+"Parameterized trait declarations" subsection above for the current
 deferred limitation around trait-arg-keyed impls.)
 
 ### User-defined generic container
 
 ```silt
+import map
+
 type Cache(k, v) {
   store: Map(k, v),
   capacity: Int,

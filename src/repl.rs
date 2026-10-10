@@ -655,6 +655,61 @@ mod tests {
         )
     }
 
+    /// An entry that fails leaves every table of the session as it was
+    /// before it: what its check entered is forgotten when the next
+    /// entry is added, and it wrote over nothing. One failing entry of
+    /// each kind that enters rows, in a session that has a type, two
+    /// traits with a method of one name, an impl, a trait with an
+    /// associated type, a function and a `let`.
+    #[test]
+    fn a_failed_entry_leaves_the_session_tables_as_they_were() {
+        let mut repl = repl();
+        let setup = [
+            "type U { U(Int) }",
+            "trait A { fn m(self) -> String }\ntrait A for U { fn m(self) -> String { \"a\" } }",
+            "trait B { fn m(self) -> Int }",
+            "trait Has {\n  type Item\n  fn item(self) -> Self::Item\n}",
+            "fn f(u: U) -> String { \"{u}\" }",
+            "let n = 1",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(evaluation.committed, "`{entry}` must run");
+        }
+        let failing = [
+            "trait Display for U { fn display(self) -> String { 3 } }",
+            "trait Display for U { fn display(self) -> String { \"x\" } }\nlet z: Int = \"s\"",
+            "trait B for U { fn m(self) -> Int { \"bad\" } }",
+            "trait Has for U {\n  type Item = Int\n  fn item(self) -> Int { \"bad\" }\n}",
+            "type U { U(Int), V }\nlet z: Int = \"s\"",
+            "type Pair = (U, U)\nlet z: Int = \"s\"",
+            "fn f(u: U) -> String { 3 }",
+            "type W { w: U }\ntrait C { fn c(self) -> Int }\ntrait C for W { fn c(self) -> Int { nope } }",
+            "let n: String = 2",
+            "f(1)",
+        ];
+        for entry in failing {
+            let before = repl.session.tables().fingerprint();
+            let evaluation = repl.eval(entry);
+            assert!(!evaluation.committed, "`{entry}` must fail");
+            assert_ne!(
+                repl.session.tables().fingerprint(),
+                before,
+                "the check of `{entry}` enters rows (or the test shows nothing)"
+            );
+            // The next entry drops what the failed one declared.
+            repl.session.add_cell(String::new());
+            assert_eq!(
+                repl.session.tables().fingerprint(),
+                before,
+                "after the failed entry `{entry}`"
+            );
+        }
+        // The session is what it was.
+        assert_eq!(value(&mut repl, "U(1).m()"), "a");
+        assert_eq!(value(&mut repl, "f(U(2))"), "U(2)");
+    }
+
     /// The error messages of `input`, which must not run.
     fn errors(repl: &mut Repl, input: &str) -> Vec<String> {
         let evaluation = repl.eval(input);

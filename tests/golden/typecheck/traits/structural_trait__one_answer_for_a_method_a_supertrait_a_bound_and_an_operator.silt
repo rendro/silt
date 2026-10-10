@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Whether a type has `Equal` is asked of its structure, whoever asks:
+-- a method call, a supertrait of an impl, a bound and an operator.
+-- `Held` holds a function, which has no `Equal`: all four are refused.
+-- `Plain` has it: its four uses check.
+type Plain {
+  n: Int,
+}
+
+type Held {
+  f: Fn(Int) -> Int,
+}
+
+trait Ranked: Equal {
+  fn rank(self) -> Int
+}
+
+trait Ranked for Plain {
+  fn rank(self) -> Int {
+    self.n
+  }
+}
+
+trait Ranked for Held {
+  fn rank(self) -> Int {
+    0
+  }
+}
+
+fn same(a: a, b: a) -> Bool where a: Equal {
+  a == b
+}
+
+fn main() {
+  let p = Plain { n: 1 }
+  println(p.equal(p))
+  println(same(p, p))
+  println(p == p)
+  println(p.rank())
+  let h = Held { f: { x -> x } }
+  println(h.equal(h))
+  println(same(h, h))
+  println(h == h)
+}

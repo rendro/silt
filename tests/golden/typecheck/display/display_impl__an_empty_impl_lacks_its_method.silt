@@ -1,10 +1,10 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: trait impl 'Display' for 'D' is missing method 'display'
--- stderr-contains: trait impl 'Display' for 'F' is missing method 'display'
 -- An impl of `Display` that does not write `display` lacks its method,
 -- as an impl of any trait does. (It was accepted, and the type was
--- shown by its structure.)
+-- shown by its structure.) That is the impl's one error: the type has
+-- the trait by its impl for every question after it (printing, a bound,
+-- `.display()`, `D.display`), and none of them is reported as well.
 import string
 
 type D {

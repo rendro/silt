@@ -1,0 +1,43 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `make` takes no `self` — call it on the type instead: `a.make(..)`, where `a` is a `type a` parameter
+-- stderr-contains: error[type]: method `join` takes no `self` — call it on the type instead: `a.join(..)`, where `a` is a `type a` parameter
+-- stderr-contains: :28:3
+-- stderr-contains: :32:3
+-- stderr-contains: :36:3
+-- The same through a bound: a value of a bounded type variable.
+trait Mk {
+  fn make(n: Int) -> Self
+  fn join(a: Self, b: Self) -> Self
+  fn twice(self) -> Self
+}
+
+trait Mk for Int {
+  fn make(n: Int) -> Int {
+    n
+  }
+  fn join(a: Int, b: Int) -> Int {
+    a + b
+  }
+  fn twice(self) -> Int {
+    self * 2
+  }
+}
+
+fn one(x: a) -> a where a: Mk {
+  x.make()
+}
+
+fn all(x: a) -> a where a: Mk {
+  x.make(1)
+}
+
+fn two(x: a, y: a) -> a where a: Mk {
+  x.join(y)
+}
+
+fn main() {
+  println(one(5))
+  println(all(5))
+  println(two(1, 2))
+}

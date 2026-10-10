@@ -306,74 +306,19 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
 }
 
 /// Say that each of `type_names` has each of the structural traits
-/// `trait_names`, and enter the traits' methods for it.
-///
-/// The four built-in trait methods are always considered. A method is
-/// registered only when its parent trait appears in `trait_names`:
-/// - `display` ← Display
-/// - `equal`   ← Equal
-/// - `compare` ← Compare
-/// - `hash`    ← Hash
+/// `trait_names`: a value of the type then has the trait's method as a
+/// name (`Tables::has_structural_name`).
 pub(super) fn register_structural_traits_for(
     checker: &mut TypeChecker,
     type_names: &[&str],
     trait_names: &[&str],
 ) {
-    let dummy_span = Span::BUILTIN;
-    let has_display = trait_names.contains(&"Display");
-    let has_equal = trait_names.contains(&"Equal");
-    let has_compare = trait_names.contains(&"Compare");
-    let has_hash = trait_names.contains(&"Hash");
     for type_name in type_names {
         for trait_name in trait_names {
             checker
                 .tables
                 .trait_impl_set
                 .insert((TraitKey::builtin(trait_name), TypeRef::builtin(type_name)));
-        }
-        // Build method entries only for traits in `trait_names`.
-        let mut methods: Vec<(&str, Type)> = Vec::with_capacity(4);
-        if has_display {
-            methods.push((
-                "display",
-                Type::Fun(vec![checker.fresh_var()], Box::new(Type::String)),
-            ));
-        }
-        if has_equal {
-            methods.push((
-                "equal",
-                Type::Fun(
-                    vec![checker.fresh_var(), checker.fresh_var()],
-                    Box::new(Type::Bool),
-                ),
-            ));
-        }
-        if has_compare {
-            methods.push((
-                "compare",
-                Type::Fun(
-                    vec![checker.fresh_var(), checker.fresh_var()],
-                    Box::new(Type::Int),
-                ),
-            ));
-        }
-        if has_hash {
-            methods.push((
-                "hash",
-                Type::Fun(vec![checker.fresh_var()], Box::new(Type::Int)),
-            ));
-        }
-        for (method_name, method_type) in &methods {
-            checker.tables.method_table.insert(
-                (TypeRef::builtin(type_name), intern(method_name)),
-                MethodEntry {
-                    method_type: method_type.clone(),
-                    span: dummy_span,
-                    structural: true,
-                    trait_name: None,
-                    preds: Vec::new(),
-                },
-            );
         }
     }
 }

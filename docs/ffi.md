@@ -65,7 +65,7 @@ From silt (a program run in a session that declares `mylib`):
 ```silt
 import mylib
 
-mylib.add(mylib.double(20), mylib.answer() - 40)   -- 42
+println(mylib.add(mylib.double(20), mylib.answer() - 40)) -- 42
 ```
 
 The module is imported the usual ways: `import mylib`,
@@ -180,7 +180,7 @@ A host function is a value like any other function: it can be passed to
 import list
 import mylib
 
-[1, 2, 3] |> list.map(mylib.double)   -- [2, 4, 6]
+println([1, 2, 3] |> list.map(mylib.double)) -- [2, 4, 6]
 ```
 
 ## Thread Safety

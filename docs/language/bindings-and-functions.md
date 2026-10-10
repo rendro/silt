@@ -369,8 +369,8 @@ Named functions are always top-level, keeping scoping rules simple.
 the parentheses:
 
 ```silt
-[1, 2, 3] |> list.map { x -> x * 2 }
-[1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
+let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+let total = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 
 -- Destructuring in closure parameters
 pairs |> list.each { (n, word) -> println("{n} is {word}") }

@@ -421,3 +421,13 @@ lang/soundness/z3.silt	holds	reject E0314	TS-9: Display of containers of closure
 lang/soundness/z4.silt	holds	reject E0314	control: `[f] == [f]` written directly
 lang/soundness/d06.silt	holds	reject E0316	a default body uses `"{self}"`, `==` and `<` on `Self` without the bound; the impl is for a record that holds a function
 lang/soundness/e05.silt	holds	reject E0331	an impl method adds a `where` bound its trait does not declare; a call through the trait does not owe it
+lang/soundness/every_fn__self_is_not_a_function_of_a_chosen_signature.silt	holds	reject E0301	an impl for every function returned `self` as `Fn(Int) -> Cents`: a `Secret` reached the irrefutable pattern `Cents(n)`
+lang/soundness/every_fn__self_returned_as_a_function_of_a_record.silt	holds	reject E0301	the same with a record result taken apart by `let`
+lang/soundness/every_fn__a_closure_returned_as_a_function_of_a_variant.silt	holds	reject E0301	the same with a closure of Ints: an Int reached `Solo(s)`
+lang/soundness/every_tuple__self_is_not_a_tuple_of_chosen_elements.silt	holds	reject E0301	an impl for every tuple returned `self` as `(Meters, Int)`: a `Feet` was read as a `Meters`
+lang/soundness/every_tuple__self_returned_as_a_tuple_of_a_variant.silt	holds	reject E0301	the same with a variant element
+lang/soundness/every_tuple__self_returned_as_a_tuple_of_a_record.silt	holds	reject E0301	the same with a record element
+lang/soundness/every_tuple__self_type_is_the_receivers.silt	holds	reject E0301	`Self` in an impl for every tuple was every tuple: a tuple of another type came back as the receiver's
+lang/soundness/every_fn__not_called_through_the_type.silt	holds	reject E0309	`Fn.describe(5)`: the method of an impl for every function written through the type takes anything
+lang/soundness/every_fn__self_is_not_called_taken_apart_or_shown.silt	holds	reject E0301	control: `self` of an impl for every function or tuple is not called, taken apart or shown
+lang/soundness/alias_impl__another_length_or_arity_has_no_impl.silt	holds	reject E0314	a bound answered by an impl for `(Int, Int)` or `Fn(Int) -> Int` (through an alias) held for a tuple of another length and a function of another arity

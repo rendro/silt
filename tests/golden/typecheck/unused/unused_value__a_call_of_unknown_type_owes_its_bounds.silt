@@ -4,6 +4,8 @@
 -- A call that stands as a statement and whose type nothing decides has
 -- type `()`, and `()` owes what the call's signature asks of that type:
 -- in a function with a full signature, in one without, and in a closure.
+-- The error says what is asked and why the type is `()`: the program
+-- wrote no `()`.
 import channel
 import channel.{ Message }
 

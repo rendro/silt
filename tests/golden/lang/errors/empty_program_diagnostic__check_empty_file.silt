@@ -1,3 +1,3 @@
 -- cmd: check
--- exit: 1
--- A program with nothing but these comments has no main.
+-- exit: 0
+-- A file with nothing but these comments is an empty module: it checks.

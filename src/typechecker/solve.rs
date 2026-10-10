@@ -354,22 +354,12 @@ impl TypeChecker {
             Type::Var(_) => unreachable!("a selection waits while its receiver is unknown"),
             // The receiver became an annotation variable: it has the
             // methods of its bounds, and nothing else.
-            Type::Rigid(r) => match self.bound_methods(*r, field).as_slice() {
-                [(trait_name, scheme)] => {
-                    let method_ty = self.instantiate_method(scheme, field, span);
-                    self.deferred_method_traits.insert(span, *trait_name);
+            Type::Rigid(r) => {
+                if let Some((trait_name, method_ty)) = self.bound_method(*r, field, span) {
+                    self.deferred_method_traits.insert(span, trait_name);
                     self.unify_deferred_method(&result_ty, &method_ty, span);
                 }
-                _ => self.error(
-                    Code::UnknownMethod,
-                    format!(
-                        "no field or method '{field}' on a value of type `{}`: the \
-                         bounds of the type variable provide none, or more than one",
-                        r.name
-                    ),
-                    span,
-                ),
-            },
+            }
             Type::AnonRecord { fields: af, tail } => {
                 if let Some(field_ty) = af.get(&field) {
                     let ft = field_ty.clone();
@@ -1165,6 +1155,13 @@ impl TypeChecker {
                     .iter()
                     .find(|(n, _)| *n == name)
                     .expect("the trait declares the method");
+                // A method without `self` is not what a value's `.{name}`
+                // calls, and says nothing of the receiver.
+                let receiver = info.receivers.contains(&name);
+                let on_type = on_type_call("SomeType", name, method_ty);
+                if self.takes_no_self(receiver, name, &on_type, span) {
+                    return;
+                }
                 // The trait's parameters are what the receiver's impl
                 // will say; the method's own variables are new.
                 let mut mapping: HashMap<TyVar, Type> = HashMap::new();
@@ -1339,11 +1336,10 @@ impl TypeChecker {
             // compared as empty-vs-empty and ANY tuple/function satisfied
             // a bound whose only impl targeted a concrete alias shape
             // (round-102 hole, same class as the head-key-only bug it
-            // fixed). Differing arities land on the caller's equal-length
-            // conservative-skip guard, so the bare `trait T for Tuple`
-            // wildcard (`Generic("Tuple", [])`, zero args) keeps matching
-            // every tuple, and mismatched-arity functions defer to the
-            // direct-dispatch unify.
+            // fixed). A subject of another length than such an impl's
+            // self type is refused by the caller; the impl for every
+            // tuple (`trait T for Tuple`) has a variable for its self
+            // type and no positional args at all.
             Type::Tuple(elems) => elems.clone(),
             Type::Fun(params, ret) => {
                 let mut args = params.clone();
@@ -1444,13 +1440,19 @@ impl TypeChecker {
         {
             return true;
         }
+        // A `Display` impl is written for the head: in this module
+        // (`display_written`, known before its impls are entered), in
+        // another one or in an earlier REPL cell, or by silt itself (a
+        // builtin error enum's): its method is a row of the impls'
+        // methods. A method `display` of another trait is no `Display`
+        // impl.
         trait_name.is_builtin("Display")
             && !self.display_written.contains(&head)
             && self
                 .tables
-                .method_table
-                .get(&(head, intern("display")))
-                .is_none_or(|entry| entry.structural)
+                .impl_methods
+                .get(head, intern("display"), trait_name)
+                .is_none()
     }
 
     /// What a message says of a type that lacks the structural trait
@@ -1693,6 +1695,13 @@ impl TypeChecker {
                     self.show_type(&resolved),
                     self.show_bound(trait_name, bound_trait_args)
                 ),
+                // The `()` is no type the program wrote: it is what a
+                // statement's call was given (`fix_statement_calls`).
+                Type::Unit if self.in_fixed_statement(span) => format!(
+                    "trait '{}' is asked of a type that nothing decides: the call is a \
+                     statement, so the type is `()`, which does not implement the trait",
+                    self.show_bound(trait_name, bound_trait_args)
+                ),
                 _ => format!(
                     "type '{}' does not implement trait '{}'",
                     self.show_type(&Type::Generic(type_name, vec![])),
@@ -1742,12 +1751,12 @@ impl TypeChecker {
         // compared with the impl self type's: a concrete mismatch is
         // reported; a repeated binder of a NON-LINEAR impl self type
         // (`type Pair(a) = (a, a)`) must see equal types
-        // (`impl_self_args_consistent`). A length mismatch means the two
-        // sides describe differently shaped representations of the same
-        // head (a `Record` receiver against a `Generic` impl form, the
-        // bare `Tuple`/`Fn` wildcard): skipped. Impls without a stored
-        // self type (the stamps of the structural traits) skip the
-        // check.
+        // (`impl_self_args_consistent`). A length mismatch between two
+        // tuples or two functions is a mismatch; otherwise the impl's
+        // self type says nothing of the subject's parts (the impl for
+        // every tuple or function, whose self type is a variable):
+        // skipped. Impls without a stored self type (the stamps of the
+        // structural traits) skip the check.
         let obligated_args = self.type_args_of(&resolved);
         // Whether the impl's variables are the subject's parts by now.
         let mut linked = false;
@@ -1775,6 +1784,27 @@ impl TypeChecker {
                     let _ = self.unify_types(ob, im);
                 }
                 linked = true;
+            } else if matches!(
+                (&resolved, &impl_self),
+                (Type::Tuple(_), Type::Tuple(_)) | (Type::Fun(..), Type::Fun(..))
+            ) {
+                // An impl for one tuple or function type (through an
+                // alias: `type P2 = (Int, Int)`) is no impl for a tuple
+                // of another length or a function of other parameters.
+                // (The impl for every tuple has a variable for its self
+                // type, and says nothing of the subject's parts.)
+                let (obligated, only) = self.show_apart(&resolved, &impl_self);
+                self.error(
+                    Code::MissingTraitImpl,
+                    format!(
+                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                        obligated,
+                        self.show_bound(trait_name, bound_trait_args),
+                        only
+                    ),
+                    span,
+                );
+                return;
             }
         }
         // The bound's trait arguments are the impl's
@@ -1808,9 +1838,8 @@ impl TypeChecker {
             }
         }
         // What the impl's header asks of its variables, which are the
-        // subject's parts now, is owed by the same use. (An impl whose
-        // self type is another shape than the subject's, a bare `Tuple`
-        // or `Fn` target, says nothing of the parts.)
+        // subject's parts now, is owed by the same use. (The impl for
+        // every tuple or function says nothing of the parts.)
         if linked {
             for pred in header {
                 self.want(pred.substitute(&fresh), origin);
@@ -2098,15 +2127,109 @@ impl TypeChecker {
         )
     }
 
+    /// The traits that give the type `ty` a method `method`, in the
+    /// order of their names: those of the session's impls, and the
+    /// structural trait whose method it is when no impl of that trait
+    /// is written for the type.
+    fn method_providers(&self, ty: TypeRef, method: Symbol) -> Vec<TraitKey> {
+        let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
+        if let Some(tr) = self.structural_provider(ty, method)
+            && !traits.contains(&tr)
+        {
+            traits.push(tr);
+        }
+        traits.sort_by_key(|t| self.show_trait(*t));
+        traits
+    }
+
+    /// The structural trait whose method `method` the type `ty` has by
+    /// its structure: one of the four names, of a type that has the
+    /// name (`Tables::has_structural_name`) and no written impl of the
+    /// trait.
+    fn structural_provider(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
+        let method = resolve(method);
+        let (name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == method)?;
+        let tr = TraitKey::builtin(name);
+        (self.tables.has_structural_name(tr, ty) && self.by_structure(tr, ty)).then_some(tr)
+    }
+
+    /// Of the traits that give a type a method (`method_providers`), the
+    /// one a call in the module checked means: the only one; of several,
+    /// the one the module sees (a trait it declares, names by an import
+    /// or reaches through a module it imports, or a builtin trait).
+    /// `Err` with the candidates when it sees none of several, or more
+    /// than one: the call is ambiguous.
+    fn meant_provider(&self, providers: &[TraitKey]) -> Result<Option<TraitKey>, Vec<TraitKey>> {
+        match providers {
+            [] => Ok(None),
+            [t] => Ok(Some(*t)),
+            _ => {
+                let seen: Vec<TraitKey> = providers
+                    .iter()
+                    .copied()
+                    .filter(|t| self.sees_trait(*t))
+                    .collect();
+                match seen.as_slice() {
+                    [t] => Ok(Some(*t)),
+                    [] => Err(providers.to_vec()),
+                    _ => Err(seen),
+                }
+            }
+        }
+    }
+
     /// The method `method` of the type `ty`, if the module checked may
     /// call it: a method of a trait declared in a module it does not
-    /// reach by its imports it has not.
+    /// reach by its imports it has not. It is decided from the impls'
+    /// rows each time. (For a call that is ambiguous the first
+    /// candidate's: `ambiguous_method_call` reports it.)
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
-        let entry = self.tables.method_table.get(&(ty, method))?;
-        match entry.trait_name.and_then(|t| self.unreached(t)) {
-            Some(_) => None,
-            None => Some(entry.clone()),
+        let providers = self.method_providers(ty, method);
+        let tr = match self.meant_provider(&providers) {
+            Ok(tr) => tr?,
+            Err(candidates) => candidates[0],
+        };
+        if self.unreached(tr).is_some() {
+            return None;
         }
+        match self.tables.impl_methods.get(ty, method, tr) {
+            Some(entry) => Some(entry.clone()),
+            // The structural trait's: no row, and no type of its own
+            // (`structural_method` gives it one for the receiver).
+            None => Some(MethodEntry {
+                method_type: Type::Error,
+                structural: true,
+                trait_name: None,
+                receiver: true,
+                preds: Vec::new(),
+            }),
+        }
+    }
+
+    /// Whether a value of the type `ty` has a method `method`, whatever
+    /// the module checked may call.
+    pub(super) fn has_method(&self, ty: TypeRef, method: Symbol) -> bool {
+        !self.method_providers(ty, method).is_empty()
+    }
+
+    /// The names of the methods of the type `ty`.
+    pub(super) fn method_names(&self, ty: TypeRef) -> Vec<Symbol> {
+        let mut names: Vec<Symbol> = self
+            .tables
+            .impl_methods
+            .keys()
+            .filter(|(of, _, _)| *of == ty)
+            .map(|(_, method, _)| *method)
+            .collect();
+        for (_, method) in STRUCTURAL_METHODS {
+            let method = intern(method);
+            if self.structural_provider(ty, method).is_some() {
+                names.push(method);
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Keep that the type `ty` was reported at `span` to have no method
@@ -2128,7 +2251,8 @@ impl TypeChecker {
         method: Symbol,
         span: Span,
     ) -> bool {
-        let Some(traits) = self.ambiguous_methods.get(&(ty, method)).cloned() else {
+        let providers = self.method_providers(ty, method);
+        let Err(traits) = self.meant_provider(&providers) else {
             return false;
         };
         let on = format!("type '{}'", self.show_type(&Type::Generic(ty, vec![])));

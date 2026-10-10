@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected Fn(Int) -> Wrap, got Fn
+-- The `self` of an impl for every function is not returned as a function of a signature the impl chooses.
+type Wrap { Wrap(Int) }
+type Point { x: String, y: String }
+trait Cast { fn cast(self) -> Fn(Int) -> Wrap }
+trait Cast for Fn {
+  fn cast(self) -> Fn(Int) -> Wrap { self }
+}
+fn mk(n: Int) -> Point { Point { x: "px", y: "py" } }
+fn main() {
+  let f = mk.cast()
+  let Wrap(n) = f(1)
+  println(n + 1)
+}

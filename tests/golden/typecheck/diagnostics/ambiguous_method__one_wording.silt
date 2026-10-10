@@ -1,0 +1,73 @@
+-- cmd: check
+-- exit: 1
+-- A method two traits provide is ambiguous in one wording, the traits
+-- in the order of their names, wherever the call is decided: on a type,
+-- on a bounded value, on a value whose type is not known, on a value
+-- whose type becomes a bounded variable later, on a `type` parameter.
+-- A method none of the bounds provide is, there too, what it is where
+-- the receiver is known at once.
+trait Zeta {
+  fn show(self) -> String
+}
+
+trait Alpha {
+  fn show(self) -> String
+}
+
+trait Other {
+  fn other(self) -> String
+}
+
+trait Zeta for Int {
+  fn show(self) -> String {
+    "z"
+  }
+}
+
+trait Alpha for Int {
+  fn show(self) -> String {
+    "a"
+  }
+}
+
+fn concrete() -> String {
+  7.show()
+}
+
+fn bounded(x: b) -> String where b: Zeta + Alpha {
+  x.show()
+}
+
+fn unknown(x) {
+  x.show()
+}
+
+fn first(x: a) -> a {
+  x
+}
+
+fn later(x: b) -> String where b: Zeta + Alpha {
+  let f = { y -> first(y).show() }
+  f(x)
+}
+
+fn missing(x: b) -> String where b: Other {
+  let f = { y -> first(y).show() }
+  f(x)
+}
+
+fn on_type(type b) -> String where b: Zeta + Alpha {
+  b.show(b)
+}
+
+fn on_name() -> String {
+  Int.show(7)
+}
+
+fn main() {
+  println(concrete())
+  println(bounded(7))
+  println(unknown(7))
+  println(later(7))
+  println(on_name())
+}

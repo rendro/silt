@@ -286,55 +286,6 @@ impl TypeChecker {
             }
         }
 
-        // The structural traits of the type: `Display`, `Equal`,
-        // `Compare`, `Hash`. The stamp is provisional:
-        // `enforce_structural_gate` takes a trait away again from a type
-        // whose fields or payloads lack it (a record that holds a
-        // function has no `Equal`), with the reason. No impl is made:
-        // the VM has each natively, over the structure of the value.
-        let dummy_span = td.span;
-        for trait_name in STRUCTURAL_TRAIT_NAMES {
-            self.tables
-                .trait_impl_set
-                .insert((TraitKey::builtin(trait_name), ty));
-        }
-        // The methods of the structural traits.
-        let builtin_methods: &[(&str, Type)] = &[
-            (
-                "display",
-                Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
-            ),
-            (
-                "equal",
-                Type::Fun(
-                    vec![self.fresh_var(), self.fresh_var()],
-                    Box::new(Type::Bool),
-                ),
-            ),
-            (
-                "compare",
-                Type::Fun(
-                    vec![self.fresh_var(), self.fresh_var()],
-                    Box::new(Type::Int),
-                ),
-            ),
-            (
-                "hash",
-                Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
-            ),
-        ];
-        for (method_name, method_type) in builtin_methods {
-            self.tables.method_table.insert(
-                (ty, intern(method_name)),
-                MethodEntry {
-                    method_type: method_type.clone(),
-                    span: dummy_span,
-                    structural: true,
-                    trait_name: None,
-                    preds: Vec::new(),
-                },
-            );
-        }
         self.current_type_anno_span = prev_type_span;
     }
 

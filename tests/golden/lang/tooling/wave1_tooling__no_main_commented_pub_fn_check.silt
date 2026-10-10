@@ -1,8 +1,0 @@
--- cmd: check
--- exit: 1
--- stderr-contains: program has no main() function
--- stderr-not-contains: silt test
-{-
-pub fn double(x) { x * 2 }
--}
-fn helper() { 1 }

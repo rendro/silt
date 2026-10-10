@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 0
+-- One rule for what `check` asks of a file: it is a module, and a module
+-- needs no `main`, whatever it declares (types and traits only here; a
+-- `pub fn`, a test, a private function or nothing in the cases beside
+-- this one). `run` asks for a `main` (the case of that name).
+type Point {
+  x: Int,
+  y: Int,
+}
+
+trait Shown {
+  fn shown(self) -> String
+}
+
+trait Shown for Point {
+  fn shown(self) -> String {
+    "({self.x}, {self.y})"
+  }
+}

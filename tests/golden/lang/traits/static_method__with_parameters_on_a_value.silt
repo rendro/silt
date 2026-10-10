@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `make` takes no `self` — call it on the type instead: `Int.make(..)`
+-- stderr-contains: error[type]: method `join` takes no `self` — call it on the type instead: `Int.join(..)`
+-- stderr-contains: :33:11
+-- stderr-contains: :34:11
+-- stderr-contains: :35:11
+-- stderr-contains: :36:11
+-- stderr-not-contains: expects
+-- A method without `self` is called on the type, whatever parameters it
+-- has: on a value of the type it is refused, with one argument too few
+-- (it used to check and run, the receiver taken for the first
+-- parameter) and with all of them (it was "expects 0 arguments").
+trait Mk {
+  fn make(n: Int) -> Self
+  fn join(a: Self, b: Self) -> Self
+  fn twice(self) -> Self
+}
+
+trait Mk for Int {
+  fn make(n: Int) -> Int {
+    n
+  }
+  fn join(a: Int, b: Int) -> Int {
+    a + b
+  }
+  fn twice(self) -> Int {
+    self * 2
+  }
+}
+
+fn main() {
+  println(5.make())
+  println(5.make(1))
+  println(1.join(2))
+  println(1.join(2, 3))
+}

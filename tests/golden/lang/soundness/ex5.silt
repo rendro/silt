@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: missing variant X
+-- stderr-contains: non-exhaustive match: `X(false, false)` is not covered
 -- Port of repros/type_soundness/ex5.silt, two statements on one line split.
 type R { a: Bool, b: Bool }
 fn r(x: R) -> Int {

@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: method `make` takes no `self` — call it on the type instead: `SomeType.make(..)`
+-- stderr-contains: error[type]: method `join` takes no `self` — call it on the type instead: `SomeType.join(..)`
+-- stderr-contains: :29:3
+-- stderr-contains: :33:3
+-- The same for a receiver whose type is not known where the call is
+-- written (it used to check, and fail when run: "function 'Int.make'
+-- expects 1 arguments, got 2").
+trait Mk {
+  fn make(n: Int) -> Self
+  fn join(a: Self, b: Self) -> Self
+  fn twice(self) -> Self
+}
+
+trait Mk for Int {
+  fn make(n: Int) -> Int {
+    n
+  }
+  fn join(a: Int, b: Int) -> Int {
+    a + b
+  }
+  fn twice(self) -> Int {
+    self * 2
+  }
+}
+
+fn all(x) {
+  x.make(1)
+}
+
+fn two(x, y) {
+  x.join(y)
+}
+
+fn main() {
+  println(all(5))
+  println(two(1, 2))
+}

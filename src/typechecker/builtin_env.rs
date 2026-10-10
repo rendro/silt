@@ -40,7 +40,9 @@ impl BuiltinEnv {
         for (name, scheme) in variants {
             env.define(name, scheme);
         }
-        let tables = std::mem::take(&mut checker.tables);
+        let mut tables = std::mem::take(&mut checker.tables);
+        // (The builtins' rows are no module's.)
+        tables.begin_rows();
         BuiltinEnv {
             checker,
             tables,
@@ -236,13 +238,11 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // a program's type derives. A builtin type is not a value, and which
     // traits it derives is `register_builtin_trait_impls`'s to say.
     let impls = checker.tables.trait_impl_set.clone();
-    let methods = checker.tables.method_table.clone();
     let mut as_values = TypeEnv::new();
     for td in &types {
         checker.register_type_decl(td, &mut as_values);
     }
     checker.tables.trait_impl_set = impls;
-    checker.tables.method_table = methods;
     // Each variant's scheme is the builtin scope's, under its name.
     let (defs, _) = names::builtins();
     for variants in defs.variants.values() {
@@ -287,13 +287,15 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
             for (trait_name, method) in [("Error", "message"), ("Display", "display")] {
                 let key = TraitKey::builtin(trait_name);
                 checker.tables.trait_impl_set.insert((key, ty));
-                checker.tables.method_table.insert(
-                    (ty, intern(method)),
+                checker.tables.impl_methods.insert(
+                    ty,
+                    intern(method),
+                    key,
                     MethodEntry {
                         method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
-                        span: Span::BUILTIN,
                         structural: false,
                         trait_name: Some(key),
+                        receiver: true,
                         preds: Vec::new(),
                     },
                 );
@@ -318,8 +320,8 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
 /// Returns `(trait_impls, method_keys)` where:
 /// - `trait_impls` is the set of `"Trait:Type"` pairs registered in
 ///   `trait_impl_set`.
-/// - `method_keys` is the set of `"Type.method"` pairs in
-///   `method_table`.
+/// - `method_keys` is the set of `"Type.method"` pairs the builtins
+///   have (`Tables::methods`).
 ///
 /// Stringifies the `Symbol` keys so test code doesn't need access to
 /// the crate-private `Symbol`/`intern` types.
@@ -342,8 +344,8 @@ pub fn __trait_init_fingerprint_check_program() -> (
         .collect();
     let method_keys: BTreeSet<String> = checker
         .tables
-        .method_table
-        .keys()
+        .methods()
+        .iter()
         .map(|(ty, m)| format!("{}.{}", resolve(ty.name), resolve(*m)))
         .collect();
     (trait_impls, method_keys)
