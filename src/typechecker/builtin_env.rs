@@ -226,10 +226,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 );
             }
             TypeBody::Record(_) => {
-                checker
-                    .tables
-                    .records
-                    .insert(ty, RecordInfo::default());
+                checker.tables.records.insert(ty, RecordInfo::default());
             }
             TypeBody::Alias(_) => {}
         }
