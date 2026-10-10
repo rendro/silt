@@ -1,11 +1,14 @@
-//! `textDocument/signatureHelp` handler and its call-site scanner.
+//! `textDocument/signatureHelp` handler: the call the cursor is in is
+//! read from the tokens in front of the cursor.
 
 use lsp_types::{
     Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, SignatureHelp,
     SignatureInformation,
 };
 
-use crate::intern::intern;
+use crate::intern::{intern, resolve};
+use crate::lexer::{Lexer, Tok, Token};
+use crate::source::FileId;
 use crate::types::Type;
 
 use super::Server;
@@ -23,28 +26,13 @@ impl Server {
         let pos = params.text_document_position_params.position;
         let doc = self.documents.get(uri)?;
 
-        // Walk backwards from cursor to find the function name before `(`.
+        // The tokens of the text in front of the cursor say which call
+        // it is in: the lexer goes on behind an error, so a call that is
+        // being typed (an argument that is no token yet, a string that
+        // is not closed) has its tokens all the same.
         let cursor = position_to_offset(&doc.source, &pos);
-        let before = &doc.source.text[..cursor];
-
-        // Forward-scan `before` to find the active call site: the last `(`
-        // at nesting depth 0, and count commas at depth 1 from there.
-        // Skips string literals and silt comments so that commas/parens
-        // inside them are not miscounted.
-        let (active_param, paren_pos) = scan_call_site_forward(before.as_bytes())?;
-        let before_paren = before[..paren_pos].trim_end();
-        let fn_name: String = before_paren
-            .chars()
-            .rev()
-            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-
-        if fn_name.is_empty() {
-            return None;
-        }
+        let lexed = Lexer::new(FileId::default(), &doc.source.text[..cursor]).tokenize();
+        let (fn_name, active_param) = call_site(&lexed.tokens)?;
 
         // Look up in definitions first, then builtins.
         let fn_sym = intern(&fn_name);
@@ -174,150 +162,72 @@ pub(super) fn build_signature_from_def(
     (label, params_info)
 }
 
-/// Forward-scan `before` (the source slice up to the cursor) to find the
-/// innermost active call site. Returns `(active_param, paren_byte_offset)`
-/// where `paren_byte_offset` is the position of the opening `(` of the call
-/// and `active_param` is the 0-based comma count between that `(` and the end.
-///
-/// Skips string literals (`"..."`, `""" ... """`), line comments (`--`), and
-/// block comments (`{- ... -}`) so commas and parens inside them are ignored.
-///
-/// Bracket-aware: `[`/`]` (list/array literals) and `{`/`}` (record/set
-/// literals, blocks) are tracked on the same stack as `(`/`)` so commas
-/// nested inside list/record/map literals are not credited to the
-/// enclosing call's argument count. Round-75 DX-1 fix — without this,
-/// `foo([1, 2], cursor)` reported active_param=2 (inflated by the inner
-/// list's comma) instead of 1.
-pub(super) fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
-    // Stack entry per nesting depth. `kind` is `b'('`, `b'['`, or `b'{'`
-    // — only `(` levels participate in the call-site lookup at the end.
-    // `comma_count` is incremented on `,` at this level only.
-    #[derive(Clone, Copy)]
-    struct Frame {
-        kind: u8,
-        paren_pos: usize,
-        comma_count: u32,
+/// The call that the end of `tokens` is in, as the name written in
+/// front of its `(` (`f`, or `m.f`) and the number of its arguments
+/// that are complete (the index of the one being written): the
+/// innermost `(` that is not closed. A list, a record, a block or a
+/// string interpolation that is open inside it is part of the argument
+/// being written, and its commas are its own.
+fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
+    #[derive(PartialEq)]
+    enum Open {
+        Paren,
+        Bracket,
+        Brace,
+        Interpolation,
     }
-    let mut stack: Vec<Frame> = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            // ── Strings ──────────────────────────────────────────
-            b'"' => {
-                if i + 2 < bytes.len() && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
-                    i += 3;
-                    while i + 2 < bytes.len()
-                        && !(bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
-                    {
-                        i += 1;
-                    }
-                    i = (i + 3).min(bytes.len());
-                } else {
-                    i += 1;
-                    while i < bytes.len() && bytes[i] != b'"' {
-                        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                            i += 2;
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    if i < bytes.len() {
-                        i += 1;
-                    }
+    // Each delimiter that is open: its kind, its token, the commas
+    // directly inside it.
+    let mut open: Vec<(Open, usize, u32)> = Vec::new();
+    for (index, tok) in tokens.iter().enumerate() {
+        // A closer closes the innermost delimiter if it is of its kind;
+        // one that is not (text that is being typed) closes nothing.
+        let mut close = |kind: Open| {
+            if open.last().is_some_and(|(top, ..)| *top == kind) {
+                open.pop();
+            }
+        };
+        match tok.kind {
+            Token::RParen => close(Open::Paren),
+            Token::RBracket => close(Open::Bracket),
+            Token::RBrace => close(Open::Brace),
+            Token::StringEnd(_) => close(Open::Interpolation),
+            Token::LParen => open.push((Open::Paren, index, 0)),
+            Token::LBracket | Token::HashBracket => open.push((Open::Bracket, index, 0)),
+            Token::LBrace | Token::HashBrace => open.push((Open::Brace, index, 0)),
+            Token::StringStart(_) => open.push((Open::Interpolation, index, 0)),
+            Token::Comma => {
+                if let Some((.., commas)) = open.last_mut() {
+                    *commas += 1;
                 }
             }
-            // ── Block comments {- ... -} (with nesting). MUST run
-            //    BEFORE the `{` literal arm so `{- comment -}` is
-            //    not misread as opening a record literal. ──────────
-            b'{' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
-                i += 2;
-                let mut cd = 1u32;
-                while i < bytes.len() && cd > 0 {
-                    if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
-                        cd += 1;
-                        i += 2;
-                    } else if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
-                        cd -= 1;
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-            // ── Line comments -- ... ────────────────────────────
-            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            // ── Brackets ────────────────────────────────────────
-            b'(' => {
-                stack.push(Frame {
-                    kind: b'(',
-                    paren_pos: i,
-                    comma_count: 0,
-                });
-                i += 1;
-            }
-            b')' => {
-                // Pop only matching `(`. Mismatches just drop the
-                // stack head (best-effort against malformed source).
-                if let Some(top) = stack.last()
-                    && top.kind == b'('
-                {
-                    stack.pop();
-                }
-                i += 1;
-            }
-            b'[' => {
-                stack.push(Frame {
-                    kind: b'[',
-                    paren_pos: i,
-                    comma_count: 0,
-                });
-                i += 1;
-            }
-            b']' => {
-                if let Some(top) = stack.last()
-                    && top.kind == b'['
-                {
-                    stack.pop();
-                }
-                i += 1;
-            }
-            b'{' => {
-                stack.push(Frame {
-                    kind: b'{',
-                    paren_pos: i,
-                    comma_count: 0,
-                });
-                i += 1;
-            }
-            b'}' => {
-                if let Some(top) = stack.last()
-                    && top.kind == b'{'
-                {
-                    stack.pop();
-                }
-                i += 1;
-            }
-            b',' => {
-                if let Some(top) = stack.last_mut() {
-                    top.comma_count += 1;
-                }
-                i += 1;
-            }
-            _ => {
-                i += 1;
-            }
+            _ => {}
         }
     }
-    // The innermost unclosed `(` is the active call site. Walk the stack
-    // top-down to find the deepest `(` frame, ignoring `[` / `{` levels
-    // that may sit above it (e.g. cursor inside a list literal that's an
-    // argument to the call).
-    let frame = stack.iter().rev().find(|f| f.kind == b'(')?;
-    Some((frame.comma_count, frame.paren_pos))
+    let (_, paren, commas) = open.iter().rev().find(|(kind, ..)| *kind == Open::Paren)?;
+    let name_at = |index: Option<usize>| match index.and_then(|i| tokens.get(i)) {
+        Some(Tok {
+            kind: Token::Ident(name),
+            ..
+        }) => Some(resolve(*name)),
+        _ => None,
+    };
+    let is_dot = |index: Option<usize>| {
+        index
+            .and_then(|i| tokens.get(i))
+            .is_some_and(|tok| tok.kind == Token::Dot)
+    };
+    let name = name_at(paren.checked_sub(1))?;
+    // `m.f(`: a member of a module. A longer path (`a.b.f(`) is a method
+    // or a field of a value, which has no signature here.
+    if is_dot(paren.checked_sub(2)) {
+        let module = name_at(paren.checked_sub(3))?;
+        if is_dot(paren.checked_sub(4)) {
+            return None;
+        }
+        return Some((format!("{module}.{name}"), *commas));
+    }
+    Some((name, *commas))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -351,64 +261,5 @@ mod tests {
         let (label, params) = build_signature_from_def("foo", &def);
         assert_eq!(label, "fn foo(x, y)");
         assert_eq!(params.len(), 2);
-    }
-
-    // ── scan_call_site_forward tests ─────────────────────────────
-
-    #[test]
-    fn test_sig_help_comma_in_string_not_counted() {
-        // foo("hello, world", 42)  — cursor after 42
-        // The comma inside the string must not be counted.
-        let before = r#"foo("hello, world", 42"#;
-        let (param, paren) = scan_call_site_forward(before.as_bytes()).unwrap();
-        assert_eq!(param, 1, "should be param 1 (y), not 2");
-        assert_eq!(paren, 3, "paren at index 3");
-    }
-
-    #[test]
-    fn test_sig_help_comma_in_line_comment_not_counted() {
-        // foo(1,\n-- a, b, c\n2)  — cursor after 2
-        let before = "foo(1,\n-- a, b, c\n2";
-        let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
-        assert_eq!(param, 1, "commas inside -- comment should be ignored");
-    }
-
-    #[test]
-    fn test_sig_help_comma_in_block_comment_not_counted() {
-        // foo(1, {- a, b -} 2)  — cursor after 2
-        let before = "foo(1, {- a, b -} 2";
-        let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
-        assert_eq!(param, 1, "commas inside block comment should be ignored");
-    }
-
-    #[test]
-    fn test_sig_help_nested_call_finds_outer_function() {
-        // add(mul(1, 2), 3)  — cursor after 3
-        let before = "add(mul(1, 2), 3";
-        let (param, paren) = scan_call_site_forward(before.as_bytes()).unwrap();
-        assert_eq!(param, 1, "should be param 1 of add, not param of mul");
-        assert_eq!(paren, 3, "paren should be add's ( at index 3");
-    }
-
-    #[test]
-    fn test_sig_help_cursor_inside_inner_call() {
-        // add(mul(1, | — cursor between 1 and closing
-        let before = "add(mul(1, ";
-        let (param, paren) = scan_call_site_forward(before.as_bytes()).unwrap();
-        assert_eq!(param, 1, "should be param 1 of mul");
-        assert_eq!(paren, 7, "paren should be mul's ( at index 7");
-    }
-
-    #[test]
-    fn test_sig_help_no_open_paren_returns_none() {
-        let before = "let x = 42";
-        assert!(scan_call_site_forward(before.as_bytes()).is_none());
-    }
-
-    #[test]
-    fn test_sig_help_triple_quoted_string_skipped() {
-        let before = r#"foo("""hello, world""", 42"#;
-        let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
-        assert_eq!(param, 1, "comma inside triple-quoted string ignored");
     }
 }

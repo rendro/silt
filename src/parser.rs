@@ -446,18 +446,16 @@ impl<'src> Parser<'src> {
     /// two on one line get "each statement must start on its own line".
     pub fn parse_cell(&mut self, wrapper: Symbol) -> (Program, Vec<Diagnostic>) {
         self.top_level_item = "statement";
-        if !self.nl_before()
-            && matches!(
-                self.peek(),
-                Token::Fn
-                    | Token::Type
-                    | Token::Trait
-                    | Token::Pub
-                    | Token::Import
-                    | Token::Let
-                    | Token::Mod
-            )
-        {
+        if matches!(
+            self.peek(),
+            Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Let
+                | Token::Mod
+        ) {
             return self.parse_program_recovering();
         }
         let start = self.span();

@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: {- open\nstill -} 5\n1 + {- a ( [ " -} 2\n-- a line comment with ( and "\n3\n:quit\n
+-- A block comment that is not closed goes on in the next line; what a
+-- comment holds (a paren, a bracket, a quote) opens nothing.

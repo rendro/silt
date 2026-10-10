@@ -233,6 +233,27 @@ impl Lexed {
         self.errors.iter().any(ends_text)
     }
 
+    /// Whether the text is not finished: it ends inside a string or a
+    /// block comment (`is_cut_short`), or a delimiter it opens (`(`,
+    /// `[`, `{`, `#{`, `#[`, the `{` of a string interpolation) is not
+    /// closed at its end. A closer with nothing open closes nothing.
+    /// The REPL reads another line of such an input.
+    pub fn ends_open(&self) -> bool {
+        let open = self.tokens.iter().fold(0usize, |open, tok| match tok.kind {
+            Token::LParen
+            | Token::LBracket
+            | Token::LBrace
+            | Token::HashBrace
+            | Token::HashBracket
+            | Token::StringStart(_) => open + 1,
+            Token::RParen | Token::RBracket | Token::RBrace | Token::StringEnd(_) => {
+                open.saturating_sub(1)
+            }
+            _ => open,
+        });
+        open > 0 || self.is_cut_short()
+    }
+
     /// The comments between the token before `tok` and `tok`.
     pub fn comments_before(&self, tok: &Tok) -> &[Comment] {
         &self.comments[tok.comments.start as usize..tok.comments.end as usize]

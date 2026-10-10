@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: let x = {\n  1\n}\nx\n[1, 2\n, 3]\nfn foo(\n  a\n) { a }\nfoo(7)\nlet n = { ( [\n1 ] ) }\nn\nlet done = 1\ndone\n:quit\n
+-- An input with an open brace, paren or bracket goes on in the next
+-- line until all of them are closed; a balanced one is read at once.

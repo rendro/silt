@@ -5,4 +5,4 @@ Commands:
   <Tab>        Autocomplete builtins and user-defined names
 
 Enter expressions to evaluate, or declarations (fn, type, trait, import).
-Multi-line input: unclosed braces/parens/brackets continue on the next line.
+Multi-line input: an open brace, paren, bracket, string or block comment continues on the next line.
