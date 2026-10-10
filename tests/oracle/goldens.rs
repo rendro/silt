@@ -113,7 +113,9 @@ fn source_of(case: &Path, entry: PathBuf, text: String) -> Source {
         // A single file is run in a directory of its own.
         let file = entry.file_name().expect("a file").to_string_lossy();
         Source::Memory(vec![(file.into_owned(), text)])
-    } else if is_package_case(case) {
+    } else if case.join("silt.toml").is_file() {
+        // A package, whose entry is `main.silt` or `src/main.silt`: its
+        // manifest and lock file are read where they are.
         Source::Package(entry)
     } else {
         Source::Script(entry)
