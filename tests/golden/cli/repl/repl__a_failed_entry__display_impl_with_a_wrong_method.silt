@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stderr-contains: trait impl 'Display' for 'U' is missing method 'display'
+-- stderr-contains: method `display` takes 2 parameters in this impl, but trait `Display` declares it with 1
+-- stdin: type U { U(Int) }\ntrait Display for U { fn show(self) -> String { "x" } }\n"{U(1)}"\ntrait Display for U { fn display(self, extra: Int) -> String { "x" } }\n"{U(1)}"\n:quit\n
+-- The same for an impl that lacks the method, and one with a parameter too
+-- many.

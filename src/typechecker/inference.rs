@@ -173,25 +173,17 @@ pub(super) fn format_record_field_suggestion(
     (base, help)
 }
 
-/// GAP (round 23 #3): append a "did you mean `<cand>`?" hint to an
-/// "unknown method '<field>' on <Type>" diagnostic when the method table
-/// has a close edit-distance match for the given type name. The
-/// method_table is keyed on `(type_name, method_name)`; we walk it once
-/// to collect every method registered on the target type and feed them
-/// to the existing `suggest::suggest_similar` policy.
+/// The "unknown method '<field>' on <Type>" message, with a "did you
+/// mean `<cand>`?" help when one of `methods`, the names of the type's
+/// methods, is close to `field` (`suggest::suggest_similar`).
 pub(super) fn format_unknown_method_message(
     field: Symbol,
     display_type_name: &str,
-    method_table: &HashMap<(TypeRef, Symbol), MethodEntry>,
-    table_key: TypeRef,
+    methods: &[Symbol],
 ) -> (String, Option<String>) {
     let field_str = resolve(field);
     let base = format!("unknown method '{field_str}' on {display_type_name}");
-    let candidates: Vec<String> = method_table
-        .keys()
-        .filter(|(ty, _)| *ty == table_key)
-        .map(|(_, m)| resolve(*m).to_string())
-        .collect();
+    let candidates: Vec<String> = methods.iter().map(|m| resolve(*m).to_string()).collect();
     let help = suggest_similar(&field_str, candidates.iter())
         .map(|hint| format!("did you mean `{hint}`?"));
     (base, help)
@@ -209,7 +201,7 @@ impl TypeChecker {
         span: Span,
     ) -> (String, Option<String>) {
         self.note_unknown_method(span, ty, field);
-        format_unknown_method_message(field, display, &self.tables.method_table, ty)
+        format_unknown_method_message(field, display, &self.method_names(ty))
     }
 
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
@@ -519,15 +511,19 @@ impl TypeChecker {
     /// every impl that has a method of that name is of such a trait, and
     /// no trait this module may name declares it.
     fn only_private_provider(&self, method: Symbol) -> Option<TraitKey> {
+        // (A structural trait's method is every type's.)
+        let name = resolve(method);
+        if STRUCTURAL_METHODS.iter().any(|(_, m)| *m == name) {
+            return None;
+        }
         let mut providers = self
             .tables
-            .method_table
-            .iter()
-            .filter(|((_, m), _)| *m == method)
-            .map(|(_, entry)| entry.trait_name);
-        let first = providers.next()??;
-        if self.private_owner(first).is_none()
-            || providers.any(|t| t.is_none_or(|t| self.private_owner(t).is_none()))
+            .impl_methods
+            .keys()
+            .filter(|(_, m, _)| *m == method)
+            .map(|(_, _, tr)| *tr);
+        let first = providers.next()?;
+        if self.private_owner(first).is_none() || providers.any(|t| self.private_owner(t).is_none())
         {
             return None;
         }

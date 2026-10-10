@@ -123,14 +123,11 @@ impl TypeChecker {
             // written in the impl, or the trait's default
             // (`register_trait_impl`).
             for (method_name, _) in &trait_info.methods {
-                let key = (*type_name, *method_name);
-                // (What the type has by its structure is not the
-                // impl's method.)
                 let provided = self
                     .tables
-                    .method_table
-                    .get(&key)
-                    .is_some_and(|entry| !entry.structural);
+                    .impl_methods
+                    .get(*type_name, *method_name, *trait_name)
+                    .is_some();
                 if !provided && !trait_info.default_method_bodies.contains_key(method_name) {
                     // No impl method AND the trait does not provide a
                     // default body — the impl is genuinely missing a
@@ -751,31 +748,20 @@ impl TypeChecker {
 
         // Coherence check: reject duplicate user-defined impls.
         if self.tables.trait_impl_set.contains(&impl_key) {
-            // A written impl takes the place of the structural trait
-            // (only `Display` can be written by hand: see
-            // `reject_sealed_trait_impls`).
-            let first_method = ti
-                .methods
-                .first()
-                .map(|m| m.name)
-                .unwrap_or_else(|| intern("display"));
-            // The impl of this trait already registered, not a method of
-            // another trait of one name (`trait Describe for Pt { fn
-            // display }` is no impl of Display).
-            let existing = self
-                .tables
-                .trait_methods
-                .get(&(target_type, first_method, trait_key))
-                .cloned()
-                .or_else(|| {
-                    self.tables
-                        .method_table
-                        .get(&(target_type, first_method))
-                        .filter(|e| self.entry_trait(e, first_method) == Some(trait_key))
-                        .cloned()
-                });
-            let is_overriding_auto = existing.map(|e| e.structural).unwrap_or(true);
-            if !is_overriding_auto {
+            // A builtin type is stamped with the structural traits it
+            // has: that is no impl. (Where an impl of one may be
+            // written is `impl_in_its_module`'s to say.)
+            let structural_method = STRUCTURAL_METHODS
+                .iter()
+                .find(|(name, _)| trait_key.is_builtin(name))
+                .map(|(_, method)| intern(method));
+            let stamp = structural_method.is_some_and(|method| {
+                self.tables
+                    .impl_methods
+                    .get(target_type, method, trait_key)
+                    .is_none()
+            });
+            if !stamp {
                 self.error(
                     Code::DuplicateDeclaration,
                     format!(
@@ -1571,7 +1557,7 @@ impl TypeChecker {
             // Two traits may each provide a method of one name for one
             // type (two modules' `Show` for `Int`): each impl is kept, by
             // its trait, and a call means the one whose trait the module
-            // of the call sees (`select_visible_methods`); a call that
+            // of the call sees (`method_entry`); a call that
             // sees both is ambiguous.
 
             // What a use of the method owes: the bounds of the impl's
@@ -1843,41 +1829,14 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Enter a method of an impl in the method table, and by its trait
-    /// in `trait_methods` when the impl is written.
+    /// Enter a method of an impl among the impls' methods, by its type,
+    /// its name and its trait: the row is the module's that writes the
+    /// impl.
     fn register_method_entry(&mut self, target_type: TypeRef, method: Symbol, entry: MethodEntry) {
         let trait_key = entry.trait_name.expect("an impl's method has its trait");
-        // The method of another trait this impl's method shares its
-        // name with, for its type, is kept by its trait: a builtin
-        // trait's method of a builtin type (`display` of Int) has no
-        // trait in the method table.
-        if let Some(existing) = self
-            .tables
-            .method_table
-            .get(&(target_type, method))
-            .cloned()
-            && let Some(existing_trait) = existing.trait_name.or_else(|| {
-                crate::defs::builtin_trait_of_method(&resolve(method))
-                    .and_then(|t| self.trait_key(t.0))
-            })
-            && existing_trait != trait_key
-        {
-            self.tables
-                .trait_methods
-                .entry((target_type, method, existing_trait))
-                .or_insert(MethodEntry {
-                    trait_name: Some(existing_trait),
-                    ..existing
-                });
-        }
-        if !entry.structural {
-            self.tables
-                .trait_methods
-                .insert((target_type, method, trait_key), entry.clone());
-        }
         self.tables
-            .method_table
-            .insert((target_type, method), entry);
+            .impl_methods
+            .insert(target_type, method, trait_key, entry);
     }
 
     /// Round 60 G1, extended round 101: a where-clause bound must
@@ -1930,48 +1889,5 @@ impl TypeChecker {
             self.error(Code::ArityMismatch, msg, span);
         }
         false
-    }
-}
-
-impl TypeChecker {
-    /// For each type and method name that the impls of two or more traits
-    /// provide, put in the method table the one the module checked
-    /// means: the one whose trait the module sees, by `scope`: a trait it
-    /// declares, a trait it names by an import, a trait of a module it
-    /// imports, or a builtin trait. Where it sees none or several of the
-    /// traits, a call is ambiguous (`ambiguous_methods`). Run once the
-    /// module's impls are registered.
-    pub(super) fn select_visible_methods(&mut self) {
-        let mut providers: HashMap<(TypeRef, Symbol), Vec<TraitKey>> = HashMap::new();
-        for (ty, method, t) in self.tables.trait_methods.keys() {
-            providers.entry((*ty, *method)).or_default().push(*t);
-        }
-        let seen: std::collections::HashSet<TraitKey> = providers
-            .values()
-            .flatten()
-            .copied()
-            .filter(|t| self.sees_trait(*t))
-            .collect();
-        let sees = |t: &TraitKey| seen.contains(t);
-        self.ambiguous_methods.clear();
-        for ((ty, method), mut traits) in providers {
-            if traits.len() < 2 {
-                continue;
-            }
-            traits.sort_by_key(|t| self.show_trait(*t));
-            let seen: Vec<TraitKey> = traits.iter().copied().filter(|t| sees(t)).collect();
-            match seen.as_slice() {
-                [t] => {
-                    let entry = self.tables.trait_methods[&(ty, method, *t)].clone();
-                    self.tables.method_table.insert((ty, method), entry);
-                }
-                [] => {
-                    self.ambiguous_methods.insert((ty, method), traits);
-                }
-                _ => {
-                    self.ambiguous_methods.insert((ty, method), seen);
-                }
-            }
-        }
     }
 }

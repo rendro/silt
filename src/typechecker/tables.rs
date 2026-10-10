@@ -99,16 +99,16 @@ pub(super) struct AssocTypeInfo {
     pub(super) span: Span,
 }
 
-/// A registered trait method implementation (new trait system).
+/// A method a type has: an impl's (a row of [`ImplMethods`]), or a
+/// structural trait's (`structural`), which is no row: every declared
+/// type has those four names, and whether it has the trait is the
+/// structural judgement's to say (`TypeChecker::method_entry`).
 #[derive(Debug, Clone)]
 pub(crate) struct MethodEntry {
     pub(super) method_type: Type,
     pub(super) structural: bool,
-    /// GAP (round 17 F3): name of the trait that provided this method.
-    /// Used for coherence diagnostics when two distinct traits supply
-    /// a method with the same name for the same target type. `None`
-    /// for a structural trait's method (`structural`), which is no
-    /// impl's.
+    /// The trait whose impl provides the method. `None` for a
+    /// structural trait's method (`structural`), which is no impl's.
     pub(super) trait_name: Option<TraitKey>,
     /// What every use of the method owes, on the variables of
     /// `method_type`: the `where` clauses of the impl's header
@@ -121,10 +121,18 @@ pub(crate) struct MethodEntry {
 /// notes each row when it is entered: `take_added` gives the keys
 /// entered since it was last asked that are still in the table. Read
 /// like the map or set it holds; `insert` and `entry` are its own.
+///
+/// A row belongs to the module whose check entered it, and
+/// [`Tables::forget`] removes exactly those: no check writes over a row
+/// of another module (`overwritten` counts the attempts, which are a
+/// fault of the checker; the earlier row is kept).
 #[derive(Clone)]
 pub(super) struct Table<M, K> {
     rows: M,
     added: Vec<K>,
+    /// The keys of `added`, to ask whether a row is the check's own.
+    own: std::collections::HashSet<K>,
+    overwritten: usize,
 }
 
 impl<M: Default, K> Default for Table<M, K> {
@@ -132,6 +140,8 @@ impl<M: Default, K> Default for Table<M, K> {
         Table {
             rows: M::default(),
             added: Vec::new(),
+            own: std::collections::HashSet::new(),
+            overwritten: 0,
         }
     }
 }
@@ -163,10 +173,17 @@ where
 }
 
 impl<K: Copy + Eq + std::hash::Hash, V> Table<HashMap<K, V>, K> {
+    /// Enter the row, or write the check's own row again. A row of
+    /// another module's check stays as it is.
     pub(super) fn insert(&mut self, key: K, value: V) -> Option<V> {
+        if self.rows.contains_key(&key) && !self.own.contains(&key) {
+            self.overwritten += 1;
+            return Some(value);
+        }
         let before = self.rows.insert(key, value);
         if before.is_none() {
             self.added.push(key);
+            self.own.insert(key);
         }
         before
     }
@@ -174,14 +191,22 @@ impl<K: Copy + Eq + std::hash::Hash, V> Table<HashMap<K, V>, K> {
     pub(super) fn entry(&mut self, key: K) -> std::collections::hash_map::Entry<'_, K, V> {
         if !self.rows.contains_key(&key) {
             self.added.push(key);
+            self.own.insert(key);
         }
         self.rows.entry(key)
     }
 
     fn take_added(&mut self) -> Vec<K> {
         let mut added = std::mem::take(&mut self.added);
+        self.own.clear();
         added.retain(|key| self.rows.contains_key(key));
         added
+    }
+
+    /// How often the check under way tried to write over a row that is
+    /// not its own, since this was last asked.
+    fn take_overwritten(&mut self) -> usize {
+        std::mem::take(&mut self.overwritten)
     }
 }
 
@@ -190,6 +215,7 @@ impl<K: Copy + Eq + std::hash::Hash> Table<std::collections::HashSet<K>, K> {
         let new = self.rows.insert(key);
         if new {
             self.added.push(key);
+            self.own.insert(key);
         }
         new
     }
@@ -205,8 +231,72 @@ impl<K: Copy + Eq + std::hash::Hash> Table<std::collections::HashSet<K>, K> {
 
     fn take_added(&mut self) -> Vec<K> {
         let mut added = std::mem::take(&mut self.added);
+        self.own.clear();
         added.retain(|key| self.rows.contains(key));
         added
+    }
+}
+
+/// The structural traits, each with its method.
+pub(super) const STRUCTURAL_METHODS: [(&str, &str); 4] = [
+    ("Display", "display"),
+    ("Equal", "equal"),
+    ("Compare", "compare"),
+    ("Hash", "hash"),
+];
+
+/// The key of an impl's method: the type the impl is for, the method's
+/// name, the impl's trait.
+pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey);
+
+/// The methods of the session's impls: one row for each method of each
+/// impl, by its type, its name and its trait, entered by the module that
+/// writes the impl. The impls of two traits that each have a method `m`
+/// for one type are two rows; what `x.m()` means in a module is decided
+/// from the rows each time (`TypeChecker::method_entry`), never written
+/// back. `providers` is an index of the rows, kept with them.
+#[derive(Clone, Default)]
+pub(super) struct ImplMethods {
+    rows: Table<HashMap<ImplMethodKey, MethodEntry>, ImplMethodKey>,
+    /// For a type and a method name, the traits whose impls have rows.
+    by_name: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
+}
+
+impl ImplMethods {
+    /// Enter the method `method` of the impl of `tr` for `ty`.
+    pub(super) fn insert(&mut self, ty: TypeRef, method: Symbol, tr: TraitKey, entry: MethodEntry) {
+        if self.rows.insert((ty, method, tr), entry).is_none() {
+            self.by_name.entry((ty, method)).or_default().push(tr);
+        }
+    }
+
+    pub(super) fn get(&self, ty: TypeRef, method: Symbol, tr: TraitKey) -> Option<&MethodEntry> {
+        self.rows.get(&(ty, method, tr))
+    }
+
+    /// The traits whose impls give the type `ty` a method `method`.
+    pub(super) fn providers(&self, ty: TypeRef, method: Symbol) -> &[TraitKey] {
+        self.by_name
+            .get(&(ty, method))
+            .map_or(&[], |traits| traits.as_slice())
+    }
+
+    /// Every row's key.
+    pub(super) fn keys(&self) -> impl Iterator<Item = &ImplMethodKey> {
+        self.rows.keys()
+    }
+
+    fn remove(&mut self, key: &ImplMethodKey) {
+        if self.rows.remove(key).is_none() {
+            return;
+        }
+        let name = (key.0, key.1);
+        if let Some(traits) = self.by_name.get_mut(&name) {
+            traits.retain(|tr| *tr != key.2);
+            if traits.is_empty() {
+                self.by_name.remove(&name);
+            }
+        }
     }
 }
 
@@ -224,15 +314,8 @@ pub struct Tables {
     pub(super) records: Table<HashMap<TypeRef, RecordInfo>, TypeRef>,
     /// Declared traits.
     pub(super) traits: Table<HashMap<TraitKey, TraitInfo>, TraitKey>,
-    /// Method table: (type, method_name) → method entry. For a type and
-    /// name that the impls of two traits provide (two modules' `Show`
-    /// for `Int`), it holds the one the module being checked means (see
-    /// `TypeChecker::select_visible_methods`).
-    pub(super) method_table: Table<HashMap<(TypeRef, Symbol), MethodEntry>, (TypeRef, Symbol)>,
-    /// Every method of a written trait impl, by its type, its name and
-    /// its trait.
-    pub(super) trait_methods:
-        Table<HashMap<(TypeRef, Symbol, TraitKey), MethodEntry>, (TypeRef, Symbol, TraitKey)>,
+    /// The methods of every impl, by type, name and trait.
+    pub(super) impl_methods: ImplMethods,
     /// Where each module reported that a type has no method of some
     /// name: the place, the type, the name. Once every module of a
     /// program is checked, a trait out of the module's reach that has
@@ -352,8 +435,7 @@ pub struct Rows {
     trail: Vec<TyVar>,
     types: Vec<TypeRef>,
     traits: Vec<TraitKey>,
-    methods: Vec<(TypeRef, Symbol)>,
-    trait_methods: Vec<(TypeRef, Symbol, TraitKey)>,
+    impl_methods: Vec<ImplMethodKey>,
     impls: Vec<(TraitKey, TypeRef)>,
     schemes: Vec<crate::defs::DefId>,
 }
@@ -373,9 +455,101 @@ impl Tables {
     }
 
     /// Every method a value has, as (the type impls key the value's type
-    /// by, the method's name): declared, derived and builtin.
+    /// by, the method's name): those of the impls, and those of the
+    /// structural traits (of a builtin type, the traits it is stamped
+    /// with; of a type a program declares, all four names).
     pub fn methods(&self) -> Vec<(TypeRef, Symbol)> {
-        self.method_table.keys().copied().collect()
+        let mut methods: std::collections::HashSet<(TypeRef, Symbol)> = self
+            .impl_methods
+            .keys()
+            .map(|(ty, method, _)| (*ty, *method))
+            .collect();
+        let declared = self
+            .records
+            .keys()
+            .chain(self.enums.keys())
+            .filter(|ty| builtin_type_name(**ty).is_none());
+        for (name, method) in STRUCTURAL_METHODS {
+            let tr = TraitKey::builtin(name);
+            let method = intern(method);
+            methods.extend(
+                self.trait_impl_set
+                    .iter()
+                    .filter(|(t, _)| *t == tr)
+                    .map(|(_, ty)| (*ty, method)),
+            );
+            methods.extend(declared.clone().map(|ty| (*ty, method)));
+        }
+        methods.into_iter().collect()
+    }
+
+    /// Whether a value of the type `ty` has the method of the structural
+    /// trait `tr` as a name: a builtin type when it is stamped with the
+    /// trait, a type a program declares always (whether it has the
+    /// trait is the structural judgement's to say).
+    pub(super) fn has_structural_name(&self, tr: TraitKey, ty: TypeRef) -> bool {
+        match builtin_type_name(ty) {
+            Some(_) => self.trait_impl_set.contains(&(tr, ty)),
+            None => self.records.contains_key(&ty) || self.enums.contains_key(&ty),
+        }
+    }
+
+    /// Every row of every table, as text in a fixed order: for a test
+    /// that compares two states of a session (what an entry that failed
+    /// leaves behind is nothing).
+    #[doc(hidden)]
+    pub fn fingerprint(&self) -> Vec<String> {
+        fn keys<K: std::fmt::Debug>(table: &str, keys: impl Iterator<Item = K>) -> Vec<String> {
+            keys.map(|key| format!("{table} {key:?}")).collect()
+        }
+        let mut rows = Vec::new();
+        rows.extend(keys("enum", self.enums.keys()));
+        rows.extend(keys("record", self.records.keys()));
+        rows.extend(keys("record-params", self.record_param_var_ids.keys()));
+        rows.extend(keys("alias", self.type_aliases.iter()));
+        rows.extend(keys("alias-arity", self.type_alias_arity.keys()));
+        rows.extend(keys("trait", self.traits.keys()));
+        rows.extend(keys("impl", self.trait_impl_set.iter()));
+        rows.extend(keys("impl-span", self.trait_impl_spans.keys()));
+        rows.extend(keys("impl-preds", self.impl_preds.keys()));
+        rows.extend(keys("impl-args", self.impl_trait_args.keys()));
+        rows.extend(keys("impl-self", self.impl_self_types.keys()));
+        rows.extend(keys("method", self.impl_methods.keys()));
+        rows.extend(keys(
+            "method-index",
+            self.impl_methods
+                .by_name
+                .iter()
+                .flat_map(|(name, traits)| traits.iter().map(move |tr| (name, tr))),
+        ));
+        rows.extend(keys("scheme", self.schemes.keys()));
+        rows.extend(keys("statement-units", self.statement_units.keys()));
+        rows.extend(keys("unknown-methods", self.unknown_methods.keys()));
+        rows.extend(keys("waiting", self.waiting.keys()));
+        rows.extend(keys("rows-of", self.rows.keys()));
+        rows.extend(keys(
+            "bound-variable",
+            self.vars
+                .subst
+                .iter()
+                .enumerate()
+                .filter(|(_, bound)| bound.is_some())
+                .map(|(var, _)| var),
+        ));
+        rows.extend(self.resolver.fingerprint());
+        rows.sort();
+        rows
+    }
+
+    /// How often the check under way tried to write over a row of
+    /// another module, since this was last asked: a fault of the
+    /// checker, reported as one.
+    pub(super) fn take_overwritten(&mut self) -> usize {
+        self.enums.take_overwritten()
+            + self.records.take_overwritten()
+            + self.traits.take_overwritten()
+            + self.schemes.take_overwritten()
+            + self.impl_methods.rows.take_overwritten()
     }
 
     /// The type aliases and associated-type bindings of the session.
@@ -400,8 +574,7 @@ impl Tables {
             trail: self.vars.trail.clone(),
             types,
             traits: self.traits.take_added(),
-            methods: self.method_table.take_added(),
-            trait_methods: self.trait_methods.take_added(),
+            impl_methods: self.impl_methods.rows.take_added(),
             impls: self.trait_impl_set.take_added(),
             schemes: self.schemes.take_added(),
         }
@@ -427,11 +600,8 @@ impl Tables {
         for t in rows.traits {
             self.traits.remove(&t);
         }
-        for key in rows.methods {
-            self.method_table.remove(&key);
-        }
-        for key in rows.trait_methods {
-            self.trait_methods.remove(&key);
+        for key in rows.impl_methods {
+            self.impl_methods.remove(&key);
         }
         for key in rows.impls {
             self.trait_impl_set.remove(&key);
@@ -439,6 +609,7 @@ impl Tables {
             self.impl_preds.remove(&key);
             self.impl_trait_args.remove(&key);
             self.impl_self_types.remove(&key);
+            self.resolver.unregister_assoc_bindings(key.0, key.1);
         }
         for id in rows.schemes {
             self.schemes.remove(&id);

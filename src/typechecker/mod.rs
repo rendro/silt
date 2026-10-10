@@ -211,10 +211,6 @@ pub struct TypeChecker {
     /// the span of the access; `resolve_all_types` records each on its
     /// access.
     pub(super) deferred_method_traits: HashMap<Span, TraitKey>,
-    /// The methods the impls of two or more traits provide for one type,
-    /// with the traits, where this module sees none or several of the
-    /// traits: a call of one is ambiguous.
-    pub(super) ambiguous_methods: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -325,7 +321,6 @@ impl TypeChecker {
             last_field_access_was_method: false,
             method_trait: None,
             deferred_method_traits: HashMap::new(),
-            ambiguous_methods: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             reach: None,
@@ -883,8 +878,6 @@ impl TypeChecker {
                 _ => None,
             });
         }
-        self.select_visible_methods();
-
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
@@ -1317,10 +1310,10 @@ pub fn out_of_reach_helps(
     let mut helps = Vec::new();
     for (span, ty, method) in tables.unknown_methods.get(&module).into_iter().flatten() {
         let mut found: Vec<(String, String, bool)> = tables
-            .trait_methods
-            .keys()
-            .filter(|(of, name, _)| of == ty && name == method)
-            .filter_map(|(_, _, t)| {
+            .impl_methods
+            .providers(*ty, *method)
+            .iter()
+            .filter_map(|t| {
                 let owner = defs.get(t.id.0).module;
                 let private = tables
                     .traits
@@ -1473,6 +1466,32 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
                 top_level.insert(name, checker.apply(&scheme.ty));
             }
         }
+    }
+    // No check writes over a row of another module: `forget` removes
+    // what a module's check entered, and nothing else.
+    let overwritten = checker.tables.take_overwritten();
+    debug_assert_eq!(
+        overwritten, 0,
+        "the check of '{module_name}' wrote over a row of another module"
+    );
+    if overwritten > 0 {
+        let at = match program.decls.first() {
+            Some(Decl::Fn(f)) => f.span,
+            Some(Decl::Type(t)) => t.span,
+            Some(Decl::Trait(t)) => t.span,
+            Some(Decl::TraitImpl(i)) => i.span,
+            Some(Decl::Import(_, span) | Decl::Let { span, .. }) => *span,
+            None => Span::BUILTIN,
+        };
+        checker.errors.push(Diagnostic::error(
+            Code::CompilerBug,
+            at,
+            format!(
+                "compiler bug: the check of module '{module_name}' declared again what \
+                 another module declares ({overwritten} of the session's rows); the earlier \
+                 declarations stand"
+            ),
+        ));
     }
     *tables = std::mem::take(&mut checker.tables);
     let rows = tables.take_rows();

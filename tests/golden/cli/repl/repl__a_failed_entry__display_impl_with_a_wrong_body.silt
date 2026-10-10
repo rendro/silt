@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stderr-contains: type mismatch: expected String, got Int
+-- stdin: type U { U(Int) }\n"{U(1)}"\ntrait Display for U { fn display(self) -> String { 3 } }\n"{U(1)}"\nU(2)\n[U(3)]\nU(4).display()\nprintln(U(5))\nfn show(x: a) -> String where a: Display { "{x}" }\nshow(U(6))\nU(7) == U(7)\n:quit\n
+-- An entry that writes a Display impl and fails leaves the session as it
+-- was: the type is shown, printed and bounded by its structure as before.

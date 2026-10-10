@@ -1441,23 +1441,17 @@ impl TypeChecker {
         }
         // A `Display` impl is written for the head: in this module
         // (`display_written`, known before its impls are entered), in
-        // another one or in an earlier REPL cell (its method is in
-        // `trait_methods`), or by silt itself (a builtin error enum's,
-        // in the method table). A method `display` of another trait is
-        // no `Display` impl.
-        let display = intern("display");
+        // another one or in an earlier REPL cell, or by silt itself (a
+        // builtin error enum's): its method is a row of the impls'
+        // methods. A method `display` of another trait is no `Display`
+        // impl.
         trait_name.is_builtin("Display")
             && !self.display_written.contains(&head)
             && self
                 .tables
-                .trait_methods
-                .get(&(head, display, trait_name))
-                .is_none_or(|entry| entry.structural)
-            && self
-                .tables
-                .method_table
-                .get(&(head, display))
-                .is_none_or(|entry| entry.structural || entry.trait_name != Some(trait_name))
+                .impl_methods
+                .get(head, intern("display"), trait_name)
+                .is_none()
     }
 
     /// What a message says of a type that lacks the structural trait
@@ -2132,15 +2126,108 @@ impl TypeChecker {
         )
     }
 
+    /// The traits that give the type `ty` a method `method`, in the
+    /// order of their names: those of the session's impls, and the
+    /// structural trait whose method it is when no impl of that trait
+    /// is written for the type.
+    fn method_providers(&self, ty: TypeRef, method: Symbol) -> Vec<TraitKey> {
+        let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
+        if let Some(tr) = self.structural_provider(ty, method)
+            && !traits.contains(&tr)
+        {
+            traits.push(tr);
+        }
+        traits.sort_by_key(|t| self.show_trait(*t));
+        traits
+    }
+
+    /// The structural trait whose method `method` the type `ty` has by
+    /// its structure: one of the four names, of a type that has the
+    /// name (`Tables::has_structural_name`) and no written impl of the
+    /// trait.
+    fn structural_provider(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
+        let method = resolve(method);
+        let (name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == method)?;
+        let tr = TraitKey::builtin(name);
+        (self.tables.has_structural_name(tr, ty) && self.by_structure(tr, ty)).then_some(tr)
+    }
+
+    /// Of the traits that give a type a method (`method_providers`), the
+    /// one a call in the module checked means: the only one; of several,
+    /// the one the module sees (a trait it declares, names by an import
+    /// or reaches through a module it imports, or a builtin trait).
+    /// `Err` with the candidates when it sees none of several, or more
+    /// than one: the call is ambiguous.
+    fn meant_provider(&self, providers: &[TraitKey]) -> Result<Option<TraitKey>, Vec<TraitKey>> {
+        match providers {
+            [] => Ok(None),
+            [t] => Ok(Some(*t)),
+            _ => {
+                let seen: Vec<TraitKey> = providers
+                    .iter()
+                    .copied()
+                    .filter(|t| self.sees_trait(*t))
+                    .collect();
+                match seen.as_slice() {
+                    [t] => Ok(Some(*t)),
+                    [] => Err(providers.to_vec()),
+                    _ => Err(seen),
+                }
+            }
+        }
+    }
+
     /// The method `method` of the type `ty`, if the module checked may
     /// call it: a method of a trait declared in a module it does not
-    /// reach by its imports it has not.
+    /// reach by its imports it has not. It is decided from the impls'
+    /// rows each time. (For a call that is ambiguous the first
+    /// candidate's: `ambiguous_method_call` reports it.)
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
-        let entry = self.tables.method_table.get(&(ty, method))?;
-        match entry.trait_name.and_then(|t| self.unreached(t)) {
-            Some(_) => None,
-            None => Some(entry.clone()),
+        let providers = self.method_providers(ty, method);
+        let tr = match self.meant_provider(&providers) {
+            Ok(tr) => tr?,
+            Err(candidates) => candidates[0],
+        };
+        if self.unreached(tr).is_some() {
+            return None;
         }
+        match self.tables.impl_methods.get(ty, method, tr) {
+            Some(entry) => Some(entry.clone()),
+            // The structural trait's: no row, and no type of its own
+            // (`structural_method` gives it one for the receiver).
+            None => Some(MethodEntry {
+                method_type: Type::Error,
+                structural: true,
+                trait_name: None,
+                preds: Vec::new(),
+            }),
+        }
+    }
+
+    /// Whether a value of the type `ty` has a method `method`, whatever
+    /// the module checked may call.
+    pub(super) fn has_method(&self, ty: TypeRef, method: Symbol) -> bool {
+        !self.method_providers(ty, method).is_empty()
+    }
+
+    /// The names of the methods of the type `ty`.
+    pub(super) fn method_names(&self, ty: TypeRef) -> Vec<Symbol> {
+        let mut names: Vec<Symbol> = self
+            .tables
+            .impl_methods
+            .keys()
+            .filter(|(of, _, _)| *of == ty)
+            .map(|(_, method, _)| *method)
+            .collect();
+        for (_, method) in STRUCTURAL_METHODS {
+            let method = intern(method);
+            if self.structural_provider(ty, method).is_some() {
+                names.push(method);
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Keep that the type `ty` was reported at `span` to have no method
@@ -2162,7 +2249,8 @@ impl TypeChecker {
         method: Symbol,
         span: Span,
     ) -> bool {
-        let Some(traits) = self.ambiguous_methods.get(&(ty, method)).cloned() else {
+        let providers = self.method_providers(ty, method);
+        let Err(traits) = self.meant_provider(&providers) else {
             return false;
         };
         let on = format!("type '{}'", self.show_type(&Type::Generic(ty, vec![])));

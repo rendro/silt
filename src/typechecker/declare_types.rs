@@ -286,47 +286,6 @@ impl TypeChecker {
             }
         }
 
-        // The methods of the structural traits (`Display`, `Equal`,
-        // `Compare`, `Hash`) are names every type has. Whether the type
-        // has the trait is the structural judgement's to say, where a
-        // method is called, an operator used or a bound owed
-        // (`structure_gap`): no impl is made and nothing is stamped. The
-        // VM has each trait natively, over the structure of the value.
-        let builtin_methods: &[(&str, Type)] = &[
-            (
-                "display",
-                Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
-            ),
-            (
-                "equal",
-                Type::Fun(
-                    vec![self.fresh_var(), self.fresh_var()],
-                    Box::new(Type::Bool),
-                ),
-            ),
-            (
-                "compare",
-                Type::Fun(
-                    vec![self.fresh_var(), self.fresh_var()],
-                    Box::new(Type::Int),
-                ),
-            ),
-            (
-                "hash",
-                Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
-            ),
-        ];
-        for (method_name, method_type) in builtin_methods {
-            self.tables.method_table.insert(
-                (ty, intern(method_name)),
-                MethodEntry {
-                    method_type: method_type.clone(),
-                    structural: true,
-                    trait_name: None,
-                    preds: Vec::new(),
-                },
-            );
-        }
         self.current_type_anno_span = prev_type_span;
     }
 

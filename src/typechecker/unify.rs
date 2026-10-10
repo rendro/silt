@@ -648,10 +648,7 @@ impl TypeChecker {
             );
             // A method of the record is not a field of it: what reads
             // a record's fields calls a field.
-            if let Some(method) = missing
-                .iter()
-                .find(|f| self.tables.method_table.contains_key(&(*name, intern(f))))
-            {
+            if let Some(method) = missing.iter().find(|f| self.has_method(*name, intern(f))) {
                 fault.help = Some(format!(
                     "'{method}' is a method of `{shown}`, and what is asked for here is a record with a field '{method}': a value whose fields are read is a record, and `x.{method}(..)` on it calls a field; annotate it, `p: {shown}`"
                 ));

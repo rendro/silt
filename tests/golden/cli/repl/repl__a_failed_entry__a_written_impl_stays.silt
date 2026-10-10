@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stderr-contains: duplicate implementation of trait 'Display' for type 'U'
+-- stdin: type U { U(Int) }\ntrait Display for U { fn display(self) -> String { "first" } }\n"{U(1)}"\ntrait Display for U { fn display(self) -> String { 3 } }\n"{U(1)}"\ntrait Display for U { fn display(self) -> String { "second" } }\n"{U(1)}"\n:quit\n
+-- A Display impl of an earlier entry stays the type's Display when a later
+-- entry writes a second one, which is refused.
