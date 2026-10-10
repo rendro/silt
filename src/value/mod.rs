@@ -20,7 +20,7 @@ pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
-pub use obj::Variant;
+pub use obj::{Record, Variant};
 
 #[derive(Clone)]
 pub enum Value {
@@ -32,8 +32,7 @@ pub enum Value {
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
     Tuple(Arc<[Value]>),
-    /// A record: its type and its fields by name.
-    Record(Arc<TypeInfo>, Arc<BTreeMap<String, Value>>),
+    Record(Record),
     Variant(Variant),
     VmClosure(Arc<bytecode::VmClosure>),
     /// A builtin function: its row of the builtin registry.
@@ -88,9 +87,36 @@ impl Value {
         Value::Tuple(Arc::from(items))
     }
 
-    /// A record of the builtin record type `ty` (`ty::DATE`).
-    pub fn builtin_record(ty: crate::defs::TypeId, fields: BTreeMap<String, Value>) -> Value {
-        Value::Record(crate::typeinfo::builtin_type(ty).clone(), Arc::new(fields))
+    /// The record of the type `ty` with the fields `fields`, in the
+    /// order the type declares them.
+    pub fn record(ty: Arc<TypeInfo>, fields: Vec<Value>) -> Value {
+        Value::Record(Record::new(ty, fields))
+    }
+
+    /// A record of the builtin record type `ty` (`ty::DATE`) with the
+    /// fields `fields`, named, in the order the type declares them.
+    pub fn builtin_record<const N: usize>(
+        ty: crate::defs::TypeId,
+        fields: [(&str, Value); N],
+    ) -> Value {
+        let ty = crate::typeinfo::builtin_type(ty);
+        debug_assert!(
+            ty.fields()
+                .iter()
+                .map(|(name, _)| &**name)
+                .eq(fields.iter().map(|(name, _)| *name)),
+            "the fields of {} are not {:?}",
+            ty.name,
+            fields.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+        );
+        let fields = fields.into_iter().map(|(_, value)| value).collect();
+        Value::record(ty.clone(), fields)
+    }
+
+    /// The anonymous record of the fields `fields`, whose names are
+    /// distinct.
+    pub fn anon_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+        Value::Record(Record::anon(fields.into_iter().collect()))
     }
 }
 
@@ -175,7 +201,7 @@ impl Value {
                         pending.push(v);
                     }
                 }
-                Value::Record(_, fields) => pending.extend(fields.values()),
+                Value::Record(record) => pending.extend(record.fields()),
                 _ => {}
             }
         }

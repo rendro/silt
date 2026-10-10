@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
-use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
+use crate::bytecode::{Instr, Op, VmClosure};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{List, MAX_RANGE_MATERIALIZE, Value};
+use crate::value::{List, MAX_RANGE_MATERIALIZE, Record, Value};
 
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
@@ -64,15 +64,6 @@ pub(super) enum Slice {
 }
 
 impl Vm {
-    /// The strings a list operand of the instruction being run names.
-    fn names(&self, names: crate::bytecode::Operands<crate::bytecode::Const>) -> Vec<String> {
-        let chunk = self.chunk();
-        names
-            .iter(chunk.code())
-            .map(|k| chunk.string(k).to_owned())
-            .collect()
-    }
-
     // ── The loop ──────────────────────────────────────────────────
 
     /// Run the frames above the first `floor`, which are finished when
@@ -772,45 +763,36 @@ impl Vm {
                 self.push(Value::Set(Arc::new(set)));
             }
             Instr::MakeRecord { ty, fields } => {
-                let field_names = self.names(fields);
-                let ty = self.chunk().type_info(ty).clone();
-                let start = self.stack.len() - field_names.len();
-                let mut fields = BTreeMap::new();
-                for (i, name) in field_names.into_iter().enumerate() {
-                    fields.insert(name, self.stack[start + i].clone());
-                }
-                self.stack.truncate(start);
-                self.push(Value::Record(ty, Arc::new(fields)));
+                let start = self.stack.len() - fields.len();
+                let values: Vec<Value> = self.stack.drain(start..).collect();
+                let chunk = self.chunk();
+                let ty = chunk.type_info(ty).clone();
+                let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
+                let record = Record::written(ty, names, values).ok_or_else(|| {
+                    VmError::type_confusion("a record literal's fields are not its type's")
+                })?;
+                self.push(Value::Record(record));
             }
             Instr::RecordUpdate { fields } => {
-                // Functional record update: preserves the base's
-                // `type_name`. Used for both nominal `.{...}` updates
-                // and `{...base, ...}` spreads. Round 83 had introduced
-                // a sibling `RecordUpdateAnon` that rebranded the
-                // result's `type_name` to `"<anon>"` for spread
-                // expressions whose typed result was `Type::AnonRecord`
-                // — round 85's follow-up removed it because round 84's
-                // `Value::PartialEq` + round 85's `Value::Ord` /
-                // `Value::Hash` `<anon>` wildcards close the soundness
-                // gap from the other side, leaving the rebrand strictly
-                // redundant.
-                let field_names = self.names(fields);
-                let start = self.stack.len() - field_names.len();
-                let new_values: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
+                // Functional record update, `r.{ x: 1 }`, and the
+                // fields written after a spread, `{...r, x: 1}`, whose
+                // base is the anonymous record `DestructRecordRest`
+                // made of `r`: see `Record::updated`.
+                let start = self.stack.len() - fields.len();
+                let values: Vec<Value> = self.stack.drain(start..).collect();
                 let base = self.pop();
-                if let Value::Record(type_name, mut existing) = base {
-                    let fields = Arc::make_mut(&mut existing);
-                    for (name, val) in field_names.into_iter().zip(new_values) {
-                        fields.insert(name, val);
-                    }
-                    self.push(Value::Record(type_name, existing));
-                } else {
+                let Value::Record(base) = base else {
                     return Err(VmError::type_confusion(format!(
                         "record update `.{{...}}` requires a record, got {}",
                         self.user_facing_type_name(&base)
                     )));
-                }
+                };
+                let chunk = self.chunk();
+                let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
+                let updated = base.updated(names, values).ok_or_else(|| {
+                    VmError::type_confusion("record update `.{...}` of a field the record has not")
+                })?;
+                self.push(Value::Record(updated));
             }
             Instr::MakeRange => {
                 let end = self.pop();
@@ -848,31 +830,41 @@ impl Vm {
                 result.extend(b);
                 self.push(Value::list(result));
             }
-            Instr::GetField { name } => {
-                let name = self.chunk().string(name).to_owned();
+            Instr::GetField { index } => {
                 let target = self.pop();
-                match target {
-                    Value::Record(_, ref fields) => {
-                        let val = fields.get(&name).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!("record has no field '{name}'"))
-                        })?;
-                        self.push(val);
-                    }
-                    Value::Map(ref map) => {
-                        let val = map
-                            .get(&Value::String(name.clone().into()))
-                            .cloned()
-                            .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
-                        self.push(val);
-                    }
+                let field = match &target {
+                    Value::Record(record) => record.fields().get(index).cloned(),
+                    _ => None,
+                };
+                let field = field.ok_or_else(|| {
+                    VmError::type_confusion(format!(
+                        "cannot access field {index} of {}",
+                        self.user_facing_type_name(&target)
+                    ))
+                })?;
+                self.push(field);
+            }
+            Instr::GetFieldNamed { name: k } => {
+                let target = self.pop();
+                let name = self.chunk().string(k);
+                let field = match &target {
+                    Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
+                        VmError::type_confusion(format!("record has no field '{name}'"))
+                    })?,
+                    // (The key is the constant itself, a String.)
+                    Value::Map(map) => map
+                        .get(self.chunk().constant(k))
+                        .cloned()
+                        .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?,
                     other => {
                         return Err(VmError::type_confusion(format!(
                             "cannot access field '{}' on {}",
                             name,
-                            self.user_facing_type_name(&other)
+                            self.user_facing_type_name(other)
                         )));
                     }
-                }
+                };
+                self.push(field);
             }
             Instr::Jump { to } => {
                 self.frame_mut().ip = to;
@@ -1013,46 +1005,50 @@ impl Vm {
                 };
                 self.push(Value::List(rest));
             }
-            Instr::DestructRecordField { name } => {
-                let name = self.chunk().string(name).to_owned();
-                let val = self.peek().clone();
-                if let Value::Record(_, fields) = val {
-                    let field = fields.get(&name).cloned().ok_or_else(|| {
+            Instr::DestructRecordField { index } => {
+                let field = match self.peek() {
+                    Value::Record(record) => record.fields().get(index).cloned(),
+                    _ => None,
+                };
+                let field = field.ok_or_else(|| {
+                    VmError::type_confusion(format!(
+                        "record destructure: no field {index} in {}",
+                        self.user_facing_type_name(self.peek())
+                    ))
+                })?;
+                self.push(field);
+            }
+            Instr::DestructRecordFieldNamed { name } => {
+                let name = self.chunk().string(name);
+                let field = match self.peek() {
+                    Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
                         VmError::type_confusion(format!("record has no field '{name}'"))
-                    })?;
-                    self.push(field);
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "record destructure: expected record, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
+                    })?,
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "record destructure: expected record, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(field);
             }
             Instr::DestructRecordRest { excluded } => {
-                let excluded = self.names(excluded);
                 let val = self.pop();
-                if let Value::Record(_, fields) = val {
-                    let mut rest_fields: std::collections::BTreeMap<String, Value> =
-                        std::collections::BTreeMap::new();
-                    for (k, v) in fields.iter() {
-                        if !excluded.iter().any(|e| e == k) {
-                            rest_fields.insert(k.clone(), v.clone());
-                        }
-                    }
-                    self.push(Value::builtin_record(
-                        crate::typeinfo::ty::ANON_RECORD,
-                        rest_fields,
-                    ));
-                } else {
+                let Value::Record(record) = &val else {
                     return Err(VmError::type_confusion(format!(
                         "record rest destructure: expected record, got {}",
                         self.user_facing_type_name(&val)
                     )));
-                }
+                };
+                let chunk = self.chunk();
+                let rest = record.rest(excluded.iter(chunk.code()).map(|k| chunk.string(k)));
+                self.push(Value::Record(rest));
             }
             Instr::TestRecordTag { ty } => {
                 let expected = self.chunk().type_info(ty).id;
-                let result = matches!(self.peek(), Value::Record(ty, _) if record_type_matches(ty, expected));
+                let result =
+                    matches!(self.peek(), Value::Record(record) if record.type_id() == expected);
                 self.push(Value::Bool(result));
             }
             Instr::TestMapHasKey { key } => {

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use super::list::Elements;
-use super::{List, TooLong, Value};
+use super::{List, Record, TooLong, Value};
 use crate::typeinfo::ty;
 
 /// What the formatters write of a list.
@@ -82,7 +82,7 @@ impl Value {
                         pending.push(v);
                     }
                 }
-                Value::Record(_, fields) => pending.extend(fields.values()),
+                Value::Record(record) => pending.extend(record.fields()),
                 _ => {}
             }
         }
@@ -116,9 +116,9 @@ impl fmt::Debug for Value {
                 }
                 t.finish()
             }
-            Value::Record(ty, fields) => {
-                write!(f, "{} {{", ty.name)?;
-                for (i, (k, v)) in fields.iter().enumerate() {
+            Value::Record(record) => {
+                write!(f, "{} {{", record.ty().name)?;
+                for (i, (k, v)) in record_fields(record).into_iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
@@ -193,8 +193,10 @@ impl Value {
                 let items: Vec<String> = vs.iter().map(|v| v.format_silt()).collect();
                 format!("({})", items.join(", "))
             }
-            Value::Record(ty, fields) => {
-                let items: Vec<String> = record_fields(ty, fields)
+            Value::Record(record) => {
+                let ty = record.ty();
+                let items: Vec<String> = record_fields(record)
+                    .into_iter()
                     .map(|(k, v)| format!("{k}: {}", v.format_silt()))
                     .collect();
                 // (An anonymous record is written without a name.)
@@ -228,60 +230,12 @@ impl Value {
 }
 
 /// The fields of a record in the order they are written in, in every
-/// text of it: the order the type declares them in; an anonymous
-/// record's, which has no declaration, in name order.
-fn record_fields<'a>(
-    ty: &'a crate::typeinfo::TypeInfo,
-    fields: &'a std::collections::BTreeMap<String, Value>,
-) -> RecordFields<'a> {
-    match &ty.shape {
-        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
-            RecordFields::Declared {
-                declared: declared.iter(),
-                fields,
-                in_step: Some(fields.iter()),
-            }
-        }
-        _ => RecordFields::Named(fields.iter()),
-    }
-}
-
-/// See [`record_fields`].
-enum RecordFields<'a> {
-    Declared {
-        declared: std::slice::Iter<'a, (String, crate::typeinfo::FieldType)>,
-        fields: &'a std::collections::BTreeMap<String, Value>,
-        /// The fields in name order, for as long as the declaration
-        /// has gone in that order too: the next declared field is then
-        /// the next of these, and is not looked up.
-        in_step: Option<std::collections::btree_map::Iter<'a, String, Value>>,
-    },
-    Named(std::collections::btree_map::Iter<'a, String, Value>),
-}
-
-impl<'a> Iterator for RecordFields<'a> {
-    type Item = (&'a str, &'a Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            RecordFields::Declared {
-                declared,
-                fields,
-                in_step,
-            } => loop {
-                let (name, _) = declared.next()?;
-                if let Some(by_name) = in_step {
-                    match by_name.next() {
-                        Some((key, value)) if key == name => return Some((name.as_str(), value)),
-                        _ => *in_step = None,
-                    }
-                }
-                if let Some(value) = fields.get(name.as_str()) {
-                    return Some((name.as_str(), value));
-                }
-            },
-            RecordFields::Named(fields) => fields.next().map(|(name, v)| (name.as_str(), v)),
-        }
+/// text of it: the order the type declares them in; a builtin record's,
+/// and an anonymous record's, which has no declaration, in name order.
+fn record_fields(record: &Record) -> Vec<(&str, &Value)> {
+    match record.ty().is_builtin() {
+        true => record.by_name(),
+        false => record.named().collect(),
     }
 }
 
@@ -424,18 +378,18 @@ impl Value {
                 }
                 write!(f, ")")
             }
-            Value::Record(ty, fields) => match ty.id {
+            Value::Record(record) => match record.type_id() {
                 ty::DATE => {
-                    let y = val_i64(fields.get("year"));
-                    let m = val_i64(fields.get("month"));
-                    let d = val_i64(fields.get("day"));
+                    let y = val_i64(record.get("year"));
+                    let m = val_i64(record.get("month"));
+                    let d = val_i64(record.get("day"));
                     write!(f, "{y:04}-{m:02}-{d:02}")
                 }
                 ty::TIME => {
-                    let h = val_i64(fields.get("hour"));
-                    let m = val_i64(fields.get("minute"));
-                    let s = val_i64(fields.get("second"));
-                    let ns = val_i64(fields.get("ns"));
+                    let h = val_i64(record.get("hour"));
+                    let m = val_i64(record.get("minute"));
+                    let s = val_i64(record.get("second"));
+                    let ns = val_i64(record.get("ns"));
                     if ns > 0 {
                         write!(f, "{h:02}:{m:02}:{s:02}.{ns:09}")
                     } else {
@@ -443,21 +397,21 @@ impl Value {
                     }
                 }
                 ty::DATE_TIME => {
-                    if let (Some(date), Some(time)) = (fields.get("date"), fields.get("time")) {
+                    if let (Some(date), Some(time)) = (record.get("date"), record.get("time")) {
                         write!(f, "{date}T{time}")
                     } else {
                         write!(f, "DateTime {{}}")
                     }
                 }
-                ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
+                ty::DURATION => fmt_duration(f, val_i64(record.get("ns"))),
                 _ => {
                     // (An anonymous record is written without a name.)
-                    if !ty.is_anon() {
-                        f.write_str(&ty.name)?;
+                    if !record.ty().is_anon() {
+                        f.write_str(&record.ty().name)?;
                         f.write_str(" ")?;
                     }
                     f.write_str("{")?;
-                    for (i, (k, v)) in record_fields(ty, fields).enumerate() {
+                    for (i, (k, v)) in record_fields(record).into_iter().enumerate() {
                         if i > 0 {
                             f.write_str(", ")?;
                         }

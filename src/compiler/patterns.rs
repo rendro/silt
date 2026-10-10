@@ -10,10 +10,25 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, Compiler, name_without_binding};
+use super::{BindDestructKind, Compiler, FieldRead, name_without_binding};
 use crate::diagnostic::{Code, Diagnostic};
 
 impl Compiler {
+    /// The declared record type the record pattern `pattern` names, if
+    /// it names one (`Pt { x }`).
+    fn pattern_record_type(
+        &self,
+        pattern: &Pattern,
+        span: Span,
+    ) -> Result<Option<std::sync::Arc<crate::typeinfo::TypeInfo>>, Diagnostic> {
+        match &pattern.kind {
+            PatternKind::Record {
+                name: Some(name), ..
+            } => self.record_type(pattern.res, *name, span).map(Some),
+            _ => Ok(None),
+        }
+    }
+
     /// Emit the shape test of a tuple pattern with `len` elements for the
     /// value on TOS and return the failure jump. The pattern `()` has no
     /// elements and matches the unit value, which is not a tuple at run
@@ -225,9 +240,11 @@ impl Compiler {
             PatternKind::Record { name, fields, .. } => {
                 let mut all_jumps = Vec::new();
 
-                if let Some(type_name) = name {
-                    let ty = self.record_type(pattern.res, *type_name, span)?;
-                    let idx = self.add_constant(Value::TypeDescriptor(ty), span)?;
+                let ty = self.pattern_record_type(pattern, span)?;
+                if name.is_some()
+                    && let Some(ty) = &ty
+                {
+                    let idx = self.add_constant(Value::TypeDescriptor(ty.clone()), span)?;
                     self.emit(Asm::TestRecordTag { ty: idx }, span)?;
                     let tag_jump = self.jump_if_false(span)?;
                     all_jumps.push((tag_jump, base_depth));
@@ -239,9 +256,8 @@ impl Compiler {
                         None => continue,
                     };
                     if !sub_pattern.irrefutable {
-                        let field_idx =
-                            self.add_constant(Value::String(resolve(*field_name).into()), span)?;
-                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
+                        let field = Self::field_read(ty.as_deref(), *field_name);
+                        self.emit_destruct_field(field, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
                         self.emit(Asm::Pop, span)?;
@@ -260,9 +276,7 @@ impl Compiler {
                         None => continue,
                     };
                     if !sub_pattern.irrefutable {
-                        let field_idx =
-                            self.add_constant(Value::String(resolve(*field_name).into()), span)?;
-                        self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
+                        self.emit_destruct_field(FieldRead::Named(*field_name), span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
                         self.emit(Asm::Pop, span)?;
@@ -556,21 +570,20 @@ impl Compiler {
             }
 
             PatternKind::Record { fields, .. } => {
+                let ty = self.pattern_record_type(pattern, span)?;
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
                 for (field_name, _, sub_pat) in fields {
+                    let field = Self::field_read(ty.as_deref(), *field_name);
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
-                                items.push((
-                                    BindDestructKind::RecordField(*field_name),
-                                    pat.clone(),
-                                ));
+                                items.push((BindDestructKind::RecordField(field), pat.clone()));
                             }
                         }
                         None => {
                             // Shorthand: { name } binds field to local with same name
                             items.push((
-                                BindDestructKind::RecordField(*field_name),
+                                BindDestructKind::RecordField(field),
                                 Pattern::new(PatternKind::Ident(*field_name), pattern.span),
                             ));
                         }
@@ -586,14 +599,14 @@ impl Compiler {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
                                 items.push((
-                                    BindDestructKind::RecordField(*field_name),
+                                    BindDestructKind::RecordField(FieldRead::Named(*field_name)),
                                     pat.clone(),
                                 ));
                             }
                         }
                         None => {
                             items.push((
-                                BindDestructKind::RecordField(*field_name),
+                                BindDestructKind::RecordField(FieldRead::Named(*field_name)),
                                 Pattern::new(PatternKind::Ident(*field_name), pattern.span),
                             ));
                         }
@@ -816,10 +829,8 @@ impl Compiler {
                 BindDestructKind::ListRest(start) => {
                     self.emit(Asm::DestructListRest { start: *start }, span)?;
                 }
-                BindDestructKind::RecordField(name) => {
-                    let field_idx =
-                        self.add_constant(Value::String(resolve(*name).into()), span)?;
-                    self.emit(Asm::DestructRecordField { name: field_idx }, span)?;
+                BindDestructKind::RecordField(field) => {
+                    self.emit_destruct_field(*field, span)?;
                 }
                 BindDestructKind::RecordRest(names) => {
                     // `Op::DestructRecordRest` pops its input and pushes the

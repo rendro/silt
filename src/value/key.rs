@@ -1,25 +1,10 @@
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use super::list::Elements;
-use super::{List, Value, Variant};
-use crate::typeinfo::ty;
-
-/// Compare a named field in two record field maps.
-fn cmp_record_field(
-    a: &BTreeMap<String, Value>,
-    b: &BTreeMap<String, Value>,
-    key: &str,
-) -> Ordering {
-    match (a.get(key), b.get(key)) {
-        (Some(x), Some(y)) => x.cmp(y),
-        (Some(_), None) => Ordering::Greater,
-        (None, Some(_)) => Ordering::Less,
-        (None, None) => Ordering::Equal,
-    }
-}
+use super::{List, Record, Value, Variant};
+use crate::typeinfo::{TypeInfo, ty};
 
 /// The order of a list that holds the elements `items` and the list
 /// of the Ints from `lo` to `hi`: element by element, and a list that
@@ -136,6 +121,70 @@ impl Ord for Variant {
     }
 }
 
+/// Whether the type of `record` declares its fields in the order of
+/// their names (an anonymous record's type does).
+fn in_name_order(record: &Record) -> bool {
+    record.ty().fields().is_sorted_by(|(a, _), (b, _)| a <= b)
+}
+
+/// Whether records of the type `ty` are ordered by their fields in
+/// name order: a builtin record but `Date`, `Time` and `DateTime`,
+/// which like a record of a program's type go in the order of their
+/// declaration, the largest unit first.
+fn ordered_by_name(ty: &TypeInfo) -> bool {
+    ty.is_builtin() && !matches!(ty.id, ty::DATE | ty::TIME | ty::DATE_TIME)
+}
+
+/// Two records of one declared type are equal if their fields are.
+///
+/// The typechecker let a nominal record and an anonymous record of the
+/// same shape meet (`unify_anon_nominal`) with no change to the value,
+/// so when either side is anonymous the fields alone decide, by their
+/// names. Two nominal types (`Person{x:1}` vs `Car{x:1}`) are never
+/// unified and compare unequal.
+impl PartialEq for Record {
+    fn eq(&self, other: &Record) -> bool {
+        let (a, b) = (self.ty(), other.ty());
+        if Arc::ptr_eq(a, b) || (a.id == b.id && !a.is_anon()) {
+            return self.fields() == other.fields();
+        }
+        (a.is_anon() || b.is_anon()) && self.by_name() == other.by_name()
+    }
+}
+
+impl Eq for Record {}
+
+impl PartialOrd for Record {
+    fn partial_cmp(&self, other: &Record) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Records of one declared type order by their fields in the order the
+/// type declares them; records of two types by the types' ids.
+///
+/// Mirror the `<anon>` wildcard of `PartialEq`: when either side is an
+/// anonymous record, the typechecker has already decided these are the
+/// same type, and Ord must agree so that `a == b ⇒ cmp(a, b) == Equal`;
+/// otherwise BTreeSet / BTreeMap would treat equal values as distinct.
+/// An anonymous record, which has no declaration, orders by its fields
+/// in name order, and so does a builtin record ([`ordered_by_name`]).
+impl Ord for Record {
+    fn cmp(&self, other: &Record) -> Ordering {
+        let (a, b) = (self.ty(), other.ty());
+        if Arc::ptr_eq(a, b) && a.is_anon() {
+            return self.named().cmp(other.named());
+        }
+        if a.is_anon() || b.is_anon() {
+            return self.by_name().cmp(&other.by_name());
+        }
+        a.id.cmp(&b.id).then_with(|| match ordered_by_name(a) {
+            true => self.by_name().cmp(&other.by_name()),
+            false => self.fields().cmp(other.fields()),
+        })
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -149,18 +198,7 @@ impl PartialEq for Value {
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
-            // The typechecker lets a nominal record and an anonymous
-            // record of the same shape meet (`unify_anon_nominal`) with
-            // no change to the value, so when either side is anonymous
-            // the fields alone decide. Two nominal types (`Person{x:1}`
-            // vs `Car{x:1}`) are never unified and compare unequal.
-            (Value::Record(ta, fa), Value::Record(tb, fb)) => {
-                if ta.is_anon() || tb.is_anon() {
-                    fa == fb
-                } else {
-                    ta.id == tb.id && fa == fb
-                }
-            }
+            (Value::Record(a), Value::Record(b)) => a == b,
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id == b.id,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id() == b.id(),
@@ -253,43 +291,7 @@ impl Ord for Value {
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),
             (Value::Set(a), Value::Set(b)) => a.iter().cmp(b.iter()),
-            (Value::Record(ta, fa), Value::Record(tb, fb)) => {
-                // Mirror the `<anon>` wildcard of `PartialEq`: when either
-                // side is an anonymous record, the typechecker has
-                // already decided these are the same type, and Ord must
-                // agree so that `a == b ⇒ cmp(a, b) == Equal`; otherwise
-                // BTreeSet / BTreeMap would treat equal values as
-                // distinct. Records of one builtin time type order by
-                // their fields from the largest unit down; a record of
-                // a declared type by its fields in the order the type
-                // declares them; an anonymous record, which has no
-                // declaration, by its fields in name order.
-                if ta.is_anon() || tb.is_anon() {
-                    fa.iter().cmp(fb.iter())
-                } else {
-                    ta.id.cmp(&tb.id).then_with(|| match ta.id {
-                        ty::DATE => cmp_record_field(fa, fb, "year")
-                            .then_with(|| cmp_record_field(fa, fb, "month"))
-                            .then_with(|| cmp_record_field(fa, fb, "day")),
-                        ty::TIME => cmp_record_field(fa, fb, "hour")
-                            .then_with(|| cmp_record_field(fa, fb, "minute"))
-                            .then_with(|| cmp_record_field(fa, fb, "second"))
-                            .then_with(|| cmp_record_field(fa, fb, "ns")),
-                        ty::DATE_TIME => cmp_record_field(fa, fb, "date")
-                            .then_with(|| cmp_record_field(fa, fb, "time")),
-                        _ => match &ta.shape {
-                            crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
-                                declared
-                                    .iter()
-                                    .map(|(name, _)| cmp_record_field(fa, fb, name))
-                                    .find(|ordering| ordering.is_ne())
-                                    .unwrap_or(Ordering::Equal)
-                            }
-                            _ => fa.iter().cmp(fb.iter()),
-                        },
-                    })
-                }
-            }
+            (Value::Record(a), Value::Record(b)) => a.cmp(b),
             (Value::Variant(a), Value::Variant(b)) => a.cmp(b),
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
@@ -376,19 +378,24 @@ impl Hash for Value {
                     v.hash(state);
                 }
             }
-            Value::Record(_, fields) => {
+            Value::Record(record) => {
                 state.write_u8(9);
                 // Do NOT hash the type. `PartialEq` treats an anonymous
                 // record as equal to a nominal one with the same fields
                 // (the `<anon>` wildcard), so the Hash contract `a == b ⇒
                 // hash(a) == hash(b)` requires the same fields to hash to
-                // the same value whatever the type. Two distinct nominal
-                // types with the same fields (`Person{x:1}` vs
+                // the same value whatever the type, and so in one
+                // order whatever the type's: the names'. Two distinct
+                // nominal types with the same fields (`Person{x:1}` vs
                 // `Car{x:1}`) still compare unequal, so they just
                 // hash-collide and are told apart by Eq.
-                for (k, v) in fields.iter() {
-                    k.hash(state);
-                    v.hash(state);
+                let mut field = |(name, value): (&str, &Value)| {
+                    name.hash(state);
+                    value.hash(state);
+                };
+                match in_name_order(record) {
+                    true => record.named().for_each(&mut field),
+                    false => record.by_name().into_iter().for_each(&mut field),
                 }
             }
             Value::Variant(variant) => {

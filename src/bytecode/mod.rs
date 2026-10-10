@@ -240,20 +240,6 @@ impl Globals {
     }
 }
 
-// ── Record types ───────────────────────────────────────────────────
-
-/// Whether a record of the type `ty` satisfies a check for the nominal
-/// record type `expected`. A record built from an anonymous record
-/// literal (`{x: 1}`) or bound by a record rest pattern satisfies every
-/// check: the typechecker lets such a value flow wherever a nominal
-/// record of the same shape is expected, and has already proved the
-/// shapes agree. This is the one rule every run-time record-type check
-/// uses (pattern tests, builtins that accept a `Date`/`Response`/...
-/// record).
-pub fn record_type_matches(ty: &TypeInfo, expected: TypeId) -> bool {
-    ty.id == expected || ty.is_anon()
-}
-
 // ── Operands the compiler names ────────────────────────────────────
 
 /// A constant of a function, by its index in the function's pool. The

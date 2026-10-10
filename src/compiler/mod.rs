@@ -88,6 +88,21 @@ struct UndecodableField {
     part: String,
 }
 
+// ── Reading a field ──────────────────────────────────────────────────
+
+/// How code reads a field of a record.
+#[derive(Clone, Copy)]
+enum FieldRead {
+    /// At the place the record's type declares the field: the type is a
+    /// declared record the compiler knows (the receiver's checked type,
+    /// the type a pattern names).
+    Slot(usize),
+    /// By its name, in the type of the record that is there when the
+    /// code runs: an anonymous record, or a record behind an open row
+    /// (`{x: T, ...r}`), which a declared record flows into as itself.
+    Named(Symbol),
+}
+
 // ── Bind destruct kind ───────────────────────────────────────────────
 
 /// Describes how to destructure a sub-value from a compound pattern.
@@ -96,7 +111,7 @@ enum BindDestructKind {
     Tuple(usize),
     List(usize),
     ListRest(usize),
-    RecordField(Symbol),
+    RecordField(FieldRead),
     /// Anonymous record `...rest` capture: produces a new record containing
     /// every field of the parent record except those listed here.
     RecordRest(Vec<Symbol>),
@@ -1297,8 +1312,7 @@ impl Compiler {
             // the checker.)
             ExprKind::FieldAccess(expr, field, _) => {
                 self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(resolve(*field).into()), span)?;
-                self.emit(Asm::GetField { name: name_idx }, span)?;
+                self.emit_get_field(self.receiver_field(expr, *field), span)?;
             }
 
             ExprKind::StringInterp(parts) => {
@@ -1519,13 +1533,14 @@ impl Compiler {
                     self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
                 } else {
                     // Closed anon record literal: same encoding as nominal
-                    // RecordCreate but with the anonymous record type,
-                    // which every run-time record-type check accepts (see
-                    // `bytecode::record_type_matches`).
+                    // RecordCreate but with the type of the anonymous
+                    // records of these fields.
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                    let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
-                    let ty = self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
+                    let mut names: Vec<String> = field_names.iter().map(|n| resolve(*n)).collect();
+                    names.sort();
+                    let anon = crate::typeinfo::anon_record_type(names.iter().map(|n| &**n));
+                    let ty = self.add_constant(Value::TypeDescriptor(anon), span)?;
                     let fields = self.name_constants(&field_names, span)?;
                     self.emit(
                         Asm::MakeRecord {
@@ -1830,8 +1845,7 @@ impl Compiler {
             // The function a field holds: an ordinary call of it.
             Some(Selection::FieldCall) => {
                 self.compile_expr(receiver)?;
-                let name = self.add_constant(Value::String(resolve(method).into()), span)?;
-                self.emit(Asm::GetField { name }, span)?;
+                self.emit_get_field(self.receiver_field(receiver, method), span)?;
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
@@ -2069,6 +2083,48 @@ impl Compiler {
             None => crate::typeinfo::builtin_type_named(&resolve(name))
                 .cloned()
                 .ok_or_else(|| checker_missed(span, &format!("the unresolved type '{name}'"))),
+        }
+    }
+
+    /// How the field `field` of the record `receiver` evaluates to is
+    /// read: at its place, if the checker gave the receiver a declared
+    /// record type.
+    fn receiver_field(&self, receiver: &Expr, field: Symbol) -> FieldRead {
+        let declared = match &receiver.ty {
+            Some(Type::Generic(ty, _)) => Some(self.type_info(ty.id)),
+            _ => None,
+        };
+        Self::field_read(declared.as_deref(), field)
+    }
+
+    /// How the field `field` of a record is read: at its place in the
+    /// declared type `ty`, by its name without one.
+    fn field_read(ty: Option<&TypeInfo>, field: Symbol) -> FieldRead {
+        match ty.and_then(|ty| ty.field_index(&resolve(field))) {
+            Some(slot) => FieldRead::Slot(slot),
+            None => FieldRead::Named(field),
+        }
+    }
+
+    /// Replace the record on top of the stack with its field.
+    fn emit_get_field(&mut self, field: FieldRead, span: Span) -> Result<(), Diagnostic> {
+        match field {
+            FieldRead::Slot(index) => self.emit(Asm::GetField { index }, span),
+            FieldRead::Named(name) => {
+                let name = self.add_constant(Value::String(resolve(name).into()), span)?;
+                self.emit(Asm::GetFieldNamed { name }, span)
+            }
+        }
+    }
+
+    /// Push the field of the record on top of the stack.
+    fn emit_destruct_field(&mut self, field: FieldRead, span: Span) -> Result<(), Diagnostic> {
+        match field {
+            FieldRead::Slot(index) => self.emit(Asm::DestructRecordField { index }, span),
+            FieldRead::Named(name) => {
+                let name = self.add_constant(Value::String(resolve(name).into()), span)?;
+                self.emit(Asm::DestructRecordFieldNamed { name }, span)
+            }
         }
     }
 

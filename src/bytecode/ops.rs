@@ -159,7 +159,7 @@ impl<T: Packed> Operands<T> {
 
     /// The items, read from `code`: the code the instruction was decoded
     /// from.
-    pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = T> + 'c
+    pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = T> + Clone + 'c
     where
         T: 'c,
     {
@@ -797,7 +797,8 @@ ops! {
     /// Create a set from the top `count` values.
     MakeSet { count: U16("elements of a set literal") } => pops count, pushes 1;
     /// Create a record of the type whose descriptor the constant is,
-    /// with the top values as the named fields, in order.
+    /// with the top values as the named fields, in the order they are
+    /// written in: each goes where the type declares its field.
     MakeRecord { ty: Type, fields: Strs("fields of a record") } => pops fields.len(), pushes 1;
     /// Functional record update: the record under the top values with
     /// them as the named fields. The result has the base's type.
@@ -808,8 +809,13 @@ ops! {
     ListConcat => pops 2, pushes 1;
 
     // ── Field access ───────────────────────────────────────────
-    /// Access the named field of TOS.
-    GetField { name: Str } => pops 1, pushes 1;
+    /// The field at `index` of TOS, a record of a declared type: the
+    /// field the type declares there.
+    GetField { index: U16("fields of a record") } => pops 1, pushes 1;
+    /// The named field of TOS, a record whose type is not known where
+    /// the code is compiled: an anonymous record, or a record behind an
+    /// open row.
+    GetFieldNamed { name: Str } => pops 1, pushes 1;
 
     // ── Control flow ───────────────────────────────────────────
     /// Jump, forward or back.
@@ -847,8 +853,12 @@ ops! {
     DestructList { index: U8("elements of a list pattern") } => pops 1, pushes 2;
     /// Extract the list's tail from `start`. Peek list, push rest.
     DestructListRest { start: U8("elements of a list pattern") } => pops 1, pushes 2;
-    /// Extract the named record field. Peek record, push value.
-    DestructRecordField { name: Str } => pops 1, pushes 2;
+    /// Extract the field at `index` of a record of a declared type.
+    /// Peek record, push value.
+    DestructRecordField { index: U16("fields of a record") } => pops 1, pushes 2;
+    /// Extract the named field of a record whose type is not known
+    /// where the code is compiled. Peek record, push value.
+    DestructRecordFieldNamed { name: Str } => pops 1, pushes 2;
     /// Construct a new record from TOS by removing the listed field
     /// names. The record on TOS is consumed (popped) and a new
     /// anonymous `Value::Record` of the fields minus the excluded ones is
@@ -856,9 +866,7 @@ ops! {
     /// the `...rest` portion.
     DestructRecordRest { excluded: Strs("fields of an anonymous record pattern") } => pops 1, pushes 1;
     /// Test if TOS is a record of the type whose descriptor the
-    /// constant is, or an anonymous record (see
-    /// [`record_type_matches`](super::record_type_matches)). Peek, push
-    /// bool.
+    /// constant is. Peek, push bool.
     TestRecordTag { ty: Type } => pops 1, pushes 2;
     /// Test if TOS map contains the key. Peek, push bool.
     TestMapHasKey { key: Str } => pops 1, pushes 2;
