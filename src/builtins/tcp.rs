@@ -20,7 +20,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use super::common::ok;
+use super::common::{READ_AT_ONCE, ok};
 use super::typed::{self, Bytes, builtins};
 use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
@@ -627,7 +627,10 @@ builtins! {
         }
         let stop = stopper(&stream);
         vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-            let mut buf = vec![0u8; max];
+            // One read takes no more than this at once, whatever was
+            // asked for: the buffer is for what can arrive, not for
+            // the number.
+            let mut buf = vec![0u8; max.min(READ_AT_ONCE)];
             match stream.read(&mut buf) {
                 Ok(n) => {
                     buf.truncate(n);
@@ -661,9 +664,8 @@ builtins! {
         }
         let stop = stopper(&stream);
         vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-            let mut buf = vec![0u8; n];
-            match stream.read_exact(&mut buf) {
-                Ok(()) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
+            match stream.read_exact(n) {
+                Ok(buf) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
                 Err(e) => tcp_io_err(&e),
             }
         })

@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::common::ok;
+use super::common::{READ_AT_ONCE, ok};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
 use super::typed::{Arg, Chan, Elements, List, builtins, unsound};
@@ -613,15 +613,28 @@ builtins! {
         let path = path.to_string();
         let mut file: Option<std::fs::File> = None;
         reading(vm, "stream.file_chunks", None, move || {
-            use std::io::Read;
+            use std::io::{Read, Seek};
             if file.is_none() {
                 match std::fs::File::open(&path) {
                     Ok(opened) => file = Some(opened),
                     Err(e) => return Some(err_io(&e)),
                 }
             }
-            let mut buf = vec![0u8; n];
-            match file.as_mut()?.read(&mut buf) {
+            let file = file.as_mut()?;
+            // A chunk larger than one read takes is as large as what
+            // the file still has, if that is known.
+            let size = match n <= READ_AT_ONCE {
+                true => n,
+                false => {
+                    let left = file.metadata().ok().and_then(|meta| {
+                        let at = file.stream_position().ok()?;
+                        usize::try_from(meta.len().saturating_sub(at)).ok()
+                    });
+                    n.min(left.unwrap_or(0).max(READ_AT_ONCE))
+                }
+            };
+            let mut buf = vec![0u8; size];
+            match file.read(&mut buf) {
                 Ok(0) => None,
                 Ok(read) => {
                     buf.truncate(read);
@@ -661,7 +674,7 @@ builtins! {
             "stream.tcp_chunks",
             stopper(&stream_handle),
             move || {
-                let mut buf = vec![0u8; n];
+                let mut buf = vec![0u8; n.min(READ_AT_ONCE)];
                 let read = stream_handle.read(&mut buf);
                 match read {
                     Ok(0) => None,

@@ -3,6 +3,13 @@
 use crate::typeinfo::bv;
 use crate::value::Value;
 
+/// The most bytes one read of a connection takes (`tcp.read`, a chunk
+/// of `stream.tcp_chunks`), and one read of a file of no known length
+/// (`stream.file_chunks`): a caller may ask for more, and gets what one
+/// read of this size gives. The buffer of a read is for what can
+/// arrive, never for the number asked for.
+pub(crate) const READ_AT_ONCE: usize = 64 * 1024;
+
 pub(crate) fn ok(v: Value) -> Value {
     Value::variant(bv::OK, vec![v])
 }
