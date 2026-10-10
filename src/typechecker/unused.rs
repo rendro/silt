@@ -21,11 +21,21 @@ impl TypeChecker {
     /// `fix_statement_calls`.
     pub(super) fn note_statement(&mut self, stmt: &Stmt, ty: &Type) {
         if let Stmt::Expr(e) = stmt
-            && matches!(self.apply(ty), Type::Var(_))
+            && let Type::Var(v) = self.apply(ty)
             && self.is_call_like(e)
         {
-            self.statement_calls.push(ty.clone());
+            self.await_statement_call(v, ty.clone());
         }
+    }
+
+    /// File the type `ty` of a statement call, the unresolved variable
+    /// `v`, under the scope that decides `v`.
+    fn await_statement_call(&mut self, v: TyVar, ty: Type) {
+        let level = self.tables.vars.level_of(v) as usize;
+        if self.statement_calls.len() <= level {
+            self.statement_calls.resize_with(level + 1, Vec::new);
+        }
+        self.statement_calls[level].push(ty);
     }
 
     /// Give `()` to the calls that stand as statements and whose type is
@@ -34,15 +44,26 @@ impl TypeChecker {
     /// of an outer binding waits: a later definition may decide it.
     /// Returns whether a type was decided: what the scope owes for it
     /// is to be checked again.
+    ///
+    /// Only the calls filed under the scopes that ended are looked at:
+    /// one that waits for an outer scope is filed under that scope, and
+    /// is not read again until it ends.
     pub(super) fn fix_statement_calls(&mut self, all: bool) -> bool {
+        let keep = match all {
+            true => 0,
+            false => self.tables.vars.level() as usize + 1,
+        };
         let mut fixed = false;
-        for ty in std::mem::take(&mut self.statement_calls) {
-            match self.apply(&ty) {
-                Type::Var(v) if all || self.tables.vars.is_generalizable(v) => {
-                    fixed |= self.unify_types(&ty, &Type::Unit).is_ok();
+        while self.statement_calls.len() > keep {
+            for ty in self.statement_calls.pop().unwrap_or_default() {
+                match self.apply(&ty) {
+                    Type::Var(v) if all || self.tables.vars.is_generalizable(v) => {
+                        fixed |= self.unify_types(&ty, &Type::Unit).is_ok();
+                    }
+                    // (Its level is below the scopes that ended.)
+                    Type::Var(v) => self.await_statement_call(v, ty),
+                    _ => {}
                 }
-                Type::Var(_) => self.statement_calls.push(ty),
-                _ => {}
             }
         }
         fixed

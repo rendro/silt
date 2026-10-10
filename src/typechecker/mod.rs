@@ -223,8 +223,9 @@ pub struct TypeChecker {
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
     /// The types of the calls that stand as statements and are still
-    /// unknown (see `unused`).
-    pub(super) statement_calls: Vec<Type>,
+    /// unknown (see `unused`), by the level of the variable each is:
+    /// the scope that decides it.
+    pub(super) statement_calls: Vec<Vec<Type>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// Its name, for diagnostics.
