@@ -1,0 +1,11 @@
+-- cmd: lsp
+-- without-feature: tcp-tls
+-- lsp: hover 10:16
+-- A function of a cargo feature that this build of silt lacks is not
+-- known to the checker (the diagnostic says what it needs). Hover on it
+-- shows its signature and summary and names the feature.
+import tcp
+
+fn main() {
+  let a = tcp.connect_tls
+}

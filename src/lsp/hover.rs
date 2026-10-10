@@ -158,7 +158,10 @@ impl Server {
         // dropping the broken top block is strictly an improvement.
         let mut value = String::new();
         if let Some(t) = ty {
-            let render_top_signature = !(has_unresolved_vars(&t) && doc_text.is_some());
+            // (So does a name the checker has no type for, a function
+            // of a feature that is not built: its docs say what it is.)
+            let untyped = has_unresolved_vars(&t) || matches!(t, crate::types::Type::Error);
+            let render_top_signature = !(untyped && doc_text.is_some());
             if render_top_signature {
                 value.push_str(&format!("```silt\n{t}\n```"));
             }
