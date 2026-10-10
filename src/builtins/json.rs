@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-use super::common::value_kind;
 use super::time::{make_date, make_datetime, make_time};
+use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
 use crate::value::{Value, checked_range_len};
@@ -347,27 +347,13 @@ fn json_to_record_list(
     Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
 }
 
-fn json_to_map(
-    vm: &mut Vm,
-    value_type: &Value,
-    json: &serde_json::Value,
-) -> Result<Value, VmError> {
+fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
     let field_type = match value_type {
-        Value::PrimitiveDescriptor(name) => match name.as_str() {
-            "String" => FieldType::String,
-            "Int" => FieldType::Int,
-            "Float" => FieldType::Float,
-            "Bool" => FieldType::Bool,
-            other => {
-                return Ok(json_unknown_err(format!(
-                    "json.parse_map: unknown value type '{other}'"
-                )));
-            }
-        },
-        Value::TypeDescriptor(ty) => {
+        Type::Primitive(field_type) => field_type,
+        Type::Named(ty) => {
             if decodable_record("json.parse_map", ty).is_err() {
                 return Ok(json_unknown_err(format!(
                     "json.parse_map: unknown value type '{}'",
@@ -375,11 +361,6 @@ fn json_to_map(
                 )));
             }
             FieldType::Record(ty.id)
-        }
-        _ => {
-            return Err(VmError::new(
-                "json.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
-            ));
         }
     };
     let mut map = BTreeMap::new();
@@ -554,121 +535,56 @@ fn json_to_typed_value(
     }
 }
 
-// ── JSON dispatch ───────────────────────────────────────────────────
+// ── The functions ───────────────────────────────────────────────────
 
-/// Dispatch `json.<name>(args)`.
-pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "parse" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "json.parse takes 2 arguments: (String, type a)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "json.parse requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let s = s.clone();
-            match &args[1] {
-                Value::PrimitiveDescriptor(name) => {
-                    // Primitive descriptor path: decode JSON scalars directly
-                    // into `Value::Int / Float / String / Bool`,
-                    // returning the typed `Result(a, JsonError)` shape.
-                    let field_type = match name.as_str() {
-                        "Int" => FieldType::Int,
-                        "Float" => FieldType::Float,
-                        "String" => FieldType::String,
-                        "Bool" => FieldType::Bool,
-                        other => {
-                            return Err(VmError::new(format!(
-                                "json.parse: unsupported primitive descriptor '{other}'"
-                            )));
-                        }
-                    };
-                    match serde_json::from_str::<serde_json::Value>(&s) {
-                        Ok(json_val) => match json_to_typed_value(vm, &json_val, &field_type) {
-                            Ok(val) => Ok(Value::variant(bv::OK, vec![val])),
-                            Err(e) => Ok(decode_err_to_silt(e)),
-                        },
-                        Err(e) => Ok(json_result_err(&e)),
-                    }
+builtins! {
+    fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let parsed = serde_json::from_str::<serde_json::Value>(s);
+        match ty {
+            // A primitive type: a JSON scalar, decoded as it is.
+            Type::Primitive(field_type) => Ok(match parsed {
+                Ok(json) => match json_to_typed_value(vm, &json, &field_type) {
+                    Ok(val) => Value::variant(bv::OK, vec![val]),
+                    Err(e) => decode_err_to_silt(e),
+                },
+                Err(e) => json_result_err(&e),
+            }),
+            Type::Named(ty) => {
+                let fields = decodable_record("json.parse", ty)?;
+                match parsed {
+                    Ok(json) => json_to_record(vm, ty, &fields, &json),
+                    Err(e) => Ok(json_result_err(&e)),
                 }
-                Value::TypeDescriptor(ty) => {
-                    let ty = ty.clone();
-                    let fields = decodable_record("json.parse", &ty)?;
-                    match serde_json::from_str::<serde_json::Value>(&s) {
-                        Ok(json_val) => json_to_record(vm, &ty, &fields, &json_val),
-                        Err(e) => Ok(json_result_err(&e)),
-                    }
-                }
-                _ => Err(VmError::new(
-                    "json.parse: type argument must be a type (Int, Float, String, Bool, or a record type)".into(),
-                )),
             }
         }
-        "parse_list" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "json.parse_list takes 2 arguments: (String, type a)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "json.parse_list requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let s = s.clone();
-            let Value::TypeDescriptor(ty) = &args[1] else {
-                return Err(VmError::new(
-                    "json.parse_list: type argument must be a record type".into(),
-                ));
-            };
-            let ty = ty.clone();
-            let fields = decodable_record("json.parse_list", &ty)?;
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(json_val) => json_to_record_list(vm, &ty, &fields, &json_val),
-                Err(e) => Ok(json_result_err(&e)),
-            }
+    }
+
+    fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let Type::Named(ty) = ty else {
+            return Err(VmError::new(
+                "json.parse_list: type argument must be a record type".into(),
+            ));
+        };
+        let fields = decodable_record("json.parse_list", ty)?;
+        match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(json) => json_to_record_list(vm, ty, &fields, &json),
+            Err(e) => Ok(json_result_err(&e)),
         }
-        "parse_map" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "json.parse_map takes 2 arguments: (String, type v)".into(),
-                ));
-            }
-            let Value::String(s) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "json.parse_map requires String, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let s = s.clone();
-            let value_type = args[1].clone();
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(json_val) => json_to_map(vm, &value_type, &json_val),
-                Err(e) => Ok(json_result_err(&e)),
-            }
+    }
+
+    fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
+        match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(json) => json_to_map(vm, value_type, &json),
+            Err(e) => Ok(json_result_err(&e)),
         }
-        "stringify" => {
-            if args.len() != 1 {
-                return Err(VmError::new("json.stringify takes 1 argument".into()));
-            }
-            let j = value_to_json(&args[0])?;
-            Ok(Value::String(j.to_string()))
-        }
-        "pretty" => {
-            if args.len() != 1 {
-                return Err(VmError::new("json.pretty takes 1 argument".into()));
-            }
-            let j = value_to_json(&args[0])?;
-            Ok(Value::String(
-                serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string()),
-            ))
-        }
-        _ => Err(VmError::new(format!("unknown json function: {name}"))),
+    }
+
+    fn stringify(value: &Value) -> Result<String, VmError> {
+        Ok(value_to_json(value)?.to_string())
+    }
+
+    fn pretty(value: &Value) -> Result<String, VmError> {
+        let json = value_to_json(value)?;
+        Ok(serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string()))
     }
 }

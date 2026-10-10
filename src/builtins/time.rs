@@ -2,14 +2,16 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::common::value_kind;
+use super::typed::{Arg, builtins};
 use crate::bytecode::record_type_matches;
+use crate::defs::TypeId;
 use crate::runtime::sync::Wait;
 use crate::typeinfo::{bv, ty};
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::{Step, VmError};
 
 /// Compute (year, month, day) from Unix epoch seconds.
 /// Uses Howard Hinnant's civil_from_days algorithm (public domain).
@@ -28,19 +30,18 @@ fn civil_from_epoch_secs(secs: i64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
-/// Returns the number of days in the given month (1-12) for the given year.
-fn days_in_month(year: i32, month: u32) -> u32 {
+/// Whether `year` is a leap year.
+fn leap(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+/// The number of days in the month (1-12) of the year.
+fn days_in(year: i32, month: u32) -> u32 {
     match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 => {
-            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 30, // fallback for invalid month
+        2 if leap(year) => 29,
+        2 => 28,
+        _ => 31,
     }
 }
 
@@ -128,42 +129,180 @@ fn make_duration(ns: i64) -> Value {
     Value::builtin_record(ty::DURATION, fields)
 }
 
-/// Round 77 BLOAT-D2: shared body for the six `time.*` duration
-/// constructors (`time.hours`, `time.minutes`, `time.seconds`,
-/// `time.ms`, `time.micros`, `time.nanos`). Each call site previously
-/// repeated a 12-line block with the same arity check, the same
-/// `Value::Int` kind check, and the same checked-multiply / overflow
-/// message template — differing only in the multiplier and unit
-/// label. The error wording (arity, kind, overflow) is preserved
-/// verbatim from the pre-refactor sites so observable behaviour at
-/// every entry point is byte-identical.
-///
-/// `name` is the fully-qualified builtin label (e.g. `"time.hours"`),
-/// used verbatim in every diagnostic. `multiplier` is applied via
-/// `checked_mul` — for `time.nanos` the multiplier is `1`, which can
-/// never overflow, matching the old hand-coded `Ok(make_duration(*n))`
-/// arm.
-///
-/// The exact diagnostic forms produced (kept here as canonical
-/// references so the round-75 source-grep wording lock keeps passing
-/// after the round-77 BLOAT-D2 dedup):
-///   - `"time.hours requires Int, got <kind>"`
-///   - `"time.minutes requires Int, got <kind>"`
-///   - `"time.seconds requires Int, got <kind>"`
-///   - `"time.ms requires Int, got <kind>"`
-///   - `"time.micros requires Int, got <kind>"`
-///   - `"time.nanos requires Int, got <kind>"`
-fn duration_from_int(name: &str, multiplier: i64, args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new(format!("{name} takes 1 argument")));
+// ── The arguments ───────────────────────────────────────────────────
+
+/// The fields of `value`, if it is a record of the builtin type `ty`.
+fn record(value: &Value, ty: TypeId) -> Option<&BTreeMap<String, Value>> {
+    match value {
+        Value::Record(name, fields) if record_type_matches(name, ty) => Some(fields),
+        _ => None,
     }
-    let Value::Int(n) = &args[0] else {
-        return Err(VmError::new(format!(
-            "{name} requires Int, got {}",
-            value_kind(&args[0])
-        )));
-    };
-    let ns = n.checked_mul(multiplier).ok_or_else(|| {
+}
+
+/// The `Int` field `name` of a record.
+fn int(fields: &BTreeMap<String, Value>, name: &str) -> Option<i64> {
+    i64::take(fields.get(name)?)
+}
+
+/// `n` as the `what` of a date (its year), for `name`: an error if it
+/// is no `i32`. (A cast would truncate: the year `u32::MAX + 1999`
+/// would be 1999.)
+fn as_i32(name: &str, what: &str, n: i64) -> Result<i32, VmError> {
+    i32::try_from(n).map_err(|_| VmError::new(format!("{name}: {what} {n} out of range for i32")))
+}
+
+/// The same for the parts that are a `u32` (month, day, hour, minute,
+/// second, nanosecond).
+fn as_u32(name: &str, what: &str, n: i64) -> Result<u32, VmError> {
+    u32::try_from(n).map_err(|_| VmError::new(format!("{name}: {what} {n} out of range for u32")))
+}
+
+/// A `Date` argument: its fields, which a program can set to what is
+/// no date of the calendar ([`Date::naive`]).
+#[derive(Clone, Copy)]
+struct Date {
+    year: i64,
+    month: i64,
+    day: i64,
+}
+
+impl<'a> Arg<'a> for Date {
+    fn take(value: &'a Value) -> Option<Self> {
+        let fields = record(value, ty::DATE)?;
+        Some(Date {
+            year: int(fields, "year")?,
+            month: int(fields, "month")?,
+            day: int(fields, "day")?,
+        })
+    }
+}
+
+impl Date {
+    fn naive(self) -> Result<NaiveDate, VmError> {
+        let y = as_i32("time", "year", self.year)?;
+        let m = as_u32("time", "month", self.month)?;
+        let d = as_u32("time", "day", self.day)?;
+        NaiveDate::from_ymd_opt(y, m, d)
+            .ok_or_else(|| VmError::new(format!("invalid date: {y}-{m}-{d}")))
+    }
+}
+
+/// A `Time` argument: its fields, like a [`Date`]'s.
+#[derive(Clone, Copy)]
+struct Time {
+    hour: i64,
+    minute: i64,
+    second: i64,
+    ns: i64,
+}
+
+impl<'a> Arg<'a> for Time {
+    fn take(value: &'a Value) -> Option<Self> {
+        let fields = record(value, ty::TIME)?;
+        Some(Time {
+            hour: int(fields, "hour")?,
+            minute: int(fields, "minute")?,
+            second: int(fields, "second")?,
+            ns: int(fields, "ns")?,
+        })
+    }
+}
+
+impl Time {
+    fn naive(self) -> Result<NaiveTime, VmError> {
+        let h = as_u32("time", "hour", self.hour)?;
+        let m = as_u32("time", "minute", self.minute)?;
+        let s = as_u32("time", "second", self.second)?;
+        let ns = as_u32("time", "ns", self.ns)?;
+        NaiveTime::from_hms_nano_opt(h, m, s, ns)
+            .ok_or_else(|| VmError::new(format!("invalid time: {h}:{m}:{s}.{ns}")))
+    }
+}
+
+/// A `DateTime` argument.
+#[derive(Clone, Copy)]
+struct DateTime {
+    date: Date,
+    time: Time,
+}
+
+impl<'a> Arg<'a> for DateTime {
+    fn take(value: &'a Value) -> Option<Self> {
+        let fields = record(value, ty::DATE_TIME)?;
+        Some(DateTime {
+            date: Date::take(fields.get("date")?)?,
+            time: Time::take(fields.get("time")?)?,
+        })
+    }
+}
+
+impl DateTime {
+    fn naive(self) -> Result<NaiveDateTime, VmError> {
+        Ok(NaiveDateTime::new(self.date.naive()?, self.time.naive()?))
+    }
+}
+
+/// An `Instant` argument: its nanoseconds since the epoch.
+#[derive(Clone, Copy)]
+struct Instant(i64);
+
+impl<'a> Arg<'a> for Instant {
+    fn take(value: &'a Value) -> Option<Self> {
+        int(record(value, ty::INSTANT)?, "epoch_ns").map(Instant)
+    }
+}
+
+impl Instant {
+    /// The date and time of the instant in UTC.
+    fn utc(self) -> Result<NaiveDateTime, VmError> {
+        // Rust `i64 % i64` carries the sign of the dividend, so for a
+        // negative instant whose magnitude isn't a multiple of 1e9 the
+        // remainder is negative; casting to `u32` wraps it to a huge
+        // value and chrono then rejects the instant. With
+        // div_euclid/rem_euclid the remainder is always in
+        // `[0, 1_000_000_000)` and seconds round toward negative
+        // infinity, which matches chrono's own expectations.
+        let secs = self.0.div_euclid(1_000_000_000);
+        let nanos = self.0.rem_euclid(1_000_000_000) as u32;
+        chrono::DateTime::from_timestamp(secs, nanos)
+            .map(|at| at.naive_utc())
+            .ok_or_else(|| VmError::new("instant out of range".into()))
+    }
+
+    /// The instant of a date and time in UTC.
+    fn of_utc(at: NaiveDateTime) -> Result<Value, VmError> {
+        at.and_utc()
+            .timestamp_nanos_opt()
+            .map(make_instant)
+            .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))
+    }
+}
+
+/// A `Duration` argument: its nanoseconds.
+#[derive(Clone, Copy)]
+pub(crate) struct Duration(pub(crate) i64);
+
+impl<'a> Arg<'a> for Duration {
+    fn take(value: &'a Value) -> Option<Self> {
+        int(record(value, ty::DURATION)?, "ns").map(Duration)
+    }
+}
+
+/// The nanoseconds of a `Duration` value, for the builtins whose
+/// bodies are not typed (`channel`, `task`).
+pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
+    match Duration::take(v) {
+        Some(Duration(ns)) => Ok(ns),
+        None => Err(VmError::new(format!(
+            "expected Duration, got {}",
+            value_kind(v)
+        ))),
+    }
+}
+
+/// The duration of `n` units of `per_unit` nanoseconds, for `name`.
+fn duration_of(name: &str, n: i64, per_unit: i64) -> Result<Value, VmError> {
+    let ns = n.checked_mul(per_unit).ok_or_else(|| {
         VmError::new(format!(
             "time arithmetic overflow: {name}({n}) exceeds i64 nanoseconds"
         ))
@@ -171,37 +310,9 @@ fn duration_from_int(name: &str, multiplier: i64, args: &[Value]) -> Result<Valu
     Ok(make_duration(ns))
 }
 
-/// Convert a Silt `Int` field on a record to an `i32`, rejecting
-/// values that don't fit with a clean `VmError`. `default` is used
-/// when the field is missing. Previously this was done via `as i32`
-/// casts that silently truncated, letting `year = u32::MAX + 1999`
-/// wrap to `1999` inside `NaiveDate::from_ymd_opt`.
-fn field_as_i32(
-    fields: &BTreeMap<String, Value>,
-    name: &str,
-    default: i32,
-) -> Result<i32, VmError> {
-    match fields.get(name) {
-        Some(Value::Int(n)) => i32::try_from(*n)
-            .map_err(|_| VmError::new(format!("time: {name} {n} out of range for i32"))),
-        _ => Ok(default),
-    }
-}
-
-/// Same as [`field_as_i32`] but for `u32`-typed components (month,
-/// day, hour, minute, second, nanosecond). Silently truncating
-/// `hour = u32::MAX + 9` to `9` previously let bogus timestamps
-/// slip past `NaiveTime::from_hms_nano_opt`'s validation.
-fn field_as_u32(
-    fields: &BTreeMap<String, Value>,
-    name: &str,
-    default: u32,
-) -> Result<u32, VmError> {
-    match fields.get(name) {
-        Some(Value::Int(n)) => u32::try_from(*n)
-            .map_err(|_| VmError::new(format!("time: {name} {n} out of range for u32"))),
-        _ => Ok(default),
-    }
+/// `Ok(value)`.
+fn ok(value: Value) -> Value {
+    Value::variant(bv::OK, vec![value])
 }
 
 /// What kind of value is being formatted — determines which strftime
@@ -312,658 +423,307 @@ fn validate_strftime_pattern(
     Ok(())
 }
 
-/// Extract a NaiveDate from a Silt Date record.
-fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
-    let Value::Record(name, fields) = v else {
-        return Err(VmError::new(format!(
-            "extract_date requires Date, got {}",
-            value_kind(v)
-        )));
-    };
-    if !record_type_matches(name, ty::DATE) {
-        return Err(VmError::new(format!("expected Date, got {}", name.name)));
-    }
-    let y = field_as_i32(fields, "year", 0)?;
-    let m = field_as_u32(fields, "month", 1)?;
-    let d = field_as_u32(fields, "day", 1)?;
-    NaiveDate::from_ymd_opt(y, m, d)
-        .ok_or_else(|| VmError::new(format!("invalid date: {y}-{m}-{d}")))
-}
+// ── The functions ───────────────────────────────────────────────────
 
-/// Extract a NaiveTime from a Silt Time record.
-fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
-    let Value::Record(name, fields) = v else {
-        return Err(VmError::new(format!(
-            "extract_time requires Time, got {}",
-            value_kind(v)
-        )));
-    };
-    if !record_type_matches(name, ty::TIME) {
-        return Err(VmError::new(format!("expected Time, got {}", name.name)));
-    }
-    let h = field_as_u32(fields, "hour", 0)?;
-    let m = field_as_u32(fields, "minute", 0)?;
-    let s = field_as_u32(fields, "second", 0)?;
-    let ns = field_as_u32(fields, "ns", 0)?;
-    NaiveTime::from_hms_nano_opt(h, m, s, ns)
-        .ok_or_else(|| VmError::new(format!("invalid time: {h}:{m}:{s}.{ns}")))
-}
-
-/// Extract a NaiveDateTime from a Silt DateTime record.
-fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
-    let Value::Record(name, fields) = v else {
-        return Err(VmError::new(format!(
-            "extract_datetime requires DateTime, got {}",
-            value_kind(v)
-        )));
-    };
-    if !record_type_matches(name, ty::DATE_TIME) {
-        return Err(VmError::new(format!(
-            "expected DateTime, got {}",
-            name.name
-        )));
-    }
-    let date = fields
-        .get("date")
-        .ok_or_else(|| VmError::new("DateTime missing date field".into()))?;
-    let time = fields
-        .get("time")
-        .ok_or_else(|| VmError::new("DateTime missing time field".into()))?;
-    let d = extract_date(date)?;
-    let t = extract_time(time)?;
-    Ok(NaiveDateTime::new(d, t))
-}
-
-/// Extract epoch_ns from an Instant record.
-fn extract_instant(v: &Value) -> Result<i64, VmError> {
-    let Value::Record(name, fields) = v else {
-        return Err(VmError::new(format!(
-            "extract_instant requires Instant, got {}",
-            value_kind(v)
-        )));
-    };
-    if !record_type_matches(name, ty::INSTANT) {
-        return Err(VmError::new(format!("expected Instant, got {}", name.name)));
-    }
-    match fields.get("epoch_ns") {
-        Some(Value::Int(n)) => Ok(*n),
-        _ => Err(VmError::new("Instant missing epoch_ns field".into())),
-    }
-}
-
-/// Extract ns from a Duration record.
-pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
-    let Value::Record(name, fields) = v else {
-        return Err(VmError::new(format!(
-            "extract_duration requires Duration, got {}",
-            value_kind(v)
-        )));
-    };
-    if !record_type_matches(name, ty::DURATION) {
-        return Err(VmError::new(format!(
-            "expected Duration, got {}",
-            name.name
-        )));
-    }
-    match fields.get("ns") {
-        Some(Value::Int(n)) => Ok(*n),
-        _ => Err(VmError::new("Duration missing ns field".into())),
-    }
-}
-
-// ── Time dispatch ───────────────────────────────────────────────────
-
-/// Dispatch `time.<name>(args)`.
-pub(crate) fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Step, VmError> {
-    match name {
-        "sleep" => sleep(vm, args),
-        _ => time_plain(vm, name, args).map(Step::Done),
-    }
-}
-
-/// `time.sleep(duration)`.
-fn sleep(vm: &mut Vm, args: &[Value]) -> Result<Step, VmError> {
-    if args.len() != 1 {
-        return Err(VmError::new(
-            "time.sleep takes 1 argument (duration)".into(),
-        ));
-    }
-    let dur_ns = extract_duration(&args[0])?;
-    if dur_ns <= 0 {
-        return Ok(Step::Done(Value::Unit));
-    }
-    let duration = std::time::Duration::from_nanos(dur_ns as u64);
-    // The program's own thread asks the clock to sleep (`Clock::sleep`),
-    // for no longer than up to the task deadline in effect.
-    if !vm.spawned {
-        let left = match vm.current_deadline {
-            Some(deadline) => duration.min(deadline.saturating_sub(vm.runtime.io.monotonic())),
-            None => duration,
+builtins! {
+    fn sleep(vm, duration: Duration) -> Result<Step, VmError> {
+        let Ok(nanos @ 1..) = u64::try_from(duration.0) else {
+            return Ok(Step::Done(Value::Unit));
         };
-        vm.runtime.io.sleep(left);
-        return Ok(Step::Done(Value::Unit));
+        let duration = std::time::Duration::from_nanos(nanos);
+        // The program's own thread asks the clock to sleep (`Clock::sleep`),
+        // for no longer than up to the task deadline in effect.
+        if !vm.spawned {
+            let left = match vm.current_deadline {
+                Some(deadline) => duration.min(deadline.saturating_sub(vm.runtime.io.monotonic())),
+                None => duration,
+            };
+            vm.runtime.io.sleep(left);
+            return Ok(Step::Done(Value::Unit));
+        }
+        // A task waits for the clock to reach the end of the sleep, or the
+        // task deadline if that comes first: time.sleep returns Unit, not a
+        // Result, so a deadline only ends the sleep.
+        let end =
+            vm.runtime.io.deadline_after(duration).ok_or_else(|| {
+                VmError::new("cannot start a timer: the duration is out of range".into())
+            })?;
+        if let Some(failure) = vm.runtime.io.clock_failure() {
+            return Err(VmError::new(failure));
+        }
+        let end = vm
+            .current_deadline
+            .map_or(end, |deadline| end.min(deadline));
+        let wait = Wait::new(Vec::new()).deadline(Some(end));
+        Ok(vm.park("time.sleep", wait, |_, _| Ok(Step::Done(Value::Unit))))
     }
-    // A task waits for the clock to reach the end of the sleep, or the
-    // task deadline if that comes first: time.sleep returns Unit, not a
-    // Result, so a deadline only ends the sleep.
-    let end =
-        vm.runtime.io.deadline_after(duration).ok_or_else(|| {
-            VmError::new("cannot start a timer: the duration is out of range".into())
+
+    fn now(vm) -> Result<Value, VmError> {
+        // Millisecond resolution.
+        let epoch_ns = i64::try_from(vm.runtime.io.now().as_millis())
+            .ok()
+            .and_then(|ms| ms.checked_mul(1_000_000))
+            .ok_or_else(|| {
+                VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
+            })?;
+        Ok(make_instant(epoch_ns))
+    }
+
+    fn today(vm) -> Result<Value, VmError> {
+        let out_of_range = || VmError::new("time.today: date out of range".into());
+        let now = vm.runtime.io.now();
+        let secs = i64::try_from(now.as_secs()).map_err(|_| out_of_range())?;
+        // The date of the host clock's time: in the local time zone
+        // where the build knows it, in UTC otherwise.
+        #[cfg(feature = "local-clock")]
+        {
+            use chrono::TimeZone;
+            let local = chrono::Local
+                .timestamp_opt(secs, now.subsec_nanos())
+                .single()
+                .ok_or_else(out_of_range)?;
+            Ok(make_date(local.date_naive()))
+        }
+        #[cfg(not(feature = "local-clock"))]
+        {
+            let (y, m, d) = civil_from_epoch_secs(secs);
+            let date = NaiveDate::from_ymd_opt(y, m, d).ok_or_else(out_of_range)?;
+            Ok(make_date(date))
+        }
+    }
+
+    fn date(year: i64, month: i64, day: i64) -> Result<Value, VmError> {
+        let y = as_i32("time.date", "year", year)?;
+        let m = as_u32("time.date", "month", month)?;
+        let d = as_u32("time.date", "day", day)?;
+        Ok(match NaiveDate::from_ymd_opt(y, m, d) {
+            Some(date) => ok(make_date(date)),
+            None => time_out_of_range_err(format!("invalid date: {year}-{month}-{day}")),
+        })
+    }
+
+    fn time(hour: i64, min: i64, sec: i64) -> Result<Value, VmError> {
+        let h = as_u32("time.time", "hour", hour)?;
+        let m = as_u32("time.time", "minute", min)?;
+        let s = as_u32("time.time", "second", sec)?;
+        Ok(match NaiveTime::from_hms_opt(h, m, s) {
+            Some(time) => ok(make_time(time)),
+            None => time_out_of_range_err(format!("invalid time: {hour}:{min}:{sec}")),
+        })
+    }
+
+    fn datetime(date: Date, time: Time) -> Result<Value, VmError> {
+        Ok(make_datetime(NaiveDateTime::new(date.naive()?, time.naive()?)))
+    }
+
+    fn to_datetime(instant: Instant, offset_minutes: i64) -> Result<Value, VmError> {
+        let utc = instant.utc()?;
+        // `chrono::Duration::minutes(i64)` panics when the value is
+        // outside a roughly `i64::MAX / 60000` window. Use the
+        // fallible constructor so a pathological offset surfaces as
+        // a clean VmError rather than a builtin panic.
+        let offset = chrono::Duration::try_minutes(offset_minutes).ok_or_else(|| {
+            VmError::new(format!(
+                "time.to_datetime: offset {offset_minutes} minutes out of range"
+            ))
         })?;
-    if let Some(failure) = vm.runtime.io.clock_failure() {
-        return Err(VmError::new(failure));
+        // Even a valid chrono::Duration can still push the naive
+        // datetime past chrono's ±262143-year range; `NaiveDateTime
+        // + Duration` panics on overflow, so use the checked form.
+        // (In practice `Instant.epoch_ns` is an i64, so the combined
+        // epoch-ns + i32-minute-offset input cannot reach chrono's
+        // ±262143-year boundary from Silt user code — we keep the
+        // check as defence in depth against future Instant
+        // widenings or chrono internal assumption changes.)
+        let local = utc.checked_add_signed(offset).ok_or_else(|| {
+            VmError::new("time.to_datetime: datetime + offset out of range".into())
+        })?;
+        Ok(make_datetime(local))
     }
-    let end = vm
-        .current_deadline
-        .map_or(end, |deadline| end.min(deadline));
-    let wait = Wait::new(Vec::new()).deadline(Some(end));
-    Ok(vm.park("time.sleep", wait, |_, _| Ok(Step::Done(Value::Unit))))
-}
 
-/// The `time` functions that do not wait.
-fn time_plain(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "now" => {
-            if !args.is_empty() {
-                return Err(VmError::new("time.now takes 0 arguments".into()));
-            }
-            // Millisecond resolution.
-            let epoch_ns = i64::try_from(vm.runtime.io.now().as_millis())
-                .ok()
-                .and_then(|ms| ms.checked_mul(1_000_000))
-                .ok_or_else(|| {
-                    VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
-                })?;
-            Ok(make_instant(epoch_ns))
+    fn to_instant(datetime: DateTime, offset_minutes: i64) -> Result<Value, VmError> {
+        let local = datetime.naive()?;
+        let offset = chrono::Duration::try_minutes(offset_minutes).ok_or_else(|| {
+            VmError::new(format!(
+                "time.to_instant: offset {offset_minutes} minutes out of range"
+            ))
+        })?;
+        // `NaiveDateTime - Duration` panics on overflow (chrono's
+        // valid range is ±262143 years). Use the checked form so a
+        // pathological offset/datetime combination surfaces as a
+        // clean VmError.
+        let utc = local.checked_sub_signed(offset).ok_or_else(|| {
+            VmError::new("time.to_instant: datetime - offset out of range".into())
+        })?;
+        Instant::of_utc(utc)
+    }
+
+    fn to_utc(instant: Instant) -> Result<Value, VmError> {
+        Ok(make_datetime(instant.utc()?))
+    }
+
+    fn from_utc(datetime: DateTime) -> Result<Value, VmError> {
+        Instant::of_utc(datetime.naive()?)
+    }
+
+    fn format(datetime: DateTime, pattern: &str) -> Result<String, VmError> {
+        let datetime = datetime.naive()?;
+        validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;
+        Ok(datetime.format(pattern).to_string())
+    }
+
+    fn format_date(date: Date, pattern: &str) -> Result<String, VmError> {
+        let date = date.naive()?;
+        validate_strftime_pattern("time.format_date", pattern, StrftimeReceiver::Date)?;
+        Ok(date.format(pattern).to_string())
+    }
+
+    fn parse(s: &str, pattern: &str) -> Value {
+        match NaiveDateTime::parse_from_str(s, pattern) {
+            Ok(datetime) => ok(make_datetime(datetime)),
+            Err(e) => time_parse_err(e),
         }
+    }
 
-        "today" => {
-            if !args.is_empty() {
-                return Err(VmError::new("time.today takes 0 arguments".into()));
-            }
-            let out_of_range = || VmError::new("time.today: date out of range".into());
-            let now = vm.runtime.io.now();
-            let secs = i64::try_from(now.as_secs()).map_err(|_| out_of_range())?;
-            // The date of the host clock's time: in the local time zone
-            // where the build knows it, in UTC otherwise.
-            #[cfg(feature = "local-clock")]
-            {
-                use chrono::TimeZone;
-                let local = chrono::Local
-                    .timestamp_opt(secs, now.subsec_nanos())
-                    .single()
-                    .ok_or_else(out_of_range)?;
-                Ok(make_date(local.date_naive()))
-            }
-            #[cfg(not(feature = "local-clock"))]
-            {
-                let (y, m, d) = civil_from_epoch_secs(secs);
-                let date = NaiveDate::from_ymd_opt(y, m, d).ok_or_else(out_of_range)?;
-                Ok(make_date(date))
-            }
+    fn parse_date(s: &str, pattern: &str) -> Value {
+        // Parse as NaiveDateTime with a dummy time appended, then extract the date.
+        let padded = format!("{s}T00:00:00");
+        let padded_fmt = format!("{pattern}T%H:%M:%S");
+        match NaiveDateTime::parse_from_str(&padded, &padded_fmt) {
+            Ok(datetime) => ok(make_date(datetime.date())),
+            // Fallback: try direct NaiveDate parse (works on native)
+            Err(_) => match NaiveDate::parse_from_str(s, pattern) {
+                Ok(date) => ok(make_date(date)),
+                Err(e) => time_parse_err(e),
+            },
         }
+    }
 
-        "date" => {
-            if args.len() != 3 {
-                return Err(VmError::new(
-                    "time.date takes 3 arguments (year, month, day)".into(),
-                ));
-            }
-            let (Value::Int(y), Value::Int(m), Value::Int(d)) = (&args[0], &args[1], &args[2])
-            else {
-                return Err(VmError::new(format!(
-                    "time.date requires Int, got ({}, {}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1]),
-                    value_kind(&args[2])
-                )));
-            };
-            // Reject silently-truncated `as i32`/`as u32` values: a
-            // year of `u32::MAX + 1999` used to silently wrap to 1999.
-            let y32 = i32::try_from(*y)
-                .map_err(|_| VmError::new(format!("time.date: year {y} out of range for i32")))?;
-            let m32 = u32::try_from(*m)
-                .map_err(|_| VmError::new(format!("time.date: month {m} out of range for u32")))?;
-            let d32 = u32::try_from(*d)
-                .map_err(|_| VmError::new(format!("time.date: day {d} out of range for u32")))?;
-            match NaiveDate::from_ymd_opt(y32, m32, d32) {
-                Some(date) => Ok(Value::variant(bv::OK, vec![make_date(date)])),
-                None => Ok(time_out_of_range_err(format!("invalid date: {y}-{m}-{d}"))),
-            }
+    fn add_days(date: Date, days: i64) -> Result<Value, VmError> {
+        let date = date.naive()?;
+        // chrono::Duration::days panics when `days * 86_400_000` overflows
+        // i64 milliseconds (i.e. for inputs beyond roughly ±106_751_991 days).
+        // We reject such values up front so the panic can never escape
+        // the builtin. Further, `NaiveDate::checked_add_signed` returns
+        // None for out-of-range dates (chrono's valid range spans ±262_143
+        // years).  In both failure modes we produce a clean VmError.
+        const MAX_DAYS: i64 = 100_000_000; // safely below chrono's panic threshold
+        if days.unsigned_abs() > MAX_DAYS as u64 {
+            return Err(VmError::new(format!(
+                "time arithmetic overflow: time.add_days days={days} out of range"
+            )));
         }
+        let delta = chrono::Duration::days(days);
+        let result = date.checked_add_signed(delta).ok_or_else(|| {
+            VmError::new(format!(
+                "time arithmetic overflow: time.add_days result out of range for {date} + {days} days"
+            ))
+        })?;
+        Ok(make_date(result))
+    }
 
-        "time" => {
-            if args.len() != 3 {
-                return Err(VmError::new(
-                    "time.time takes 3 arguments (hour, min, sec)".into(),
-                ));
-            }
-            let (Value::Int(h), Value::Int(m), Value::Int(s)) = (&args[0], &args[1], &args[2])
-            else {
-                return Err(VmError::new(format!(
-                    "time.time requires Int, got ({}, {}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1]),
-                    value_kind(&args[2])
-                )));
-            };
-            let h32 = u32::try_from(*h)
-                .map_err(|_| VmError::new(format!("time.time: hour {h} out of range for u32")))?;
-            let m32 = u32::try_from(*m)
-                .map_err(|_| VmError::new(format!("time.time: minute {m} out of range for u32")))?;
-            let s32 = u32::try_from(*s)
-                .map_err(|_| VmError::new(format!("time.time: second {s} out of range for u32")))?;
-            match NaiveTime::from_hms_opt(h32, m32, s32) {
-                Some(t) => Ok(Value::variant(bv::OK, vec![make_time(t)])),
-                None => Ok(time_out_of_range_err(format!("invalid time: {h}:{m}:{s}"))),
-            }
-        }
-
-        "datetime" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.datetime takes 2 arguments (date, time)".into(),
-                ));
-            }
-            let d = extract_date(&args[0])?;
-            let t = extract_time(&args[1])?;
-            Ok(make_datetime(NaiveDateTime::new(d, t)))
-        }
-
-        "to_datetime" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.to_datetime takes 2 arguments (instant, offset_minutes)".into(),
-                ));
-            }
-            let epoch_ns = extract_instant(&args[0])?;
-            let Value::Int(offset_min) = &args[1] else {
-                return Err(VmError::new(format!(
-                    "time.to_datetime requires Int, got {}",
-                    value_kind(&args[1])
-                )));
-            };
-            // Rust `i64 % i64` carries the sign of the dividend, so for
-            // negative `epoch_ns` whose magnitude isn't a multiple of 1e9
-            // the remainder is negative; casting to `u32` wraps it to a
-            // huge value and chrono then rejects the instant. Use
-            // div_euclid/rem_euclid so the remainder is always in
-            // `[0, 1_000_000_000)` and seconds round toward negative
-            // infinity, which matches chrono's own expectations.
-            let epoch_secs = epoch_ns.div_euclid(1_000_000_000);
-            let nano_remainder = epoch_ns.rem_euclid(1_000_000_000) as u32;
-            let utc_dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
-                .ok_or_else(|| VmError::new("instant out of range".into()))?
-                .naive_utc();
-            // `chrono::Duration::minutes(i64)` panics when the value is
-            // outside a roughly `i64::MAX / 60000` window. Use the
-            // fallible constructor so a pathological offset surfaces as
-            // a clean VmError rather than a builtin panic.
-            let offset = chrono::Duration::try_minutes(*offset_min).ok_or_else(|| {
+    fn add_months(date: Date, months: i64) -> Result<Value, VmError> {
+        let date = date.naive()?;
+        // Calculate target year and month using checked arithmetic so
+        // extreme `months` inputs (e.g. i64::MAX) don't panic in debug
+        // builds or silently wrap in release builds.
+        let total_months = (date.year() as i64)
+            .checked_mul(12)
+            .and_then(|y| y.checked_add(date.month() as i64 - 1))
+            .and_then(|m| m.checked_add(months))
+            .ok_or_else(|| {
                 VmError::new(format!(
-                    "time.to_datetime: offset {offset_min} minutes out of range"
+                    "time arithmetic overflow: time.add_months months={months} out of range"
                 ))
             })?;
-            // Even a valid chrono::Duration can still push the naive
-            // datetime past chrono's ±262143-year range; `NaiveDateTime
-            // + Duration` panics on overflow, so use the checked form.
-            // (In practice `Instant.epoch_ns` is an i64, so the combined
-            // epoch-ns + i32-minute-offset input cannot reach chrono's
-            // ±262143-year boundary from Silt user code — we keep the
-            // check as defence in depth against future Instant
-            // widenings or chrono internal assumption changes.)
-            let local_dt = utc_dt.checked_add_signed(offset).ok_or_else(|| {
-                VmError::new("time.to_datetime: datetime + offset out of range".into())
-            })?;
-            Ok(make_datetime(local_dt))
-        }
-
-        "to_instant" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.to_instant takes 2 arguments (datetime, offset_minutes)".into(),
-                ));
-            }
-            let dt = extract_datetime(&args[0])?;
-            let Value::Int(offset_min) = &args[1] else {
-                return Err(VmError::new(format!(
-                    "time.to_instant requires Int, got {}",
-                    value_kind(&args[1])
-                )));
-            };
-            let offset = chrono::Duration::try_minutes(*offset_min).ok_or_else(|| {
+        let target_year = total_months.div_euclid(12);
+        let target_year = i32::try_from(target_year).map_err(|_| {
+            VmError::new(format!(
+                "time arithmetic overflow: time.add_months target year {target_year} out of i32 range"
+            ))
+        })?;
+        let target_month = (total_months.rem_euclid(12) + 1) as u32;
+        // Clamp day to last valid day of target month
+        let target_day = date.day().min(days_in(target_year, target_month));
+        let result = NaiveDate::from_ymd_opt(target_year, target_month, target_day)
+            .ok_or_else(|| {
                 VmError::new(format!(
-                    "time.to_instant: offset {offset_min} minutes out of range"
+                    "add_months overflow: {target_year}-{target_month}-{target_day}"
                 ))
             })?;
-            // `NaiveDateTime - Duration` panics on overflow (chrono's
-            // valid range is ±262143 years). Use the checked form so a
-            // pathological offset/datetime combination surfaces as a
-            // clean VmError.
-            let utc_dt = dt.checked_sub_signed(offset).ok_or_else(|| {
-                VmError::new("time.to_instant: datetime - offset out of range".into())
-            })?;
-            let epoch_ns = utc_dt
-                .and_utc()
-                .timestamp_nanos_opt()
-                .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))?;
-            Ok(make_instant(epoch_ns))
+        Ok(make_date(result))
+    }
+
+    fn add(instant: Instant, duration: Duration) -> Result<Value, VmError> {
+        let result = instant.0.checked_add(duration.0).ok_or_else(|| {
+            VmError::new("time arithmetic overflow: time.add instant + duration".into())
+        })?;
+        Ok(make_instant(result))
+    }
+
+    fn since(from: Instant, to: Instant) -> Result<Value, VmError> {
+        let result = to.0.checked_sub(from.0).ok_or_else(|| {
+            VmError::new("time arithmetic overflow: time.since to - from".into())
+        })?;
+        Ok(make_duration(result))
+    }
+
+    fn hours(n: i64) -> Result<Value, VmError> {
+        duration_of("time.hours", n, 3_600_000_000_000)
+    }
+
+    fn minutes(n: i64) -> Result<Value, VmError> {
+        duration_of("time.minutes", n, 60_000_000_000)
+    }
+
+    fn seconds(n: i64) -> Result<Value, VmError> {
+        duration_of("time.seconds", n, 1_000_000_000)
+    }
+
+    fn ms(n: i64) -> Result<Value, VmError> {
+        duration_of("time.ms", n, 1_000_000)
+    }
+
+    fn micros(n: i64) -> Result<Value, VmError> {
+        duration_of("time.micros", n, 1_000)
+    }
+
+    fn nanos(n: i64) -> Result<Value, VmError> {
+        duration_of("time.nanos", n, 1)
+    }
+
+    fn weekday(date: Date) -> Result<Value, VmError> {
+        let day = match date.naive()?.weekday() {
+            Weekday::Mon => bv::MONDAY,
+            Weekday::Tue => bv::TUESDAY,
+            Weekday::Wed => bv::WEDNESDAY,
+            Weekday::Thu => bv::THURSDAY,
+            Weekday::Fri => bv::FRIDAY,
+            Weekday::Sat => bv::SATURDAY,
+            Weekday::Sun => bv::SUNDAY,
+        };
+        Ok(Value::variant(day, vec![]))
+    }
+
+    fn days_between(from: Date, to: Date) -> Result<i64, VmError> {
+        let (from, to) = (from.naive()?, to.naive()?);
+        Ok(to.signed_duration_since(from).num_days())
+    }
+
+    fn days_in_month(year: i64, month: i64) -> Result<i64, VmError> {
+        let y = as_i32("time.days_in_month", "year", year)?;
+        let m = as_u32("time.days_in_month", "month", month)?;
+        // A month outside 1..=12 is refused, as `time.date` and
+        // `time.time` refuse each part that is none.
+        if !(1..=12).contains(&m) {
+            return Err(VmError::new(format!(
+                "time.days_in_month: month {month} out of range (must be 1..=12)"
+            )));
         }
+        Ok(days_in(y, m) as i64)
+    }
 
-        "to_utc" => {
-            if args.len() != 1 {
-                return Err(VmError::new(
-                    "time.to_utc takes 1 argument (instant)".into(),
-                ));
-            }
-            let epoch_ns = extract_instant(&args[0])?;
-            // See `to_datetime` above: signed `%` on negative epoch_ns
-            // yields a negative remainder, which `as u32` wraps into a
-            // huge value and chrono then rejects. div_euclid/rem_euclid
-            // keep the remainder in `[0, 1_000_000_000)` unconditionally.
-            let epoch_secs = epoch_ns.div_euclid(1_000_000_000);
-            let nano_remainder = epoch_ns.rem_euclid(1_000_000_000) as u32;
-            let dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
-                .ok_or_else(|| VmError::new("instant out of range".into()))?
-                .naive_utc();
-            Ok(make_datetime(dt))
-        }
-
-        "from_utc" => {
-            if args.len() != 1 {
-                return Err(VmError::new(
-                    "time.from_utc takes 1 argument (datetime)".into(),
-                ));
-            }
-            let dt = extract_datetime(&args[0])?;
-            let epoch_ns = dt
-                .and_utc()
-                .timestamp_nanos_opt()
-                .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))?;
-            Ok(make_instant(epoch_ns))
-        }
-
-        "format" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.format takes 2 arguments (datetime, pattern)".into(),
-                ));
-            }
-            let dt = extract_datetime(&args[0])?;
-            let Value::String(pattern) = &args[1] else {
-                return Err(VmError::new(format!(
-                    "time.format requires String, got {}",
-                    value_kind(&args[1])
-                )));
-            };
-            validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;
-            Ok(Value::String(dt.format(pattern).to_string()))
-        }
-
-        "format_date" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.format_date takes 2 arguments (date, pattern)".into(),
-                ));
-            }
-            let d = extract_date(&args[0])?;
-            let Value::String(pattern) = &args[1] else {
-                return Err(VmError::new(format!(
-                    "time.format_date requires String, got {}",
-                    value_kind(&args[1])
-                )));
-            };
-            validate_strftime_pattern("time.format_date", pattern, StrftimeReceiver::Date)?;
-            Ok(Value::String(d.format(pattern).to_string()))
-        }
-
-        "parse" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.parse takes 2 arguments (string, pattern)".into(),
-                ));
-            }
-            let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(format!(
-                    "time.parse requires String, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
-                )));
-            };
-            match NaiveDateTime::parse_from_str(s, pattern) {
-                Ok(dt) => Ok(Value::variant(bv::OK, vec![make_datetime(dt)])),
-                Err(e) => Ok(time_parse_err(e)),
-            }
-        }
-
-        "parse_date" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.parse_date takes 2 arguments (string, pattern)".into(),
-                ));
-            }
-            let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(format!(
-                    "time.parse_date requires String, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
-                )));
-            };
-            // Parse as NaiveDateTime with a dummy time appended, then extract the date.
-            let padded = format!("{s}T00:00:00");
-            let padded_fmt = format!("{pattern}T%H:%M:%S");
-            match NaiveDateTime::parse_from_str(&padded, &padded_fmt) {
-                Ok(dt) => Ok(Value::variant(bv::OK, vec![make_date(dt.date())])),
-                Err(_) => {
-                    // Fallback: try direct NaiveDate parse (works on native)
-                    match NaiveDate::parse_from_str(s, pattern) {
-                        Ok(d) => Ok(Value::variant(bv::OK, vec![make_date(d)])),
-                        Err(e) => Ok(time_parse_err(e)),
-                    }
-                }
-            }
-        }
-
-        "add_days" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.add_days takes 2 arguments (date, days)".into(),
-                ));
-            }
-            let d = extract_date(&args[0])?;
-            let Value::Int(days) = &args[1] else {
-                return Err(VmError::new(format!(
-                    "time.add_days requires Int, got {}",
-                    value_kind(&args[1])
-                )));
-            };
-            // chrono::Duration::days panics when `days * 86_400_000` overflows
-            // i64 milliseconds (i.e. for inputs beyond roughly ±106_751_991 days).
-            // We reject such values up front so the panic can never escape
-            // the builtin. Further, `NaiveDate::checked_add_signed` returns
-            // None for out-of-range dates (chrono's valid range spans ±262_143
-            // years).  In both failure modes we produce a clean VmError.
-            const MAX_DAYS: i64 = 100_000_000; // safely below chrono's panic threshold
-            if days.unsigned_abs() > MAX_DAYS as u64 {
-                return Err(VmError::new(format!(
-                    "time arithmetic overflow: time.add_days days={days} out of range"
-                )));
-            }
-            let delta = chrono::Duration::days(*days);
-            let result = d.checked_add_signed(delta).ok_or_else(|| {
-                VmError::new(format!(
-                    "time arithmetic overflow: time.add_days result out of range for {d} + {days} days"
-                ))
-            })?;
-            Ok(make_date(result))
-        }
-
-        "add_months" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.add_months takes 2 arguments (date, months)".into(),
-                ));
-            }
-            let d = extract_date(&args[0])?;
-            let Value::Int(months) = &args[1] else {
-                return Err(VmError::new(format!(
-                    "time.add_months requires Int, got {}",
-                    value_kind(&args[1])
-                )));
-            };
-            let months = *months;
-            // Calculate target year and month using checked arithmetic so
-            // extreme `months` inputs (e.g. i64::MAX) don't panic in debug
-            // builds or silently wrap in release builds.
-            let base_year = d.year() as i64;
-            let total_months = base_year
-                .checked_mul(12)
-                .and_then(|y| y.checked_add(d.month() as i64 - 1))
-                .and_then(|m| m.checked_add(months))
-                .ok_or_else(|| {
-                    VmError::new(format!(
-                        "time arithmetic overflow: time.add_months months={months} out of range"
-                    ))
-                })?;
-            let target_year_i64 = total_months.div_euclid(12);
-            // Cast to i32 only after verifying it fits.
-            if target_year_i64 < i32::MIN as i64 || target_year_i64 > i32::MAX as i64 {
-                return Err(VmError::new(format!(
-                    "time arithmetic overflow: time.add_months target year {target_year_i64} out of i32 range"
-                )));
-            }
-            let target_year = target_year_i64 as i32;
-            let target_month = (total_months.rem_euclid(12) + 1) as u32;
-            // Clamp day to last valid day of target month
-            let max_day = days_in_month(target_year, target_month);
-            let target_day = d.day().min(max_day);
-            let result = NaiveDate::from_ymd_opt(target_year, target_month, target_day)
-                .ok_or_else(|| {
-                    VmError::new(format!(
-                        "add_months overflow: {target_year}-{target_month}-{target_day}"
-                    ))
-                })?;
-            Ok(make_date(result))
-        }
-
-        "add" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.add takes 2 arguments (instant, duration)".into(),
-                ));
-            }
-            let epoch_ns = extract_instant(&args[0])?;
-            let dur_ns = extract_duration(&args[1])?;
-            let result = epoch_ns.checked_add(dur_ns).ok_or_else(|| {
-                VmError::new("time arithmetic overflow: time.add instant + duration".into())
-            })?;
-            Ok(make_instant(result))
-        }
-
-        "since" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.since takes 2 arguments (from, to)".into(),
-                ));
-            }
-            let from_ns = extract_instant(&args[0])?;
-            let to_ns = extract_instant(&args[1])?;
-            let result = to_ns.checked_sub(from_ns).ok_or_else(|| {
-                VmError::new("time arithmetic overflow: time.since to - from".into())
-            })?;
-            Ok(make_duration(result))
-        }
-
-        "hours" => duration_from_int("time.hours", 3_600_000_000_000, args),
-        "minutes" => duration_from_int("time.minutes", 60_000_000_000, args),
-        "seconds" => duration_from_int("time.seconds", 1_000_000_000, args),
-        "ms" => duration_from_int("time.ms", 1_000_000, args),
-        "micros" => duration_from_int("time.micros", 1_000, args),
-        "nanos" => duration_from_int("time.nanos", 1, args),
-
-        "weekday" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.weekday takes 1 argument (date)".into()));
-            }
-            let d = extract_date(&args[0])?;
-            let day_name = match d.weekday() {
-                Weekday::Mon => bv::MONDAY,
-                Weekday::Tue => bv::TUESDAY,
-                Weekday::Wed => bv::WEDNESDAY,
-                Weekday::Thu => bv::THURSDAY,
-                Weekday::Fri => bv::FRIDAY,
-                Weekday::Sat => bv::SATURDAY,
-                Weekday::Sun => bv::SUNDAY,
-            };
-            Ok(Value::variant(day_name, vec![]))
-        }
-
-        "days_between" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.days_between takes 2 arguments (from, to)".into(),
-                ));
-            }
-            let from = extract_date(&args[0])?;
-            let to = extract_date(&args[1])?;
-            let diff = to.signed_duration_since(from).num_days();
-            Ok(Value::Int(diff))
-        }
-
-        "days_in_month" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "time.days_in_month takes 2 arguments (year, month)".into(),
-                ));
-            }
-            let (Value::Int(y), Value::Int(m)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(format!(
-                    "time.days_in_month requires Int, got ({}, {})",
-                    value_kind(&args[0]),
-                    value_kind(&args[1])
-                )));
-            };
-            // Previously these were `*y as i32` / `*m as u32`, which
-            // silently wrapped: `days_in_month(2024, u32::MAX + 2)`
-            // returned 29. Require the arguments to fit.
-            let y32 = i32::try_from(*y).map_err(|_| {
-                VmError::new(format!("time.days_in_month: year {y} out of range for i32"))
-            })?;
-            let m32 = u32::try_from(*m).map_err(|_| {
-                VmError::new(format!(
-                    "time.days_in_month: month {m} out of range for u32"
-                ))
-            })?;
-            // Reject months outside 1..=12: `days_in_month` itself used to
-            // fabricate 30 for any out-of-range month, so e.g.
-            // `days_in_month(2024, 13)` and `(2024, 0)` silently returned 30.
-            // Mirror the range-rejection style of `time.date`/`time.time`,
-            // which validate each component before constructing a value.
-            if !(1..=12).contains(&m32) {
-                return Err(VmError::new(format!(
-                    "time.days_in_month: month {m} out of range (must be 1..=12)"
-                )));
-            }
-            Ok(Value::Int(days_in_month(y32, m32) as i64))
-        }
-
-        "is_leap_year" => {
-            if args.len() != 1 {
-                return Err(VmError::new("time.is_leap_year takes 1 argument".into()));
-            }
-            let Value::Int(y) = &args[0] else {
-                return Err(VmError::new(format!(
-                    "time.is_leap_year requires Int, got {}",
-                    value_kind(&args[0])
-                )));
-            };
-            let y32 = i32::try_from(*y).map_err(|_| {
-                VmError::new(format!("time.is_leap_year: year {y} out of range for i32"))
-            })?;
-            let leap = (y32 % 4 == 0 && y32 % 100 != 0) || (y32 % 400 == 0);
-            Ok(Value::Bool(leap))
-        }
-
-        _ => Err(VmError::new(format!("unknown time function: {name}"))),
+    fn is_leap_year(year: i64) -> Result<bool, VmError> {
+        Ok(leap(as_i32("time.is_leap_year", "year", year)?))
     }
 }

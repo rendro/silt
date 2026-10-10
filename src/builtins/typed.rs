@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::typeinfo::bv;
+use crate::typeinfo::{FieldType, TypeInfo, bv};
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
@@ -157,6 +157,29 @@ impl List<'_> {
                 crate::value::checked_range_len(lo, hi).map_err(VmError::new)?;
                 Ok((lo..=hi).map(Value::Int).collect())
             }
+        }
+    }
+}
+
+/// A `type a` argument: one of the primitive types, as the type of a
+/// field of it, or a type of a name.
+pub(crate) enum Type<'a> {
+    Primitive(FieldType),
+    Named(&'a Arc<TypeInfo>),
+}
+
+impl<'a> Arg<'a> for Type<'a> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::PrimitiveDescriptor(name) => Some(Type::Primitive(match name.as_str() {
+                "Int" => FieldType::Int,
+                "Float" => FieldType::Float,
+                "String" => FieldType::String,
+                "Bool" => FieldType::Bool,
+                _ => return None,
+            })),
+            Value::TypeDescriptor(ty) => Some(Type::Named(ty)),
+            _ => None,
         }
     }
 }
