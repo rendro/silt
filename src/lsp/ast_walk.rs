@@ -642,7 +642,7 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
-        | ExprKind::StringLit(_, _)
+        | ExprKind::StringLit(_)
         | ExprKind::Ident(_)
         | ExprKind::Unit
         | ExprKind::Return(None) => {}
