@@ -134,7 +134,7 @@ impl Record {
     /// The anonymous record of the fields `fields`, whose names are
     /// distinct ([`Value::anon_record`]).
     pub(super) fn anon(mut fields: Vec<(&str, Value)>) -> Record {
-        fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+        fields.sort_by_key(|(name, _)| *name);
         let ty = anon_record_type(fields.iter().map(|(name, _)| *name));
         Record::new(ty, fields.into_iter().map(|(_, value)| value).collect())
     }
@@ -196,7 +196,7 @@ impl Record {
     /// it.
     pub(super) fn by_name(&self) -> Vec<(&str, &Value)> {
         let mut fields: Vec<(&str, &Value)> = self.named().collect();
-        fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+        fields.sort_by_key(|(name, _)| *name);
         fields
     }
 

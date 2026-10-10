@@ -1,0 +1,45 @@
+Ver {major: 1, build: 9, label: a}
+true
+true
+1 9 a
+1 9 a
+Ver {major: 2, build: 9, label: d}
+Ver {major: 1, build: 9, label: a}
+a 1.9
+first of 2
+unlabelled 2.9
+d 2 9
+1
+9
+Ver {major: 1, build: 9, label: a}
+a
+{build: 3, label: anon, major: 7}
+7 3 anon
+7
+3
+anon
+9
+{label: a, major: 1}
+a
+{build: 9, label: a, major: 1, patch: 4}
+1 4
+{build: 30, label: a, major: 1}
+true
+a
+2
+9 d
+twice 42
+true
+[Ver {major: 1, build: 2, label: s}, Ver {major: 1, build: 9, label: a}, Ver {major: 2, build: 9, label: d}]
+2
+Some(second)
+true
+Ver {major: 4, build: 5, label: j} 4 5 j
+Ver {major: 5, build: 6, label: t} 5 6 t
+{"build":9,"label":"a","major":1}
+2024-03-09
+2024 3 9
+2024-03-09T07:30:05
+2024 7 30
+4
+true

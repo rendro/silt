@@ -1620,12 +1620,16 @@ fn is_valid_ident(s: &str) -> bool {
 
 /// Build a silt `Notification` record from a tokio-postgres notification.
 fn notification_to_record(n: &postgres::Notification) -> Value {
+    make_notification(n.channel(), n.payload(), n.process_id() as i64)
+}
+
+fn make_notification(channel: &str, payload: &str, pid: i64) -> Value {
     Value::builtin_record(
         ty::NOTIFICATION,
         [
-            ("channel", Value::String(n.channel().into())),
-            ("payload", Value::String(n.payload().into())),
-            ("pid", Value::Int(n.process_id() as i64)),
+            ("channel", Value::String(channel.into())),
+            ("payload", Value::String(payload.into())),
+            ("pid", Value::Int(pid)),
         ],
     )
 }
@@ -2095,6 +2099,22 @@ fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The records the module builds have the fields of their types,
+    /// in the types' order (`Value::builtin_record` says so in a debug
+    /// build), and are shown under their names.
+    #[test]
+    fn the_records_of_the_module_have_their_types_fields() {
+        let rows = make_query_result(vec![Value::Int(1), Value::Int(2)]);
+        assert_eq!(rows.to_string(), "QueryResult {row_count: 2, rows: [1, 2]}");
+        let done = make_exec_result(3, vec![]);
+        assert_eq!(done.to_string(), "ExecResult {affected: 3, returning: []}");
+        let told = make_notification("jobs", "42", 7);
+        assert_eq!(
+            told.to_string(),
+            "Notification {channel: jobs, payload: 42, pid: 7}"
+        );
+    }
 
     #[test]
     fn strip_ssl_params_preserves_rest() {

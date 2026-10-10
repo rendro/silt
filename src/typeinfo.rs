@@ -8,11 +8,17 @@
 //! an enum's order is its declaration order whatever else the program
 //! declares.
 //!
+//! A record value holds its fields in the order its type lists them,
+//! which is the order of the declaration, so the compiler reads a field
+//! of a record whose type it knows at its place there.
+//!
 //! The compiler builds a [`TypeInfo`] for each type of the program and
 //! hands the VM a [`TypeTable`] of them; the builtin types have theirs in
 //! a table of their own, with fixed ids ([`ty`]) and fixed variants
 //! ([`bv`]), so a builtin builds `Some(x)` as `Value::variant(bv::SOME,
-//! ..)`.
+//! ..)`. An anonymous record has no declaration: its type is the one of
+//! its set of field names ([`anon_record_type`]), which lists them in
+//! name order, and all these types share one id ([`ty::ANON_RECORD`]).
 
 use std::collections::HashMap;
 use std::fmt;
