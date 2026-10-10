@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A block that initialises a top-level `let` is checked too.
+let limit = {
+  10
+  20
+}
+
+fn main() {
+  println(limit)
+}

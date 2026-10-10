@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- `run` calls `f` as a statement, so `f` returns `()`: a function that
+-- returns a value is not one. The same for a closure bound by a `let`.
+fn run(f) {
+  f()
+  "ran"
+}
+
+fn main() {
+  println(run { -> 3 })
+  let also = { g ->
+    g()
+    1
+  }
+  println(also { -> "x" })
+}

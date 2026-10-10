@@ -1,0 +1,5 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_type_decided_after_the_statement.silt:19:3
+    |
+ 19 |   take(ch)
+    |   ^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

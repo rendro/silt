@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A line that starts with `-` does not continue the line above: it is
+-- a statement, and its value is unused. The help says so.
+fn net(price, discount, tax) {
+  let total = price
+  - discount * tax
+  total
+}
+
+fn main() {
+  println(net(100, 30, 2))
+}

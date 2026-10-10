@@ -28,6 +28,7 @@ mod structural;
 mod tables;
 mod typeexpr;
 mod unify;
+mod unused;
 // `pub(crate)`: round 93 — `module::sibling_module_suggestion` reuses
 // the shared did-you-mean threshold policy for import-path hints.
 pub(crate) mod suggest;
@@ -221,6 +222,9 @@ pub struct TypeChecker {
     /// The session's definitions, which the resolver's `Res` slots
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
+    /// The types of the calls that stand as statements and are still
+    /// unknown (see `unused`).
+    pub(super) statement_calls: Vec<Type>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// Its name, for diagnostics.
@@ -302,6 +306,7 @@ impl TypeChecker {
             reach: None,
             cells: std::collections::HashSet::new(),
             defs: None,
+            statement_calls: Vec::new(),
             module: crate::session::ModuleId(0),
             module_name: intern("main"),
             own_types: HashMap::new(),
@@ -866,6 +871,12 @@ impl TypeChecker {
         // nothing above waited for them.
         self.check_decl_bodies(&mut program.decls, &mut env);
         self.exit_level();
+
+        // A statement leaves no value unused.
+        if self.fix_statement_calls(true) {
+            self.solve_wanted(0);
+        }
+        self.check_unused_values(program);
 
         // Detect unresolved type variables on let-binding values where
         // the user did not provide a type annotation.

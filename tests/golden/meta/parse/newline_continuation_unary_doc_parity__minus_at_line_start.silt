@@ -1,4 +1,7 @@
--- A line starting with `-` is a new unary-negation statement.
+-- cmd: check
+-- exit: 1
+-- A line starting with `-` is a new unary-negation statement: `y` is 10,
+-- and the `- 20` is an unused value.
 fn main() {
   let y = 10
     - 20

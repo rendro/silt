@@ -2820,8 +2820,12 @@ impl TypeChecker {
             ExprKind::Block(stmts) => {
                 let mut last_ty = Type::Unit;
                 env.push();
-                for stmt in stmts {
+                let last = stmts.len().saturating_sub(1);
+                for (i, stmt) in stmts.iter_mut().enumerate() {
                     last_ty = self.infer_stmt(stmt, env);
+                    if i != last {
+                        self.note_statement(stmt, &last_ty);
+                    }
                 }
                 env.pop();
 

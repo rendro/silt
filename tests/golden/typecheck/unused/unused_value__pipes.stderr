@@ -1,0 +1,11 @@
+error[type]: this `List(Int)` value is unused; write `let _ = ...` to discard it
+ --> unused_value__pipes.silt:11:3
+    |
+ 11 |   xs |> list.map { x -> x + 1 }
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this `List(Int)` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__pipes.silt:12:3
+    |
+ 12 |   xs
+    |   ^^ this `Int` value is unused; write `let _ = ...` to discard it

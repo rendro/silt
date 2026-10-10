@@ -1,0 +1,5 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__match_as_a_statement.silt:15:3
+    |
+ 15 |   match map.get(m, "a") {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^ this `Int` value is unused; write `let _ = ...` to discard it

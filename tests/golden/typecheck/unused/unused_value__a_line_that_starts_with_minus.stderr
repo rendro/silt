@@ -1,0 +1,6 @@
+error[type]: this value is unused; write `let _ = ...` to discard it
+ --> unused_value__a_line_that_starts_with_minus.silt:8:3
+   |
+ 8 |   - discount * tax
+   |   ^^^^^^^^^^^^^^^^ this value is unused; write `let _ = ...` to discard it
+  = help: a line that starts with `-` is a statement of its own; to subtract from the line above, end that line with the `-`

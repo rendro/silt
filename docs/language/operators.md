@@ -117,7 +117,7 @@ let y = 10
 
 let z = 10
   - 20            -- NOT a continuation — `z = 10`, then `-20` is a new
-                  -- unary-negation expression statement
+                  -- statement, and an error: its value is unused
 ```
 
 **Postfix operators do not cross newlines.** Call, `?`, and trailing closure must appear on the same line as their operand:

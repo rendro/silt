@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- The body of an impl's method and of a trait's default method.
+trait Describe {
+  fn name(self) -> String
+  fn twice(self) -> String {
+    self.name()
+    "{self.name()} {self.name()}"
+  }
+}
+
+trait Describe for Int {
+  fn name(self) -> String {
+    self + 1
+    "int"
+  }
+}
+
+fn main() {
+  println(3.twice())
+}

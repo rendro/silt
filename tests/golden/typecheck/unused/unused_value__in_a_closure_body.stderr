@@ -1,0 +1,11 @@
+error[type]: this `Int` value is unused; write `let _ = ...` to discard it
+ --> unused_value__in_a_closure_body.silt:9:5
+   |
+ 9 |     x * 2
+   |     ^^^^^ this `Int` value is unused; write `let _ = ...` to discard it
+
+error[type]: this `String` value is unused; write `let _ = ...` to discard it
+ --> unused_value__in_a_closure_body.silt:13:5
+    |
+ 13 |     "n is {n}"
+    |     ^^^^^^^^^^ this `String` value is unused; write `let _ = ...` to discard it

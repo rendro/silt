@@ -90,6 +90,50 @@ fn add_import_quickfix_offered_for_unimported_module() {
     client.shutdown();
 }
 
+/// An unused value has the quick fix that discards it: `let _ = `
+/// inserted where the statement starts.
+#[test]
+fn discard_quickfix_offered_for_an_unused_value() {
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_ca_unused_value.silt";
+    let source = "fn f() -> Int {\n  1\n}\n\nfn main() {\n  f()\n  println(\"done\")\n}\n";
+    let diags = client.did_open_and_collect_diagnostics(uri, source);
+    let unused = diag_matching(&diags, "value is unused")
+        .unwrap_or_else(|| panic!("expected an unused-value diagnostic; got {diags:?}"))
+        .clone();
+
+    let resp = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": uri },
+            "range": unused.get("range").cloned().expect("the diagnostic has a range"),
+            "context": { "diagnostics": [unused] }
+        }),
+    );
+    let actions = code_actions(&resp);
+    let action = actions
+        .iter()
+        .find(|a| a.get("title").and_then(|t| t.as_str()) == Some("Discard with `let _ =`"))
+        .unwrap_or_else(|| panic!("no discard action; got {actions:?}"));
+    let edits = action
+        .pointer("/edit/changes")
+        .and_then(|c| c.get(uri))
+        .and_then(|v| v.as_array())
+        .expect("edits for our uri");
+    assert_eq!(
+        edits,
+        &vec![json!({
+            "range": {
+                "start": { "line": 5, "character": 2 },
+                "end": { "line": 5, "character": 2 }
+            },
+            "newText": "let _ = "
+        })],
+        "the fix inserts `let _ = ` before `f()`"
+    );
+    client.shutdown();
+}
+
 #[test]
 fn no_action_when_diagnostic_is_unrelated() {
     let mut client = LspClient::spawn();

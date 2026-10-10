@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: import list\n1 + 2\n[1, 2] |> list.map { x -> x * 10 }\nfn f() { 4\n 5 }\n{ 6\n 7 }\nlet y = { 8\n 9 }\n:quit\n
+-- The last expression of an entry is the entry's value, and the REPL
+-- shows it: `1 + 2` and a pipeline are not unused values there. A
+-- statement inside a block is checked as in a file: the `4` in `f`'s
+-- body and the `6` and the `8` in the blocks are unused.

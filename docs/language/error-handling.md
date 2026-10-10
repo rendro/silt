@@ -19,6 +19,10 @@ match parse_int(input) {
 }
 ```
 
+A `Result` cannot be dropped by accident. One that stands as a statement, with
+nothing looking at it, is an error: ``this `Result` is unused: an error in it
+would go unseen; handle it, return it with `?`, or write `let _ = ...` ``.
+
 ## Typed Stdlib Errors
 
 Every fallible stdlib module except `crypto`, `encoding`, `uuid`, and `regex`

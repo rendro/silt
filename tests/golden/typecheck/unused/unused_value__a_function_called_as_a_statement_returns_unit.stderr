@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected (), got Int
+ --> unused_value__a_function_called_as_a_statement_returns_unit.silt:12:15
+    |
+ 12 |   println(run { -> 3 })
+    |               ^^^^^^^^ type mismatch: expected (), got Int
+
+error[type]: type mismatch: expected (), got String
+ --> unused_value__a_function_called_as_a_statement_returns_unit.silt:17:16
+    |
+ 17 |   println(also { -> "x" })
+    |                ^^^^^^^^^^ type mismatch: expected (), got String

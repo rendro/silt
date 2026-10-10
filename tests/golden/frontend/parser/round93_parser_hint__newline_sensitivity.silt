@@ -1,4 +1,11 @@
--- A newline before `-` ends the previous expression; `&&` may cross a newline.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: round93_parser_hint__newline_sensitivity.silt:11:3
+-- stderr-contains: this `Int` value is unused
+-- stderr-contains: a line that starts with `-` is a statement of its own
+-- stderr-not-contains: error[parse]
+-- A newline before `-` ends the previous expression: `- a` is a statement,
+-- and its value is unused. `&&` may cross a newline.
 fn main() {
   let a = 1
   - a
