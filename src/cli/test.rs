@@ -235,12 +235,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             vm.wait_until_idle();
         }
         if let Err(e) = setup {
-            // G2 (audit round 21): frame and error-header paths follow
-            // the style of the path the user typed, as under `silt run`.
-            //
-            // Lock: tests/cli/cli_test_rendering_tests.rs
-            // `test_test_setup_error_paths_normalized`.
-            eprintln!("{path}: setup error:");
+            // Frame and error-header paths follow the style of the path
+            // the user typed, as under `silt run`. The header says what
+            // the summary counts ("the top-level code of 1 file
+            // failed").
+            eprintln!("{path}: the file's top-level code failed:");
             eprintln!(
                 "{}",
                 render_runtime_error(&e, path, &owners.files[file_index].sources)

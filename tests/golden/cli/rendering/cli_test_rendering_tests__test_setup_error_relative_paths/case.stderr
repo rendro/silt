@@ -1,4 +1,4 @@
-main.silt: setup error:
+main.silt: the file's top-level code failed:
 error[runtime]: division by zero
  --> crasher.silt:1:17
    |

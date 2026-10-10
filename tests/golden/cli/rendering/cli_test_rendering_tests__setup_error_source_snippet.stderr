@@ -1,4 +1,4 @@
-cli_test_rendering_tests__setup_error_source_snippet.silt: setup error:
+cli_test_rendering_tests__setup_error_source_snippet.silt: the file's top-level code failed:
 error[runtime]: division by zero
  --> cli_test_rendering_tests__setup_error_source_snippet.silt:9:11
    |

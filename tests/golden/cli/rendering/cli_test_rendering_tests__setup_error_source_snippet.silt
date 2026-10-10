@@ -1,6 +1,6 @@
 -- cmd: test
 -- exit: 1
--- stderr-contains: setup error
+-- stderr-contains: the file's top-level code failed:
 -- stderr-contains: error[runtime]
 -- stderr-contains: -->
 -- stderr-contains: 1 / 0
