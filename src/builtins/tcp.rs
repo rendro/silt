@@ -520,7 +520,7 @@ pub(crate) fn accept_op(
         .unheard_with(move |value| {
             if let Value::Variant(variant) = value
                 && variant.is(bv::OK)
-                && let [Value::TcpStream(conn)] = &variant.fields()[..]
+                && let [Value::TcpStream(conn)] = variant.fields()
                 && let Some(socket) = conn.socket()
             {
                 listener.keep(socket);

@@ -163,7 +163,7 @@ fn partial_eq_reflexivity_every_variant() {
             "Point",
             Vec::new(),
         )),
-        Value::PrimitiveDescriptor("Int".into()),
+        Value::PrimitiveDescriptor("Int"),
     ];
     for v in &values {
         assert_eq!(
