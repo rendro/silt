@@ -35,14 +35,6 @@ pub fn io_pool_live_threads(vm: &Vm) -> usize {
     vm.runtime.io_pool.live_threads()
 }
 
-/// Test-only (Linux): a function that gives the OS thread ids of the
-/// I/O pool's threads of this VM, callable from any thread while the
-/// VM runs: for a test that looks at one thread in `/proc`.
-#[cfg(all(target_os = "linux", feature = "test-hooks"))]
-pub fn io_pool_thread_ids(vm: &Vm) -> impl Fn() -> Vec<u32> + Send + 'static {
-    vm.runtime.io_pool.thread_ids()
-}
-
 /// Test-only: run a panicking operation on this VM's I/O pool, wait
 /// for it, and return the value it completes with: `failure` of the
 /// panic's message, with a "panic: " prefix. `failure` is the typed

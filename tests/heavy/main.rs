@@ -12,6 +12,9 @@ mod integration;
 mod lsp_workspace_perf;
 #[path = "../support/port_file.rs"]
 mod port_file;
+#[path = "../support/quiet.rs"]
+mod quiet;
+mod quiet_tests;
 #[path = "../lsp/rename_sweep.rs"]
 mod rename_sweep;
 mod rename_sweep_examples;

@@ -34,6 +34,8 @@ mod numeric_defaulting_tests;
 mod port_file;
 mod postgres_hardening_tests;
 mod property_tests;
+#[path = "../support/quiet.rs"]
+mod quiet;
 mod round73_postgres_poisoned_mutex_tests;
 mod round74_io_args_forward_via_double_dash_tests;
 mod round76_assoc_cycle_tests;

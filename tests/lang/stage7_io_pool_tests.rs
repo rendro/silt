@@ -271,128 +271,51 @@ fn main() {
     drop(vm);
 }
 
-/// An accept that waits costs nothing: its thread is in the OS call
-/// and is not woken until a connection comes or the accept is given
-/// up. Over two seconds it is never scheduled and uses no CPU time to
-/// speak of.
-///
-/// The program gives its accept up only when the test connects to a
-/// second listener, so nothing wakes the accept during the window the
-/// test measures. The thread is the accept's own, known by its OS id
-/// from the pool. A window in which the thread was scheduled (it may
-/// not have reached the call yet when the test first looks) is
-/// measured again: a thread that is woken now and then fails every
-/// window.
+/// An accept that waits costs nothing: its thread sleeps in the
+/// system's call until a connection comes or the accept is given up,
+/// and nothing else in the process wakes either. No thread of the
+/// program is scheduled once in five seconds (see `quiet`); the heavy
+/// suite looks for 65 seconds.
 #[test]
-#[cfg(all(target_os = "linux", feature = "test-hooks"))]
+#[cfg(target_os = "linux")]
 fn an_idle_accept_is_not_woken() {
-    an_idle_acceptor_is_not_woken("", "tcp.accept(listener)");
+    crate::quiet::assert_never_woken(crate::quiet::ACCEPTS, Duration::from_secs(5));
 }
 
 /// A server that nobody connects to costs as little: `http.serve` is
 /// an accept on the listener and nothing else, with no thread of its
 /// own and nothing that wakes now and then to look.
 #[test]
-#[cfg(all(target_os = "linux", feature = "test-hooks", feature = "http"))]
+#[cfg(all(target_os = "linux", feature = "http"))]
 fn an_idle_server_is_not_woken() {
-    an_idle_acceptor_is_not_woken(
-        "import http",
-        r#"http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }"#,
-    );
+    crate::quiet::assert_never_woken(crate::quiet::SERVER, Duration::from_secs(5));
 }
 
-/// A task runs `acceptor` on `listener`, and nothing connects to it:
-/// see [`an_idle_accept_is_not_woken`].
-#[cfg(all(target_os = "linux", feature = "test-hooks"))]
-fn an_idle_acceptor_is_not_woken(imports: &str, acceptor: &str) {
-    use crate::port_file::PortFile;
-
-    /// (voluntary context switches, nanoseconds on a CPU) of a thread.
-    fn activity(thread: u32) -> Option<(u64, u64)> {
-        let dir = format!("/proc/self/task/{thread}");
-        let status = std::fs::read_to_string(format!("{dir}/status")).ok()?;
-        let switches = status
-            .lines()
-            .find_map(|line| line.strip_prefix("voluntary_ctxt_switches:"))?
-            .trim()
-            .parse()
-            .ok()?;
-        let on_cpu = std::fs::read_to_string(format!("{dir}/schedstat"))
-            .ok()?
-            .split_whitespace()
-            .next()?
-            .parse()
-            .ok()?;
-        Some((switches, on_cpu))
-    }
-
-    let control = PortFile::new();
-    let source = format!(
-        r#"
-{imports}
-import io
+/// The look that the two tests above take does see a wake-up: a
+/// program in which one task wakes once a second, between waits that
+/// are as quiet as theirs, fails it.
+#[test]
+#[cfg(target_os = "linux")]
+#[should_panic(expected = "were woken within")]
+fn a_program_that_wakes_now_and_then_is_caught() {
+    let wakes = r#"
 import task
 import tcp
+import time
 
-fn main() {{
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
-  let acceptor = task.spawn {{ -> {acceptor} }}
-  -- Until the test connects here, nothing happens.
-  when let Ok(control) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
-  when let Ok(_) = io.write_file("{control_path}", "{{tcp.local_port(control)}}\n") else {{
-    panic("cannot write the port")
-  }}
-  let _ = tcp.accept(control)
-  task.cancel(acceptor)
-  println("done")
-}}
-"#,
-        control_path = control.path()
-    );
-    let program = compile_str(&source).unwrap_or_else(|errors| panic!("{errors:?}"));
-    let out = Buffer::new();
-    let mut vm = Vm::new(HostIo::buffer(&out));
-    let threads = silt::vm::io_pool_thread_ids(&vm);
-    let running = thread::spawn(move || {
-        let result = vm.run_program(&program).map_err(|e| e.message);
-        vm.settle();
-        result
-    });
-    let control_port = control.wait();
-    // Both accepts have their threads: the task's and main's.
-    until("the two accepts have threads", || threads().len() == 2);
-    let accepts = threads();
+fn tick() {
+  time.sleep(time.ms(1000))
+  tick()
+}
 
-    let mut quiet = false;
-    for _ in 0..10 {
-        let before: Vec<_> = accepts.iter().map(|id| activity(*id)).collect();
-        thread::sleep(Duration::from_secs(2));
-        let after: Vec<_> = accepts.iter().map(|id| activity(*id)).collect();
-        let deltas: Vec<(u64, u64)> = before
-            .iter()
-            .zip(&after)
-            .map(|(b, a)| {
-                let (b, a) = (b.expect("the thread exists"), a.expect("the thread exists"));
-                (a.0 - b.0, a.1 - b.1)
-            })
-            .collect();
-        if deltas
-            .iter()
-            .all(|(switches, on_cpu)| *switches == 0 && *on_cpu < 10_000_000)
-        {
-            quiet = true;
-            break;
-        }
-    }
-    assert!(
-        quiet,
-        "an idle accept was scheduled in each of ten windows of two seconds"
-    );
-
-    drop(TcpStream::connect(("127.0.0.1", control_port)).expect("connect to end the program"));
-    let result = running.join().expect("the program ran");
-    assert_eq!(result, Ok(Value::Unit));
-    assert_eq!(out.contents(), "done\n");
+fn main() {
+  when let Ok(other) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let _ = task.spawn(tick)
+  println("waiting")
+  let _ = tcp.accept(other)
+}
+"#;
+    crate::quiet::assert_never_woken(wakes, Duration::from_secs(3));
 }
 
 /// Two tasks wait in `tcp.accept` on one listener; the first is

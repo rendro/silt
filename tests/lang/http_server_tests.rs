@@ -998,11 +998,12 @@ fn after_a_refusal_the_client_is_heard_out_for_a_time() {
     let clock = TestClock::default();
     let server = Server::on(ECHO, Some(clock.clone()));
     let mut client = server.connect();
-    // Refused on its head; megabytes of a body follow, which the
-    // server takes although it has answered.
+    // Refused on its head; a body follows, more of it than the system
+    // would hold for a server that reads nothing: the server takes it
+    // although it has answered.
     client.send(b"POST /big HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999999\r\n\r\n");
     let body = vec![b'x'; 64 * 1024];
-    for _ in 0..64 {
+    for _ in 0..512 {
         client.send(&body);
     }
     let response = client.response();
