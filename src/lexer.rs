@@ -226,6 +226,11 @@ pub struct Lexed {
     /// Whether the text ends inside a string or a block comment that is
     /// not closed (see `is_cut_short`).
     pub cut_short: bool,
+    /// Whether a backslash stands outside every string. Silt has none
+    /// there: the quotes of the text are off (one too many or too few
+    /// somewhere in front), and what was read as a string is code and
+    /// the other way round (see `is_cut_short`).
+    pub quotes_off: bool,
 }
 
 impl Lexed {
@@ -237,12 +242,14 @@ impl Lexed {
         }
     }
 
-    /// Whether the text ends inside a string or a block comment that is
-    /// not closed. Where it was meant to end is unknown, so what the
-    /// tokens before it are is unknown too: only the lexer's errors are
-    /// worth reporting for such a text.
+    /// Whether what the tokens are cannot be trusted: the text ends
+    /// inside a string or a block comment that is not closed, or a
+    /// backslash stands outside every string (the quotes are off).
+    /// Where a string was meant to start or end is unknown then, so
+    /// what the tokens in front and behind are is unknown too: only the
+    /// lexer's first error is worth reporting for such a text.
     pub fn is_cut_short(&self) -> bool {
-        self.cut_short
+        self.cut_short || self.quotes_off
     }
 
     /// Whether more lines can finish the text: a delimiter of code
@@ -367,6 +374,8 @@ pub struct Lexer {
     more_errors: usize,
     /// Whether the text ends inside an unclosed string or comment.
     cut_short: bool,
+    /// Whether a backslash stands outside every string.
+    quotes_off: bool,
     /// The mistakes that are one error when they are made again: what
     /// was written (for the note), the index in `errors` of its first
     /// error, and the places it is written again.
@@ -389,6 +398,7 @@ impl Lexer {
             errors: Vec::new(),
             more_errors: 0,
             cut_short: false,
+            quotes_off: false,
             repeats: std::collections::HashMap::new(),
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
@@ -454,6 +464,7 @@ impl Lexer {
             errors: std::mem::take(&mut self.errors),
             more_errors: self.more_errors,
             cut_short: self.cut_short,
+            quotes_off: self.quotes_off,
         }
     }
 
@@ -1227,6 +1238,7 @@ impl Lexer {
             // `@$~`, stray control bytes) are one error, named by the
             // first.
             _ => {
+                self.quotes_off |= ch == '\\';
                 let error = self.unexpected(start, || match ch {
                     // A BOM after the start of the file (the leading one
                     // is skipped in `Lexer::new`) is invisible and
@@ -2040,5 +2052,11 @@ mod tests {
             assert_eq!(kinds, tokens, "{input}");
         }
         assert!(!lex("1 @ 2 \"a\\q\"").is_cut_short());
+        // A backslash outside every string: the quotes are off. The
+        // text does not end in a string, and more lines finish nothing.
+        let lexed = lex("let a = 0\"\nlet b = \"x \\\" y\"\n");
+        assert!(lexed.quotes_off && !lexed.cut_short && lexed.is_cut_short());
+        assert!(!lexed.ends_open());
+        assert!(!lex("\"a \\\\ b\" + \"\\{\"").is_cut_short());
     }
 }
