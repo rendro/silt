@@ -154,9 +154,9 @@ Returns `Unit`.
 
 ```silt
 let ch = channel.new(2)
-channel.try_send(ch, "a") -- true
-channel.try_send(ch, "b") -- true
-channel.try_send(ch, "c") -- false (buffer full)
+println(channel.try_send(ch, "a")) -- true
+println(channel.try_send(ch, "b")) -- true
+println(channel.try_send(ch, "c")) -- false (buffer full)
 ```
 
 Attempts to send without blocking. Returns `true` if the value was placed in
@@ -169,8 +169,8 @@ yields to the scheduler.
 let ch = channel.new(10)
 channel.send(ch, 42)
 
-channel.try_receive(ch) -- Message(42)
-channel.try_receive(ch) -- Empty
+println(channel.try_receive(ch)) -- Message(42)
+println(channel.try_receive(ch)) -- Empty
 ```
 
 Attempts to receive without blocking. Returns a `ChannelResult(a)`. The

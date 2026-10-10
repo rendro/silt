@@ -56,10 +56,10 @@ never infinite. An operation whose result would be NaN or infinite is a
 **runtime error**, the same rule as integer overflow:
 
 ```silt
-1.0 / 0.0 -- error: float division by zero
-float.max_value * 2.0 -- error: float overflow
-math.sqrt(-4.0) -- error: math.sqrt of a negative number: -4
-math.log(0.0) -- error: math.log of a number that is not positive: 0
+println(1.0 / 0.0) -- error: float division by zero
+println(float.max_value * 2.0) -- error: float overflow
+println(math.sqrt(-4.0)) -- error: math.sqrt of a negative number: -4
+println(math.log(0.0)) -- error: math.log of a number that is not positive: 0
 ```
 
 Where an input can be out of range, guard it explicitly:

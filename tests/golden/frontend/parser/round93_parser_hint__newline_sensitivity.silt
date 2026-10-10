@@ -5,7 +5,7 @@
 -- stderr-contains: a line that starts with `-` is a statement of its own
 -- stderr-not-contains: error[parse]
 -- A newline before `-` ends the previous expression: `- a` is a statement,
--- and its value is unused. `&&` may cross a newline.
+-- and its value is unused. `&&` may cross a newline (..__and_continues_the_line_above runs that).
 fn main() {
   let a = 1
   - a
