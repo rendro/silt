@@ -4,7 +4,7 @@ import test
 import float
 import string
 fn main() {
-  let c = channel.new()
+  let c = channel.new(0)
   test.assert(true)
   println(string.from(1.5))
   println(float.format(1.5, 3))

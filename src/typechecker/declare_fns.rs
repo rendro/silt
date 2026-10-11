@@ -249,7 +249,6 @@ impl TypeChecker {
                     vars: scheme_vars,
                     preds: bounds.clone(),
                     ty: fn_type,
-                    optional_last_param: false,
                 },
             );
         }

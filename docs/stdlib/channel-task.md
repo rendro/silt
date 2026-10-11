@@ -15,7 +15,7 @@ communication between tasks spawned with `task.spawn`.
 |----------|-----------|-------------|
 | `close` | `(Channel(a)) -> ()` | Close the channel |
 | `each` | `(Channel(a), Fn(a) -> b) -> ()` | Iterate until channel closes |
-| `new` | `(Int?) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
+| `new` | `(Int) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel(a)) -> ChannelResult(a)` | Blocking receive |
 | `receive_timeout` | `(Channel(a), Duration) -> ChannelResult(a)` | Receive, waiting no longer than a duration |
 | `select` | `(List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`) |
@@ -74,20 +74,19 @@ fn main() {
 ## `channel.new`
 
 ```
-channel.new() -> Channel(a)
 channel.new(capacity: Int) -> Channel(a)
 ```
 
-Creates a new channel. With no argument, creates a rendezvous channel
-(capacity 0) where the sender blocks until a receiver is ready and vice versa.
-With an integer argument, creates a buffered channel with that capacity --
-sends block when the buffer is full, receives block when the buffer is empty.
+Creates a new channel. With capacity 0 it is a rendezvous channel: the sender
+blocks until a receiver is ready and vice versa. With a larger capacity it is
+buffered: sends block when the buffer is full, receives block when the buffer
+is empty. A negative capacity is an error.
 
 ```silt
 import channel
 
 fn main() {
-  let rendezvous = channel.new() -- true rendezvous (capacity 0)
+  let rendezvous = channel.new(0) -- true rendezvous (capacity 0)
   let buffered = channel.new(10) -- buffered (capacity 10)
 }
 ```

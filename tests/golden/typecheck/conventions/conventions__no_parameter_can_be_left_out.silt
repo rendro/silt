@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- No function has a parameter that a call may leave out: a channel is
+-- made with its capacity, and an assertion takes what it compares and
+-- nothing else.
+import channel
+import test
+
+fn main() {
+  let ch: Channel(Int) = channel.new()
+  channel.close(ch)
+  test.assert(true, "a message")
+  test.assert_eq(1, 1, "a message")
+  test.assert_ne(1, 2, "a message")
+  1 |> test.assert_eq(1, "a message")
+}

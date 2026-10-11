@@ -5,8 +5,8 @@ import io
 import channel
 import task
 fn program() {
-  let ping = channel.new()
-  let pong = channel.new()
+  let ping = channel.new(0)
+  let pong = channel.new(0)
 
   let t1 = task.spawn({ ->
     -- Send ping, wait for pong, repeat

@@ -1,6 +1,6 @@
 -- exit: 1
--- stderr-contains: should be true
+-- stderr-contains: assertion failed: false
 import test
 fn main() {
-  test.assert(false, "should be true")
+  test.assert(false)
 }

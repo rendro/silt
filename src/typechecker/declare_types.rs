@@ -141,7 +141,6 @@ impl TypeChecker {
                             Type::Fun(field_types, Box::new(result_type))
                         },
                         preds: vec![],
-                        optional_last_param: false,
                     };
                     // The variant's definition's scheme, which a use of it
                     // reads: two enums may have variants of one name.
@@ -169,7 +168,6 @@ impl TypeChecker {
                         vars: var_ids.clone(),
                         ty: Type::type_of(enum_ty),
                         preds: vec![],
-                        optional_last_param: false,
                     };
                     env.define(td.name, scheme);
                 }
@@ -254,7 +252,6 @@ impl TypeChecker {
                         vars: vec![],
                         ty: Type::type_of(record_ty),
                         preds: vec![],
-                        optional_last_param: false,
                     }
                 } else {
                     // Re-use the param TyVars that parameterize the
@@ -275,7 +272,6 @@ impl TypeChecker {
                         vars: var_ids,
                         ty: Type::type_of(generic_record),
                         preds: vec![],
-                        optional_last_param: false,
                     }
                 };
                 env.define(td.name, scheme);

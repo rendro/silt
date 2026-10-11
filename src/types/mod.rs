@@ -562,22 +562,11 @@ impl Pred {
 /// The `vars` are the universally quantified type variables.
 /// The `preds` are what each use owes for them (from `where` clauses, or
 /// inferred from what the definition's body uses).
-///
-/// `optional_last_param` is part of a function's signature: when `true`,
-/// a call may leave out the function's last parameter. Only the builtins
-/// whose implementation accepts the shorter call declare it
-/// (`test.assert`, `test.assert_eq`, `test.assert_ne`, `channel.new`);
-/// every other function requires exactly as many
-/// arguments as it has parameters. The fact belongs to the named
-/// function, not to its type: a scheme made from a type alone
-/// (`generalize`, `mono`) never declares it, so a function value bound
-/// with `let` or passed as an argument is called with its full arity.
 #[derive(Debug, Clone)]
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub preds: Vec<Pred>,
     pub ty: Type,
-    pub optional_last_param: bool,
 }
 
 impl Scheme {
@@ -586,15 +575,7 @@ impl Scheme {
             vars: Vec::new(),
             preds: Vec::new(),
             ty,
-            optional_last_param: false,
         }
-    }
-
-    /// Declare that a call may leave out this function's last parameter.
-    /// See the `optional_last_param` note on `Scheme`.
-    pub fn with_optional_last_param(mut self) -> Self {
-        self.optional_last_param = true;
-        self
     }
 }
 

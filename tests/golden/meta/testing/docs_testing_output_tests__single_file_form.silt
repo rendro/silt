@@ -13,7 +13,7 @@ fn test_string_length() {
 }
 
 fn skip_test_not_ready_yet() {
-    test.assert(false, "this would fail")
+    test.assert(false)
 }
 
 fn helper(x) {

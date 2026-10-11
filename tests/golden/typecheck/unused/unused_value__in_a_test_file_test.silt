@@ -9,5 +9,5 @@ fn double(n: Int) -> Int {
 
 fn test_double() {
   double(2)
-  test.assert_eq(double(2), 4, "double")
+  test.assert_eq(double(2), 4)
 }

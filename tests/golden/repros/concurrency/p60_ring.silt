@@ -6,7 +6,7 @@ import task
 -- ring of 2000 tasks on rendezvous channels; a token is passed around once
 fn main() {
   let n = 2000
-  let chans = 0..n |> list.map { i -> channel.new() }
+  let chans = 0..n |> list.map { i -> channel.new(0) }
   let hs = 0..(n - 1) |> list.map { i ->
     let inp = list.get(chans, i)
     let out = list.get(chans, i + 1)

@@ -4,7 +4,7 @@ import io
 import channel
 import task
 fn program() {
-  let ch = channel.new()
+  let ch = channel.new(0)
   let results = channel.new(10)
 
   let r1 = task.spawn({ ->

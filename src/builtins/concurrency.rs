@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::time;
-use super::typed::{Arg, Called, Chan, Handle, List, builtins, unsound};
+use super::typed::{Arg, Chan, Handle, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
@@ -82,28 +82,16 @@ fn select_arms(ops: List) -> Result<Vec<Arm>, VmError> {
 pub(crate) mod channel {
     use super::*;
 
-    /// `channel.new()` and `channel.new(capacity)`: with or without
-    /// its parameter, which the typed form has no way to say, so it is
-    /// written as the call the macro would write. (The conventions step
-    /// gives it one form.)
-    pub(crate) fn new(vm: &mut Vm, args: &[Value]) -> Called {
-        let capacity = match args {
-            [] => 0,
-            [capacity] => i64::take(capacity)?,
-            _ => return None,
-        };
-        Some(match usize::try_from(capacity) {
-            Ok(capacity) => {
-                let id = vm.next_channel_id();
-                Ok(Step::Done(Value::Channel(Channel::new(id, capacity))))
-            }
-            Err(_) => Err(VmError::new(
-                "channel.new capacity must be a non-negative integer".into(),
-            )),
-        })
-    }
-
     builtins! {
+        fn new(vm, capacity: i64) -> Result<Value, VmError> {
+            match usize::try_from(capacity) {
+                Ok(capacity) => Ok(Value::Channel(Channel::new(vm.next_channel_id(), capacity))),
+                Err(_) => Err(VmError::new(
+                    "channel.new capacity must be a non-negative integer".into(),
+                )),
+            }
+        }
+
         fn send(vm, ch: Chan, value: &Value) -> Result<Step, VmError> {
             let id = ch.id();
             let value = match ch.try_send(value.clone(), vm.scheduler().wake()) {

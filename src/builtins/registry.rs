@@ -92,10 +92,6 @@ pub struct Row {
     /// A function's parameter names, from the signature (`a` for a
     /// `type a` parameter). Empty for a constant.
     pub params: Vec<&'static str>,
-    /// Whether the last parameter may be left out of a call. A signature
-    /// cannot say so; the conventions step removes the five rows that
-    /// have it.
-    pub optional_last: bool,
     /// The cargo feature the row needs beyond its module's, if any.
     pub feature: Option<&'static str>,
     /// Whether the row's feature and its module's are built.
@@ -203,7 +199,6 @@ pub struct RowSpec {
     /// The typed body of a function row that has one.
     typed: Option<TypedCall>,
     constant: Option<Value>,
-    optional_last: bool,
     feature: Option<(&'static str, bool)>,
 }
 
@@ -222,7 +217,6 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
         summary,
         typed: None,
         constant: None,
-        optional_last: false,
         feature: None,
     }
 }
@@ -236,19 +230,11 @@ fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
         constant: Some(Value::Float(
             crate::value::Float::new(value).expect("a constant of the registry is a finite number"),
         )),
-        optional_last: false,
         feature: None,
     }
 }
 
 impl RowSpec {
-    /// The last parameter may be left out of a call (see
-    /// [`Row::optional_last`]).
-    fn optional_last(mut self) -> RowSpec {
-        self.optional_last = true;
-        self
-    }
-
     /// The row needs the cargo feature `name`, which is built or not:
     /// `.feature("tcp-tls", cfg!(feature = "tcp-tls"))`.
     fn feature(mut self, name: &'static str, built: bool) -> RowSpec {
@@ -432,17 +418,11 @@ macro_rules! module {
     (@rows $slot:ident, [$feature:literal], [$({ $($row:tt)* })*]) => {
         $slot = vec![$(module!(@row [$feature] $($row)*)),*];
     };
-    // A function row, `f(signature, summary, body)`: alone, with
-    // `.optional_last()`, or with `.feature("name")`, the cargo feature
-    // the row needs beyond its module's.
+    // A function row, `f(signature, summary, body)`: alone, or with
+    // `.feature("name")`, the cargo feature the row needs beyond its
+    // module's.
     (@row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr) []) => {
         module!(@typed [$($of)?] [] $signature, $summary, $body)
-    };
-    (
-        @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
-        [. optional_last ()]
-    ) => {
-        module!(@typed [$($of)?] [] $signature, $summary, $body).optional_last()
     };
     (
         @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
@@ -588,7 +568,6 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
                 name: "",
                 module: name,
                 params: Vec::new(),
-                optional_last: spec.optional_last,
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
                 // (Its place among all rows: the registry's to say.)

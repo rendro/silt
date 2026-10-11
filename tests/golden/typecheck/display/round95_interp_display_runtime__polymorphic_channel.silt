@@ -5,6 +5,6 @@
 import channel
 fn show(x: a) -> String where a: Display { "val={x}" }
 fn main() {
-  let c = channel.new()
+  let c = channel.new(0)
   println(show(c))
 }

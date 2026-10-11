@@ -254,8 +254,7 @@ fn trim_blank_edges(lines: &[&str]) -> String {
 // ── The generated parts of a page ───────────────────────────────────
 
 /// A row's signature without its parameter names, as a summary table
-/// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type. A
-/// last parameter that may be left out is marked `?`.
+/// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type.
 fn summary_signature(row: &Row) -> String {
     let Some((label, ranges)) = row.qualified_signature("") else {
         return row
@@ -264,7 +263,7 @@ fn summary_signature(row: &Row) -> String {
             .map_or(row.signature, |(_, ty)| ty)
             .to_string();
     };
-    let mut types: Vec<String> = ranges
+    let types: Vec<String> = ranges
         .iter()
         .map(|[start, end]| {
             let param = &label[*start as usize..*end as usize];
@@ -274,11 +273,6 @@ fn summary_signature(row: &Row) -> String {
                 .to_string()
         })
         .collect();
-    if row.optional_last
-        && let Some(last) = types.last_mut()
-    {
-        last.push('?');
-    }
     let close = ranges.last().map_or_else(
         || label.find(')').unwrap_or(label.len()),
         |[_, end]| *end as usize,
@@ -287,23 +281,11 @@ fn summary_signature(row: &Row) -> String {
 }
 
 /// The signature block of a function's section: `list.map(xs: List(a),
-/// f: Fn(a) -> b) -> List(b)`; `math.pi: Float` for a constant. A
-/// function whose last parameter may be left out has two lines, the
-/// call without it first.
+/// f: Fn(a) -> b) -> List(b)`; `math.pi: Float` for a constant.
 fn section_signature(module: &Module, row: &Row) -> String {
-    let Some((label, ranges)) = row.qualified_signature(module.name) else {
-        return format!("{}.{}", module.name, row.signature);
-    };
-    let full = &label["fn ".len()..];
-    match ranges.as_slice() {
-        [.., [last, end]] if row.optional_last => {
-            // The text before the last parameter, without the comma
-            // that ends the parameter before it.
-            let before = label[..*last as usize].trim_end_matches(", ");
-            let short = format!("{before}{}", &label[*end as usize..]);
-            format!("{}\n{full}", &short["fn ".len()..])
-        }
-        _ => full.to_string(),
+    match row.qualified_signature(module.name) {
+        Some((label, _)) => label["fn ".len()..].to_string(),
+        None => format!("{}.{}", module.name, row.signature),
     }
 }
 

@@ -5,7 +5,7 @@ import channel
 import task
 import time
 fn program() {
-  let ch = channel.new()
+  let ch = channel.new(0)
   let timer = channel.timeout(time.ms(50))
 
   -- Nobody sends to ch, but timer will fire

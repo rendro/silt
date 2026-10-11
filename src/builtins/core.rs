@@ -1,9 +1,9 @@
 //! Core builtin functions (`result.*`, `option.*`, `test.*`).
 
-use super::typed::{Arg, Called, builtins, unsound};
+use super::typed::{Arg, builtins, unsound};
 use crate::typeinfo::{BuiltinVariant, bv};
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError, call_then};
+use crate::vm::{Step, VmError, call_then};
 
 /// The one field of `value`, if it is the variant `tag` with one.
 fn field(value: &Value, tag: BuiltinVariant) -> Option<&Value> {
@@ -153,57 +153,40 @@ pub(crate) mod option {
 pub(crate) mod test {
     use super::*;
 
-    /// The arguments without the message, and the message if there is
-    /// one: `None` if they are not `N` or `N + 1`, or the message is no
-    /// `String`.
-    fn with_message<const N: usize>(args: &[Value]) -> Option<(&[Value; N], Option<&str>)> {
-        let (args, message) = args.split_first_chunk::<N>()?;
-        match message {
-            [] => Some((args, None)),
-            [message] => Some((args, Some(<&str>::take(message)?))),
-            _ => None,
+    /// The failure of an assertion: what failed. (Values are shown as
+    /// silt source writes them.)
+    fn failed(what: String) -> VmError {
+        VmError::new(format!("assertion failed: {what}"))
+    }
+
+    builtins! {
+        fn assert(condition: bool) -> Result<(), VmError> {
+            match condition {
+                true => Ok(()),
+                false => Err(failed("false".to_string())),
+            }
         }
-    }
 
-    /// The failure of an assertion: what failed, after the message if
-    /// there is one. (Values are shown as silt source writes them.)
-    fn failed(message: Option<&str>, what: String) -> Called {
-        Some(Err(VmError::new(match message {
-            Some(message) => format!("assertion failed: {message}: {what}"),
-            None => format!("assertion failed: {what}"),
-        })))
-    }
-
-    const PASSED: Called = Some(Ok(Step::Done(Value::Unit)));
-
-    pub(crate) fn assert(_vm: &mut Vm, args: &[Value]) -> Called {
-        let ([condition], message) = with_message(args)?;
-        match bool::take(condition)? {
-            true => PASSED,
-            // (The message stands for the condition: it is `false`.)
-            false => failed(None, message.map_or("false", |message| message).to_string()),
+        fn assert_eq(left: &Value, right: &Value) -> Result<(), VmError> {
+            match left == right {
+                true => Ok(()),
+                false => Err(failed(format!(
+                    "{} != {}",
+                    left.format_silt(),
+                    right.format_silt()
+                ))),
+            }
         }
-    }
 
-    pub(crate) fn assert_eq(_vm: &mut Vm, args: &[Value]) -> Called {
-        let ([left, right], message) = with_message(args)?;
-        match left == right {
-            true => PASSED,
-            false => failed(
-                message,
-                format!("{} != {}", left.format_silt(), right.format_silt()),
-            ),
-        }
-    }
-
-    pub(crate) fn assert_ne(_vm: &mut Vm, args: &[Value]) -> Called {
-        let ([left, right], message) = with_message(args)?;
-        match left != right {
-            true => PASSED,
-            false => failed(
-                message,
-                format!("{} == {}", left.format_silt(), right.format_silt()),
-            ),
+        fn assert_ne(left: &Value, right: &Value) -> Result<(), VmError> {
+            match left != right {
+                true => Ok(()),
+                false => Err(failed(format!(
+                    "{} == {}",
+                    left.format_silt(),
+                    right.format_silt()
+                ))),
+            }
         }
     }
 }

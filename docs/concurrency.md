@@ -75,13 +75,13 @@ A channel is a conduit for passing values between tasks.
 
 ```silt
 -- Rendezvous channel (capacity 0 -- sender blocks until receiver is ready)
-let ch = channel.new()
+let ch = channel.new(0)
 
 -- Buffered channel with capacity 10
 let ch = channel.new(10)
 ```
 
-`channel.new()` takes zero or one argument. With no argument, it creates a
+`channel.new(0)` takes zero or one argument. With no argument, it creates a
 rendezvous channel (capacity 0) where the sender blocks until a receiver is
 ready and vice versa. With an integer argument, it creates a buffered channel
 with that capacity.
@@ -215,7 +215,7 @@ behind round-robin fan-out (see Section 5).
 
 ### Unbuffered channels (true rendezvous)
 
-`channel.new()` with no arguments creates a true rendezvous channel with
+`channel.new(0)` with no arguments creates a true rendezvous channel with
 capacity 0. The sender blocks until a receiver is ready, and the receiver
 blocks until a sender is ready. The value is handed off directly -- it is
 never buffered. When `channel.send` returns, the value has been handed to a
@@ -231,7 +231,7 @@ a receiver is parked on the channel, and `channel.try_receive` gives a value
 only while a sender is.
 
 ```silt
-let ch = channel.new() -- capacity 0, true rendezvous
+let ch = channel.new(0) -- capacity 0, true rendezvous
 
 let _ = task.spawn { ->
   -- this blocks until the main task calls channel.receive
@@ -1347,7 +1347,7 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 
 | Operation | Syntax | Returns |
 |---|---|---|
-| Create channel | `channel.new()` / `channel.new(n)` | `Channel` |
+| Create channel | `channel.new(0)` / `channel.new(n)` | `Channel` |
 | Send (blocking) | `channel.send(ch, val)` | `Unit` |
 | Receive (blocking) | `channel.receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)` or `channel.Closed` in practice; `channel.Empty`/`channel.Sent` are unreachable here but still required by exhaustiveness |
 | Close | `channel.close(ch)` | `Unit` |

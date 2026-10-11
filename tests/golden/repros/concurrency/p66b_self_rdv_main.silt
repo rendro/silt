@@ -2,7 +2,7 @@
 import channel
 
 fn main() {
-  let ch = channel.new()
+  let ch = channel.new(0)
   match channel.select([channel.Recv(ch), channel.Send(ch, 7)]) {
     (_, channel.Sent) -> println("Sent (to whom?)")
     (_, channel.Message(v)) -> println("Message {v}")

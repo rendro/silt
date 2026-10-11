@@ -1191,7 +1191,6 @@ impl TypeChecker {
                     vars: own,
                     preds,
                     ty,
-                    optional_last_param: false,
                 };
                 let origin = Origin {
                     span,

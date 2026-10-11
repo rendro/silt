@@ -5,7 +5,7 @@ import channel
 import list
 import task
 fn program() {
-  let ch = channel.new()
+  let ch = channel.new(0)
 
   -- Spawn 20 senders
   let handles = loop i = 0, acc = [] {

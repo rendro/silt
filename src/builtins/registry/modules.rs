@@ -4,9 +4,8 @@
 //! A function row is `f(signature, summary, body)`: the body is the
 //! function of that name among the module's typed bodies
 //! (`crate::builtins::typed`); with `.feature("name")` it needs a
-//! cargo feature beyond its module's, with `.optional_last()` its last
-//! parameter may be left out. A constant is `k("name: Type", summary,
-//! value)`.
+//! cargo feature beyond its module's. A constant is `k("name: Type",
+//! summary, value)`.
 
 use super::{Module, RowSpec, build_module, f, k, module};
 use crate::builtins::collections::{list, map, set};
@@ -236,9 +235,9 @@ pub(super) fn modules() -> Vec<Module> {
             name: "test",
             page: "test.md",
             rows: [
-                f("fn assert(condition: Bool, message: String) -> ()", "Assert value is truthy", core::test::assert).optional_last(),
-                f("fn assert_eq(left: a, right: a, message: String) -> () where a: Equal + Display", "Assert two values are equal", core::test::assert_eq).optional_last(),
-                f("fn assert_ne(left: a, right: a, message: String) -> () where a: Equal + Display", "Assert two values are not equal", core::test::assert_ne).optional_last(),
+                f("fn assert(condition: Bool) -> ()", "Assert a condition is true", core::test::assert),
+                f("fn assert_eq(left: a, right: a) -> () where a: Equal + Display", "Assert two values are equal", core::test::assert_eq),
+                f("fn assert_ne(left: a, right: a) -> () where a: Equal + Display", "Assert two values are not equal", core::test::assert_ne),
             ],
         },
         module! {
@@ -252,7 +251,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
                 f("fn each(ch: Channel(a), f: Fn(a) -> b) -> ()", "Iterate until channel closes", concurrency::channel::each),
-                f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new).optional_last(),
+                f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new),
                 f("fn receive(ch: Channel(a)) -> ChannelResult(a)", "Blocking receive", concurrency::channel::receive),
                 f("fn receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)", "Receive, waiting no longer than a duration", concurrency::channel::receive_timeout),
                 f("fn select(ops: List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))", "Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`)", concurrency::channel::select),

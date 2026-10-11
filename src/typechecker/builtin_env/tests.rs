@@ -72,36 +72,28 @@ fn a_row_s_scheme_is_its_signature() {
             })
             .collect();
         let ty = checker.instantiate(&scheme);
-        (format!("{ty}"), constraints, scheme.optional_last_param)
+        (format!("{ty}"), constraints)
     };
     assert_eq!(
         show("map.get"),
         (
             "Fn(Map(_, _), _) -> Option(_)".to_string(),
-            vec!["Hash".to_string()],
-            false
+            vec!["Hash".to_string()]
         )
     );
     assert_eq!(
         show("json.parse"),
         (
             "Fn(String, type _) -> Result(_, JsonError)".to_string(),
-            vec![],
-            false
+            vec![]
         )
     );
-    assert_eq!(
-        show("set.new"),
-        ("Fn() -> Set(_)".to_string(), vec![], false)
-    );
-    assert_eq!(show("math.pi"), ("Float".to_string(), vec![], false));
-    assert_eq!(
-        show("test.assert"),
-        ("Fn(Bool, String) -> ()".to_string(), vec![], true)
-    );
+    assert_eq!(show("set.new"), ("Fn() -> Set(_)".to_string(), vec![]));
+    assert_eq!(show("math.pi"), ("Float".to_string(), vec![]));
+    assert_eq!(show("test.assert"), ("Fn(Bool) -> ()".to_string(), vec![]));
     assert_eq!(
         show("time.sleep"),
-        ("Fn(Duration) -> ()".to_string(), vec![], false)
+        ("Fn(Duration) -> ()".to_string(), vec![])
     );
 }
 

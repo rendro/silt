@@ -6,33 +6,31 @@ order: 15
 
 # test
 
-Assertion functions for test scripts. Each accepts an optional trailing `String`
-message argument.
+Assertion functions for test scripts. A failed assertion is a runtime error
+that says what failed, with both values and the place of the call.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `assert` | `(Bool, String?) -> ()` | Assert value is truthy |
-| `assert_eq` | `(a, a, String?) -> () where a: Equal + Display` | Assert two values are equal |
-| `assert_ne` | `(a, a, String?) -> () where a: Equal + Display` | Assert two values are not equal |
+| `assert` | `(Bool) -> ()` | Assert a condition is true |
+| `assert_eq` | `(a, a) -> () where a: Equal + Display` | Assert two values are equal |
+| `assert_ne` | `(a, a) -> () where a: Equal + Display` | Assert two values are not equal |
 
 
 ## `test.assert`
 
 ```
 test.assert(condition: Bool) -> ()
-test.assert(condition: Bool, message: String) -> ()
 ```
 
-Panics if `condition` is `false`. The optional message is included in the error.
+Panics if `condition` is `false`.
 
 ```silt
 import test
 
 fn main() {
   test.assert(1 + 1 == 2)
-  test.assert(1 + 1 == 2, "math should work")
 }
 ```
 
@@ -41,7 +39,6 @@ fn main() {
 
 ```
 test.assert_eq(left: a, right: a) -> () where a: Equal + Display
-test.assert_eq(left: a, right: a, message: String) -> () where a: Equal + Display
 ```
 
 Panics if `left != right`, displaying both values.
@@ -52,7 +49,7 @@ import test
 
 fn main() {
   test.assert_eq(list.length([1, 2, 3]), 3)
-  test.assert_eq(1 + 1, 2, "addition")
+  test.assert_eq(1 + 1, 2)
 }
 ```
 
@@ -61,7 +58,6 @@ fn main() {
 
 ```
 test.assert_ne(left: a, right: a) -> () where a: Equal + Display
-test.assert_ne(left: a, right: a, message: String) -> () where a: Equal + Display
 ```
 
 Panics if `left == right`, displaying both values.

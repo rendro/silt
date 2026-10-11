@@ -171,7 +171,6 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars,
                 preds: vec![],
                 ty: Type::type_of(ty),
-                optional_last_param: false,
             },
         );
     }
@@ -273,7 +272,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
             {
                 scheme = Scheme::mono(*value);
             }
-            scheme.optional_last_param = row.optional_last;
             env.define(intern(&format!("{}.{name}", module.name)), scheme);
         }
         // The module's error enum implements `Error` natively

@@ -154,12 +154,7 @@ impl TypeChecker {
                 }
             }
         }
-        Scheme {
-            vars,
-            preds,
-            ty,
-            optional_last_param: false,
-        }
+        Scheme { vars, preds, ty }
     }
 
     /// The scheme of a top-level function whose body is checked: `ty`,
@@ -408,7 +403,6 @@ impl TypeChecker {
             vars,
             preds: entry.preds.clone(),
             ty,
-            optional_last_param: false,
         }
     }
 }

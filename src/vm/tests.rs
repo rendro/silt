@@ -2287,7 +2287,7 @@ fn test_scheduler_channel_communication() {
             import task
             import channel
             fn main() {
-                let ch = channel.new()
+                let ch = channel.new(0)
                 let _ = task.spawn({ -> channel.send(ch, 99) })
                 channel.receive(ch)
             }
@@ -2304,7 +2304,7 @@ fn test_scheduler_deadlock_detection() {
             import task
             import channel
             fn main() {
-                let ch = channel.new()
+                let ch = channel.new(0)
                 let t = task.spawn({ -> channel.receive(ch) })
                 task.join(t)
             }
@@ -2567,7 +2567,6 @@ fn test_builtin_panic_converted_to_vm_error() {
         name: "boom",
         module: "test",
         params: Vec::new(),
-        optional_last: false,
         feature: None,
         enabled: true,
         id: println.id,
