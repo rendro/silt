@@ -620,12 +620,14 @@ impl TcpStreamHandle {
     /// write that waits for the system ([`TcpStreamHandle::write_all`])
     /// is in flight when it is called: a connection of `http.serve`,
     /// whose task writes nothing while the rest of a response is on
-    /// its way and ends the connection if it gives that up. Whoever
-    /// has the turn then is in a call of this kind itself: it asks
-    /// the system for what it takes at once, and does nothing else
-    /// under the lock. The wait is as long as that, and a thread of
-    /// the scheduler that waits here is not held: the other writer
-    /// needs nothing of the scheduler to finish.
+    /// its way and ends the connection if it gives that up. (The rule
+    /// stands at `ConnState::Sending` in `builtins/http.rs`; a new
+    /// call there has to keep it.) Whoever has the turn then is in a
+    /// call of this kind itself: it asks the system for what it takes
+    /// at once, and does nothing else under the lock. The wait is as
+    /// long as that, and a thread of the scheduler that waits here is
+    /// not held: the other writer needs nothing of the scheduler to
+    /// finish.
     ///
     /// A read of the connection may be in flight on another thread
     /// meanwhile: it is not disturbed (see `send_now`).

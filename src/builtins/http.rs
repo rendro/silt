@@ -738,7 +738,15 @@ enum ConnState {
     Calling { reply: Reply, called: Called },
     /// A response is to be sent.
     Answering { bytes: Vec<u8>, then: Then },
-    /// A response is being sent.
+    /// A response is being sent: its rest is written by an operation
+    /// of the pool that waits for the system, with the lock of the
+    /// connection's writes. Nothing else is written on the connection
+    /// in this state, by the task or when it is abandoned: a writer
+    /// that takes its turn ([`TcpStreamHandle::write_in_turn`]) would
+    /// wait behind that operation for as long as the client does not
+    /// read, on a thread of the scheduler. Every way out of the state
+    /// has the operation done, or ends the connection without another
+    /// word.
     Sending { op: crate::vm::IoOp, then: Then },
     /// The server has said its last word, a refusal: what the client
     /// still sends is read and dropped.
@@ -1112,8 +1120,10 @@ impl crate::vm::Native for Conn {
     fn abandon(&mut self, vm: &mut Vm) {
         // The task ends in the middle: the handler failed, or the task
         // was stopped with the server, or dropped with the VM. A
-        // request that is in flight is answered; nothing here waits,
-        // so the answer is what the system takes at once. (A program
+        // request that is in flight is answered; nothing here waits
+        // for the system, so the answer is what the system takes at
+        // once, in its turn behind an interim response that the
+        // reader's thread is writing (`write_in_turn`). (A program
         // that fails under `silt run` ends as a process: nothing runs
         // here then, and its connections are just closed.)
         let unavailable = Reply::LAST;
@@ -1154,7 +1164,8 @@ impl crate::vm::Native for Conn {
                 let _ = self.stream.write_in_turn(&bytes);
             }
             // Nothing is in flight: between requests, or the response
-            // is on its way.
+            // is on its way. (Nothing may be written in that case: see
+            // `ConnState::Sending`.)
             _ => {}
         }
     }
