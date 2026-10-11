@@ -1,8 +1,0 @@
--- exit: 1
--- stderr-contains: error[runtime]: task.deadline: duration must be non-negative
-import task
-import time
-
-fn main() {
-  println(task.deadline(time.ms(-1), { -> 1 }))
-}

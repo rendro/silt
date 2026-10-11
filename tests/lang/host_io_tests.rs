@@ -590,7 +590,7 @@ fn main() {
     assert_eq!(run(source, io), Ok(Value::Unit));
     assert_eq!(
         out.contents(),
-        "Ok(Err(file not found: /no/such/file))\nErr(the function did not return before its deadline)\n"
+        "Ok(Err(file not found: /no/such/file))\nErr(the function was ended by its deadline)\n"
     );
     assert!(clock.passed() >= Duration::from_secs(3600));
 }
@@ -627,7 +627,7 @@ fn main() {
     assert_eq!(run(source, io), Ok(Value::Unit));
     assert_eq!(
         out.contents(),
-        "Err(the function did not return before its deadline)\n"
+        "Err(the function was ended by its deadline)\n"
     );
     assert!(clock.passed() >= Duration::from_secs(3600));
 }

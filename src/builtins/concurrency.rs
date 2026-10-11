@@ -369,7 +369,7 @@ impl Native for Body {
 /// `None` if they are no variant of it.
 pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Timeout", []) => "the function did not return before its deadline".to_string(),
+        ("Timeout", []) => "the function was ended by its deadline".to_string(),
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })

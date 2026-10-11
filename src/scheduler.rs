@@ -939,16 +939,17 @@ impl Inner {
     /// Whether the task, whose slice has just run out, is ended here
     /// by its deadline: its time is over, and since a wait last ended
     /// for it in time it has run a slice of the standard length
-    /// ([`time_slice`]).
+    /// ([`STANDARD_SLICE`]). With that slice this is the end of the
+    /// first slice that ends after the time.
     ///
-    /// The bound is in steps and not in slices of the task's own VM,
-    /// so that a wait which gave the task a value in time is followed
-    /// by the same amount of work whatever the slice: the task has the
-    /// steps to return what it took. A task is never ended so at the
-    /// start of a slice, nor in one that it ends by returning or
-    /// failing.
+    /// The bound is in steps and not in slices as the task's VM or
+    /// `SILT_TIME_SLICE` have them, so that a wait which gave the task
+    /// a value in time is followed by the same amount of work whatever
+    /// the slice: the task has the steps to return what it took. A
+    /// task is never ended so at the start of a slice, nor in one that
+    /// it ends by returning or failing.
     fn past_its_time(&self, task: &Task) -> bool {
-        task.ran >= time_slice() && self.over(task)
+        task.ran >= STANDARD_SLICE && self.over(task)
     }
 
     /// A task has ended: it completed, failed, was cancelled, or was
@@ -1362,6 +1363,10 @@ fn more_than_one_core() -> bool {
     *MORE.get_or_init(|| thread::available_parallelism().is_ok_and(|n| n.get() > 1))
 }
 
+/// How many steps a task runs before it gives way, unless
+/// `SILT_TIME_SLICE` says otherwise.
+const STANDARD_SLICE: usize = 2000;
+
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
 pub(crate) fn time_slice() -> usize {
     static SLICE: OnceLock<usize> = OnceLock::new();
@@ -1369,7 +1374,7 @@ pub(crate) fn time_slice() -> usize {
         std::env::var("SILT_TIME_SLICE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(2000)
+            .unwrap_or(STANDARD_SLICE)
             .max(1)
     })
 }

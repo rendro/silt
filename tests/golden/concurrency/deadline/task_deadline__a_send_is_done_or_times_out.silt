@@ -1,0 +1,35 @@
+-- timeout: 120
+-- A send under a deadline was either done, and `task.deadline` gives
+-- `Ok`, or was not, and it gives `Err(Timeout)`: never a value that
+-- arrived from a send reported as timed out. The sender tries each of
+-- 300 numbers again until its send is `Ok`; the consumer takes one
+-- about every 5 ms. Whatever the timing, it gets each number once.
+import channel
+import task
+import time
+
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let consumer = task.spawn { ->
+    loop n = 0, sum = 0 {
+      time.sleep(time.ms(5))
+      match channel.receive(ch) {
+        channel.Message(v) -> loop(n + 1, sum + v)
+        _ -> (n, sum)
+      }
+    }
+  }
+  loop i = 0 {
+    match i >= 300 {
+      true -> ()
+      false -> match task.deadline(time.ms(5), { -> channel.send(ch, i) }) {
+        Ok(_) -> loop(i + 1)
+        Err(_) -> loop(i)
+      }
+    }
+  }
+  channel.close(ch)
+  match task.join(consumer) {
+    (got, sum) -> println("300 sends were Ok (sum 44850); the consumer received {got} (sum {sum})")
+  }
+}
