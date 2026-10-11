@@ -46,7 +46,7 @@ type Response {
 | `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
-| `parse_query` | `(String) -> Map(String, List(String))` | Parse a URL query string into a multi-value map |
+| `parse_query` | `(String) -> Result(Map(String, List(String)), EncodingError)` | Parse a URL query string into a multi-value map |
 
 ## Errors
 
@@ -374,7 +374,7 @@ This function has no dependencies and works even with `--no-default-features`.
 ## `http.parse_query`
 
 ```
-http.parse_query(query: String) -> Map(String, List(String))
+http.parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)
 ```
 
 Parses a URL query string into a map from key to a list of values. Repeated
@@ -382,8 +382,12 @@ keys accumulate into the same list in the order they appear, so a query like
 `tag=a&tag=b` parses as `#{"tag": ["a", "b"]}`.
 
 - A leading `?` is accepted and ignored.
-- Percent escapes (`%HH`) in both keys and values are decoded. Invalid or
-  truncated escapes cause a runtime error.
+- Percent escapes (`%HH`) in both keys and values are decoded. A query
+  string comes from whoever sent the request, so one that does not decode
+  is an error value, not a failure of the program: an invalid or truncated
+  escape is `Err(encoding.InvalidPercent(text))`, bytes that are no UTF-8
+  `Err(encoding.InvalidUtf8(text))`, as from `encoding.form_decode`, which
+  decodes the same pairs into a list in their order.
 - Following the `application/x-www-form-urlencoded` convention, `+` decodes
   to a space in values.
 - A key with no `=` (e.g. `flag&other=x`) is treated as having an empty
@@ -397,13 +401,16 @@ import io
 
 fn main() {
   println(io.inspect(http.parse_query("name=alice&tag=dev&tag=admin")))
-  -- #{"name": ["alice"], "tag": ["dev", "admin"]}
+  -- Ok(#{"name": ["alice"], "tag": ["dev", "admin"]})
 
   println(io.inspect(http.parse_query("?q=hello%20world")))
-  -- #{"q": ["hello world"]}
+  -- Ok(#{"q": ["hello world"]})
 
   println(io.inspect(http.parse_query("")))
-  -- #{}
+  -- Ok(#{})
+
+  println(http.parse_query("q=100%"))
+  -- Err(pair 0: value: truncated percent-escape at offset 3)
 }
 ```
 

@@ -427,7 +427,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
                 f("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection", http::serve).feature("http"),
                 f("fn segments(path: String) -> List(String)", "Split URL path into segments", http::segments),
-                f("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map", http::parse_query),
+                f("fn parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)", "Parse a URL query string into a multi-value map", http::parse_query),
             ],
         },
         module! {

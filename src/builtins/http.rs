@@ -1395,7 +1395,10 @@ builtins! {
             .collect()
     }
 
-    fn parse_query(query: &str) -> Result<BTreeMap<Value, Value>, VmError> {
+    // The pairs are decoded as `encoding.form_decode` decodes them, and
+    // a pair that does not decode is its error: a query string comes
+    // from whoever sent the request.
+    fn parse_query(query: &str) -> Value {
         // Accept a leading `?` for convenience — e.g. directly
         // passing a URL fragment like `?a=1&b=2` shouldn't require
         // the caller to strip it first.
@@ -1417,16 +1420,18 @@ builtins! {
             // "present with empty value", which matches how forms
             // serialize a checkbox with value "".
             let (raw_key, raw_val) = segment.split_once('=').unwrap_or((segment, ""));
-            let key = form_decode_component(raw_key)
-                .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} key: {msg}")))?;
-            let val = form_decode_component(raw_val)
-                .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} value: {msg}")))?;
+            let key = match form_decode_component(raw_key) {
+                Ok(key) => key,
+                Err(error) => return error.err(&format!("pair {i}: key: ")),
+            };
+            let val = match form_decode_component(raw_val) {
+                Ok(val) => val,
+                Err(error) => return error.err(&format!("pair {i}: value: ")),
+            };
             out.entry(Value::String(key.into())).or_default().push(Value::String(val.into()));
         }
-        Ok(out
-            .into_iter()
-            .map(|(key, values)| (key, Value::list(values)))
-            .collect())
+        let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
+        Value::variant(bv::OK, vec![Value::map(pairs.collect())])
     }
 }
 

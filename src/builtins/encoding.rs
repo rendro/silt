@@ -57,7 +57,7 @@ impl std::fmt::Display for DecodeError {
 impl DecodeError {
     /// `Err(EncodingError)` of it, its text after `at` (which part of
     /// the input it is in, if it is one of several).
-    fn err(&self, at: &str) -> Value {
+    pub(crate) fn err(&self, at: &str) -> Value {
         let variant = match self {
             DecodeError::Percent(_) => bv::ENCODING_INVALID_PERCENT,
             DecodeError::Utf8 => bv::ENCODING_INVALID_UTF8,
