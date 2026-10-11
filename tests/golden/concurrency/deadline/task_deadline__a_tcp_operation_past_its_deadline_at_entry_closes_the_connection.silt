@@ -54,8 +54,9 @@ fn main() {
     _ -> println("write at entry: no timeout")
   }
 
-  -- The deadline passes while the read waits (or, on a machine that
-  -- is slow enough, before it began): the same either way.
+  -- The deadline passes while the read waits, or, on a machine that
+  -- is slow enough, before it began or before a thread had taken it:
+  -- the same wherever the read stands then.
   let (conn, peer) = pair(listener)
   match task.deadline(time.ms(20), { -> tcp.read(conn, 16) }) {
     Err(tcp.TcpTimeout) -> afterwards(conn, peer, "read in flight")

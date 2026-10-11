@@ -1,0 +1,41 @@
+-- timeout: 10
+-- requires-feature: tcp
+-- A pipeline on a connection that is cut short shuts the connection
+-- down, like a read that nobody waits for: `stream.first` takes the
+-- one line, the source stops, and the peer, which waits for more,
+-- reads the end. After that a write on the connection says closed.
+import bytes
+import channel
+import stream
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let seen = channel.new(1)
+  let _peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    let _ = tcp.write(conn, bytes.from_string("hello\n"))
+    -- Nothing more is sent to the peer: what it reads next is the end.
+    match tcp.read(conn, 16) {
+      Ok(read) -> channel.send(seen, "the peer read {bytes.length(read)} bytes: the end")
+      Err(e) -> channel.send(seen, "the peer: {e.message()}")
+    }
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  println(stream.tcp_lines(conn) |> stream.first)
+  when let channel.Message(said) = channel.receive(seen) else {
+    panic("the peer said nothing")
+  }
+  println(said)
+  match tcp.write(conn, bytes.from_string("x")) {
+    Err(tcp.TcpClosed) -> println("closed")
+    _ -> println("something else")
+  }
+}

@@ -153,8 +153,10 @@ that timed out cannot be tried again: the next call on that connection
 gives `Err(TcpClosed)`. A `tcp.read`, `tcp.read_exact` or `tcp.write` that
 begins when its `task.deadline` has already passed is such a timeout too:
 it gives `Err(TcpTimeout)` without reading or writing anything, and the
-connection is shut down. What a timeout leaves of a connection does not
-depend on the moment at which it came. The same holds for the
+connection is shut down. So is one whose result arrives in the very
+moment in which its task stops waiting: the task gets `Err(TcpTimeout)`,
+and what the read had taken is gone with the connection. What a timeout
+leaves of a connection does not depend on the moment at which it came. The same holds for the
 `stream.tcp_*` sources and sink when their pipeline is cut short. A
 `tcp.accept` that nobody waits
 for is woken and gives up; the listener stays usable. A `tcp.accept_tls` that
