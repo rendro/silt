@@ -85,7 +85,9 @@ fn history_path() -> Option<PathBuf> {
 // ── Tab completion helper ───────────────────────────────────────────
 
 struct SiltHelper {
-    names: Rc<RefCell<Vec<String>>>,
+    /// The session, asked for its names when `<Tab>` is pressed: an
+    /// entry does not pay for a list that nobody may ask for.
+    repl: Rc<RefCell<Repl>>,
 }
 
 impl Completer for SiltHelper {
@@ -113,13 +115,11 @@ impl Completer for SiltHelper {
             return Ok((pos, Vec::new()));
         }
 
-        let names = self.names.borrow();
-        let matches: Vec<Pair> = names
-            .iter()
+        let matches: Vec<Pair> = (self.repl.borrow().completion_names().into_iter())
             .filter(|n| n.starts_with(prefix))
             .map(|n| Pair {
                 display: n.clone(),
-                replacement: n.clone(),
+                replacement: n,
             })
             .collect();
 
@@ -137,10 +137,9 @@ impl Helper for SiltHelper {}
 // ── REPL ────────────────────────────────────────────────────────────
 
 pub fn run_repl() {
-    let names = Rc::new(RefCell::new(builtin_names()));
-    let helper = SiltHelper {
-        names: names.clone(),
-    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let repl = Rc::new(RefCell::new(Repl::new(ProjectSetup::Discover(cwd))));
+    let helper = SiltHelper { repl: repl.clone() };
 
     let mut rl: Editor<SiltHelper, DefaultHistory> = match Editor::new() {
         Ok(editor) => editor,
@@ -160,12 +159,11 @@ pub fn run_repl() {
     // the REPL instead of by the scheduler. Not after each input: the
     // handle may still be bound, and a later input may join or cancel it.
     crate::scheduler::collect_unjoined_failures();
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let mut repl = Repl::new(ProjectSetup::Discover(cwd));
 
     println!("Silt REPL (type :quit to exit, :help for commands)");
-    for d in repl.project_problems() {
-        eprintln!("{}", repl.render(&d));
+    let problems = repl.borrow_mut().project_problems();
+    for d in problems {
+        eprintln!("{}", repl.borrow().render(&d));
     }
 
     let mut buffer = String::new();
@@ -223,7 +221,7 @@ pub fn run_repl() {
                 }
 
                 let input = std::mem::take(&mut buffer);
-                evaluate(&mut rl, &mut repl, &names, input.trim());
+                evaluate(&mut rl, &mut repl.borrow_mut(), input.trim());
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -233,7 +231,7 @@ pub fn run_repl() {
             // evaluated as it is, and says what it lacks.
             Err(ReadlineError::Eof) => {
                 let input = std::mem::take(&mut buffer);
-                evaluate(&mut rl, &mut repl, &names, input.trim());
+                evaluate(&mut rl, &mut repl.borrow_mut(), input.trim());
                 break;
             }
             Err(err) => {
@@ -245,21 +243,15 @@ pub fn run_repl() {
 
     // Tasks that failed and that no input joined or cancelled. A task
     // that is still running when the session ends is not reported.
-    report_task_failures(&repl);
+    report_task_failures(&repl.borrow());
 
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
     }
 }
 
-/// Evaluate the entry `input`, show its diagnostics and its value, and
-/// give its names to the completion.
-fn evaluate(
-    rl: &mut Editor<SiltHelper, DefaultHistory>,
-    repl: &mut Repl,
-    names: &Rc<RefCell<Vec<String>>>,
-    input: &str,
-) {
+/// Evaluate the entry `input`, and show its diagnostics and its value.
+fn evaluate(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input: &str) {
     if input.is_empty() {
         return;
     }
@@ -272,13 +264,6 @@ fn evaluate(
         && !matches!(value, Value::Unit)
     {
         println!("{}", repl.show(value));
-    }
-    if evaluation.committed {
-        let mut all = builtin_names();
-        all.extend(evaluation.names);
-        all.sort();
-        all.dedup();
-        *names.borrow_mut() = all;
     }
 }
 
@@ -293,6 +278,9 @@ pub struct Repl {
     /// The working directory, against which the files of the session are
     /// named.
     cwd: Option<PathBuf>,
+    /// The last cell that ran to its end: later inputs see what its
+    /// scope binds.
+    committed: Option<ModuleId>,
 }
 
 /// What evaluating one input gives.
@@ -305,9 +293,6 @@ pub struct Evaluation {
     pub value: Option<Value>,
     /// Whether it ran to the end, so that later inputs see what it binds.
     pub committed: bool,
-    /// When it ran: every name later inputs see, for completion, but
-    /// the prelude's (see [`builtin_names`]).
-    pub names: Vec<String>,
 }
 
 impl Repl {
@@ -325,6 +310,7 @@ impl Repl {
             }),
             vm: Vm::new(crate::HostIo::process()),
             cwd,
+            committed: None,
         }
     }
 
@@ -347,7 +333,6 @@ impl Repl {
             diagnostics: analysis.diagnostics.clone(),
             value: None,
             committed: false,
-            names: Vec::new(),
         };
         if analysis.has_errors() {
             return evaluation;
@@ -362,20 +347,32 @@ impl Repl {
         match self.vm.run_program(&program) {
             Ok(value) => {
                 self.session.commit_cell(file);
-                let module = self.session.module_of(file);
-                if let Some(analysis) = self.session.module_analysis(module) {
-                    let session = &self.session;
-                    evaluation.names =
-                        scope_completion_names(&analysis.scope, session.defs(), |id| {
-                            session.module_analysis(id).map(|a| &a.scope.exports)
-                        });
-                }
+                self.committed = Some(self.session.module_of(file));
                 evaluation.value = Some(value);
                 evaluation.committed = true;
             }
             Err(e) => evaluation.diagnostics.push(e.to_diagnostic()),
         }
         evaluation
+    }
+
+    /// The names `<Tab>` offers now: those of [`builtin_names`], and
+    /// every name the next input sees of the inputs that ran (see
+    /// [`scope_completion_names`]). An input that did not run to its
+    /// end adds none and takes none away.
+    pub fn completion_names(&self) -> Vec<String> {
+        let mut names = builtin_names();
+        let session = &self.session;
+        if let Some(analysis) = self.committed.and_then(|id| session.module_analysis(id)) {
+            names.extend(scope_completion_names(
+                &analysis.scope,
+                session.defs(),
+                |id| session.module_analysis(id).map(|a| &a.scope.exports),
+            ));
+        }
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// `d` rendered for the terminal.
@@ -855,15 +852,9 @@ mod tests {
         use rustyline::completion::Completer;
         use rustyline::history::DefaultHistory;
 
-        let mut repl = Repl::new(ProjectSetup::None);
-        let evaluation = repl.eval("import string");
-        assert!(evaluation.committed);
-        let mut all = builtin_names();
-        all.extend(evaluation.names);
-        let names = Rc::new(RefCell::new(all));
-        let helper = SiltHelper {
-            names: names.clone(),
-        };
+        let repl = Rc::new(RefCell::new(Repl::new(ProjectSetup::None)));
+        assert!(repl.borrow_mut().eval("import string").committed);
+        let helper = SiltHelper { repl: repl.clone() };
         let history = DefaultHistory::new();
         let ctx = Context::new(&history);
 
