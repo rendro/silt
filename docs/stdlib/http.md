@@ -26,7 +26,7 @@ type Request {
   path: String,
   query: String,
   headers: Map(String, String),
-  body: String,
+  body: Bytes,
 }
 
 type Response {
@@ -79,6 +79,9 @@ http.get(url: String) -> Result(Response, HttpError)
 Makes an HTTP GET request. Returns `Ok(Response)` for any successful
 connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
 for network errors (DNS failure, connection refused, timeout, TLS).
+The names of the response's headers are in lower case
+(`map.get(resp.headers, "content-type")`), and its body is a `String`: a
+byte of the body that is no UTF-8 is replaced by `?`.
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
@@ -219,7 +222,7 @@ The server speaks HTTP/1.1, and HTTP/1.0 to a client that does (the
 connection is then closed after the response unless the request says
 `Connection: keep-alive`). A request body is given by `Content-Length`
 or sent in chunks (`Transfer-Encoding: chunked`; trailers are read and
-dropped); `req.body` is the body, decoded. A client that sends `Expect:
+dropped); `req.body` is the body's bytes, whichever way they came. A client that sends `Expect:
 100-continue` is told to go on before its body is read. `Connection:
 close` closes the connection after the response.
 
@@ -264,11 +267,14 @@ An `Expect` header that asks for anything but `100-continue` is answered
 
 ### What the handler gets
 
-- `req.headers` has the names as the client sent them: a lookup is
-  case-sensitive, and `Content-Type` and `content-type` are two keys. Of
-  a header sent twice under the same spelling the last one stays.
-- `req.body` is a `String`: bytes of a body that are not UTF-8 are
-  replaced (U+FFFD), so a binary upload does not arrive intact.
+- `req.headers` has every name in lower case, however the client wrote
+  it: a header's name is not case-sensitive, and a lookup asks for one
+  spelling, `map.get(req.headers, "content-type")`. Of a header sent
+  twice the last one stays. (The headers of a `Response` that `http.get`
+  or `http.request` returns have their names in lower case too.)
+- `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.
+  A handler that wants text says so: `bytes.to_string(req.body)` is
+  `Err(InvalidUtf8(offset))` for a body that is no UTF-8.
 - `req.path` and `req.query` are the request target as sent, cut at the
   first `?`: nothing is decoded or normalised. A target in absolute form
   (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
@@ -317,6 +323,7 @@ written to stderr once, and the server tries again after 100 ms.
 Use pattern matching on `(req.method, segments)` for routing:
 
 ```silt
+import bytes
 import http
 import json
 import tcp
@@ -338,11 +345,14 @@ fn main() {
 
       (http.GET, ["users", id]) -> http.Response { status: 200, body: "User {id}", headers: #{} }
 
-      (http.POST, ["users"]) -> match json.parse(req.body, User) {
-        Ok(user) -> http.Response {
-          status: 201,
-          body: json.stringify(user),
-          headers: #{ "Content-Type": "application/json" },
+      (http.POST, ["users"]) -> match bytes.to_string(req.body) {
+        Ok(text) -> match json.parse(text, User) {
+          Ok(user) -> http.Response {
+            status: 201,
+            body: json.stringify(user),
+            headers: #{ "Content-Type": "application/json" },
+          }
+          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
         }
         Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
       }

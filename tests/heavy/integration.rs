@@ -448,8 +448,10 @@ fn test_http_serve_reads_request_body() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
+import result
 import tcp
 
 -- Listen on a port the system chooses, and tell the test which.
@@ -463,7 +465,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: req.body, headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.to_string(req.body) |> result.unwrap_or(""), headers: #{{}} }}
   }})
 }}
 "#

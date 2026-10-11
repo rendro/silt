@@ -93,6 +93,7 @@ Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on
 Built-in HTTP client and server. Pattern matching replaces routing frameworks. Requests are handled concurrently.
 
 ```silt
+import bytes
 import http
 import json
 import tcp
@@ -116,8 +117,11 @@ fn main() {
         ]
         http.Response { status: 200, body: json.stringify(todos), headers: #{} }
       }
-      (http.POST, ["todos"]) -> match json.parse(req.body, Todo) {
-        Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
+      (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
+        Ok(text) -> match json.parse(text, Todo) {
+          Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
+          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+        }
         Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
       }
       _ -> http.Response { status: 404, body: "Not found", headers: #{} }

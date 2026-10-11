@@ -75,7 +75,7 @@ fn make_http_request_value(
     path: &str,
     query: &str,
     headers: BTreeMap<Value, Value>,
-    body: std::string::String,
+    body: Vec<u8>,
 ) -> Value {
     Value::builtin_record(
         ty::REQUEST,
@@ -84,7 +84,7 @@ fn make_http_request_value(
             ("path", Value::String(path.into())),
             ("query", Value::String(query.into())),
             ("headers", Value::map(headers)),
-            ("body", Value::String(body.into())),
+            ("body", Value::Bytes(Arc::new(body))),
         ],
     )
 }
@@ -124,6 +124,8 @@ fn ureq_response_to_value(
     mut response: ureq::http::Response<ureq::Body>,
 ) -> Result<Value, VmError> {
     let status = response.status().as_u16();
+    // The names are in lower case, as the names of a request's
+    // headers are (`http::HeaderName` holds them so).
     let mut headers = BTreeMap::new();
     for (name, value) in response.headers().iter() {
         if let Ok(v) = value.to_str() {
@@ -573,17 +575,19 @@ impl Got {
             Some((path, query)) => (path, query),
             None => (request.target.as_str(), ""),
         };
+        // A header's name is in lower case, however the client wrote
+        // it: a name is not case-sensitive, and a lookup has one
+        // spelling to ask for. (Of a header sent twice the last stays.)
         let mut headers = BTreeMap::new();
         for (name, value) in request.headers {
-            headers.insert(Value::String(name.into()), Value::String(value.into()));
+            headers.insert(
+                Value::String(name.to_ascii_lowercase().into()),
+                Value::String(value.into()),
+            );
         }
-        // The Request API hands the body over as a String: bytes that
-        // are not UTF-8 are replaced, not dropped. (A body that is
-        // UTF-8 is the string, not a copy of it.)
-        let body = std::string::String::from_utf8(request.body)
-            .unwrap_or_else(|e| std::string::String::from_utf8_lossy(e.as_bytes()).into_owned());
+        // The body is the bytes that arrived.
         Got::Request(
-            make_http_request_value(method, path, query, headers, body),
+            make_http_request_value(method, path, query, headers, request.body),
             reply,
             held,
         )
@@ -1468,11 +1472,10 @@ mod http_response_tests {
         assert_eq!((status, body.as_str()), (204, "done"));
         assert_eq!(record.fields()[0], Value::Int(204));
 
-        let request =
-            make_http_request_value(bv::POST, "/jobs", "n=1", headers(), "go".to_string());
+        let request = make_http_request_value(bv::POST, "/jobs", "n=1", headers(), b"go".to_vec());
         assert_eq!(
             request.to_string(),
-            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: go}"
+            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2)}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");

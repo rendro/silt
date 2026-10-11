@@ -32,7 +32,7 @@ const PATIENCE: Duration = Duration::from_secs(60);
 /// `/fail`.
 const ECHO: &str = r#"match req.path {
         "/fail" -> panic("the handler failed: secret-detail")
-        _ -> http.Response { status: 200, body: "{req.method} {req.path} [{req.body}]", headers: #{} }
+        _ -> http.Response { status: 200, body: "{req.method} {req.path} [{text(req.body)}]", headers: #{} }
       }"#;
 
 /// A clock that stands still unless the test moves it: its reading,
@@ -100,10 +100,17 @@ impl Server {
     fn on(handler: &str, clock: Option<TestClock>) -> Server {
         let source = format!(
             r#"
+import bytes
 import http
+import result
 import string
 import task
 import tcp
+
+-- A body as text, for a handler that answers with it.
+fn text(body: Bytes) -> String {{
+  bytes.to_string(body) |> result.unwrap_or("(not UTF-8)")
+}}
 
 fn main() {{
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
@@ -611,7 +618,7 @@ fn main() {{
 #[test]
 fn a_request_beyond_a_limit_is_refused() {
     let server = Server::new(
-        r#"http.Response { status: 200, body: "{string.length(req.body)}", headers: #{} }"#,
+        r#"http.Response { status: 200, body: "{bytes.length(req.body)}", headers: #{} }"#,
     );
     let refused = |request: &[u8], status: u16| {
         let mut client = server.connect();
@@ -684,7 +691,7 @@ fn a_request_beyond_a_limit_is_refused() {
 #[test]
 fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
     let server = Server::new(
-        r#"http.Response { status: 200, body: "{string.length(req.body)}", headers: #{} }"#,
+        r#"http.Response { status: 200, body: "{bytes.length(req.body)}", headers: #{} }"#,
     );
     let largest = format!(
         "POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {BODY_MAX}\r\n\r\n"
@@ -1486,7 +1493,7 @@ fn a_request_behind_a_response_that_is_not_read_is_served() {
           let part = string.repeat("x", 8000000)
           http.Response { status: 200, body: "{part}{part}{part}{part}{part}{part}{part}{part}", headers: #{} }
         }
-        _ -> http.Response { status: 200, body: "{req.path} [{req.body}]", headers: #{} }
+        _ -> http.Response { status: 200, body: "{req.path} [{text(req.body)}]", headers: #{} }
       }"#,
     );
     let mut client = server.connect();
