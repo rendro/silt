@@ -111,17 +111,8 @@ impl Vm {
             // Lists are ordered element by element (`Value::cmp`), after
             // the function-leaf gate (see `ordering_with_fn_gate` below).
             (Value::List(_), Value::List(_)) => Self::ordering_with_fn_gate(&a, &b)?,
-            // Round 85: mirror the `<anon>`-wildcard logic from
-            // `Value::PartialEq`/`Ord` (src/value/key.rs).
-            // The typechecker normally rejects source-level ordering of
-            // anon-shaped records, but this is defensive for cases
-            // where a nominal flows through `unify_anon_nominal` and
-            // ends up compared against an anon-typed value at runtime —
-            // the same-type guard alone would skip the dispatch and
-            // fall to the catch-all error.
-            (Value::Record(ra), Value::Record(rb))
-                if ra.type_id() == rb.type_id() || ra.ty().is_anon() || rb.ty().is_anon() =>
-            {
+            // Records of one type are ordered by their fields.
+            (Value::Record(ra), Value::Record(rb)) if ra.type_id() == rb.type_id() => {
                 Self::ordering_with_fn_gate(&a, &b)?
             }
             (Value::Variant(..), Value::Variant(..)) => Self::ordering_with_fn_gate(&a, &b)?,

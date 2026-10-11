@@ -190,10 +190,8 @@ impl Record {
     }
 
     /// The fields with their names, in name order: the order of an
-    /// anonymous record. A builtin record is shown and ordered in it
-    /// (src/value/fmt.rs, src/value/key.rs), every record is hashed in
-    /// it, and an anonymous record is compared with a declared one in
-    /// it.
+    /// anonymous record. A builtin record is shown in it
+    /// (src/value/fmt.rs).
     pub(super) fn by_name(&self) -> Vec<(&str, &Value)> {
         let mut fields: Vec<(&str, &Value)> = self.named().collect();
         fields.sort_by_key(|(name, _)| *name);
