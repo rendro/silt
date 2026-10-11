@@ -1,0 +1,25 @@
+-- cmd: disasm
+-- A match on a Bool with an arm for each value is one conditional jump on
+-- the scrutinee, and a match on Int literals with an arm for the rest
+-- tests the scrutinee where it is: no copy of it for a test or for an
+-- arm, no slide at the end, no stop for a value that no arm matched.
+fn sum(n) {
+  loop i = 0, acc = 0 {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+}
+
+fn fib(n) {
+  match n {
+    0 -> 0
+    1 -> 1
+    _ -> fib(n - 1) + fib(n - 2)
+  }
+}
+
+fn main() {
+  println(sum(10) + fib(10))
+}

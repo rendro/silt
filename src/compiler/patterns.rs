@@ -1125,7 +1125,139 @@ mod tests {
         function.chunk().instrs().any(|(_, instr)| instr.op() == op)
     }
 
+    /// The opcodes of the function `name` of `input`, in order.
+    fn ops(input: &str, name: &str) -> Vec<Op> {
+        let function = compiled(input, name);
+        (function.chunk().instrs())
+            .map(|(_, instr)| instr.op())
+            .collect()
+    }
+
     const TYPES: &str = "type Wrap { Wrap(Int) }\ntype Point { x: Int, y: Int }\n";
+
+    /// A `match` on a Bool with an arm for `true` and one for the rest
+    /// (or the other way round) is one conditional jump on the
+    /// scrutinee: no copy of it, no test against a constant, no slide.
+    #[test]
+    fn test_a_match_on_a_bool_is_one_jump() {
+        use Op::*;
+        assert_eq!(
+            ops(
+                "fn f(b: Bool) -> Int {\n  match b {\n    true -> 1\n    false -> 2\n  }\n}\n",
+                "f"
+            ),
+            [GetLocal, JumpIfFalse, Constant, Jump, Constant, Return]
+        );
+        // `false` first: the jump is taken when the scrutinee is true.
+        // Not in tail position: the value is where the scrutinee was.
+        assert_eq!(
+            ops(
+                "fn f(b: Bool) -> Int {\n  let v = match b {\n    false -> 1\n    _ -> 2\n  }\n  v + 1\n}\n",
+                "f"
+            ),
+            [
+                GetLocal, JumpIfTrue, Constant, Jump, Constant, SetLocal, GetLocal, Constant, Add,
+                Return
+            ]
+        );
+        // A name for the rest is the one value that comes there, and is
+        // dropped from under the arm's value.
+        assert_eq!(
+            ops(
+                "fn f(b: Bool) -> Bool {\n  let v = match b {\n    true -> false\n    other -> other\n  }\n  v\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                JumpIfFalse,
+                False,
+                Jump,
+                False,
+                GetLocal,
+                Slide,
+                SetLocal,
+                GetLocal,
+                Return
+            ]
+        );
+    }
+
+    /// A `match` on Int literals with a last arm for the rest tests the
+    /// scrutinee where it is, once per literal.
+    #[test]
+    fn test_a_match_on_int_literals_tests_the_scrutinee_where_it_is() {
+        use Op::*;
+        assert_eq!(
+            ops(
+                "fn f(n: Int) -> Int {\n  match n {\n    0 -> 10\n    1 -> 11\n    _ -> 12\n  }\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                Pop,
+                Constant,
+                Return
+            ]
+        );
+        // A name for the rest is the scrutinee itself.
+        assert_eq!(
+            ops(
+                "fn f(n: Int) -> Int {\n  let v = match n {\n    0 -> 10\n    m -> m + 1\n  }\n  v + 1\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                GetLocal,
+                Constant,
+                Add,
+                Slide,
+                SetLocal,
+                GetLocal,
+                Constant,
+                Add,
+                Return
+            ]
+        );
+    }
+
+    /// Every other `match` keeps its scrutinee as a local and ends in
+    /// the stop for a value no arm matched: a guard, one arm, a first
+    /// arm that takes everything, an or-pattern, Int literals without an
+    /// arm for the rest.
+    #[test]
+    fn test_other_matches_keep_the_scrutinee() {
+        for body in [
+            "match b {\n    true when n > 0 -> 1\n    true -> 2\n    false -> 3\n  }",
+            "match b {\n    _ -> 1\n  }",
+            "match b {\n    other -> match other {\n      _ -> 2\n    }\n  }",
+            "match b {\n    true | false -> 1\n  }",
+            "match n {\n    0 | 1 -> 1\n    _ -> 2\n  }",
+            "match n {\n    0 -> 1\n    1..5 -> 2\n    _ -> 3\n  }",
+            "match n {\n    0 -> 1\n    m when m > 3 -> 2\n    _ -> 3\n  }",
+            "match (b, n) {\n    (true, 0) -> 1\n    _ -> 2\n  }",
+        ] {
+            let f = compiled(
+                &format!("fn f(b: Bool, n: Int) -> Int {{\n  {body}\n}}\n"),
+                "f",
+            );
+            assert!(has_op(&f, Op::Panic), "no stop in:\n{body}");
+        }
+    }
 
     /// A `let` or a parameter whose pattern the checker marked
     /// irrefutable is bound without a test.

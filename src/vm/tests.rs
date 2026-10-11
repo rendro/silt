@@ -2971,6 +2971,55 @@ fn main() {
     }
 
     #[test]
+    fn in_an_arm_of_a_match_on_literals() {
+        let pick = "\
+fn pick(b: Bool, d: Int) -> Int {
+  match b {
+    true -> 10 / d
+    false -> 20 % d
+  }
+}
+";
+        let source = format!("{pick}fn main() {{\n  println(pick(true, 0))\n}}\n");
+        assert_eq!(
+            stops(&source),
+            "division by zero at 3:13; pick 3:13; main 8:11; <script> 7:1"
+        );
+        let source = format!("{pick}fn main() {{\n  println(pick(false, 0))\n}}\n");
+        assert_eq!(
+            stops(&source),
+            "modulo by zero at 4:14; pick 4:14; main 8:11; <script> 7:1"
+        );
+        let step = "\
+fn step(n: Int, d: Int) -> Int {
+  let v = match n {
+    0 -> 1 / d
+    1 -> 2
+    other -> other % d
+  }
+  v + 9223372036854775807
+}
+";
+        for (n, error) in [
+            (
+                0,
+                "division by zero at 3:10; step 3:10; main 10:11; <script> 9:1",
+            ),
+            (
+                1,
+                "integer overflow: 2 + 9223372036854775807 at 7:3; step 7:3; main 10:11; <script> 9:1",
+            ),
+            (
+                2,
+                "modulo by zero at 5:14; step 5:14; main 10:11; <script> 9:1",
+            ),
+        ] {
+            let source = format!("{step}fn main() {{\n  println(step({n}, 0))\n}}\n");
+            assert_eq!(stops(&source), error);
+        }
+    }
+
+    #[test]
     fn in_the_callback_of_a_builtin() {
         let source = "\
 import list

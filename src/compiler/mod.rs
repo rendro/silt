@@ -3531,8 +3531,10 @@ fn f(x) {
 }
 "#,
         );
+        // (One jump on the scrutinee: `compile_literal_match`.)
         let f = find_fn(&fns, "f");
-        assert!(has_op(f.chunk(), Op::TestEqual));
+        assert!(has_op(f.chunk(), Op::JumpIfFalse));
+        assert!(!has_op(f.chunk(), Op::TestEqual));
     }
 
     #[test]

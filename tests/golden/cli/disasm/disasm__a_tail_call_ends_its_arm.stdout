@@ -11,32 +11,22 @@
 
 == count (arity=2, upvalues=0) ==
 0000  GetLocal             0
-0003  SetLocal             2
-0006  GetLocal             2
-0009  TestEqual            0     ; 0
-0012  JumpIfFalse          15    -> 0030
-0015  Pop
-0016  GetLocal             2
-0019  SetLocal             3
-0022  GetLocal             1
-0025  Jump                 37    -> 0067
-0030  GetLocal             2
-0033  Slide                3
-0036  Pop
-0037  GetLocal             2
-0040  SetLocal             3
-0043  GetGlobal            0     ; count
-0046  GetLocal             0
-0049  Constant             1     ; 1
-0052  Sub
-0053  GetLocal             1
-0056  Constant             1     ; 1
-0059  Add
-0060  TailCall             2
-0062  Return
-0063  Constant             2     ; "non-exhaustive match: no arm matched"
-0066  Panic
-0067  Return
+0003  TestEqual            0     ; 0
+0006  JumpIfFalse          9     -> 0018
+0009  Pop
+0010  GetLocal             1
+0013  Jump                 21    -> 0039
+0018  Pop
+0019  GetGlobal            0     ; count
+0022  GetLocal             0
+0025  Constant             1     ; 1
+0028  Sub
+0029  GetLocal             1
+0032  Constant             1     ; 1
+0035  Add
+0036  TailCall             2
+0038  Return
+0039  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>
