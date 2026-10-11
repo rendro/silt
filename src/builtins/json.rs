@@ -153,7 +153,43 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
     }
 }
 
-fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
+/// The most levels a value may be nested to be written as JSON or as
+/// TOML (`json.stringify`, `json.pretty`, `toml.stringify`,
+/// `toml.pretty`): the element of a list or of a tuple, the field of a
+/// record or of a variant and the value of a map are each one level
+/// further in than what holds them (the content of a `Some` is not: it
+/// is written in the `Some`'s place). The encoders go down a value on
+/// the native stack, and one nested without bound would overflow it:
+/// a value at the bound takes some 5 MiB of it in a debug build, a
+/// third of the least a thread that runs silt code has
+/// (`scheduler::WORKER_STACK_BYTES`). (A parser stops far sooner:
+/// `json.parse` at 127 levels of a document, `toml.parse` at 79.)
+pub(crate) const MAX_ENCODE_DEPTH: usize = 1000;
+
+/// The error of `caller` for a value nested deeper than
+/// [`MAX_ENCODE_DEPTH`]: `level` is how far in the encoder is.
+pub(crate) fn ensure_encodable_depth(caller: &str, level: usize) -> Result<(), VmError> {
+    match level > MAX_ENCODE_DEPTH {
+        true => Err(VmError::new(format!(
+            "{caller}: the value is nested more than {MAX_ENCODE_DEPTH} levels deep"
+        ))),
+        false => Ok(()),
+    }
+}
+
+/// `v`, which is `level` levels inside the value `caller` writes, as
+/// JSON.
+fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Value, VmError> {
+    ensure_encodable_depth(caller, level)?;
+    let inner = |v: &Value| value_to_json(caller, v, level + 1);
+    // `Some(x)` is written as `x` is, and is no level of its own.
+    let mut v = v;
+    while let Value::Variant(variant) = v
+        && variant.is(bv::SOME)
+        && let [content] = variant.fields()
+    {
+        v = content;
+    }
     Ok(match v {
         Value::Int(n) => serde_json::Value::Number((*n).into()),
         Value::Float(f) => serde_json::Number::from_f64(f.get())
@@ -163,33 +199,30 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
         Value::String(s) => serde_json::Value::String(s.to_string()),
         Value::List(xs) => {
             xs.writable()?;
-            let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_json(&x)).collect();
+            let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
             serde_json::Value::Array(items?)
         }
         Value::Map(m) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> = m
                 .iter()
-                .map(|(k, v)| Ok((k.to_string(), value_to_json(v)?)))
+                .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
                 .collect();
             serde_json::Value::Object(obj?)
         }
         Value::Tuple(vs) => {
-            let items: Result<Vec<_>, _> = vs.iter().map(value_to_json).collect();
+            let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
             serde_json::Value::Array(items?)
         }
         Value::Record(record) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> =
                 record
                     .named()
-                    .map(|(k, v)| Ok((k.to_string(), value_to_json(v)?)))
+                    .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
                     .collect();
             serde_json::Value::Object(obj?)
         }
         Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => {
             serde_json::Value::Null
-        }
-        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
-            value_to_json(&variant.fields()[0])?
         }
         Value::Variant(variant) => {
             let mut obj = serde_json::Map::new();
@@ -198,7 +231,7 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
                 serde_json::Value::String(variant.name().into()),
             );
             if !variant.fields().is_empty() {
-                let items: Result<Vec<_>, _> = variant.fields().iter().map(value_to_json).collect();
+                let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
                 obj.insert("fields".into(), serde_json::Value::Array(items?));
             }
             serde_json::Value::Object(obj)
@@ -567,11 +600,55 @@ builtins! {
     }
 
     fn stringify(value: &Value) -> Result<String, VmError> {
-        Ok(value_to_json(value)?.to_string())
+        Ok(value_to_json("json.stringify", value, 0)?.to_string())
     }
 
     fn pretty(value: &Value) -> Result<String, VmError> {
-        let json = value_to_json(value)?;
+        let json = value_to_json("json.pretty", value, 0)?;
         Ok(serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The deepest value the encoder writes, of the shape that makes
+    /// the deepest document (a list in a variant: three levels of the
+    /// document for two of the value), is written on a stack of 16 MiB,
+    /// the least a thread that runs silt code has
+    /// (`scheduler::WORKER_STACK_BYTES` where pointers have 32 bits),
+    /// in a debug build too, where it takes some 5 MiB; and a value
+    /// one level deeper is refused.
+    #[test]
+    fn the_deepest_value_is_written_on_the_smallest_stack() {
+        let (text, pretty, refused) = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let nested = |levels: usize| {
+                    (0..levels / 2).fold(Value::Int(1), |inner, _| {
+                        Value::variant(bv::OK, vec![Value::list(vec![inner])])
+                    })
+                };
+                let deepest = nested(MAX_ENCODE_DEPTH);
+                let json = value_to_json("json.stringify", &deepest, 0).expect("written");
+                let text = json.to_string();
+                let pretty = serde_json::to_string_pretty(&json).expect("written");
+                drop(json);
+                let too_deep = nested(MAX_ENCODE_DEPTH + 2);
+                let refused = value_to_json("json.pretty", &too_deep, 0).unwrap_err();
+                (text, pretty, refused.message)
+            })
+            .expect("a thread")
+            .join()
+            .expect("the thread ends");
+        assert!(text.starts_with(r#"{"fields":[[{"fields":[[{"#));
+        assert!(text.contains(r#"{"fields":[[1]],"variant":"Ok"}"#));
+        assert_eq!(text.len(), MAX_ENCODE_DEPTH / 2 * 30 + 1);
+        assert!(pretty.len() > text.len());
+        assert_eq!(
+            refused,
+            format!("json.pretty: the value is nested more than {MAX_ENCODE_DEPTH} levels deep")
+        );
     }
 }

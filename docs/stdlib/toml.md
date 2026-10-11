@@ -76,6 +76,26 @@ decoder gives an `Err(TomlUnknown(msg))` whose message names the field and its
 record, and a type the function does not take is a run-time error.
 
 
+## Nesting limits
+
+`toml.stringify` and `toml.pretty` write a value nested up to 1,000 levels
+deep (the same bound as `json.stringify`). The element of a list or of a
+tuple, the field of a record or of an enum variant and the value of a map are
+each one level further in than what holds them; the content of a `Some` is
+not (it is written in the `Some`'s place). A value nested deeper is an
+`Err(TomlUnknown(msg))`:
+
+```text
+toml.stringify: the value is nested more than 1000 levels deep
+```
+
+The parsers stop sooner: `toml.parse`, `toml.parse_list` and `toml.parse_map` read
+a document whose arrays and tables are nested up to 79 levels deep, and give a
+`TomlSyntax` error (`recursion limit exceeded`) for one nested deeper. A value
+written at more levels than that is valid TOML that silt itself does not read
+back.
+
+
 ## `toml.parse`
 
 ```

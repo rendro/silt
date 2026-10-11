@@ -75,6 +75,26 @@ decoder gives an `Err(JsonUnknown(msg))` whose message names the field and its
 record, and a type the function does not take is a run-time error.
 
 
+## Nesting limits
+
+`json.stringify` and `json.pretty` write a value nested up to 1,000 levels
+deep. The element of a list or of a tuple, the field of a record or of an
+enum variant and the value of a map are each one level further in than what
+holds them; the content of a `Some` is not (it is written in the `Some`'s
+place). A value nested deeper is a runtime error, as is any value they cannot
+write:
+
+```text
+json.stringify: the value is nested more than 1000 levels deep
+```
+
+The parsers stop sooner: `json.parse`, `json.parse_list` and `json.parse_map` read
+a document whose arrays and objects are nested up to 127 levels deep, and give a
+`JsonSyntax` error (`recursion limit exceeded`) for one nested deeper. A value
+written at more levels than that is valid JSON that silt itself does not read
+back.
+
+
 ## `json.parse`
 
 ```
