@@ -285,6 +285,22 @@ fn a_budget_of_no_steps_runs_nothing() {
     }
 }
 
+/// The budget is looked at where a slice ends: at the scheduler's slice
+/// a program of a few hundred steps runs to its end on a budget of one
+/// step, and at slice 1 it does not.
+#[test]
+fn a_program_may_run_one_slice_more_than_its_budget() {
+    let source = "fn main() {\n  println(\"ran\")\n  loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  }\n}\n";
+    let (result, output) = run_whole(source, |vm| vm.set_step_budget(1));
+    assert_eq!(result.unwrap(), Value::Int(100));
+    assert_eq!(output, "ran\n");
+    let (result, _) = run_whole(source, |vm| {
+        vm.set_time_slice(1);
+        vm.set_step_budget(1);
+    });
+    assert!(result.unwrap_err().out_of_steps);
+}
+
 /// `out_of_steps` marks what the budget did, and nothing else: a fault
 /// of the program's own code is that fault, with the flag unset, also
 /// when a task has used the budget up meanwhile. (`main` sleeps in a

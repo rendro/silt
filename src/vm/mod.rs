@@ -332,10 +332,13 @@ impl Vm {
     ///
     /// A step is an instruction, or a step of a builtin that calls back
     /// into the program. They are counted where a slice has run its
-    /// full length, so the program is ended at the end of a slice, at
-    /// most one slice of each of its threads late; with a budget the
-    /// thread that runs the program's own code is sliced as the tasks
-    /// are (see [`Vm::set_time_slice`]). The start of a wait counts as
+    /// full length, and no slice starts once they are used up: so each
+    /// thread of the program may run up to one slice more than the
+    /// budget (1,999 steps at the scheduler's slice of 2,000, with
+    /// which a budget of 1 runs a short program to its end), the count
+    /// is exact at slice 1, and a budget of 0 runs nothing. With a
+    /// budget the thread that runs the program's own code is sliced as
+    /// the tasks are (see [`Vm::set_time_slice`]). The start of a wait counts as
     /// one step, so tasks that hand a value to and fro for ever end
     /// too; a wait that never ends is not ended by the budget.
     pub fn set_step_budget(&mut self, steps: u64) {

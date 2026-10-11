@@ -403,9 +403,12 @@ many more steps, those of its tasks included. When they are used up,
 whatever of the program still runs ends with a `VmError` whose
 `out_of_steps` is `true` (message `the step budget is used up`): `main`,
 and each task, whose join gives the error on. A program that loops for
-ever ends there. Steps are counted at the end of each slice that ran its
-full length, so the program may run up to one slice per thread more
-than its budget; with `set_time_slice(1)` the count is exact. The start
+ever ends there. The budget is looked at where a slice ends and before
+one starts, so each thread of the program may run up to one slice more
+than the budget before it ends: 1,999 steps at the scheduler's slice of
+2,000, with which a budget of 1 still runs a short program to its end.
+With `set_time_slice(1)` the count is exact, and a budget of 0 runs
+nothing at any slice. The start
 of a wait counts as one step, so tasks that pass a value to and fro for
 ever end too. A wait that never ends is not ended by the budget: that is
 the deadlock check's, or the host drops the `Vm`. `out_of_steps` marks
