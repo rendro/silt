@@ -41,76 +41,91 @@ pub(crate) const TCO_ELIDED_CAP: usize = 32;
 /// (tests/golden/lang/errors), `vm::tests::error_places::in_a_tail_call`.
 #[derive(Default)]
 pub(crate) struct TailCalls {
-    /// The frames that have made tail calls, the innermost last.
-    frames: Vec<TailCaller>,
-    /// Their entries, in the order of `frames`: the function a frame
-    /// was running when it made a tail call, and its instruction
-    /// pointer then, past the call.
-    callers: Vec<(Arc<Function>, usize)>,
+    /// For each frame that has made tail calls, the innermost last: its
+    /// callers, then its record. (One list: a VM has a log whether its
+    /// code makes tail calls or not, and a program can have a hundred
+    /// thousand VMs.)
+    entries: Vec<TailCall>,
 }
 
-/// A frame that has made tail calls.
-struct TailCaller {
-    /// The frame's index in the VM's frames.
-    depth: usize,
-    /// Where its entries start. They are in the order they were logged
-    /// until there are [`TCO_ELIDED_CAP`] of them; from then on each
-    /// takes the place of the oldest.
-    start: usize,
-    /// How many tail calls the frame has made.
-    made: usize,
+enum TailCall {
+    /// The function a frame was running when it made a tail call, and
+    /// its instruction pointer then, past the call.
+    Caller(Arc<Function>, usize),
+    /// A frame that has made tail calls: its index in the VM's frames,
+    /// and how many it has made. Its callers are the entries before
+    /// this one, as many as it has made and at most
+    /// [`TCO_ELIDED_CAP`]: in the order they were logged until there
+    /// are that many; from then on each takes the place of the oldest.
+    Frame { depth: usize, made: usize },
 }
 
 impl TailCalls {
     /// Whether no frame has made a tail call.
     pub(crate) fn is_empty(&self) -> bool {
-        self.frames.is_empty()
+        self.entries.is_empty()
     }
 
     /// The frame at `depth`, the one on top, makes a tail call: it was
     /// running `function` and had come to `ip`.
     pub(crate) fn log(&mut self, depth: usize, function: Arc<Function>, ip: usize) {
-        if self.frames.last().is_none_or(|frame| frame.depth != depth) {
-            self.frames.push(TailCaller {
-                depth,
-                start: self.callers.len(),
-                made: 0,
-            });
-        }
-        let frame = self.frames.last_mut().expect("the frame is there now");
-        if frame.made < TCO_ELIDED_CAP {
-            self.callers.push((function, ip));
+        // The frame's record is off the end while its callers change.
+        let made = match self.entries.last() {
+            Some(&TailCall::Frame { depth: top, made }) if top == depth => {
+                self.entries.pop();
+                made
+            }
+            _ => 0,
+        };
+        let caller = TailCall::Caller(function, ip);
+        if made < TCO_ELIDED_CAP {
+            self.entries.push(caller);
         } else {
-            self.callers[frame.start + frame.made % TCO_ELIDED_CAP] = (function, ip);
+            let start = self.entries.len() - TCO_ELIDED_CAP;
+            self.entries[start + made % TCO_ELIDED_CAP] = caller;
         }
-        frame.made += 1;
+        self.entries.push(TailCall::Frame {
+            depth,
+            made: made + 1,
+        });
     }
 
     /// Drop the entries of the frames at `keep_depth` and above: those
     /// frames are gone.
     pub(crate) fn prune(&mut self, keep_depth: usize) {
-        while let Some(frame) = self.frames.last()
-            && frame.depth >= keep_depth
+        while let Some(&TailCall::Frame { depth, made }) = self.entries.last()
+            && depth >= keep_depth
         {
-            self.callers.truncate(frame.start);
-            self.frames.pop();
+            let kept = made.min(TCO_ELIDED_CAP);
+            self.entries.truncate(self.entries.len() - 1 - kept);
         }
     }
 
-    /// The entries, each with its frame's depth: the innermost frame's
+    /// The callers, each with its frame's depth: the innermost frame's
     /// first, and a frame's latest tail call first.
     pub(crate) fn newest_first(&self) -> impl Iterator<Item = (usize, &Function, usize)> + '_ {
-        let mut end = self.callers.len();
-        self.frames.iter().rev().flat_map(move |frame| {
-            let callers = &self.callers[frame.start..end];
-            end = frame.start;
+        let mut end = self.entries.len();
+        std::iter::from_fn(move || {
+            // The record of the next frame down, after its callers.
+            let record = end.checked_sub(1)?;
+            let TailCall::Frame { depth, made } = self.entries[record] else {
+                unreachable!("a frame's record is after its callers")
+            };
+            let kept = made.min(TCO_ELIDED_CAP);
+            let callers = &self.entries[record - kept..record];
+            end = record - kept;
             // The latest entry is before the place of the next one.
-            let (next, kept) = (frame.made % TCO_ELIDED_CAP, callers.len());
-            (0..kept).map(move |back| {
-                let (function, ip) = &callers[(next + kept - 1 - back) % kept];
-                (frame.depth, &**function, *ip)
-            })
+            let next = made % TCO_ELIDED_CAP;
+            Some((0..kept).map(
+                move |back| match &callers[(next + kept - 1 - back) % kept] {
+                    TailCall::Caller(function, ip) => (depth, &**function, *ip),
+                    TailCall::Frame { .. } => {
+                        unreachable!("a frame's callers are before its record")
+                    }
+                },
+            ))
         })
+        .flatten()
     }
 }
 
