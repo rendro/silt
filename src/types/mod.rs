@@ -179,12 +179,6 @@ pub enum Type {
     Fun(Vec<Type>, Box<Type>),
     /// Homogeneous list type.
     List(Box<Type>),
-    /// Inclusive integer-range type produced by `a..b`. Nominally distinct
-    /// from `List(T)` so annotations like `let r: Range(Int) = 1..10`
-    /// succeed, but unifies bidirectionally with `List(T)` — Range is a
-    /// zero-cost alias whose runtime representation is the same `Vec<Value>`
-    /// as a List. Laziness is future work (tracked in docs/language/operators.md).
-    Range(Box<Type>),
     /// Tuple type (fixed length, heterogeneous).
     Tuple(Vec<Type>),
     /// A named type with its arguments, like `Result(Int, String)`: an
@@ -305,7 +299,7 @@ impl Type {
                 }
                 ret.collect_refs(out);
             }
-            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => t.collect_refs(out),
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => t.collect_refs(out),
             Type::Map(k, v) => {
                 k.collect_refs(out);
                 v.collect_refs(out);
@@ -410,7 +404,6 @@ impl std::fmt::Display for Shown<'_> {
                 write!(f, ") -> {}", self.of(ret))
             }
             Type::List(inner) => write!(f, "List({})", self.of(inner)),
-            Type::Range(inner) => write!(f, "Range({})", self.of(inner)),
             Type::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
@@ -630,7 +623,6 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             fvs
         }
         Type::List(inner) => free_vars_in(inner),
-        Type::Range(inner) => free_vars_in(inner),
         Type::Tuple(elems) => {
             let mut fvs = Vec::new();
             for e in elems {
@@ -740,7 +732,6 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
             Type::Fun(params, Box::new(map_rigid(ret, f)))
         }
         Type::List(inner) => Type::List(Box::new(map_rigid(inner, f))),
-        Type::Range(inner) => Type::Range(Box::new(map_rigid(inner, f))),
         Type::Set(inner) => Type::Set(Box::new(map_rigid(inner, f))),
         Type::Channel(inner) => Type::Channel(Box::new(map_rigid(inner, f))),
         Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| map_rigid(e, f)).collect()),
@@ -802,7 +793,6 @@ pub fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>)
             all(gp, ap) && all(std::slice::from_ref(&**gr), std::slice::from_ref(&**ar))
         }
         (Type::List(g), Type::List(a))
-        | (Type::Range(g), Type::Range(a))
         | (Type::Set(g), Type::Set(a))
         | (Type::Channel(g), Type::Channel(a)) => instance_of(g, a, stands),
         (Type::Tuple(g), Type::Tuple(a)) => all(g, a),
@@ -845,7 +835,6 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
             Type::Fun(params, ret)
         }
         Type::List(inner) => Type::List(Box::new(substitute_vars(inner, mapping))),
-        Type::Range(inner) => Type::Range(Box::new(substitute_vars(inner, mapping))),
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|e| substitute_vars(e, mapping)).collect())
         }
@@ -971,11 +960,6 @@ pub fn substitute_enum_params(
             Type::Fun(params, ret)
         }
         Type::List(inner) => Type::List(Box::new(substitute_enum_params(
-            inner,
-            param_var_ids,
-            type_args,
-        ))),
-        Type::Range(inner) => Type::Range(Box::new(substitute_enum_params(
             inner,
             param_var_ids,
             type_args,

@@ -1846,13 +1846,9 @@ impl TypeChecker {
                 let obj_ty = self.infer_expr(obj, env);
                 self.last_field_access_was_method = false;
                 let obj_ty = self.apply(&obj_ty);
-                // Phase B: canonicalise before dispatch so a Range
-                // receiver (from `1..n`) lands in the List arm. The
-                // dedicated `Type::List(_) | Type::Range(_)` arm
-                // below is therefore reduced to `Type::List(_)`; no
-                // separate Range redirect to the List method table
-                // is needed because the Range form has been collapsed
-                // away upstream of this match.
+                // Canonicalise before dispatch so a receiver whose type
+                // is written through an alias lands in the arm of the
+                // type it stands for.
                 let obj_ty = crate::types::canonical::canonicalize(&self.tables.resolver, &obj_ty);
 
                 // Field / method access
@@ -2045,11 +2041,7 @@ impl TypeChecker {
                         self.error_help(Code::UnknownMethod, message, span);
                         Type::Error
                     }
-                    // Collection types. Phase B: Range receivers were
-                    // canonicalised to List upstream of this match, so
-                    // the dispatch-time redirect (formerly
-                    // `Type::List(_) | Type::Range(_)`) is reduced to a
-                    // single List arm. Range no longer reaches here.
+                    // Collection types.
                     //
                     // Round 77 BLOAT D3: the four container arms (List,
                     // Tuple, Map, Set) are line-for-line identical
@@ -2252,12 +2244,7 @@ impl TypeChecker {
                 let et = self.infer_expr(end, env);
                 self.unify(&st, &Type::Int, start_span);
                 self.unify(&et, &Type::Int, end_span);
-                // Range(T) is a nominal alias over List(T): unifies
-                // bidirectionally with List(T) (see unify in
-                // src/typechecker/mod.rs), runtime rep is still Vec<Value>.
-                // The nominal distinction lets `let r: Range(Int) = 1..10`
-                // typecheck cleanly without silently widening annotations.
-                Type::Range(Box::new(Type::Int))
+                Type::List(Box::new(Type::Int))
             }
 
             ExprKind::QuestionMark(inner) => {
@@ -3572,7 +3559,6 @@ pub(super) fn resolve_supertrait_arg(
             };
             match builtin_type_name(ty).unwrap_or_default() {
                 "List" if resolved.len() == 1 => Type::List(Box::new(resolved.pop().unwrap())),
-                "Range" if resolved.len() == 1 => Type::Range(Box::new(resolved.pop().unwrap())),
                 "Set" if resolved.len() == 1 => Type::Set(Box::new(resolved.pop().unwrap())),
                 "Channel" if resolved.len() == 1 => {
                     Type::Channel(Box::new(resolved.pop().unwrap()))

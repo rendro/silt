@@ -59,7 +59,7 @@ const DECODING_BUILTINS: &[&str] = &[
 
 /// The field types the decoders support, as shown in compile errors.
 const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
-     Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
+     Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
      non-generic record types, and aliases of these";
 
 /// The record types a field type names.
@@ -741,9 +741,9 @@ impl Compiler {
             Decl::TraitImpl(trait_impl) => {
                 // Compile each method into the global slot of the method
                 // of the impl's type: the canonical head of its target, as
-                // the typechecker keys impls (`Range` is `List`, an alias
-                // is the type it stands for), so the VM finds it by the
-                // type of the receiver.
+                // the typechecker keys impls (an alias is the type it
+                // stands for), so the VM finds it by the type of the
+                // receiver.
                 // An impl whose target names no type (`trait Display
                 // for a`) is never dispatched to: it has no code.
                 let (Some(ty), Some(t)) = (self.impl_type(trait_impl), self.impl_trait(trait_impl))
@@ -2245,8 +2245,8 @@ impl Compiler {
     }
 
     /// The type the impl `ti` is for, as the checker keys impls and the
-    /// VM dispatches: the canonical head of its target (`Range` is
-    /// `List`, an alias is the type it stands for). `None` for a target
+    /// VM dispatches: the canonical head of its target (an alias is
+    /// the type it stands for). `None` for a target
     /// that names no type (`trait Display for a`).
     fn impl_type(&self, ti: &crate::ast::TraitImpl) -> Option<crate::defs::TypeId> {
         let written = match ti.target_res {
@@ -2419,7 +2419,7 @@ impl Compiler {
             Type::Bool => Ok(FieldType::Bool),
             // A range type is described like the list type it is the
             // same type as.
-            Type::List(elem) | Type::Range(elem) => Ok(FieldType::List(Box::new(
+            Type::List(elem) => Ok(FieldType::List(Box::new(
                 self.describe_field_type(elem, records)?,
             ))),
             // The keys of a JSON object or a TOML table are strings.

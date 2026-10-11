@@ -455,7 +455,7 @@ impl TypeChecker {
 fn holds(ty: &Type, v: TyVar) -> bool {
     match ty {
         Type::Var(w) => *w == v,
-        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => holds(t, v),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds(t, v),
         Type::Map(key, value) => holds(key, v) || holds(value, v),
         Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().any(|t| holds(t, v)),
         Type::AnonRecord { fields, .. } => fields.values().any(|t| holds(t, v)),
@@ -479,7 +479,7 @@ fn holds(ty: &Type, v: TyVar) -> bool {
 fn holds_result(ty: &Type) -> bool {
     match ty {
         Type::Generic(_, args) => ty.is_builtin("Result") || args.iter().any(holds_result),
-        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => holds_result(t),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_result(t),
         Type::Map(key, value) => holds_result(key) || holds_result(value),
         Type::Tuple(ts) => ts.iter().any(holds_result),
         Type::AnonRecord { fields, .. } => fields.values().any(holds_result),

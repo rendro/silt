@@ -219,7 +219,6 @@ impl TypeChecker {
                 Type::Fun(params, ret)
             }
             Type::List(inner) => Type::List(Box::new(self.apply(inner))),
-            Type::Range(inner) => Type::Range(Box::new(self.apply(inner))),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.apply(e)).collect()),
             Type::Generic(name, args) => {
                 let args = args.iter().map(|a| self.apply(a)).collect();
@@ -902,20 +901,6 @@ impl TypeChecker {
                 self.unify_into(a, b, out);
             }
 
-            (Type::Range(a), Type::Range(b)) => {
-                self.unify_into(a, b, out);
-            }
-
-            // Range(T) is a nominal zero-cost alias for List(T): they
-            // unify bidirectionally at the element level. `1..10` infers
-            // as `Range(Int)` so annotations `let r: Range(Int) = 1..10`
-            // typecheck, but existing `list.*` call sites still accept
-            // ranges and `let r: List(Int) = 1..10` still typechecks.
-            // Runtime representation is unchanged (Vec<Value>).
-            (Type::Range(a), Type::List(b)) | (Type::List(b), Type::Range(a)) => {
-                self.unify_into(a, b, out);
-            }
-
             (Type::Map(k1, v1), Type::Map(k2, v2)) => {
                 self.unify_into(k1, k2, out);
                 self.unify_into(v1, v2, out);
@@ -1111,7 +1096,7 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
     match ty {
         Type::Rigid(r) => Some(*r),
         Type::Fun(params, ret) => params.iter().find_map(rigid_in).or_else(|| rigid_in(ret)),
-        Type::List(inner) | Type::Range(inner) | Type::Set(inner) | Type::Channel(inner) => {
+        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
             rigid_in(inner)
         }
         Type::Tuple(elems) => elems.iter().find_map(rigid_in),
@@ -1139,7 +1124,6 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Var(v) => *v == var,
         Type::Fun(params, ret) => params.iter().any(|p| occurs_in(var, p)) || occurs_in(var, ret),
         Type::List(inner) => occurs_in(var, inner),
-        Type::Range(inner) => occurs_in(var, inner),
         Type::Tuple(elems) => elems.iter().any(|e| occurs_in(var, e)),
         Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),

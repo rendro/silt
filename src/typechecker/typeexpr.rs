@@ -194,18 +194,9 @@ impl TypeChecker {
         te: &TypeExpr,
         param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
-        // Phase B: canonicalise the result so user-written `Range(T)`
-        // annotations arrive at the unifier (and at every other
-        // typechecker consumer) as `List(T)`. The user's source
-        // spelling is irrelevant downstream — diagnostic display of
-        // value-side types (e.g. the `Range(Int)` from a `1..n`
-        // expression) is preserved because expression-level inference
-        // (`ExprKind::Range` in `inference.rs`) keeps producing
-        // `Type::Range`. The unify cross-arm at `unify` (`mod.rs:1492`)
-        // therefore still fires for the asymmetric case of a
-        // (canonicalised) annotation meeting an internally-inferred
-        // Range, but only the value side carries Range past this
-        // point.
+        // Canonicalise the result so a type written through an alias
+        // arrives at the unifier (and at every other typechecker
+        // consumer) as the type it stands for.
         //
         // Idempotence note: canonicalize is structurally idempotent
         // (see canonicalize_idempotent test in src/types/canonical.rs),
@@ -285,12 +276,8 @@ impl TypeChecker {
                         "String" => return Type::String,
                         "Unit" => return Type::Unit,
                         // A container without explicit type params gets
-                        // a fresh variable for each. Range is a nominal
-                        // alias for List (see Type::Range in
-                        // src/types.rs); inference is bidirectional at
-                        // unify time.
+                        // a fresh variable for each.
                         "List" => return Type::List(Box::new(self.fresh_var())),
-                        "Range" => return Type::Range(Box::new(self.fresh_var())),
                         "Map" => {
                             return Type::Map(
                                 Box::new(self.fresh_var()),
@@ -355,7 +342,6 @@ impl TypeChecker {
                     let mut arg = |this: &mut Self| it.next().unwrap_or_else(|| this.fresh_var());
                     match (builtin, n) {
                         ("List", 0 | 1) => return Type::List(Box::new(arg(self))),
-                        ("Range", 0 | 1) => return Type::Range(Box::new(arg(self))),
                         ("Map", 0 | 2) => {
                             let k = arg(self);
                             let v = arg(self);

@@ -1146,7 +1146,7 @@ impl TypeChecker {
     ///
     /// An impl's method is checked against the signature its trait
     /// gives it (`register_trait_impl` keeps it in `impl_sigs`, by the
-    /// canonical head of the impl's target: `List` for `Range` and for a
+    /// canonical head of the impl's target: `List` for a
     /// user alias of `List(..)`, `Fn` for `Fun`, `Unit` for `()`).
     ///
     /// A default method is checked once, in its trait: `Self` is rigid
@@ -1236,7 +1236,7 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
             params.iter().for_each(|t| row_tail_vars(t, out));
             row_tail_vars(ret, out);
         }
-        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
         Type::Map(k, v) => {
             row_tail_vars(k, out);
             row_tail_vars(v, out);
