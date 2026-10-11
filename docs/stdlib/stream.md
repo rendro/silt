@@ -134,8 +134,11 @@ fn main() {
   closed (`stream.tcp_lines(conn) |> stream.first`), or the task in
   `stream.write_to_tcp` is cancelled, the connection is shut down, as by
   `tcp.close`: a read that may be in flight has to end, and what the
-  source had read ahead is gone anyway. Read with `tcp.read` if the
-  connection is to be used afterwards.
+  source had read ahead is gone anyway. That holds at whatever moment
+  the source is stopped once it has begun to read: in a read, or with
+  an item that nobody takes any more. (A source that is stopped before
+  it has read anything leaves the connection as it is.) Read with
+  `tcp.read` if the connection is to be used afterwards.
 - **A stream that you stop reading goes on.** A stream that is read by
   hand (`channel.receive`, `channel.select`) and then left is still at
   work: its stages run until their outputs are full or the source is at

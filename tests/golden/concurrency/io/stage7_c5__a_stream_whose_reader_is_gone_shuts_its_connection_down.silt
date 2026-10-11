@@ -1,0 +1,45 @@
+-- timeout: 10
+-- requires-feature: tcp
+-- The reader of a stream on a connection has gone when the source
+-- comes with its first line: the source ends there, and shuts its
+-- connection down like one that is stopped in a read. The peer sends
+-- its lines when the stream is closed, waits for more, and reads the
+-- end; a write on the connection then says closed.
+import bytes
+import channel
+import stream
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let gone = channel.new(0)
+  let seen = channel.new(1)
+  let _peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    let _ = channel.receive(gone)
+    let _ = tcp.write(conn, bytes.from_string("one\ntwo\n"))
+    match tcp.read(conn, 16) {
+      Ok(read) -> channel.send(seen, "the peer read {bytes.length(read)} bytes: the end")
+      Err(e) -> channel.send(seen, "the peer: {e.message()}")
+    }
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  let lines = stream.tcp_lines(conn)
+  channel.close(lines)
+  channel.send(gone, ())
+  when let channel.Message(said) = channel.receive(seen) else {
+    panic("the peer said nothing")
+  }
+  println(said)
+  match tcp.write(conn, bytes.from_string("x")) {
+    Err(tcp.TcpClosed) -> println("closed")
+    _ -> println("something else")
+  }
+}
