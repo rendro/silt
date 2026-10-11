@@ -3024,7 +3024,7 @@ mod type_confusion {
             e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });
         confused("map has no key 'k'", |e| {
-            push(e, Value::Map(Arc::new(BTreeMap::new())));
+            push(e, Value::map(BTreeMap::new()));
             let k = name(e, "k");
             e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });

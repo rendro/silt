@@ -64,7 +64,7 @@ fn make_http_response(
         [
             ("status", Value::Int(status as i64)),
             ("body", Value::String(body.into())),
-            ("headers", Value::Map(Arc::new(headers))),
+            ("headers", Value::map(headers)),
         ],
     )
 }
@@ -83,7 +83,7 @@ fn make_http_request_value(
             ("method", Value::variant(method, vec![])),
             ("path", Value::String(path.into())),
             ("query", Value::String(query.into())),
-            ("headers", Value::Map(Arc::new(headers))),
+            ("headers", Value::map(headers)),
             ("body", Value::String(body.into())),
         ],
     )
@@ -1440,7 +1440,7 @@ mod http_response_tests {
             [
                 ("status", Value::Int(status)),
                 ("body", Value::String(String::new().into())),
-                ("headers", Value::Map(Arc::new(BTreeMap::new()))),
+                ("headers", Value::map(BTreeMap::new())),
             ],
         )
     }

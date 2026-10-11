@@ -1,7 +1,6 @@
 //! Collection builtin functions (`list.*`, `map.*`, `set.*`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
@@ -141,13 +140,13 @@ fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
 }
 
 fn as_set(out: &mut Vec<Value>) -> Result<Value, VmError> {
-    Ok(Value::Set(Arc::new(
+    Ok(Value::set(
         std::mem::take(out).into_iter().collect(),
-    )))
+    ))
 }
 
 fn as_map(out: &mut BTreeMap<Value, Value>) -> Result<Value, VmError> {
-    Ok(Value::Map(Arc::new(std::mem::take(out))))
+    Ok(Value::map(std::mem::take(out)))
 }
 
 fn unit<S>(_: &mut S) -> Result<Value, VmError> {
@@ -480,9 +479,9 @@ pub(crate) mod list {
                 },
                 |groups| {
                     let groups = std::mem::take(groups).into_iter();
-                    Ok(Value::Map(Arc::new(
+                    Ok(Value::map(
                         groups.map(|(k, v)| (k, Value::list(v))).collect(),
-                    )))
+                    ))
                 },
             ))
         }
@@ -821,9 +820,9 @@ pub(crate) mod map {
             let current = m.get(key).unwrap_or(default).clone();
             let (m, key) = (m.clone(), key.clone());
             Ok(call_then("map.update", f.clone(), current, move |new_val| {
-                let mut new_map = (*m).clone();
+                let mut new_map = (**m).clone();
                 new_map.insert(key, new_val);
-                Ok(Value::Map(Arc::new(new_map)))
+                Ok(Value::map(new_map))
             }))
         }
 
@@ -832,13 +831,13 @@ pub(crate) mod map {
         }
 
         fn set(m: Map, k: &Value, v: &Value) -> BTreeMap<Value, Value> {
-            let mut new_map = (**m).clone();
+            let mut new_map = (***m).clone();
             new_map.insert(k.clone(), v.clone());
             new_map
         }
 
         fn delete(m: Map, key: &Value) -> BTreeMap<Value, Value> {
-            let mut new_map = (**m).clone();
+            let mut new_map = (***m).clone();
             new_map.remove(key);
             new_map
         }
@@ -860,7 +859,7 @@ pub(crate) mod map {
         }
 
         fn merge(m1: Map, m2: Map) -> BTreeMap<Value, Value> {
-            let mut result = (**m1).clone();
+            let mut result = (***m1).clone();
             result.extend(m2.iter().map(|(k, v)| (k.clone(), v.clone())));
             result
         }
@@ -969,14 +968,14 @@ pub(crate) mod set {
 
         fn insert(s: Set, elem: &Value) -> Result<BTreeSet<Value>, VmError> {
             ensure_no_fn("set.insert", "Compare", [elem])?;
-            let mut new_set = (**s).clone();
+            let mut new_set = (***s).clone();
             new_set.insert(elem.clone());
             Ok(new_set)
         }
 
         fn remove(s: Set, elem: &Value) -> Result<BTreeSet<Value>, VmError> {
             ensure_no_fn("set.remove", "Compare", [elem])?;
-            let mut new_set = (**s).clone();
+            let mut new_set = (***s).clone();
             new_set.remove(elem);
             Ok(new_set)
         }

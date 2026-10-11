@@ -310,7 +310,7 @@ fn a_string_and_a_tuple_are_shared_not_copied() {
     let (Value::Tuple(a), Value::Tuple(b)) = (&tuple, &tuple_again) else {
         panic!("two tuples");
     };
-    assert!(Arc::ptr_eq(a, b));
+    assert!(std::ptr::eq(a.as_ptr(), b.as_ptr()));
     assert_eq!(a[..], [text.clone(), Value::Int(1)]);
 }
 
@@ -568,7 +568,7 @@ fn records_are_ordered_and_hashed_in_declaration_order() {
 
     // `Response` declares `status` before `body`: the status decides.
     let response = |status, body: &str| {
-        let headers = Value::Map(Arc::new(BTreeMap::new()));
+        let headers = Value::map(BTreeMap::new());
         let body = Value::String(body.into());
         Value::builtin_record(
             ty::RESPONSE,
@@ -607,10 +607,10 @@ fn values_of_every_kind_have_one_key() {
         Value::list(vec![Value::Int(2)]),
         Value::tuple(vec![Value::Int(1), Value::Int(2)]),
         Value::tuple(vec![Value::Int(1), Value::Int(3)]),
-        Value::Map(Arc::new(BTreeMap::from([(Value::Int(1), Value::Int(1))]))),
-        Value::Map(Arc::new(BTreeMap::from([(Value::Int(1), Value::Int(2))]))),
-        Value::Set(Arc::new(BTreeSet::from([Value::Int(1)]))),
-        Value::Set(Arc::new(BTreeSet::from([Value::Int(1), Value::Int(2)]))),
+        Value::map(BTreeMap::from([(Value::Int(1), Value::Int(1))])),
+        Value::map(BTreeMap::from([(Value::Int(1), Value::Int(2))])),
+        Value::set(BTreeSet::from([Value::Int(1)])),
+        Value::set(BTreeSet::from([Value::Int(1), Value::Int(2)])),
         Value::anon_record([("x", Value::Int(1))]),
         Value::variant(bv::OK, vec![Value::Int(1)]),
         Value::variant(bv::OK, vec![Value::Int(2)]),
@@ -886,24 +886,24 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         // A key that is a string is in quotes however the map is
         // written; a key that has parts is written like any value.
         (
-            Value::Map(Arc::new(BTreeMap::from([
+            Value::map(BTreeMap::from([
                 (text("k"), text("v")),
                 (text("l"), Value::list(vec![Value::Int(1)])),
-            ]))),
+            ])),
             "#{\"k\": v, \"l\": [1]}",
             "#{\"k\": \"v\", \"l\": [1]}",
         ),
         (
-            Value::Map(Arc::new(BTreeMap::from([(
+            Value::map(BTreeMap::from([(
                 Value::tuple(vec![Value::Int(1), text("a")]),
                 Value::Int(2),
-            )]))),
+            )])),
             "#{(1, a): 2}",
             "#{(1, \"a\"): 2}",
         ),
-        (Value::Map(Arc::new(BTreeMap::new())), "#{}", "#{}"),
+        (Value::map(BTreeMap::new()), "#{}", "#{}"),
         (
-            Value::Set(Arc::new(BTreeSet::from([text("b"), text("a")]))),
+            Value::set(BTreeSet::from([text("b"), text("a")])),
             "#[a, b]",
             "#[\"a\", \"b\"]",
         ),
@@ -1024,7 +1024,7 @@ fn display_set() {
     let mut s = BTreeSet::new();
     s.insert(Value::Int(1));
     s.insert(Value::Int(2));
-    let set = Value::Set(Arc::new(s));
+    let set = Value::set(s);
     assert_eq!(format!("{}", set), "#[1, 2]");
 }
 

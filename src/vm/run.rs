@@ -797,7 +797,7 @@ impl Vm {
                     map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Map(Arc::new(map)));
+                self.push(Value::map(map));
             }
             Instr::MakeSet { count } => {
                 let start = self.stack.len() - count;
@@ -806,7 +806,7 @@ impl Vm {
                     set.insert(self.stack[i].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Set(Arc::new(set)));
+                self.push(Value::set(set));
             }
             Instr::MakeRecord { ty, fields } => {
                 let start = self.stack.len() - fields.len();

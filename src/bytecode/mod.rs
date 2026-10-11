@@ -605,3 +605,13 @@ pub struct VmClosure {
     pub function: Arc<Function>,
     pub upvalues: Vec<Value>,
 }
+
+impl Drop for VmClosure {
+    fn drop(&mut self) {
+        // On no native stack, however deep the captured values nest:
+        // a closure may capture a closure that captures a closure.
+        if !self.upvalues.is_empty() {
+            crate::value::drop_held(std::mem::take(&mut self.upvalues));
+        }
+    }
+}

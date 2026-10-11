@@ -73,6 +73,16 @@ pub(super) struct State {
     stale: usize,
 }
 
+impl Drop for State {
+    fn drop(&mut self) {
+        // On no native stack, however deep the values that wait nest:
+        // a channel may hold a channel that holds a channel.
+        if !self.buf.is_empty() {
+            crate::value::drop_held(Vec::from(std::mem::take(&mut self.buf)));
+        }
+    }
+}
+
 impl State {
     pub(super) fn send(&mut self, value: Value, wakes: &mut Wakes) -> TrySend {
         if let Some(close) = &self.closed {

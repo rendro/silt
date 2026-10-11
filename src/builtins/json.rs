@@ -372,7 +372,7 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::Map(Arc::new(map))]))
+    Ok(Value::variant(bv::OK, vec![Value::map(map)]))
 }
 
 /// Decode a `serde_json::Value` into a silt `Value` of the expected
@@ -449,7 +449,7 @@ fn json_to_typed_value(
                     let val = json_to_typed_value(vm, item, inner)?;
                     map.insert(Value::String(key.clone().into()), val);
                 }
-                Ok(Value::Map(Arc::new(map)))
+                Ok(Value::map(map))
             }
             _ => Err(mismatch("Map", json_type_name(json))),
         },

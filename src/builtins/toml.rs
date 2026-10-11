@@ -425,7 +425,7 @@ fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Valu
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::Map(Arc::new(map))]))
+    Ok(Value::variant(bv::OK, vec![Value::map(map)]))
 }
 
 fn toml_to_typed_value(
@@ -497,7 +497,7 @@ fn toml_to_typed_value(
                     let val = toml_to_typed_value(vm, item, inner)?;
                     map.insert(Value::String(key.clone().into()), val);
                 }
-                Ok(Value::Map(Arc::new(map)))
+                Ok(Value::map(map))
             }
             _ => Err(mismatch("Map", toml_type_name(tv))),
         },

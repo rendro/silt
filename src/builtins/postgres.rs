@@ -848,7 +848,7 @@ fn row_to_map(row: &postgres::Row) -> Value {
         let key = Value::String(col.name().into());
         map.insert(key, pg_cell_to_value(row, idx));
     }
-    Value::Map(Arc::new(map))
+    Value::map(map)
 }
 
 fn make_query_result(rows: Vec<Value>) -> Value {

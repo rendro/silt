@@ -15,10 +15,10 @@
 //! its name ([`Record::get`]) and all with their names
 //! ([`Record::named`]).
 
-use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use super::Value;
+use super::deep::drop_held;
 use crate::defs::TypeId;
 use crate::typeinfo::{BuiltinVariant, Tag, TypeInfo, anon_record_type};
 
@@ -30,58 +30,10 @@ struct Obj {
     fields: Box<[Value]>,
 }
 
-// ── Dropping a deep value ──────────────────────────────────────────
-//
-// The last holder of an object drops its fields, and a field that is
-// the last holder of an object drops that one's: a list of a program's
-// own, a million links long, was dropped a million calls deep, and
-// overflowed the native stack. So the objects being dropped, each
-// inside the one before, are counted, and past a few of them the
-// fields of an object are put aside and dropped by the outermost when
-// it is done with its own. (A value can only be nested without bound
-// through a type that holds itself, which is a variant or a record at
-// each level: the other values between two objects are as many as
-// their type has, and are dropped as they are.)
-
-/// How many objects drop their fields each inside the one before; the
-/// fields of one further in are put aside.
-const NEAR_DROPS: usize = 64;
-
-thread_local! {
-    /// How many objects are dropping their fields on this thread, each
-    /// inside the one before.
-    static DROPPING: Cell<usize> = const { Cell::new(0) };
-    /// Whether fields are put aside.
-    static ASIDE: Cell<bool> = const { Cell::new(false) };
-    /// The fields put aside.
-    static PUT_ASIDE: RefCell<Vec<Box<[Value]>>> = const { RefCell::new(Vec::new()) };
-}
-
 impl Drop for Obj {
     fn drop(&mut self) {
-        let fields = std::mem::take(&mut self.fields);
-        let depth = DROPPING.get();
-        if depth >= NEAR_DROPS {
-            // (A thread that is ending has nothing to put them into,
-            // and drops them where it is.)
-            if PUT_ASIDE
-                .try_with(|aside| aside.borrow_mut().push(fields))
-                .is_ok()
-            {
-                ASIDE.set(true);
-            }
-            return;
-        }
-        DROPPING.set(depth + 1);
-        drop(fields);
-        while depth == 0 && ASIDE.get() {
-            let next = PUT_ASIDE.try_with(|aside| aside.borrow_mut().pop());
-            match next {
-                Ok(Some(fields)) => drop(fields),
-                _ => ASIDE.set(false),
-            }
-        }
-        DROPPING.set(depth);
+        // On no native stack, however deep the fields nest.
+        drop_held(std::mem::take(&mut self.fields));
     }
 }
 

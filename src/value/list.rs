@@ -18,9 +18,8 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
-
 use super::Value;
+use super::deep::Buf;
 
 /// The most elements a list that holds none (`a..b`) may have when it
 /// is made a list that holds them: reversed, written out, encoded.
@@ -35,7 +34,7 @@ pub struct List(Stored);
 enum Stored {
     /// `len` elements of `buf` from `start`.
     Items {
-        buf: Arc<[Value]>,
+        buf: Buf,
         start: usize,
         len: usize,
     },
@@ -413,7 +412,7 @@ impl From<Vec<Value>> for List {
     fn from(items: Vec<Value>) -> List {
         let len = items.len();
         List(Stored::Items {
-            buf: Arc::from(items),
+            buf: Buf::from(items),
             start: 0,
             len,
         })
@@ -422,7 +421,7 @@ impl From<Vec<Value>> for List {
 
 impl FromIterator<Value> for List {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> List {
-        let buf: Arc<[Value]> = items.into_iter().collect();
+        let buf: Buf = items.into_iter().collect();
         let len = buf.len();
         List(Stored::Items { buf, start: 0, len })
     }
