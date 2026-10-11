@@ -239,6 +239,9 @@ impl Vm {
     ) -> Result<Slice, VmError> {
         let scheduler = self.runtime.scheduler.clone();
         let _running = scheduler.enter();
+        // No slice starts once the step budget is used up, as for a
+        // task (`execute_slice`).
+        self.runtime.charge(0)?;
         let mut run = start(self)?;
         loop {
             match run {
@@ -248,7 +251,7 @@ impl Vm {
                 Slice::OutOfBudget => self.runtime.charge(self.own_slice())?,
                 Slice::Parked(wait) => {
                     // A wait is a step of the budget (the error comes
-                    // where a slice ends).
+                    // before the next slice).
                     let _ = self.runtime.charge(1);
                     let who = match self.is_program() {
                         true => Blocks::Program {
@@ -258,6 +261,12 @@ impl Vm {
                     };
                     self.woken = Some(scheduler.block_thread(wait, who)?);
                 }
+            }
+            // A thread whose slices all end in a wait never runs one
+            // out: the budget its waits have used up ends it here.
+            if let Err(e) = self.runtime.charge(0) {
+                self.woken = None;
+                return Err(e);
             }
             run = self.run_frames(floor, self.own_slice())?;
         }

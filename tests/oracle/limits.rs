@@ -163,10 +163,10 @@ fn the_budget_ends_the_tasks_of_a_program_too() {
     let (result, _) = run_whole(&joined, |vm| vm.set_step_budget(100_000));
     let error = result.unwrap_err();
     assert!(error.out_of_steps, "{error:?}");
-    assert_eq!(
-        error.message,
-        "joined task failed: the step budget is used up"
-    );
+    // (The budget's error: the join's, or `main`'s own when its next
+    // slice does not start.)
+    let message = &error.message;
+    assert!(message.ends_with("the step budget is used up"), "{error:?}");
 
     // `main` returns at once; `settle` waits for the task, which the
     // budget ends, and the runtime reports its failure.
@@ -211,5 +211,76 @@ fn main() {
         let (result, _) = run_whole(source, |vm| vm.set_step_budget(20_000));
         let error = result.unwrap_err();
         assert!(error.out_of_steps, "{error:?}");
+    }
+}
+
+/// The three settings a budget must work under: no slice set, the
+/// scheduler's own, and one step.
+const SLICES: [Option<usize>; 3] = [None, Some(2000), Some(1)];
+
+/// `source` under a budget of `steps` at each of [`SLICES`]: it ends,
+/// and with `out_of_steps`. (A program that the budget does not end
+/// does not end at all: there is no timeout here.)
+#[track_caller]
+fn assert_ended_by_budget(source: &str, steps: u64) {
+    for slice in SLICES {
+        let (result, _) = run_whole(source, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+            vm.set_step_budget(steps);
+        });
+        let error = result.expect_err("the program does not end by itself");
+        assert!(error.out_of_steps, "slice {slice:?}: {error:?}");
+    }
+}
+
+/// The program's own thread, when each of its slices ends in a wait,
+/// never runs a slice to its end. Its waits are steps, and no slice
+/// starts once they have used the budget up: `main` alone, looping on a
+/// receive with a timeout.
+#[test]
+fn the_budget_ends_a_main_that_only_waits_for_a_timeout() {
+    let source = "import channel\nimport time\n\nfn main() {\n  let ch = channel.new(0)\n  loop i = 0 {\n    let _ = channel.recv_timeout(ch, time.ms(1))\n    loop(i + 1)\n  }\n}\n";
+    assert_ended_by_budget(source, 100);
+}
+
+/// The same with a receive on a channel that a timer closes.
+#[test]
+fn the_budget_ends_a_main_that_only_waits_for_timer_channels() {
+    let source = "import channel\nimport time\n\nfn main() {\n  loop i = 0 {\n    match channel.receive(channel.timeout(1)) {\n      _ -> loop(i + 1)\n    }\n  }\n}\n";
+    assert_ended_by_budget(source, 100);
+}
+
+/// The same with an operation of the I/O pool, which `main` waits for
+/// like for a channel: reading a file again and again.
+#[test]
+fn the_budget_ends_a_main_that_only_waits_for_io() {
+    let dir = std::env::temp_dir().join(format!("silt-oracle-limits-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("read.txt");
+    std::fs::write(&file, "text\n").unwrap();
+    let path = file.to_string_lossy().replace('\\', "/");
+    let source = format!(
+        "import io\n\nfn main() {{\n  loop i = 0 {{\n    let _ = io.read_file(\"{path}\")\n    loop(i + 1)\n  }}\n}}\n"
+    );
+    assert_ended_by_budget(&source, 100);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A budget of no steps starts no slice: nothing of the program runs,
+/// whatever the slice.
+#[test]
+fn a_budget_of_no_steps_runs_nothing() {
+    let source = "fn main() {\n  println(\"ran\")\n}\n";
+    for slice in SLICES {
+        let (result, output) = run_whole(source, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+            vm.set_step_budget(0);
+        });
+        assert!(result.unwrap_err().out_of_steps, "slice {slice:?}");
+        assert_eq!(output, "", "slice {slice:?}");
     }
 }
