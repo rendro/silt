@@ -15,7 +15,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 /// A Float: a finite `f64` that is not `-0.0`.
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Float(f64);
 
 impl Float {
@@ -50,6 +50,12 @@ impl std::ops::Neg for Float {
 }
 
 impl Eq for Float {}
+
+impl PartialOrd for Float {
+    fn partial_cmp(&self, other: &Float) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl Ord for Float {
     fn cmp(&self, other: &Float) -> Ordering {
