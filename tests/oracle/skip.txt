@@ -1,0 +1,25 @@
+# The inputs of the differential oracle (tests/oracle) with a finding
+# that is known and reported, one per line:
+#
+#   <input> | <kind> | <what it is, and where it was reported>
+#
+# <input> is the input's name in the oracle's report, <kind> the kind of
+# its finding (panic, compiler-bug, verifier, type-confusion,
+# internal-error, hang, abort, one-slice, differs, expectation). The suite
+# fails on a finding that has no line here, and on a line whose input has no such
+# finding any more: remove the line with the fix.
+#
+# An input of the kind `abort` ends the process that runs it, so the
+# suite does not run it in its own: a full sweep (SILT_ORACLE_FULL=1)
+# runs it through the `silt` command and fails when that ends with
+# status 0 or 1.
+
+# Showing, comparing, hashing or dropping a value nested 100,000 levels
+# and more overflows the native stack of a debug build (stage 7 step V3:
+# "a 200,000-deep value returns or raises a clean error").
+tests/golden/repros/compiler_vm/deep_nest_disp_100000.silt | abort | deep value: Display overflows the native stack (V3)
+tests/golden/repros/compiler_vm/deep_nest_disp_1000000.silt | abort | deep value: Display overflows the native stack (V3)
+tests/golden/repros/compiler_vm/deep_nest_drop_1000000.silt | abort | deep value: drop overflows the native stack (V3)
+tests/golden/repros/compiler_vm/deep_nest_eq_1000000.silt | abort | deep value: == overflows the native stack (V3)
+tests/golden/repros/compiler_vm/deep_nest_lt_1000000.silt | abort | deep value: < overflows the native stack (V3)
+tests/golden/repros/compiler_vm/deep_nest_set_1000000.silt | abort | deep value: hashing overflows the native stack (V3)

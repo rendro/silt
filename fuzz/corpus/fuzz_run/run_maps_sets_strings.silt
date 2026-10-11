@@ -1,0 +1,30 @@
+import map
+import set
+import string
+
+fn main() {
+  let counts = string.split("a b a c b a", " ")
+    |> list_count
+  println(map.get(counts, "a"))
+  println(map.get(counts, "z"))
+  let seen = set.from_list([3, 1, 3, 2])
+  println(set.contains(seen, 2))
+  println(set.length(seen))
+  println(string.join(["x", "y"], "-") |> string.repeat(2))
+  map.length(counts)
+}
+
+fn list_count(words) {
+  loop rest = words, acc = #{} {
+    match rest {
+      [] -> acc
+      [w, ..tail] -> {
+        let n = match map.get(acc, w) {
+          Some(k) -> k + 1
+          None -> 1
+        }
+        loop(tail, map.set(acc, w, n))
+      }
+    }
+  }
+}

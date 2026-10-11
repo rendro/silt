@@ -1,0 +1,22 @@
+import list
+
+fn classify(n) {
+  match (n % 3, n % 5) {
+    (0, 0) -> "fizzbuzz"
+    (0, _) | (_, 0) -> "one"
+    _ -> "none"
+  }
+}
+
+fn main() {
+  let x = {
+    let a = (7 * 6)
+    (a - list.length([1, 2, 3]))
+  }
+  println(classify(x))
+  println(classify(15))
+  (match (x > 0) {
+    true -> (x + 1)
+    false -> (0 - x)
+  })
+}

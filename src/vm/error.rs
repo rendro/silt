@@ -11,6 +11,11 @@ pub struct VmError {
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub type_confusion: bool,
+    /// If true, the program had run the steps its embedder gave it
+    /// ([`Vm::set_step_budget`](super::Vm::set_step_budget)) and was
+    /// ended for it: this is the budget's error, the error of a join
+    /// of a task it ended, or a deadlock that followed from it.
+    pub out_of_steps: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -23,6 +28,7 @@ impl VmError {
             message,
             help: Vec::new(),
             type_confusion: false,
+            out_of_steps: false,
             span: None,
             call_stack: Vec::new(),
         }
@@ -39,6 +45,15 @@ impl VmError {
         VmError {
             type_confusion: true,
             ..VmError::new(message.into())
+        }
+    }
+
+    /// The step budget of the program is used up: what still runs of
+    /// it ends with this.
+    pub(crate) fn budget_used_up() -> Self {
+        VmError {
+            out_of_steps: true,
+            ..VmError::new("the step budget is used up".into())
         }
     }
 

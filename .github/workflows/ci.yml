@@ -55,9 +55,10 @@ jobs:
     # Split Linux test runs across 4 parallel matrix partitions so total
     # wall-clock approximates max(slowest partition) instead of the sum.
     # The partitions follow the suite binaries under tests/ (see
-    # .github/scripts/run-test-partition.sh): the `heavy` suite, the
-    # `concurrency` suite, and everything else split in two by nextest's
-    # hash partitioning. A new test needs no change here.
+    # .github/scripts/run-test-partition.sh): the `heavy` suite with the
+    # `oracle` suite, the `concurrency` suite, and everything else split
+    # in three by nextest's hash partitioning. A new test needs no change
+    # here.
     name: Test Linux (${{ matrix.partition }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -271,6 +272,9 @@ jobs:
 
       - name: Replay fuzz_http_request corpus
         run: ./fuzz/replay.sh fuzz_http_request
+
+      - name: Replay fuzz_run corpus
+        run: ./fuzz/replay.sh fuzz_run
 
       - name: Upload reproducers on failure
         if: failure()
