@@ -81,7 +81,13 @@ fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
         unreachable!("an instruction runs in a function's frame")
     };
     let chunk = frame.closure.function.chunk();
-    (&frame.closure, chunk, chunk.code(), frame.ip, frame.base_slot)
+    (
+        &frame.closure,
+        chunk,
+        chunk.code(),
+        frame.ip,
+        frame.base_slot,
+    )
 }
 
 // The code a VM runs has passed the bytecode verifier
@@ -630,16 +636,14 @@ impl Vm {
                     self.stack.push(Value::Bool(result));
                 }
                 Instr::TestIntRange { lo, hi } => {
-                    let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi))
-                    {
+                    let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi)) {
                         (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
                         _ => false,
                     };
                     self.stack.push(Value::Bool(result));
                 }
                 Instr::TestFloatRange { lo, hi } => {
-                    let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi))
-                    {
+                    let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi)) {
                         (Value::Float(n), Value::Float(lo), Value::Float(hi)) => n >= lo && n <= hi,
                         _ => false,
                     };
@@ -820,9 +824,8 @@ impl Vm {
                 Instr::Panic => {
                     let msg = pop(&mut self.stack);
                     save!();
-                    let step = ok!(
-                        self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}"))))
-                    );
+                    let step =
+                        ok!(self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}")))));
                     go_on!(ok!(self.enter_step(step)));
                 }
                 Instr::CallMethod { method, argc, of } => {
@@ -869,7 +872,6 @@ impl Vm {
     /// [`Vm::deliver`] to a builtin's frame, and to whatever frame is on
     /// top when that one is done.
     fn deliver_native(
-
         &mut self,
         floor: usize,
         mut value: Value,
@@ -1099,7 +1101,7 @@ impl Vm {
         // stack for runtime errors. The caller's name comes
         // from its closure's function name; the caller's span
         // points at the tail-call site (the op just before
-        // `frame.ip`, which `fetch` has stepped past it).
+        // `frame.ip`, which the loop wrote back past it).
         // Bounded by TCO_ELIDED_CAP entries per depth — on
         // overflow we drop the oldest caller at this depth.
         // The existing `render_call_stack` head/tail truncation

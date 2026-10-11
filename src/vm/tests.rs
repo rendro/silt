@@ -2630,6 +2630,739 @@ fn test_println_rejects_wrong_arity() {
     }
 }
 
+// ── Where an error is ───────────────────────────────────────────────
+//
+// An error's place and its call stack are read off the frames a run
+// leaves (`Vm::enrich_error`): off each frame's instruction pointer,
+// which the instruction loop keeps in a variable of its own and writes
+// back to the frame when it leaves, or calls. Each test stops code with
+// an error and says where the error must be: in a script and in a
+// function the script calls, and whether the code runs in one piece or
+// is stopped and resumed after every instruction.
+mod error_places {
+    use std::cell::Cell;
+
+    use super::*;
+    use crate::bytecode::VmClosure;
+    use crate::source::FileId;
+    use crate::{Buffer, HostIo};
+
+    thread_local! {
+        static NEXT_SPAN: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// A span of its own at each call: the instruction emitted with it
+    /// is known by it.
+    pub(super) fn span() -> Span {
+        let at = NEXT_SPAN.with(|next| next.replace(next.get() + 1));
+        Span::point(FileId::default(), at)
+    }
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// Run the code `build` emits, which must stop with an error of its
+    /// last instruction, and give the error. The code is run as a
+    /// script and as a function a script calls, each in one piece and
+    /// in slices of one step: every run must stop at that instruction,
+    /// with the call stack of the frames that are there.
+    pub(super) fn stopped(build: impl FnOnce(&mut Emitter)) -> VmError {
+        let inner = make_function(|e| {
+            build(e);
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        // The last instruction of `build`: the one before the `Return`.
+        let place = inner.chunk().span_at(inner.chunk().len() - 2);
+        let call = span();
+        let outer = make_function(|e| {
+            push(
+                e,
+                Value::VmClosure(Arc::new(VmClosure {
+                    function: inner.clone(),
+                    upvalues: vec![],
+                })),
+            );
+            e.emit(Asm::Call { argc: 0 }, call).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let mut errors = Vec::new();
+        for (script, stack) in [(inner.clone(), vec![place]), (outer, vec![place, call])] {
+            for slice in [None, Some(1)] {
+                let mut vm = Vm::new(HostIo::process());
+                if let Some(steps) = slice {
+                    vm.set_time_slice(steps);
+                }
+                let err = vm
+                    .run(script.clone())
+                    .expect_err("the code stops with an error");
+                assert_eq!(err.span, Some(place), "the place of: {err}");
+                let frames: Vec<Span> = err.call_stack.iter().map(|(_, span)| *span).collect();
+                assert_eq!(frames, stack, "the call stack of: {err}");
+                errors.push(err);
+            }
+        }
+        let error = errors.pop().expect("four runs");
+        for other in &errors {
+            assert_eq!(other.message, error.message);
+        }
+        error
+    }
+
+    /// `a op b` stops with `message`.
+    fn binary(a: Value, op: Asm<'static>, b: Value, message: &str) {
+        let err = stopped(|e| {
+            push(e, a);
+            push(e, b);
+            e.emit(op, span()).unwrap();
+        });
+        assert_eq!(err.message, message);
+        assert!(!err.type_confusion);
+    }
+
+    #[test]
+    fn an_integer_overflow() {
+        let int = Value::Int;
+        binary(
+            int(i64::MAX),
+            Asm::Add,
+            int(1),
+            "integer overflow: 9223372036854775807 + 1",
+        );
+        binary(
+            int(i64::MIN),
+            Asm::Sub,
+            int(1),
+            "integer overflow: -9223372036854775808 - 1",
+        );
+        binary(
+            int(i64::MAX),
+            Asm::Mul,
+            int(2),
+            "integer overflow: 9223372036854775807 * 2",
+        );
+        binary(
+            int(i64::MIN),
+            Asm::Div,
+            int(-1),
+            "integer overflow: -9223372036854775808 / -1",
+        );
+        binary(
+            int(i64::MIN),
+            Asm::Mod,
+            int(-1),
+            "integer overflow: -9223372036854775808 % -1",
+        );
+        let err = stopped(|e| {
+            push(e, int(i64::MIN));
+            e.emit(Asm::Negate, span()).unwrap();
+        });
+        assert_eq!(err.message, "integer overflow: negate -9223372036854775808");
+    }
+
+    #[test]
+    fn a_division_by_zero() {
+        binary(Value::Int(7), Asm::Div, Value::Int(0), "division by zero");
+        binary(Value::Int(7), Asm::Mod, Value::Int(0), "modulo by zero");
+        binary(float(7.0), Asm::Div, float(0.0), "float division by zero");
+        binary(float(7.0), Asm::Mod, float(0.0), "modulo by zero");
+    }
+
+    #[test]
+    fn a_float_overflow() {
+        binary(
+            float(f64::MAX),
+            Asm::Add,
+            float(f64::MAX),
+            &format!("float overflow: {0} + {0}", f64::MAX),
+        );
+        binary(
+            float(f64::MAX),
+            Asm::Mul,
+            float(2.0),
+            &format!("float overflow: {} * 2", f64::MAX),
+        );
+    }
+
+    /// The error the program `source` stops with: its message, its
+    /// place and its call stack, the innermost function first, each
+    /// place as `line:column` (`-` for one in no file; a function that
+    /// is there `n` times in a row at one place is `(n times)`). The
+    /// program is run in one piece and in slices of one step, and must
+    /// stop with the same error both times.
+    fn stops(source: &str) -> String {
+        stops_within(source, None)
+    }
+
+    /// [`stops`] for a program that may run `budget` steps.
+    fn stops_within(source: &str, budget: Option<u64>) -> String {
+        let program =
+            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let at = |span: Span| {
+            if !span.is_in_source() {
+                return "-".to_string();
+            }
+            let before = &source[..span.start_offset()];
+            let line = before.matches('\n').count() + 1;
+            let column = before.len() - before.rfind('\n').map_or(0, |at| at + 1) + 1;
+            format!("{line}:{column}")
+        };
+        let shown = |err: &VmError| {
+            let mut text = format!("{} at {}", err.message, err.span.map_or("-".into(), at));
+            let mut frames = err.call_stack.iter().peekable();
+            while let Some((name, span)) = frames.next() {
+                let mut times = 1;
+                while frames
+                    .next_if(|next| next.0 == *name && next.1 == *span)
+                    .is_some()
+                {
+                    times += 1;
+                }
+                text += &format!("; {name} {}", at(*span));
+                if times > 1 {
+                    text += &format!(" ({times} times)");
+                }
+            }
+            text
+        };
+        let run = |slice: Option<usize>| {
+            let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+            if let Some(steps) = slice {
+                vm.set_time_slice(steps);
+            }
+            if let Some(steps) = budget {
+                vm.set_step_budget(steps);
+            }
+            let err = vm
+                .run_program(&program)
+                .expect_err("the program stops with an error");
+            vm.stop_tasks();
+            shown(&err)
+        };
+        let sliced = run(Some(1));
+        // (A budget is counted exactly at slice 1 only.)
+        if budget.is_none() {
+            assert_eq!(run(None), sliced);
+        }
+        sliced
+    }
+
+    #[test]
+    fn in_main_after_a_call_has_returned() {
+        let source = "\
+fn id(x: Int) -> Int {
+  x
+}
+fn main() {
+  let big = id(9223372036854775807)
+  let one = id(1)
+  let sum = big + one
+  println(sum)
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: 9223372036854775807 + 1 at 7:13; main 7:13; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn in_a_called_function() {
+        let source = "\
+fn inner(a: Int, b: Int) -> Int {
+  let r = a % b
+  r
+}
+fn outer(a: Int) -> Int {
+  let v = inner(a, 0)
+  v * 2
+}
+fn main() {
+  println(outer(7))
+}
+";
+        assert_eq!(
+            stops(source),
+            "modulo by zero at 2:11; inner 2:11; outer 6:11; main 10:11; <script> 9:1"
+        );
+        let source = "\
+fn mul(a: Int, b: Int) -> Int {
+  a * b
+}
+fn sub(a: Int, b: Int) -> Int {
+  let d = a - b
+  d
+}
+fn main() {
+  let a = match mul(3, 4) {
+    12 -> sub(0 - 9223372036854775807, 2)
+    _ -> 0
+  }
+  println(a)
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: -9223372036854775807 - 2 at 5:11; sub 5:11; main 10:11; <script> 8:1"
+        );
+        let source = "\
+fn neg(x: Int) -> Int {
+  let y = -x
+  y
+}
+fn main() {
+  let m = 0 - 9223372036854775807 - 1
+  println(neg(m))
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: negate -9223372036854775808 at 2:11; neg 2:11; main 7:11; <script> 5:1"
+        );
+        let source = "\
+fn ratio(x: Float, by: Float) -> Float {
+  x / by
+}
+fn main() {
+  let z = ratio(1.0, 0.0)
+  println(z)
+}
+";
+        assert_eq!(
+            stops(source),
+            "float division by zero at 2:3; ratio 2:3; main 5:11; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn in_a_closure_and_in_a_loop() {
+        let source = "\
+fn make(d: Int) -> Fn(Int) -> Int {
+  { x -> x / d }
+}
+fn main() {
+  let f = make(0)
+  let g = make(2)
+  println(g(8))
+  println(f(8))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 2:10; <lambda> 2:10; main 8:11; <script> 4:1"
+        );
+        let source = "\
+fn main() {
+  let r = loop i = 5, acc = 1 {
+    match i < 0 {
+      true -> acc
+      false -> loop(i - 1, acc + 100 / i)
+    }
+  }
+  println(r)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 5:34; main 5:34; <script> 1:1"
+        );
+    }
+
+    #[test]
+    fn in_the_callback_of_a_builtin() {
+        let source = "\
+import list
+fn main() {
+  let xs = [3, 2, 1, 0]
+  let ys = list.map(xs) { x ->
+    let q = 12 / x
+    q + 1
+  }
+  println(ys)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 5:13; <lambda> 5:13; main 4:12; <script> 2:1"
+        );
+        let source = "\
+import list
+fn step(acc: Int, x: Int) -> Int {
+  acc * x
+}
+fn main() {
+  let xs = [4611686018427387904, 2, 2]
+  let total = list.fold(xs, 1) { acc, x -> step(acc, x) }
+  println(total)
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: 4611686018427387904 * 2 at 3:3; step 3:3; <lambda> 7:44; main 7:15; <script> 5:1"
+        );
+    }
+
+    #[test]
+    fn in_a_display_impl() {
+        let source = "\
+type P {
+  x: Int,
+}
+trait Display for P {
+  fn display(self) -> String {
+    let d = 10 / self.x
+    \"P({d})\"
+  }
+}
+fn main() {
+  let p = P { x: 0 }
+  println(\"got {p}\")
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 6:13; P.display 6:13; main 12:11; <script> 10:1"
+        );
+        let source = "\
+type P {
+  x: Int,
+}
+trait Display for P {
+  fn display(self) -> String {
+    let d = 10 % self.x
+    \"P({d})\"
+  }
+}
+fn main() {
+  let ps = [P { x: 1 }, P { x: 0 }]
+  println(ps)
+}
+";
+        assert_eq!(
+            stops(source),
+            "modulo by zero at 6:13; P.display 6:13; main 12:3; <script> 10:1"
+        );
+    }
+
+    #[test]
+    fn behind_a_question_mark() {
+        let source = "\
+fn parse(n: Int) -> Result(Int, String) {
+  match n > 0 {
+    true -> Ok(100 / (n - 1))
+    false -> Err(\"neg\")
+  }
+}
+fn run(n: Int) -> Result(Int, String) {
+  let a = parse(n + 1)?
+  let b = parse(n)?
+  Ok(a + b)
+}
+fn main() {
+  match run(1) {
+    Ok(v) -> println(v)
+    Err(e) -> println(e)
+  }
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:16; parse 3:16; run 9:11; main 13:9; <script> 12:1"
+        );
+        // After a `?` that returned early.
+        let source = "\
+fn parse(n: Int) -> Result(Int, String) {
+  match n > 0 {
+    true -> Ok(n)
+    false -> Err(\"neg\")
+  }
+}
+fn run(n: Int) -> Result(Int, String) {
+  let a = parse(n)?
+  Ok(a)
+}
+fn main() {
+  let r = run(0)
+  let k = match r {
+    Ok(v) -> v
+    Err(_) -> 0
+  }
+  println(7 / k)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 17:11; main 17:11; <script> 11:1"
+        );
+    }
+
+    #[test]
+    fn in_a_tail_call() {
+        let source = "\
+fn c(n: Int) -> Int {
+  100 / n
+}
+fn b(n: Int) -> Int {
+  c(n - 1)
+}
+fn a(n: Int) -> Int {
+  b(n - 1)
+}
+fn main() {
+  println(a(2))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 2:3; c 2:3; b 5:3; a 8:3; main 11:11; <script> 10:1"
+        );
+        // More tail calls than the log keeps.
+        let source = "\
+fn count(i: Int, acc: Int) -> Int {
+  match i {
+    0 -> acc / i
+    _ -> count(i - 1, acc + i)
+  }
+}
+fn main() {
+  println(count(100, 0))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; count 3:10; count 4:10 (32 times); main 8:11; <script> 7:1"
+        );
+        let source = "\
+type C {
+  n: Int,
+}
+trait Step {
+  fn go(self, k: Int) -> Int
+}
+trait Step for C {
+  fn go(self, k: Int) -> Int {
+    match k {
+      0 -> 1 / k
+      _ -> self.go(k - 1)
+    }
+  }
+}
+fn main() {
+  let c = C { n: 1 }
+  println(c.go(5))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 10:12; C.go 10:12; C.go 11:12 (5 times); main 17:11; <script> 15:1"
+        );
+    }
+
+    #[test]
+    fn a_panic_and_an_error_of_a_builtin() {
+        let source = "\
+fn boom(n: Int) -> Int {
+  match n {
+    0 -> panic(\"zero at {n}\")
+    _ -> n
+  }
+}
+fn main() {
+  let a = boom(1)
+  println(a + boom(0))
+}
+";
+        assert_eq!(
+            stops(source),
+            "panic: zero at 0 at 3:10; boom 3:10; main 9:15; <script> 7:1"
+        );
+        let source = "\
+fn span(a: Int, b: Int) -> List(Int) {
+  a..b
+}
+fn main() {
+  let xs = span(0, 9000000000000000000)
+  println(xs)
+}
+";
+        assert_eq!(
+            stops(source),
+            "range 0..9000000000000000000 has 9000000000000000001 elements; materializing more than 10000000 is not allowed at 6:3; main 6:3; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn in_a_task_that_is_joined() {
+        let source = "\
+import task
+fn work(n: Int) -> Int {
+  10 / n
+}
+fn main() {
+  let h = task.spawn({ -> work(0) })
+  let v = task.join(h)
+  println(v)
+}
+";
+        assert_eq!(
+            stops(source),
+            "joined task failed: division by zero at 3:3; work 3:3; <lambda> 6:27"
+        );
+    }
+
+    #[test]
+    fn the_join_of_a_cancelled_task() {
+        let source = "\
+import channel
+import task
+fn wait(ch: Channel(Int)) -> Int {
+  match channel.receive(ch) {
+    channel.Message(n) -> n
+    _ -> 0
+  }
+}
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn({ -> wait(ch) })
+  task.cancel(h)
+  let v = task.join(h)
+  println(v)
+}
+";
+        assert_eq!(
+            stops(source),
+            "joined task failed: cancelled at 13:11; main 13:11; <script> 9:1"
+        );
+    }
+
+    #[test]
+    fn under_a_deadline() {
+        // In the callback of `task.deadline`, after a wait.
+        let source = "\
+import task
+import time
+fn slow(n: Int) -> Int {
+  time.sleep(time.ms(1))
+  10 / n
+}
+fn main() {
+  let r = task.deadline(time.ms(60000), { -> slow(0) })
+  println(r)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 5:3; slow 5:3; <lambda> 8:46; main 8:11; <script> 7:1"
+        );
+        // A wait that the deadline does not end, and nothing else does.
+        let source = "\
+import channel
+import task
+import time
+fn wait(ch: Channel(Int), d: Int) -> Int {
+  let got = channel.receive(ch)
+  match got {
+    channel.Message(n) -> n
+    _ -> 10 / d
+  }
+}
+fn main() {
+  let ch = channel.new(0)
+  let r = task.deadline(time.ms(20), { -> wait(ch, 0) })
+  println(r)
+}
+";
+        assert_eq!(
+            stops(source),
+            "deadlock on main thread: channel receive with no counterparty at 5:13; wait 5:13; <lambda> 13:43; main 13:11; <script> 11:1"
+        );
+    }
+
+    #[test]
+    fn at_the_frame_limit() {
+        let source = "\
+fn deep(n: Int) -> Int {
+  1 + deep(n + 1)
+}
+fn main() {
+  println(deep(0))
+}
+";
+        assert_eq!(
+            stops(source),
+            "stack overflow: recursion depth exceeded 100000 frames at 2:7; deep 2:7 (99998 times); main 5:11; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn at_the_step_budget() {
+        let source = "\
+fn id(x: Int) -> Int {
+  x
+}
+fn twice(x: Int) -> Int {
+  let a = id(x)
+  let b = id(a)
+  a + b
+}
+fn main() {
+  let n = twice(1)
+  let m = twice(n)
+  println(n + m)
+}
+";
+        let ends: Vec<String> = (0..40)
+            .map(|steps| stops_within(source, Some(steps)))
+            .collect();
+        assert_eq!(
+            ends.join("\n"),
+            "\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 4:1; <script> 4:1\n\
+the step budget is used up at 4:1; <script> 4:1\n\
+the step budget is used up at 4:1; <script> 4:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:17; main 10:17; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:14; twice 5:14; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:11; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:14; twice 6:14; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:11; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:11; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 7:3; twice 7:3; main 10:11; <script> 9:1\n\
+the step budget is used up at 7:7; twice 7:7; main 10:11; <script> 9:1\n\
+the step budget is used up at 7:3; twice 7:3; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 11:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 11:17; main 11:17; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 5:14; twice 5:14; main 11:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1"
+        );
+    }
+}
+
 // ── Type confusion: one test per guard family ───────────────────────
 //
 // The code a VM runs is verified, so an instruction always finds its
@@ -2642,6 +3375,7 @@ fn test_println_rejects_wrong_arity() {
 mod type_confusion {
     use std::collections::BTreeMap;
 
+    use super::error_places::{span, stopped};
     use super::*;
     use crate::bytecode::VmClosure;
     use crate::diagnostic::Code;
@@ -2671,17 +3405,12 @@ mod type_confusion {
         }))
     }
 
-    /// Run the script `build` emits (followed by a `Return`), which
-    /// must stop with a type-confusion error whose message contains
-    /// `phrase`.
+    /// Run the code `build` emits, which must stop at its last
+    /// instruction with a type-confusion error whose message contains
+    /// `phrase`: as a script and as a called function, in one piece
+    /// and in slices of one step (`error_places::stopped`).
     fn confused(phrase: &str, build: impl FnOnce(&mut Emitter)) {
-        let script = make_function(|e| {
-            build(e);
-            e.emit(Asm::Return, span()).unwrap();
-        });
-        let err = Vm::new(crate::HostIo::process())
-            .run(script)
-            .expect_err("an instruction that meets a value of the wrong kind stops");
+        let err = stopped(build);
         assert!(
             err.message.contains(phrase),
             "expected {phrase:?} in: {}",
