@@ -1183,35 +1183,46 @@ mod tests {
 
     /// A write that takes its turn waits for the write that has it,
     /// and goes on when that one is done: the peer gets both whole,
-    /// one after the other. (Here the write in flight is one that
-    /// waits for the system, so that it lasts until the test lets it
-    /// end.)
+    /// one after the other. The first writer is held in its turn by
+    /// the hook of the writes, when the system has taken its bytes;
+    /// the second reports that it waits, and has not written when it
+    /// does.
     #[test]
-    fn a_write_in_turn_comes_after_the_write_in_flight() {
+    fn a_write_in_turn_comes_after_the_write_that_has_the_turn() {
         use std::io::Read;
-        // More than the system takes for a peer that reads nothing.
-        const FIRST: usize = 64 * 1024 * 1024;
+        use std::sync::mpsc;
         let patience = std::time::Duration::from_secs(60);
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
         peer.set_read_timeout(Some(patience)).expect("read timeout");
         let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
-        let first = {
-            let conn = conn.clone();
-            std::thread::spawn(move || conn.write_all(&vec![b'1'; FIRST]))
-        };
-        // The first write has the turn when a byte of it has arrived.
-        let mut byte = [0u8; 1];
-        peer.read_exact(&mut byte)
-            .expect("a byte of the first write");
-        // The second finds the turn taken, and waits.
+        // The first write of this connection stays in its turn until
+        // `go` is dropped; a writer that finds the turn taken says so.
+        let (go, held) = mpsc::channel::<()>();
+        let held = Mutex::new(Some(held));
         let waits = Arc::new(AtomicBool::new(false));
         let (waiting, this) = (waits.clone(), Arc::as_ptr(&conn) as usize);
         let _watching = watch_writes(move |conn, moment| {
-            if std::ptr::eq(conn, this as *const TcpStreamHandle) && moment == WriteMoment::Waits {
-                waiting.store(true, AtomicOrdering::SeqCst);
+            if !std::ptr::eq(conn, this as *const TcpStreamHandle) {
+                return;
+            }
+            match moment {
+                WriteMoment::Written => {
+                    let held = held.lock().take();
+                    if let Some(held) = held {
+                        let _ = held.recv();
+                    }
+                }
+                WriteMoment::Waits => waiting.store(true, AtomicOrdering::SeqCst),
             }
         });
+        let first = {
+            let conn = conn.clone();
+            std::thread::spawn(move || conn.write_in_turn(b"first"))
+        };
+        // The first write has the turn when its bytes have arrived.
+        let mut both = [0u8; 11];
+        peer.read_exact(&mut both[..5]).expect("the first write");
         let second = {
             let conn = conn.clone();
             std::thread::spawn(move || conn.write_in_turn(b"second"))
@@ -1219,21 +1230,21 @@ mod tests {
         let limit = std::time::Instant::now() + patience;
         while !waits.load(AtomicOrdering::SeqCst) {
             assert!(
-                std::time::Instant::now() < limit && !first.is_finished(),
+                std::time::Instant::now() < limit,
                 "the second write did not find the turn taken"
             );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        assert!(
+            !first.is_finished(),
+            "the first write did not keep its turn"
+        );
         assert!(!second.is_finished(), "the second write did not wait");
-        // The peer takes everything: the first write ends, and the
-        // second has its turn.
-        let mut all = vec![0u8; FIRST - 1 + b"second".len()];
-        peer.read_exact(&mut all).expect("both writes");
-        first.join().expect("joined").expect("the first write");
-        assert_eq!(second.join().expect("joined"), b"second".len());
-        let (ones, rest) = all.split_at(FIRST - 1);
-        assert!(ones.iter().all(|byte| *byte == b'1'));
-        assert_eq!(rest, b"second");
+        drop(go);
+        peer.read_exact(&mut both[5..]).expect("the second write");
+        assert_eq!(first.join().expect("joined"), 5);
+        assert_eq!(second.join().expect("joined"), 6);
+        assert_eq!(&both, b"firstsecond");
     }
 
     /// A last word and the end of the writes are one turn: the peer
