@@ -1614,9 +1614,15 @@ impl Compiler {
             return self.compile_guardless_match(arms, span, tail);
         };
 
-        // Compile the scrutinee and keep it in the frame as a hidden local.
-        // This lets us GetLocal it for each arm's test and binding.
         self.compile_expr(scrutinee)?;
+        // (A scrutinee that is only held against literals needs none of
+        // what follows.)
+        if self.compile_literal_match(arms, span, tail)? {
+            return Ok(());
+        }
+
+        // Keep the scrutinee in the frame as a hidden local. This lets us
+        // GetLocal it for each arm's test and binding.
         self.begin_scope_with_top();
         let scrutinee_slot = self.add_local(intern("__scrutinee__"), span)?;
         self.emit(

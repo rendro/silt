@@ -4,13 +4,13 @@
 //! used by the compiler to emit bytecode for pattern matching constructs
 //! (match arms, let-destructuring, function parameters, etc.).
 
-use crate::ast::{Pattern, PatternKind};
+use crate::ast::{MatchArm, Pattern, PatternKind};
 use crate::bytecode::{Asm, Label};
 use crate::intern::{Symbol, intern};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, Compiler, FieldRead, name_without_binding};
+use super::{BindDestructKind, Compiler, FieldRead, MATCH_ARM, name_without_binding};
 use crate::diagnostic::{Code, Diagnostic};
 
 impl Compiler {
@@ -41,6 +41,114 @@ impl Compiler {
             self.emit(Asm::TestTupleLen { len }, span)?;
         }
         self.jump_if_false(span)
+    }
+
+    // ── A match on literals ──────────────────────────────────────
+
+    /// Compile the arms of a `match` whose scrutinee, the value on top
+    /// of the frame, is only held against literals, if the arms have one
+    /// of the two shapes below; `false`, and nothing emitted, if they
+    /// have not. No arm may have a guard.
+    ///
+    /// - Two arms, the first `true` or `false`, the second the other of
+    ///   the two, `_` or a name: one conditional jump takes the
+    ///   scrutinee off the frame and picks the arm.
+    /// - Arms that are Int literals, and a last one that is `_` or a
+    ///   name: each literal is one test of the scrutinee where it is.
+    ///
+    /// The scrutinee is no local here, and no copy of it is made for a
+    /// test or for an arm: an arm starts with the frame as it was
+    /// before the scrutinee, and leaves its value where the scrutinee
+    /// was. An arm that is a name has the value under that name: the
+    /// scrutinee itself, or for a Bool the one value that reaches the
+    /// arm.
+    ///
+    /// Every arm of these shapes can be reached and every value of the
+    /// scrutinee's type has one, so each arm is compiled, once, and the
+    /// code has no end where no arm matched.
+    pub(super) fn compile_literal_match(
+        &mut self,
+        arms: &[MatchArm],
+        span: Span,
+        tail: bool,
+    ) -> Result<bool, Diagnostic> {
+        let [tests @ .., last] = arms else {
+            return Ok(false);
+        };
+        if tests.is_empty() || arms.iter().any(|arm| arm.guard.is_some()) {
+            return Ok(false);
+        }
+        let last_name = match &last.pattern.kind {
+            PatternKind::Wildcard => None,
+            PatternKind::Ident(name) => Some(*name),
+            // (The other literal of a Bool: looked at below.)
+            PatternKind::Bool(_) => None,
+            _ => return Ok(false),
+        };
+        let mut end_jumps = Vec::new();
+        match (&tests[0].pattern.kind, &last.pattern.kind) {
+            (PatternKind::Bool(first), other) if tests.len() == 1 => {
+                if matches!(other, PatternKind::Bool(second) if second == first) {
+                    return Ok(false);
+                }
+                let otherwise = match first {
+                    true => self.jump_if_false(span)?,
+                    false => self.jump_if_true(span)?,
+                };
+                self.in_tail_position = tail;
+                self.compile_expr(&tests[0].body)?;
+                end_jumps.push(self.jump(span)?);
+                self.bind_over(otherwise, MATCH_ARM, span)?;
+                match last_name {
+                    Some(name) => {
+                        self.begin_scope();
+                        self.emit(if *first { Asm::False } else { Asm::True }, span)?;
+                        self.add_local(name, span)?;
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                        self.end_scope_with_result(tail, span)?;
+                    }
+                    None => {
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                    }
+                }
+            }
+            (PatternKind::Int(_), PatternKind::Wildcard | PatternKind::Ident(_))
+                if (tests.iter()).all(|arm| matches!(arm.pattern.kind, PatternKind::Int(_))) =>
+            {
+                for arm in tests {
+                    // (The test looks at the scrutinee and leaves it.)
+                    let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
+                    self.emit(Asm::Pop, span)?;
+                    self.in_tail_position = tail;
+                    self.compile_expr(&arm.body)?;
+                    end_jumps.push(self.jump(span)?);
+                    for fail_jump in fail_jumps {
+                        self.bind_over(fail_jump, MATCH_ARM, span)?;
+                    }
+                }
+                match last_name {
+                    Some(name) => {
+                        self.begin_scope_with_top();
+                        self.add_local(name, span)?;
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                        self.end_scope_with_result(tail, span)?;
+                    }
+                    None => {
+                        self.emit(Asm::Pop, span)?;
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                    }
+                }
+            }
+            _ => return Ok(false),
+        }
+        for end_jump in end_jumps {
+            self.bind(end_jump, span)?;
+        }
+        Ok(true)
     }
 
     // ── Recursive pattern test ───────────────────────────────────
