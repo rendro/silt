@@ -688,6 +688,60 @@ fn two_lists_as_one_list() {
     assert!(long.concat(&List::new()).is_err());
 }
 
+/// A part of a list shares the list's buffer if it is a quarter of the
+/// buffer or more, and has a buffer of its own if it is less: a list
+/// keeps at most four times its own elements from being freed.
+#[test]
+fn a_short_part_of_a_list_does_not_keep_the_list() {
+    let big = made(0..1000);
+    let (len, at) = big.buffer().expect("a list that holds its elements");
+    assert_eq!(len, 1000);
+
+    // The rest after the first element, and any part of a quarter or
+    // more, is a part of the same buffer.
+    for part in [big.slice(1, 1000), big.slice(0, 250), big.slice(750, 1000)] {
+        assert_eq!(part.buffer(), Some((1000, at)));
+    }
+    // A shorter part holds its own elements and no others.
+    for (from, to) in [(0, 1), (999, 1000), (300, 549), (0, 249)] {
+        let part = big.slice(from, to);
+        let (held, apart) = part.buffer().expect("a list that holds its elements");
+        assert_eq!(held, to - from, "{from}..{to}");
+        assert_ne!(apart, at);
+        assert_eq!(elements(&part), elements(&made(from as i64..to as i64)));
+    }
+    // A part of a part is measured against the buffer, not the part.
+    let rest = big.slice(500, 1000).slice(100, 400);
+    assert_eq!(rest.buffer(), Some((1000, at)));
+    let rest = big.slice(500, 1000).slice(100, 349);
+    assert_eq!(rest.buffer().map(|(held, _)| held), Some(249));
+    // A list that holds no element has no buffer to keep.
+    assert_eq!(ints(0, 999).slice(3, 4).buffer(), None);
+}
+
+/// A walk down a list by its rest (`[h, ..t]`, `list.tail`) copies a
+/// third of the list in all, whatever its length: each rest is the
+/// same buffer until it is less than a quarter of it.
+#[test]
+fn a_walk_down_a_list_copies_a_third_of_it() {
+    for n in [1_000usize, 64_000] {
+        let mut rest = made(0..n as i64);
+        let mut buffer = rest.buffer();
+        let (mut copied, mut buffers) = (0, 0);
+        while !rest.is_empty() {
+            rest = rest.slice(1, rest.len());
+            if rest.buffer() != buffer && !rest.is_empty() {
+                copied += rest.len();
+                buffers += 1;
+            }
+            buffer = rest.buffer();
+        }
+        assert!(copied <= n / 3, "{copied} elements copied in a walk of {n}");
+        assert!(copied >= n / 4, "{copied} elements copied in a walk of {n}");
+        assert!(buffers <= 10, "{buffers} buffers in a walk of {n}");
+    }
+}
+
 #[test]
 fn a_bound_of_a_part_past_the_end_is_the_end() {
     for xs in both() {

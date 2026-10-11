@@ -1,9 +1,10 @@
 //! The list value.
 //!
 //! A list is a run of the elements of a buffer that lists share: the
-//! tail of a list, or any part of it, is a list of the same buffer, and
-//! taking it copies no element. The list a range expression `a..b`
-//! makes holds its two ends and no element at all. A clone is a count.
+//! tail of a list, or any part of it that is a quarter of the buffer
+//! or more, is a list of the same buffer, and taking it copies no
+//! element ([`List::slice`]). The list a range expression `a..b` makes
+//! holds its two ends and no element at all. A clone is a count.
 //!
 //! How a list is stored is this file's own. The rest of silt has its
 //! length, its elements by index and in order, and its parts
@@ -157,8 +158,16 @@ impl List {
         }
     }
 
-    /// The elements from `from` up to, not including, `to`, as a list:
-    /// no element is copied. A bound past the end is the end.
+    /// The elements from `from` up to, not including, `to`, as a list.
+    /// A bound past the end is the end.
+    ///
+    /// The part is a list of the same buffer, and no element is copied,
+    /// unless it is less than a quarter of the buffer: then it gets a
+    /// buffer of its own, so that a list never keeps more than four
+    /// times its elements from being freed (the one element kept of a
+    /// list of a million would keep the million). A walk down a list
+    /// by its rest copies a third of the list in all: a quarter of it
+    /// once it is that short, a quarter of that, and so on.
     pub fn slice(&self, from: usize, to: usize) -> List {
         let to = to.min(self.len());
         let from = from.min(to);
@@ -166,6 +175,9 @@ impl List {
             return List::new();
         }
         List(match &self.0 {
+            Stored::Items { buf, start, .. } if (to - from) < buf.len() / 4 => {
+                return List::from(buf[start + from..start + to].to_vec());
+            }
             Stored::Items { buf, start, .. } => Stored::Items {
                 buf: buf.clone(),
                 start: start + from,
@@ -351,6 +363,16 @@ impl List {
         match &self.0 {
             Stored::Items { buf, start, len } => Elements::Items(&buf[*start..*start + *len]),
             Stored::Ints { lo, hi } => Elements::Ints(*lo, *hi),
+        }
+    }
+
+    /// The number of elements of the buffer the list is a part of, and
+    /// where the buffer is: what the tests of sharing ask.
+    #[cfg(test)]
+    pub(super) fn buffer(&self) -> Option<(usize, *const Value)> {
+        match &self.0 {
+            Stored::Items { buf, .. } => Some((buf.len(), buf.as_ptr())),
+            Stored::Ints { .. } => None,
         }
     }
 
