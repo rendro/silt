@@ -12,6 +12,12 @@ name: Fuzz (nightly deep)
 # crash that needs permanent regression coverage should be copied
 # into fuzz/corpus/<target>/ so the ci.yml corpus-replay gate picks
 # it up on every subsequent push.
+#
+# The `oracle` job is the full sweep of the differential oracle
+# (tests/oracle): every input of every class, where the per-push suite
+# runs a sample. Unlike a fuzz crash, a failure of it fails the run:
+# the sweep is deterministic, and what it reports is a finding that has
+# no line in tests/oracle/skip.txt, or a line whose finding is gone.
 
 on:
   schedule:
@@ -42,6 +48,7 @@ jobs:
           - fuzz_typechecker
           - fuzz_compiler
           - fuzz_http_request
+          - fuzz_run
     steps:
       - uses: actions/checkout@v6
 
@@ -97,3 +104,38 @@ jobs:
         if: steps.fuzz.outcome == 'failure'
         run: |
           echo "::warning title=New fuzz finding::Target ${{ matrix.target }} produced a crash artifact in this run. Job is intentionally not failed — see uploaded artifacts to triage. Add the repro to fuzz/corpus/${{ matrix.target }}/ to lock it as a regression test."
+
+  oracle:
+    name: Differential oracle (full sweep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-heavy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # A debug build, as the per-push suite: the inputs that
+      # tests/oracle/skip.txt lists as aborting do so in one.
+      - name: cargo nextest (oracle, every input)
+        env:
+          SILT_ORACLE_FULL: "1"
+          SILT_ORACLE_REPORT: oracle-report.txt
+        run: cargo nextest run --no-fail-fast --all-features --test oracle
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: oracle-report
+          path: oracle-report.txt
+          retention-days: 30
+          if-no-files-found: ignore

@@ -1,0 +1,22 @@
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(2)
+  let producer = task.spawn({ ->
+    list.each([1, 2, 3, 4, 5]) { n -> channel.send(ch, n * n) }
+    channel.close(ch)
+    "produced"
+  })
+  let total = loop acc = 0 {
+    match channel.receive(ch) {
+      channel.Message(n) -> loop(acc + n)
+      _ -> acc
+    }
+  }
+  println(total)
+  println(task.join(producer))
+  let workers = list.map([1, 2, 3]) { n -> task.spawn({ -> n * 10 }) }
+  list.fold(workers, 0) { acc, h -> acc + task.join(h) }
+}

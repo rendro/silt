@@ -670,6 +670,12 @@ pub struct Runtime {
     // ── Host ────────────────────────────────────────────────────
     /// Where the program's output goes and which clock it reads.
     pub(crate) io: HostIo,
+    /// The slice an embedder set ([`Vm::set_time_slice`]); 0 while it
+    /// has set none.
+    pub(crate) time_slice: std::sync::atomic::AtomicUsize,
+    /// The steps the program may still run ([`Vm::set_step_budget`]);
+    /// `u64::MAX` while it has no budget.
+    pub(crate) steps_left: std::sync::atomic::AtomicU64,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it
@@ -691,6 +697,30 @@ impl Runtime {
     pub(super) fn shutdown(&self) {
         self.scheduler.shutdown();
         self.io_pool.stop();
+    }
+
+    /// Take `used` steps, those of a slice that ran its full length,
+    /// off the step budget. The error of a program whose budget is
+    /// used up, from then on at every call.
+    pub(crate) fn charge(&self, used: usize) -> Result<(), VmError> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.steps_left.load(Relaxed) == u64::MAX {
+            return Ok(());
+        }
+        let used = used as u64;
+        let mut left = self.steps_left.load(Relaxed);
+        // (A loop of its own: `fetch_update` is deprecated on newer
+        // toolchains, and its new name is not on older ones.)
+        while let Err(now) =
+            self.steps_left
+                .compare_exchange_weak(left, left.saturating_sub(used), Relaxed, Relaxed)
+        {
+            left = now;
+        }
+        match left > used {
+            true => Ok(()),
+            false => Err(VmError::budget_used_up()),
+        }
     }
 
     /// The next value of `math.random`, in `[0, 1)`.

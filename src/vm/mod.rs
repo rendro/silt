@@ -271,6 +271,8 @@ impl Vm {
                 io_pool: IoPool::new(scheduler.clone()),
                 scheduler,
                 io,
+                time_slice: Default::default(),
+                steps_left: AtomicU64::new(u64::MAX),
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
@@ -290,6 +292,70 @@ impl Vm {
             current_deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
+        }
+    }
+
+    /// Run the program in slices of `steps` steps (at least 1): a task
+    /// gives way to the other tasks after that many, instead of the
+    /// scheduler's own 2000, and the thread that runs the program's own
+    /// code (`fn main`, a test) stops and goes on after that many too,
+    /// where it otherwise runs without a break.
+    ///
+    /// What a program computes does not depend on the slice. An embedder
+    /// sets one to see that: with `steps` 1 the program is stopped and
+    /// resumed after every instruction and after every step of a builtin
+    /// that calls back into it. It holds for every program the VM runs
+    /// from then on, and for the tasks it has.
+    pub fn set_time_slice(&mut self, steps: usize) {
+        self.runtime
+            .time_slice
+            .store(steps.max(1), Ordering::Relaxed);
+    }
+
+    /// The slice an embedder set ([`Vm::set_time_slice`]).
+    pub(crate) fn time_slice(&self) -> Option<usize> {
+        match self.runtime.time_slice.load(Ordering::Relaxed) {
+            0 => None,
+            steps => Some(steps),
+        }
+    }
+
+    /// Let the program run `steps` more steps, those of its tasks
+    /// included. When they are used up, whatever of the program still
+    /// runs ends with an error whose [`VmError::out_of_steps`] is set
+    /// (`main`, and each task: a join of one gives the error on): a
+    /// program that does not end by itself ends there. A deadlock of
+    /// the program's own code from then on has it set too: the task it
+    /// waited for was ended. A fault of the program's own (a division
+    /// by zero, a `panic`) does not, whatever its tasks did to the
+    /// budget.
+    ///
+    /// A step is an instruction, or a step of a builtin that calls back
+    /// into the program. They are counted where a slice has run its
+    /// full length, and no slice starts once they are used up: so each
+    /// thread of the program may run up to one slice more than the
+    /// budget (1,999 steps at the scheduler's slice of 2,000, with
+    /// which a budget of 1 runs a short program to its end), the count
+    /// is exact at slice 1, and a budget of 0 runs nothing. With a
+    /// budget the thread that runs the program's own code is sliced as
+    /// the tasks are (see [`Vm::set_time_slice`]). The start of a wait counts as
+    /// one step, so tasks that hand a value to and fro for ever end
+    /// too; a wait that never ends is not ended by the budget.
+    pub fn set_step_budget(&mut self, steps: u64) {
+        let steps = steps.min(u64::MAX - 1);
+        self.runtime.steps_left.store(steps, Ordering::Relaxed);
+    }
+
+    /// How many steps the thread that runs the program's own code runs
+    /// at a time: without a break, unless an embedder set a slice or a
+    /// step budget.
+    pub(crate) fn own_slice(&self) -> usize {
+        match self.time_slice() {
+            Some(steps) => steps,
+            None if self.runtime.steps_left.load(Ordering::Relaxed) != u64::MAX => {
+                crate::scheduler::time_slice()
+            }
+            None => usize::MAX,
         }
     }
 
@@ -487,7 +553,7 @@ impl Vm {
             ip: 0,
             base_slot: 0,
         }));
-        let run = self.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+        let run = self.run_thread(floor, |vm| vm.run_frames(floor, vm.own_slice()));
         self.finish_run(run, floor, stack_floor)
     }
 

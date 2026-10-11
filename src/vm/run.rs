@@ -59,6 +59,9 @@ pub(super) enum Slice {
     Done(Value),
     /// The budget is used up; the frames can go on.
     OutOfBudget,
+    /// A builtin gave the rest of the slice away ([`Step::Yield`]); the
+    /// frames can go on.
+    Yielded,
     /// A builtin's frame waits for this (see [`Step::Park`]).
     Parked(Wait),
 }
@@ -180,7 +183,7 @@ impl Vm {
                 }
                 Ok(Step::Yield) => {
                     self.frames.push(Frame::Native(native));
-                    return Ok(Some(Slice::OutOfBudget));
+                    return Ok(Some(Slice::Yielded));
                 }
                 Ok(Step::Call { callee, argc }) => {
                     self.frames.push(Frame::Native(native));
@@ -226,24 +229,48 @@ impl Vm {
     ) -> Result<Slice, VmError> {
         let scheduler = self.runtime.scheduler.clone();
         let _running = scheduler.enter();
+        // No slice starts once the step budget is used up, as for a
+        // task (`execute_slice`).
+        self.runtime.charge(0)?;
         let mut run = start(self)?;
         loop {
             match run {
                 Slice::Done(_) => return Ok(run),
                 // The frame gave way to other tasks, which a thread
                 // of its own has no need to.
-                Slice::OutOfBudget => {}
+                Slice::OutOfBudget => self.runtime.charge(self.own_slice())?,
+                // A slice given away is a step of the budget, like a
+                // wait: it did not run its full length.
+                Slice::Yielded => {
+                    let _ = self.runtime.charge(1);
+                }
                 Slice::Parked(wait) => {
+                    // A wait is a step of the budget (the error comes
+                    // before the next slice).
+                    let _ = self.runtime.charge(1);
                     let who = match self.is_program() {
                         true => Blocks::Program {
                             in_deadline: self.current_deadline.is_some(),
                         },
                         false => Blocks::Thread,
                     };
-                    self.woken = Some(scheduler.block_thread(wait, who)?);
+                    // A wait that cannot end (a deadlock) after the step
+                    // budget is used up is the budget's doing: the task
+                    // waited for was ended.
+                    let woken = scheduler.block_thread(wait, who).map_err(|mut e| {
+                        e.out_of_steps |= self.runtime.charge(0).is_err();
+                        e
+                    })?;
+                    self.woken = Some(woken);
                 }
             }
-            run = self.run_frames(floor, usize::MAX)?;
+            // A thread whose slices all end in a wait never runs one
+            // out: the budget its waits have used up ends it here.
+            if let Err(e) = self.runtime.charge(0) {
+                self.woken = None;
+                return Err(e);
+            }
+            run = self.run_frames(floor, self.own_slice())?;
         }
     }
 
@@ -257,7 +284,7 @@ impl Vm {
     ) -> Result<Value, VmError> {
         let error = match run {
             Ok(Slice::Done(value)) => return Ok(value),
-            Ok(Slice::OutOfBudget | Slice::Parked(_)) => {
+            Ok(Slice::OutOfBudget | Slice::Yielded | Slice::Parked(_)) => {
                 VmError::new("internal VM error: a run to the end stopped before it".into())
             }
             Err(e) => e,
@@ -275,10 +302,28 @@ impl Vm {
     /// Run a task's frames for up to `max_steps` steps and return a
     /// `SliceResult`. Used by the M:N scheduler's worker threads.
     pub(crate) fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+        // A task of a program whose step budget is used up runs no
+        // further.
+        if let Err(e) = self.runtime.charge(0) {
+            return SliceResult::Failed(e);
+        }
         match self.run_frames(0, max_steps) {
             Ok(Slice::Done(value)) => SliceResult::Completed(value),
-            Ok(Slice::OutOfBudget) => SliceResult::Yielded,
-            Ok(Slice::Parked(wait)) => SliceResult::Blocked(wait),
+            Ok(Slice::OutOfBudget) => match self.runtime.charge(max_steps) {
+                Ok(()) => SliceResult::Yielded,
+                Err(e) => SliceResult::Failed(e),
+            },
+            Ok(Slice::Yielded) => {
+                // A slice given away is a step of the budget.
+                let _ = self.runtime.charge(1);
+                SliceResult::Yielded
+            }
+            Ok(Slice::Parked(wait)) => {
+                // A wait is a step of the budget: the task ends where
+                // its next slice would start.
+                let _ = self.runtime.charge(1);
+                SliceResult::Blocked(wait)
+            }
             Err(e) => SliceResult::Failed(e),
         }
     }

@@ -1116,7 +1116,8 @@ impl Inner {
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(task.handle.owner())));
         let counted = COUNTED.with(|counted| counted.replace(true));
         let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
-        let result = task.vm.execute_slice(time_slice());
+        let slice = task.vm.time_slice().unwrap_or_else(time_slice);
+        let result = task.vm.execute_slice(slice);
         RUNNING_TASK.with(|was| was.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
@@ -1337,7 +1338,7 @@ fn more_than_one_core() -> bool {
 }
 
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
-fn time_slice() -> usize {
+pub(crate) fn time_slice() -> usize {
     static SLICE: OnceLock<usize> = OnceLock::new();
     *SLICE.get_or_init(|| {
         std::env::var("SILT_TIME_SLICE")

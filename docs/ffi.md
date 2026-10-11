@@ -387,6 +387,36 @@ another, and share one `Vm`.)
 one thread (the scheduler owns its own worker threads internally). To run
 several scripts in parallel from Rust, create one `Vm` per thread.
 
+## Limits
+
+**Time slice.** `vm.set_time_slice(steps)` makes the program run in
+slices of that many steps: a task gives way to the other tasks after
+`steps` instructions (the scheduler's own slice is 2000), and the thread
+that runs the program's own code stops and goes on after `steps` too,
+where it otherwise runs `main` without a break. What a program computes
+does not depend on the slice; a host sets one to test exactly that. With
+`set_time_slice(1)` the program is stopped and resumed after every
+instruction and after every step of a builtin that calls back into it.
+
+**Step budget.** `vm.set_step_budget(steps)` lets the program run that
+many more steps, those of its tasks included. When they are used up,
+whatever of the program still runs ends with a `VmError` whose
+`out_of_steps` is `true` (message `the step budget is used up`): `main`,
+and each task, whose join gives the error on. A program that loops for
+ever ends there. The budget is looked at where a slice ends and before
+one starts, so each thread of the program may run up to one slice more
+than the budget before it ends: 1,999 steps at the scheduler's slice of
+2,000, with which a budget of 1 still runs a short program to its end.
+With `set_time_slice(1)` the count is exact, and a budget of 0 runs
+nothing at any slice. The start
+of a wait counts as one step, so tasks that pass a value to and fro for
+ever end too. A wait that never ends is not ended by the budget: that is
+the deadlock check's, or the host drops the `Vm`. `out_of_steps` marks
+what the budget did: its own error, the error of a join of a task it
+ended, and a deadlock that follows (the task waited for is gone). A
+fault of the program itself, a division by zero or a `panic`, keeps it
+`false` even when a task has used the budget up.
+
 ## Error Surfacing
 
 - **Static errors** (type errors, unknown names, bad host signatures)

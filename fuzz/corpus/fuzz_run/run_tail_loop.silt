@@ -1,0 +1,28 @@
+fn sum_to(n) {
+  loop i = 0, acc = 0 {
+    match i > n {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+}
+
+fn count_down(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count_down(n - 1, acc + 1)
+  }
+}
+
+fn fib(n) {
+  match n < 2 {
+    true -> n
+    false -> fib(n - 1) + fib(n - 2)
+  }
+}
+
+fn main() {
+  println(sum_to(1000))
+  println(count_down(5000, 0))
+  fib(15)
+}

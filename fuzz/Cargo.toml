@@ -53,3 +53,8 @@ doc = false
 name = "fuzz_http_request"
 path = "fuzz_targets/fuzz_http_request.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_run"
+path = "fuzz_targets/fuzz_run.rs"
+doc = false

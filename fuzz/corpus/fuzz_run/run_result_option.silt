@@ -1,0 +1,17 @@
+import int
+import result
+
+fn parse_sum(a, b) -> Result(Int, int.ParseError) {
+  let x = int.parse(a)?
+  let y = int.parse(b)?
+  Ok(x + y)
+}
+
+fn main() {
+  println(parse_sum("20", "22"))
+  println(result.is_err(parse_sum("20", "x")))
+  match parse_sum("1", "2") {
+    Ok(n) -> n
+    Err(_) -> -1
+  }
+}
