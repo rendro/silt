@@ -1,0 +1,35 @@
+-- timeout: 120
+-- A value nested a million levels deep through sets alone is dropped
+-- like any other, and so is a channel in which a channel waits in
+-- which a channel waits, a million deep. No type describes such a
+-- value: a function that calls itself with its argument inside a set,
+-- or sent into a new channel, makes it, a level deeper at each call,
+-- and it is dropped when the last call returns. (The drop went down
+-- the value on the native stack and aborted the program: of sets at
+-- less than half the depth, of channels at this one.)
+import channel
+
+fn in_sets(x: a, n: Int) -> Int where a: Hash + Equal {
+  match n <= 0 {
+    true -> 0
+    false -> in_sets(#[x], n - 1)
+  }
+}
+
+fn in_channels(x: a, n: Int) -> Int {
+  match n <= 0 {
+    true -> 0
+    false -> {
+      let waits = channel.new(1)
+      channel.send(waits, x)
+      in_channels(waits, n - 1)
+    }
+  }
+}
+
+fn main() {
+  println(in_sets(1, 1000000))
+  println("a set in a set, a million deep, is dropped")
+  println(in_channels(1, 1000000))
+  println("a channel in a channel, a million deep, is dropped")
+}

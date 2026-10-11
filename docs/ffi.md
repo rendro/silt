@@ -171,12 +171,6 @@ match users.find(1) {
 let n = users.parse_int("42")?   -- propagates Err with ?
 ```
 
-A value a program builds nests only through records and variants, and
-dropping such a value takes no native stack however deep it nests. A value
-a host function builds in Rust out of tuples or lists held directly in
-each other (a million deep, say; no silt type describes one) is outside
-that: dropping it uses native stack for every level.
-
 ## Functions as values
 
 A host function is a value like any other function: it can be passed to

@@ -2,7 +2,7 @@
 //! ordered, hashed, made members of a set, shown, inspected and
 //! dropped: none of these goes down a value on the native stack (the
 //! key of a value in src/value/key.rs, its text in src/value/fmt.rs,
-//! its end in src/value/obj.rs). Each overflowed it at some depth,
+//! its end in src/value/deep.rs). Each overflowed it at some depth,
 //! which was another in a debug build, in a release build, and from
 //! one compiler to the next.
 //!
@@ -34,10 +34,14 @@ fn program(uses: &[&str]) -> String {
 }
 
 fn run(name: &str, uses: &[&str]) -> String {
+    run_program(name, &program(uses))
+}
+
+fn run_program(name: &str, program: &str) -> String {
     let dir = std::env::temp_dir().join(format!("silt_deep_{}_{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.silt");
-    std::fs::write(&file, program(uses)).unwrap();
+    std::fs::write(&file, program).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("run")
         .arg(&file)
@@ -86,4 +90,51 @@ fn deep_values_are_shown_inspected_and_dropped() {
         ),
         format!("{length}\n{length}\n{}", DEPTH * 16 + 8 + 6)
     );
+}
+
+/// A value is nested without a type that holds itself too: a function
+/// that calls itself with its argument inside a list, a tuple, a map
+/// or a set makes one of them a level deeper at each call, and one
+/// that wraps a closure in a closure, or sends a channel into a new
+/// channel, does the same. Such a value is dropped like any other,
+/// when the last call returns. (Each of these overflowed the native
+/// stack: in a release build at the depths of this test, lists,
+/// tuples and closures between two and five million levels, maps,
+/// sets and channels between one and two.)
+#[test]
+fn values_nested_through_any_container_are_dropped() {
+    let scale = match cfg!(debug_assertions) {
+        true => 100_000,
+        false => 1_000_000,
+    };
+    let polymorphic = |next: &str| {
+        format!(
+            "fn deep(x: a, n: Int) -> Int where a: Hash + Equal {{\n  match n <= 0 {{\n    \
+             true -> 0\n    false -> deep({next}, n - 1)\n  }}\n}}\n"
+        )
+    };
+    let closures = "fn deep(f: Fn() -> Int, n: Int) -> Int {\n  match n <= 0 {\n    \
+                    true -> f()\n    false -> deep({ -> f() }, n - 1)\n  }\n}\n"
+        .to_string();
+    let channels = "import channel\n\
+                    fn deep(x: a, n: Int) -> Int {\n  match n <= 0 {\n    true -> 0\n    \
+                    false -> {\n      let c = channel.new(1)\n      channel.send(c, x)\n      \
+                    deep(c, n - 1)\n    }\n  }\n}\n"
+        .to_string();
+    let shapes = [
+        ("list", polymorphic("[x]"), "1", 5),
+        ("tuple", polymorphic("(n, x)"), "1", 5),
+        ("map_value", polymorphic("#{n: x}"), "1", 2),
+        ("map_key", polymorphic("#{x: n}"), "1", 2),
+        ("set", polymorphic("#[x]"), "1", 2),
+        ("closure", closures, "{ -> 0 }", 5),
+        ("channel", channels, "1", 2),
+    ];
+    for (name, deep, first, millions) in shapes {
+        let depth = millions * scale;
+        let program = format!(
+            "{deep}fn main() {{\n  println(deep({first}, {depth}))\n  println(\"done\")\n}}\n"
+        );
+        assert_eq!(run_program(name, &program), "0\ndone", "{name}");
+    }
 }

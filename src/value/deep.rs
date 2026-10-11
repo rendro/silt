@@ -11,17 +11,19 @@
 //! counted, and past a few of them what a holder holds is put aside
 //! and dropped by the outermost when it is done with its own.
 //!
-//! Every holder a program can nest values through without bound drops
-//! what it holds through [`drop_held`]: an object ([`super::obj`]), the
-//! entries of a map and the members of a set ([`Entries`],
-//! [`Members`]), a closure (`bytecode::VmClosure`), a channel
-//! (`runtime::sync::Channel`) and the handle of a task that has ended
-//! (`runtime::handle::TaskHandle`). The elements that lists and tuples
-//! share are counted where each of their holders is dropped ([`Buf`]).
+//! Every holder a program can nest values through without bound is
+//! counted. An object ([`super::obj`]), a closure
+//! (`bytecode::VmClosure`), a channel (`runtime::sync::Channel`) and
+//! the handle of a task that has ended (`runtime::handle::TaskHandle`)
+//! take what they hold out of themselves and drop it through
+//! [`drop_held`]. The elements that lists and tuples share ([`Buf`]),
+//! the entries of a map and the members of a set ([`Entries`],
+//! [`Members`]) stay where they are: their holder is counted in where
+//! its `drop` starts, and counted out by its last field.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::sync::Arc;
 
 use super::Value;
@@ -30,23 +32,25 @@ use super::Value;
 /// what one further in holds is put aside.
 const NEAR_DROPS: usize = 64;
 
+/// Set in [`DROPPING`] while anything is put aside.
+const ASIDE: usize = 1 << (usize::BITS - 1);
+
 thread_local! {
     /// How many holders are being dropped on this thread, each inside
-    /// the one before.
+    /// the one before; and [`ASIDE`].
     static DROPPING: Cell<usize> = const { Cell::new(0) };
-    /// Whether anything is put aside.
-    static ASIDE: Cell<bool> = const { Cell::new(false) };
     /// What is put aside.
     static PUT_ASIDE: RefCell<Vec<Held>> = const { RefCell::new(Vec::new()) };
 }
 
-/// What a holder holds, put aside.
+/// What a holder holds, put aside: it is kept, and dropped.
+#[allow(dead_code)]
 pub(crate) enum Held {
-    Value(#[allow(dead_code)] Value),
-    Values(#[allow(dead_code)] Box<[Value]>),
-    Shared(#[allow(dead_code)] Arc<[Value]>),
-    Entries(#[allow(dead_code)] BTreeMap<Value, Value>),
-    Members(#[allow(dead_code)] BTreeSet<Value>),
+    Value(Value),
+    Values(Box<[Value]>),
+    Shared(Arc<[Value]>),
+    Entries(BTreeMap<Value, Value>),
+    Members(BTreeSet<Value>),
 }
 
 impl From<Value> for Held {
@@ -90,9 +94,9 @@ impl From<BTreeSet<Value>> for Held {
 /// Either way [`leave`] follows.
 #[inline]
 fn enter() -> bool {
-    let depth = DROPPING.get();
-    DROPPING.set(depth + 1);
-    depth >= NEAR_DROPS
+    let dropping = DROPPING.get();
+    DROPPING.set(dropping + 1);
+    dropping & !ASIDE >= NEAR_DROPS
 }
 
 /// Leave `held` to the outermost holder that is being dropped.
@@ -105,7 +109,7 @@ fn put_aside(held: Held) {
         .try_with(move |aside| aside.borrow_mut().push(held))
         .is_ok()
     {
-        ASIDE.set(true);
+        DROPPING.set(DROPPING.get() | ASIDE);
     }
 }
 
@@ -113,24 +117,23 @@ fn put_aside(held: Held) {
 /// drops what was put aside.
 #[inline]
 fn leave() {
-    let depth = DROPPING.get();
-    if depth == 1 && ASIDE.get() {
+    let dropping = DROPPING.get();
+    if dropping == ASIDE | 1 {
         drop_aside();
+    } else {
+        DROPPING.set(dropping - 1);
     }
-    DROPPING.set(depth - 1);
 }
 
-/// Drop what was put aside, and what is put aside meanwhile.
+/// The outermost holder drops what was put aside, and what is put
+/// aside meanwhile, and is done.
 #[cold]
 #[inline(never)]
 fn drop_aside() {
-    while ASIDE.get() {
-        let next = PUT_ASIDE.try_with(|aside| aside.borrow_mut().pop());
-        match next {
-            Ok(Some(held)) => drop(held),
-            _ => ASIDE.set(false),
-        }
+    while let Ok(Some(held)) = PUT_ASIDE.try_with(|aside| aside.borrow_mut().pop()) {
+        drop(held);
     }
+    DROPPING.set(0);
 }
 
 /// Drop `held`, which a holder that is being dropped has taken out of
@@ -161,8 +164,8 @@ pub(super) struct Buf {
     _leave: Leave,
 }
 
-/// Counts a [`Buf`] out when it is dropped.
-#[derive(Clone)]
+/// Counts out the holder it is the last field of, when that is dropped.
+#[derive(Clone, Default)]
 struct Leave;
 
 impl Drop for Buf {
@@ -209,41 +212,37 @@ impl FromIterator<Value> for Buf {
 
 /// The entries of a map: a `BTreeMap` whose keys and values are
 /// dropped on no native stack however deep they nest.
-#[derive(Clone, Default)]
-pub struct Entries(BTreeMap<Value, Value>);
+#[derive(Default)]
+pub struct Entries {
+    entries: BTreeMap<Value, Value>,
+    _leave: Leave,
+}
 
 /// The members of a set: a `BTreeSet` whose members are dropped on no
 /// native stack however deep they nest.
-#[derive(Clone, Default)]
-pub struct Members(BTreeSet<Value>);
+#[derive(Default)]
+pub struct Members {
+    members: BTreeSet<Value>,
+    _leave: Leave,
+}
 
+// (As for a `Buf`: the map, or the set, is dropped after `drop`, and
+// the second field counts its holder out.)
 impl Drop for Entries {
+    #[inline]
     fn drop(&mut self) {
-        if !self.0.is_empty() {
-            drop_held(std::mem::take(&mut self.0));
+        if enter() {
+            put_aside(Held::Entries(std::mem::take(&mut self.entries)));
         }
     }
 }
 
 impl Drop for Members {
+    #[inline]
     fn drop(&mut self) {
-        if !self.0.is_empty() {
-            drop_held(std::mem::take(&mut self.0));
+        if enter() {
+            put_aside(Held::Members(std::mem::take(&mut self.members)));
         }
-    }
-}
-
-impl Entries {
-    /// The map itself.
-    pub fn into_inner(mut self) -> BTreeMap<Value, Value> {
-        std::mem::take(&mut self.0)
-    }
-}
-
-impl Members {
-    /// The set itself.
-    pub fn into_inner(mut self) -> BTreeSet<Value> {
-        std::mem::take(&mut self.0)
     }
 }
 
@@ -251,13 +250,7 @@ impl Deref for Entries {
     type Target = BTreeMap<Value, Value>;
 
     fn deref(&self) -> &BTreeMap<Value, Value> {
-        &self.0
-    }
-}
-
-impl DerefMut for Entries {
-    fn deref_mut(&mut self) -> &mut BTreeMap<Value, Value> {
-        &mut self.0
+        &self.entries
     }
 }
 
@@ -265,24 +258,24 @@ impl Deref for Members {
     type Target = BTreeSet<Value>;
 
     fn deref(&self) -> &BTreeSet<Value> {
-        &self.0
-    }
-}
-
-impl DerefMut for Members {
-    fn deref_mut(&mut self) -> &mut BTreeSet<Value> {
-        &mut self.0
+        &self.members
     }
 }
 
 impl From<BTreeMap<Value, Value>> for Entries {
     fn from(entries: BTreeMap<Value, Value>) -> Entries {
-        Entries(entries)
+        Entries {
+            entries,
+            _leave: Leave,
+        }
     }
 }
 
 impl From<BTreeSet<Value>> for Members {
     fn from(members: BTreeSet<Value>) -> Members {
-        Members(members)
+        Members {
+            members,
+            _leave: Leave,
+        }
     }
 }
