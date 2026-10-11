@@ -2842,7 +2842,6 @@ mod error_places {
             shown(&err)
         };
         let sliced = run(Some(1));
-        eprintln!("ACTUAL\t{}\t{:?}", std::thread::current().name().unwrap_or("?"), sliced);
         // (A budget is counted exactly at slice 1 only.)
         if budget.is_none() {
             assert_eq!(run(None), sliced);
@@ -3231,7 +3230,11 @@ fn main() {
   println(a(15))
 }
 ";
-        let _ = stops(source);
+        let kept = "c 11:3; b 8:3; a 4:14; ".repeat(10) + "c 11:3; b 8:3";
+        assert_eq!(
+            stops(source),
+            format!("division by zero at 3:13; a 3:13; {kept}; main 14:11; <script> 13:1")
+        );
         // Two frames that have each made tail calls: each frame's
         // callers come after it.
         let source = "\
@@ -3254,7 +3257,10 @@ fn main() {
   println(outer(2))
 }
 ";
-        let _ = stops(source);
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; inner 3:10; inner 4:10 (3 times); mid 8:7; outer 12:10; outer 13:10 (2 times); main 17:11; <script> 16:1"
+        );
         // A frame's callers go with the frame: the second call of
         // `inner` shows its own tail calls only.
         let source = "\
@@ -3270,7 +3276,10 @@ fn main() {
   println(first + second)
 }
 ";
-        let _ = stops(source);
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; inner 3:10; inner 4:10 (2 times); main 9:16; <script> 7:1"
+        );
     }
 
     #[test]
@@ -3473,6 +3482,93 @@ the step budget is used up at 2:3; id 2:3; twice 5:11; main 11:11; <script> 9:1\
 the step budget is used up at 2:3; id 2:3; twice 5:11; main 11:11; <script> 9:1\n\
 the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1"
         );
+    }
+}
+
+// ── The log of tail calls ───────────────────────────────────────────
+mod tail_calls {
+    use super::*;
+    use crate::vm::runtime::{TCO_ELIDED_CAP, TailCalls};
+
+    fn function(name: &str) -> Arc<Function> {
+        Arc::new(Function::returning_unit(name.to_string(), 0))
+    }
+
+    /// The log's entries as `depth name ip`, the innermost frame's
+    /// first and a frame's latest first.
+    fn entries(log: &TailCalls) -> Vec<String> {
+        log.newest_first()
+            .map(|(depth, function, ip)| format!("{depth} {} {ip}", function.name()))
+            .collect()
+    }
+
+    #[test]
+    fn a_frame_keeps_its_latest_tail_calls_the_latest_first() {
+        let (f, g) = (function("f"), function("g"));
+        let mut log = TailCalls::default();
+        assert!(log.is_empty());
+        log.log(3, f.clone(), 10);
+        log.log(3, g.clone(), 20);
+        log.log(3, f.clone(), 30);
+        assert!(!log.is_empty());
+        assert_eq!(entries(&log), ["3 f 30", "3 g 20", "3 f 10"]);
+
+        // One more than the log keeps: the first is gone, at every
+        // place of the ring.
+        for extra in 0..=2 * TCO_ELIDED_CAP {
+            let mut log = TailCalls::default();
+            let made = TCO_ELIDED_CAP + extra;
+            for ip in 0..made {
+                log.log(0, f.clone(), ip);
+            }
+            let latest: Vec<String> = (made - TCO_ELIDED_CAP..made)
+                .rev()
+                .map(|ip| format!("0 f {ip}"))
+                .collect();
+            assert_eq!(entries(&log), latest);
+        }
+    }
+
+    #[test]
+    fn each_frame_has_its_own_and_they_go_with_it() {
+        let (f, g, h) = (function("f"), function("g"), function("h"));
+        let mut log = TailCalls::default();
+        log.log(1, f.clone(), 1);
+        log.log(1, f.clone(), 2);
+        // A frame above makes more than the log keeps.
+        for ip in 0..TCO_ELIDED_CAP + 3 {
+            log.log(4, g.clone(), ip);
+        }
+        log.log(6, h.clone(), 7);
+        let all = entries(&log);
+        assert_eq!(all.len(), 2 + TCO_ELIDED_CAP + 1);
+        assert_eq!(all[0], "6 h 7");
+        assert_eq!(all[1], format!("4 g {}", TCO_ELIDED_CAP + 2));
+        assert_eq!(all[TCO_ELIDED_CAP], "4 g 3");
+        assert_eq!(all[TCO_ELIDED_CAP + 1..], ["1 f 2", "1 f 1"]);
+
+        // The frames at 5 and above go; the one at 4 goes on.
+        log.prune(5);
+        assert_eq!(entries(&log).len(), 2 + TCO_ELIDED_CAP);
+        log.log(4, h.clone(), 99);
+        assert_eq!(
+            entries(&log)[..2],
+            ["4 h 99".to_string(), format!("4 g {}", TCO_ELIDED_CAP + 2)]
+        );
+        assert_eq!(entries(&log).len(), 2 + TCO_ELIDED_CAP);
+
+        log.prune(4);
+        assert_eq!(entries(&log), ["1 f 2", "1 f 1"]);
+        // A new frame at the depth of one that is gone starts anew.
+        log.log(4, g.clone(), 5);
+        assert_eq!(entries(&log), ["4 g 5", "1 f 2", "1 f 1"]);
+        log.prune(0);
+        assert!(log.is_empty());
+        assert_eq!(entries(&log), [""; 0]);
+        // The functions are held by the test alone again.
+        assert_eq!(Arc::strong_count(&f), 1);
+        assert_eq!(Arc::strong_count(&g), 1);
+        assert_eq!(Arc::strong_count(&h), 1);
     }
 }
 
