@@ -628,7 +628,14 @@ impl TcpStreamHandle {
         else {
             return 0;
         };
-        let _turn = writing.lock();
+        let _turn = match writing.try_lock() {
+            Some(turn) => turn,
+            None => {
+                #[cfg(any(test, feature = "test-hooks"))]
+                tell_write_watches(self, WriteMoment::Waits);
+                writing.lock()
+            }
+        };
         // Asked in its turn: a connection that the writer before shut
         // down is closed for this one.
         if self.is_closed() {
@@ -646,6 +653,8 @@ impl TcpStreamHandle {
         if whole && written < bytes.len() {
             self.shut_down();
         }
+        #[cfg(any(test, feature = "test-hooks"))]
+        tell_write_watches(self, WriteMoment::Written);
         written
     }
 
@@ -738,6 +747,69 @@ impl TcpStreamHandle {
         }
         #[cfg(not(windows))]
         let _ = self.io_socket;
+    }
+}
+
+// ── What a test is told of the writes that take their turn ─────────
+
+/// Test-only: a moment in a write that takes its turn
+/// ([`TcpStreamHandle::write_in_turn`]).
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteMoment {
+    /// Another writer has the turn: this one is about to wait for it.
+    Waits,
+    /// The system has taken what it takes at once, and the writer
+    /// still has its turn.
+    Written,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+type WriteWatch = Arc<dyn Fn(&TcpStreamHandle, WriteMoment) + Send + Sync>;
+
+#[cfg(any(test, feature = "test-hooks"))]
+static WRITE_WATCHES: Mutex<Vec<(u64, WriteWatch)>> = Mutex::new(Vec::new());
+
+/// Test-only: a watch of the writes ([`watch_writes`]), until it is
+/// dropped.
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct WriteWatching(u64);
+
+/// Test-only: call `watch` at the moments of every write that takes
+/// its turn, on whichever connection of the process (the watch tells
+/// its own by the connection's addresses), on the thread that writes.
+/// A watch that does not return holds the writer where it is: at
+/// [`WriteMoment::Written`], in its turn. That is how a test brings
+/// two writes of a connection together, which nothing outside the
+/// process can do.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn watch_writes(
+    watch: impl Fn(&TcpStreamHandle, WriteMoment) + Send + Sync + 'static,
+) -> WriteWatching {
+    static WATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = WATCHES.fetch_add(1, AtomicOrdering::Relaxed);
+    WRITE_WATCHES.lock().push((id, Arc::new(watch)));
+    WriteWatching(id)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl Drop for WriteWatching {
+    fn drop(&mut self) {
+        WRITE_WATCHES.lock().retain(|(id, _)| *id != self.0);
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+fn tell_write_watches(conn: &TcpStreamHandle, moment: WriteMoment) {
+    // Called outside the lock of the list: a watch may hold its
+    // writer.
+    let watches: Vec<WriteWatch> = WRITE_WATCHES
+        .lock()
+        .iter()
+        .map(|(_, watch)| watch.clone())
+        .collect();
+    for watch in watches {
+        watch(conn, moment);
     }
 }
 
@@ -1061,6 +1133,61 @@ mod tests {
         assert_eq!(read.len(), 2000);
         assert!(written > 0);
         assert_eq!(conn.read_now(&mut buf), Some(0));
+    }
+
+    /// A write that takes its turn waits for the write that has it,
+    /// and goes on when that one is done: the peer gets both whole,
+    /// one after the other. (Here the write in flight is one that
+    /// waits for the system, so that it lasts until the test lets it
+    /// end.)
+    #[test]
+    fn a_write_in_turn_comes_after_the_write_in_flight() {
+        use std::io::Read;
+        // More than the system takes for a peer that reads nothing.
+        const FIRST: usize = 64 * 1024 * 1024;
+        let patience = std::time::Duration::from_secs(60);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        peer.set_read_timeout(Some(patience)).expect("read timeout");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        let first = {
+            let conn = conn.clone();
+            std::thread::spawn(move || conn.write_all(&vec![b'1'; FIRST]))
+        };
+        // The first write has the turn when a byte of it has arrived.
+        let mut byte = [0u8; 1];
+        peer.read_exact(&mut byte)
+            .expect("a byte of the first write");
+        // The second finds the turn taken, and waits.
+        let waits = Arc::new(AtomicBool::new(false));
+        let (waiting, this) = (waits.clone(), Arc::as_ptr(&conn) as usize);
+        let _watching = watch_writes(move |conn, moment| {
+            if std::ptr::eq(conn, this as *const TcpStreamHandle) && moment == WriteMoment::Waits {
+                waiting.store(true, AtomicOrdering::SeqCst);
+            }
+        });
+        let second = {
+            let conn = conn.clone();
+            std::thread::spawn(move || conn.write_in_turn(b"second"))
+        };
+        let limit = std::time::Instant::now() + patience;
+        while !waits.load(AtomicOrdering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < limit && !first.is_finished(),
+                "the second write did not find the turn taken"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(!second.is_finished(), "the second write did not wait");
+        // The peer takes everything: the first write ends, and the
+        // second has its turn.
+        let mut all = vec![0u8; FIRST - 1 + b"second".len()];
+        peer.read_exact(&mut all).expect("both writes");
+        first.join().expect("joined").expect("the first write");
+        assert_eq!(second.join().expect("joined"), b"second".len());
+        let (ones, rest) = all.split_at(FIRST - 1);
+        assert!(ones.iter().all(|byte| *byte == b'1'));
+        assert_eq!(rest, b"second");
     }
 
     /// Bytes that mean nothing in part are written whole, or the

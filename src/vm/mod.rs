@@ -19,6 +19,11 @@ pub use runtime::IoFailure;
 pub use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
 
+/// Test-only: what a test is told of the writes of a connection that
+/// take their turn, and how it holds one of them in its turn.
+#[cfg(any(test, feature = "test-hooks"))]
+pub use crate::runtime::handle::{WriteMoment, WriteWatching, watch_writes};
+
 /// Test-only: how many threads the I/O pool of this VM has: those
 /// that run an operation somebody waits for, and those that wait for
 /// work.

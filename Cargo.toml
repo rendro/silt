@@ -27,8 +27,8 @@ postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
 tcp-tls = ["tcp", "dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
 # Exposes what tests outside the crate read of the I/O pool (its size,
-# what a panicking operation completes with). Always enabled under
-# `cfg(test)`.
+# what a panicking operation completes with) and are told of a
+# connection's writes. Always enabled under `cfg(test)`.
 test-hooks = []
 
 [[bench]]
