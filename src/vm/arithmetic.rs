@@ -45,24 +45,27 @@ impl Vm {
                 }
                 _ => unreachable!(),
             },
-            (Value::Float(a), Value::Float(b)) => match op {
-                Op::Add => finite_float(a + b, &format!("{a} + {b}"))?,
-                Op::Sub => finite_float(a - b, &format!("{a} - {b}"))?,
-                Op::Mul => finite_float(a * b, &format!("{a} * {b}"))?,
-                Op::Div => {
-                    if *b == 0.0 {
-                        return Err(VmError::new("float division by zero".to_string()));
+            (Value::Float(a), Value::Float(b)) => {
+                let (a, b) = (a.get(), b.get());
+                match op {
+                    Op::Add => finite_float(a + b, &format!("{a} + {b}"))?,
+                    Op::Sub => finite_float(a - b, &format!("{a} - {b}"))?,
+                    Op::Mul => finite_float(a * b, &format!("{a} * {b}"))?,
+                    Op::Div => {
+                        if b == 0.0 {
+                            return Err(VmError::new("float division by zero".to_string()));
+                        }
+                        finite_float(a / b, &format!("{a} / {b}"))?
                     }
-                    finite_float(a / b, &format!("{a} / {b}"))?
-                }
-                Op::Mod => {
-                    if *b == 0.0 {
-                        return Err(VmError::new("modulo by zero".to_string()));
+                    Op::Mod => {
+                        if b == 0.0 {
+                            return Err(VmError::new("modulo by zero".to_string()));
+                        }
+                        finite_float(a % b, &format!("{a} % {b}"))?
                     }
-                    finite_float(a % b, &format!("{a} % {b}"))?
+                    _ => unreachable!(),
                 }
-                _ => unreachable!(),
-            },
+            }
             _ => {
                 let op_name = match op {
                     Op::Add => "+",
@@ -103,11 +106,7 @@ impl Vm {
         let a = self.pop();
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            // A Float is always finite, so `partial_cmp` always answers;
-            // `Equal` is the same safety net `Value::cmp` uses.
-            (Value::Float(a), Value::Float(b)) => {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            }
+            (Value::Float(a), Value::Float(b)) => a.cmp(b),
             (Value::String(a), Value::String(b)) => a.cmp(b),
             // Lists are ordered element by element (`Value::cmp`), after
             // the function-leaf gate (see `ordering_with_fn_gate` below).

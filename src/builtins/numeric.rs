@@ -2,7 +2,7 @@
 
 use super::typed::builtins;
 use crate::typeinfo::bv;
-use crate::value::Value;
+use crate::value::{Float, Value};
 use crate::vm::{Step, Vm, VmError};
 
 /// Locate the byte offset of the first character in `s` that could not
@@ -91,25 +91,14 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// Build a `Float` from a finite `f64`. `-0.0` becomes `0.0`: every
-/// `Float` comparison (equality, ordering, hashing, sets, maps) treats
-/// the two zeros as one value, so no `Float` may carry a negative zero
-/// that would print or format differently. Every `Float` this module
-/// produces goes through here.
-pub(crate) fn float_value(f: f64) -> Value {
-    Value::Float(if f == 0.0 { 0.0 } else { f })
-}
-
 /// Build a `Float` from the result of a float operation, raising the
 /// error `msg` names when the result is NaN or infinite: a `Float` is
 /// always finite, so an operation with no finite result fails the way
 /// integer overflow does.
 pub(crate) fn checked_float(f: f64, msg: impl FnOnce() -> String) -> Result<Value, VmError> {
-    if f.is_finite() {
-        Ok(float_value(f))
-    } else {
-        Err(VmError::new(msg()))
-    }
+    Float::new(f)
+        .map(Value::Float)
+        .ok_or_else(|| VmError::new(msg()))
 }
 
 /// `int.*`
@@ -170,18 +159,21 @@ pub(crate) mod float {
                 // number silt reads, and an out-of-range literal
                 // overflows the way `int.parse` does (`ParseUnderflow`
                 // below the range, `ParseOverflow` above it).
-                Ok(n) if !n.is_finite() => {
-                    let spelled = s.trim().trim_start_matches(['+', '-']);
-                    let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
-                        Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(0)])
-                    } else if n < 0.0 {
-                        Value::variant(bv::PARSE_UNDERFLOW, vec![])
-                    } else {
-                        Value::variant(bv::PARSE_OVERFLOW, vec![])
-                    };
-                    Value::variant(bv::ERR, vec![err])
-                }
-                Ok(n) => Value::variant(bv::OK, vec![float_value(n)]),
+                Ok(n) => match Float::new(n) {
+                    Some(n) => Value::variant(bv::OK, vec![Value::Float(n)]),
+                    None => {
+                        let spelled = s.trim().trim_start_matches(['+', '-']);
+                        let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+                        {
+                            Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(0)])
+                        } else if n < 0.0 {
+                            Value::variant(bv::PARSE_UNDERFLOW, vec![])
+                        } else {
+                            Value::variant(bv::PARSE_OVERFLOW, vec![])
+                        };
+                        Value::variant(bv::ERR, vec![err])
+                    }
+                },
                 Err(e) => Value::variant(bv::ERR, vec![classify_float_parse_error(&e, s)]),
             }
         }
@@ -249,8 +241,8 @@ pub(crate) mod float {
     /// decimal places.
     pub(crate) fn to_string(_vm: &mut Vm, args: &[Value]) -> Called {
         let (f, decimals) = match args {
-            [Value::Float(f)] => (*f, None),
-            [Value::Float(f), Value::Int(decimals)] => (*f, Some(*decimals)),
+            [Value::Float(f)] => (f.get(), None),
+            [Value::Float(f), Value::Int(decimals)] => (f.get(), Some(*decimals)),
             _ => return None,
         };
         let Some(decimals) = decimals else {

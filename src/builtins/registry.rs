@@ -233,7 +233,9 @@ fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
         signature,
         summary,
         typed: None,
-        constant: Some(Value::Float(value)),
+        constant: Some(Value::Float(
+            crate::value::Float::new(value).expect("a constant of the registry is a finite number"),
+        )),
         optional_last: false,
         feature: None,
     }

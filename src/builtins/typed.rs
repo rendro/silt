@@ -58,7 +58,7 @@ impl<'a> Arg<'a> for i64 {
 impl<'a> Arg<'a> for f64 {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::Float(f) => Some(*f),
+            Value::Float(f) => Some(f.get()),
             _ => None,
         }
     }
@@ -256,11 +256,17 @@ impl Ret for bool {
 
 /// A `Float`: finite, as every float a body computes from floats with
 /// an operation that cannot leave them is; one that can goes through
-/// `numeric::checked_float`. (`-0.0` becomes `0.0`: see
-/// `numeric::float_value`.)
+/// `numeric::checked_float` and says what overflowed. (A body that
+/// gave a number that is no `Float` all the same is a defect of silt,
+/// and an error here, not a value.)
 impl Ret for f64 {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(super::numeric::float_value(self)))
+        match crate::value::Float::new(self) {
+            Some(float) => Ok(Step::Done(Value::Float(float))),
+            None => Err(VmError::type_confusion(format!(
+                "a builtin's result is no Float: {self}"
+            ))),
+        }
     }
 }
 

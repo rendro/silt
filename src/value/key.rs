@@ -279,13 +279,7 @@ impl Ord for Value {
             (Value::Unit, Value::Unit) => Ordering::Equal,
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Float(a), Value::Float(b)) => {
-                // Float values are guaranteed finite, so partial_cmp always
-                // returns Some. The fallback to Equal is a safety net that
-                // keeps Eq/Ord consistent (NaN == NaN) if a non-finite value
-                // ever appears.
-                a.partial_cmp(b).unwrap_or(Ordering::Equal)
-            }
+            (Value::Float(a), Value::Float(b)) => a.cmp(b),
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.cmp(b),
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
@@ -337,16 +331,9 @@ impl Hash for Value {
                 state.write_u8(2);
                 n.hash(state);
             }
-            // Canonicalize -0.0 → 0.0 so that 0.0/-0.0 (which compare
-            // equal) hash equally.
             Value::Float(f) => {
                 state.write_u8(3);
-                let bits = if *f == 0.0 {
-                    0.0_f64.to_bits()
-                } else {
-                    f.to_bits()
-                };
-                bits.hash(state);
+                f.hash(state);
             }
             Value::String(s) => {
                 state.write_u8(4);

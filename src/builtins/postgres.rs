@@ -447,10 +447,10 @@ fn wrap_v_bool(b: bool) -> Value {
 /// A silt `Float` is always finite, so a column holding `NaN` or
 /// `±Infinity` decodes like any other value that has no silt form.
 fn wrap_v_float(f: f64) -> Value {
-    if !f.is_finite() {
-        return wrap_v_str(format!("<decode error: non-finite float {f}>"));
+    match crate::value::Float::new(f) {
+        Some(f) => Value::variant(bv::V_FLOAT, vec![Value::Float(f)]),
+        None => wrap_v_str(format!("<decode error: non-finite float {f}>")),
     }
-    Value::variant(bv::V_FLOAT, vec![crate::builtins::numeric::float_value(f)])
 }
 fn wrap_v_null() -> Value {
     Value::variant(bv::V_NULL, vec![])
@@ -732,7 +732,7 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
             )),
         },
         "VFloat" => match param.fields().first() {
-            Some(Value::Float(f)) => Ok(SqlParam::Float8(*f)),
+            Some(Value::Float(f)) => Ok(SqlParam::Float8(f.get())),
             // Some silt programs store integers in Float slots; coerce.
             Some(Value::Int(n)) => Ok(SqlParam::Float8(*n as f64)),
             other => Err(format!(
@@ -807,7 +807,7 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
                 match x {
                     Value::Variant(variant) if variant.is(bv::V_FLOAT) => {
                         match variant.fields().first() {
-                            Some(Value::Float(f)) => out.push(Some(*f)),
+                            Some(Value::Float(f)) => out.push(Some(f.get())),
                             Some(Value::Int(n)) => out.push(Some(*n as f64)),
                             _ => return Err("postgres: bad VFloat in array".into()),
                         }

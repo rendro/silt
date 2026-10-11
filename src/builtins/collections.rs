@@ -709,7 +709,7 @@ pub(crate) mod list {
                 let Value::Float(n) = item else {
                     return Err(unsound("list.sum_float", "xs"));
                 };
-                total += n;
+                total += n.get();
             }
             // A finite sum only ever overflows to ±inf, and the sum
             // cannot come back from there, so one check at the end sees it.
@@ -730,7 +730,7 @@ pub(crate) mod list {
                 let Value::Float(n) = item else {
                     return Err(unsound("list.product_float", "xs"));
                 };
-                total *= n;
+                total *= n.get();
             }
             // As in `sum_float`: once the product leaves the finite range
             // it stays out, so one check at the end sees it.
