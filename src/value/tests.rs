@@ -735,7 +735,18 @@ fn the_key_of_a_value_does_not_depend_on_its_depth() {
         }
     }
     let near = super::key::NEAR;
-    for depth in [0, 1, 2, near - 1, near, near + 1, near + 2, 2 * near + 1] {
+    let depths = [
+        0,
+        1,
+        2,
+        near - 2,
+        near - 1,
+        near,
+        near + 1,
+        near + 2,
+        2 * near + 1,
+    ];
+    for depth in depths {
         let value = nested(depth, 7);
         let mut state = DefaultHasher::new();
         by_hand(depth, 7, &mut state);
@@ -758,16 +769,24 @@ fn the_key_of_a_value_does_not_depend_on_its_depth() {
 /// the first part of the level, in its last part, or in the leaf of a
 /// value that deep, are equal, ordered and hashed as a plain recursion
 /// over the two says, which this test has as its reference: for
-/// tuples, lists, maps (the next level a value, and a key), sets,
-/// variants and records, and for all of them in turn.
+/// tuples, lists, maps (the next level a value between a first and a
+/// last entry, and a key), sets (the next level between a first and a
+/// last member), variants and records, and for all of them in turn.
+/// A map and a set are walked from the frame of a call above that
+/// level and from a boxed form on the walk's stack below it.
 #[test]
 fn the_key_is_the_same_where_the_walk_changes_its_stack() {
     use crate::defs::{DefId, TypeId};
     use std::hash::Hasher;
     let near = super::key::NEAR;
     let record = record_type(9301, "Level", &["a", "n", "z"]);
-    let wrapped = TypeInfo::new_enum(TypeId(DefId(9302)), "Wrapped", &[("Leaf", 0), ("W", 3)]);
+    let wrapped = TypeInfo::new_enum(
+        TypeId(DefId(9302)),
+        "Wrapped",
+        &[("Leaf", 0), ("W", 3), ("Last", 1)],
+    );
     let w = Tag::named(&wrapped, "W").expect("a variant");
+    let last = Tag::named(&wrapped, "Last").expect("a variant");
     // A level around `inner`, with `pre` before it and `post` after.
     let shapes: [&dyn Fn(Value, i64, i64) -> Value; 7] = [
         &|inner, pre, post| Value::tuple(vec![Value::Int(pre), inner, Value::Int(post)]),
@@ -787,12 +806,11 @@ fn the_key_is_the_same_where_the_walk_changes_its_stack() {
                 (inner, Value::Int(post)),
             ]))
         },
+        // (An Int is the first member of a set, before one that has
+        // parts, and a variant the last, after a set.)
         &|inner, pre, post| {
-            Value::set(BTreeSet::from([
-                Value::Int(pre),
-                inner,
-                Value::Int(50 + post),
-            ]))
+            let after = Value::variant(last.clone(), vec![Value::Int(post)]);
+            Value::set(BTreeSet::from([Value::Int(pre), inner, after]))
         },
         &|inner, pre, post| {
             Value::variant(w.clone(), vec![Value::Int(pre), inner, Value::Int(post)])
