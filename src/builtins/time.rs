@@ -711,3 +711,39 @@ builtins! {
         Ok(leap(as_i32("time.is_leap_year", "year", year)?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The records the module builds have the fields of their types,
+    /// in the types' order (`Value::builtin_record` says so in a debug
+    /// build), and are read back as what they were built from.
+    #[test]
+    fn the_records_of_the_module_have_their_types_fields() {
+        let day = NaiveDate::from_ymd_opt(2024, 3, 9).expect("a date");
+        let clock = NaiveTime::from_hms_nano_opt(7, 30, 5, 42).expect("a time");
+        let date = make_date(day);
+        let time = make_time(clock);
+        let both = make_datetime(day.and_time(clock));
+        assert_eq!(date.to_string(), "2024-03-09");
+        assert_eq!(time.to_string(), "07:30:05.000000042");
+        assert_eq!(both.to_string(), "2024-03-09T07:30:05.000000042");
+        assert_eq!(make_instant(7).to_string(), "Instant {epoch_ns: 7}");
+        assert_eq!(make_duration(1_500_000_000).to_string(), "1.500s");
+
+        let read = Date::take(&date).expect("a Date");
+        assert_eq!((read.year, read.month, read.day), (2024, 3, 9));
+        let read = Time::take(&time).expect("a Time");
+        assert_eq!(
+            (read.hour, read.minute, read.second, read.ns),
+            (7, 30, 5, 42)
+        );
+        let Value::Record(record) = &both else {
+            panic!("a record");
+        };
+        assert_eq!(record.fields(), [date, time]);
+        // (A record of another type is none of these.)
+        assert!(Date::take(&both).is_none());
+    }
+}
