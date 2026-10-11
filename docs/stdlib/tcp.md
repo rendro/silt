@@ -146,18 +146,15 @@ another task has in flight on it returns, and later calls fail with
 reference to the connection is gone.
 
 **A read or write that nobody waits for ends its connection.** When a
-task stops waiting for `tcp.read`, `tcp.read_exact` or `tcp.write` (its
-`task.deadline` or `SILT_IO_TIMEOUT` passed, it was cancelled, or the
-program ended), the connection is shut down exactly as by `tcp.close`.
-That is what lets the blocked operation, and its thread, end. So a read
-that timed out cannot be tried again: the next call on that connection
-gives `Err(Closed)`. A `tcp.read`, `tcp.read_exact` or `tcp.write` that
-begins when its `task.deadline` has already passed is such a timeout too:
-it gives `Err(Timeout)` without reading or writing anything, and the
-connection is shut down. So is one whose result arrives in the very
-moment in which its task stops waiting: the task gets `Err(Timeout)`,
-and what the read had taken is gone with the connection. What a timeout
-leaves of a connection does not depend on the moment at which it came. The same holds for the
+task stops waiting for `tcp.read`, `tcp.read_exact` or `tcp.write`
+(`SILT_IO_TIMEOUT` passed, the task was cancelled or was the function of
+a `task.deadline` whose time is up, or the program ended), the
+connection is shut down exactly as by `tcp.close`. That is what lets the
+blocked operation, and its thread, end. So a read that timed out cannot
+be tried again: the next call on that connection gives `Err(Closed)`.
+So is the connection of an operation whose result arrives in the very
+moment in which its task stops waiting: what the read had taken is gone
+with the connection. The same holds for the
 `stream.tcp_*` sources and sink when their pipeline is cut short. A
 `tcp.accept` that nobody waits
 for is woken and gives up; the listener stays usable. A `tcp.accept_tls` that

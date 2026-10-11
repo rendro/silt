@@ -1,0 +1,26 @@
+-- repeat: 3
+-- timeout: 10
+-- requires-feature: tcp
+-- A wait for I/O is ended like any other wait. Nobody connects to the
+-- listener, so without the deadline the accept would wait for ever.
+-- The answer is the deadline's `Err(Timeout)`, not an error of `tcp`:
+-- the accept did not fail, it was given up.
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  match task.deadline(time.ms(50), { -> tcp.accept(listener) }) {
+    Err(task.Timeout) -> println("the deadline passed")
+    Ok(Ok(_)) -> println("accepted a connection")
+    Ok(Err(e)) -> println("tcp: {e.message()}")
+    Err(e) -> println(e.message())
+  }
+  -- The listener is as it was: a connection is accepted.
+  when let Ok(_) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }
+  match task.deadline(time.seconds(30), { -> tcp.accept(listener) }) {
+    Ok(Ok(_)) -> println("accepted a connection")
+    other -> println("something else")
+  }
+}

@@ -1,0 +1,17 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-contains: task_deadline__a_failure_of_the_function_is_the_callers.silt:15:48
+-- stderr-not-contains: joined task failed
+-- stderr-not-contains: never joined
+-- A failure of the function is raised by `task.deadline` as it is, at
+-- the place in the function where it happened: the caller called the
+-- function, and that it ran under a deadline changes nothing of that.
+import task
+import time
+
+fn main() {
+  println("before")
+  let zero = 0
+  println(task.deadline(time.seconds(60), { -> 1 / zero }))
+  println("not reached")
+}

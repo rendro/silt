@@ -1,0 +1,13 @@
+-- repeat: 5
+-- timeout: 10
+-- A join is a wait like any other: the deadline ends the function that
+-- joins. The task it joined is none of the deadline's: it runs on (and
+-- is cancelled here so that the program ends).
+import task
+import time
+
+fn main() {
+  let slow = task.spawn { -> time.sleep(time.hours(1)) }
+  println(task.deadline(time.ms(30), { -> task.join(slow) }))
+  task.cancel(slow)
+}

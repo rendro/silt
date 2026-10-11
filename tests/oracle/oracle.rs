@@ -110,7 +110,6 @@ pub const TIMED: &[&str] = &[
     "channel.timeout",
     "channel.receive_timeout",
     "task.deadline",
-    "task.spawn_until",
 ];
 
 /// The slices of the two runs.

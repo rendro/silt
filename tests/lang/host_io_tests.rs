@@ -565,10 +565,12 @@ fn main() {
 }
 
 /// The deadline of `task.deadline` is a reading of the clock: once the
-/// clock has passed it, I/O in the scope fails with the timeout.
+/// clock has passed it, the function is ended. (The function runs as a
+/// task, so its sleep waits for the clock to move, as a task's does.)
 #[test]
 fn task_deadline_is_measured_on_the_clock() {
     let out = Buffer::new();
+    let clock = FakeClock::default();
     let source = r#"
 import io
 import task
@@ -583,16 +585,18 @@ fn main() {
   println(late)
 }
 "#;
-    let io = HostIo::buffer(&out).clock(FakeClock::default());
+    let _ticking = keep_advancing(&clock);
+    let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
     assert_eq!(
         out.contents(),
-        "Err(file not found: /no/such/file)\nErr(I/O timeout (task.deadline exceeded))\n"
+        "Ok(Err(file not found: /no/such/file))\nErr(the function did not return before its deadline)\n"
     );
+    assert!(clock.passed() >= Duration::from_secs(3600));
 }
 
-/// The deadline of a task parked on I/O is the clock's too: the
-/// scheduler's watchdog cancels the wait when the clock passes it.
+/// The deadline of a function that waits for I/O is the clock's too:
+/// the function is ended when the clock passes it.
 #[cfg(feature = "tcp")]
 #[test]
 fn a_parked_tasks_deadline_follows_the_clock() {
@@ -604,14 +608,16 @@ import task
 import tcp
 import time
 fn main() {
-  let h = task.spawn_until(time.hours(1), { ->
-    match tcp.listen("127.0.0.1:0") {
-      Ok(listener) -> match tcp.accept(listener) {
-        Ok(_) -> "accepted"
-        Err(e) -> "{e}"
+  let h = task.spawn({ ->
+    task.deadline(time.hours(1), { ->
+      match tcp.listen("127.0.0.1:0") {
+        Ok(listener) -> match tcp.accept(listener) {
+          Ok(_) -> "accepted"
+          Err(e) -> "{e}"
+        }
+        Err(e) -> "cannot listen: {e}"
       }
-      Err(e) -> "cannot listen: {e}"
-    }
+    })
   })
   println(task.join(h))
 }
@@ -619,7 +625,10 @@ fn main() {
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
-    assert_eq!(out.contents(), "tcp operation timed out\n");
+    assert_eq!(
+        out.contents(),
+        "Err(the function did not return before its deadline)\n"
+    );
     assert!(clock.passed() >= Duration::from_secs(3600));
 }
 

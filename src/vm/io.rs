@@ -9,8 +9,8 @@
 //!   that failed and was never joined, the log of an `http.serve`
 //!   handler that failed) goes to its stderr;
 //! - `time.now`, `time.today`, `time.sleep`, the timeouts of
-//!   `channel.timeout` and `channel.receive_timeout`, and the deadlines of
-//!   `task.deadline` and `task.spawn_until` read its clock.
+//!   `channel.timeout` and `channel.receive_timeout`, and the deadline of
+//!   `task.deadline` read its clock.
 //!
 //! ```rust
 //! use silt::{Buffer, HostIo, Vm};

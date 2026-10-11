@@ -1,0 +1,29 @@
+-- repeat: 20
+-- timeout: 10
+-- stderr-not-contains: deadlock
+-- The function may wait for a stream: for a stage whose function waits,
+-- or for a source that never ends. The deadline ends the function; the
+-- stream it read is cut short like any stream nobody reads any more.
+import channel
+import stream
+import task
+import time
+
+fn recv(ch) {
+  match channel.receive(ch) {
+    channel.Message(v) -> v
+    _ -> 0 - 1
+  }
+}
+
+fn main() {
+  let never = channel.new(0)
+  println(task.deadline(time.ms(20), { ->
+    stream.from_list([1, 2, 3]) |> stream.map { x -> x + recv(never) } |> stream.collect
+  }))
+  println(task.deadline(time.ms(20), { -> stream.repeat(1) |> stream.count }))
+  let inside = task.spawn { ->
+    task.deadline(time.ms(20), { -> channel.each(stream.repeat(1)) { x -> time.sleep(time.ms(1)) } })
+  }
+  println(task.join(inside))
+}

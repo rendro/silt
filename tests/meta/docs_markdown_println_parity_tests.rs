@@ -61,7 +61,6 @@ const DENY_SUBSTRINGS: &[&str] = &[
     "http.Server",
     // Concurrency.
     "task.spawn",
-    "task.spawn_until",
     "task.deadline",
     "task.sleep",
     "channel.new",

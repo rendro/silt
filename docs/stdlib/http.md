@@ -283,13 +283,13 @@ An `Expect` header that asks for anything but `100-continue` is answered
 - If the program fails while requests are in flight, it ends as a
   process: their connections are closed without an answer.
 
-These times are the server's own, and the only ones that bound its
-waits. A `task.deadline` around `http.serve` does not end the server,
-nor a connection's wait for a request, a body or a client; neither does
-`SILT_IO_TIMEOUT`. Inside a handler both work as in any task: the
-handler's own I/O ends at `SILT_IO_TIMEOUT`, and a `task.deadline` that
-the handler sets bounds what it calls. A deadline set around
-`http.serve` is not handed on to the handlers.
+These times are the server's own, and the only ones that bound a
+connection's wait for a request, a body or a client: `SILT_IO_TIMEOUT`
+does not. Inside a handler it works as in any task: the handler's own
+I/O ends at `SILT_IO_TIMEOUT`, and a `task.deadline` that the handler
+sets ends what it runs. A `task.deadline` around `http.serve` itself
+ends the server when its time is up, as `task.cancel` of the server's
+task does: the listener stays bound and can be served again.
 
 Every connection that waits for a request has one I/O operation in
 flight, of the 4,096 a program can have (see

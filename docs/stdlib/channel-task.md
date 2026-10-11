@@ -337,10 +337,9 @@ fixed thread pool and run in parallel. They communicate through channels.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `cancel` | `(Handle(a)) -> ()` | Request cancellation of a task (cooperative; see details below) |
-| `deadline` | `(Duration, Fn() -> a) -> a` | Run a callback with a scoped I/O deadline |
+| `deadline` | `(Duration, Fn() -> a) -> Result(a, TaskError)` | Run a function, and end it if it has not returned when the duration has passed |
 | `join` | `(Handle(a)) -> a` | Wait for a task to complete |
 | `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
-| `spawn_until` | `(Duration, Fn() -> a) -> Handle(a)` | Spawn a task scoped by a deadline |
 
 
 ## `task.cancel`
@@ -452,29 +451,34 @@ fn main() {
 ## `task.deadline`
 
 ```
-task.deadline(dur: Duration, f: Fn() -> a) -> a
+task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)
 ```
 
-Runs `f` with a scoped I/O deadline. If any blocking I/O builtin inside `f`
-(see [Concurrency: Blocking operations](../concurrency.md#blocking-operations))
-runs longer than `dur`, the builtin returns **the module's own typed
-timeout variant** instead of its normal result — the surrounding silt code
-handles it through the usual `Result` match on the typed `IoError`,
-`TcpError`, or `HttpError` enum that builtin already declares. No exception
-is raised, and the deadline does not preempt pure CPU work; it only applies
-to I/O.
+Runs `f` and gives `Ok` of what it returns, or `Err(Timeout)` if `f` has not
+returned when `dur` has passed, in which case `f` is ended as a cancelled
+task is.
 
-Specifically (matching the [`SILT_IO_TIMEOUT`](../concurrency.md#io-timeouts-silt_io_timeout)
-table):
+The function runs as a task of its own and it is the wait for it that is
+bounded, so the rule is the same whatever `f` waits for when its time is up:
+I/O, a `time.sleep`, a `channel.receive` or `channel.send`, a `task.join`, a
+wait deep inside the callback of a builtin or a stage of a stream.
 
-- `io.*` and `fs.*` surface `Err(Other("I/O timeout (task.deadline exceeded)"))`.
-- `tcp.*` surfaces `Err(Timeout)`.
-- `http.*` surfaces `Err(Timeout)`.
+- An ended function runs no further: a wait of it takes and sends nothing,
+  and an I/O operation of it that is in flight is given up (a connection it
+  was reading or writing is shut down). A function that only computes is
+  ended at the end of the time slice it is in; one call of a builtin that is
+  under way runs to its end first.
+- A runtime error inside `f` is raised by `task.deadline` as it is.
+- Deadlines nest: the one that passes first ends its own function, and an
+  outer one ends the inner function with it.
+- A negative `dur` is a runtime error.
 
-The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
-or a surrounding `task.deadline`, whichever elapses first fires. The
-embedded message on the `Other` variant distinguishes the source so
-silt code can tell scoped timeouts from the global one.
+`TaskError` is the module's error enum:
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Timeout` | — | the function had not returned when its deadline passed |
+| `Other(String)` | message | unclassified failure |
 
 ```silt
 -- noexec
@@ -485,40 +489,15 @@ import time
 fn main() {
   let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
-    Ok(contents) -> println(contents)
-    Err(io.Other(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
-    Err(_) -> println("other io error")
+    Ok(Ok(contents)) -> println(contents)
+    Ok(Err(e)) -> println("the read failed: {e}")
+    Err(task.Timeout) -> println("the read took too long")
+    Err(e) -> println(e.message())
   }
 }
 ```
 
+A task with a deadline is `task.spawn { -> task.deadline(dur, f) }`: its
+handle joins to the same `Result`.
 
-## `task.spawn_until`
 
-```
-task.spawn_until(dur: Duration, f: Fn() -> a) -> Handle(a)
-```
-
-Spawns `f` as a task with a bounded wall-clock deadline. Equivalent to
-`task.spawn({ -> task.deadline(dur, f) })` but with one less closure
-wrapper. The returned handle resolves to the function's result if it
-finishes in time, or to the deadline error inside any I/O builtin it
-was blocked on when the deadline fired.
-
-Useful for fan-out patterns where each child task must bound its own
-runtime -- e.g. racing N replicas and dropping stragglers.
-
-```silt
--- noexec
-import io
-import task
-import time
-
-fn main() {
-  let h = task.spawn_until(time.seconds(2)) { -> io.read_file("/tmp/maybe_slow.txt") }
-  match task.join(h) {
-    Ok(contents) -> println(contents)
-    Err(msg) -> println(msg)
-  }
-}
-```

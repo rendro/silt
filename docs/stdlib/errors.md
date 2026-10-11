@@ -152,6 +152,15 @@ its own (`float.Empty` is not `int.Empty`).
 | `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
 | `Other(String)` | message | unclassified failure |
 
+### `TaskError` (requires `import task`)
+
+Returned by `task.deadline`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Timeout` | — | the function had not returned when its deadline passed (it is ended) |
+| `Other(String)` | message | unclassified failure |
+
 ### `EncodingError` (requires `import encoding`)
 
 Returned by `encoding.url_decode` and `encoding.form_decode`.

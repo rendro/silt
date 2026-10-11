@@ -117,7 +117,7 @@
     },
     "primitives": {
       "name": "support.type.primitive.silt",
-      "match": "\\b(Int|Float|Bool|String|Unit|List|Map|Set|Channel|Tuple|Fn|Fun|Handle|Bytes|TcpListener|TcpStream|FileStat|Instant|Date|Time|DateTime|Duration|Weekday|Method|Response|Request|IoError|JsonError|TomlError|IntError|FloatError|HttpError|RegexError|TimeError|BytesError|PostgresError|TcpError|EncodingError|CryptoError|UuidError)\\b"
+      "match": "\\b(Int|Float|Bool|String|Unit|List|Map|Set|Channel|Tuple|Fn|Fun|Handle|Bytes|TcpListener|TcpStream|FileStat|Instant|Date|Time|DateTime|Duration|Weekday|Method|Response|Request|IoError|JsonError|TomlError|IntError|FloatError|HttpError|RegexError|TimeError|BytesError|PostgresError|TcpError|EncodingError|CryptoError|UuidError|TaskError)\\b"
     },
     "constructors": {
       "name": "constant.language.constructor.silt",

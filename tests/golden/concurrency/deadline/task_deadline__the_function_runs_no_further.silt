@@ -1,0 +1,31 @@
+-- repeat: 10
+-- timeout: 20
+-- A function that the deadline ended is ended: it does not go on behind
+-- the caller's back. What it would have sent after its sleep is never
+-- sent, and a function that only computes (it never waits) is ended
+-- too, at the end of the time slice it is in.
+import channel
+import task
+import time
+
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn main() {
+  let out: Channel(String) = channel.new(4)
+  println(task.deadline(time.ms(20), { ->
+    time.sleep(time.ms(60))
+    channel.send(out, "sent after the deadline")
+  }))
+  time.sleep(time.ms(200))
+  println(channel.try_receive(out))
+  println(task.deadline(time.ms(20), { ->
+    let n = count(2000000000, 0)
+    channel.send(out, "counted to {n}")
+  }))
+  println(channel.try_receive(out))
+}

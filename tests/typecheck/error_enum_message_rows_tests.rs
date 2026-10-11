@@ -49,6 +49,7 @@ fn every_builtin_error_enum_has_a_message_row() {
         ("CryptoError", "crypto", "InvalidLength(-1)"),
         ("EncodingError", "encoding", r#"InvalidPercent("x")"#),
         ("UuidError", "uuid", r#"Invalid("x")"#),
+        ("TaskError", "task", "Timeout"),
     ];
 
     let skip = |enum_name: &str| -> bool {

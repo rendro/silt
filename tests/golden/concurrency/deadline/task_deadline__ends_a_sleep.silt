@@ -1,0 +1,17 @@
+-- repeat: 5
+-- timeout: 10
+-- A function that has not returned when its deadline has passed is
+-- ended, and `task.deadline` gives `Err(Timeout)`: on the program's own
+-- thread and in a task. This sleep would last an hour.
+import task
+import time
+
+fn main() {
+  println(task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) }))
+  let inside = task.spawn { -> task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) }) }
+  println(task.join(inside))
+  match task.deadline(time.ms(0), { -> time.sleep(time.hours(1)) }) {
+    Err(task.Timeout) -> println("no time at all: Timeout")
+    other -> println(other)
+  }
+}

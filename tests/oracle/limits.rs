@@ -218,6 +218,80 @@ fn main() {
 /// scheduler's own, and one step.
 const SLICES: [Option<usize>; 3] = [None, Some(2000), Some(1)];
 
+/// `task.deadline` ends its function at every time slice, whatever the
+/// function waits for when its time is up: a sleep, a channel, a join,
+/// a wait deep inside a callback of a builtin or a stage of a stream;
+/// and a function that never waits at all, where tasks have a time
+/// slice. And a function that returns in time is `Ok` of its value at
+/// every slice.
+#[test]
+fn a_deadline_ends_its_function_at_every_slice() {
+    let doors = [
+        ("a sleep", "time.sleep(time.hours(1))"),
+        ("a receive", "channel.receive(never)"),
+        ("a send", "channel.send(never, 1)"),
+        (
+            "a join",
+            "task.join(task.spawn({ -> channel.receive(never) }))",
+        ),
+        (
+            "inside a callback",
+            "list.fold([1, 2], 0) { acc, i -> acc + recv(never) }",
+        ),
+        (
+            "inside a stream stage",
+            "stream.from_list([1, 2]) |> stream.map { x -> x + recv(never) } |> stream.collect",
+        ),
+        (
+            "an inner deadline that is longer",
+            "task.deadline(time.hours(1), { -> time.sleep(time.hours(1)) })",
+        ),
+    ];
+    let program = |door: &str, dur: &str| {
+        format!(
+            "import channel\nimport list\nimport stream\nimport task\nimport time\n\n\
+             fn recv(ch) {{\n  match channel.receive(ch) {{\n    channel.Message(v) -> v\n    _ -> 0\n  }}\n}}\n\n\
+             fn count(n, acc) {{\n  match n {{\n    0 -> acc\n    _ -> count(n - 1, acc + 1)\n  }}\n}}\n\n\
+             fn main() {{\n  let never: Channel(Int) = channel.new(0)\n  \
+             match task.deadline({dur}, {{ -> {door} }}) {{\n    \
+             Ok(_) -> \"returned\"\n    Err(task.Timeout) -> \"timeout\"\n    Err(_) -> \"other\"\n  }}\n}}\n"
+        )
+    };
+    let at_each = |slices: &[Option<usize>], what: &str, source: &str, expected: &str| {
+        for slice in slices.iter().copied() {
+            let (result, _) = run_with(source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            assert_eq!(
+                result,
+                Ok(Value::String(expected.into())),
+                "{what} at slice {slice:?}"
+            );
+        }
+    };
+    for (what, door) in doors {
+        at_each(&SLICES, what, &program(door, "time.ms(20)"), "timeout");
+    }
+    // A function that never waits is ended where its time slice ends:
+    // with slices, that is. (A VM that runs its tasks without a time
+    // slice lets such a function run to its next wait; the caller has
+    // its `Err(Timeout)` on time all the same.)
+    at_each(
+        &[Some(2000), Some(1)],
+        "a function that only computes",
+        &program("count(2000000000, 0)", "time.ms(20)"),
+        "timeout",
+    );
+    at_each(
+        &SLICES,
+        "a function that returns in time",
+        &program("count(1000, 0)", "time.hours(1)"),
+        "returned",
+    );
+}
+
 /// A send on a closed channel is one error at every time slice,
 /// whichever function was to send and wherever the call stands: on the
 /// program's own thread, in a task, inside a callback of a builtin,
