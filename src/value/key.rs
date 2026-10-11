@@ -172,10 +172,9 @@ impl<'a> Head<'a> {
                 ty.hash(state);
                 ordinal.hash(state);
             }
-            Head::Channel(id)
-            | Head::Handle(id)
-            | Head::TcpListener(id)
-            | Head::TcpStream(id) => id.hash(state),
+            Head::Channel(id) | Head::Handle(id) | Head::TcpListener(id) | Head::TcpStream(id) => {
+                id.hash(state)
+            }
             Head::Bytes(bytes) => {
                 bytes.len().hash(state);
                 state.write(bytes);
@@ -201,10 +200,13 @@ impl<'a> RecordType<'a> {
         if std::ptr::eq(self.0, other.0) {
             return Ordering::Equal;
         }
-        self.0.id.cmp(&other.0.id).then_with(|| match self.0.is_anon() {
-            true => self.names().cmp(other.names()),
-            false => Ordering::Equal,
-        })
+        self.0
+            .id
+            .cmp(&other.0.id)
+            .then_with(|| match self.0.is_anon() {
+                true => self.names().cmp(other.names()),
+                false => Ordering::Equal,
+            })
     }
 }
 
