@@ -15,10 +15,21 @@
 //! casing or formatting accepted by the underlying parser (hyphenated,
 //! braced, urn-prefixed, simple/32-char).
 
-use super::common::{err, ok};
+use super::common::ok;
 use super::typed::builtins;
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::Vm;
+
+/// What `UuidError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("Invalid", [Value::String(why)]) => format!("invalid uuid: {why}"),
+        ("Other", [Value::String(m)]) => m.to_string(),
+        _ => return None,
+    })
+}
 
 /// A version 7 UUID whose timestamp is the host clock's time. The VM's
 /// counter keeps the UUIDs minted within a millisecond in order.
@@ -54,11 +65,17 @@ builtins! {
     /// Validates and canonicalizes a UUID string. Accepts any form the
     /// underlying parser understands (hyphenated, simple/32-char,
     /// braced, urn-prefixed) and returns the lowercase hyphenated
-    /// canonical form on success, `Err(msg)` on malformed input.
+    /// canonical form on success, `Err(Invalid(why))` on malformed input.
     fn parse(s: &str) -> Value {
         match ::uuid::Uuid::parse_str(s) {
             Ok(u) => ok(Value::String(u.hyphenated().to_string().into())),
-            Err(e) => err(format!("invalid uuid: {e}")),
+            Err(e) => Value::variant(
+                bv::ERR,
+                vec![Value::variant(
+                    bv::UUID_INVALID,
+                    vec![Value::String(e.to_string().into())],
+                )],
+            ),
         }
     }
 

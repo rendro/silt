@@ -361,6 +361,9 @@ pub mod ty {
     pub const ANON_RECORD: TypeId = TypeId(DefId(31));
     pub const NOTIFICATION: TypeId = TypeId(DefId(32));
     pub const FLOAT_ERROR: TypeId = TypeId(DefId(33));
+    pub const CRYPTO_ERROR: TypeId = TypeId(DefId(34));
+    pub const ENCODING_ERROR: TypeId = TypeId(DefId(35));
+    pub const UUID_ERROR: TypeId = TypeId(DefId(36));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -424,6 +427,13 @@ pub mod bv {
     pub const FLOAT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 2);
     pub const FLOAT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 3);
     pub const FLOAT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
+    pub const CRYPTO_INVALID_LENGTH: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 0);
+    pub const CRYPTO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 1);
+    pub const ENCODING_INVALID_PERCENT: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 0);
+    pub const ENCODING_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 1);
+    pub const ENCODING_OTHER: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 2);
+    pub const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
+    pub const UUID_OTHER: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 1);
     pub const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
     pub const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
     pub const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
@@ -508,6 +518,9 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "<anon>",
     "Notification",
     "FloatError",
+    "CryptoError",
+    "EncodingError",
+    "UuidError",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -822,6 +835,13 @@ mod tests {
             (bv::FLOAT_OVERFLOW, "Overflow"),
             (bv::FLOAT_UNDERFLOW, "Underflow"),
             (bv::FLOAT_OTHER, "Other"),
+            (bv::CRYPTO_INVALID_LENGTH, "InvalidLength"),
+            (bv::CRYPTO_OTHER, "Other"),
+            (bv::ENCODING_INVALID_PERCENT, "InvalidPercent"),
+            (bv::ENCODING_INVALID_UTF8, "InvalidUtf8"),
+            (bv::ENCODING_OTHER, "Other"),
+            (bv::UUID_INVALID, "Invalid"),
+            (bv::UUID_OTHER, "Other"),
             (bv::HTTP_CONNECT, "Connect"),
             (bv::HTTP_TLS, "Tls"),
             (bv::HTTP_TIMEOUT, "Timeout"),

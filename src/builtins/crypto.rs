@@ -23,8 +23,9 @@ use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
 
-use super::common::{err, ok};
+use super::common::ok;
 use super::typed::{Bytes, builtins};
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
@@ -32,6 +33,25 @@ use crate::vm::VmError;
 /// cap documented in `docs/stdlib/crypto.md`; this is a sanity guard against accidental giant allocations, not a
 /// security boundary.
 const RANDOM_BYTES_CAP: i64 = 1_048_576;
+
+/// What `CryptoError`'s `message` says of the variant `tag` with
+/// `fields`: `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("InvalidLength", [Value::Int(n)]) if *n < 0 => {
+            format!("crypto.random_bytes: a length must not be negative: {n}")
+        }
+        ("InvalidLength", [Value::Int(n)]) => {
+            format!("crypto.random_bytes: {n} bytes exceed the cap of {RANDOM_BYTES_CAP} (1 MiB)")
+        }
+        ("Other", [Value::String(m)]) => m.to_string(),
+        _ => return None,
+    })
+}
+
+fn crypto_err(variant: Value) -> Value {
+    Value::variant(bv::ERR, vec![variant])
+}
 
 builtins! {
     // ── Hashes ─────────────────────────────────────────────────────────
@@ -83,15 +103,16 @@ builtins! {
     // ── CSPRNG ─────────────────────────────────────────────────────────
 
     fn random_bytes(n: i64) -> Value {
-        if n < 0 {
-            return err("n must be non-negative");
-        }
-        if n > RANDOM_BYTES_CAP {
-            return err("n exceeds 1 MiB cap");
+        if !(0..=RANDOM_BYTES_CAP).contains(&n) {
+            return crypto_err(Value::variant(bv::CRYPTO_INVALID_LENGTH, vec![Value::Int(n)]));
         }
         let mut buf = vec![0u8; n as usize];
         if let Err(e) = getrandom::getrandom(&mut buf) {
-            return err(format!("CSPRNG failure: {e}"));
+            let text = format!("CSPRNG failure: {e}");
+            return crypto_err(Value::variant(
+                bv::CRYPTO_OTHER,
+                vec![Value::String(text.into())],
+            ));
         }
         ok(Value::Bytes(Arc::new(buf)))
     }

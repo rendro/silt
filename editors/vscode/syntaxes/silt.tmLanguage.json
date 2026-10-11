@@ -117,11 +117,11 @@
     },
     "primitives": {
       "name": "support.type.primitive.silt",
-      "match": "\\b(Int|Float|Bool|String|Unit|List|Map|Set|Channel|Tuple|Fn|Fun|Handle|Bytes|TcpListener|TcpStream|FileStat|Instant|Date|Time|DateTime|Duration|Weekday|Method|Response|Request|IoError|JsonError|TomlError|IntError|FloatError|HttpError|RegexError|TimeError|BytesError|PostgresError|TcpError)\\b"
+      "match": "\\b(Int|Float|Bool|String|Unit|List|Map|Set|Channel|Tuple|Fn|Fun|Handle|Bytes|TcpListener|TcpStream|FileStat|Instant|Date|Time|DateTime|Duration|Weekday|Method|Response|Request|IoError|JsonError|TomlError|IntError|FloatError|HttpError|RegexError|TimeError|BytesError|PostgresError|TcpError|EncodingError|CryptoError|UuidError)\\b"
     },
     "constructors": {
       "name": "constant.language.constructor.silt",
-      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty|Sent|Recv|Send|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|NotFound|PermissionDenied|AlreadyExists|InvalidInput|Interrupted|UnexpectedEof|WriteZero|Other|Syntax|TypeMismatch|MissingField|InvalidDigit|Overflow|Underflow|Connect|Tls|Timeout|InvalidUrl|InvalidResponse|ClosedEarly|StatusCode|InvalidPattern|TooBig|AuthFailed|Query|NoSuchColumn|TxnAborted|ParseFormat|OutOfRange|InvalidUtf8|InvalidHex|InvalidBase64|ByteOutOfRange|OutOfBounds)\\b"
+      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty|Sent|Recv|Send|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|NotFound|PermissionDenied|AlreadyExists|InvalidInput|Interrupted|UnexpectedEof|WriteZero|Other|Syntax|TypeMismatch|MissingField|InvalidDigit|Overflow|Underflow|Connect|Tls|Timeout|InvalidUrl|InvalidResponse|ClosedEarly|StatusCode|InvalidPattern|TooBig|AuthFailed|Query|NoSuchColumn|TxnAborted|ParseFormat|OutOfRange|InvalidUtf8|InvalidHex|InvalidBase64|ByteOutOfRange|OutOfBounds|InvalidPercent|InvalidLength|Invalid)\\b"
     },
     "builtins": {
       "name": "support.function.builtin.silt",

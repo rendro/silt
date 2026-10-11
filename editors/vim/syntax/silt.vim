@@ -20,7 +20,7 @@ syntax keyword siltType Int Float Bool String Unit List Map Set Channel Tuple Fn
 " (`silt::module::builtin_module_types`). Lock test at
 " tests/meta/editor_grammar_primitives_tests.rs.
 syntax keyword siltType FileStat Instant Date Time DateTime Duration Weekday Method Response Request
-syntax keyword siltType IoError JsonError TomlError IntError FloatError HttpError RegexError TimeError BytesError PostgresError TcpError
+syntax keyword siltType IoError JsonError TomlError IntError FloatError HttpError RegexError TimeError BytesError PostgresError TcpError EncodingError CryptoError UuidError
 
 " ── Builtins ────────────────────────────────────────────────────────
 syntax keyword siltBuiltin print println panic
@@ -35,6 +35,7 @@ syntax keyword siltConstructor InvalidPattern TooBig
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor ParseFormat OutOfRange
 syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange OutOfBounds
+syntax keyword siltConstructor InvalidPercent InvalidLength Invalid
 
 " ── Module names (before the dot) ───────────────────────────────────
 syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\|toml\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\)\>\ze\."

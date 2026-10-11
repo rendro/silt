@@ -34,7 +34,7 @@ beforehand if length privacy matters for your protocol.
 | `blake2b` | `(Bytes) -> Bytes` | BLAKE2b-512 digest (64 bytes), RFC 7693 |
 | `hmac_sha256` | `(Bytes, Bytes) -> Bytes` | HMAC-SHA256 over `(key, msg)` (32 bytes) |
 | `hmac_sha512` | `(Bytes, Bytes) -> Bytes` | HMAC-SHA512 over `(key, msg)` (64 bytes) |
-| `random_bytes` | `(Int) -> Result(Bytes, String)` | OS CSPRNG, `0..=1_048_576` bytes |
+| `random_bytes` | `(Int) -> Result(Bytes, CryptoError)` | OS CSPRNG, `0..=1_048_576` bytes |
 | `constant_time_eq` | `(Bytes, Bytes) -> Bool` | Timing-safe comparison (lengths leak) |
 
 ## Examples
@@ -71,11 +71,13 @@ fn main() {
 ## Errors
 
 Only `random_bytes` is fallible at the type level — the others are
-total functions over their `Bytes` inputs.
+total functions over their `Bytes` inputs. It returns
+`Result(Bytes, CryptoError)`:
 
-| Operation | Error condition |
-|-----------|-----------------|
-| `random_bytes` | `n < 0` ("n must be non-negative"); `n > 1_048_576` ("n exceeds 1 MiB cap"); OS CSPRNG failure |
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `InvalidLength(Int)` | the length asked for | `n < 0` or `n > 1_048_576` |
+| `Other(String)` | message | the OS CSPRNG failed |
 
 ## Notes
 

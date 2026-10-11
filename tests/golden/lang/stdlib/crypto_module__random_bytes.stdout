@@ -1,5 +1,5 @@
 0
 32
 equal draws: false
-n must be non-negative
-n exceeds 1 MiB cap
+crypto.random_bytes: a length must not be negative: -1
+crypto.random_bytes: 2000000 bytes exceed the cap of 1048576 (1 MiB)

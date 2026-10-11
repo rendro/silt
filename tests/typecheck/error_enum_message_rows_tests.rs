@@ -46,6 +46,9 @@ fn every_builtin_error_enum_has_a_message_row() {
         ("PostgresError", "postgres", r#"Connect("x")"#),
         ("BytesError", "bytes", "InvalidUtf8(0)"),
         ("TcpError", "tcp", r#"Connect("x")"#),
+        ("CryptoError", "crypto", "InvalidLength(-1)"),
+        ("EncodingError", "encoding", r#"InvalidPercent("x")"#),
+        ("UuidError", "uuid", r#"Invalid("x")"#),
     ];
 
     let skip = |enum_name: &str| -> bool {

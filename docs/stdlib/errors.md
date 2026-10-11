@@ -151,6 +151,34 @@ its own (`float.Empty` is not `int.Empty`).
 | `OutOfBounds(Int)` | index | slice or get index out of bounds |
 | `Other(String)` | message | unclassified failure |
 
+### `EncodingError` (requires `import encoding`)
+
+Returned by `encoding.url_decode` and `encoding.form_decode`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `InvalidPercent(String)` | what and where | a `%` that two hex digits do not follow |
+| `InvalidUtf8(String)` | where | decoded bytes are not valid UTF-8 |
+| `Other(String)` | message | unclassified failure |
+
+### `CryptoError` (requires `import crypto`)
+
+Returned by `crypto.random_bytes`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `InvalidLength(Int)` | the length asked for | negative, or above the 1 MiB cap |
+| `Other(String)` | message | the OS CSPRNG failed |
+
+### `UuidError` (requires `import uuid`)
+
+Returned by `uuid.parse`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Invalid(String)` | why | not a syntactically valid UUID |
+| `Other(String)` | message | unclassified failure |
+
 ### `RegexError` (requires `import regex`)
 
 Constructible by user code. Stdlib `regex.*` functions do not return
@@ -163,16 +191,6 @@ at the call site rather than through `Err`.
 | `InvalidPattern(String, Int)` | message, byte offset | pattern did not parse |
 | `TooBig` | — | compiled pattern exceeded size budget |
 | `Other(String)` | message | unclassified failure |
-
-## Stdlib functions that return `Result(T, String)`
-
-A handful of fallible stdlib functions surface their error as a plain
-`String` rather than a typed enum — the failure modes are not diverse
-enough to benefit from a richer taxonomy:
-
-- `encoding.url_decode`, `encoding.form_decode`
-- `crypto.random_bytes`
-- `uuid.parse`
 
 ## Example: user-side pattern matching
 

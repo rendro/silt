@@ -518,6 +518,10 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "crypto",
             page: "crypto.md",
+            types: "\
+                pub type CryptoError { InvalidLength(Int), Other(String) }\n\
+            ",
+            error: "CryptoError" => crypto::error_text,
             rows: [
                 f("fn sha256(data: Bytes) -> Bytes", "SHA-256 digest (32 bytes)", crypto::sha256),
                 f("fn sha512(data: Bytes) -> Bytes", "SHA-512 digest (64 bytes)", crypto::sha512),
@@ -525,18 +529,22 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn blake2b(data: Bytes) -> Bytes", "BLAKE2b-512 digest (64 bytes), RFC 7693", crypto::blake2b),
                 f("fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes", "HMAC-SHA256 over `(key, msg)` (32 bytes)", crypto::hmac_sha256),
                 f("fn hmac_sha512(key: Bytes, msg: Bytes) -> Bytes", "HMAC-SHA512 over `(key, msg)` (64 bytes)", crypto::hmac_sha512),
-                f("fn random_bytes(n: Int) -> Result(Bytes, String)", "OS CSPRNG, `0..=1_048_576` bytes", crypto::random_bytes),
+                f("fn random_bytes(n: Int) -> Result(Bytes, CryptoError)", "OS CSPRNG, `0..=1_048_576` bytes", crypto::random_bytes),
                 f("fn constant_time_eq(a: Bytes, b: Bytes) -> Bool", "Timing-safe comparison (lengths leak)", crypto::constant_time_eq),
             ],
         },
         module! {
             name: "encoding",
             page: "encoding.md",
+            types: "\
+                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String), Other(String) }\n\
+            ",
+            error: "EncodingError" => encoding::error_text,
             rows: [
                 f("fn url_encode(s: String) -> String", "Percent-encode per RFC 3986 (unreserved = `ALPHA` / `DIGIT` / `-._~`)", encoding::url_encode),
-                f("fn url_decode(s: String) -> Result(String, String)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding", encoding::url_decode),
+                f("fn url_decode(s: String) -> Result(String, EncodingError)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding", encoding::url_decode),
                 f("fn form_encode(pairs: List((String, String))) -> String", "Build an `application/x-www-form-urlencoded` body", encoding::form_encode),
-                f("fn form_decode(body: String) -> Result(List((String, String)), String)", "Parse an `application/x-www-form-urlencoded` body into pairs", encoding::form_decode),
+                f("fn form_decode(body: String) -> Result(List((String, String)), EncodingError)", "Parse an `application/x-www-form-urlencoded` body into pairs", encoding::form_decode),
             ],
         },
         module! {
@@ -604,10 +612,14 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "uuid",
             page: "uuid.md",
+            types: "\
+                pub type UuidError { Invalid(String), Other(String) }\n\
+            ",
+            error: "UuidError" => uuid::error_text,
             rows: [
                 f("fn v4() -> String", "Random UUID (version 4, CSPRNG-backed)", uuid::v4),
                 f("fn v7() -> String", "Time-ordered UUID (version 7, RFC 9562)", uuid::v7),
-                f("fn parse(s: String) -> Result(String, String)", "Validate + canonicalize any-version UUID", uuid::parse),
+                f("fn parse(s: String) -> Result(String, UuidError)", "Validate + canonicalize any-version UUID", uuid::parse),
                 f("fn nil() -> String", "The all-zero UUID sentinel", uuid::nil),
                 f("fn is_valid(s: String) -> Bool", "Predicate form of `parse`", uuid::is_valid),
             ],

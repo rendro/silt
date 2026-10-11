@@ -1,7 +1,5 @@
 //! Shared helper functions used by several builtin modules.
 
-use std::sync::Arc;
-
 use crate::typeinfo::bv;
 use crate::value::Value;
 
@@ -14,10 +12,6 @@ pub(crate) const READ_AT_ONCE: usize = 64 * 1024;
 
 pub(crate) fn ok(v: Value) -> Value {
     Value::variant(bv::OK, vec![v])
-}
-
-pub(super) fn err(s: impl Into<Arc<str>>) -> Value {
-    Value::variant(bv::ERR, vec![Value::String(s.into())])
 }
 
 /// Convert a 4-bit nibble (0..=15) to its ASCII hex character.
