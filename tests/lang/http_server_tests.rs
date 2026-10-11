@@ -1278,3 +1278,174 @@ fn a_last_word_waits_its_turn_behind_the_interim_response() {
     assert_eq!(client.response().status, 408);
     assert_eq!(client.rest(), b"");
 }
+
+/// The head of a request is not there in time: the server answers 408,
+/// ends its writes, and hears the client out. The rest of the head
+/// comes then, and it asks for `100 Continue`. The system takes
+/// nothing of an interim response any more, and none is needed: it is
+/// skipped, the request is read on, and the client is still heard out.
+/// (A server for which an interim response that cannot be written is
+/// the end of the connection stops hearing here.)
+///
+/// The body is sent when the server has had its try at the interim
+/// response, which the hook of the writes tells: a body that is there
+/// with the end of the head is not waited with, and nothing is tried.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn an_interim_response_that_the_system_does_not_take_is_skipped() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicBool;
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    let head = format!(
+        "POST /late HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {}\r\n",
+        2 * 1024 * 1024
+    );
+    let patience = Instant::now() + PATIENCE;
+    let mut client = loop {
+        assert!(
+            Instant::now() < patience,
+            "a head that stops is never answered"
+        );
+        let mut client = server.connect();
+        client.send(head.as_bytes());
+        // The clock goes on until the server makes its answer (it
+        // asks for the date), and stands from then: at most one step
+        // later, well within the time for which the client is heard.
+        let asked = clock.asked();
+        while clock.asked() == asked && !client.has_word() {
+            assert!(
+                Instant::now() < patience,
+                "a head that stops is waited for without end"
+            );
+            clock.advance(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(2));
+        }
+        // (A connection whose time was over before the server had
+        // read a byte of the head is closed without a word: again.)
+        if clock.asked() != asked {
+            break client;
+        }
+    };
+    assert_eq!(client.response().status, 408);
+    // The server has ended its writes.
+    assert_eq!(client.rest(), b"");
+    // The head is complete now, and the client waits for an interim
+    // response that cannot come.
+    let this = client.0.get_ref().local_addr().expect("the client's end");
+    let tried = Arc::new(AtomicBool::new(false));
+    let trying = tried.clone();
+    let _watching = watch_writes(move |conn, moment| {
+        if conn.peer_addr().ok() == Some(this) && moment == WriteMoment::Written {
+            trying.store(true, Ordering::SeqCst);
+        }
+    });
+    client.send(b"\r\n");
+    while !tried.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < patience,
+            "the server did not go on with the request"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    // The body is taken all the same.
+    for _ in 0..4096 {
+        let taken = client.0.get_mut().write_all(&[b'b'; 256]);
+        assert!(
+            taken.is_ok(),
+            "the server stopped hearing a client out when it could not write the interim response"
+        );
+    }
+}
+
+/// A client keeps its connection, asks for a response that is larger
+/// than what the system takes for a client that does not read, and has
+/// its next request there already, which asks for `100 Continue`. When
+/// the server comes to that request, the system may take nothing of
+/// the interim response (its buffer still holds the end of the first
+/// response): the request is served all the same, and the client gets
+/// both responses. Only a part of an interim response on the
+/// connection ends it.
+///
+/// The client does not wait for the interim response, but it sends
+/// the body only when the server has had its try at one (the hook of
+/// the writes tells): a body that is there with the head is not asked
+/// for, and nothing is tried. How much the system takes then is the
+/// system's to say; the test holds for each of the three.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_request_behind_a_response_that_is_not_read_is_served() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicUsize;
+    // More than the system takes in for a client that reads nothing.
+    const LENGTH: usize = 64_000_000;
+    let server = Server::new(
+        r#"match req.path {
+        "/big" -> {
+          let part = string.repeat("x", 8000000)
+          http.Response { status: 200, body: "{part}{part}{part}{part}{part}{part}{part}{part}", headers: #{} }
+        }
+        _ -> http.Response { status: 200, body: "{req.path} [{req.body}]", headers: #{} }
+      }"#,
+    );
+    let mut client = server.connect();
+    let this = client.0.get_ref().local_addr().expect("the client's end");
+    // The writes of the connection's own: the first response's
+    // beginning, then the try at the interim response.
+    let writes = Arc::new(AtomicUsize::new(0));
+    let written = writes.clone();
+    let _watching = watch_writes(move |conn, moment| {
+        if conn.peer_addr().ok() == Some(this) && moment == WriteMoment::Written {
+            written.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    client.send(b"GET /big HTTP/1.1\r\nHost: x\r\n\r\n");
+    client.send(
+        b"POST /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+    );
+    // The client takes of the first response what the server needs it
+    // to take, and no more: until the server has come to the second
+    // request and tried to write the interim response.
+    let (status, headers) = client.head();
+    assert_eq!(status, 200);
+    assert!(headers.contains(&format!("Content-Length: {LENGTH}")));
+    let patience = Instant::now() + PATIENCE;
+    let mut left = LENGTH;
+    let mut piece = vec![0u8; 4096];
+    while writes.load(Ordering::SeqCst) < 2 {
+        assert!(
+            Instant::now() < patience,
+            "the server did not come to the second request"
+        );
+        match left {
+            0 => thread::sleep(Duration::from_millis(1)),
+            _ => {
+                let n = piece.len().min(left);
+                client.0.read_exact(&mut piece[..n]).expect("the body");
+                left -= n;
+            }
+        }
+    }
+    // Not waiting for the interim response: the rest of the first
+    // response, the body, and everything that comes.
+    let mut rest = vec![0u8; left];
+    client
+        .0
+        .read_exact(&mut rest)
+        .expect("the rest of the body");
+    assert!(rest.iter().all(|byte| *byte == b'x'));
+    let _ = client.0.get_mut().write_all(b"body");
+    let all = client.rest();
+    let interim: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+    let a_part_of_it = !all.is_empty() && all.len() < interim.len() && interim.starts_with(&all);
+    if a_part_of_it {
+        // The connection ended behind the part, as it must.
+        return;
+    }
+    let second = all.strip_prefix(interim).unwrap_or(&all);
+    let second = String::from_utf8_lossy(second);
+    assert!(
+        second.starts_with("HTTP/1.1 200 ") && second.ends_with("/next [body]"),
+        "the second request was not served: {second:?}"
+    );
+}

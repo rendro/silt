@@ -16,7 +16,7 @@ use super::typed::{Arg, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
 use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
-use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
 use crate::runtime::sync::{Arm, Cell, Fired, Wait};
 #[cfg(feature = "http")]
@@ -856,16 +856,25 @@ impl Conn {
                     // the system takes at once. The task may have its
                     // last word to say meanwhile, and waits for this
                     // write to say it. A client that waits takes these
-                    // bytes at once; where the system does not take
-                    // all of them (a client that sent requests ahead
-                    // and reads nothing), half an interim response
-                    // would stand before whatever came next: the
-                    // connection ends here.
-                    match !waits || stream.write_whole_in_turn(wire::CONTINUE) {
-                        true => Ok(()),
-                        false => Err(std::io::Error::other(
-                            "the client did not take the interim response",
-                        )),
+                    // bytes at once. Where the system takes none of
+                    // them (its buffer is full of earlier responses
+                    // that the client has not read, or the task has
+                    // ended the writes), nothing stands on the
+                    // connection and nothing is owed: a server may
+                    // leave the interim response out, and the request
+                    // is read on. Where it takes a part of them, half
+                    // an interim response would stand before whatever
+                    // came next: the connection has been shut down
+                    // (`write_whole_in_turn`), and the request ends
+                    // here.
+                    match waits {
+                        false => Ok(()),
+                        true => match stream.write_whole_in_turn(wire::CONTINUE) {
+                            Taken::All | Taken::Nothing => Ok(()),
+                            Taken::Part => Err(std::io::Error::other(
+                                "the client took a part of the interim response",
+                            )),
+                        },
                     }
                 };
                 let next = reader.lock().next(&mut before_body);

@@ -389,6 +389,17 @@ impl TcpListenerHandle {
 /// On the loopback interface it is made at once.
 const WAKE_CONNECT_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// What the system took of bytes that are written whole or not at all
+/// ([`TcpStreamHandle::write_whole_in_turn`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Taken {
+    All,
+    /// None of them: nothing stands on the connection.
+    Nothing,
+    /// Some of them: the connection was shut down behind them.
+    Part,
+}
+
 /// A connection.
 ///
 /// A plain TCP connection is read and written at the same time: a
@@ -610,12 +621,18 @@ impl TcpStreamHandle {
     }
 
     /// [`TcpStreamHandle::write_in_turn`] for bytes that mean nothing
-    /// in part (an interim response): whether the system took all of
-    /// them. If it did not, the connection is shut down before the
-    /// turn passes on: who writes next writes nothing, and not
-    /// something behind a part.
-    pub fn write_whole_in_turn(&self, bytes: &[u8]) -> bool {
-        self.write_at_once(bytes, true) == bytes.len()
+    /// in part and need not be written at all (an interim response):
+    /// what the system took of them. If it took a part, the
+    /// connection is shut down before the turn passes on: who writes
+    /// next writes nothing, and not something behind a part. If it
+    /// took nothing, nothing of them stands on the connection, which
+    /// is as it was.
+    pub fn write_whole_in_turn(&self, bytes: &[u8]) -> Taken {
+        match self.write_at_once(bytes, true) {
+            0 => Taken::Nothing,
+            taken if taken == bytes.len() => Taken::All,
+            _ => Taken::Part,
+        }
     }
 
     fn write_at_once(&self, bytes: &[u8], whole: bool) -> usize {
@@ -636,13 +653,10 @@ impl TcpStreamHandle {
                 writing.lock()
             }
         };
+        let mut written = 0;
         // Asked in its turn: a connection that the writer before shut
         // down is closed for this one.
-        if self.is_closed() {
-            return 0;
-        }
-        let mut written = 0;
-        while written < bytes.len() {
+        while written < bytes.len() && !self.is_closed() {
             match send_now(socket, switching, &bytes[written..]) {
                 Ok(0) => break,
                 Ok(n) => written += n,
@@ -650,7 +664,7 @@ impl TcpStreamHandle {
                 Err(_) => break,
             }
         }
-        if whole && written < bytes.len() {
+        if whole && (1..bytes.len()).contains(&written) {
             self.shut_down();
         }
         #[cfg(any(test, feature = "test-hooks"))]
@@ -1190,40 +1204,64 @@ mod tests {
         assert_eq!(rest, b"second");
     }
 
-    /// Bytes that mean nothing in part are written whole, or the
-    /// connection ends with them: when the system takes no more for a
-    /// peer that reads nothing, the write says so, the connection is
-    /// closed for every writer that comes after, and the peer reads
-    /// what was written up to there and then the end.
+    /// Bytes that mean nothing in part are written whole or not at
+    /// all, or the connection ends with them. Whole chunks go to a
+    /// peer that reads nothing until the system does not take one. If
+    /// it took a part of that one, the connection is closed for every
+    /// writer that comes after, and the peer reads the chunks, the
+    /// part, and the end. If it took nothing, the connection is as it
+    /// was: the peer reads the chunks, and what is written then.
+    /// (Which of the two it is, is the system's to say.)
     #[test]
-    fn what_is_not_written_whole_ends_the_connection() {
+    fn what_is_not_written_whole_is_not_written_or_ends_the_connection() {
         use std::io::Read;
+        let patience = std::time::Duration::from_secs(60);
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        peer.set_read_timeout(Some(patience)).expect("read timeout");
         let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
         let chunk = vec![b'w'; 64 * 1024];
         let mut whole = 0;
-        while conn.write_whole_in_turn(&chunk) {
-            whole += 1;
+        let last = loop {
+            match conn.write_whole_in_turn(&chunk) {
+                Taken::All => whole += 1,
+                last => break last,
+            }
             assert!(
                 whole < 10_000,
                 "64 KiB x 10,000 were taken for a peer that reads nothing"
             );
+        };
+        if last == Taken::Part {
+            assert!(conn.is_closed());
+            assert_eq!(conn.write_in_turn(b"behind the part"), 0);
+            assert_eq!(conn.write_whole_in_turn(b"behind the part"), Taken::Nothing);
+            let mut all = Vec::new();
+            peer.read_to_end(&mut all).expect("the end");
+            assert!(
+                (whole * chunk.len() + 1..(whole + 1) * chunk.len()).contains(&all.len()),
+                "{} bytes after {whole} whole chunks",
+                all.len()
+            );
+            assert!(all.iter().all(|byte| *byte == b'w'));
+            return;
         }
-        assert!(conn.is_closed());
-        assert_eq!(conn.write_in_turn(b"behind the part"), 0);
-        assert!(!conn.write_whole_in_turn(b"behind the part"));
-        // The whole chunks, a part of the last one, and nothing more.
-        peer.set_read_timeout(Some(std::time::Duration::from_secs(60)))
-            .expect("read timeout");
-        let mut all = Vec::new();
-        peer.read_to_end(&mut all).expect("the end");
-        assert!(
-            (whole * chunk.len()..(whole + 1) * chunk.len()).contains(&all.len()),
-            "{} bytes after {whole} whole chunks",
-            all.len()
-        );
-        assert!(all.iter().all(|byte| *byte == b'w'));
+        assert!(!conn.is_closed());
+        let mut chunks = vec![0u8; whole * chunk.len()];
+        peer.read_exact(&mut chunks).expect("the whole chunks");
+        // The system has room again when the peer has read.
+        let limit = std::time::Instant::now() + patience;
+        while conn.write_whole_in_turn(b"then") != Taken::All {
+            assert!(!conn.is_closed(), "a part of four bytes was taken");
+            assert!(
+                std::time::Instant::now() < limit,
+                "nothing is taken for a peer that has read everything"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let mut then = [0u8; 4];
+        peer.read_exact(&mut then).expect("what was written then");
+        assert_eq!(&then, b"then");
     }
 
     /// The form for systems without a call that does not wait: the
