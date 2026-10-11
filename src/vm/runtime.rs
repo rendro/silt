@@ -707,10 +707,19 @@ impl Runtime {
         if self.steps_left.load(Relaxed) == u64::MAX {
             return Ok(());
         }
-        let take = |left: u64| Some(left.saturating_sub(used as u64));
-        match self.steps_left.fetch_update(Relaxed, Relaxed, take) {
-            Ok(left) if left > used as u64 => Ok(()),
-            _ => Err(VmError::budget_used_up()),
+        let used = used as u64;
+        let mut left = self.steps_left.load(Relaxed);
+        // (A loop of its own: `fetch_update` is deprecated on newer
+        // toolchains, and its new name is not on older ones.)
+        while let Err(now) =
+            self.steps_left
+                .compare_exchange_weak(left, left.saturating_sub(used), Relaxed, Relaxed)
+        {
+            left = now;
+        }
+        match left > used {
+            true => Ok(()),
+            false => Err(VmError::budget_used_up()),
         }
     }
 
