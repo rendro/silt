@@ -49,7 +49,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "io",
             page: "io-fs.md",
             types: "\
-                pub type IoError { IoNotFound(String), IoPermissionDenied(String), IoAlreadyExists(String), IoInvalidInput(String), IoInterrupted, IoUnexpectedEof, IoWriteZero, IoUnknown(String) }\n\
+                pub type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }\n\
             ",
             error: "IoError" => io::error_text,
             rows: [
@@ -103,22 +103,25 @@ pub(super) fn modules() -> Vec<Module> {
             name: "int",
             page: "int-float.md",
             types: "\
-                pub type ParseError { ParseEmpty, ParseInvalidDigit(Int), ParseOverflow, ParseUnderflow }\n\
+                pub type IntError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
             ",
-            error: "ParseError" => numeric::error_text,
+            error: "IntError" => numeric::int_error_text,
             rows: [
                 f("fn abs(n: Int) -> Int", "Absolute value", int::abs),
                 f("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`", int::clamp),
                 f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),
                 f("fn min(a: Int, b: Int) -> Int", "Smaller of two values", int::min),
-                f("fn parse(s: String) -> Result(Int, ParseError)", "Parse string to integer", int::parse),
+                f("fn parse(s: String) -> Result(Int, IntError)", "Parse string to integer", int::parse),
                 f("fn to_float(n: Int) -> Float", "Convert to float", int::to_float),
             ],
         },
         module! {
             name: "float",
             page: "int-float.md",
-            shares: [("int", "ParseError")],
+            types: "\
+                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
+            ",
+            error: "FloatError" => numeric::float_error_text,
             rows: [
                 f("fn abs(f: Float) -> Float", "Absolute value", float::abs),
                 f("fn ceil(f: Float) -> Float", "Round up to nearest integer (as Float)", float::ceil),
@@ -127,7 +130,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn format(f: Float, decimals: Int) -> String", "Decimal text with that many decimal places", float::format),
                 f("fn max(a: Float, b: Float) -> Float", "Larger of two values", float::max),
                 f("fn min(a: Float, b: Float) -> Float", "Smaller of two values", float::min),
-                f("fn parse(s: String) -> Result(Float, ParseError)", "Parse string to float", float::parse),
+                f("fn parse(s: String) -> Result(Float, FloatError)", "Parse string to float", float::parse),
                 f("fn round(f: Float) -> Float", "Round to nearest integer (as Float)", float::round),
                 f("fn to_int(f: Float) -> Int", "Truncate to integer", float::to_int),
                 k("max_value: Float", "Maximum finite value (`1.7976931348623157e+308`)", f64::MAX),
@@ -277,7 +280,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "regex",
             page: "regex.md",
             types: "\
-                pub type RegexError { RegexInvalidPattern(String, Int), RegexTooBig }\n\
+                pub type RegexError { InvalidPattern(String, Int), TooBig, Other(String) }\n\
             ",
             error: "RegexError" => regex::error_text,
             rows: [
@@ -297,7 +300,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "json",
             page: "json.md",
             types: "\
-                pub type JsonError { JsonSyntax(String, Int), JsonTypeMismatch(String, String), JsonMissingField(String), JsonUnknown(String) }\n\
+                pub type JsonError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
             ",
             error: "JsonError" => json::error_text,
             rows: [
@@ -312,7 +315,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "toml",
             page: "toml.md",
             types: "\
-                pub type TomlError { TomlSyntax(String, Int), TomlTypeMismatch(String, String), TomlMissingField(String), TomlUnknown(String) }\n\
+                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
             ",
             error: "TomlError" => toml::error_text,
             rows: [
@@ -376,7 +379,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type DateTime { date: Date, time: Time }\n\
                 pub type Duration { ns: Int }\n\
                 pub type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\n\
-                pub type TimeError { TimeParseFormat(String), TimeOutOfRange(String) }\n\
+                pub type TimeError { ParseFormat(String), OutOfRange(String), Other(String) }\n\
             ",
             error: "TimeError" => time::error_text,
             rows: [
@@ -415,7 +418,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }\n\
                 pub type Response { status: Int, body: String, headers: Map(String, String) }\n\
                 pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: String }\n\
-                pub type HttpError { HttpConnect(String), HttpTls(String), HttpTimeout, HttpInvalidUrl(String), HttpInvalidResponse(String), HttpClosedEarly, HttpStatusCode(Int, String), HttpUnknown(String) }\n\
+                pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, StatusCode(Int, String), Other(String) }\n\
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError" => http::error_text,
@@ -464,31 +467,31 @@ pub(super) fn modules() -> Vec<Module> {
             feature: "postgres",
             page: "postgres.md",
             types: "\
-                pub type PgError { PgConnect(String), PgTls(String), PgAuthFailed(String), PgQuery(String, String), PgTypeMismatch(String, String, String), PgNoSuchColumn(String), PgClosed, PgTimeout, PgTxnAborted, PgUnknown(String) }\n\
+                pub type PostgresError { Connect(String), Tls(String), AuthFailed(String), Query(String, String), TypeMismatch(String, String, String), NoSuchColumn(String), Closed, Timeout, TxnAborted, Other(String) }\n\
                 pub type Notification { channel: String, payload: String, pid: Int }\n\
             ",
             opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("Value", 0)],
-            error: "PgError" => postgres::error_text,
+            error: "PostgresError" => postgres::error_text,
             rows: [
-                f("fn connect(url: String) -> Result(PgPool, PgError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
-                f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PgError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
-                f("fn query(conn: a, sql: String, params: List(Value)) -> Result(QueryResult, PgError)", "Run a SELECT-style statement and materialize rows", postgres::query),
-                f("fn execute(conn: a, sql: String, params: List(Value)) -> Result(ExecResult, PgError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
-                f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
+                f("fn connect(url: String) -> Result(PgPool, PostgresError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
+                f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PostgresError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
+                f("fn query(conn: a, sql: String, params: List(Value)) -> Result(QueryResult, PostgresError)", "Run a SELECT-style statement and materialize rows", postgres::query),
+                f("fn execute(conn: a, sql: String, params: List(Value)) -> Result(ExecResult, PostgresError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
+                f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
                 f("fn close(pool: PgPool) -> ()", "Drop the pool; future ops on it error", postgres::close),
-                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(Result(Map(String, Value), PgError)), PgError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
-                f("fn cursor(tx: PgTx, sql: String, params: List(Value), batch_size: Int) -> Result(PgCursor, PgError)", "Declare a server-side cursor with batch size", postgres::cursor),
-                f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, Value)), PgError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
-                f("fn cursor_close(cursor: PgCursor) -> Result((), PgError)", "Release a cursor and its underlying connection", postgres::cursor_close),
-                f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PgError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
-                f("fn notify(conn: a, channel: String, payload: String) -> Result((), PgError)", "NOTIFY a channel with a payload", postgres::notify),
+                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(Result(Map(String, Value), PostgresError)), PostgresError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
+                f("fn cursor(tx: PgTx, sql: String, params: List(Value), batch_size: Int) -> Result(PgCursor, PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor),
+                f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, Value)), PostgresError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
+                f("fn cursor_close(cursor: PgCursor) -> Result((), PostgresError)", "Release a cursor and its underlying connection", postgres::cursor_close),
+                f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
+                f("fn notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)", "NOTIFY a channel with a payload", postgres::notify),
             ],
         },
         module! {
             name: "bytes",
             page: "bytes.md",
             types: "\
-                pub type BytesError { BytesInvalidUtf8(Int), BytesInvalidHex(String), BytesInvalidBase64(String), BytesByteOutOfRange(Int), BytesOutOfBounds(Int) }\n\
+                pub type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int), OutOfBounds(Int), Other(String) }\n\
             ",
             error: "BytesError" => bytes::error_text,
             rows: [
@@ -541,13 +544,13 @@ pub(super) fn modules() -> Vec<Module> {
             feature: "tcp",
             page: "tcp.md",
             types: "\
-                pub type TcpError { TcpConnect(String), TcpTls(String), TcpClosed, TcpTimeout, TcpUnknown(String) }\n\
+                pub type TcpError { Connect(String), Tls(String), Closed, Timeout, Other(String) }\n\
             ",
             opaque: [("TcpListener", 0), ("TcpStream", 0)],
             error: "TcpError" => tcp::error_text,
             rows: [
                 f("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)", tcp::accept),
-                f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(TcpClosed)`", tcp::close),
+                f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(Closed)`", tcp::close),
                 f("fn connect(addr: String) -> Result(TcpStream, TcpError)", "Open a TCP connection to `host:port` (cooperative I/O)", tcp::connect),
                 f("fn listen(addr: String) -> Result(TcpListener, TcpError)", "Bind a TCP listener to `host:port`", tcp::listen),
                 f("fn local_port(listener: TcpListener) -> Int", "The port the listener is bound to: the one the system chose for port `0`", tcp::local_port),

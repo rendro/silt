@@ -1,5 +1,5 @@
 -- A past deadline short-circuits tcp.connect at entry with the tcp
--- module's own typed timeout, TcpTimeout.
+-- module's own typed timeout, Timeout.
 import tcp
 import task
 import time
@@ -10,7 +10,7 @@ fn main() {
   })
   match outcome {
     Ok(_) -> println("unexpected ok")
-    Err(tcp.TcpTimeout) -> println("tcp-timeout")
+    Err(tcp.Timeout) -> println("tcp-timeout")
     Err(other) -> println("other: {other.message()}")
   }
 }

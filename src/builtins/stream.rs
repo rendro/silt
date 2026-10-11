@@ -390,19 +390,16 @@ fn err_io(e: &std::io::Error) -> Value {
         ErrorKind::Interrupted => Value::variant(bv::IO_INTERRUPTED, vec![]),
         ErrorKind::UnexpectedEof => Value::variant(bv::IO_UNEXPECTED_EOF, vec![]),
         ErrorKind::WriteZero => Value::variant(bv::IO_WRITE_ZERO, vec![]),
-        _ => Value::variant(bv::IO_UNKNOWN, vec![Value::String(msg.into())]),
+        _ => Value::variant(bv::IO_OTHER, vec![Value::String(msg.into())]),
     };
     Value::variant(bv::ERR, vec![inner])
 }
 
-/// Build an `Err(IoUnknown(msg))` for string-only failures.
+/// Build an `Err(Other(msg))` for string-only failures.
 fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
         bv::ERR,
-        vec![Value::variant(
-            bv::IO_UNKNOWN,
-            vec![Value::String(s.into())],
-        )],
+        vec![Value::variant(bv::IO_OTHER, vec![Value::String(s.into())])],
     )
 }
 
@@ -426,7 +423,7 @@ fn err_tcp(e: &std::io::Error) -> Value {
             Value::variant(bv::TCP_CLOSED, vec![])
         }
         ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
-        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg.into())]),
+        _ => Value::variant(bv::TCP_OTHER, vec![Value::String(msg.into())]),
     };
     Value::variant(bv::ERR, vec![inner])
 }

@@ -61,10 +61,10 @@ use super::typed::{Type, builtins};
 // a bare `Err(String)`. Mirrors `json_*_err` in `src/builtins/json.rs`.
 //
 // `TomlError` variants:
-//   TomlSyntax(message, byte_offset)
-//   TomlTypeMismatch(expected, actual)
-//   TomlMissingField(name)
-//   TomlUnknown(message)
+//   Syntax(message, byte_offset)
+//   TypeMismatch(expected, actual)
+//   MissingField(name)
+//   Other(message)
 
 fn toml_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, vec![inner])
@@ -87,7 +87,7 @@ pub(crate) fn toml_de_result_err(err: &::toml::de::Error) -> Value {
     toml_err_wrap(toml_de_error_to_variant(err))
 }
 
-/// Build `Err(TomlTypeMismatch(expected, actual))`.
+/// Build `Err(TypeMismatch(expected, actual))`.
 pub(crate) fn toml_type_mismatch_err(expected: &str, actual: &str) -> Value {
     toml_err_wrap(Value::variant(
         bv::TOML_TYPE_MISMATCH,
@@ -95,7 +95,7 @@ pub(crate) fn toml_type_mismatch_err(expected: &str, actual: &str) -> Value {
     ))
 }
 
-/// Build `Err(TomlMissingField(name))`.
+/// Build `Err(MissingField(name))`.
 pub(crate) fn toml_missing_field_err(name: &str) -> Value {
     toml_err_wrap(Value::variant(
         bv::TOML_MISSING_FIELD,
@@ -103,11 +103,11 @@ pub(crate) fn toml_missing_field_err(name: &str) -> Value {
     ))
 }
 
-/// Build `Err(TomlUnknown(msg))` for ad-hoc failures (unknown type,
+/// Build `Err(Other(msg))` for ad-hoc failures (unknown type,
 /// serialization errors, document-shape violations, etc.).
 pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     toml_err_wrap(Value::variant(
-        bv::TOML_UNKNOWN,
+        bv::TOML_OTHER,
         vec![Value::String(msg.into())],
     ))
 }
@@ -116,16 +116,16 @@ pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
+        ("Syntax", [Value::String(m), Value::Int(offset)]) => {
             format!("toml syntax error at byte {offset}: {m}")
         }
-        ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+        ("TypeMismatch", [Value::String(exp), Value::String(act)]) => {
             format!("toml type mismatch: expected {exp}, got {act}")
         }
-        ("TomlMissingField", [Value::String(n)]) => {
+        ("MissingField", [Value::String(n)]) => {
             format!("toml missing field: {n}")
         }
-        ("TomlUnknown", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -325,7 +325,7 @@ fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<::toml::Value, VmE
 enum TomlDecodeErr {
     Variant(Value),
     /// A value was present for a type no decoder exists for (the type as
-    /// written). `toml_to_record` turns it into a `TomlUnknown` that names
+    /// written). `toml_to_record` turns it into a `Other` that names
     /// the record field whose type this is.
     Unsupported(String),
     Vm(VmError),
@@ -457,7 +457,7 @@ fn toml_to_typed_value(
     };
     let unknown = |msg: String| -> TomlDecodeErr {
         TomlDecodeErr::Variant(Value::variant(
-            bv::TOML_UNKNOWN,
+            bv::TOML_OTHER,
             vec![Value::String(msg.into())],
         ))
     };
@@ -698,7 +698,7 @@ mod tests {
     /// and so on) is written on a stack of 16 MiB, the least a thread
     /// that runs silt code has (`scheduler::WORKER_STACK_BYTES` where
     /// pointers have 32 bits), in a debug build too; and a value one
-    /// level deeper is refused with a `TomlUnknown`.
+    /// level deeper is refused with a `Other`.
     #[test]
     fn the_deepest_value_is_written_on_the_smallest_stack() {
         let (written, refused) = std::thread::Builder::new()
@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(
             refused,
             format!(
-                "Err(TomlUnknown(\"toml.pretty: the value is nested more than \
+                "Err(Other(\"toml.pretty: the value is nested more than \
                  {MAX_ENCODE_DEPTH} levels deep\"))"
             )
         );

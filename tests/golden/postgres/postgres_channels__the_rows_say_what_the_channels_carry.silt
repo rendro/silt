@@ -11,7 +11,7 @@ import postgres
 fn rows(pool: postgres.PgPool) -> Int {
   match postgres.stream(pool, "SELECT 1", []) {
     Ok(ch) -> {
-      let typed: Channel(Result(Map(String, postgres.Value), postgres.PgError)) = ch
+      let typed: Channel(Result(Map(String, postgres.Value), postgres.PostgresError)) = ch
       match channel.receive(typed) {
         channel.Message(Ok(row)) -> map.length(row)
         channel.Message(Err(e)) -> {

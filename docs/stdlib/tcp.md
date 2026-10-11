@@ -19,7 +19,7 @@ default features in your `Cargo.toml`.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `accept` | `(TcpListener) -> Result(TcpStream, TcpError)` | Wait for an incoming connection (cooperative I/O) |
-| `close` | `(TcpStream) -> ()` | Shut the connection down: operations in flight on it return, later ones give `Err(TcpClosed)` |
+| `close` | `(TcpStream) -> ()` | Shut the connection down: operations in flight on it return, later ones give `Err(Closed)` |
 | `connect` | `(String) -> Result(TcpStream, TcpError)` | Open a TCP connection to `host:port` (cooperative I/O) |
 | `listen` | `(String) -> Result(TcpListener, TcpError)` | Bind a TCP listener to `host:port` |
 | `local_port` | `(TcpListener) -> Int` | The port the listener is bound to: the one the system chose for port `0` |
@@ -37,11 +37,11 @@ out the OS-specific noise:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TcpConnect(msg)` | `String` | TCP / DNS connect failure |
-| `TcpTls(msg)` | `String` | TLS handshake failure |
-| `TcpClosed` | — | connection closed (broken pipe, peer reset) |
-| `TcpTimeout` | — | op exceeded its deadline |
-| `TcpUnknown(msg)` | `String` | unclassified socket failure |
+| `Connect(msg)` | `String` | TCP / DNS connect failure |
+| `Tls(msg)` | `String` | TLS handshake failure |
+| `Closed` | — | connection closed (broken pipe, peer reset) |
+| `Timeout` | — | op exceeded its deadline |
+| `Other(msg)` | `String` | unclassified socket failure |
 
 `TcpError` implements the built-in `Error` trait, so `e.message()`
 renders any variant as a string when you don't want to branch on it.
@@ -110,7 +110,7 @@ tries again, a second or more later.
 A listener is also what [`http.serve`](http.md#httpserve) serves on.
 While it does, the listener is the server's alone: `tcp.accept`,
 `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
-`Err(TcpUnknown("the listener is served by http.serve"))` at once, and
+`Err(Other("the listener is served by http.serve"))` at once, and
 so does an accept that was waiting on it when the server started. When
 the task that serves has been cancelled, the listener is the program's
 again: the next `tcp.accept` gets the next client.
@@ -132,7 +132,7 @@ same TLS connection until the read returns.
 **How much a read takes.** `tcp.read(conn, max)` gives what one read
 finds, at most `max` bytes and at most 64 KiB (65536 bytes) at once: a
 larger `max` asks for no more. `tcp.read_exact(conn, n)` reads until it
-has `n` bytes; a connection that ends before that is `Err(TcpClosed)`.
+has `n` bytes; a connection that ends before that is `Err(Closed)`.
 Neither sets memory aside for the number asked for, only for the bytes
 that arrive. The same holds for a chunk of `stream.tcp_chunks`.
 
@@ -140,8 +140,8 @@ that arrive. The same holds for a chunk of `stream.tcp_chunks`.
 
 `tcp.close(conn)` shuts the connection down: a `read` or `write` that
 another task has in flight on it returns, and later calls fail with
-`TcpClosed`. A closed connection answers nothing: `tcp.peer_addr` and
-`tcp.set_nodelay` give `Err(TcpClosed)` too. Without `tcp.close` the socket is closed when the last
+`Closed`. A closed connection answers nothing: `tcp.peer_addr` and
+`tcp.set_nodelay` give `Err(Closed)` too. Without `tcp.close` the socket is closed when the last
 reference to the connection is gone.
 
 **A read or write that nobody waits for ends its connection.** When a
@@ -150,11 +150,11 @@ task stops waiting for `tcp.read`, `tcp.read_exact` or `tcp.write` (its
 program ended), the connection is shut down exactly as by `tcp.close`.
 That is what lets the blocked operation, and its thread, end. So a read
 that timed out cannot be tried again: the next call on that connection
-gives `Err(TcpClosed)`. A `tcp.read`, `tcp.read_exact` or `tcp.write` that
+gives `Err(Closed)`. A `tcp.read`, `tcp.read_exact` or `tcp.write` that
 begins when its `task.deadline` has already passed is such a timeout too:
-it gives `Err(TcpTimeout)` without reading or writing anything, and the
+it gives `Err(Timeout)` without reading or writing anything, and the
 connection is shut down. So is one whose result arrives in the very
-moment in which its task stops waiting: the task gets `Err(TcpTimeout)`,
+moment in which its task stops waiting: the task gets `Err(Timeout)`,
 and what the read had taken is gone with the connection. What a timeout
 leaves of a connection does not depend on the moment at which it came. The same holds for the
 `stream.tcp_*` sources and sink when their pipeline is cut short. A
@@ -209,7 +209,7 @@ fn main() {
 `accept_tls`. The fourth argument is a PEM-encoded bundle of CA
 certificates — every connecting client must present a certificate that
 chains to one of those CAs, or the TLS handshake fails and the call
-returns `Err(TcpTls(msg))`. This is appropriate for service-to-service
+returns `Err(Tls(msg))`. This is appropriate for service-to-service
 APIs, internal mesh traffic, and any flow where you want cryptographic
 client identity rather than bearer tokens.
 

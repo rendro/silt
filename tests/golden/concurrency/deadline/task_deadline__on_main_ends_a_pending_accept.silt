@@ -13,7 +13,7 @@ fn main() {
   let outcome = task.deadline(time.ms(50), { -> tcp.accept(listener) })
   match outcome {
     Ok(_) -> println("unexpected ok")
-    Err(tcp.TcpTimeout) -> println("tcp-timeout")
+    Err(tcp.Timeout) -> println("tcp-timeout")
     Err(other) -> println("other: {other.message()}")
   }
 }

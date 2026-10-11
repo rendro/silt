@@ -274,27 +274,6 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         }
         scopes.modules.insert(id, exports);
     }
-    // A type a module shares with the module that declares it
-    // (`ParseError` is the error of `int.parse` and of `float.parse`) is
-    // reached through both, and so are its variants.
-    for module in registry.enabled_modules() {
-        let id = ModuleId::builtin(module.name).expect("a builtin module");
-        for (owner, ty_name) in module.shares {
-            let owner = ModuleId::builtin(owner).expect("a builtin module");
-            let ty_name = intern(ty_name);
-            let Some(Binding::Def(ty)) = scopes.modules[&owner].types.get(&ty_name).cloned() else {
-                continue;
-            };
-            let variants = defs.variants.get(&ty).cloned().unwrap_or_default();
-            let exports = scopes.modules.get_mut(&id).expect("the module's exports");
-            exports.types.insert(ty_name, Binding::Def(ty));
-            for v in variants {
-                exports
-                    .values
-                    .insert(defs.defs[v.0 as usize].name, Binding::Def(v));
-            }
-        }
-    }
     (defs, scopes)
 }
 
@@ -1119,22 +1098,51 @@ impl Resolver<'_> {
     }
 
     /// The help for `name`, which resolves to nothing here but which the
-    /// modules `elsewhere` offer.
+    /// modules `elsewhere` offer. Several modules may offer a name
+    /// (`tcp.Timeout`, `http.Timeout`): the ones this module binds are
+    /// named if there are any, the others otherwise, and a module that
+    /// is not built only if no other offers the name.
     fn elsewhere_help(&self, name: Symbol, elsewhere: &[(Symbol, Option<Symbol>)]) -> String {
-        let (module, bound_as) = elsewhere[0];
-        if let Some(feature) = crate::module::missing_feature(&resolve(module)) {
+        let built: Vec<(Symbol, Option<Symbol>)> = elsewhere
+            .iter()
+            .copied()
+            .filter(|(module, _)| crate::module::missing_feature(&resolve(*module)).is_none())
+            .collect();
+        let Some(&(module, bound_as)) = built.first() else {
+            let (module, _) = elsewhere[0];
+            let feature = crate::module::missing_feature(&resolve(module)).unwrap_or_default();
             return format!(
                 "`{name}` is in module `{module}`, which is not part of this build of silt: it \
                  needs the cargo feature `{feature}`"
             );
-        }
+        };
+        // "`a`, `b` or `c`".
+        let listed = |items: Vec<String>, last: &str| match items.split_last() {
+            Some((end, rest)) if !rest.is_empty() => {
+                format!("{} {last} {end}", rest.join(", "))
+            }
+            _ => items.concat(),
+        };
+        let bound: Vec<Symbol> = built.iter().filter_map(|(_, bound_as)| *bound_as).collect();
         match bound_as {
-            Some(bound_as) => format!(
+            Some(bound_as) if bound.len() == 1 => format!(
                 "did you mean `{bound_as}.{name}`? or import the name: `import {module}.{{ {name} }}`"
             ),
-            None => format!(
+            Some(_) => format!(
+                "did you mean {}? or import one of them by name: `import {module}.{{ {name} }}`",
+                listed(
+                    bound.iter().map(|m| format!("`{m}.{name}`")).collect(),
+                    "or"
+                )
+            ),
+            None if built.len() == 1 => format!(
                 "`{name}` is in module `{module}`: write `{module}.{name}` after `import {module}`, \
                  or add `import {module}.{{ {name} }}`"
+            ),
+            None => format!(
+                "`{name}` is in modules {}: write `{module}.{name}` after `import {module}`, \
+                 or add `import {module}.{{ {name} }}`",
+                listed(built.iter().map(|(m, _)| format!("`{m}`")).collect(), "and")
             ),
         }
     }

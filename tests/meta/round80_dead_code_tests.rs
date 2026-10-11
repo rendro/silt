@@ -11,7 +11,7 @@
 /// wrappers come from the same macro arm. If the macro arm was wrong
 /// (e.g. accidentally swapped Read for Write, dropped `complete_io`),
 /// at least one of the two paths below would diverge from the
-/// pre-collapse error shape `Err(TcpTls(_))`.
+/// pre-collapse error shape `Err(Tls(_))`.
 #[cfg(feature = "tcp-tls")]
 #[test]
 fn tcp_tls_wrappers_observable_behavior_identical() {
@@ -29,7 +29,7 @@ fn tcp_tls_wrappers_observable_behavior_identical() {
     // Client side: connect_tls drives `ClientStreamWrapper`. We point
     // at a closed port so the handshake never starts; the wrapper's
     // `complete_io_handshake` propagates the connect error as
-    // `Err(TcpTls(_))`. (Pre-fix this came from `ClientStreamWrapper`.)
+    // `Err(Tls(_))`. (Pre-fix this came from `ClientStreamWrapper`.)
     let unused_port = unbound_addr();
     let client_src = format!(
         r#"

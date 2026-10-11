@@ -41,10 +41,10 @@ fn days_in(year: i32, month: u32) -> u32 {
     }
 }
 
-/// Build `Err(TimeParseFormat(msg))` from a chrono `ParseError`. chrono's
+/// Build `Err(ParseFormat(msg))` from a chrono `ParseError`. chrono's
 /// `Display` doesn't distinguish format-mismatch from field-out-of-range
 /// cleanly — both surface here; we fold "out of range" messages into
-/// `TimeOutOfRange` and treat everything else as `TimeParseFormat`.
+/// `OutOfRange` and treat everything else as `ParseFormat`.
 fn time_parse_err(err: chrono::ParseError) -> Value {
     let msg = err.to_string();
     let inner = if msg.contains("out of range") {
@@ -55,7 +55,7 @@ fn time_parse_err(err: chrono::ParseError) -> Value {
     Value::variant(bv::ERR, vec![inner])
 }
 
-/// Build `Err(TimeOutOfRange(msg))` for explicit range rejections from
+/// Build `Err(OutOfRange(msg))` for explicit range rejections from
 /// `time.date` / `time.time`.
 fn time_out_of_range_err(msg: String) -> Value {
     Value::variant(
@@ -71,8 +71,9 @@ fn time_out_of_range_err(msg: String) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
-        ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+        ("ParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
+        ("OutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }

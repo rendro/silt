@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: tcp
+-- A name is bound once at the top level: two modules' variants of one
+-- name cannot both be imported bare. A bare use with neither imported
+-- is told which modules have the name.
+import http
+import int
+import tcp
+import tcp.{ Timeout }
+import http.{ Timeout }
+
+fn main() {
+  println(Timeout)
+  println(Connect("x"))
+  println(Overflow)
+}

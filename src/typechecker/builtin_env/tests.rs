@@ -10,7 +10,13 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
     for name in ["print", "println", "panic", "Some", "None", "Ok", "Err"] {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
     }
-    for name in ["list.map", "math.pi", "Message", "ChannelResult.Message"] {
+    for name in ["list.map", "math.pi", "ChannelResult.Message"] {
+        assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
+    }
+    // A variant of a module's enum is bound through its enum only: two
+    // modules may have a variant of one name.
+    assert!(env.root.lookup(intern("Message")).is_none());
+    for name in ["HttpError.Timeout", "IntError.Other", "FloatError.Other"] {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
     }
     // A builtin type is not a value.

@@ -1,17 +1,17 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: non-exhaustive
--- stderr-contains: IoUnknown
+-- stderr-contains: Other
 import io
 fn describe(e: io.IoError) -> String {
   match e {
-    io.IoNotFound(p) -> "not found"
-    io.IoPermissionDenied(p) -> "denied"
-    io.IoAlreadyExists(p) -> "exists"
-    io.IoInvalidInput(p) -> "invalid"
-    io.IoInterrupted -> "interrupted"
-    io.IoUnexpectedEof -> "eof"
-    io.IoWriteZero -> "write zero"
+    io.NotFound(p) -> "not found"
+    io.PermissionDenied(p) -> "denied"
+    io.AlreadyExists(p) -> "exists"
+    io.InvalidInput(p) -> "invalid"
+    io.Interrupted -> "interrupted"
+    io.UnexpectedEof -> "eof"
+    io.WriteZero -> "write zero"
   }
 }
-fn main() { println(describe(io.IoNotFound("x"))) }
+fn main() { println(describe(io.NotFound("x"))) }

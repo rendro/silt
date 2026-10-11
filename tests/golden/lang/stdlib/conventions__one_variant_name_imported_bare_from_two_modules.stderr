@@ -1,0 +1,24 @@
+error[parse]: 'Timeout' is bound twice at the top level: by the import and by the import here
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:11:15
+    |
+ 11 | import http.{ Timeout }
+    |               ^^^^^^^ 'Timeout' is bound twice at the top level: by the import and by the import here
+ ::: conventions__one_variant_name_imported_bare_from_two_modules.silt:10:14
+    |
+ 10 | import tcp.{ Timeout }
+    |              ------- first bound here, by the import
+  = note: a top-level name can be bound only once
+
+error[type]: undefined variable 'Connect'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:15:11
+    |
+ 15 |   println(Connect("x"))
+    |           ^^^^^^^ undefined variable 'Connect'
+  = help: did you mean `http.Connect` or `tcp.Connect`? or import one of them by name: `import http.{ Connect }`
+
+error[type]: undefined variable 'Overflow'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:16:11
+    |
+ 16 |   println(Overflow)
+    |           ^^^^^^^^ undefined variable 'Overflow'
+  = help: did you mean `int.Overflow`? or import the name: `import int.{ Overflow }`

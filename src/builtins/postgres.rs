@@ -44,14 +44,14 @@ use crate::value::Value;
 use crate::vm::{Native, Step, Vm, VmError};
 
 /// The error of a `postgres` function whose operation has no value
-/// of its own: `PgTimeout` when its deadline passed, `PgUnknown` with
+/// of its own: `Timeout` when its deadline passed, `Other` with
 /// the reason when it could not run or panicked.
 fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     use crate::vm::IoFailure;
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::PG_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::PG_UNKNOWN, vec![Value::String(why.into())])
+            Value::variant(bv::PG_OTHER, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
@@ -292,7 +292,7 @@ fn err(v: Value) -> Value {
 ///
 /// Rust callers that need the full un-redacted error can still call
 /// `postgres::Error::as_db_error()` directly on the original error.
-/// The scrub only applies to strings destined for silt-side `PgError`.
+/// The scrub only applies to strings destined for silt-side `PostgresError`.
 #[doc(hidden)] // Exposed for integration tests (tests/lang/postgres_hardening_tests.rs).
 pub fn redact_pg_message(s: &str) -> String {
     // Drop follow-on lines that Postgres uses for user-data callouts.
@@ -322,25 +322,25 @@ pub fn redact_pg_message(s: &str) -> String {
     out
 }
 
-// ── PgError helpers (Phase 2 of stdlib error redesign) ─────────────
+// ── PostgresError helpers (Phase 2 of stdlib error redesign) ─────────────
 //
-// Every fallible postgres.* call now surfaces a typed `PgError` variant
+// Every fallible postgres.* call now surfaces a typed `PostgresError` variant
 // wrapped in `Err(...)`. Variants (declared by the module's `types` in the builtin registry):
-//   PgConnect(msg)         — pool checkout / URL parse / transport setup
-//   PgTls(msg)             — TLS handshake / setup / cert read
-//   PgAuthFailed(msg)      — SQLSTATE class 28 (invalid auth)
-//   PgQuery(msg, sqlstate) — any other DbError with a SQLSTATE
-//   PgTypeMismatch(col, expected, actual)
-//   PgNoSuchColumn(col)
-//   PgClosed               — connection closed / broken pipe
-//   PgTimeout              — query canceled / statement timeout
-//   PgTxnAborted           — 25P02 in_failed_sql_transaction
-//   PgUnknown(msg)         — fallback for shapes we can't classify
+//   Connect(msg)         — pool checkout / URL parse / transport setup
+//   Tls(msg)             — TLS handshake / setup / cert read
+//   AuthFailed(msg)      — SQLSTATE class 28 (invalid auth)
+//   Query(msg, sqlstate) — any other DbError with a SQLSTATE
+//   TypeMismatch(col, expected, actual)
+//   NoSuchColumn(col)
+//   Closed               — connection closed / broken pipe
+//   Timeout              — query canceled / statement timeout
+//   TxnAborted           — 25P02 in_failed_sql_transaction
+//   Other(msg)         — fallback for shapes we can't classify
 //
 // All message strings are first run through `redact_pg_message` so
 // DETAIL / WHERE / HINT follow-on rows don't leak across the VM boundary.
 
-/// Build a bare `PgConnect(msg)` variant (no Err wrapper).
+/// Build a bare `Connect(msg)` variant (no Err wrapper).
 fn pg_connect(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_CONNECT,
@@ -348,7 +348,7 @@ fn pg_connect(msg: impl Into<String>) -> Value {
     )
 }
 
-/// Build a bare `PgTls(msg)` variant (no Err wrapper).
+/// Build a bare `Tls(msg)` variant (no Err wrapper).
 fn pg_tls(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_TLS,
@@ -356,15 +356,15 @@ fn pg_tls(msg: impl Into<String>) -> Value {
     )
 }
 
-/// Build a bare `PgUnknown(msg)` variant (no Err wrapper).
+/// Build a bare `Other(msg)` variant (no Err wrapper).
 fn pg_unknown(msg: impl Into<String>) -> Value {
     Value::variant(
-        bv::PG_UNKNOWN,
+        bv::PG_OTHER,
         vec![Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
-/// Classify a `postgres::Error` into the matching `PgError` variant.
+/// Classify a `postgres::Error` into the matching `PostgresError` variant.
 /// For DbError we inspect SQLSTATE; for transport errors we sniff the
 /// Display text for "closed" / "broken pipe" / "timed out" keywords.
 fn pg_error_to_variant(e: &postgres::Error) -> Value {
@@ -391,7 +391,7 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         }
     } else {
         // Non-DB: transport / protocol. Sniff keywords to pick a
-        // more specific variant where we can; fall back to PgUnknown.
+        // more specific variant where we can; fall back to Other.
         let raw = format!("{e}");
         let lc = raw.to_ascii_lowercase();
         let scrubbed = redact_pg_message(&raw);
@@ -404,15 +404,15 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         {
             Value::variant(bv::PG_CLOSED, vec![])
         } else {
-            Value::variant(bv::PG_UNKNOWN, vec![Value::String(scrubbed.into())])
+            Value::variant(bv::PG_OTHER, vec![Value::String(scrubbed.into())])
         }
     }
 }
 
-/// Build a typed `PgError` variant from an `r2d2::Error` (pool checkout
+/// Build a typed `PostgresError` variant from an `r2d2::Error` (pool checkout
 /// / build failure). r2d2 wraps the underlying postgres error inside —
 /// we classify on the Display text: a timeout while waiting for a slot
-/// maps to `PgTimeout`, anything else to `PgConnect`.
+/// maps to `Timeout`, anything else to `Connect`.
 fn pool_error_value(e: &r2d2::Error) -> Value {
     let raw = format!("{e}");
     let lc = raw.to_ascii_lowercase();
@@ -423,10 +423,10 @@ fn pool_error_value(e: &r2d2::Error) -> Value {
     }
 }
 
-/// Ad-hoc `PgUnknown(msg)` for misuse errors (wrong variant shape, bad
+/// Ad-hoc `Other(msg)` for misuse errors (wrong variant shape, bad
 /// argument types, cursor registry miss). These aren't transport or
 /// query failures — they're programmer errors that still need to
-/// surface as a typed `PgError` because the signature says so.
+/// surface as a typed `PostgresError` because the signature says so.
 fn other_error(detail: impl Into<String>) -> Value {
     pg_unknown(detail)
 }
@@ -911,7 +911,7 @@ impl<'a> Arg<'a> for PoolHandle {
 }
 
 impl PoolHandle {
-    /// The pool, or the `PgError` of one that is closed.
+    /// The pool, or the `PostgresError` of one that is closed.
     fn open(self) -> Result<Arc<PgPool>, Value> {
         lookup_pool(self.0).ok_or_else(|| {
             pg_connect(format!(
@@ -933,7 +933,7 @@ impl<'a> Arg<'a> for TxHandle {
 }
 
 impl TxHandle {
-    /// The transaction's connection, or the `PgError` of one that has
+    /// The transaction's connection, or the `PostgresError` of one that has
     /// ended.
     fn open(self) -> Result<Arc<Mutex<PinnedConn>>, Value> {
         lookup_tx(self.0).ok_or_else(|| {
@@ -967,14 +967,14 @@ impl<'a> Arg<'a> for Opts<'a> {
     }
 }
 
-/// The parameters of a statement, or the `PgError` of a value that
+/// The parameters of a statement, or the `PostgresError` of a value that
 /// is none.
 fn sql_params(params: List) -> Result<Vec<SqlParam>, Value> {
     let params = params.iter().map(|param| value_to_sql_param(&param));
     params.collect::<Result<_, _>>().map_err(other_error)
 }
 
-/// The `PgError` a function ends with before its operation starts: a
+/// The `PostgresError` a function ends with before its operation starts: a
 /// body's `Err`, which is the function's `Err(error)`.
 struct Failed(Value);
 
@@ -1005,7 +1005,7 @@ enum ExecutorRef {
 }
 
 /// The executor that `conn` is, the argument of a function that takes
-/// a pool or a transaction: the `PgError` if it is neither, or is one
+/// a pool or a transaction: the `PostgresError` if it is neither, or is one
 /// that is closed.
 fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
     if let Some(pool) = PoolHandle::take(conn) {
@@ -1718,34 +1718,34 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
     }
 }
 
-// ── trait Error for PgError ─────────────────────────────────────────
+// ── trait Error for PostgresError ─────────────────────────────────────────
 
-/// What `PgError`'s `message` says of the variant `tag` with `fields`:
+/// What `PostgresError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("PgConnect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
-        ("PgTls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
-        ("PgAuthFailed", [Value::String(m)]) => {
+        ("Connect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
+        ("Tls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
+        ("AuthFailed", [Value::String(m)]) => {
             format!("postgres authentication failed: {m}")
         }
-        ("PgQuery", [Value::String(msg), Value::String(sqlstate)]) => {
+        ("Query", [Value::String(msg), Value::String(sqlstate)]) => {
             if sqlstate.is_empty() {
                 format!("postgres query error: {msg}")
             } else {
                 format!("postgres query error [{sqlstate}]: {msg}")
             }
         }
-        ("PgTypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
+        ("TypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
             format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}")
         }
-        ("PgNoSuchColumn", [Value::String(col)]) => {
+        ("NoSuchColumn", [Value::String(col)]) => {
             format!("postgres: no such column `{col}`")
         }
-        ("PgClosed", []) => "postgres connection closed".to_string(),
-        ("PgTimeout", []) => "postgres operation timed out".to_string(),
-        ("PgTxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
-        ("PgUnknown", [Value::String(m)]) => m.to_string(),
+        ("Closed", []) => "postgres connection closed".to_string(),
+        ("Timeout", []) => "postgres operation timed out".to_string(),
+        ("TxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -1855,7 +1855,7 @@ builtins! {
     }
 
     // `postgres.stream(target, sql, params)` — returns a bounded silt
-    // `Channel` of `Result(Map(String, Value), PgError)` row wrappers.
+    // `Channel` of `Result(Map(String, Value), PostgresError)` row wrappers.
     //
     // The caller does not wait for the worker, which is
     // long-lived: it produces many rows over time, not a single result.
@@ -1912,14 +1912,14 @@ builtins! {
     }
 
     // `postgres.listen(pool, channel_name)` — open a notification
-    // listener. Returns `Result(Channel, PgError)`. On success the channel
+    // listener. Returns `Result(Channel, PostgresError)`. On success the channel
     // yields `Notification` records until the underlying conn dies or the
     // caller calls `channel.close`.
     //
     // The LISTEN statement is issued synchronously inside this function (on
     // the io_pool) so LISTEN errors — e.g. an invalid channel name that
     // somehow slipped past the identifier validator, or a pool checkout
-    // failure — surface as an immediate `Err(PgError)` rather than a
+    // failure — surface as an immediate `Err(PostgresError)` rather than a
     // channel that silently closes. The long-lived worker is spawned only
     // after LISTEN succeeds.
     fn listen(vm, pool: PoolHandle, channel: &str) -> Started {
@@ -1947,7 +1947,7 @@ builtins! {
 
         // Blocking work we submit to io_pool: checkout + LISTEN. On success
         // we spawn the long-lived worker and return the silt channel; on
-        // failure we return the PgError without spawning. We need a handle
+        // failure we return the PostgresError without spawning. We need a handle
         // to the io_pool inside the closure so it can spawn the worker
         // itself — `runtime` is an `Arc<Runtime>` so the clone is cheap.
         let runtime = vm.runtime.clone();
@@ -2164,10 +2164,10 @@ mod tests {
             panic!("expected inner Variant, got {inner:?}");
         };
         // Error redesign Phase 2: non-TLS builds that are asked for
-        // TLS now surface `PgTls(msg)` instead of the legacy
+        // TLS now surface `Tls(msg)` instead of the legacy
         // `ConnectionError`. The message text still mentions TLS /
         // postgres-tls so operators see the feature-flag hint.
-        assert_eq!(error.name(), "PgTls");
+        assert_eq!(error.name(), "Tls");
         let Some(Value::String(msg)) = error.fields().first() else {
             panic!("expected message string");
         };

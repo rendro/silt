@@ -137,7 +137,7 @@ fn assert_needs_feature(label: &str, src: &str, module: &str, feature: &str) {
 fn importing_tcp_without_its_feature_is_one_error_that_names_it() {
     assert_needs_feature(
         "tcp_connect",
-        "import tcp\nfn main() {\n  let e = tcp.TcpError.TcpConnect(\"nope\")\n  println(e)\n}\n",
+        "import tcp\nfn main() {\n  let e = tcp.TcpError.Connect(\"nope\")\n  println(e)\n}\n",
         "tcp",
         "tcp",
     );

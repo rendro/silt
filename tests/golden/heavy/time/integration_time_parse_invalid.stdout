@@ -1,1 +1,1 @@
-Err(TimeParseFormat("input contains invalid characters"))
+Err(ParseFormat("input contains invalid characters"))

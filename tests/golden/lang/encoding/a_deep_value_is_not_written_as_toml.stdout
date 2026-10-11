@@ -4,4 +4,4 @@ toml.pretty: the value is nested more than 1000 levels deep
 toml.stringify: the value is nested more than 1000 levels deep
 toml.pretty: the value is nested more than 1000 levels deep
 toml.stringify: the value is nested more than 1000 levels deep
-the error is a TomlUnknown
+the error is a Other

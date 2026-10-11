@@ -80,13 +80,13 @@ fn main() {
       Ok(cfg) -> println("loaded: {cfg.name}")
       Err(e) -> println("parse error: {e.message()}")
     }
-    Err(io.IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
+    Err(io.NotFound(path)) -> println("no config at {path} — run `silt init` first")
     Err(e) -> println("read error: {e.message()}")
   }
 }
 ```
 
-Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `IoNotFound(path)` and still fall back to `.message()` for the long tail.
+Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `NotFound(path)` and still fall back to `.message()` for the long tail.
 
 ## HTTP
 

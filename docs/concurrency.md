@@ -555,13 +555,13 @@ will ever answer is a deadlock inside `task.deadline` as outside it.
 Specifically (matching the [`SILT_IO_TIMEOUT`](#io-timeouts-silt_io_timeout)
 table):
 
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
+- `io.*` and `fs.*` surface `Err(Other("I/O timeout (task.deadline exceeded)"))`.
+- `tcp.*` surfaces `Err(Timeout)`.
+- `http.*` surfaces `Err(Timeout)`.
 
 The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
 or a surrounding `task.deadline`, whichever elapses first fires. The
-embedded message on the `IoUnknown` variant distinguishes the source so
+embedded message on the `Other` variant distinguishes the source so
 silt code can tell scoped timeouts from the global one.
 
 ```silt
@@ -573,7 +573,7 @@ fn main() {
   let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
     Ok(contents) -> println(contents)
-    Err(io.IoUnknown(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
+    Err(io.Other(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
     Err(_) -> println("other io error")
   }
 }
@@ -595,9 +595,9 @@ it finishes in time, or to the deadline error inside any I/O builtin
 the task was blocked on when the deadline fired — the same typed
 timeout shapes as `task.deadline`:
 
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
+- `io.*` and `fs.*` surface `Err(Other("I/O timeout (task.deadline exceeded)"))`.
+- `tcp.*` surfaces `Err(Timeout)`.
+- `http.*` surfaces `Err(Timeout)`.
 
 Useful for fan-out patterns where each child task must bound its own
 runtime — e.g. racing N replicas and dropping stragglers.
@@ -1190,9 +1190,9 @@ Setting `SILT_IO_TIMEOUT=5s` makes every I/O
 builtin that blocks longer than that duration return the module's own typed
 timeout variant instead of its normal value:
 
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
+- `io.*` and `fs.*` surface `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
+- `tcp.*` surfaces `Err(Timeout)`.
+- `http.*` surfaces `Err(Timeout)`.
 
 The deadline is *invisible* at the language surface — no new syntax, no
 colored functions — because every I/O builtin already returns `Result` with
@@ -1229,8 +1229,8 @@ wait for a line from a silent peer do not delay a file read. There is
 nothing to configure.
 
 There is a bound: **4,096 operations in flight**. One more is not queued;
-it returns its module's error at once (`Err(TcpUnknown("too many I/O
-operations in flight (4096)"))`, `Err(IoUnknown(...))`, ...), because an
+it returns its module's error at once (`Err(Other("too many I/O
+operations in flight (4096)"))`, `Err(Other(...))`, ...), because an
 operation that waited for a thread might be the very one that would have
 released the others. A server that holds more connections than that open
 in blocking reads has to refuse some. (`http.serve` has one operation in

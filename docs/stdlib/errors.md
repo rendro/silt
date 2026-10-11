@@ -15,20 +15,26 @@ just wants a rendered error can fall back to `"{e.message()}"`.
 
 ## Variant naming
 
-Every variant is module-prefixed (`IoNotFound`, not `NotFound`). An
-error enum and its variants are members of their module, reached
-through it, with or without the enum as a second qualifier:
+Every error enum is named after its module (`io.IoError`,
+`tcp.TcpError`), its variants carry no prefix (`io.NotFound`,
+`tcp.Timeout`), and its last variant is `Other(String)` for a failure
+that fits no other. An error enum and its variants are members of their
+module, reached through it, with or without the enum as a second
+qualifier:
 
 ```silt
 import io
 
-let a = io.IoNotFound("config.toml")
+let a = io.NotFound("config.toml")
 
-let b = io.IoError.IoNotFound("config.toml") -- same value
+let b = io.IoError.NotFound("config.toml") -- same value
 ```
 
 A selective import binds a variant by its bare name:
-`import io.{ IoNotFound }`.
+`import io.{ NotFound }`. Two modules may have a variant of one name
+(`tcp.Timeout` and `http.Timeout`, `Other` in every module): a file
+imports at most one of them bare, and writes the others through their
+modules.
 
 ## Enums
 
@@ -36,100 +42,114 @@ A selective import binds a variant by its bare name:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `IoNotFound(String)` | path | file or directory missing |
-| `IoPermissionDenied(String)` | path | permissions check failed |
-| `IoAlreadyExists(String)` | path | target already exists |
-| `IoInvalidInput(String)` | description | malformed argument |
-| `IoInterrupted` | — | syscall interrupted |
-| `IoUnexpectedEof` | — | reader hit EOF mid-record |
-| `IoWriteZero` | — | writer returned zero bytes |
-| `IoUnknown(String)` | platform message | unclassified platform error |
+| `NotFound(String)` | path | file or directory missing |
+| `PermissionDenied(String)` | path | permissions check failed |
+| `AlreadyExists(String)` | path | target already exists |
+| `InvalidInput(String)` | description | malformed argument |
+| `Interrupted` | — | syscall interrupted |
+| `UnexpectedEof` | — | reader hit EOF mid-record |
+| `WriteZero` | — | writer returned zero bytes |
+| `Other(String)` | platform message | unclassified platform error |
 
 ### `JsonError` (requires `import json`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `JsonSyntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `JsonTypeMismatch(String, String)` | expected, actual | wrong JSON type for target |
-| `JsonMissingField(String)` | field name | required field absent |
-| `JsonUnknown(String)` | message | unclassified parse failure |
+| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
+| `TypeMismatch(String, String)` | expected, actual | wrong JSON type for target |
+| `MissingField(String)` | field name | required field absent |
+| `Other(String)` | message | unclassified parse failure |
 
 ### `TomlError` (requires `import toml`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TomlSyntax(String, Int)` | message, byte offset | syntactically invalid TOML |
-| `TomlTypeMismatch(String, String)` | expected, actual | wrong TOML type for target |
-| `TomlMissingField(String)` | field name | required field absent |
-| `TomlUnknown(String)` | message | unclassified parse failure |
+| `Syntax(String, Int)` | message, byte offset | syntactically invalid TOML |
+| `TypeMismatch(String, String)` | expected, actual | wrong TOML type for target |
+| `MissingField(String)` | field name | required field absent |
+| `Other(String)` | message | unclassified parse failure |
 
-### `ParseError` (requires `import int` or `import float`)
+### `IntError` (requires `import int`)
 
-Shared by `int.parse` and `float.parse`. Either import unlocks the
-variants; users who import only one can still match on values they
-receive from the other.
+Returned by `int.parse`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `ParseEmpty` | — | input was empty |
-| `ParseInvalidDigit(Int)` | byte offset | non-digit character at offset |
-| `ParseOverflow` | — | value exceeds type max |
-| `ParseUnderflow` | — | value below type min |
+| `Empty` | — | input was empty |
+| `InvalidDigit(Int)` | byte offset | non-digit character at offset |
+| `Overflow` | — | value exceeds type max |
+| `Underflow` | — | value below type min |
+| `Other(String)` | message | unclassified parse failure |
+
+### `FloatError` (requires `import float`)
+
+Returned by `float.parse`: the same variants as `IntError`, in a type of
+its own (`float.Empty` is not `int.Empty`).
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Empty` | — | input was empty |
+| `InvalidDigit(Int)` | byte offset | character that is no part of a number at offset; `"NaN"` and `"inf"` at 0 |
+| `Overflow` | — | literal above the `Float` range |
+| `Underflow` | — | literal below the `Float` range |
+| `Other(String)` | message | unclassified parse failure |
 
 ### `HttpError` (requires `import http`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `HttpConnect(String)` | message | TCP / DNS connect failure |
-| `HttpTls(String)` | message | TLS handshake / cert failure |
-| `HttpTimeout` | — | request exceeded its deadline |
-| `HttpInvalidUrl(String)` | url | URL did not parse |
-| `HttpInvalidResponse(String)` | message | response violated protocol |
-| `HttpClosedEarly` | — | peer closed before response completed |
-| `HttpStatusCode(Int, String)` | status, body preview | non-success status |
-| `HttpUnknown(String)` | message | unclassified transport error |
+| `Connect(String)` | message | TCP / DNS connect failure |
+| `Tls(String)` | message | TLS handshake / cert failure |
+| `Timeout` | — | request exceeded its deadline |
+| `InvalidUrl(String)` | url | URL did not parse |
+| `InvalidResponse(String)` | message | response violated protocol |
+| `ClosedEarly` | — | peer closed before response completed |
+| `StatusCode(Int, String)` | status, body preview | non-success status |
+| `Other(String)` | message | unclassified transport error |
 
 ### `TcpError` (requires `import tcp`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TcpConnect(String)` | message | tcp/dns connect failure |
-| `TcpTls(String)` | message | TLS handshake failure |
-| `TcpClosed` | — | connection closed (broken pipe, peer reset) |
-| `TcpTimeout` | — | op exceeded its deadline |
-| `TcpUnknown(String)` | message | unclassified socket failure |
+| `Connect(String)` | message | tcp/dns connect failure |
+| `Tls(String)` | message | TLS handshake failure |
+| `Closed` | — | connection closed (broken pipe, peer reset) |
+| `Timeout` | — | op exceeded its deadline |
+| `Other(String)` | message | unclassified socket failure |
 
-### `PgError` (requires `import postgres`)
+### `PostgresError` (requires `import postgres`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `PgConnect(String)` | message | tcp / DNS / pool checkout failure |
-| `PgTls(String)` | message | TLS setup / handshake |
-| `PgAuthFailed(String)` | message | SQLSTATE class 28 |
-| `PgQuery(String, String)` | message, SQLSTATE | server-reported error |
-| `PgTypeMismatch(String, String, String)` | column, expected, actual | row decode |
-| `PgNoSuchColumn(String)` | column | row.get on missing column |
-| `PgClosed` | — | connection dropped mid-query |
-| `PgTimeout` | — | statement / pool timeout |
-| `PgTxnAborted` | — | SQLSTATE 25P02 — rollback required |
-| `PgUnknown(String)` | message | unclassified pg error |
+| `Connect(String)` | message | tcp / DNS / pool checkout failure |
+| `Tls(String)` | message | TLS setup / handshake |
+| `AuthFailed(String)` | message | SQLSTATE class 28 |
+| `Query(String, String)` | message, SQLSTATE | server-reported error |
+| `TypeMismatch(String, String, String)` | column, expected, actual | row decode |
+| `NoSuchColumn(String)` | column | row.get on missing column |
+| `Closed` | — | connection dropped mid-query |
+| `Timeout` | — | statement / pool timeout |
+| `TxnAborted` | — | SQLSTATE 25P02 — rollback required |
+| `Other(String)` | message | unclassified pg error |
 
 ### `TimeError` (requires `import time`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TimeParseFormat(String)` | message | pattern did not match input |
-| `TimeOutOfRange(String)` | message | field out of valid range (e.g. month=13) |
+| `ParseFormat(String)` | message | pattern did not match input |
+| `OutOfRange(String)` | message | field out of valid range (e.g. month=13) |
+| `Other(String)` | message | unclassified failure |
 
 ### `BytesError` (requires `import bytes`)
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `BytesInvalidUtf8(Int)` | byte offset | decode failed at offset |
-| `BytesInvalidHex(String)` | message | bad hex string |
-| `BytesInvalidBase64(String)` | message | bad base64 string |
-| `BytesByteOutOfRange(Int)` | value | list element outside 0..=255 |
-| `BytesOutOfBounds(Int)` | index | slice or get index out of bounds |
+| `InvalidUtf8(Int)` | byte offset | decode failed at offset |
+| `InvalidHex(String)` | message | bad hex string |
+| `InvalidBase64(String)` | message | bad base64 string |
+| `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
+| `OutOfBounds(Int)` | index | slice or get index out of bounds |
+| `Other(String)` | message | unclassified failure |
 
 ### `RegexError` (requires `import regex`)
 
@@ -140,8 +160,9 @@ at the call site rather than through `Err`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `RegexInvalidPattern(String, Int)` | message, byte offset | pattern did not parse |
-| `RegexTooBig` | — | compiled pattern exceeded size budget |
+| `InvalidPattern(String, Int)` | message, byte offset | pattern did not parse |
+| `TooBig` | — | compiled pattern exceeded size budget |
+| `Other(String)` | message | unclassified failure |
 
 ## Stdlib functions that return `Result(T, String)`
 
@@ -160,16 +181,16 @@ import io
 
 fn handle(e: io.IoError) -> String {
   match e {
-    io.IoNotFound(path) -> "missing: {path}"
-    io.IoPermissionDenied(path) -> "denied: {path}"
-    io.IoAlreadyExists(_) | io.IoInvalidInput(_) -> "recoverable"
-    io.IoInterrupted | io.IoUnexpectedEof | io.IoWriteZero -> "transient"
-    io.IoUnknown(msg) -> "unknown: {msg}"
+    io.NotFound(path) -> "missing: {path}"
+    io.PermissionDenied(path) -> "denied: {path}"
+    io.AlreadyExists(_) | io.InvalidInput(_) -> "recoverable"
+    io.Interrupted | io.UnexpectedEof | io.WriteZero -> "transient"
+    io.Other(msg) -> "unknown: {msg}"
   }
 }
 
 fn main() {
-  println(handle(io.IoNotFound("config.toml")))
+  println(handle(io.NotFound("config.toml")))
 }
 ```
 

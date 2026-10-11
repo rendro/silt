@@ -121,6 +121,15 @@ impl Server {
             if !matches!(named, Named::Other) {
                 return None;
             }
+            // One of silt's own definitions is documented as it is
+            // reached: `println`, `list.map`, `io.NotFound`. A variant
+            // that an import binds bare is its module's all the same.
+            if let Some(d) = self
+                .builtin_at(uri, cursor)
+                .and_then(|key| self.builtin_docs.get(&key))
+            {
+                return Some(d.clone());
+            }
             if let Some(name) = ident_at_cursor
                 && let Some(d) = self.builtin_docs.get(&resolve(name))
             {
@@ -131,11 +140,9 @@ impl Server {
             if let Some(d) = self.builtin_docs.get(&format!("{module}.{member}")) {
                 return Some(d.clone());
             }
-            // A builtin module's type or variant (`io.IoNotFound`,
-            // `time.Weekday`) is documented under its bare name.
-            let owner = crate::module::builtin_variant_module(&member)
-                .or_else(|| crate::module::builtin_type_module(&member));
-            if owner == Some(module.as_str()) {
+            // A builtin module's type (`time.Weekday`) is documented
+            // under its bare name.
+            if crate::module::builtin_type_module(&member) == Some(module.as_str()) {
                 return self.builtin_docs.get(&member).cloned();
             }
             None

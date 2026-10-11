@@ -42,7 +42,7 @@ fn main() {
   }
   println(said)
   match tcp.write(conn, bytes.from_string("x")) {
-    Err(tcp.TcpClosed) -> println("closed")
+    Err(tcp.Closed) -> println("closed")
     _ -> println("something else")
   }
 }

@@ -1,0 +1,31 @@
+-- requires-feature: tcp
+-- `tcp.Timeout` and `http.Timeout` are two variants of one name. A file
+-- may import one of them bare; the other is written through its module,
+-- and each is of its own enum.
+import http
+import tcp
+import tcp.{ Timeout, Other }
+
+fn of_tcp(e: tcp.TcpError) -> String {
+  match e {
+    Timeout -> "tcp timeout"
+    Other(text) -> "tcp other: {text}"
+    _ -> "tcp, something else"
+  }
+}
+
+fn of_http(e: http.HttpError) -> String {
+  match e {
+    http.Timeout -> "http timeout"
+    http.Other(text) -> "http other: {text}"
+    _ -> "http, something else"
+  }
+}
+
+fn main() {
+  println(of_tcp(Timeout))
+  println(of_tcp(tcp.Other("a")))
+  println(of_http(http.Timeout))
+  println(of_http(http.HttpError.Other("b")))
+  println("{Timeout} / {http.Timeout}")
+}

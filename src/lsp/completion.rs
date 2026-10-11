@@ -269,21 +269,17 @@ impl Server {
                     ..CompletionItem::default()
                 });
             }
-            // The variants of the module's enums (e.g. `io.IoNotFound`,
+            // The variants of the module's enums (e.g. `io.NotFound`,
             // `http.GET`, `channel.Recv`, `time.Monday`,
-            // `postgres.PgConnect`), reached as `module.Variant`. Emitted
+            // `postgres.Connect`), reached as `module.Variant`. Emitted
             // as CONSTRUCTOR entries so editors distinguish them from
             // module functions / constants.
-            for (_enum_name, variants) in module::builtin_enum_variants() {
-                for &variant in variants {
-                    if module::builtin_variant_module(variant) == Some(prefix) {
-                        items.push(CompletionItem {
-                            label: variant.to_string(),
-                            kind: Some(CompletionItemKind::CONSTRUCTOR),
-                            ..CompletionItem::default()
-                        });
-                    }
-                }
+            for variant in module::builtin_module_variants(prefix) {
+                items.push(CompletionItem {
+                    label: variant.to_string(),
+                    kind: Some(CompletionItemKind::CONSTRUCTOR),
+                    ..CompletionItem::default()
+                });
             }
             // The module's types (`time.Weekday`, `task.Handle`).
             let (_, scopes) = crate::typechecker::names::builtins();

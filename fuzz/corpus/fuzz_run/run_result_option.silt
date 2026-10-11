@@ -1,7 +1,7 @@
 import int
 import result
 
-fn parse_sum(a, b) -> Result(Int, int.ParseError) {
+fn parse_sum(a, b) -> Result(Int, int.IntError) {
   let x = int.parse(a)?
   let y = int.parse(b)?
   Ok(x + y)

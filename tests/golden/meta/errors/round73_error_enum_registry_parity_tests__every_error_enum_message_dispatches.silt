@@ -1,6 +1,6 @@
 -- `.message()` dispatches for a variant of every stdlib error enum
 -- (the registry-driven `<Enum>.message` globals and trait-dispatch table).
--- PgError needs the postgres feature and is left out.
+-- PostgresError needs the postgres feature and is left out.
 import io
 import json
 import toml
@@ -12,13 +12,13 @@ import time
 import bytes
 
 fn main() {
-  println(io.IoNotFound("missing.txt").message())
-  println(json.JsonMissingField("name").message())
-  println(toml.TomlMissingField("key").message())
-  println(int.ParseEmpty.message())
-  println(http.HttpTimeout.message())
-  println(regex.RegexTooBig.message())
-  println(tcp.TcpClosed.message())
-  println(time.TimeOutOfRange("month 13").message())
-  println(bytes.BytesInvalidHex("zz").message())
+  println(io.NotFound("missing.txt").message())
+  println(json.MissingField("name").message())
+  println(toml.MissingField("key").message())
+  println(int.Empty.message())
+  println(http.Timeout.message())
+  println(regex.TooBig.message())
+  println(tcp.Closed.message())
+  println(time.OutOfRange("month 13").message())
+  println(bytes.InvalidHex("zz").message())
 }

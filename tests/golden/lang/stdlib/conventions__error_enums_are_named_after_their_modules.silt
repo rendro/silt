@@ -1,0 +1,52 @@
+-- Each module that can fail has one error enum, named after the module,
+-- with variants that carry no prefix and a last variant `Other(String)`.
+-- Every one has a `message`.
+import bytes
+import float
+import http
+import int
+import io
+import json
+import regex
+import time
+import toml
+
+type Point { x: Int }
+
+fn show(e: a) -> String where a: Error { e.message() }
+
+fn main() {
+  match io.read_file("no/such/file/anywhere") {
+    Err(io.NotFound(path)) -> println("io.NotFound: {path}")
+    other -> println(io.inspect(other))
+  }
+  println(io.inspect(int.parse("")))
+  println(io.inspect(int.parse("99999999999999999999")))
+  println(io.inspect(float.parse("1x")))
+  println(io.inspect(float.parse("-1e999")))
+  match json.parse("[", Point) {
+    Err(json.Syntax(_, offset)) -> println("json.Syntax at {offset}")
+    other -> println(io.inspect(other))
+  }
+  match toml.parse("x = ", Point) {
+    Err(toml.Syntax(_, _)) -> println("toml.Syntax")
+    other -> println(io.inspect(other))
+  }
+  println(io.inspect(time.date(2024, 13, 1)))
+  println(io.inspect(bytes.from_hex("zz")))
+  let last: List(String) = [
+    show(io.Other("io")),
+    show(int.Other("int")),
+    show(float.Other("float")),
+    show(json.Other("json")),
+    show(toml.Other("toml")),
+    show(time.Other("time")),
+    show(bytes.Other("bytes")),
+    show(regex.Other("regex")),
+    show(http.Other("http")),
+  ]
+  println(last)
+  let e: io.IoError = io.IoError.Interrupted
+  println(show(e))
+  println(show(http.Timeout))
+}

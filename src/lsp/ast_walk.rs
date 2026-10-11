@@ -381,7 +381,7 @@ fn find_ident_in_fn_signature(f: &FnDecl, cursor: usize, best: &mut Option<Symbo
 /// nominal-record HEAD names (`Circle(r)`, `Point { x }`) so that
 /// goto-def / references / rename resolve cursors on user type and
 /// variant references in pattern position. Stdlib heads (`Some`, `Ok`,
-/// `IoNotFound`, ...) resolve to their `Symbol` too.
+/// `NotFound`, ...) resolve to their `Symbol` too.
 fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Symbol>) {
     match &pattern.kind {
         PatternKind::Ident(name) => {

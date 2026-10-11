@@ -337,10 +337,10 @@ pub mod ty {
     pub const IO_ERROR: TypeId = TypeId(DefId(7));
     pub const JSON_ERROR: TypeId = TypeId(DefId(8));
     pub const TOML_ERROR: TypeId = TypeId(DefId(9));
-    pub const PARSE_ERROR: TypeId = TypeId(DefId(10));
+    pub const INT_ERROR: TypeId = TypeId(DefId(10));
     pub const HTTP_ERROR: TypeId = TypeId(DefId(11));
     pub const REGEX_ERROR: TypeId = TypeId(DefId(12));
-    pub const PG_ERROR: TypeId = TypeId(DefId(13));
+    pub const POSTGRES_ERROR: TypeId = TypeId(DefId(13));
     pub const TCP_ERROR: TypeId = TypeId(DefId(14));
     pub const TIME_ERROR: TypeId = TypeId(DefId(15));
     pub const BYTES_ERROR: TypeId = TypeId(DefId(16));
@@ -360,6 +360,7 @@ pub mod ty {
     pub const EXEC_RESULT: TypeId = TypeId(DefId(30));
     pub const ANON_RECORD: TypeId = TypeId(DefId(31));
     pub const NOTIFICATION: TypeId = TypeId(DefId(32));
+    pub const FLOAT_ERROR: TypeId = TypeId(DefId(33));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -404,19 +405,25 @@ pub mod bv {
     pub const IO_INTERRUPTED: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 4);
     pub const IO_UNEXPECTED_EOF: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 5);
     pub const IO_WRITE_ZERO: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 6);
-    pub const IO_UNKNOWN: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
+    pub const IO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::IO_ERROR, 7);
     pub const JSON_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 0);
     pub const JSON_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 1);
     pub const JSON_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 2);
-    pub const JSON_UNKNOWN: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 3);
+    pub const JSON_OTHER: BuiltinVariant = BuiltinVariant::new(ty::JSON_ERROR, 3);
     pub const TOML_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 0);
     pub const TOML_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 1);
     pub const TOML_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 2);
-    pub const TOML_UNKNOWN: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 3);
-    pub const PARSE_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::PARSE_ERROR, 0);
-    pub const PARSE_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::PARSE_ERROR, 1);
-    pub const PARSE_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::PARSE_ERROR, 2);
-    pub const PARSE_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::PARSE_ERROR, 3);
+    pub const TOML_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TOML_ERROR, 3);
+    pub const INT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 0);
+    pub const INT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 1);
+    pub const INT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 2);
+    pub const INT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 3);
+    pub const INT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 4);
+    pub const FLOAT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 0);
+    pub const FLOAT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 1);
+    pub const FLOAT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 2);
+    pub const FLOAT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 3);
+    pub const FLOAT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
     pub const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
     pub const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
     pub const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
@@ -424,31 +431,34 @@ pub mod bv {
     pub const HTTP_INVALID_RESPONSE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 4);
     pub const HTTP_CLOSED_EARLY: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 5);
     pub const HTTP_STATUS_CODE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
-    pub const HTTP_UNKNOWN: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 7);
+    pub const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 7);
     pub const REGEX_INVALID_PATTERN: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 0);
     pub const REGEX_TOO_BIG: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 1);
-    pub const PG_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 0);
-    pub const PG_TLS: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 1);
-    pub const PG_AUTH_FAILED: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 2);
-    pub const PG_QUERY: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 3);
-    pub const PG_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 4);
-    pub const PG_NO_SUCH_COLUMN: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 5);
-    pub const PG_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 6);
-    pub const PG_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 7);
-    pub const PG_TXN_ABORTED: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 8);
-    pub const PG_UNKNOWN: BuiltinVariant = BuiltinVariant::new(ty::PG_ERROR, 9);
+    pub const REGEX_OTHER: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 2);
+    pub const PG_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 0);
+    pub const PG_TLS: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 1);
+    pub const PG_AUTH_FAILED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 2);
+    pub const PG_QUERY: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 3);
+    pub const PG_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 4);
+    pub const PG_NO_SUCH_COLUMN: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 5);
+    pub const PG_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 6);
+    pub const PG_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 7);
+    pub const PG_TXN_ABORTED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 8);
+    pub const PG_OTHER: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 9);
     pub const TCP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 0);
     pub const TCP_TLS: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 1);
     pub const TCP_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 2);
     pub const TCP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 3);
-    pub const TCP_UNKNOWN: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 4);
+    pub const TCP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 4);
     pub const TIME_PARSE_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 0);
     pub const TIME_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 1);
+    pub const TIME_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
     pub const BYTES_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 0);
     pub const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
     pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
     pub const BYTES_BYTE_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 3);
     pub const BYTES_OUT_OF_BOUNDS: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 4);
+    pub const BYTES_OTHER: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 5);
     pub const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
     pub const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
     pub const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
@@ -474,10 +484,10 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "IoError",
     "JsonError",
     "TomlError",
-    "ParseError",
+    "IntError",
     "HttpError",
     "RegexError",
-    "PgError",
+    "PostgresError",
     "TcpError",
     "TimeError",
     "BytesError",
@@ -497,6 +507,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "ExecResult",
     "<anon>",
     "Notification",
+    "FloatError",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -785,58 +796,67 @@ mod tests {
             (bv::DELETE, "DELETE"),
             (bv::HEAD, "HEAD"),
             (bv::OPTIONS, "OPTIONS"),
-            (bv::IO_NOT_FOUND, "IoNotFound"),
-            (bv::IO_PERMISSION_DENIED, "IoPermissionDenied"),
-            (bv::IO_ALREADY_EXISTS, "IoAlreadyExists"),
-            (bv::IO_INVALID_INPUT, "IoInvalidInput"),
-            (bv::IO_INTERRUPTED, "IoInterrupted"),
-            (bv::IO_UNEXPECTED_EOF, "IoUnexpectedEof"),
-            (bv::IO_WRITE_ZERO, "IoWriteZero"),
-            (bv::IO_UNKNOWN, "IoUnknown"),
-            (bv::JSON_SYNTAX, "JsonSyntax"),
-            (bv::JSON_TYPE_MISMATCH, "JsonTypeMismatch"),
-            (bv::JSON_MISSING_FIELD, "JsonMissingField"),
-            (bv::JSON_UNKNOWN, "JsonUnknown"),
-            (bv::TOML_SYNTAX, "TomlSyntax"),
-            (bv::TOML_TYPE_MISMATCH, "TomlTypeMismatch"),
-            (bv::TOML_MISSING_FIELD, "TomlMissingField"),
-            (bv::TOML_UNKNOWN, "TomlUnknown"),
-            (bv::PARSE_EMPTY, "ParseEmpty"),
-            (bv::PARSE_INVALID_DIGIT, "ParseInvalidDigit"),
-            (bv::PARSE_OVERFLOW, "ParseOverflow"),
-            (bv::PARSE_UNDERFLOW, "ParseUnderflow"),
-            (bv::HTTP_CONNECT, "HttpConnect"),
-            (bv::HTTP_TLS, "HttpTls"),
-            (bv::HTTP_TIMEOUT, "HttpTimeout"),
-            (bv::HTTP_INVALID_URL, "HttpInvalidUrl"),
-            (bv::HTTP_INVALID_RESPONSE, "HttpInvalidResponse"),
-            (bv::HTTP_CLOSED_EARLY, "HttpClosedEarly"),
-            (bv::HTTP_STATUS_CODE, "HttpStatusCode"),
-            (bv::HTTP_UNKNOWN, "HttpUnknown"),
-            (bv::REGEX_INVALID_PATTERN, "RegexInvalidPattern"),
-            (bv::REGEX_TOO_BIG, "RegexTooBig"),
-            (bv::PG_CONNECT, "PgConnect"),
-            (bv::PG_TLS, "PgTls"),
-            (bv::PG_AUTH_FAILED, "PgAuthFailed"),
-            (bv::PG_QUERY, "PgQuery"),
-            (bv::PG_TYPE_MISMATCH, "PgTypeMismatch"),
-            (bv::PG_NO_SUCH_COLUMN, "PgNoSuchColumn"),
-            (bv::PG_CLOSED, "PgClosed"),
-            (bv::PG_TIMEOUT, "PgTimeout"),
-            (bv::PG_TXN_ABORTED, "PgTxnAborted"),
-            (bv::PG_UNKNOWN, "PgUnknown"),
-            (bv::TCP_CONNECT, "TcpConnect"),
-            (bv::TCP_TLS, "TcpTls"),
-            (bv::TCP_CLOSED, "TcpClosed"),
-            (bv::TCP_TIMEOUT, "TcpTimeout"),
-            (bv::TCP_UNKNOWN, "TcpUnknown"),
-            (bv::TIME_PARSE_FORMAT, "TimeParseFormat"),
-            (bv::TIME_OUT_OF_RANGE, "TimeOutOfRange"),
-            (bv::BYTES_INVALID_UTF8, "BytesInvalidUtf8"),
-            (bv::BYTES_INVALID_HEX, "BytesInvalidHex"),
-            (bv::BYTES_INVALID_BASE64, "BytesInvalidBase64"),
-            (bv::BYTES_BYTE_OUT_OF_RANGE, "BytesByteOutOfRange"),
-            (bv::BYTES_OUT_OF_BOUNDS, "BytesOutOfBounds"),
+            (bv::IO_NOT_FOUND, "NotFound"),
+            (bv::IO_PERMISSION_DENIED, "PermissionDenied"),
+            (bv::IO_ALREADY_EXISTS, "AlreadyExists"),
+            (bv::IO_INVALID_INPUT, "InvalidInput"),
+            (bv::IO_INTERRUPTED, "Interrupted"),
+            (bv::IO_UNEXPECTED_EOF, "UnexpectedEof"),
+            (bv::IO_WRITE_ZERO, "WriteZero"),
+            (bv::IO_OTHER, "Other"),
+            (bv::JSON_SYNTAX, "Syntax"),
+            (bv::JSON_TYPE_MISMATCH, "TypeMismatch"),
+            (bv::JSON_MISSING_FIELD, "MissingField"),
+            (bv::JSON_OTHER, "Other"),
+            (bv::TOML_SYNTAX, "Syntax"),
+            (bv::TOML_TYPE_MISMATCH, "TypeMismatch"),
+            (bv::TOML_MISSING_FIELD, "MissingField"),
+            (bv::TOML_OTHER, "Other"),
+            (bv::INT_EMPTY, "Empty"),
+            (bv::INT_INVALID_DIGIT, "InvalidDigit"),
+            (bv::INT_OVERFLOW, "Overflow"),
+            (bv::INT_UNDERFLOW, "Underflow"),
+            (bv::INT_OTHER, "Other"),
+            (bv::FLOAT_EMPTY, "Empty"),
+            (bv::FLOAT_INVALID_DIGIT, "InvalidDigit"),
+            (bv::FLOAT_OVERFLOW, "Overflow"),
+            (bv::FLOAT_UNDERFLOW, "Underflow"),
+            (bv::FLOAT_OTHER, "Other"),
+            (bv::HTTP_CONNECT, "Connect"),
+            (bv::HTTP_TLS, "Tls"),
+            (bv::HTTP_TIMEOUT, "Timeout"),
+            (bv::HTTP_INVALID_URL, "InvalidUrl"),
+            (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
+            (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
+            (bv::HTTP_STATUS_CODE, "StatusCode"),
+            (bv::HTTP_OTHER, "Other"),
+            (bv::REGEX_INVALID_PATTERN, "InvalidPattern"),
+            (bv::REGEX_TOO_BIG, "TooBig"),
+            (bv::REGEX_OTHER, "Other"),
+            (bv::PG_CONNECT, "Connect"),
+            (bv::PG_TLS, "Tls"),
+            (bv::PG_AUTH_FAILED, "AuthFailed"),
+            (bv::PG_QUERY, "Query"),
+            (bv::PG_TYPE_MISMATCH, "TypeMismatch"),
+            (bv::PG_NO_SUCH_COLUMN, "NoSuchColumn"),
+            (bv::PG_CLOSED, "Closed"),
+            (bv::PG_TIMEOUT, "Timeout"),
+            (bv::PG_TXN_ABORTED, "TxnAborted"),
+            (bv::PG_OTHER, "Other"),
+            (bv::TCP_CONNECT, "Connect"),
+            (bv::TCP_TLS, "Tls"),
+            (bv::TCP_CLOSED, "Closed"),
+            (bv::TCP_TIMEOUT, "Timeout"),
+            (bv::TCP_OTHER, "Other"),
+            (bv::TIME_PARSE_FORMAT, "ParseFormat"),
+            (bv::TIME_OUT_OF_RANGE, "OutOfRange"),
+            (bv::TIME_OTHER, "Other"),
+            (bv::BYTES_INVALID_UTF8, "InvalidUtf8"),
+            (bv::BYTES_INVALID_HEX, "InvalidHex"),
+            (bv::BYTES_INVALID_BASE64, "InvalidBase64"),
+            (bv::BYTES_BYTE_OUT_OF_RANGE, "ByteOutOfRange"),
+            (bv::BYTES_OUT_OF_BOUNDS, "OutOfBounds"),
+            (bv::BYTES_OTHER, "Other"),
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),
             (bv::PG_CURSOR, "PgCursor"),
@@ -852,7 +872,7 @@ mod tests {
             assert_eq!(tag.name(), *name);
             // The checker declares the error enums of the postgres and tcp
             // modules only when those features are built.
-            if (variant.ty == ty::PG_ERROR && !cfg!(feature = "postgres"))
+            if (variant.ty == ty::POSTGRES_ERROR && !cfg!(feature = "postgres"))
                 || (variant.ty == ty::TCP_ERROR && !cfg!(feature = "tcp"))
             {
                 continue;

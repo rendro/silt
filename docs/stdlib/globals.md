@@ -65,7 +65,7 @@ fn main() {
 | `http.GET`, `http.POST`, ... | `http.Method` | HTTP method constructors |
 
 The error enums of the builtin modules (`io.IoError`, `json.JsonError`,
-...) and their variants (`io.IoNotFound(path)`, ...) are reached the
+...) and their variants (`io.NotFound(path)`, ...) are reached the
 same way.
 
 

@@ -24,14 +24,14 @@ Every fallible `io` / `fs` function returns `Result(T, IoError)`.
 
 | Variant                      | Meaning                                    |
 |------------------------------|--------------------------------------------|
-| `IoNotFound(path)`           | file or directory does not exist           |
-| `IoPermissionDenied(path)`   | OS denied access                           |
-| `IoAlreadyExists(path)`      | destination already exists                 |
-| `IoInvalidInput(msg)`        | malformed argument                         |
-| `IoInterrupted`              | syscall was interrupted                    |
-| `IoUnexpectedEof`            | stream ended before the requested bytes    |
-| `IoWriteZero`                | write returned 0 bytes                     |
-| `IoUnknown(msg)`             | everything else                            |
+| `NotFound(path)`           | file or directory does not exist           |
+| `PermissionDenied(path)`   | OS denied access                           |
+| `AlreadyExists(path)`      | destination already exists                 |
+| `InvalidInput(msg)`        | malformed argument                         |
+| `Interrupted`              | syscall was interrupted                    |
+| `UnexpectedEof`            | stream ended before the requested bytes    |
+| `WriteZero`                | write returned 0 bytes                     |
+| `Other(msg)`             | everything else                            |
 
 `IoError` implements the built-in `Error` trait, so every value exposes
 `.message() -> String` for a human-readable summary. Most call sites
@@ -97,7 +97,7 @@ import io
 fn main() {
   match io.read_file("data.txt") {
     Ok(contents) -> println(contents)
-    Err(io.IoNotFound(path)) -> println("no such file: {path}")
+    Err(io.NotFound(path)) -> println("no such file: {path}")
     Err(e) -> println("Error: {e.message()}")
   }
 }
@@ -112,7 +112,7 @@ io.read_line() -> Result(String, IoError)
 
 Reads a single line from stdin (trailing newline stripped). Returns
 `Ok(line)` on success or `Err(IoError)` on failure — in particular
-`Err(IoUnexpectedEof)` when stdin is closed. When called from a spawned
+`Err(UnexpectedEof)` when stdin is closed. When called from a spawned
 task, the operation transparently yields to the scheduler.
 
 ```silt
@@ -122,7 +122,7 @@ fn main() {
   print("Name: ")
   match io.read_line() {
     Ok(name) -> println("Hello, {name}!")
-    Err(io.IoUnexpectedEof) -> println("(EOF)")
+    Err(io.UnexpectedEof) -> println("(EOF)")
     Err(e) -> println("Error: {e.message()}")
   }
 }
@@ -586,7 +586,7 @@ symlinks, walk, then post-filter with `fs.stat` / `fs.read_link`.
 
 **Entry cap.** To avoid accidental OOM on huge trees, `fs.walk`
 refuses to materialize more than `1_000_000` entries. Hitting the cap
-returns `Err(IoUnknown("fs.walk: exceeded 1000000 entries (cap)"))` rather than
+returns `Err(Other("fs.walk: exceeded 1000000 entries (cap)"))` rather than
 silently truncating — callers can then narrow the root or paginate at
 a higher layer.
 
@@ -618,7 +618,7 @@ start with `/` (or a drive prefix on Windows). Syntax mirrors the
 - `[abc]` / `[!abc]` matches one of a character set
 - `**` matches any number of directories recursively
 
-Returns `Err(IoInvalidInput(msg))` if the pattern itself is malformed. The result
+Returns `Err(InvalidInput(msg))` if the pattern itself is malformed. The result
 is subject to the same `1_000_000`-entry cap as `fs.walk`.
 
 ```silt

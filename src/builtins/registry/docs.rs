@@ -42,15 +42,18 @@ pub fn pages() -> Vec<(String, &'static str)> {
     pages
 }
 
-/// The markdown an editor shows for each builtin name: `list.map`, a
-/// module's variant by its bare name (`IoNotFound`), a prelude name.
+/// The markdown an editor shows for each builtin name as it is reached
+/// qualified: `list.map`, a module's variant (`io.NotFound`,
+/// `channel.Message`), a prelude name bare.
 pub fn builtin_docs() -> &'static HashMap<String, String> {
     static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
     DOCS.get_or_init(|| {
         let registry = registry();
         let mut docs: HashMap<String, String> = HashMap::new();
         let mut names: HashSet<String> = HashSet::new();
-        let mut module_variants: HashSet<&str> = HashSet::new();
+        // The modules that have a variant of a name (`Timeout` is
+        // `tcp`'s, `http`'s and `postgres`'s).
+        let mut module_variants: HashMap<&str, Vec<&str>> = HashMap::new();
         // A function with no section of its own shows its module's page.
         for module in registry.enabled_modules() {
             for row in module.enabled_rows() {
@@ -60,7 +63,10 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
             }
             for ty in &module.type_decls {
                 for (variant, _) in ty.variants() {
-                    module_variants.insert(variant);
+                    module_variants
+                        .entry(variant)
+                        .or_default()
+                        .push(module.name);
                 }
             }
         }
@@ -68,14 +74,14 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
         for (file, page) in pages() {
             for (keys, body) in iter_sections(page) {
                 for key in keys {
-                    let known = match file.as_str() {
-                        // The globals page documents the prelude as a
-                        // whole (below); its sections are for the
-                        // variants of the builtin modules.
-                        "globals.md" => module_variants.contains(key.as_str()),
-                        _ => names.contains(&key),
-                    };
-                    if known {
+                    // The globals page documents the prelude as a
+                    // whole (below); its sections are for the variants
+                    // of the builtin modules.
+                    if file == "globals.md" {
+                        for module in module_variants.get(key.as_str()).into_iter().flatten() {
+                            docs.insert(format!("{module}.{key}"), body.clone());
+                        }
+                    } else if names.contains(&key) {
                         docs.insert(key, body.clone());
                     }
                 }
@@ -100,7 +106,7 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                 .filter(|ty| ty.name == error)
                 .flat_map(|ty| ty.variants());
             for (variant, _) in variants {
-                docs.entry(variant.to_string())
+                docs.entry(format!("{}.{variant}", module.name))
                     .or_insert_with(|| body.clone());
             }
         }

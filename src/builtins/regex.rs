@@ -8,10 +8,11 @@ use crate::vm::{Step, Vm, VmError, iterate, next};
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
+        ("InvalidPattern", [Value::String(m), Value::Int(pos)]) => {
             format!("invalid regex pattern at position {pos}: {m}")
         }
-        ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
+        ("TooBig", []) => "compiled regex exceeds size budget".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }

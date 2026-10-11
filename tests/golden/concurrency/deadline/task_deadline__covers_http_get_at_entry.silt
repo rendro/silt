@@ -1,5 +1,5 @@
 -- A past deadline short-circuits http.get at entry with the http
--- module's own typed timeout, HttpTimeout.
+-- module's own typed timeout, Timeout.
 import http
 import task
 import time
@@ -10,7 +10,7 @@ fn main() {
   })
   match outcome {
     Ok(_) -> println("unexpected ok")
-    Err(http.HttpTimeout) -> println("http-timeout")
+    Err(http.Timeout) -> println("http-timeout")
     Err(other) -> println("other: {other.message()}")
   }
 }

@@ -11,7 +11,7 @@ Regular expression functions. Pattern strings use standard regex syntax.
 Stdlib signatures return `Bool`, `Option`, `List`, or `String` — there is
 no `Result` slot on any `regex.*` fn. A pattern that fails to compile
 surfaces as a runtime error at the call site, not as an `Err`. A
-`RegexError` enum (`RegexInvalidPattern(String, Int)`, `RegexTooBig`)
+`RegexError` enum (`InvalidPattern(String, Int)`, `TooBig`)
 exists for user code that wants to model regex failures in its own
 types, but no stdlib function produces it.
 

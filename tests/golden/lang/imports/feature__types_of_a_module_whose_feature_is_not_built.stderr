@@ -61,16 +61,16 @@ error[type]: module 'postgres' is not imported
     |           ^^^^^^^^^^^^^^ module 'postgres' is not imported
   = help: module `postgres` is not part of this build of silt: it needs the cargo feature `postgres`
 
-error[type]: unknown type 'PgError'
+error[type]: unknown type 'PostgresError'
  --> feature__types_of_a_module_whose_feature_is_not_built.silt:20:10
     |
- 20 |   let e: PgError = PgClosed
-    |          ^^^^^^^ unknown type 'PgError'
-  = help: `PgError` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+ 20 |   let e: PostgresError = TxnAborted
+    |          ^^^^^^^^^^^^^ unknown type 'PostgresError'
+  = help: `PostgresError` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
 
-error[type]: undefined variable 'PgClosed'
- --> feature__types_of_a_module_whose_feature_is_not_built.silt:20:20
+error[type]: undefined variable 'TxnAborted'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:20:26
     |
- 20 |   let e: PgError = PgClosed
-    |                    ^^^^^^^^ undefined variable 'PgClosed'
-  = help: `PgClosed` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+ 20 |   let e: PostgresError = TxnAborted
+    |                          ^^^^^^^^^^ undefined variable 'TxnAborted'
+  = help: `TxnAborted` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`

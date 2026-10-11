@@ -16,7 +16,7 @@ Functions for parsing, converting, and comparing integers.
 | `clamp` | `(Int, Int, Int) -> Int` | Clamp value to `[lo, hi]` |
 | `max` | `(Int, Int) -> Int` | Larger of two values |
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
-| `parse` | `(String) -> Result(Int, ParseError)` | Parse string to integer |
+| `parse` | `(String) -> Result(Int, IntError)` | Parse string to integer |
 | `to_float` | `(Int) -> Float` | Convert to float |
 
 
@@ -97,12 +97,12 @@ fn main() {
 ## `int.parse`
 
 ```
-int.parse(s: String) -> Result(Int, ParseError)
+int.parse(s: String) -> Result(Int, IntError)
 ```
 
 Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
-`Ok(n)` on success, `Err(ParseError)` on failure — a typed enum with variants
-`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`, and `ParseUnderflow`.
+`Ok(n)` on success, `Err(IntError)` on failure — a typed enum with variants
+`Empty`, `InvalidDigit(offset)`, `Overflow`, `Underflow` and `Other(message)`.
 Match on the variant to handle specific cases, or fall back to `e.message()` for
 a human-readable default.
 
@@ -118,10 +118,11 @@ fn main() {
   -- Pattern-match on specific failure modes:
   match int.parse("") {
     Ok(_) -> ()
-    Err(int.ParseEmpty) -> println("cannot parse empty input")
-    Err(int.ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
-    Err(int.ParseOverflow) -> println("too large")
-    Err(int.ParseUnderflow) -> println("too small")
+    Err(int.Empty) -> println("cannot parse empty input")
+    Err(int.InvalidDigit(i)) -> println("bad digit at byte {i}")
+    Err(int.Overflow) -> println("too large")
+    Err(int.Underflow) -> println("too small")
+    Err(int.Other(message)) -> println(message)
   }
 }
 ```
@@ -174,7 +175,7 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `format` | `(Float, Int) -> String` | Decimal text with that many decimal places |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
-| `parse` | `(String) -> Result(Float, ParseError)` | Parse string to float |
+| `parse` | `(String) -> Result(Float, FloatError)` | Parse string to float |
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
 | **Constants** | | |
@@ -316,15 +317,15 @@ fn main() {
 ## `float.parse`
 
 ```
-float.parse(s: String) -> Result(Float, ParseError)
+float.parse(s: String) -> Result(Float, FloatError)
 ```
 
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
-`Ok(f)` on success, `Err(ParseError)` on failure — the same typed enum
-`int.parse` uses (`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`,
-`ParseUnderflow`). A `Float` is always finite, so `"NaN"` and `"inf"` are
-rejected as `ParseInvalidDigit(0)`, and a literal outside the `Float` range
-as `ParseOverflow` (`"1e400"`) or `ParseUnderflow` (`"-1e400"`).
+`Ok(f)` on success, `Err(FloatError)` on failure — an enum of its own with
+the variants `int.parse` has (`Empty`, `InvalidDigit(offset)`, `Overflow`,
+`Underflow`, `Other(message)`). A `Float` is always finite, so `"NaN"` and `"inf"` are
+rejected as `InvalidDigit(0)`, and a literal outside the `Float` range
+as `Overflow` (`"1e400"`) or `Underflow` (`"-1e400"`).
 
 ```silt
 import float

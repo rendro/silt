@@ -31,22 +31,22 @@ use parking_lot::Mutex;
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
-        ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
-        ("HttpTimeout", []) => "http request timed out".to_string(),
-        ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
-        ("HttpInvalidResponse", [Value::String(m)]) => {
+        ("Connect", [Value::String(m)]) => format!("http connect failed: {m}"),
+        ("Tls", [Value::String(m)]) => format!("http TLS error: {m}"),
+        ("Timeout", []) => "http request timed out".to_string(),
+        ("InvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
+        ("InvalidResponse", [Value::String(m)]) => {
             format!("http invalid response: {m}")
         }
-        ("HttpClosedEarly", []) => "http connection closed before response completed".to_string(),
-        ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
+        ("ClosedEarly", []) => "http connection closed before response completed".to_string(),
+        ("StatusCode", [Value::Int(code), Value::String(body)]) => {
             if body.is_empty() {
                 format!("http status {code}")
             } else {
                 format!("http status {code}: {body}")
             }
         }
-        ("HttpUnknown", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -206,10 +206,10 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// Classify a ureq error (or any transport-style error string) into a
 /// typed `HttpError` variant. The classifier is string-based because
 /// ureq's error enum shape is minor-version-unstable; we match on
-/// the rendered message and fall back to `HttpUnknown`.
+/// the rendered message and fall back to `Other`.
 #[cfg(feature = "http")]
 /// The error of an `http` function whose operation has no value of
-/// its own: `HttpTimeout` when its deadline passed, `HttpUnknown` with
+/// its own: `Timeout` when its deadline passed, `Other` with
 /// the reason when it could not run or panicked.
 #[cfg(feature = "http")]
 fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
@@ -217,7 +217,7 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(why.into())])
+            Value::variant(bv::HTTP_OTHER, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
@@ -256,7 +256,7 @@ fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
     {
         Value::variant(bv::HTTP_CONNECT, vec![Value::String(msg.into())])
     } else {
-        Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(msg.into())])
+        Value::variant(bv::HTTP_OTHER, vec![Value::String(msg.into())])
     }
 }
 
@@ -266,7 +266,7 @@ fn http_err(raw_msg: &str, url: &str) -> Value {
     Value::variant(bv::ERR, vec![http_error_to_variant(raw_msg, url)])
 }
 
-/// Wrap a response-body decode failure as `Err(HttpInvalidResponse(msg))`.
+/// Wrap a response-body decode failure as `Err(InvalidResponse(msg))`.
 #[cfg(feature = "http")]
 fn http_response_decode_err(msg: String) -> Value {
     Value::variant(
@@ -282,7 +282,7 @@ fn http_response_decode_err(msg: String) -> Value {
 /// to the program. Shared by `do_http_get` and `do_http_request`, which had
 /// byte-identical match blocks here. Behavior: on transport success, decode
 /// the response (success → `Ok(resp)`, body-read failure →
-/// `Err(HttpInvalidResponse(..))`); on transport error → `Err(HttpError(..))`.
+/// `Err(InvalidResponse(..))`); on transport error → `Err(HttpError(..))`.
 #[cfg(feature = "http")]
 fn finish_http_response(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,

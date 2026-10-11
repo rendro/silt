@@ -204,7 +204,7 @@ fn main() {{
   }}
   match task.deadline(time.ms(100), {{ -> tcp.accept_tls(listener, cert, key) }}) {{
     Ok(_) -> println("a handshake with a silent client")
-    Err(tcp.TcpTimeout) -> println("given up")
+    Err(tcp.Timeout) -> println("given up")
     Err(e) -> println("another error: {{e.message()}}")
   }}
   -- The connection of the handshake was closed from the server's side.

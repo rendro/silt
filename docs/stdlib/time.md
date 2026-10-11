@@ -60,8 +60,8 @@ validation and format parsing are the only structural failure modes:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TimeParseFormat(msg)` | `String` | pattern did not match input |
-| `TimeOutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
+| `ParseFormat(msg)` | `String` | pattern did not match input |
+| `OutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
 
 `TimeError` implements the built-in `Error` trait, so `e.message()`
 yields a rendered string when variant branching isn't needed.

@@ -27,10 +27,11 @@ it would go unseen; handle it, return it with `?`, or write `let _ = ...` ``.
 
 Every fallible stdlib module except `crypto`, `encoding`, `uuid`, and `regex`
 returns a typed error enum — `IoError`, `JsonError`, `TomlError`,
-`ParseError`, `HttpError`, `TcpError`, `PgError`, `TimeError` and
-`BytesError`. Each is a member of its module (`io.IoError`), and
-so are its variants: `io.IoNotFound`, `json.JsonSyntax`,
-`http.HttpTimeout`, and so on. The full
+`IntError`, `FloatError`, `HttpError`, `TcpError`, `PostgresError`,
+`TimeError` and `BytesError`. Each is named after its module and is a
+member of it (`io.IoError`), and so are its variants: `io.NotFound`,
+`json.Syntax`, `http.Timeout`, and so on; the last variant of each is
+`Other(String)`. The full
 catalog is in [`docs/stdlib/errors.md`](../stdlib/errors.md); hovering
 over an error type in your editor shows the same table.
 
@@ -44,8 +45,8 @@ import string
 fn main() {
   match io.read_file("app.json") {
     Ok(content) -> println("loaded {string.length(content)} bytes")
-    Err(io.IoNotFound(path)) -> println("file does not exist: {path}")
-    Err(io.IoPermissionDenied(path)) -> println("denied: {path}")
+    Err(io.NotFound(path)) -> println("file does not exist: {path}")
+    Err(io.PermissionDenied(path)) -> println("denied: {path}")
     Err(e) -> println("error: {e.message()}")
   }
 }

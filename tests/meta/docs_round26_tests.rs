@@ -195,8 +195,14 @@ fn every_builtin_module_has_a_per_module_doc() {
         }
     }
     // A variant of an error enum shows its enum's section of
-    // docs/stdlib/errors.md.
-    for variant in ["IoNotFound", "JsonSyntax", "TomlSyntax", "ParseEmpty"] {
+    // docs/stdlib/errors.md, under the name it is reached by.
+    for variant in [
+        "io.NotFound",
+        "json.Syntax",
+        "toml.Syntax",
+        "int.Empty",
+        "float.Empty",
+    ] {
         if !docs.get(variant).is_some_and(|d| !d.trim().is_empty()) {
             missing.push(format!("error variant `{variant}` has no registered doc"));
         }

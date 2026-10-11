@@ -1,0 +1,36 @@
+error[type]: module 'io' has no member 'IoNotFound'
+ --> conventions__the_prefixed_error_names_are_none.silt:12:11
+    |
+ 12 |   let a = io.IoNotFound("x")
+    |           ^^^^^^^^^^^^^ module 'io' has no member 'IoNotFound'
+  = help: did you mean `NotFound`?
+
+error[type]: module 'io' has no member 'IoUnknown'
+ --> conventions__the_prefixed_error_names_are_none.silt:13:11
+    |
+ 13 |   let b = io.IoUnknown("x")
+    |           ^^^^^^^^^^^^ module 'io' has no member 'IoUnknown'
+
+error[type]: module 'json' has no member 'JsonSyntax'
+ --> conventions__the_prefixed_error_names_are_none.silt:14:11
+    |
+ 14 |   let c = json.JsonSyntax("x", 0)
+    |           ^^^^^^^^^^^^^^^ module 'json' has no member 'JsonSyntax'
+
+error[type]: module 'int' has no type 'ParseError'
+ --> conventions__the_prefixed_error_names_are_none.silt:15:14
+    |
+ 15 |   let d: int.ParseError = int.ParseEmpty
+    |              ^^^^^^^^^^ module 'int' has no type 'ParseError'
+
+error[type]: module 'int' has no member 'ParseEmpty'
+ --> conventions__the_prefixed_error_names_are_none.silt:15:27
+    |
+ 15 |   let d: int.ParseError = int.ParseEmpty
+    |                           ^^^^^^^^^^^^^^ module 'int' has no member 'ParseEmpty'
+
+error[type]: type mismatch: expected FloatError, got IntError
+ --> conventions__the_prefixed_error_names_are_none.silt:16:29
+    |
+ 16 |   let e: float.FloatError = int.Empty
+    |                             ^^^^^^^^^ type mismatch: expected FloatError, got IntError

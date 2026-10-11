@@ -5,7 +5,7 @@
 -- what to do with it. `?` hands the error on; a Result that `?` leaves
 -- behind as an Int is an unused Int.
 import int
-import int.{ ParseError }
+import int.{ IntError }
 import io
 import io.{ IoError }
 
@@ -15,7 +15,7 @@ fn save(path: String) -> Result((), IoError) {
   Ok(())
 }
 
-fn total(a: String) -> Result(Int, ParseError) {
+fn total(a: String) -> Result(Int, IntError) {
   int.parse(a)?
   int.parse(a)
 }

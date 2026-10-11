@@ -5,9 +5,9 @@ import io
 import http
 fn describe(e: io.IoError) -> String {
   match e {
-    http.HttpConnect(m) -> "nope"
-    io.IoNotFound(p) -> "ok"
+    http.Connect(m) -> "nope"
+    io.NotFound(p) -> "ok"
     _ -> "other"
   }
 }
-fn main() { println(describe(io.IoNotFound("x"))) }
+fn main() { println(describe(io.NotFound("x"))) }

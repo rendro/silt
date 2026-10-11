@@ -15,7 +15,7 @@ fn run() -> Result(String, E) {
 fn outcome() {
   match run() {
     Ok(_) -> "ok"
-    Err(Wrap(io.IoNotFound(_))) -> "not-found"
+    Err(Wrap(io.NotFound(_))) -> "not-found"
     Err(Wrap(_)) -> "other"
   }
 }

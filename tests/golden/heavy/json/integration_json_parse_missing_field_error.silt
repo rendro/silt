@@ -7,7 +7,7 @@ type User { name: String, age: Int }
 fn program() {
   match json.parse("\{\"name\": \"Alice\"\}", User) {
     Ok(_) -> "unexpected"
-    Err(json.JsonMissingField(f)) -> f
+    Err(json.MissingField(f)) -> f
     Err(e) -> e.message()
   }
 }

@@ -457,13 +457,13 @@ to I/O.
 Specifically (matching the [`SILT_IO_TIMEOUT`](../concurrency.md#io-timeouts-silt_io_timeout)
 table):
 
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
+- `io.*` and `fs.*` surface `Err(Other("I/O timeout (task.deadline exceeded)"))`.
+- `tcp.*` surfaces `Err(Timeout)`.
+- `http.*` surfaces `Err(Timeout)`.
 
 The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
 or a surrounding `task.deadline`, whichever elapses first fires. The
-embedded message on the `IoUnknown` variant distinguishes the source so
+embedded message on the `Other` variant distinguishes the source so
 silt code can tell scoped timeouts from the global one.
 
 ```silt
@@ -476,7 +476,7 @@ fn main() {
   let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
     Ok(contents) -> println(contents)
-    Err(io.IoUnknown(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
+    Err(io.Other(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
     Err(_) -> println("other io error")
   }
 }

@@ -2,7 +2,7 @@ import int
 fn main() {
   match int.parse("") {
     Ok(n) -> println("Ok({n})")
-    Err(int.ParseEmpty) -> println("Err(ParseEmpty)")
+    Err(int.Empty) -> println("Err(Empty)")
     Err(_) -> println("Err(other)")
   }
 }

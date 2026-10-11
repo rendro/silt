@@ -313,9 +313,6 @@ pub struct Module {
     /// What each variant of the error enum reads as, in its `message`
     /// and where it is shown; none where the module is not built.
     pub text: Option<ErrorText>,
-    /// Types of other modules the module offers too, with their
-    /// variants, as (module, type): `float` offers `int`'s `ParseError`.
-    pub shares: &'static [(&'static str, &'static str)],
     pub rows: Vec<Row>,
 }
 
@@ -354,7 +351,6 @@ macro_rules! module {
         $(derives: $derives:expr,)?
         $(opaque: $opaque:expr,)?
         $(error: $error:literal => $text:expr,)?
-        $(shares: $shares:expr,)?
         rows: [$(
             $row:ident ( $($arg:expr),* $(,)? ) $(. $with:ident ( $($with_arg:tt)* ))*
         ),* $(,)?] $(,)?
@@ -379,9 +375,6 @@ macro_rules! module {
         #[allow(unused_mut, unused_assignments)]
         let mut error: Option<(&'static str, &'static str, Option<$crate::builtins::registry::ErrorText>)> = None;
         module!(@error error, [$($feature)?], [$($error => $text)?]);
-        #[allow(unused_mut, unused_assignments)]
-        let mut shares: &'static [(&'static str, &'static str)] = &[];
-        $(shares = &$shares;)?
         let rows;
         module!(
             @rows rows, [$($feature)?],
@@ -393,7 +386,6 @@ macro_rules! module {
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
             (types, derives, opaque),
             error,
-            shares,
             rows,
         )
     }};
@@ -524,7 +516,6 @@ fn build_module(
         &'static [(&'static str, usize)],
     ),
     error: Option<(&'static str, &'static str, Option<ErrorText>)>,
-    shares: &'static [(&'static str, &'static str)],
     specs: Vec<RowSpec>,
 ) -> Module {
     // The `message` of the error enum: a row of the enum, not of the
@@ -550,7 +541,6 @@ fn build_module(
         error: error.map(|(error, _, _)| error),
         message,
         text: error.and_then(|(_, _, text)| text),
-        shares,
         rows: rows(name, enabled, specs),
     }
 }

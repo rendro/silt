@@ -32,47 +32,43 @@ fn every_builtin_error_enum_has_a_message_row() {
         path
     }
 
-    // One known-good variant per enum is enough to exercise its row.
-    fn ctor_call_for(_enum_name: &str, variant: &str, _arity: usize) -> Option<String> {
-        match variant {
-            "ParseEmpty" => Some(variant.to_string()),
-            "IoNotFound" | "HttpConnect" | "PgConnect" | "TcpConnect" | "TimeParseFormat" => {
-                Some(format!(r#"{variant}("x")"#))
-            }
-            "BytesInvalidUtf8" => Some(format!(r#"{variant}(0)"#)),
-            "JsonSyntax" | "TomlSyntax" | "RegexInvalidPattern" => {
-                Some(format!(r#"{variant}("x", 0)"#))
-            }
-            _ => None,
-        }
-    }
+    // One known-good variant per enum is enough to exercise its row:
+    // the enum, its module, and a variant of it as source text.
+    const SAMPLES: &[(&str, &str, &str)] = &[
+        ("IoError", "io", r#"NotFound("x")"#),
+        ("IntError", "int", "Empty"),
+        ("FloatError", "float", "Empty"),
+        ("RegexError", "regex", r#"InvalidPattern("x", 0)"#),
+        ("JsonError", "json", r#"Syntax("x", 0)"#),
+        ("TomlError", "toml", r#"Syntax("x", 0)"#),
+        ("TimeError", "time", r#"ParseFormat("x")"#),
+        ("HttpError", "http", r#"Connect("x")"#),
+        ("PostgresError", "postgres", r#"Connect("x")"#),
+        ("BytesError", "bytes", "InvalidUtf8(0)"),
+        ("TcpError", "tcp", r#"Connect("x")"#),
+    ];
 
     let skip = |enum_name: &str| -> bool {
         match enum_name {
             #[cfg(not(feature = "postgres"))]
-            "PgError" => true,
+            "PostgresError" => true,
             #[cfg(not(feature = "tcp"))]
             "TcpError" => true,
             _ => false,
         }
     };
 
-    for (enum_name, variants) in builtin_error_enum_variants_with_arity() {
+    for (enum_name, _) in builtin_error_enum_variants_with_arity() {
         if skip(enum_name) {
             continue;
         }
-        let chosen = variants
-            .iter()
-            .find_map(|(v, a)| ctor_call_for(enum_name, v, *a).map(|c| (*v, c)));
-        let (variant, call) = chosen.unwrap_or_else(|| {
+        let Some((_, module, call)) = SAMPLES.iter().find(|(name, _, _)| name == enum_name) else {
             panic!(
-                "no variant of {enum_name} has a constructor template in \
-                 `ctor_call_for`. Add one: every registered stdlib error \
-                 enum is exercised here."
+                "{enum_name} has no sample in `SAMPLES`. Add one: every \
+                 registered stdlib error enum is exercised here."
             )
-        });
-        let module = silt::module::builtin_variant_module(variant)
-            .expect("every stdlib error variant belongs to a module");
+        };
+        let variant = call.split('(').next().unwrap_or(call);
 
         // The script prints the raw `.message()` output. We don't pin
         // the exact wording (that is the module's `error_text`) — we

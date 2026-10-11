@@ -4,10 +4,10 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: operator '+' requires Int or Float, got 'Result(Int, ParseError)'
+-- stderr-contains: operator '+' requires Int or Float, got 'Result(Int, IntError)'
 import int
 
-fn f() -> Result(Int, int.ParseError) {
+fn f() -> Result(Int, int.IntError) {
   Ok(int.parse("1") + int.parse("2")?)
 }
 

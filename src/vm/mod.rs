@@ -171,8 +171,8 @@ impl Vm {
     /// builtins call this at entry so a call made past the deadline
     /// short-circuits into a clean `Err` without submitting to the
     /// I/O pool. The factory determines which typed error variant the
-    /// caller's signature expects (io uses `IoUnknown`, tcp uses
-    /// `TcpTimeout`, etc.).
+    /// caller's signature expects (io uses `Other`, tcp uses
+    /// `Timeout`, etc.).
     pub(crate) fn deadline_exceeded_with(&self, timeout_err: ErrFactory) -> Option<Value> {
         let deadline = self.current_deadline?;
         if self.runtime.io.monotonic() >= deadline {

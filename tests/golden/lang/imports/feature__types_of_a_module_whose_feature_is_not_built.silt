@@ -17,6 +17,6 @@ type Holder { pool: PgPool, values: List(Value) }
 
 fn main() {
   println(postgres.close(1))
-  let e: PgError = PgClosed
+  let e: PostgresError = TxnAborted
   println(e)
 }

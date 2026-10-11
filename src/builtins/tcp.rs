@@ -28,14 +28,14 @@ use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
 /// The error of a `tcp` function whose operation has no value of its
-/// own: `TcpTimeout` when its deadline passed, `TcpUnknown` with the
+/// own: `Timeout` when its deadline passed, `Other` with the
 /// reason when it could not run or panicked.
 fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     use crate::vm::IoFailure;
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::TCP_UNKNOWN, vec![Value::String(why.into())])
+            Value::variant(bv::TCP_OTHER, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
@@ -45,11 +45,11 @@ fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("TcpConnect", [Value::String(m)]) => format!("tcp connect failed: {m}"),
-        ("TcpTls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
-        ("TcpClosed", []) => "tcp connection closed".to_string(),
-        ("TcpTimeout", []) => "tcp operation timed out".to_string(),
-        ("TcpUnknown", [Value::String(m)]) => m.to_string(),
+        ("Connect", [Value::String(m)]) => format!("tcp connect failed: {m}"),
+        ("Tls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
+        ("Closed", []) => "tcp connection closed".to_string(),
+        ("Timeout", []) => "tcp operation timed out".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -436,7 +436,7 @@ fn tcp_error_to_variant(err: &std::io::Error) -> Value {
             Value::variant(bv::TCP_CLOSED, vec![])
         }
         ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
-        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg.into())]),
+        _ => Value::variant(bv::TCP_OTHER, vec![Value::String(msg.into())]),
     }
 }
 
@@ -445,19 +445,16 @@ fn tcp_io_err(err: &std::io::Error) -> Value {
     Value::variant(bv::ERR, vec![tcp_error_to_variant(err)])
 }
 
-/// Build `Err(TcpUnknown(msg))` for string-form failures (TLS stringly
+/// Build `Err(Other(msg))` for string-form failures (TLS stringly
 /// errors from the rustls code path; ad-hoc arg/validation failures).
 fn err(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
         bv::ERR,
-        vec![Value::variant(
-            bv::TCP_UNKNOWN,
-            vec![Value::String(s.into())],
-        )],
+        vec![Value::variant(bv::TCP_OTHER, vec![Value::String(s.into())])],
     )
 }
 
-/// Build `Err(TcpClosed)`.
+/// Build `Err(Closed)`.
 fn err_closed() -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::TCP_CLOSED, vec![])])
 }

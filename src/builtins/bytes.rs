@@ -23,19 +23,20 @@ use crate::vm::VmError;
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("BytesInvalidUtf8", [Value::Int(offset)]) => {
+        ("InvalidUtf8", [Value::Int(offset)]) => {
             format!("invalid UTF-8 at byte {offset}")
         }
-        ("BytesInvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
-        ("BytesInvalidBase64", [Value::String(m)]) => {
+        ("InvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
+        ("InvalidBase64", [Value::String(m)]) => {
             format!("invalid base64: {m}")
         }
-        ("BytesByteOutOfRange", [Value::Int(v)]) => {
+        ("ByteOutOfRange", [Value::Int(v)]) => {
             format!("byte value out of range (expected 0..=255): {v}")
         }
-        ("BytesOutOfBounds", [Value::Int(idx)]) => {
+        ("OutOfBounds", [Value::Int(idx)]) => {
             format!("index out of bounds: {idx}")
         }
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }

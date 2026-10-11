@@ -160,9 +160,9 @@ fn test_watchdog_fires_tcp_read_surfaces_tcp_timeout() {
     // data, it parks in the io_pool. The scheduler's watchdog (armed
     // here via a scoped `task.spawn_until` deadline — `DeadlineSource::Task`)
     // must fire and complete the pending IoCompletion using the tcp
-    // module's registered TimeoutErrFactory, surfacing `Err(TcpTimeout)`
+    // module's registered TimeoutErrFactory, surfacing `Err(Timeout)`
     // to the silt-side match. Before per-completion factory plumbing,
-    // the watchdog always wrote the generic `Err(IoUnknown(_))`, which
+    // the watchdog always wrote the generic `Err(Other(_))`, which
     // collided with tcp.*'s `Result(_, TcpError)` return shape and
     // forced callers into a wildcard arm.
     //
@@ -234,7 +234,7 @@ fn main() {{
       let outcome = task.spawn_until(time.ms(50), {{ ->
         match tcp.read(s, 1024) {{
           Ok(_) -> "unexpected-ok"
-          Err(tcp.TcpTimeout) -> "tcp-timeout"
+          Err(tcp.Timeout) -> "tcp-timeout"
           Err(other) -> "other:{{other.message()}}"
         }}
       }})
@@ -308,7 +308,7 @@ fn main() {{
     );
     assert!(
         stdout.contains("tcp-timeout"),
-        "watchdog-fired tcp.read must surface Err(TcpTimeout), not IoUnknown/IoInterrupted; \
+        "watchdog-fired tcp.read must surface Err(Timeout), not Other/Interrupted; \
          got stdout={stdout:?} stderr={stderr:?}"
     );
 }

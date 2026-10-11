@@ -54,20 +54,20 @@ type Response {
 that a 4xx or 5xx HTTP response is an `Ok(Response)` — only failures
 *before* a response lands (DNS, connection, TLS, protocol) become `Err`.
 Servers that explicitly want to short-circuit on a non-2xx code can
-construct `HttpStatusCode(status, body)` themselves; the stdlib does
+construct `StatusCode(status, body)` themselves; the stdlib does
 not do that conversion for you. `HttpError` implements the built-in
 `Error` trait, so `e.message()` always yields a rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `HttpConnect(msg)` | `String` | TCP / DNS connect failure |
-| `HttpTls(msg)` | `String` | TLS handshake / cert failure |
-| `HttpTimeout` | — | request exceeded its deadline |
-| `HttpInvalidUrl(url)` | `String` | URL did not parse |
-| `HttpInvalidResponse(msg)` | `String` | response violated protocol |
-| `HttpClosedEarly` | — | peer closed before response completed |
-| `HttpStatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
-| `HttpUnknown(msg)` | `String` | unclassified transport error |
+| `Connect(msg)` | `String` | TCP / DNS connect failure |
+| `Tls(msg)` | `String` | TLS handshake / cert failure |
+| `Timeout` | — | request exceeded its deadline |
+| `InvalidUrl(url)` | `String` | URL did not parse |
+| `InvalidResponse(msg)` | `String` | response violated protocol |
+| `ClosedEarly` | — | peer closed before response completed |
+| `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
+| `Other(msg)` | `String` | unclassified transport error |
 
 
 ## `http.get`
@@ -91,7 +91,7 @@ import string
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
-    Err(http.HttpTimeout) -> println("timed out; retry later")
+    Err(http.Timeout) -> println("timed out; retry later")
     Err(e) -> println("Network error: {e.message()}")
   }
 }
@@ -294,7 +294,7 @@ flight, of the 4,096 a program can have (see
 While `http.serve` serves a listener, the listener is the server's alone:
 
 - `tcp.accept`, `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
-  `Err(TcpUnknown("the listener is served by http.serve"))` at once. An
+  `Err(Other("the listener is served by http.serve"))` at once. An
   accept that was already waiting on the listener when the server started
   returns the same error at that moment: the server has every client.
 - A second `http.serve` on it is a runtime error.

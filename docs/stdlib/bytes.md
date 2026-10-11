@@ -103,11 +103,11 @@ for granular handling or fall back to `e.message()`:
 
 | Variant | Fields | Raised by |
 |---------|--------|-----------|
-| `BytesInvalidUtf8(offset)` | `Int` | `to_string` on non-UTF-8 input |
-| `BytesInvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
-| `BytesInvalidBase64(msg)` | `String` | `from_base64` on malformed input |
-| `BytesByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
-| `BytesOutOfBounds(index)` | `Int` | `slice` / `get` on an out-of-range index |
+| `InvalidUtf8(offset)` | `Int` | `to_string` on non-UTF-8 input |
+| `InvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
+| `InvalidBase64(msg)` | `String` | `from_base64` on malformed input |
+| `ByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
+| `OutOfBounds(index)` | `Int` | `slice` / `get` on an out-of-range index |
 
 `BytesError` implements the built-in `Error` trait.
 

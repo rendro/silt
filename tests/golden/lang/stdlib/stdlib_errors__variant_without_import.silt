@@ -1,4 +1,4 @@
 -- exit: 1
--- stderr-contains: error[type]: undefined variable 'IoNotFound'
--- stderr-contains: write `io.IoNotFound` after `import io`, or add `import io.{ IoNotFound }`
-fn main() { let _ = IoNotFound("x") }
+-- stderr-contains: error[type]: undefined variable 'NotFound'
+-- stderr-contains: write `io.NotFound` after `import io`, or add `import io.{ NotFound }`
+fn main() { let _ = NotFound("x") }

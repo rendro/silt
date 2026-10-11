@@ -7,7 +7,7 @@ use crate::vm::VmError;
 
 /// Locate the byte offset of the first character in `s` that could not
 /// plausibly be part of a numeric literal (base-10 int or decimal float).
-/// Used to build `ParseInvalidDigit(offset)` variants when Rust's
+/// Used to build `InvalidDigit(offset)` variants when Rust's
 /// `ParseIntError` / `ParseFloatError` don't expose a native offset.
 ///
 /// `allow_decimal` toggles float-only characters (`.`, `e`, `E`). The
@@ -37,58 +37,65 @@ fn find_first_invalid_digit(s: &str, allow_decimal: bool) -> usize {
     0
 }
 
-/// Classify a `ParseIntError` into the matching `ParseError` variant.
+/// Classify a `ParseIntError` into the matching `IntError` variant.
 /// `s` is the original input, used to recover an offset for
 /// `InvalidDigit` since `IntErrorKind::InvalidDigit` doesn't expose one.
 fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
     use std::num::IntErrorKind;
     match err.kind() {
-        IntErrorKind::Empty => Value::variant(bv::PARSE_EMPTY, vec![]),
-        IntErrorKind::PosOverflow => Value::variant(bv::PARSE_OVERFLOW, vec![]),
-        IntErrorKind::NegOverflow => Value::variant(bv::PARSE_UNDERFLOW, vec![]),
+        IntErrorKind::Empty => Value::variant(bv::INT_EMPTY, vec![]),
+        IntErrorKind::PosOverflow => Value::variant(bv::INT_OVERFLOW, vec![]),
+        IntErrorKind::NegOverflow => Value::variant(bv::INT_UNDERFLOW, vec![]),
         // InvalidDigit, Zero, and any future-added kinds fall through
-        // to `ParseInvalidDigit(offset)`: it's the only variant that
-        // carries data, so it doubles as the "anything else" sink.
-        // std doesn't promise IntErrorKind stays exhaustive, so the
-        // `_` arm is not dead code even today.
+        // to `InvalidDigit(offset)`: std doesn't promise IntErrorKind
+        // stays exhaustive, so the `_` arm is not dead code even today.
         _ => {
             let offset = find_first_invalid_digit(s.trim(), false) as i64;
-            Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(offset)])
+            Value::variant(bv::INT_INVALID_DIGIT, vec![Value::Int(offset)])
         }
     }
 }
 
-/// Classify a `ParseFloatError` into the matching `ParseError` variant.
+/// Classify a `ParseFloatError` into the matching `FloatError` variant.
 /// `ParseFloatError` doesn't expose a stable discriminant, so we
-/// fall back to rescanning the input: empty → `ParseEmpty`, otherwise
-/// `ParseInvalidDigit(offset)`. Overflow/underflow aren't distinguishable
-/// at this layer — `f64::from_str` silently saturates to `±inf`, and
-/// `float.parse` rejects non-finite results upstream.
+/// fall back to rescanning the input: empty → `Empty`, otherwise
+/// `InvalidDigit(offset)`. (An out-of-range literal parses, to an
+/// infinity: `float.parse` tells it apart itself.)
 fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Value {
     let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Value::variant(bv::PARSE_EMPTY, vec![]);
-    }
     // A string that's only a sign has no digits → treat as empty.
-    if trimmed == "+" || trimmed == "-" {
-        return Value::variant(bv::PARSE_EMPTY, vec![]);
+    if trimmed.is_empty() || trimmed == "+" || trimmed == "-" {
+        return Value::variant(bv::FLOAT_EMPTY, vec![]);
     }
     let offset = find_first_invalid_digit(trimmed, true) as i64;
-    Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(offset)])
+    Value::variant(bv::FLOAT_INVALID_DIGIT, vec![Value::Int(offset)])
 }
 
-/// What `ParseError`'s `message` says of the variant `tag` with `fields`:
-/// `None` if they are no variant of it.
-pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+/// What a variant of `IntError` or of `FloatError` reads as: the two
+/// enums have the same variants.
+fn parse_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("ParseEmpty", []) => "cannot parse empty string".to_string(),
-        ("ParseInvalidDigit", [Value::Int(offset)]) => {
+        ("Empty", []) => "cannot parse empty string".to_string(),
+        ("InvalidDigit", [Value::Int(offset)]) => {
             format!("invalid digit at byte {offset}")
         }
-        ("ParseOverflow", []) => "number too large".to_string(),
-        ("ParseUnderflow", []) => "number too small".to_string(),
+        ("Overflow", []) => "number too large".to_string(),
+        ("Underflow", []) => "number too small".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
+}
+
+/// What `IntError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn int_error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    parse_error_text(tag, fields)
+}
+
+/// What `FloatError`'s `message` says of the variant `tag` with
+/// `fields`: `None` if they are no variant of it.
+pub(crate) fn float_error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    parse_error_text(tag, fields)
 }
 
 /// Build a `Float` from the result of a float operation, raising the
@@ -152,19 +159,19 @@ pub(crate) mod float {
                 // literals such as `"1e400"` (to ±infinity). None of them
                 // is a `Float`: a spelled-out infinity or NaN is not a
                 // number silt reads, and an out-of-range literal
-                // overflows the way `int.parse` does (`ParseUnderflow`
-                // below the range, `ParseOverflow` above it).
+                // overflows the way `int.parse` does (`Underflow` below
+                // the range, `Overflow` above it).
                 Ok(n) => match Float::new(n) {
                     Some(n) => Value::variant(bv::OK, vec![Value::Float(n)]),
                     None => {
                         let spelled = s.trim().trim_start_matches(['+', '-']);
                         let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                         {
-                            Value::variant(bv::PARSE_INVALID_DIGIT, vec![Value::Int(0)])
+                            Value::variant(bv::FLOAT_INVALID_DIGIT, vec![Value::Int(0)])
                         } else if n < 0.0 {
-                            Value::variant(bv::PARSE_UNDERFLOW, vec![])
+                            Value::variant(bv::FLOAT_UNDERFLOW, vec![])
                         } else {
-                            Value::variant(bv::PARSE_OVERFLOW, vec![])
+                            Value::variant(bv::FLOAT_OVERFLOW, vec![])
                         };
                         Value::variant(bv::ERR, vec![err])
                     }
