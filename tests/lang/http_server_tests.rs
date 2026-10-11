@@ -1462,6 +1462,17 @@ fn nothing_is_written_behind_a_last_word() {
 /// the writes tells): a body that is there with the head is not asked
 /// for, and nothing is tried. How much the system takes then is the
 /// system's to say; the test holds for each of the three.
+///
+/// What this decides: whichever of the three the system produces, the
+/// client is served as that case demands, and a server that ends the
+/// connection where nothing was taken fails here whenever that case
+/// comes. What it does not decide: that the case comes. No client can
+/// make the system refuse those 25 bytes, and on Linux it takes them
+/// every time (a writer that has just been let through has room, and
+/// a small write joins the last segment), so there this is a guard
+/// for the usual path only. The case of nothing taken is decided by
+/// `an_interim_response_that_the_system_does_not_take_is_skipped`,
+/// where the writes are ended and nothing can be taken.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_request_behind_a_response_that_is_not_read_is_served() {

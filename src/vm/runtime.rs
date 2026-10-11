@@ -1104,6 +1104,7 @@ mod tests {
     /// so does one of an operation that is only stopped while it runs
     /// ([`IoOp::stop_with`]).
     #[test]
+    #[cfg(feature = "tcp")]
     fn a_waiter_that_goes_without_the_value_stops_the_operation_wherever_it_stands() {
         let pool = pool(1, NEVER_IDLE);
         let told = Arc::new(AtomicUsize::new(0));
