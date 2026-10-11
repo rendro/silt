@@ -93,8 +93,14 @@ pub(super) struct Cells {
     /// The number of cells added.
     pub count: usize,
     pub info: HashMap<ModuleId, CellInfo>,
-    /// The committed cells, oldest first.
-    committed: Vec<ModuleId>,
+    /// The cells added, `info`'s keys: what a cell's check is told
+    /// the session's cells are.
+    ids: Arc<HashSet<ModuleId>>,
+    /// The last committed cell.
+    last: Option<ModuleId>,
+    /// The cells added since that were not committed, and whose
+    /// declarations the session has not forgotten yet.
+    dropped: Vec<ModuleId>,
     /// Their type declarations, as checked, each by the span of its
     /// name: a later cell's code knows those types.
     types: Layers<Span, Arc<ast::TypeDecl>>,
@@ -108,9 +114,15 @@ pub(super) struct Cells {
 }
 
 impl Cells {
-    /// Whether the cell `id` is committed.
-    pub fn is_committed(&self, id: ModuleId) -> bool {
-        self.committed.contains(&id)
+    /// The cells added that were not committed, each given once: what
+    /// one declared is forgotten when the next cell is added.
+    pub fn take_dropped(&mut self) -> Vec<ModuleId> {
+        std::mem::take(&mut self.dropped)
+    }
+
+    /// The cells added.
+    pub fn ids(&self) -> Arc<HashSet<ModuleId>> {
+        self.ids.clone()
     }
 
     /// Make the parsed cell `id`, the `n`th, see the committed cells: its
@@ -167,7 +179,7 @@ impl Cells {
             .iter()
             .filter(|(name, _)| !own_names.contains(name))
             .collect();
-        visible.sort_by_key(|(name, _)| resolve(**name));
+        visible.sort_by_cached_key(|(name, _)| resolve(**name));
         for (name, binder) in visible {
             match (binder.kind, &binder.import) {
                 (Kind::Module, Some((target, span))) => {
@@ -191,10 +203,9 @@ impl Cells {
         // The last committed cell offers every name of an earlier cell the
         // cell sees, and every type, trait and impl.
         let mut synthesized: Vec<Decl> = self
-            .committed
-            .last()
+            .last
             .map(|cell| {
-                let info = &self.info[cell];
+                let info = &self.info[&cell];
                 Decl::Import(
                     ImportTarget::Items(intern(&cell_name(info.n)), seen),
                     Span::point(info.file, 0),
@@ -207,6 +218,8 @@ impl Cells {
         let count = synthesized.len();
         synthesized.append(&mut program.decls);
         program.decls = synthesized;
+        Arc::make_mut(&mut self.ids).insert(id);
+        self.dropped.push(id);
         self.info.insert(
             id,
             CellInfo {
@@ -271,7 +284,8 @@ impl Cells {
                 self.types.insert(t.name_span, Arc::new(t.clone()));
             }
         }
-        self.committed.push(id);
+        self.dropped.retain(|cell| *cell != id);
+        self.last = Some(id);
         self.installed.extend(
             modules
                 .iter()

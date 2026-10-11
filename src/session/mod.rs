@@ -20,7 +20,7 @@ mod host;
 mod packages;
 pub mod testing;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -277,14 +277,7 @@ impl Session {
     /// the committed cells bind (see [`Session::commit_cell`]).
     pub fn add_cell(&mut self, text: String) -> FileId {
         // What an earlier cell that was not committed declared is gone.
-        let dropped: Vec<ModuleId> = self
-            .cells
-            .info
-            .keys()
-            .filter(|cell| !self.cells.is_committed(**cell))
-            .copied()
-            .collect();
-        for cell in dropped {
+        for cell in self.cells.take_dropped() {
             self.tables.forget(cell);
         }
         self.cells.count += 1;
@@ -495,8 +488,8 @@ impl Session {
         let cell = kind == ModuleKind::Cell;
         let reach = (!cell).then(|| self.graph.reach(id));
         let cells = match cell {
-            true => self.cells.info.keys().copied().collect(),
-            false => HashSet::new(),
+            true => self.cells.ids(),
+            false => Default::default(),
         };
         let check = typechecker::check_module(
             &mut ast,

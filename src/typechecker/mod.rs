@@ -221,7 +221,7 @@ pub struct TypeChecker {
     pub(super) reach: Option<std::collections::HashSet<crate::session::ModuleId>>,
     /// For a REPL cell, the cells of its session: for where an impl may
     /// be written they count as one module.
-    pub(super) cells: std::collections::HashSet<crate::session::ModuleId>,
+    pub(super) cells: std::sync::Arc<std::collections::HashSet<crate::session::ModuleId>>,
     /// The session's definitions, which the resolver's `Res` slots
     /// name. `None` for a checker that has no program (the builtins).
     pub(super) defs: Option<std::sync::Arc<crate::defs::DefTable>>,
@@ -324,7 +324,7 @@ impl TypeChecker {
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             reach: None,
-            cells: std::collections::HashSet::new(),
+            cells: Default::default(),
             defs: None,
             statement_calls: Vec::new(),
             fn_frames: Vec::new(),
@@ -1360,7 +1360,7 @@ pub struct ModuleContext<'a> {
     /// cell.
     pub reach: Option<std::collections::HashSet<crate::session::ModuleId>>,
     /// For a REPL cell, the cells of its session.
-    pub cells: std::collections::HashSet<crate::session::ModuleId>,
+    pub cells: std::sync::Arc<std::collections::HashSet<crate::session::ModuleId>>,
     /// The module's top-level names, from the resolver.
     pub scope: &'a names::ModuleScope,
     /// For a REPL cell, the values it imports from the earlier cells,
