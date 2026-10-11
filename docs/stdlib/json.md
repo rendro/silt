@@ -88,11 +88,11 @@ write:
 json.stringify: the value is nested more than 1000 levels deep
 ```
 
-The parsers stop sooner: `json.parse`, `json.parse_list` and `json.parse_map` read
-a document whose arrays and objects are nested up to 127 levels deep, and give a
-`JsonSyntax` error (`recursion limit exceeded`) for one nested deeper. A value
-written at more levels than that is valid JSON that silt itself does not read
-back.
+The parsers stop sooner: `json.parse`, `json.parse_list` and
+`json.parse_map` read a document whose arrays and objects are nested up to
+127 levels deep, and give a `JsonSyntax` error (`recursion limit exceeded`) for
+one nested deeper. A value written at more levels than that is valid JSON
+that silt itself does not read back.
 
 
 ## `json.parse`
