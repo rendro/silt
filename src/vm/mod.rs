@@ -67,8 +67,8 @@ use crate::bytecode::{Function, Globals, VmClosure};
 use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
-use crate::value::{Float, Value};
-use runtime::{IoPool, RegexCache};
+use crate::value::Value;
+use runtime::{IoPool, RegexCache, TailCalls};
 
 // ── VM ────────────────────────────────────────────────────────────
 
@@ -86,6 +86,10 @@ pub struct Vm {
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
     pub(crate) stack: Vec<Value>,
+    /// The arguments of the builtin being called, off the stack for the
+    /// time of the call ([`Vm::with_args`]). Between calls it is empty
+    /// and kept for the next one; a VM that waits gives it up.
+    builtin_args: Vec<Value>,
     /// The values of the program's global slots, each unset until its
     /// definition's code has run. The VMs of the program's tasks have
     /// the same slots, not a copy of them: a task starts with nothing
@@ -122,19 +126,9 @@ pub struct Vm {
     /// deadline to restore when its callback returns.
     pub(crate) current_deadline: Option<Duration>,
 
-    /// Diagnostic log of callers that were elided by tail-call replacement.
-    /// Each entry is `(frame_depth, caller_name, caller_span)` where
-    /// `frame_depth` is the index in `self.frames` at which the TCO happened
-    /// (i.e. `self.frames.len() - 1` at that moment).  `enrich_error` reads
-    /// this log so tail-call chains still render a full call stack instead
-    /// of showing only the innermost callee.  Entries are pruned when the
-    /// frame at `frame_depth` pops, and the log is bounded per-depth by
-    /// `runtime::TCO_ELIDED_CAP` to cap memory under deeply recursive
-    /// tail-call loops.
-    ///
-    /// Lock: tests/lang/callback_frame_capture_tests.rs
-    /// `test_tail_call_chain_preserves_caller_frames_in_call_stack`.
-    pub(crate) tco_elided: Vec<(usize, String, crate::source::Span)>,
+    /// The callers that tail calls replaced, for an error's call stack
+    /// ([`TailCalls`]).
+    pub(crate) tco_elided: TailCalls,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, FIFO eviction —
@@ -155,14 +149,6 @@ impl Drop for Vm {
             self.runtime.shutdown();
         }
     }
-}
-
-/// The Float `f`, the result of the operation `op_desc`: an error if
-/// it is none (a NaN or an infinity).
-fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
-    Float::new(f)
-        .map(Value::Float)
-        .ok_or_else(|| VmError::new(format!("float overflow: {op_desc}")))
 }
 
 impl Vm {
@@ -287,6 +273,7 @@ impl Vm {
             pending_input: None,
             native_frames: 0,
             stack: Vec::new(),
+            builtin_args: Vec::new(),
             globals: Arc::from([]),
             global_slots: Arc::new(Globals::default()),
             types: Arc::new(TypeTable::default()),
@@ -297,7 +284,7 @@ impl Vm {
             cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
-            tco_elided: Vec::new(),
+            tco_elided: TailCalls::default(),
         }
     }
 
@@ -533,6 +520,7 @@ impl Vm {
             pending_input: None,
             native_frames: 0,
             stack: Vec::new(),
+            builtin_args: Vec::new(),
             globals: self.globals.clone(),
             global_slots: self.global_slots.clone(),
             types: self.types.clone(),
@@ -543,7 +531,7 @@ impl Vm {
             cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
-            tco_elided: Vec::new(),
+            tco_elided: TailCalls::default(),
         }
     }
 
@@ -621,24 +609,6 @@ impl Vm {
         self.stack.push(value);
     }
 
-    // The code a VM runs has passed the bytecode verifier
-    // (`crate::bytecode::verify`): an instruction finds the values it
-    // takes on the stack, its slots in the frame and its constants in
-    // the pool, of the kinds it needs. The accessors below do not look
-    // for anything else.
-
-    fn pop(&mut self) -> Value {
-        self.stack
-            .pop()
-            .expect("verified code pops a value it pushed")
-    }
-
-    fn peek(&self) -> &Value {
-        self.stack
-            .last()
-            .expect("verified code looks at a value it pushed")
-    }
-
     // ── Frame access ──────────────────────────────────────────────
 
     /// The frame of the instruction being run.
@@ -655,39 +625,6 @@ impl Vm {
         match self.frames.last_mut() {
             Some(Frame::Code(frame)) => frame,
             _ => unreachable!("an instruction runs in a function's frame"),
-        }
-    }
-
-    /// The code and constants of the function being run.
-    fn chunk(&self) -> &crate::bytecode::Chunk {
-        self.frame().closure.function.chunk()
-    }
-
-    /// Decode the instruction at the instruction pointer and step past
-    /// it.
-    #[inline(always)]
-    fn fetch(&mut self) -> crate::bytecode::Instr {
-        let frame = self.frame_mut();
-        let (instr, next) =
-            crate::bytecode::decode(frame.closure.function.chunk().code(), frame.ip)
-                .expect("verified code decodes");
-        frame.ip = next;
-        instr
-    }
-
-    /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
-    /// entries that belong to frames no longer on the physical stack.
-    /// Called after any frame pop / truncate / split-off so stale
-    /// diagnostic state doesn't bleed across unrelated calls.
-    ///
-    /// The log is in the order of the depths: an entry is logged for
-    /// the frame on top, and this is called whenever a frame goes. So
-    /// the entries to drop are the last ones.
-    pub(crate) fn prune_tco_elided(&mut self, keep_depth: usize) {
-        while let Some((depth, _, _)) = self.tco_elided.last()
-            && *depth >= keep_depth
-        {
-            self.tco_elided.pop();
         }
     }
 
@@ -728,7 +665,7 @@ impl Vm {
         let mut stack = Vec::new();
         // The log is in the order of the depths, so its entries are
         // met from the end as the frames are.
-        let mut elided = self.tco_elided.iter().rev().peekable();
+        let mut elided = self.tco_elided.newest_first().peekable();
         for (depth, frame) in self.frames.iter().enumerate().rev() {
             let Frame::Code(frame) = frame else {
                 continue;
@@ -739,8 +676,11 @@ impl Vm {
             stack.push((func_name, span));
             // Newer (later-pushed) entries for this depth are more recent
             // callers, so they come first: the chain stays callee-first.
-            while let Some((_, name, caller_span)) = elided.next_if(|(d, _, _)| *d >= depth) {
-                stack.push((name.clone(), *caller_span));
+            // A caller's place is the tail call: the instruction before
+            // the one it had come to.
+            while let Some((_, caller, ip)) = elided.next_if(|(d, _, _)| *d >= depth) {
+                let span = caller.chunk().span_at(ip.saturating_sub(1));
+                stack.push((caller.name().to_string(), span));
             }
         }
         err.call_stack = stack;

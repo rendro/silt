@@ -4,13 +4,13 @@
 //! used by the compiler to emit bytecode for pattern matching constructs
 //! (match arms, let-destructuring, function parameters, etc.).
 
-use crate::ast::{Pattern, PatternKind};
+use crate::ast::{MatchArm, Pattern, PatternKind};
 use crate::bytecode::{Asm, Label};
 use crate::intern::{Symbol, intern};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, Compiler, FieldRead, name_without_binding};
+use super::{BindDestructKind, Compiler, FieldRead, MATCH_ARM, name_without_binding};
 use crate::diagnostic::{Code, Diagnostic};
 
 impl Compiler {
@@ -41,6 +41,121 @@ impl Compiler {
             self.emit(Asm::TestTupleLen { len }, span)?;
         }
         self.jump_if_false(span)
+    }
+
+    // ── A match on literals ──────────────────────────────────────
+
+    /// Compile the arms of a `match` whose scrutinee, the value on top
+    /// of the frame, is only held against literals, if the arms have one
+    /// of the two shapes below; `false`, and nothing emitted, if they
+    /// have not. No arm may have a guard.
+    ///
+    /// - Two arms, the first `true` or `false`, the second the other of
+    ///   the two, `_` or a name: one conditional jump takes the
+    ///   scrutinee off the frame and picks the arm.
+    /// - Arms that are Int, Float or String literals, and a last one
+    ///   that is `_` or a name: each literal is one test of the
+    ///   scrutinee where it is, the test any pattern of that literal
+    ///   makes ([`Compiler::compile_pattern_test`]).
+    ///
+    /// The scrutinee is no local here, and no copy of it is made for a
+    /// test or for an arm: an arm starts with the frame as it was
+    /// before the scrutinee, and leaves its value where the scrutinee
+    /// was. An arm that is a name has the value under that name: the
+    /// scrutinee itself, or for a Bool the one value that reaches the
+    /// arm.
+    ///
+    /// Every arm of these shapes can be reached and every value of the
+    /// scrutinee's type has one, so each arm is compiled, once, and the
+    /// code has no end where no arm matched.
+    pub(super) fn compile_literal_match(
+        &mut self,
+        arms: &[MatchArm],
+        span: Span,
+        tail: bool,
+    ) -> Result<bool, Diagnostic> {
+        let [tests @ .., last] = arms else {
+            return Ok(false);
+        };
+        if tests.is_empty() || arms.iter().any(|arm| arm.guard.is_some()) {
+            return Ok(false);
+        }
+        let last_name = match &last.pattern.kind {
+            PatternKind::Wildcard => None,
+            PatternKind::Ident(name) => Some(*name),
+            // (The other literal of a Bool: looked at below.)
+            PatternKind::Bool(_) => None,
+            _ => return Ok(false),
+        };
+        let mut end_jumps = Vec::new();
+        match (&tests[0].pattern.kind, &last.pattern.kind) {
+            (PatternKind::Bool(first), other) if tests.len() == 1 => {
+                if matches!(other, PatternKind::Bool(second) if second == first) {
+                    return Ok(false);
+                }
+                let otherwise = match first {
+                    true => self.jump_if_false(span)?,
+                    false => self.jump_if_true(span)?,
+                };
+                self.in_tail_position = tail;
+                self.compile_expr(&tests[0].body)?;
+                end_jumps.push(self.jump(span)?);
+                self.bind_over(otherwise, MATCH_ARM, span)?;
+                match last_name {
+                    Some(name) => {
+                        self.begin_scope();
+                        self.emit(if *first { Asm::False } else { Asm::True }, span)?;
+                        self.add_local(name, span)?;
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                        self.end_scope_with_result(tail, span)?;
+                    }
+                    None => {
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                    }
+                }
+            }
+            (_, PatternKind::Wildcard | PatternKind::Ident(_))
+                if tests.iter().all(|arm| {
+                    matches!(
+                        arm.pattern.kind,
+                        PatternKind::Int(_) | PatternKind::Float(_) | PatternKind::StringLit(..)
+                    )
+                }) =>
+            {
+                for arm in tests {
+                    // (The test looks at the scrutinee and leaves it.)
+                    let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
+                    self.emit(Asm::Pop, span)?;
+                    self.in_tail_position = tail;
+                    self.compile_expr(&arm.body)?;
+                    end_jumps.push(self.jump(span)?);
+                    for fail_jump in fail_jumps {
+                        self.bind_over(fail_jump, MATCH_ARM, span)?;
+                    }
+                }
+                match last_name {
+                    Some(name) => {
+                        self.begin_scope_with_top();
+                        self.add_local(name, span)?;
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                        self.end_scope_with_result(tail, span)?;
+                    }
+                    None => {
+                        self.emit(Asm::Pop, span)?;
+                        self.in_tail_position = tail;
+                        self.compile_expr(&last.body)?;
+                    }
+                }
+            }
+            _ => return Ok(false),
+        }
+        for end_jump in end_jumps {
+            self.bind(end_jump, span)?;
+        }
+        Ok(true)
     }
 
     // ── Recursive pattern test ───────────────────────────────────
@@ -1017,7 +1132,196 @@ mod tests {
         function.chunk().instrs().any(|(_, instr)| instr.op() == op)
     }
 
+    /// The opcodes of the function `name` of `input`, in order.
+    fn ops(input: &str, name: &str) -> Vec<Op> {
+        let function = compiled(input, name);
+        (function.chunk().instrs())
+            .map(|(_, instr)| instr.op())
+            .collect()
+    }
+
     const TYPES: &str = "type Wrap { Wrap(Int) }\ntype Point { x: Int, y: Int }\n";
+
+    /// A `match` on a Bool with an arm for `true` and one for the rest
+    /// (or the other way round) is one conditional jump on the
+    /// scrutinee: no copy of it, no test against a constant, no slide.
+    #[test]
+    fn test_a_match_on_a_bool_is_one_jump() {
+        use Op::*;
+        assert_eq!(
+            ops(
+                "fn f(b: Bool) -> Int {\n  match b {\n    true -> 1\n    false -> 2\n  }\n}\n",
+                "f"
+            ),
+            [GetLocal, JumpIfFalse, Constant, Jump, Constant, Return]
+        );
+        // `false` first: the jump is taken when the scrutinee is true.
+        // Not in tail position: the value is where the scrutinee was.
+        assert_eq!(
+            ops(
+                "fn f(b: Bool) -> Int {\n  let v = match b {\n    false -> 1\n    _ -> 2\n  }\n  v + 1\n}\n",
+                "f"
+            ),
+            [
+                GetLocal, JumpIfTrue, Constant, Jump, Constant, SetLocal, GetLocal, Constant, Add,
+                Return
+            ]
+        );
+        // A name for the rest is the one value that comes there, and is
+        // dropped from under the arm's value.
+        assert_eq!(
+            ops(
+                "fn f(b: Bool) -> Bool {\n  let v = match b {\n    true -> false\n    other -> other\n  }\n  v\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                JumpIfFalse,
+                False,
+                Jump,
+                False,
+                GetLocal,
+                Slide,
+                SetLocal,
+                GetLocal,
+                Return
+            ]
+        );
+    }
+
+    /// A `match` on Int literals with a last arm for the rest tests the
+    /// scrutinee where it is, once per literal.
+    #[test]
+    fn test_a_match_on_int_literals_tests_the_scrutinee_where_it_is() {
+        use Op::*;
+        assert_eq!(
+            ops(
+                "fn f(n: Int) -> Int {\n  match n {\n    0 -> 10\n    1 -> 11\n    _ -> 12\n  }\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                Pop,
+                Constant,
+                Return
+            ]
+        );
+        // A name for the rest is the scrutinee itself.
+        assert_eq!(
+            ops(
+                "fn f(n: Int) -> Int {\n  let v = match n {\n    0 -> 10\n    m -> m + 1\n  }\n  v + 1\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                GetLocal,
+                Constant,
+                Add,
+                Slide,
+                SetLocal,
+                GetLocal,
+                Constant,
+                Add,
+                Return
+            ]
+        );
+    }
+
+    /// Float and String literals are tested as Int literals are: the
+    /// one test any pattern of the literal makes, on the scrutinee where
+    /// it is.
+    #[test]
+    fn test_a_match_on_float_or_string_literals_tests_the_scrutinee_where_it_is() {
+        use Op::*;
+        let two_literals_and_the_rest = [
+            GetLocal,
+            TestEqual,
+            JumpIfFalse,
+            Pop,
+            Constant,
+            Jump,
+            TestEqual,
+            JumpIfFalse,
+            Pop,
+            Constant,
+            Jump,
+            Pop,
+            Constant,
+            Return,
+        ];
+        assert_eq!(
+            ops(
+                "fn f(x: Float) -> Int {\n  match x {\n    0.0 -> 10\n    -1.5 -> 11\n    _ -> 12\n  }\n}\n",
+                "f"
+            ),
+            two_literals_and_the_rest
+        );
+        assert_eq!(
+            ops(
+                "fn f(s: String) -> Int {\n  match s {\n    \"\" -> 10\n    \"a\" -> 11\n    _ -> 12\n  }\n}\n",
+                "f"
+            ),
+            two_literals_and_the_rest
+        );
+        // A name for the rest is the scrutinee itself.
+        assert_eq!(
+            ops(
+                "fn f(s: String) -> String {\n  match s {\n    \"a\" -> \"b\"\n    other -> other\n  }\n}\n",
+                "f"
+            ),
+            [
+                GetLocal,
+                TestEqual,
+                JumpIfFalse,
+                Pop,
+                Constant,
+                Jump,
+                GetLocal,
+                Return
+            ]
+        );
+    }
+
+    /// Every other `match` keeps its scrutinee as a local and ends in
+    /// the stop for a value no arm matched: a guard, one arm, a first
+    /// arm that takes everything, an or-pattern, a range, literals
+    /// without an arm for the rest.
+    #[test]
+    fn test_other_matches_keep_the_scrutinee() {
+        for body in [
+            "match b {\n    true when n > 0 -> 1\n    true -> 2\n    false -> 3\n  }",
+            "match b {\n    _ -> 1\n  }",
+            "match b {\n    other -> match other {\n      _ -> 2\n    }\n  }",
+            "match b {\n    true | false -> 1\n  }",
+            "match n {\n    0 | 1 -> 1\n    _ -> 2\n  }",
+            "match n {\n    0 -> 1\n    1..5 -> 2\n    _ -> 3\n  }",
+            "match n {\n    0 -> 1\n    m when m > 3 -> 2\n    _ -> 3\n  }",
+            "match (b, n) {\n    (true, 0) -> 1\n    _ -> 2\n  }",
+            "match x {\n    0.0 -> 1\n    0.5..1.5 -> 2\n    _ -> 3\n  }",
+            "match s {\n    \"a\" | \"b\" -> 1\n    _ -> 2\n  }",
+        ] {
+            let f = compiled(
+                &format!("fn f(b: Bool, n: Int, x: Float, s: String) -> Int {{\n  {body}\n}}\n"),
+                "f",
+            );
+            assert!(has_op(&f, Op::Panic), "no stop in:\n{body}");
+        }
+    }
 
     /// A `let` or a parameter whose pattern the checker marked
     /// irrefutable is bound without a test.

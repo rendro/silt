@@ -1,0 +1,211 @@
+-- A match whose scrutinee is only held against literals (a Bool against
+-- `true` / `false`; an Int, a Float or a String against literals of its
+-- type, with `_` or a name for the rest) is compiled without a copy of
+-- the scrutinee. Every shape of it, in every place a match can stand,
+-- gives what any other match gives: a Float literal matches as `==`
+-- does (a zero of either sign is `0.0`), and so does a String literal
+-- (the same characters, not the same look).
+import list
+
+fn both(b: Bool) -> Int {
+  match b {
+    true -> 1
+    false -> 2
+  }
+}
+
+fn false_first(b: Bool) -> Int {
+  match b {
+    false -> 10
+    true -> 20
+  }
+}
+
+fn rest(b: Bool) -> Int {
+  let v = match b {
+    true -> 100
+    _ -> 200
+  }
+  v + 1
+}
+
+fn named(b: Bool) -> String {
+  match b {
+    false -> "no"
+    other -> "yes, {other}"
+  }
+}
+
+fn named_true_first(b: Bool) -> String {
+  let text = match b {
+    true -> "t"
+    other -> {
+      let again = other
+      "f {other} {again}"
+    }
+  }
+  "<{text}>"
+}
+
+fn number(n: Int) -> String {
+  match n {
+    0 -> "zero"
+    1 -> "one"
+    0 -> "never"
+    -3 -> "minus three"
+    other -> "many: {other}"
+  }
+}
+
+fn float_literals(x: Float) -> String {
+  match x {
+    0.0 -> "zero"
+    -1.5 -> "minus one and a half"
+    2.5 -> "two and a half"
+    other -> "other: {other}"
+  }
+}
+
+fn string_literals(s: String) -> String {
+  let found = match s {
+    "" -> "empty"
+    "a" -> "the letter a"
+    "é" -> "e acute, one character"
+    _ -> "something else"
+  }
+  "<{found}>"
+}
+
+fn bump(n: Int) -> Int {
+  let v = match n {
+    7 -> 70
+    _ -> n + 1
+  }
+  v * 2
+}
+
+fn nested(a: Bool, n: Int) -> Int {
+  let x = match a {
+    true -> match n {
+      0 -> 5
+      k -> k * 2
+    }
+    false -> match n > 3 {
+      true -> 9
+      _ -> 8
+    }
+  }
+  x + 1
+}
+
+fn early(b: Bool) -> Int {
+  let v = match b {
+    true -> return 42
+    false -> 7
+  }
+  v + 1
+}
+
+fn countdown(n: Int, acc: List(Int)) -> List(Int) {
+  match n {
+    0 -> acc
+    _ -> countdown(n - 1, list.append(acc, n))
+  }
+}
+
+fn sum_to(n: Int) -> Int {
+  loop i = 0, acc = 0 {
+    match i > n {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+}
+
+fn three(a: Int, b: Int, c: Int) -> Int {
+  a * 100 + b * 10 + c
+}
+
+fn as_argument(b: Bool, n: Int) -> Int {
+  three(
+    1,
+    match b {
+      true -> 2
+      false -> 3
+    },
+    match n {
+      0 -> 4
+      m -> m
+    },
+  )
+}
+
+fn captured(b: Bool, k: Int) -> Fn(Int) -> Int {
+  match b {
+    true -> { x -> x + k }
+    other -> { x ->
+      match other {
+        true -> 0
+        false -> x * k
+      }
+    }
+  }
+}
+
+fn in_a_callback(xs: List(Int)) -> List(String) {
+  list.map(xs) { x ->
+    match x % 2 == 0 {
+      true -> "even {x}"
+      false -> match x {
+        1 -> "one"
+        _ -> "odd {x}"
+      }
+    }
+  }
+}
+
+fn main() {
+  println(both(true) + both(false))
+  println(false_first(true) + false_first(false))
+  println(rest(true) + rest(false))
+  println(named(true))
+  println(named(false))
+  println(named_true_first(true))
+  println(named_true_first(false))
+  println([number(0), number(1), number(-3), number(5)])
+  let minus_zero = 0.0 * -1.0
+  println(
+    [
+      float_literals(0.0),
+      float_literals(minus_zero),
+      float_literals(-1.5),
+      float_literals(2.5),
+      float_literals(0.25),
+    ],
+  )
+  println(
+    [
+      string_literals(""),
+      string_literals("a"),
+      string_literals("é"),
+      string_literals("é"),
+      string_literals("b"),
+    ],
+  )
+  println(bump(7) + bump(1))
+  println([nested(true, 0), nested(true, 4), nested(false, 9), nested(false, 1)])
+  println(early(true) + early(false))
+  println(countdown(4, []))
+  println(sum_to(10))
+  println([as_argument(true, 0), as_argument(false, 9)])
+  println(captured(true, 5)(1) + captured(false, 5)(2))
+  println(in_a_callback([1, 2, 3]))
+  let pick = match both(true) {
+    1 -> "one"
+    _ -> "?"
+  }
+  println("{pick} and {match both(false) {
+    2 -> "two"
+    other -> "{other}"
+  }}")
+}

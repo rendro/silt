@@ -2629,6 +2629,1184 @@ fn test_println_rejects_wrong_arity() {
     }
 }
 
+// ── Where an error is ───────────────────────────────────────────────
+//
+// An error's place and its call stack are read off the frames a run
+// leaves (`Vm::enrich_error`): off each frame's instruction pointer,
+// which the instruction loop keeps in a variable of its own and writes
+// back to the frame when it leaves, or calls. Each test stops code with
+// an error and says where the error must be: in a script and in a
+// function the script calls, and whether the code runs in one piece or
+// is stopped and resumed after every instruction.
+mod error_places {
+    use std::cell::Cell;
+
+    use super::*;
+    use crate::bytecode::VmClosure;
+    use crate::source::FileId;
+    use crate::{Buffer, HostIo};
+
+    thread_local! {
+        static NEXT_SPAN: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// A span of its own at each call: the instruction emitted with it
+    /// is known by it.
+    pub(super) fn span() -> Span {
+        let at = NEXT_SPAN.with(|next| next.replace(next.get() + 1));
+        Span::point(FileId::default(), at)
+    }
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// Run the code `build` emits, which must stop with an error of its
+    /// last instruction, and give the error. The code is run as a
+    /// script and as a function a script calls, each in one piece and
+    /// in slices of one step: every run must stop at that instruction,
+    /// with the call stack of the frames that are there.
+    pub(super) fn stopped(build: impl FnOnce(&mut Emitter)) -> VmError {
+        let inner = make_function(|e| {
+            build(e);
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        // The last instruction of `build`: the one before the `Return`.
+        let place = inner.chunk().span_at(inner.chunk().len() - 2);
+        let call = span();
+        let outer = make_function(|e| {
+            push(
+                e,
+                Value::VmClosure(Arc::new(VmClosure {
+                    function: inner.clone(),
+                    upvalues: vec![],
+                })),
+            );
+            e.emit(Asm::Call { argc: 0 }, call).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let mut errors = Vec::new();
+        for (script, stack) in [(inner.clone(), vec![place]), (outer, vec![place, call])] {
+            for slice in [None, Some(1)] {
+                let mut vm = Vm::new(HostIo::process());
+                if let Some(steps) = slice {
+                    vm.set_time_slice(steps);
+                }
+                let err = vm
+                    .run(script.clone())
+                    .expect_err("the code stops with an error");
+                assert_eq!(err.span, Some(place), "the place of: {err}");
+                let frames: Vec<Span> = err.call_stack.iter().map(|(_, span)| *span).collect();
+                assert_eq!(frames, stack, "the call stack of: {err}");
+                errors.push(err);
+            }
+        }
+        let error = errors.pop().expect("four runs");
+        for other in &errors {
+            assert_eq!(other.message, error.message);
+        }
+        error
+    }
+
+    /// `a op b` stops with `message`.
+    fn binary(a: Value, op: Asm<'static>, b: Value, message: &str) {
+        let err = stopped(|e| {
+            push(e, a);
+            push(e, b);
+            e.emit(op, span()).unwrap();
+        });
+        assert_eq!(err.message, message);
+        assert!(!err.type_confusion);
+    }
+
+    #[test]
+    fn an_integer_overflow() {
+        let int = Value::Int;
+        binary(
+            int(i64::MAX),
+            Asm::Add,
+            int(1),
+            "integer overflow: 9223372036854775807 + 1",
+        );
+        binary(
+            int(i64::MIN),
+            Asm::Sub,
+            int(1),
+            "integer overflow: -9223372036854775808 - 1",
+        );
+        binary(
+            int(i64::MAX),
+            Asm::Mul,
+            int(2),
+            "integer overflow: 9223372036854775807 * 2",
+        );
+        binary(
+            int(i64::MIN),
+            Asm::Div,
+            int(-1),
+            "integer overflow: -9223372036854775808 / -1",
+        );
+        binary(
+            int(i64::MIN),
+            Asm::Mod,
+            int(-1),
+            "integer overflow: -9223372036854775808 % -1",
+        );
+        let err = stopped(|e| {
+            push(e, int(i64::MIN));
+            e.emit(Asm::Negate, span()).unwrap();
+        });
+        assert_eq!(err.message, "integer overflow: negate -9223372036854775808");
+    }
+
+    #[test]
+    fn a_division_by_zero() {
+        binary(Value::Int(7), Asm::Div, Value::Int(0), "division by zero");
+        binary(Value::Int(7), Asm::Mod, Value::Int(0), "modulo by zero");
+        binary(float(7.0), Asm::Div, float(0.0), "float division by zero");
+        binary(float(7.0), Asm::Mod, float(0.0), "modulo by zero");
+    }
+
+    #[test]
+    fn a_float_overflow() {
+        binary(
+            float(f64::MAX),
+            Asm::Add,
+            float(f64::MAX),
+            &format!("float overflow: {0} + {0}", f64::MAX),
+        );
+        binary(
+            float(f64::MAX),
+            Asm::Mul,
+            float(2.0),
+            &format!("float overflow: {} * 2", f64::MAX),
+        );
+    }
+
+    /// The error the program `source` stops with: its message, its
+    /// place and its call stack, the innermost function first, each
+    /// place as `line:column` (`-` for one in no file; a function that
+    /// is there `n` times in a row at one place is `(n times)`). The
+    /// program is run in one piece and in slices of one step, and must
+    /// stop with the same error both times.
+    fn stops(source: &str) -> String {
+        stops_within(source, None)
+    }
+
+    /// [`stops`] for a program that may run `budget` steps.
+    fn stops_within(source: &str, budget: Option<u64>) -> String {
+        let program =
+            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let at = |span: Span| {
+            if !span.is_in_source() {
+                return "-".to_string();
+            }
+            let before = &source[..span.start_offset()];
+            let line = before.matches('\n').count() + 1;
+            let column = before.len() - before.rfind('\n').map_or(0, |at| at + 1) + 1;
+            format!("{line}:{column}")
+        };
+        let shown = |err: &VmError| {
+            let mut text = format!("{} at {}", err.message, err.span.map_or("-".into(), at));
+            let mut frames = err.call_stack.iter().peekable();
+            while let Some((name, span)) = frames.next() {
+                let mut times = 1;
+                while frames
+                    .next_if(|next| next.0 == *name && next.1 == *span)
+                    .is_some()
+                {
+                    times += 1;
+                }
+                text += &format!("; {name} {}", at(*span));
+                if times > 1 {
+                    text += &format!(" ({times} times)");
+                }
+            }
+            text
+        };
+        let run = |slice: Option<usize>| {
+            let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+            if let Some(steps) = slice {
+                vm.set_time_slice(steps);
+            }
+            if let Some(steps) = budget {
+                vm.set_step_budget(steps);
+            }
+            let err = vm
+                .run_program(&program)
+                .expect_err("the program stops with an error");
+            vm.stop_tasks();
+            shown(&err)
+        };
+        let sliced = run(Some(1));
+        // (A budget is counted exactly at slice 1 only.)
+        if budget.is_none() {
+            assert_eq!(run(None), sliced);
+        }
+        sliced
+    }
+
+    #[test]
+    fn in_main_after_a_call_has_returned() {
+        let source = "\
+fn id(x: Int) -> Int {
+  x
+}
+fn main() {
+  let big = id(9223372036854775807)
+  let one = id(1)
+  let sum = big + one
+  println(sum)
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: 9223372036854775807 + 1 at 7:13; main 7:13; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn in_a_called_function() {
+        let source = "\
+fn inner(a: Int, b: Int) -> Int {
+  let r = a % b
+  r
+}
+fn outer(a: Int) -> Int {
+  let v = inner(a, 0)
+  v * 2
+}
+fn main() {
+  println(outer(7))
+}
+";
+        assert_eq!(
+            stops(source),
+            "modulo by zero at 2:11; inner 2:11; outer 6:11; main 10:11; <script> 9:1"
+        );
+        let source = "\
+fn mul(a: Int, b: Int) -> Int {
+  a * b
+}
+fn sub(a: Int, b: Int) -> Int {
+  let d = a - b
+  d
+}
+fn main() {
+  let a = match mul(3, 4) {
+    12 -> sub(0 - 9223372036854775807, 2)
+    _ -> 0
+  }
+  println(a)
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: -9223372036854775807 - 2 at 5:11; sub 5:11; main 10:11; <script> 8:1"
+        );
+        let source = "\
+fn neg(x: Int) -> Int {
+  let y = -x
+  y
+}
+fn main() {
+  let m = 0 - 9223372036854775807 - 1
+  println(neg(m))
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: negate -9223372036854775808 at 2:11; neg 2:11; main 7:11; <script> 5:1"
+        );
+        let source = "\
+fn ratio(x: Float, by: Float) -> Float {
+  x / by
+}
+fn main() {
+  let z = ratio(1.0, 0.0)
+  println(z)
+}
+";
+        assert_eq!(
+            stops(source),
+            "float division by zero at 2:3; ratio 2:3; main 5:11; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn in_a_closure_and_in_a_loop() {
+        let source = "\
+fn make(d: Int) -> Fn(Int) -> Int {
+  { x -> x / d }
+}
+fn main() {
+  let f = make(0)
+  let g = make(2)
+  println(g(8))
+  println(f(8))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 2:10; <lambda> 2:10; main 8:11; <script> 4:1"
+        );
+        let source = "\
+fn main() {
+  let r = loop i = 5, acc = 1 {
+    match i < 0 {
+      true -> acc
+      false -> loop(i - 1, acc + 100 / i)
+    }
+  }
+  println(r)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 5:34; main 5:34; <script> 1:1"
+        );
+    }
+
+    #[test]
+    fn in_an_arm_of_a_match_on_literals() {
+        let pick = "\
+fn pick(b: Bool, d: Int) -> Int {
+  match b {
+    true -> 10 / d
+    false -> 20 % d
+  }
+}
+";
+        let source = format!("{pick}fn main() {{\n  println(pick(true, 0))\n}}\n");
+        assert_eq!(
+            stops(&source),
+            "division by zero at 3:13; pick 3:13; main 8:11; <script> 7:1"
+        );
+        let source = format!("{pick}fn main() {{\n  println(pick(false, 0))\n}}\n");
+        assert_eq!(
+            stops(&source),
+            "modulo by zero at 4:14; pick 4:14; main 8:11; <script> 7:1"
+        );
+        let step = "\
+fn step(n: Int, d: Int) -> Int {
+  let v = match n {
+    0 -> 1 / d
+    1 -> 2
+    other -> other % d
+  }
+  v + 9223372036854775807
+}
+";
+        for (n, error) in [
+            (
+                0,
+                "division by zero at 3:10; step 3:10; main 10:11; <script> 9:1",
+            ),
+            (
+                1,
+                "integer overflow: 2 + 9223372036854775807 at 7:3; step 7:3; main 10:11; <script> 9:1",
+            ),
+            (
+                2,
+                "modulo by zero at 5:14; step 5:14; main 10:11; <script> 9:1",
+            ),
+        ] {
+            let source = format!("{step}fn main() {{\n  println(step({n}, 0))\n}}\n");
+            assert_eq!(stops(&source), error);
+        }
+    }
+
+    #[test]
+    fn in_the_callback_of_a_builtin() {
+        let source = "\
+import list
+fn main() {
+  let xs = [3, 2, 1, 0]
+  let ys = list.map(xs) { x ->
+    let q = 12 / x
+    q + 1
+  }
+  println(ys)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 5:13; <lambda> 5:13; main 4:12; <script> 2:1"
+        );
+        let source = "\
+import list
+fn step(acc: Int, x: Int) -> Int {
+  acc * x
+}
+fn main() {
+  let xs = [4611686018427387904, 2, 2]
+  let total = list.fold(xs, 1) { acc, x -> step(acc, x) }
+  println(total)
+}
+";
+        assert_eq!(
+            stops(source),
+            "integer overflow: 4611686018427387904 * 2 at 3:3; step 3:3; <lambda> 7:44; main 7:15; <script> 5:1"
+        );
+    }
+
+    #[test]
+    fn in_a_display_impl() {
+        let source = "\
+type P {
+  x: Int,
+}
+trait Display for P {
+  fn display(self) -> String {
+    let d = 10 / self.x
+    \"P({d})\"
+  }
+}
+fn main() {
+  let p = P { x: 0 }
+  println(\"got {p}\")
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 6:13; P.display 6:13; main 12:11; <script> 10:1"
+        );
+        let source = "\
+type P {
+  x: Int,
+}
+trait Display for P {
+  fn display(self) -> String {
+    let d = 10 % self.x
+    \"P({d})\"
+  }
+}
+fn main() {
+  let ps = [P { x: 1 }, P { x: 0 }]
+  println(ps)
+}
+";
+        assert_eq!(
+            stops(source),
+            "modulo by zero at 6:13; P.display 6:13; main 12:3; <script> 10:1"
+        );
+    }
+
+    #[test]
+    fn behind_a_question_mark() {
+        let source = "\
+fn parse(n: Int) -> Result(Int, String) {
+  match n > 0 {
+    true -> Ok(100 / (n - 1))
+    false -> Err(\"neg\")
+  }
+}
+fn run(n: Int) -> Result(Int, String) {
+  let a = parse(n + 1)?
+  let b = parse(n)?
+  Ok(a + b)
+}
+fn main() {
+  match run(1) {
+    Ok(v) -> println(v)
+    Err(e) -> println(e)
+  }
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:16; parse 3:16; run 9:11; main 13:9; <script> 12:1"
+        );
+        // After a `?` that returned early.
+        let source = "\
+fn parse(n: Int) -> Result(Int, String) {
+  match n > 0 {
+    true -> Ok(n)
+    false -> Err(\"neg\")
+  }
+}
+fn run(n: Int) -> Result(Int, String) {
+  let a = parse(n)?
+  Ok(a)
+}
+fn main() {
+  let r = run(0)
+  let k = match r {
+    Ok(v) -> v
+    Err(_) -> 0
+  }
+  println(7 / k)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 17:11; main 17:11; <script> 11:1"
+        );
+    }
+
+    #[test]
+    fn in_a_tail_call() {
+        let source = "\
+fn c(n: Int) -> Int {
+  100 / n
+}
+fn b(n: Int) -> Int {
+  c(n - 1)
+}
+fn a(n: Int) -> Int {
+  b(n - 1)
+}
+fn main() {
+  println(a(2))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 2:3; c 2:3; b 5:3; a 8:3; main 11:11; <script> 10:1"
+        );
+        // More tail calls than the log keeps.
+        let source = "\
+fn count(i: Int, acc: Int) -> Int {
+  match i {
+    0 -> acc / i
+    _ -> count(i - 1, acc + i)
+  }
+}
+fn main() {
+  println(count(100, 0))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; count 3:10; count 4:10 (32 times); main 8:11; <script> 7:1"
+        );
+        let source = "\
+type C {
+  n: Int,
+}
+trait Step {
+  fn go(self, k: Int) -> Int
+}
+trait Step for C {
+  fn go(self, k: Int) -> Int {
+    match k {
+      0 -> 1 / k
+      _ -> self.go(k - 1)
+    }
+  }
+}
+fn main() {
+  let c = C { n: 1 }
+  println(c.go(5))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 10:12; C.go 10:12; C.go 11:12 (5 times); main 17:11; <script> 15:1"
+        );
+    }
+
+    #[test]
+    fn in_a_tail_call_among_other_tail_calls() {
+        // More tail calls than the log keeps, of three functions in
+        // turn: the latest 32 callers, the latest first.
+        let source = "\
+fn a(n: Int) -> Int {
+  match n <= 0 {
+    true -> 1 / n
+    false -> b(n - 1)
+  }
+}
+fn b(n: Int) -> Int {
+  c(n)
+}
+fn c(n: Int) -> Int {
+  a(n)
+}
+fn main() {
+  println(a(15))
+}
+";
+        let kept = "c 11:3; b 8:3; a 4:14; ".repeat(10) + "c 11:3; b 8:3";
+        assert_eq!(
+            stops(source),
+            format!("division by zero at 3:13; a 3:13; {kept}; main 14:11; <script> 13:1")
+        );
+        // Two frames that have each made tail calls: each frame's
+        // callers come after it.
+        let source = "\
+fn inner(n: Int) -> Int {
+  match n {
+    0 -> 1 / n
+    _ -> inner(n - 1)
+  }
+}
+fn mid(n: Int) -> Int {
+  1 + inner(n)
+}
+fn outer(n: Int) -> Int {
+  match n {
+    0 -> mid(3)
+    _ -> outer(n - 1)
+  }
+}
+fn main() {
+  println(outer(2))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; inner 3:10; inner 4:10 (3 times); mid 8:7; outer 12:10; outer 13:10 (2 times); main 17:11; <script> 16:1"
+        );
+        // A frame's callers go with the frame: the second call of
+        // `inner` shows its own tail calls only.
+        let source = "\
+fn inner(n: Int, d: Int) -> Int {
+  match n {
+    0 -> 6 / d
+    _ -> inner(n - 1, d)
+  }
+}
+fn main() {
+  let first = inner(5, 1)
+  let second = inner(2, 0)
+  println(first + second)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; inner 3:10; inner 4:10 (2 times); main 9:16; <script> 7:1"
+        );
+    }
+
+    #[test]
+    fn a_panic_and_an_error_of_a_builtin() {
+        let source = "\
+fn boom(n: Int) -> Int {
+  match n {
+    0 -> panic(\"zero at {n}\")
+    _ -> n
+  }
+}
+fn main() {
+  let a = boom(1)
+  println(a + boom(0))
+}
+";
+        assert_eq!(
+            stops(source),
+            "panic: zero at 0 at 3:10; boom 3:10; main 9:15; <script> 7:1"
+        );
+        let source = "\
+fn span(a: Int, b: Int) -> List(Int) {
+  a..b
+}
+fn main() {
+  let xs = span(0, 9000000000000000000)
+  println(xs)
+}
+";
+        assert_eq!(
+            stops(source),
+            "range 0..9000000000000000000 has 9000000000000000001 elements; materializing more than 10000000 is not allowed at 6:3; main 6:3; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn in_a_task_that_is_joined() {
+        let source = "\
+import task
+fn work(n: Int) -> Int {
+  10 / n
+}
+fn main() {
+  let h = task.spawn({ -> work(0) })
+  let v = task.join(h)
+  println(v)
+}
+";
+        assert_eq!(
+            stops(source),
+            "joined task failed: division by zero at 3:3; work 3:3; <lambda> 6:27"
+        );
+    }
+
+    #[test]
+    fn the_join_of_a_cancelled_task() {
+        let source = "\
+import channel
+import task
+fn wait(ch: Channel(Int)) -> Int {
+  match channel.receive(ch) {
+    channel.Message(n) -> n
+    _ -> 0
+  }
+}
+fn main() {
+  let ch = channel.new(0)
+  let h = task.spawn({ -> wait(ch) })
+  task.cancel(h)
+  let v = task.join(h)
+  println(v)
+}
+";
+        assert_eq!(
+            stops(source),
+            "joined task failed: cancelled at 13:11; main 13:11; <script> 9:1"
+        );
+    }
+
+    #[test]
+    fn under_a_deadline() {
+        // In the callback of `task.deadline`, after a wait.
+        let source = "\
+import task
+import time
+fn slow(n: Int) -> Int {
+  time.sleep(time.ms(1))
+  10 / n
+}
+fn main() {
+  let r = task.deadline(time.ms(60000), { -> slow(0) })
+  println(r)
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 5:3; slow 5:3; <lambda> 8:46; main 8:11; <script> 7:1"
+        );
+        // A wait that the deadline does not end, and nothing else does.
+        let source = "\
+import channel
+import task
+import time
+fn wait(ch: Channel(Int), d: Int) -> Int {
+  let got = channel.receive(ch)
+  match got {
+    channel.Message(n) -> n
+    _ -> 10 / d
+  }
+}
+fn main() {
+  let ch = channel.new(0)
+  let r = task.deadline(time.ms(20), { -> wait(ch, 0) })
+  println(r)
+}
+";
+        assert_eq!(
+            stops(source),
+            "deadlock on main thread: channel receive with no counterparty at 5:13; wait 5:13; <lambda> 13:43; main 13:11; <script> 11:1"
+        );
+    }
+
+    #[test]
+    fn at_the_frame_limit() {
+        let source = "\
+fn deep(n: Int) -> Int {
+  1 + deep(n + 1)
+}
+fn main() {
+  println(deep(0))
+}
+";
+        assert_eq!(
+            stops(source),
+            "stack overflow: recursion depth exceeded 100000 frames at 2:7; deep 2:7 (99998 times); main 5:11; <script> 4:1"
+        );
+    }
+
+    #[test]
+    fn at_the_step_budget() {
+        let source = "\
+fn id(x: Int) -> Int {
+  x
+}
+fn twice(x: Int) -> Int {
+  let a = id(x)
+  let b = id(a)
+  a + b
+}
+fn main() {
+  let n = twice(1)
+  let m = twice(n)
+  println(n + m)
+}
+";
+        let ends: Vec<String> = (0..40)
+            .map(|steps| stops_within(source, Some(steps)))
+            .collect();
+        assert_eq!(
+            ends.join("\n"),
+            "\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 1:1; <script> 1:1\n\
+the step budget is used up at 4:1; <script> 4:1\n\
+the step budget is used up at 4:1; <script> 4:1\n\
+the step budget is used up at 4:1; <script> 4:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 9:1; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:17; main 10:17; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:14; twice 5:14; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:11; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:14; twice 6:14; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:11; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 6:11; twice 6:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 7:3; twice 7:3; main 10:11; <script> 9:1\n\
+the step budget is used up at 7:7; twice 7:7; main 10:11; <script> 9:1\n\
+the step budget is used up at 7:3; twice 7:3; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 10:11; main 10:11; <script> 9:1\n\
+the step budget is used up at 11:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 11:17; main 11:17; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 5:14; twice 5:14; main 11:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 2:3; id 2:3; twice 5:11; main 11:11; <script> 9:1\n\
+the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1"
+        );
+    }
+}
+
+// ── The arguments of a builtin ──────────────────────────────────────
+//
+// A builtin's arguments leave the stack before its body runs, into the
+// VM's one list for them (`Vm::with_args`): no call has a list of its
+// own, and no body sees a slot of the stack.
+mod builtin_args {
+    use super::*;
+
+    fn ints(values: &[i64]) -> Vec<Value> {
+        values.iter().copied().map(Value::Int).collect()
+    }
+
+    #[test]
+    fn the_arguments_are_off_the_stack_and_the_list_is_used_again() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.stack = ints(&[1, 2, 3]);
+        let seen = vm.with_args(1, |vm, args| {
+            assert_eq!(vm.stack, ints(&[1]));
+            // What a body pushes is not among its arguments.
+            vm.stack.push(Value::Int(9));
+            args.to_vec()
+        });
+        assert_eq!(seen, ints(&[2, 3]));
+        assert_eq!(vm.stack, ints(&[1, 9]));
+        assert!(vm.builtin_args.is_empty());
+        let capacity = vm.builtin_args.capacity();
+        assert!(capacity >= 2);
+
+        // A call of no more arguments fits the list as it is.
+        for _ in 0..100 {
+            vm.stack.extend(ints(&[4, 5]));
+            vm.with_args(2, |_, args| assert_eq!(args, ints(&[4, 5])));
+            assert_eq!(vm.stack, ints(&[1, 9]));
+            assert!(vm.builtin_args.is_empty());
+            assert_eq!(vm.builtin_args.capacity(), capacity);
+        }
+        // No arguments: nothing leaves the stack.
+        vm.with_args(2, |vm, args| {
+            assert!(args.is_empty());
+            assert_eq!(vm.stack, ints(&[1, 9]));
+        });
+    }
+
+    #[test]
+    fn a_call_inside_a_call_has_arguments_of_its_own() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.stack = ints(&[1, 2]);
+        vm.with_args(0, |vm, outer| {
+            vm.stack = ints(&[7, 8, 9]);
+            let inner = vm.with_args(1, |_, inner| inner.to_vec());
+            assert_eq!(inner, ints(&[8, 9]));
+            assert_eq!(outer, ints(&[1, 2]));
+            assert_eq!(vm.stack, ints(&[7]));
+        });
+        assert!(vm.builtin_args.is_empty());
+        vm.stack.push(Value::Int(3));
+        vm.with_args(0, |_, args| assert_eq!(args, ints(&[7, 3])));
+    }
+
+    /// A row of the test's own, with `body`.
+    fn row(body: crate::builtins::typed::TypedCall) -> Row {
+        Row {
+            signature: "fn probe(a: Bytes) -> ()",
+            summary: "a probe",
+            name: "probe",
+            module: "test",
+            params: Vec::new(),
+            optional_last: false,
+            feature: None,
+            enabled: true,
+            id: registry().named("println").expect("println").id,
+            body: Body::Typed(body),
+        }
+    }
+
+    /// The arguments are dropped when the body has returned, whatever
+    /// it returned: before its value is anybody's, before the frame it
+    /// goes on as is resumed for the first time, before its error is
+    /// looked at. (As when every call had a list of its own, which went
+    /// when the call was made.)
+    #[test]
+    fn the_arguments_are_dropped_when_the_body_has_returned() {
+        use crate::vm::calls::Entered;
+
+        struct Frame;
+        impl Native for Frame {
+            fn name(&self) -> &str {
+                "test.probe"
+            }
+            fn resume(&mut self, _: &mut Vm, _: Value) -> Result<Step, VmError> {
+                Ok(Step::Done(Value::Unit))
+            }
+        }
+        fn value(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            Some(Ok(Step::Done(Value::Unit)))
+        }
+        fn frame(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            Some(Ok(Step::Run(Box::new(Frame))))
+        }
+        fn fails(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            Some(Err(VmError::new("the probe failed".into())))
+        }
+        fn misfit(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            None
+        }
+
+        // What the test and the argument hold: the bytes are held twice
+        // while the argument is there.
+        let held = Arc::new(vec![7u8]);
+        for (body, frames) in [
+            (value as crate::builtins::typed::TypedCall, 0),
+            (frame, 1),
+            (fails, 0),
+            (misfit, 0),
+        ] {
+            let row = row(body);
+            let mut vm = Vm::new(crate::HostIo::process());
+            vm.stack = vec![Value::Bytes(held.clone())];
+            let entered = vm.with_args(0, |vm, args| {
+                assert_eq!(Arc::strong_count(&held), 2);
+                vm.enter_row(&row, args)
+            });
+            assert_eq!(Arc::strong_count(&held), 1);
+            // (The frame is there, and has not been resumed.)
+            assert_eq!(vm.frames.len(), frames);
+            assert_eq!(matches!(entered, Ok(Entered::Native)), frames == 1);
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// A VM keeps the list from one call to the next, and gives it up
+    /// where it waits: a waiting task holds none.
+    #[test]
+    fn a_vm_that_waits_gives_the_list_up() {
+        use crate::vm::run::Slice;
+
+        let program = crate::session::testing::compile_str(
+            "\
+import channel
+import int
+fn main() {
+  let nobody = channel.new(0)
+  let n = int.abs(-1) + int.abs(-2)
+  channel.receive(nobody)
+}
+",
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.load(&program);
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(VmClosure {
+                function: Arc::new(program.functions[0].clone()),
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        // Step by step up to the wait.
+        let mut kept = 0;
+        loop {
+            match vm.run_frames(0, 1).expect("the program runs") {
+                Slice::OutOfBudget => kept = kept.max(vm.builtin_args.capacity()),
+                Slice::Parked(_) => break,
+                _ => panic!("the program waits"),
+            }
+            assert!(vm.builtin_args.is_empty());
+        }
+        assert!(kept >= 1, "the list was kept between the calls");
+        assert_eq!(vm.builtin_args.capacity(), 0);
+    }
+
+    /// Run `main`'s code and give the VM back with what the run came
+    /// to.
+    fn ran(source: &str) -> (Vm, Result<Value, VmError>) {
+        let program =
+            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut vm = Vm::new(crate::HostIo::buffer(&crate::Buffer::new()));
+        let result = vm.run_program(&program);
+        (vm, result)
+    }
+
+    #[test]
+    fn every_way_to_call_a_builtin_leaves_the_list_empty() {
+        // By its instruction, as a value, as the callback of a builtin,
+        // and with a callback of its own that calls builtins.
+        let (vm, result) = ran("\
+import int
+import list
+import string
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+fn main() {
+  let direct = int.abs(-3) + string.length(\"four\")
+  let as_value = apply(int.abs, -5)
+  let callback = list.map([-1, -2], int.abs)
+  let nested = list.fold([1, 2, 3], 0) { acc, x -> acc + int.max(x, string.length(\"ab\")) }
+  println(callback)
+  direct + as_value + list.length(callback) + nested
+}
+");
+        assert_eq!(result.unwrap(), Value::Int(7 + 5 + 2 + 7));
+        assert!(vm.builtin_args.is_empty());
+        assert!(vm.builtin_args.capacity() >= 2);
+    }
+
+    #[test]
+    fn a_builtin_that_fails_leaves_the_list_empty() {
+        let (vm, result) = ran("\
+import list
+fn main() {
+  let xs = list.map(1..4) { x -> 10 / (x - 2) }
+  list.length(xs)
+}
+");
+        assert_eq!(result.unwrap_err().message, "division by zero");
+        assert!(vm.builtin_args.is_empty());
+
+        // A body that panics: the panic is an error of the call, and
+        // the list is the VM's again.
+        fn boom(_vm: &mut Vm, _args: &[Value]) -> crate::builtins::typed::Called {
+            panic!("a panic in a builtin")
+        }
+        let row = row(boom);
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.stack = ints(&[0, 1, 2]);
+        let err = (vm.with_args(1, |vm, args| vm.enter_row(&row, args)).err())
+            .expect("the panic is an error");
+        assert!(err.message.contains("a panic in a builtin"), "{err}");
+        assert_eq!(vm.stack, ints(&[0]));
+        assert!(vm.builtin_args.is_empty());
+        assert!(vm.builtin_args.capacity() >= 2);
+    }
+}
+
+// ── The log of tail calls ───────────────────────────────────────────
+mod tail_calls {
+    use super::*;
+    use crate::vm::runtime::{TCO_ELIDED_CAP, TailCalls};
+
+    fn function(name: &str) -> Arc<Function> {
+        Arc::new(Function::returning_unit(name.to_string(), 0))
+    }
+
+    /// The log's entries as `depth name ip`, the innermost frame's
+    /// first and a frame's latest first.
+    fn entries(log: &TailCalls) -> Vec<String> {
+        log.newest_first()
+            .map(|(depth, function, ip)| format!("{depth} {} {ip}", function.name()))
+            .collect()
+    }
+
+    #[test]
+    fn a_frame_keeps_its_latest_tail_calls_the_latest_first() {
+        let (f, g) = (function("f"), function("g"));
+        let mut log = TailCalls::default();
+        assert!(log.is_empty());
+        log.log(3, f.clone(), 10);
+        log.log(3, g.clone(), 20);
+        log.log(3, f.clone(), 30);
+        assert!(!log.is_empty());
+        assert_eq!(entries(&log), ["3 f 30", "3 g 20", "3 f 10"]);
+
+        // One more than the log keeps: the first is gone, at every
+        // place of the ring.
+        for extra in 0..=2 * TCO_ELIDED_CAP {
+            let mut log = TailCalls::default();
+            let made = TCO_ELIDED_CAP + extra;
+            for ip in 0..made {
+                log.log(0, f.clone(), ip);
+            }
+            let latest: Vec<String> = (made - TCO_ELIDED_CAP..made)
+                .rev()
+                .map(|ip| format!("0 f {ip}"))
+                .collect();
+            assert_eq!(entries(&log), latest);
+        }
+    }
+
+    #[test]
+    fn each_frame_has_its_own_and_they_go_with_it() {
+        let (f, g, h) = (function("f"), function("g"), function("h"));
+        let mut log = TailCalls::default();
+        log.log(1, f.clone(), 1);
+        log.log(1, f.clone(), 2);
+        // A frame above makes more than the log keeps.
+        for ip in 0..TCO_ELIDED_CAP + 3 {
+            log.log(4, g.clone(), ip);
+        }
+        log.log(6, h.clone(), 7);
+        let all = entries(&log);
+        assert_eq!(all.len(), 2 + TCO_ELIDED_CAP + 1);
+        assert_eq!(all[0], "6 h 7");
+        assert_eq!(all[1], format!("4 g {}", TCO_ELIDED_CAP + 2));
+        assert_eq!(all[TCO_ELIDED_CAP], "4 g 3");
+        assert_eq!(all[TCO_ELIDED_CAP + 1..], ["1 f 2", "1 f 1"]);
+
+        // The frames at 5 and above go; the one at 4 goes on.
+        log.prune(5);
+        assert_eq!(entries(&log).len(), 2 + TCO_ELIDED_CAP);
+        log.log(4, h.clone(), 99);
+        assert_eq!(
+            entries(&log)[..2],
+            ["4 h 99".to_string(), format!("4 g {}", TCO_ELIDED_CAP + 2)]
+        );
+        assert_eq!(entries(&log).len(), 2 + TCO_ELIDED_CAP);
+
+        log.prune(4);
+        assert_eq!(entries(&log), ["1 f 2", "1 f 1"]);
+        // A new frame at the depth of one that is gone starts anew.
+        log.log(4, g.clone(), 5);
+        assert_eq!(entries(&log), ["4 g 5", "1 f 2", "1 f 1"]);
+        log.prune(0);
+        assert!(log.is_empty());
+        assert_eq!(entries(&log), [""; 0]);
+        // The functions are held by the test alone again.
+        assert_eq!(Arc::strong_count(&f), 1);
+        assert_eq!(Arc::strong_count(&g), 1);
+        assert_eq!(Arc::strong_count(&h), 1);
+    }
+}
+
 // ── Type confusion: one test per guard family ───────────────────────
 //
 // The code a VM runs is verified, so an instruction always finds its
@@ -2641,6 +3819,7 @@ fn test_println_rejects_wrong_arity() {
 mod type_confusion {
     use std::collections::BTreeMap;
 
+    use super::error_places::{span, stopped};
     use super::*;
     use crate::bytecode::VmClosure;
     use crate::diagnostic::Code;
@@ -2670,17 +3849,12 @@ mod type_confusion {
         }))
     }
 
-    /// Run the script `build` emits (followed by a `Return`), which
-    /// must stop with a type-confusion error whose message contains
-    /// `phrase`.
+    /// Run the code `build` emits, which must stop at its last
+    /// instruction with a type-confusion error whose message contains
+    /// `phrase`: as a script and as a called function, in one piece
+    /// and in slices of one step (`error_places::stopped`).
     fn confused(phrase: &str, build: impl FnOnce(&mut Emitter)) {
-        let script = make_function(|e| {
-            build(e);
-            e.emit(Asm::Return, span()).unwrap();
-        });
-        let err = Vm::new(crate::HostIo::process())
-            .run(script)
-            .expect_err("an instruction that meets a value of the wrong kind stops");
+        let err = stopped(build);
         assert!(
             err.message.contains(phrase),
             "expected {phrase:?} in: {}",

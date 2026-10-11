@@ -395,36 +395,47 @@ fn parked_senders_cost_time_in_proportion() {
     );
 }
 
-/// A loop of 125,000 rounds that calls `size` of a record eight times
-/// a round, a million calls: as a method of a trait found where the
-/// code runs (the function knows its argument only as a type with the
-/// trait), or (`plain`) as a function.
-fn million_calls_program(plain: bool) -> String {
-    let (parameter, call) = match plain {
-        true => ("x: Box, times: Int) -> Int", "size(x)"),
-        false => ("x: a, times: Int) -> Int where a: Size", "x.size()"),
-    };
-    let calls = [call; 8].join(" + ");
-    format!(
-        "trait Size {{
-  fn size(self) -> Int
+/// A loop of 125,000 rounds that calls the method `method` of a record
+/// eight times a round, a million calls. The method is of a trait and
+/// is found where the code runs: the function that calls it knows its
+/// argument only as a type with the trait. `other_impls` other types
+/// implement the trait too, each declared before the record's type.
+fn million_method_calls_program(method: &str, other_impls: usize) -> String {
+    let others: String = (0..other_impls)
+        .map(|i| {
+            format!(
+                "type Other{i} {{
+  n: Int,
 }}
 
-type Box {{
+trait Size for Other{i} {{
+  fn {method}(self) -> Int {{
+    self.n + {i}
+  }}
+}}
+
+"
+            )
+        })
+        .collect();
+    let call = format!("x.{method}()");
+    let calls = [call.as_str(); 8].join(" + ");
+    format!(
+        "trait Size {{
+  fn {method}(self) -> Int
+}}
+
+{others}type Box {{
   n: Int,
 }}
 
 trait Size for Box {{
-  fn size(self) -> Int {{
+  fn {method}(self) -> Int {{
     self.n
   }}
 }}
 
-fn size(b: Box) -> Int {{
-  b.n
-}}
-
-fn total({parameter} {{
+fn total(x: a, times: Int) -> Int where a: Size {{
   loop i = 0, acc = 0 {{
     match i >= times {{
       true -> acc
@@ -440,24 +451,46 @@ fn main() {{
     )
 }
 
-/// A call of a method that is found where the code runs costs little
-/// more than a call of a function: the method is found by three
-/// numbers (the trait, the receiver's type, the id of the method's
-/// name) in one table. It was found by the method's name, a text, in a
-/// table of the impl in a table of the impls, and the type of a
-/// receiver that is no record was looked up by its name at every call:
-/// a million such calls took half as long again as a million calls of
-/// a function.
+/// A method that is found where the code runs is found by three
+/// numbers in one table: the trait, the receiver's type, and the id of
+/// the method's name. So what a call costs does not depend on the
+/// name: a million calls of a method whose name has 10,000 letters
+/// take as long as a million of a method named `s`, at most three
+/// times as long. The method was found by its name, a text that was
+/// hashed and compared at every call: the calls of the long name took
+/// eight times as long.
 #[test]
-fn a_method_found_where_the_code_runs_costs_little_more_than_a_function() {
-    let programs = Programs::new("methods");
-    let methods = programs.file("methods.silt", &million_calls_program(false));
-    let functions = programs.file("functions.silt", &million_calls_program(true));
+fn a_method_call_costs_the_same_whatever_the_length_of_its_name() {
+    let programs = Programs::new("method_names");
+    let long = programs.file(
+        "long.silt",
+        &million_method_calls_program(&"s".repeat(10_000), 0),
+    );
+    let short = programs.file("short.silt", &million_method_calls_program("s", 0));
     assert_within(
-        1.35,
-        (&methods, "2000000"),
-        (&functions, "2000000"),
-        "a million calls of a method found where the code runs, against a million of a function",
+        3.0,
+        (&long, "2000000"),
+        (&short, "2000000"),
+        "a million calls of a method with a name of 10,000 letters, \
+         against a million of a method named `s`",
+    );
+}
+
+/// Nor does it depend on how many types implement the trait: a million
+/// calls take as long in a program where 200 other types implement it
+/// as where the receiver's type is the only one, at most three times
+/// as long.
+#[test]
+fn a_method_call_costs_the_same_however_many_types_implement_the_trait() {
+    let programs = Programs::new("method_impls");
+    let many = programs.file("many.silt", &million_method_calls_program("size", 200));
+    let one = programs.file("one.silt", &million_method_calls_program("size", 0));
+    assert_within(
+        3.0,
+        (&many, "2000000"),
+        (&one, "2000000"),
+        "a million calls of a method of a trait that 201 types implement, \
+         against a million where one type does",
     );
 }
 
