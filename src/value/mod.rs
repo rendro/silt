@@ -161,6 +161,19 @@ impl Value {
 }
 
 impl Value {
+    /// Whether the value is a function: a closure, a builtin function, a
+    /// host function or a variant's constructor. To a program each is an
+    /// `Fn`.
+    pub fn is_fn(&self) -> bool {
+        matches!(
+            self,
+            Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::HostFn(_)
+                | Value::VariantConstructor(..)
+        )
+    }
+
     /// Whether the value is a function, or has one inside it: the one
     /// answer of the run time to whether a value can be compared,
     /// ordered or hashed. The checker rejects those of a value that
@@ -182,12 +195,7 @@ impl Value {
         let mut pending = vec![self];
         while let Some(value) = pending.pop() {
             match value {
-                Value::VmClosure(_)
-                | Value::BuiltinFn(_)
-                | Value::HostFn(_)
-                | Value::VariantConstructor(..) => {
-                    return true;
-                }
+                value if value.is_fn() => return true,
                 Value::List(items) => {
                     // (A list that holds no element holds no function.)
                     if let list::Elements::Items(items) = items.elements() {

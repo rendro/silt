@@ -121,6 +121,9 @@ impl Vm {
             (Value::Tuple(_), Value::Tuple(_)) => Self::ordering_with_fn_gate(&a, &b)?,
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
+            // Two functions, of whatever kinds: to a program each is an
+            // `Fn`.
+            _ if a.is_fn() && b.is_fn() => Self::ordering_with_fn_gate(&a, &b)?,
             _ => {
                 return Err(VmError::type_confusion(format!(
                     "unsupported operation: cannot compare {} and {}",
@@ -141,9 +144,7 @@ impl Vm {
     /// (`Compare` is decided by structure): this is the backstop at the
     /// execution site. Without it `Value::cmp` would order `VmClosure`
     /// leaves by `Arc::as_ptr` (src/value/key.rs), a result that depends
-    /// on heap allocation order. Bare function-shaped operands never
-    /// reach this helper: they fall to `compare()`'s catch-all arm and
-    /// keep its "cannot compare Fn and Fn" wording.
+    /// on heap allocation order.
     fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
         if a.contains_fn() || b.contains_fn() {
             return Err(VmError::type_confusion(
@@ -156,9 +157,12 @@ impl Vm {
     // ── Type compatibility ────────────────────────────────────────
 
     /// Check that two values are of one kind, as the operands of `==`
-    /// and `!=` are.
+    /// and `!=` are. Two functions are of one kind, whatever made them
+    /// (a closure, a builtin, a host function, a constructor): to a
+    /// program each is an `Fn`, and the caller's gate says that an `Fn`
+    /// has no `Equal`.
     pub(super) fn check_same_type(&self, a: &Value, b: &Value) -> Result<(), VmError> {
-        if std::mem::discriminant(a) != std::mem::discriminant(b) {
+        if std::mem::discriminant(a) != std::mem::discriminant(b) && !(a.is_fn() && b.is_fn()) {
             return Err(VmError::type_confusion(format!(
                 "unsupported operation: cannot compare {} and {}",
                 a.kind(),

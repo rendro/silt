@@ -2771,6 +2771,37 @@ mod type_confusion {
         });
     }
 
+    /// To a program every function is an `Fn`: a closure against a
+    /// builtin function, or against a variant's constructor, is refused
+    /// with the words two closures are refused with.
+    #[test]
+    fn functions_of_different_kinds_are_functions() {
+        let builtin = || Value::BuiltinFn(crate::builtins::registry::BuiltinId(0));
+        let constructor = || Value::VariantConstructor(bv::SOME.tag());
+        for other in [builtin, constructor] {
+            confused("type 'Fn' does not implement Equal", |e| {
+                push(e, function(1));
+                push(e, other());
+                e.emit(Asm::Eq, span()).unwrap();
+            });
+            confused("type 'Fn' does not implement Equal", |e| {
+                push(e, other());
+                push(e, function(1));
+                e.emit(Asm::Neq, span()).unwrap();
+            });
+            confused("type 'Fn' does not implement Compare", |e| {
+                push(e, function(1));
+                push(e, other());
+                e.emit(Asm::Lt, span()).unwrap();
+            });
+        }
+        confused("type 'Fn' does not implement Compare", |e| {
+            push(e, function(1));
+            push(e, function(1));
+            e.emit(Asm::Lt, span()).unwrap();
+        });
+    }
+
     #[test]
     fn interpolation_of_a_part_that_is_no_string() {
         confused(
