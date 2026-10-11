@@ -42,6 +42,12 @@ jobs:
       - name: cargo clippy (default features)
         run: cargo clippy -- -D warnings
 
+      # No job builds a set without the `http` or `tcp` feature
+      # otherwise: code that every build has (a row of the registry, an
+      # import) must not lean on something behind a feature.
+      - name: cargo check (no features)
+        run: cargo check --no-default-features --lib --bins
+
       - name: cargo check --benches
         run: cargo check --benches --all-features
 
