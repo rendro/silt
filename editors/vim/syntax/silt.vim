@@ -34,7 +34,7 @@ syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse Cl
 syntax keyword siltConstructor InvalidPattern TooBig
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor ParseFormat OutOfRange
-syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange OutOfBounds
+syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange
 syntax keyword siltConstructor InvalidPercent InvalidLength Invalid Bind
 
 " ── Module names (before the dot) ───────────────────────────────────

@@ -38,8 +38,8 @@ fn build_lcs_table(old_lines, new_lines) {
               int.max(below, right)
             }
           }
-          let new_row = list.set(curr_row, j, val)
-          list.set(tbl, i, new_row)
+          let new_row = list.set(curr_row, j, val) |> option.unwrap_or(curr_row)
+          list.set(tbl, i, new_row) |> option.unwrap_or(tbl)
         }
     }
 }

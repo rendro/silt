@@ -77,8 +77,9 @@ as `0.0` (`0.0 * -1.0` prints `0`).
 
 ## No Negative Indexing
 
-`list.get(xs, -1)` is a runtime error, not "last element." Indices are
-positions from the start, period. Use `list.last(xs)` for the last element,
+`list.get(xs, -1)` is `None`, not "last element": a negative index is no
+position of the list, like one past the end. Indices are positions from the
+start, period. Use `list.last(xs)` for the last element,
 or `list.get(xs, list.length(xs) - 1)` for explicit end-relative access.
 This keeps the mental model simple and avoids hidden "if negative, wrap"
 logic.

@@ -3,32 +3,17 @@ fn main() {
   let a = bytes.length(bytes.empty())
   let b = bytes.length(bytes.from_string("hello"))
   println([a, b])
-  match bytes.slice(bytes.from_string("hello world"), 6, 11) {
-    Ok(s) -> match bytes.to_string(s) {
-      Ok(t) -> println(t)
-      Err(e) -> println(e.message())
-    }
+  match bytes.to_string(bytes.slice(bytes.from_string("hello world"), 6, 11)) {
+    Ok(t) -> println(t)
     Err(e) -> println(e.message())
   }
-  match bytes.slice(bytes.from_string("hello"), 2, 2) {
-    Ok(s) -> println(bytes.length(s))
-    Err(_) -> println(-1)
-  }
-  match bytes.slice(bytes.from_string("hello"), 4, 2) {
-    Ok(_) -> println("wrong")
-    Err(e) -> println(e.message())
-  }
-  match bytes.slice(bytes.from_string("hello"), 0, 99) {
-    Ok(_) -> println("wrong")
-    Err(e) -> println(e.message())
-  }
+  println(bytes.length(bytes.slice(bytes.from_string("hello"), 2, 2)))
+  -- a start past the end gives nothing; an end past the length is the length
+  println(bytes.length(bytes.slice(bytes.from_string("hello"), 4, 2)))
+  println(bytes.to_string(bytes.slice(bytes.from_string("hello"), 0, 99)))
+  println(bytes.length(bytes.slice(bytes.from_string("hello"), 7, 99)))
   -- 'e'
-  match bytes.get(bytes.from_string("hello"), 1) {
-    Ok(n) -> println(n)
-    Err(_) -> println(-1)
-  }
-  match bytes.get(bytes.from_string("hi"), 5) {
-    Ok(_) -> println("wrong")
-    Err(e) -> println(e.message())
-  }
+  println(bytes.get(bytes.from_string("hello"), 1))
+  println(bytes.get(bytes.from_string("hi"), 5))
+  println(bytes.get(bytes.from_string("hi"), -1))
 }

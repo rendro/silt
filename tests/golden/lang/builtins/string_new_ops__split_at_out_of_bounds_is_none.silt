@@ -1,0 +1,2 @@
+import string
+fn main() { println(string.split_at("hello", 99)) }

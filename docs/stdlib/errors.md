@@ -149,7 +149,6 @@ its own (`float.Empty` is not `int.Empty`).
 | `InvalidHex(String)` | message | bad hex string |
 | `InvalidBase64(String)` | message | bad base64 string |
 | `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
-| `OutOfBounds(Int)` | index | slice or get index out of bounds |
 | `Other(String)` | message | unclassified failure |
 
 ### `EncodingError` (requires `import encoding`)

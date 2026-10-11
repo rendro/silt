@@ -468,8 +468,7 @@ pub mod bv {
     pub const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
     pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
     pub const BYTES_BYTE_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 3);
-    pub const BYTES_OUT_OF_BOUNDS: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 4);
-    pub const BYTES_OTHER: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 5);
+    pub const BYTES_OTHER: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 4);
     pub const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
     pub const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
     pub const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
@@ -877,7 +876,6 @@ mod tests {
             (bv::BYTES_INVALID_HEX, "InvalidHex"),
             (bv::BYTES_INVALID_BASE64, "InvalidBase64"),
             (bv::BYTES_BYTE_OUT_OF_RANGE, "ByteOutOfRange"),
-            (bv::BYTES_OUT_OF_BOUNDS, "OutOfBounds"),
             (bv::BYTES_OTHER, "Other"),
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),

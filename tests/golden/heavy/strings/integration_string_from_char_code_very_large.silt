@@ -1,5 +1,3 @@
--- exit: 1
--- stderr-contains: invalid code point
 -- Value larger than max Unicode code point (0x10FFFF = 1114111)
 import string
-fn main() { string.from_char_code(1114112) }
+fn main() { println(string.from_char_code(1114112)) }

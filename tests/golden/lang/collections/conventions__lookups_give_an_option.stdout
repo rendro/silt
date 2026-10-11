@@ -1,0 +1,28 @@
+Some(30)
+None
+None
+Some([10, 99, 30])
+None
+None
+Some([20, 30])
+None
+None
+[10, 20, 30]
+Some((hé, llo))
+Some((héllo, ))
+None
+None
+Some(65)
+None
+Some(é)
+None
+None
+None
+Some(101)
+None
+None
+Ok(el)
+Ok(ello)
+0
+0
+3
