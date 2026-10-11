@@ -388,3 +388,29 @@ fn programs_on_disk_are_run_and_one_that_does_not_check_is_a_finding() {
         "the oracle has: check error",
     );
 }
+
+/// A program that reads the time writes what the clock says: it is
+/// held to the invariants and to ending well, and its output is
+/// compared with nothing, not with the other run's and not with a
+/// golden case's.
+#[test]
+fn a_program_that_reads_the_time_is_not_compared_by_its_output() {
+    let text = "import time\nfn main() {\n  let start = time.now()\n  let took = time.since(start, time.now())\n  println(took.ns)\n}\n";
+    let expect = || Expect {
+        succeeds: true,
+        stdout: Some("the same number every time\n".to_string()),
+        end: None,
+    };
+    let passed = verdict_with(text, expect());
+    assert!(
+        matches!(passed, Verdict::Passed(Compared::Measured)),
+        "{passed:?}"
+    );
+    // It still has to end well.
+    let failing = "import time\nfn main() {\n  let start = time.now()\n  println(time.since(start, time.now()).ns)\n  1 / 0\n}\n";
+    assert_finding(
+        verdict_with(failing, expect()),
+        Kind::Expectation,
+        "runtime error: division by zero",
+    );
+}

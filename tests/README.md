@@ -86,7 +86,13 @@ error, and no run, and no task of one, may end in a `type_confusion`
 error, an internal error or a panic, or not end
 (`tests/oracle/oracle.rs`). A program that uses tasks, channels,
 streams, the clock or the system's random source is compared only where
-a golden case's exact `.stdout` says what it writes.
+a golden case's exact `.stdout` says what it writes. A program whose
+code names `time.now` or `time.since` is never compared by its output,
+`.stdout` or not: it reads the time, as a rule to print what something
+took, and what it writes is the clock's, on a busy machine as much as
+at another slice. It is held to the invariants and, as a golden case,
+to ending well at both slices; the report counts these programs apart
+("invariants only (reads the time)").
 
 Each run has a step budget (`Vm::set_step_budget`). A program that uses
 it up at both slices is cut short: it is counted, and nothing of it is

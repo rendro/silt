@@ -324,9 +324,11 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
     );
     let count = |compared| passed.get(&compared).copied().unwrap_or(0);
     report.push_str(&format!(
-        "  passed, everything compared: {}\n  passed, invariants only: {}\n",
+        "  passed, everything compared: {}\n  passed, invariants only: {}\n  \
+         passed, invariants only (reads the time): {}\n",
         count(Compared::Everything),
         count(Compared::Invariants),
+        count(Compared::Measured),
     ));
     for (why, count) in &cut {
         report.push_str(&format!("  cut short, {why}: {count}\n"));

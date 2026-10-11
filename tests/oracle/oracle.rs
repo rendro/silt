@@ -36,7 +36,13 @@
 //! both; then a difference of the two runs; then what is known of the
 //! program from elsewhere ([`Expect`]).
 //!
-//! What is compared in step 4 depends on the builtins the program's
+//! A program whose code names a builtin of [`MEASURES`] reads the time
+//! and prints what it took, as a rule: its output is the clock's, on a
+//! busy machine as much as at another slice. It is held to step 5 and
+//! to ending well, and its output is compared with nothing, whatever a
+//! golden case's `.stdout` says.
+//!
+//! What else is compared in step 4 depends on the builtins the program's
 //! code names. The runtime runs tasks on several threads and reads the
 //! time of day, so the output of a program that names a function of
 //! [`UNORDERED`] or of [`RANDOM`] is its own only when something says
@@ -91,6 +97,11 @@ pub const UNORDERED: &[&str] = &["task", "channel", "stream", "time"];
 
 /// The builtins that draw from the system's random source.
 pub const RANDOM: &[&str] = &["uuid.v4", "uuid.v7", "crypto.random_bytes"];
+
+/// The builtins that read the time: what a program that names one
+/// writes is the clock's (a measurement, as a rule), and no two runs
+/// of it need write the same.
+pub const MEASURES: &[&str] = &["time.now", "time.since"];
 
 /// The builtins that wait for the clock: a run of a program that names
 /// one may take as long as the program likes.
@@ -301,6 +312,9 @@ pub enum Compared {
     /// Nothing: the program names a builtin of [`UNORDERED`] or
     /// [`RANDOM`] and nothing says what its output is.
     Invariants,
+    /// Nothing, whatever is said of its output: the program names a
+    /// builtin of [`MEASURES`].
+    Measured,
 }
 
 /// Why the runs of a program were not compared.
@@ -662,6 +676,7 @@ fn examine_here(input: &Input, steps: Steps) -> Verdict {
         .iter()
         .any(|name| UNORDERED.contains(&module_of(name)));
     let compared = match unordered || names(RANDOM) {
+        _ if names(MEASURES) => Compared::Measured,
         true if input.expect.stdout.is_none() => Compared::Invariants,
         _ => Compared::Everything,
     };
@@ -751,7 +766,8 @@ fn examine_here(input: &Input, steps: Steps) -> Verdict {
         let slices = format!("slice {} against slice {}", SLICES[0], SLICES[1]);
         return Verdict::Finding(differs.at(&slices));
     }
-    if let Some(finding) = unexpected(&input.expect, &runs) {
+    let output = compared != Compared::Measured;
+    if let Some(finding) = unexpected(&input.expect, &runs, output) {
         return Verdict::Finding(finding);
     }
     Verdict::Passed(compared)
@@ -1036,8 +1052,9 @@ fn broken(run: &Run) -> Option<Finding> {
     None
 }
 
-/// What of the runs is not as `expect` says.
-fn unexpected(expect: &Expect, runs: &[Run]) -> Option<Finding> {
+/// What of the runs is not as `expect` says; the stdout only when
+/// `output` says that it is the program's own.
+fn unexpected(expect: &Expect, runs: &[Run], output: bool) -> Option<Finding> {
     for (slice, run) in SLICES.iter().zip(runs) {
         let wrong = |what: &str, detail: String| {
             let finding = Finding::about(Kind::Expectation, what, detail);
@@ -1081,6 +1098,7 @@ fn unexpected(expect: &Expect, runs: &[Run]) -> Option<Finding> {
             return wrong(what, format!("{}; expected: {expected}", run.end.shown()));
         }
         if let Some(stdout) = &expect.stdout
+            && output
             && *stdout != run.stdout
         {
             let at = first_difference(stdout, &run.stdout);
