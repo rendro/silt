@@ -1096,9 +1096,7 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
     match ty {
         Type::Rigid(r) => Some(*r),
         Type::Fun(params, ret) => params.iter().find_map(rigid_in).or_else(|| rigid_in(ret)),
-        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
-            rigid_in(inner)
-        }
+        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => rigid_in(inner),
         Type::Tuple(elems) => elems.iter().find_map(rigid_in),
         Type::Generic(_, args) => args.iter().find_map(rigid_in),
         Type::Map(k, v) => rigid_in(k).or_else(|| rigid_in(v)),

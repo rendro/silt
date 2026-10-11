@@ -158,8 +158,7 @@ impl TypeChecker {
     }
 
     /// The type the impl `ti` is for, as impls are keyed: the canonical
-    /// head of its target (`Range` is `List`, an alias is the type it
-    /// stands for).
+    /// head of its target (an alias is the type it stands for).
     pub(super) fn impl_target(&self, ti: &TraitImpl) -> Option<TypeRef> {
         let ty = self.named_type(ti.target_res, ti.target_type)?;
         Some(canonical_head(&self.tables.resolver, ty))
