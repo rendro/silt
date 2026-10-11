@@ -23,7 +23,8 @@ impl Float {
     /// infinity, which are no Floats.
     pub fn new(f: f64) -> Option<Float> {
         // (`-0.0 == 0.0`, so the one test finds both zeros.)
-        f.is_finite().then_some(Float(if f == 0.0 { 0.0 } else { f }))
+        f.is_finite()
+            .then_some(Float(if f == 0.0 { 0.0 } else { f }))
     }
 
     /// The number.

@@ -4,6 +4,11 @@ use crate::bytecode::{Asm, Emitter, Function};
 use crate::source::Span;
 use crate::typeinfo::bv;
 
+/// The Float `f`, a finite number, as a value.
+fn float(f: f64) -> Value {
+    Value::Float(crate::value::Float::new(f).expect("a finite number"))
+}
+
 /// Helper: build a function of `arity` parameters with the emitter.
 fn make_function_of(arity: u8, build: impl FnOnce(&mut Emitter)) -> Arc<Function> {
     let mut emitter = Emitter::new("<test>".to_string(), usize::from(arity), span()).unwrap();
@@ -81,8 +86,8 @@ fn test_arithmetic_expression() {
 #[test]
 fn test_float_arithmetic() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(1.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.5), span()).unwrap();
+        let a = e.constant(float(1.5), span()).unwrap();
+        let b = e.constant(float(2.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Add, span()).unwrap();
@@ -90,7 +95,7 @@ fn test_float_arithmetic() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(4.0));
+    assert_eq!(result, float(4.0));
 }
 
 #[test]
@@ -362,8 +367,8 @@ fn test_sub_int_underflow() {
 #[test]
 fn test_sub_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(5.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.25), span()).unwrap();
+        let a = e.constant(float(5.5), span()).unwrap();
+        let b = e.constant(float(2.25), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Sub, span()).unwrap();
@@ -371,7 +376,7 @@ fn test_sub_float() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(3.25));
+    assert_eq!(result, float(3.25));
 }
 
 #[test]
@@ -408,8 +413,8 @@ fn test_mod_int_by_zero() {
 #[test]
 fn test_mod_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(5.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.0), span()).unwrap();
+        let a = e.constant(float(5.5), span()).unwrap();
+        let b = e.constant(float(2.0), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Mod, span()).unwrap();
@@ -417,7 +422,7 @@ fn test_mod_float() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(1.5));
+    assert_eq!(result, float(1.5));
 }
 
 #[test]
@@ -438,8 +443,8 @@ fn test_gt_int() {
 #[test]
 fn test_gt_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(1.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.5), span()).unwrap();
+        let a = e.constant(float(1.5), span()).unwrap();
+        let b = e.constant(float(2.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Gt, span()).unwrap();
@@ -468,8 +473,8 @@ fn test_geq_int() {
 #[test]
 fn test_geq_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(4.0), span()).unwrap();
-        let b = e.constant(Value::Float(4.5), span()).unwrap();
+        let a = e.constant(float(4.0), span()).unwrap();
+        let b = e.constant(float(4.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Geq, span()).unwrap();
@@ -498,8 +503,8 @@ fn test_leq_int() {
 #[test]
 fn test_leq_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(2.5), span()).unwrap();
-        let b = e.constant(Value::Float(1.5), span()).unwrap();
+        let a = e.constant(float(2.5), span()).unwrap();
+        let b = e.constant(float(1.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Leq, span()).unwrap();
@@ -513,14 +518,14 @@ fn test_leq_float() {
 #[test]
 fn test_negate_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(3.5), span()).unwrap();
+        let a = e.constant(float(3.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Negate, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(-3.5));
+    assert_eq!(result, float(-3.5));
 }
 
 #[test]
@@ -2054,7 +2059,7 @@ fn test_type_decl_variant_with_fields() {
             }
         "#,
     );
-    assert_eq!(result, Value::Float(5.0));
+    assert_eq!(result, float(5.0));
 }
 
 #[test]
@@ -2673,7 +2678,7 @@ mod type_confusion {
     fn arithmetic_on_an_int_and_a_float() {
         confused("cannot mix Int and Float", |e| {
             push(e, Value::Int(1));
-            push(e, Value::Float(2.5));
+            push(e, float(2.5));
             e.emit(Asm::Sub, span()).unwrap();
         });
     }

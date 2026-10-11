@@ -1185,7 +1185,7 @@ mod tests {
     fn dispatch_type_for_value_primitives() {
         assert_eq!(dispatch_type_for_value(&Value::Int(0)), builtin_id("Int"));
         assert_eq!(
-            dispatch_type_for_value(&Value::Float(0.0)),
+            dispatch_type_for_value(&Value::Float(crate::value::Float::from(0))),
             builtin_id("Float")
         );
         assert_eq!(

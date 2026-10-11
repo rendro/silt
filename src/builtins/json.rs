@@ -415,12 +415,10 @@ fn json_to_typed_value(
             _ => Err(mismatch("Int", json_type_name(json))),
         },
         FieldType::Float => match json {
-            serde_json::Value::Number(n) => {
-                match n.as_f64().and_then(Float::new) {
-                    Some(f) => Ok(Value::Float(f)),
-                    None => Err(unknown("expected Float, got non-numeric number".into())),
-                }
-            }
+            serde_json::Value::Number(n) => match n.as_f64().and_then(Float::new) {
+                Some(f) => Ok(Value::Float(f)),
+                None => Err(unknown("expected Float, got non-numeric number".into())),
+            },
             _ => Err(mismatch("Float", json_type_name(json))),
         },
         FieldType::Bool => match json {

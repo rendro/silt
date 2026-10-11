@@ -148,7 +148,7 @@ fn partial_eq_reflexivity_every_variant() {
         Value::Unit,
         Value::Bool(true),
         Value::Int(42),
-        Value::Float(1.5),
+        Value::Float(silt::value::Float::new(1.5).expect("a finite number")),
         Value::String("hi".into()),
         Value::list(vec![Value::Int(1), Value::Int(2)]),
         Value::List(silt::value::List::ints(1, 5).expect("a list")),

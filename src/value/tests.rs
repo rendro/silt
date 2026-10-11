@@ -46,12 +46,41 @@ fn record_type(id: u32, name: &str, fields: &[&str]) -> Arc<TypeInfo> {
 
 // ── Hash/Eq consistency ────────────────────────────────────────
 
+/// The Float `f`, a finite number, as a value.
+fn float(f: f64) -> Value {
+    Value::Float(Float::new(f).expect("a finite number"))
+}
+
+/// A Float is finite and there is one zero: `-0.0` is made `0.0`, a NaN
+/// and the infinities are no Floats. So a Float is its own key: equal
+/// Floats are the same bits and hash alike, and any two are in order.
 #[test]
-fn hash_eq_float_zero_and_neg_zero() {
-    let pos = Value::Float(0.0);
-    let neg = Value::Float(-0.0);
-    assert_eq!(pos, neg, "0.0 and -0.0 should be equal");
-    assert_eq!(hash_of(&pos), hash_of(&neg), "0.0 and -0.0 must hash equal");
+fn a_float_is_finite_and_has_one_zero() {
+    let (zero, negative) = (Float::new(0.0), Float::new(-0.0));
+    assert_eq!(zero, negative);
+    let zero = zero.expect("a Float");
+    assert!(zero.get().is_sign_positive());
+    assert!(negative.expect("a Float").get().is_sign_positive());
+    assert_eq!(hash_of(&float(0.0)), hash_of(&float(-0.0)));
+    assert_eq!(format!("{}", float(-0.0)), "0");
+    for none in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(Float::new(none), None);
+    }
+    for some in [f64::MAX, f64::MIN, f64::MIN_POSITIVE, -1.5e-300] {
+        assert_eq!(Float::new(some).map(Float::get), Some(some));
+    }
+    // What stays among the Floats: a Float negated, an Int as a Float.
+    assert_eq!(-zero, zero);
+    assert!((-zero).get().is_sign_positive());
+    assert_eq!((-Float::new(1.5).expect("a Float")).get(), -1.5);
+    assert_eq!(Float::from(i64::MAX).get(), i64::MAX as f64);
+    assert!(Float::from(0).get().is_sign_positive());
+    // The order is the numbers'.
+    let ascending = [f64::MIN, -2.0, -1e-300, 0.0, 1e-300, 2.0, f64::MAX];
+    for pair in ascending.windows(2) {
+        assert!(float(pair[0]) < float(pair[1]), "{} < {}", pair[0], pair[1]);
+        assert_ne!(hash_of(&float(pair[0])), hash_of(&float(pair[1])));
+    }
 }
 
 #[test]
@@ -114,7 +143,7 @@ fn nested_list_eq() {
 
 #[test]
 fn different_variant_types_not_equal() {
-    assert_ne!(Value::Int(1), Value::Float(1.0));
+    assert_ne!(Value::Int(1), float(1.0));
     assert_ne!(Value::Int(0), Value::Bool(false));
     assert_ne!(Value::String("1".into()), Value::Int(1));
 }
@@ -151,19 +180,6 @@ fn ord_int_ordering() {
 fn ord_string_ordering() {
     assert!(Value::String("apple".into()) < Value::String("banana".into()));
     assert!(Value::String("a".into()) < Value::String("b".into()));
-}
-
-#[test]
-fn ord_float_normal() {
-    assert!(Value::Float(1.0) < Value::Float(2.0));
-    assert!(Value::Float(-1.0) < Value::Float(0.0));
-}
-
-#[test]
-fn ord_float_nan_fallback() {
-    let nan = Value::Float(f64::NAN);
-    let _ = nan.cmp(&Value::Float(0.0));
-    let _ = nan.cmp(&nan);
 }
 
 #[test]
@@ -501,7 +517,7 @@ fn a_program_type_named_time_is_not_the_builtin_time() {
 fn ord_cross_type_by_discriminant() {
     assert!(Value::Unit < Value::Bool(true));
     assert!(Value::Bool(false) < Value::Int(0));
-    assert!(Value::Int(0) < Value::Float(0.0));
+    assert!(Value::Int(0) < float(0.0));
 }
 
 // ── Display formatting ─────────────────────────────────────────
@@ -514,7 +530,7 @@ fn display_int() {
 
 #[test]
 fn display_float() {
-    assert_eq!(format!("{}", Value::Float(4.25)), "4.25");
+    assert_eq!(format!("{}", float(4.25)), "4.25");
 }
 
 #[test]

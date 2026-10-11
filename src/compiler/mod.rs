@@ -3067,7 +3067,7 @@ mod tests {
             main.chunk()
                 .constants()
                 .iter()
-                .any(|c| matches!(c, Value::Float(f) if (*f - 4.25).abs() < f64::EPSILON))
+                .any(|c| matches!(c, Value::Float(f) if f.get() == 4.25))
         );
     }
 
