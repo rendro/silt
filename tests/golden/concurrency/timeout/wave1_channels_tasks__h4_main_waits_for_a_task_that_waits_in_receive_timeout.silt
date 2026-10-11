@@ -1,6 +1,6 @@
 -- repeat: 3
 -- stderr-not-contains: deadlock on main thread
--- The same with `channel.recv_timeout`, which parks the task on a
+-- The same with `channel.receive_timeout`, which parks the task on a
 -- select with a timer arm.
 import channel
 import task
@@ -10,10 +10,11 @@ fn main() {
   let quiet = channel.new(1)
   let x = channel.new(0)
   let h = task.spawn({ ->
-    let waited = match channel.recv_timeout(quiet, time.ms(600)) {
-      Ok(_) -> "value"
-      Err(channel.ChannelTimeout) -> "timed out"
-      Err(channel.ChannelClosed) -> "closed"
+    let waited = match channel.receive_timeout(quiet, time.ms(600)) {
+      channel.Message(_) -> "value"
+      channel.Empty -> "timed out"
+      channel.Closed -> "closed"
+      channel.Sent -> "sent"
     }
     channel.send(x, waited)
   })

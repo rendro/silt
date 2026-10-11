@@ -30,8 +30,8 @@ the callback.)
 
 Every fallible stdlib module except `crypto`, `encoding`, `uuid`, and `regex`
 returns a typed error enum — `IoError`, `JsonError`, `TomlError`,
-`ParseError`, `HttpError`, `TcpError`, `PgError`, `TimeError`, `BytesError`,
-and `ChannelError`. Each is a member of its module (`io.IoError`), and
+`ParseError`, `HttpError`, `TcpError`, `PgError`, `TimeError` and
+`BytesError`. Each is a member of its module (`io.IoError`), and
 so are its variants: `io.IoNotFound`, `json.JsonSyntax`,
 `http.HttpTimeout`, and so on. The full
 catalog is in [`docs/stdlib/errors.md`](../stdlib/errors.md); hovering

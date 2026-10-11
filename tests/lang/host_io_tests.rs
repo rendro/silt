@@ -511,7 +511,7 @@ fn main() {
     assert_eq!(out.contents(), "true\n");
 }
 
-/// `channel.timeout` and `channel.recv_timeout` end when the clock
+/// `channel.timeout` and `channel.receive_timeout` end when the clock
 /// reaches their deadline, on the main thread and in a task.
 #[test]
 fn channel_timeouts_follow_the_clock() {
@@ -525,19 +525,16 @@ fn main() {
   let quiet = channel.new(1)
   channel.send(quiet, 0)
   let _ = channel.receive(quiet)
-  println(channel.receive(channel.timeout(3600000)))
-  println(channel.recv_timeout(quiet, time.hours(1)))
-  let h = task.spawn({ -> channel.recv_timeout(quiet, time.hours(1)) })
+  println(channel.receive(channel.timeout(time.ms(3600000))))
+  println(channel.receive_timeout(quiet, time.hours(1)))
+  let h = task.spawn({ -> channel.receive_timeout(quiet, time.hours(1)) })
   println(task.join(h))
 }
 "#;
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
-    assert_eq!(
-        out.contents(),
-        "Closed\nErr(channel receive timed out)\nErr(channel receive timed out)\n"
-    );
+    assert_eq!(out.contents(), "Closed\nEmpty\nEmpty\n");
     assert!(clock.passed() >= Duration::from_secs(3 * 3600));
 }
 
@@ -549,9 +546,10 @@ fn a_timeout_does_not_end_while_the_clock_stands_still() {
     let clock = FakeClock::default();
     let source = r#"
 import channel
+import time
 fn main() {
   println("waiting")
-  println(channel.receive(channel.timeout(20)))
+  println(channel.receive(channel.timeout(time.ms(20))))
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&out).clock(clock.clone()));
@@ -681,7 +679,8 @@ fn a_clock_that_panics_in_a_builtin_is_a_runtime_error() {
     assert_eq!(run_bounded(now, broken()), failure);
     let sleep = "import time\nfn main() { time.sleep(time.ms(5)) }";
     assert_eq!(run_bounded(sleep, broken()), failure);
-    let timeout = "import channel\nfn main() { channel.receive(channel.timeout(5)) }";
+    let timeout =
+        "import channel\nimport time\nfn main() { channel.receive(channel.timeout(time.ms(5))) }";
     assert_eq!(run_bounded(timeout, broken()), failure);
 }
 
@@ -713,7 +712,7 @@ fn main() {
     );
 }
 
-/// The same on the main thread: a `channel.recv_timeout` that the
+/// The same on the main thread: a `channel.receive_timeout` that the
 /// timer thread would have ended.
 #[test]
 fn a_clock_that_panics_on_the_timer_thread_ends_a_wait_of_main() {
@@ -725,7 +724,7 @@ fn main() {
   let quiet = channel.new(1)
   channel.send(quiet, 0)
   let _ = channel.receive(quiet)
-  channel.recv_timeout(quiet, time.hours(1))
+  channel.receive_timeout(quiet, time.hours(1))
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));

@@ -3,11 +3,12 @@
 -- `main` returns. With no task left that it could wake, the program
 -- has ended: it does not last the minute.
 import channel
+import time
 
 fn main() {
   let ch = channel.new(1)
   channel.send(ch, 7)
-  let late = channel.timeout(60000)
+  let late = channel.timeout(time.ms(60000))
   match channel.select([channel.Recv(ch), channel.Recv(late)]) {
     (_, channel.Message(v)) -> println("got {v}")
     _ -> println("the timer won")

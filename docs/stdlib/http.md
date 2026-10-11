@@ -211,7 +211,7 @@ connection its descriptor, until the handler returns and the response
 cannot be sent. Clients that come and go without waiting for their
 answers can so fill every place, and every later request gets `503`. A
 handler that waits needs a limit of its own, for example
-`channel.recv_timeout` instead of `channel.receive`.
+`channel.receive_timeout` instead of `channel.receive`.
 
 ### What the server reads and sends
 

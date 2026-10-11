@@ -10,7 +10,6 @@ import regex
 import tcp
 import time
 import bytes
-import channel
 
 fn main() {
   println(io.IoNotFound("missing.txt").message())
@@ -22,5 +21,4 @@ fn main() {
   println(tcp.TcpClosed.message())
   println(time.TimeOutOfRange("month 13").message())
   println(bytes.BytesInvalidHex("zz").message())
-  println(channel.ChannelClosed.message())
 }

@@ -2,8 +2,9 @@
 -- A timeout of 0ms should close (almost) immediately.
 import io
 import channel
+import time
 fn program() {
-  let timer = channel.timeout(0)
+  let timer = channel.timeout(time.ms(0))
   let result = channel.receive(timer)
   match result {
     channel.Closed -> "closed"

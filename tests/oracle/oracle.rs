@@ -108,7 +108,7 @@ pub const MEASURES: &[&str] = &["time.now", "time.since"];
 pub const TIMED: &[&str] = &[
     "time.sleep",
     "channel.timeout",
-    "channel.recv_timeout",
+    "channel.receive_timeout",
     "task.deadline",
     "task.spawn_until",
 ];

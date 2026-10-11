@@ -131,15 +131,6 @@ receive from the other.
 | `BytesByteOutOfRange(Int)` | value | list element outside 0..=255 |
 | `BytesOutOfBounds(Int)` | index | slice or get index out of bounds |
 
-### `ChannelError` (requires `import channel`)
-
-Returned by `channel.recv_timeout`.
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `ChannelTimeout` | — | timer elapsed before a value arrived |
-| `ChannelClosed` | — | channel closed with no more values |
-
 ### `RegexError` (requires `import regex`)
 
 Constructible by user code. Stdlib `regex.*` functions do not return

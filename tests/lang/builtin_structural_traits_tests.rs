@@ -25,7 +25,6 @@ fn every_builtin_enum_has_stamps_for_policy_permitted_traits() {
         "TcpError",
         "TimeError",
         "BytesError",
-        "ChannelError",
     ] {
         for trait_name in ["Equal", "Compare", "Hash", "Display"] {
             let key = format!("{trait_name}:{type_name}");

@@ -5,7 +5,7 @@ fn main() {
   let v_channel_each: Int = channel.each
   let v_channel_new: Int = channel.new
   let v_channel_receive: Int = channel.receive
-  let v_channel_recv_timeout: Int = channel.recv_timeout
+  let v_channel_receive_timeout: Int = channel.receive_timeout
   let v_channel_select: Int = channel.select
   let v_channel_send: Int = channel.send
   let v_channel_timeout: Int = channel.timeout

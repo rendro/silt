@@ -8,7 +8,7 @@ fn main() {
     time.sleep(time.ms(5))
     channel.send(ch, "late")
   })
-  let first = channel.recv_timeout(ch, time.seconds(2))
+  let first = channel.receive_timeout(ch, time.seconds(2))
   println(first)
   task.join(sleeper)
   task.deadline(time.seconds(1), { -> 1 + 1 })

@@ -3,9 +3,10 @@
 import io
 import channel
 import task
+import time
 fn program() {
   let ch = channel.new()
-  let timer = channel.timeout(50)
+  let timer = channel.timeout(time.ms(50))
 
   -- Nobody sends to ch, but timer will fire
   let consumer = task.spawn({ ->

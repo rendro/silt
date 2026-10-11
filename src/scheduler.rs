@@ -1614,8 +1614,7 @@ pub(crate) enum Blocks {
 
 /// What a deadlock report says when a `task.deadline` is in effect for
 /// the code that waits: the deadline is for I/O and sleeps.
-const DEADLINE_DOES_NOT_BOUND: &str =
-    "task.deadline does not bound channel waits; use channel.recv_timeout or a channel.timeout arm";
+const DEADLINE_DOES_NOT_BOUND: &str = "task.deadline does not bound channel waits; use channel.receive_timeout or a channel.timeout arm";
 
 /// What the report of a failure that nobody joined advises.
 const UNJOINED_FAILURE_HELP: &str =
@@ -1864,12 +1863,12 @@ fn main() {
     time.sleep(time.ms(5))
     channel.send(ch, 1)
   }
-  match channel.recv_timeout(ch, time.ms(20000)) {
-    Ok(v) -> println("got {v}")
-    Err(_) -> println("timed out")
+  match channel.receive_timeout(ch, time.ms(20000)) {
+    channel.Message(v) -> println("got {v}")
+    _ -> println("timed out")
   }
   task.join(sender)
-  match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(5))]) {
+  match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(5)))]) {
     (_, channel.Closed) -> println("the timeout channel closed")
     _ -> println("something else")
   }
@@ -1946,9 +1945,10 @@ fn main() {
         let (result, _, end) = run(r#"
 import channel
 import task
+import time
 fn main() {
   let ch = channel.new(0)
-  let timer = channel.timeout(150)
+  let timer = channel.timeout(time.ms(150))
   let _waits = task.spawn({ -> channel.receive(timer) })
   let other = task.spawn({ -> channel.receive(ch) })
   task.join(other)

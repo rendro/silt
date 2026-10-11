@@ -224,7 +224,7 @@ reply channel if the sender must know that the value was processed.
 
 A sender on a rendezvous channel waits until its value is taken, and
 whoever takes it completes the send: a blocking `channel.receive`, a `Recv`
-arm of `channel.select`, a `channel.recv_timeout`, or a `channel.try_receive`.
+arm of `channel.select`, a `channel.receive_timeout`, or a `channel.try_receive`.
 The non-blocking operations do not wait themselves, so they only meet a
 counterpart that is already waiting: `channel.try_send` succeeds only while
 a receiver is parked on the channel, and `channel.try_receive` gives a value
@@ -247,13 +247,13 @@ println(msg) -- hello
 
 ### Timeout channels
 
-`channel.timeout(ms)` creates a channel that automatically closes after the
-given number of milliseconds. It is useful for adding deadlines to
-`channel.select` operations.
+`channel.timeout(dur)` creates a channel that automatically closes after the
+given `Duration`. It is useful for adding deadlines to `channel.select`
+operations.
 
 ```silt
 let ch = channel.new(10)
-let timer = channel.timeout(5000) -- closes after 5 seconds
+let timer = channel.timeout(time.ms(5000)) -- closes after 5 seconds
 
 match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
   (^ch, channel.Message(val)) -> println("got: {val}")
@@ -265,12 +265,12 @@ match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
 The timeout channel carries no values -- it simply closes when the duration
 elapses. Receiving from it will block until closure, at which point it
 returns `Closed`. For the common case of a *single* receive with a deadline,
-prefer `channel.recv_timeout` (next section) -- it does the same race in one
+prefer `channel.receive_timeout` (next section) -- it does the same race in one
 call.
 
-### Receive with timeout: `channel.recv_timeout(ch, dur)`
+### Receive with timeout: `channel.receive_timeout(ch, dur)`
 
-`channel.recv_timeout` is a blocking receive with a deadline. It is the
+`channel.receive_timeout` is a blocking receive with a deadline. It is the
 direct form of the `channel.timeout` + `channel.select` pattern above when
 you only need to wait on one channel:
 
@@ -279,34 +279,33 @@ let ch = channel.new(10)
 
 let _ = task.spawn { -> channel.send(ch, 42) }
 
-match channel.recv_timeout(ch, time.ms(500)) {
-  Ok(val) -> println("got: {val}")
-  Err(channel.ChannelTimeout) -> println("timed out")
-  Err(channel.ChannelClosed) -> println("channel closed")
+match channel.receive_timeout(ch, time.ms(500)) {
+  channel.Message(val) -> println("got: {val}")
+  channel.Empty -> println("timed out")
+  _ -> println("channel closed")
 }
 ```
 
-Unlike the other receive builtins, it returns a `Result(a, ChannelError)`
-rather than a `ChannelResult(a)`:
+Like the other receive builtins, it returns a `ChannelResult(a)`:
 
-- `Ok(val)` -- a value was delivered within `dur`.
-- `Err(ChannelTimeout)` -- `dur` elapsed with no value and no close.
-- `Err(ChannelClosed)` -- the channel is closed and its buffer is empty.
+- `Message(val)` -- a value was delivered within `dur`.
+- `Empty` -- `dur` elapsed with no value and no close: what
+  `channel.try_receive` gives when nothing is there now.
+- `Closed` -- the channel is closed and its buffer is empty.
 
 A value that is there wins over an expired timer: one in the buffer, or one
 held by a sender that waits on a rendezvous channel. The non-blocking path
 is always tried first, so a ready value is never preempted by the deadline.
 A `Duration` of zero gives try-receive semantics (no timer is scheduled): it
-returns such a value, and `Err(ChannelTimeout)` when there is none.
+returns such a value, and `Empty` when there is none.
 Negative durations are an error. Positive sub-millisecond durations are
 rounded up to one millisecond, so the caller always waits at least one timer
 tick.
 
 The `dur` argument is a `Duration` built with `time.ms` / `time.seconds`
-(the same shape `task.deadline` takes), and `ChannelError` implements the
-built-in `Error` trait, so `e.message()` works in generic error handling.
+(the same shape `task.deadline` takes).
 
-Signature: `channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)`.
+Signature: `channel.receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)`.
 
 
 ## 3. Tasks
@@ -549,7 +548,7 @@ does not preempt pure CPU work; it only applies to I/O.
 A wait on a channel or for a task inside `f` is **not** bounded by the
 deadline: `channel.receive`, `channel.send`, `channel.select` and
 `task.join` have no timeout value to return. Bound those with
-[`channel.recv_timeout`](#receive-with-timeout-channelrecv_timeoutch-dur)
+[`channel.receive_timeout`](#receive-with-timeout-channelreceive_timeoutch-dur)
 or a `channel.timeout` arm in a `select`. A `channel.receive` that nobody
 will ever answer is a deadlock inside `task.deadline` as outside it.
 
@@ -1310,7 +1309,7 @@ that error, silt reports the tasks that failed and that nobody joined
 producer is the usual reason why a counterpart is missing.
 
 A wait that will end by itself counts as able to go on: a `time.sleep`, a
-`channel.recv_timeout` that has not expired, a wait on a `channel.timeout`
+`channel.receive_timeout` that has not expired, a wait on a `channel.timeout`
 channel that has not closed yet (a `channel.timeout` that no task waits on
 does not count: it could wake nobody). While a task is in such a wait, no
 deadlock is reported, whether or not that task could ever reach the channel
@@ -1356,8 +1355,8 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 | Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` in practice; `channel.Sent` is unreachable here but still required by exhaustiveness |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
 | Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `(channel, channel.Message(val))`, `(channel, channel.Closed)`, `(channel, channel.Sent)` |
-| Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
-| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, channel.ChannelError)` -- `Ok(val)`, `Err(channel.ChannelTimeout)`, or `Err(channel.ChannelClosed)`; a buffered value wins over an expired timer |
+| Timeout channel | `channel.timeout(dur)` | `Channel` (closes after the `Duration`) |
+| Receive with timeout | `channel.receive_timeout(ch, dur)` | `channel.Message(val)`, `channel.Empty` (nothing came in time), or `channel.Closed`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn({ -> ... })` | `task.Handle(a)` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |

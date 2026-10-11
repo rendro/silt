@@ -17,10 +17,10 @@ communication between tasks spawned with `task.spawn`.
 | `each` | `(Channel(a), Fn(a) -> b) -> ()` | Iterate until channel closes |
 | `new` | `(Int?) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel(a)) -> ChannelResult(a)` | Blocking receive |
-| `recv_timeout` | `(Channel(a), Duration) -> Result(a, ChannelError)` | Blocking receive with a timeout |
+| `receive_timeout` | `(Channel(a), Duration) -> ChannelResult(a)` | Receive, waiting no longer than a duration |
 | `select` | `(List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`) |
 | `send` | `(Channel(a), a) -> ()` | Blocking send |
-| `timeout` | `(Int) -> Channel(a)` | Create a channel that closes after N ms |
+| `timeout` | `(Duration) -> Channel(a)` | Create a channel that closes after a duration |
 | `try_receive` | `(Channel(a)) -> ChannelResult(a)` | Non-blocking receive |
 | `try_send` | `(Channel(a), a) -> Bool` | Non-blocking send |
 
@@ -118,17 +118,18 @@ fn main() {
 ```
 
 
-## `channel.recv_timeout`
+## `channel.receive_timeout`
 
 ```
-channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)
+channel.receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)
 ```
 
-Blocking receive with a scoped timeout. Returns:
+Blocking receive that waits no longer than `dur`. Returns:
 
-- `Ok(value)` if a value is delivered within `dur`.
-- `Err(ChannelTimeout)` if `dur` elapses with no value and no close.
-- `Err(ChannelClosed)` if the channel is closed and has no more buffered values.
+- `Message(value)` if a value is delivered within `dur`.
+- `Empty` if `dur` elapses with no value and no close: what
+  `channel.try_receive` gives when nothing is there now.
+- `Closed` if the channel is closed and has no more buffered values.
 
 A value already buffered, or a rendezvous sender already parked, wins over an
 expired timer: the non-blocking path is always tried first so readiness is not
@@ -141,14 +142,6 @@ This uses the shared timer thread that backs `channel.timeout` and `time.sleep`
 -- no per-call OS thread. Cancelling the surrounding `task.spawn` handle
 takes the task off the channel and out of the timer.
 
-`ChannelError` implements the built-in `Error` trait, so `e.message()`
-renders either variant as a string:
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `ChannelTimeout` | — | timer elapsed before a value arrived |
-| `ChannelClosed` | — | channel closed with no more values |
-
 ```silt
 import channel
 import task
@@ -160,10 +153,10 @@ fn main() {
     time.sleep(time.ms(50))
     channel.send(ch, 42)
   }
-  match channel.recv_timeout(ch, time.ms(500)) {
-    Ok(v) -> println(v) -- 42
-    Err(channel.ChannelTimeout) -> println("timed out")
-    Err(channel.ChannelClosed) -> println("channel closed")
+  match channel.receive_timeout(ch, time.ms(500)) {
+    channel.Message(v) -> println(v) -- 42
+    channel.Empty -> println("timed out")
+    _ -> println("channel closed")
   }
 }
 ```
@@ -250,19 +243,21 @@ fn main() {
 ## `channel.timeout`
 
 ```
-channel.timeout(ms: Int) -> Channel(a)
+channel.timeout(dur: Duration) -> Channel(a)
 ```
 
-Creates a channel that automatically closes after the given number of
-milliseconds. The returned channel carries no values -- it simply closes when
-the duration elapses. This is useful for adding deadlines to `channel.select`.
+Creates a channel that automatically closes after the given `Duration`. The
+returned channel carries no values -- it simply closes when the duration
+elapses. This is useful for adding deadlines to `channel.select`. A positive
+duration below a millisecond is one millisecond; a negative one is an error.
 
 ```silt
 import channel
+import time
 
 fn main() {
   let ch = channel.new(10)
-  let timer = channel.timeout(1000) -- closes after 1 second
+  let timer = channel.timeout(time.ms(1000)) -- closes after 1 second
   match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
     (^ch, channel.Message(val)) -> println("got: {val}")
     (^timer, channel.Closed) -> println("timed out")

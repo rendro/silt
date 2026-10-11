@@ -241,14 +241,14 @@ fn assert_ended_by_budget(source: &str, steps: u64) {
 /// receive with a timeout.
 #[test]
 fn the_budget_ends_a_main_that_only_waits_for_a_timeout() {
-    let source = "import channel\nimport time\n\nfn main() {\n  let ch = channel.new(0)\n  loop i = 0 {\n    let _ = channel.recv_timeout(ch, time.ms(1))\n    loop(i + 1)\n  }\n}\n";
+    let source = "import channel\nimport time\n\nfn main() {\n  let ch = channel.new(0)\n  loop i = 0 {\n    let _ = channel.receive_timeout(ch, time.ms(1))\n    loop(i + 1)\n  }\n}\n";
     assert_ended_by_budget(source, 100);
 }
 
 /// The same with a receive on a channel that a timer closes.
 #[test]
 fn the_budget_ends_a_main_that_only_waits_for_timer_channels() {
-    let source = "import channel\nimport time\n\nfn main() {\n  loop i = 0 {\n    match channel.receive(channel.timeout(1)) {\n      _ -> loop(i + 1)\n    }\n  }\n}\n";
+    let source = "import channel\nimport time\n\nfn main() {\n  loop i = 0 {\n    match channel.receive(channel.timeout(time.ms(1))) {\n      _ -> loop(i + 1)\n    }\n  }\n}\n";
     assert_ended_by_budget(source, 100);
 }
 

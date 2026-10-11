@@ -231,23 +231,23 @@ fn main() { channel.new(-1) }
 }
 
 // ════════════════════════════════════════════════════════════════════
-// channel.timeout(-1) negative-duration guard
-// src/builtins/concurrency.rs:227-230
+// channel.timeout of a negative duration
+// src/builtins/concurrency.rs (`span`)
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
 fn test_channel_timeout_negative_duration_rejected_or_latent() {
-    // Locks src/builtins/concurrency.rs:227-231 — negative durations
-    // are rejected with a clean VmError instead of wrapping via
-    // `as u64` into a near-infinite delay.
+    // Negative durations are rejected with a clean VmError instead of
+    // wrapping via `as u64` into a near-infinite delay.
     let err = run_err(
         r#"
 import channel
-fn main() { channel.timeout(-1) }
+import time
+fn main() { channel.timeout(time.ms(-1)) }
     "#,
     );
     assert!(
-        err.contains("channel.timeout duration must be non-negative"),
+        err.contains("channel.timeout: duration must be non-negative"),
         "expected negative-duration rejection, got: {err}"
     );
 }

@@ -35,7 +35,7 @@ fn every_builtin_error_enum_has_a_message_row() {
     // One known-good variant per enum is enough to exercise its row.
     fn ctor_call_for(_enum_name: &str, variant: &str, _arity: usize) -> Option<String> {
         match variant {
-            "ParseEmpty" | "ChannelTimeout" => Some(variant.to_string()),
+            "ParseEmpty" => Some(variant.to_string()),
             "IoNotFound" | "HttpConnect" | "PgConnect" | "TcpConnect" | "TimeParseFormat" => {
                 Some(format!(r#"{variant}("x")"#))
             }

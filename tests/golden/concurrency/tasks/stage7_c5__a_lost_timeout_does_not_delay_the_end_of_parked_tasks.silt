@@ -6,6 +6,7 @@
 import channel
 import list
 import task
+import time
 
 fn main() {
   let jobs = channel.new(0)
@@ -14,7 +15,7 @@ fn main() {
     task.spawn { -> channel.each(jobs) { j -> channel.send(results, j + 1) } }
   }
   channel.send(jobs, 6)
-  match channel.select([channel.Recv(results), channel.Recv(channel.timeout(60000))]) {
+  match channel.select([channel.Recv(results), channel.Recv(channel.timeout(time.ms(60000)))]) {
     (_, channel.Message(v)) -> println("got {v}")
     _ -> println("timed out")
   }

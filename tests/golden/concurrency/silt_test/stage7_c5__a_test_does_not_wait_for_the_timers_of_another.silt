@@ -11,11 +11,12 @@
 -- at once: the timer is not the second test's.
 import channel
 import test
+import time
 
 fn test_a_leaves_a_timer() {
   let ch = channel.new(1)
   channel.send(ch, 7)
-  let late = channel.timeout(60000)
+  let late = channel.timeout(time.ms(60000))
   match channel.select([channel.Recv(ch), channel.Recv(late)]) {
     (_, channel.Message(v)) -> test.assert_eq(v, 7)
     _ -> panic("the timer won")

@@ -1,5 +1,5 @@
 -- repeat: 3
--- Eight senders, eight recv_timeout calls: every value arrives, no timer
+-- Eight senders, eight receive_timeout calls: every value arrives, no timer
 -- wins ahead of a value (1+..+8 = 36).
 import channel
 import task
@@ -17,9 +17,9 @@ fn main() {
   let total = loop c = 0, acc = 0 {
     match c >= 8 {
       true -> acc
-      _ -> match channel.recv_timeout(ch, time.ms(5000)) {
-        Ok(v) -> loop(c + 1, acc + v)
-        Err(_) -> -1
+      _ -> match channel.receive_timeout(ch, time.ms(5000)) {
+        channel.Message(v) -> loop(c + 1, acc + v)
+        _ -> -1
       }
     }
   }

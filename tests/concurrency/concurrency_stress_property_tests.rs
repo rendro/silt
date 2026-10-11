@@ -25,7 +25,7 @@
 //!   spawns). The supervisor itself is spawned LAST so it sees every
 //!   worker handle.
 //! - Main spawns everyone then WAITS via `channel.select` on a
-//!   counting `done` channel and a `channel.timeout(3500)` bound —
+//!   counting `done` channel and a `channel.timeout(time.ms(3500))` bound —
 //!   main never calls `task.join` on a worker. This keeps per-task
 //!   errors (cancel, send-on-closed) from surfacing as the process
 //!   exit; the test then asserts main still exits cleanly.
@@ -574,7 +574,7 @@ fn emit_program(p: &genp::Program) -> String {
     // cancelled, while giving each property-test case a short wall
     // time. Generated programs use sleeps <= 10ms, so 800ms is ample
     // for every task that's not cancelled/deadlocked to finish.
-    src.push_str("  let timer = channel.timeout(800)\n");
+    src.push_str("  let timer = channel.timeout(time.ms(800))\n");
     src.push_str(&format!(
         "  let collected = loop c = 0 {{\n\
          \x20   match c >= {} {{\n\

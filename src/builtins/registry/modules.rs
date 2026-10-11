@@ -248,19 +248,17 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type ChannelResult(a) { Message(a), Closed, Sent, Empty }\n\
                 pub type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }\n\
-                pub type ChannelError { ChannelTimeout, ChannelClosed }\n\
             ",
             derives: [("ChannelOp", &[])],
-            error: "ChannelError" => concurrency::error_text,
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
                 f("fn each(ch: Channel(a), f: Fn(a) -> b) -> ()", "Iterate until channel closes", concurrency::channel::each),
                 f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new).optional_last(),
                 f("fn receive(ch: Channel(a)) -> ChannelResult(a)", "Blocking receive", concurrency::channel::receive),
-                f("fn recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)", "Blocking receive with a timeout", concurrency::channel::recv_timeout),
+                f("fn receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)", "Receive, waiting no longer than a duration", concurrency::channel::receive_timeout),
                 f("fn select(ops: List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))", "Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`)", concurrency::channel::select),
                 f("fn send(ch: Channel(a), value: a) -> ()", "Blocking send", concurrency::channel::send),
-                f("fn timeout(ms: Int) -> Channel(a)", "Create a channel that closes after N ms", concurrency::channel::timeout),
+                f("fn timeout(dur: Duration) -> Channel(a)", "Create a channel that closes after a duration", concurrency::channel::timeout),
                 f("fn try_receive(ch: Channel(a)) -> ChannelResult(a)", "Non-blocking receive", concurrency::channel::try_receive),
                 f("fn try_send(ch: Channel(a), value: a) -> Bool", "Non-blocking send", concurrency::channel::try_send),
             ],

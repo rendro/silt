@@ -344,23 +344,22 @@ pub mod ty {
     pub const TCP_ERROR: TypeId = TypeId(DefId(14));
     pub const TIME_ERROR: TypeId = TypeId(DefId(15));
     pub const BYTES_ERROR: TypeId = TypeId(DefId(16));
-    pub const CHANNEL_ERROR: TypeId = TypeId(DefId(17));
-    pub const PG_POOL: TypeId = TypeId(DefId(18));
-    pub const PG_TX: TypeId = TypeId(DefId(19));
-    pub const PG_CURSOR: TypeId = TypeId(DefId(20));
-    pub const PG_VALUE: TypeId = TypeId(DefId(21));
-    pub const DATE: TypeId = TypeId(DefId(22));
-    pub const TIME: TypeId = TypeId(DefId(23));
-    pub const DATE_TIME: TypeId = TypeId(DefId(24));
-    pub const DURATION: TypeId = TypeId(DefId(25));
-    pub const INSTANT: TypeId = TypeId(DefId(26));
-    pub const FILE_STAT: TypeId = TypeId(DefId(27));
-    pub const RESPONSE: TypeId = TypeId(DefId(28));
-    pub const REQUEST: TypeId = TypeId(DefId(29));
-    pub const QUERY_RESULT: TypeId = TypeId(DefId(30));
-    pub const EXEC_RESULT: TypeId = TypeId(DefId(31));
-    pub const ANON_RECORD: TypeId = TypeId(DefId(32));
-    pub const NOTIFICATION: TypeId = TypeId(DefId(33));
+    pub const PG_POOL: TypeId = TypeId(DefId(17));
+    pub const PG_TX: TypeId = TypeId(DefId(18));
+    pub const PG_CURSOR: TypeId = TypeId(DefId(19));
+    pub const PG_VALUE: TypeId = TypeId(DefId(20));
+    pub const DATE: TypeId = TypeId(DefId(21));
+    pub const TIME: TypeId = TypeId(DefId(22));
+    pub const DATE_TIME: TypeId = TypeId(DefId(23));
+    pub const DURATION: TypeId = TypeId(DefId(24));
+    pub const INSTANT: TypeId = TypeId(DefId(25));
+    pub const FILE_STAT: TypeId = TypeId(DefId(26));
+    pub const RESPONSE: TypeId = TypeId(DefId(27));
+    pub const REQUEST: TypeId = TypeId(DefId(28));
+    pub const QUERY_RESULT: TypeId = TypeId(DefId(29));
+    pub const EXEC_RESULT: TypeId = TypeId(DefId(30));
+    pub const ANON_RECORD: TypeId = TypeId(DefId(31));
+    pub const NOTIFICATION: TypeId = TypeId(DefId(32));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -450,8 +449,6 @@ pub mod bv {
     pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
     pub const BYTES_BYTE_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 3);
     pub const BYTES_OUT_OF_BOUNDS: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 4);
-    pub const CHANNEL_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_ERROR, 0);
-    pub const CHANNEL_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_ERROR, 1);
     pub const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
     pub const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
     pub const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
@@ -484,7 +481,6 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "TcpError",
     "TimeError",
     "BytesError",
-    "ChannelError",
     "PgPool",
     "PgTx",
     "PgCursor",
@@ -841,8 +837,6 @@ mod tests {
             (bv::BYTES_INVALID_BASE64, "BytesInvalidBase64"),
             (bv::BYTES_BYTE_OUT_OF_RANGE, "BytesByteOutOfRange"),
             (bv::BYTES_OUT_OF_BOUNDS, "BytesOutOfBounds"),
-            (bv::CHANNEL_TIMEOUT, "ChannelTimeout"),
-            (bv::CHANNEL_CLOSED, "ChannelClosed"),
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),
             (bv::PG_CURSOR, "PgCursor"),

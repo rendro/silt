@@ -7,4 +7,3 @@ compiled regex exceeds size budget
 tcp connection closed
 time out of range: month 13
 invalid hex: zz
-channel closed with no more values

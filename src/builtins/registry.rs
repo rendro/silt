@@ -926,19 +926,19 @@ mod tests {
                 format!("{error}.message takes (error: {error}), but was called with (Int, Int)")
             );
         }
-        assert!(seen >= 9, "{seen} error enums");
+        assert!(seen >= 8, "{seen} error enums");
         // A type that is no module's error enum has none.
         let option = crate::types::TypeRef::builtin("Option").id;
         assert!(registry.error_module(option).is_none());
         // The text of a variant, and of a value shown.
-        let closed = Value::variant(crate::typeinfo::bv::CHANNEL_CLOSED, vec![]);
-        assert_eq!(closed.to_string(), "channel closed with no more values");
-        let channel = registry.module("channel").expect("channel");
-        let message = channel.message.as_ref().expect("ChannelError.message");
-        let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[closed]) else {
-            panic!("ChannelError.message");
+        let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, vec![]);
+        let io = registry.module("io").expect("io");
+        let message = io.message.as_ref().expect("IoError.message");
+        let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[interrupted.clone()])
+        else {
+            panic!("IoError.message");
         };
-        assert_eq!(text, "channel closed with no more values".into());
+        assert_eq!(interrupted.to_string(), &*text);
     }
 
     /// A call whose arguments are not the row's (which no checked

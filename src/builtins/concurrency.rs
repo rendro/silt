@@ -22,16 +22,6 @@ fn closed_channel_send_err(id: usize) -> VmError {
     VmError::new(format!("send on closed channel {id}"))
 }
 
-/// What `ChannelError`'s `message` says of the variant `tag` with `fields`:
-/// `None` if they are no variant of it.
-pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
-    Some(match (tag, fields) {
-        ("ChannelTimeout", []) => "channel receive timed out".to_string(),
-        ("ChannelClosed", []) => "channel closed with no more values".to_string(),
-        _ => return None,
-    })
-}
-
 fn message(value: Value) -> Value {
     Value::variant(bv::MESSAGE, vec![value])
 }
@@ -40,8 +30,8 @@ fn closed() -> Value {
     Value::variant(bv::CLOSED, vec![])
 }
 
-fn channel_err(tag: crate::typeinfo::BuiltinVariant) -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(tag, vec![])])
+fn empty() -> Value {
+    Value::variant(bv::EMPTY, vec![])
 }
 
 /// The time a `Duration` argument of `name` is: an error if it is
@@ -57,6 +47,15 @@ fn span(name: &str, duration: time::Duration) -> Result<Duration, VmError> {
 
 fn no_timer() -> VmError {
     VmError::new("cannot start a timer: the duration is out of range".into())
+}
+
+/// The time a timer of `channel.*` runs for a duration: whole
+/// milliseconds, and one for a positive duration below a millisecond.
+fn timer_span(dur: Duration) -> Duration {
+    match dur.as_nanos() as u64 {
+        0 => Duration::ZERO,
+        nanos => Duration::from_millis(nanos.div_ceil(1_000_000)),
+    }
 }
 
 /// The arms of a `channel.select`: each operation is `Recv(channel)`
@@ -147,7 +146,7 @@ pub(crate) mod channel {
         fn try_receive(vm, ch: Chan) -> Value {
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => message(value),
-                TryReceive::Empty => Value::variant(bv::EMPTY, Vec::new()),
+                TryReceive::Empty => empty(),
                 TryReceive::Closed(_) => closed(),
             }
         }
@@ -188,54 +187,44 @@ pub(crate) mod channel {
             }))
         }
 
-        //   * Ok(value)            — a value was delivered within the
-        //                            timeout. A value that is there wins
-        //                            over a timeout that has passed, even
-        //                            at duration zero.
-        //   * Err(ChannelClosed)   — the channel is closed and empty.
-        //   * Err(ChannelTimeout)  — the timeout elapsed with no value
-        //                            and no close. A positive duration
-        //                            below a millisecond waits one.
-        fn recv_timeout(vm, ch: Chan, dur: time::Duration) -> Result<Step, VmError> {
+        // `Message(value)` if a value is there or comes within the
+        // duration: a value that is there wins over a duration that
+        // has passed, even at duration zero. `Closed` if the channel
+        // is closed and empty. `Empty` if the duration passed with no
+        // value and no close.
+        fn receive_timeout(vm, ch: Chan, dur: time::Duration) -> Result<Step, VmError> {
             // A negative duration is an error even when a value is
             // there.
-            let dur = span("channel.recv_timeout", dur)?;
+            let dur = span("channel.receive_timeout", dur)?;
             match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => {
-                    return Ok(Step::Done(Value::variant(bv::OK, vec![value])));
-                }
-                TryReceive::Closed(_) => return Ok(Step::Done(channel_err(bv::CHANNEL_CLOSED))),
+                TryReceive::Value(value) => return Ok(Step::Done(message(value))),
+                TryReceive::Closed(_) => return Ok(Step::Done(closed())),
                 TryReceive::Empty => {}
             }
             if dur.is_zero() {
-                return Ok(Step::Done(channel_err(bv::CHANNEL_TIMEOUT)));
+                return Ok(Step::Done(empty()));
             }
-            let millis = (dur.as_nanos() as u64).div_ceil(1_000_000).max(1);
             let deadline = vm
                 .runtime
                 .io
-                .deadline_after(Duration::from_millis(millis))
+                .deadline_after(timer_span(dur))
                 .ok_or_else(no_timer)?;
             let wait = Wait::new(vec![Arm::Recv(ch.clone())]).deadline(Some(deadline));
-            Ok(vm.park("channel.recv_timeout", wait, |_, fired| {
+            Ok(vm.park("channel.receive_timeout", wait, |_, fired| {
                 Ok(Step::Done(match fired {
-                    Fired::Arm(_, Outcome::Received(value)) => Value::variant(bv::OK, vec![value]),
-                    Fired::Arm(..) => channel_err(bv::CHANNEL_CLOSED),
-                    Fired::Deadline => channel_err(bv::CHANNEL_TIMEOUT),
+                    Fired::Arm(_, Outcome::Received(value)) => message(value),
+                    Fired::Arm(..) => closed(),
+                    Fired::Deadline => empty(),
                 }))
             }))
         }
 
-        fn timeout(vm, ms: i64) -> Result<Value, VmError> {
-            let Ok(ms) = u64::try_from(ms) else {
-                return Err(VmError::new(
-                    "channel.timeout duration must be non-negative".into(),
-                ));
-            };
+        fn timeout(vm, dur: time::Duration) -> Result<Value, VmError> {
+            let dur = span("channel.timeout", dur)?;
             let deadline = vm
                 .runtime
                 .io
-                .deadline_after(Duration::from_millis(ms))
+                .deadline_after(timer_span(dur))
                 .ok_or_else(no_timer)?;
             if let Some(failure) = vm.runtime.io.clock_failure() {
                 return Err(VmError::new(failure));
