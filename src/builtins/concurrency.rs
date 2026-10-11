@@ -414,12 +414,23 @@ impl Native for Deadline {
             }
             _ => {
                 let result = self.task.try_get().ok_or_else(|| {
-                    VmError::new("internal VM error: a deadline's wait ended before its task".into())
+                    VmError::new(
+                        "internal VM error: a deadline's wait ended before its task".into(),
+                    )
                 })?;
                 // The function's failure is the caller's, as if the
-                // caller had called the function itself.
+                // caller had called the function itself: where it
+                // happened, and below the function's own calls the
+                // calls that led to this `task.deadline`.
                 self.task.mark_joined();
-                Ok(Step::Done(Value::variant(bv::OK, vec![result?])))
+                match result {
+                    Ok(value) => Ok(Step::Done(Value::variant(bv::OK, vec![value]))),
+                    Err(mut failure) => {
+                        let here = vm.enrich_error(VmError::new(String::new()));
+                        failure.call_stack.extend(here.call_stack);
+                        Err(failure)
+                    }
+                }
             }
         }
     }

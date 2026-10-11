@@ -243,8 +243,7 @@ struct Inner {
     timer_lock: Mutex<TimerThread>,
     timer_wake: Condvar,
     /// Global I/O timeout from `SILT_IO_TIMEOUT`. When set, every wait
-    /// for I/O ends after it, unless a tighter task.deadline is in
-    /// effect.
+    /// for I/O ends after it.
     global_io_timeout: Option<Duration>,
     /// Tasks that ended with an error, kept for the report of failures
     /// that nobody joined. See `report_unjoined_failures`.

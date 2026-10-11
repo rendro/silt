@@ -182,8 +182,8 @@ impl HostIo {
     ///
     /// The runtime's own threads still wait in real time: a task's
     /// `time.sleep`, a `channel.timeout`, a `channel.receive_timeout` and
-    /// a wait for I/O under a `task.deadline` end within a millisecond
-    /// of the moment `clock` reaches their deadline.
+    /// the wait of a `task.deadline` end within a millisecond of the
+    /// moment `clock` reaches their deadline.
     pub fn clock(self, clock: impl Clock + 'static) -> HostIo {
         HostIo {
             clock: Arc::new(clock),

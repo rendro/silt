@@ -3377,27 +3377,23 @@ fn main() {
             stops(source),
             "division by zero at 5:3; slow 5:3; <lambda> 8:46; main 8:11; <script> 7:1"
         );
-        // A wait that the deadline does not end, and nothing else does.
+        // The same from a task: the join's error has the stack of
+        // the function and of the task that set the deadline.
         let source = "\
-import channel
 import task
 import time
-fn wait(ch: Channel(Int), d: Int) -> Int {
-  let got = channel.receive(ch)
-  match got {
-    channel.Message(n) -> n
-    _ -> 10 / d
-  }
+fn slow(n: Int) -> Int {
+  time.sleep(time.ms(1))
+  10 / n
 }
 fn main() {
-  let ch = channel.new(0)
-  let r = task.deadline(time.ms(20), { -> wait(ch, 0) })
-  println(r)
+  let h = task.spawn({ -> task.deadline(time.ms(60000), { -> slow(0) }) })
+  println(task.join(h))
 }
 ";
         assert_eq!(
             stops(source),
-            "deadlock on main thread: channel receive with no counterparty at 5:13; wait 5:13; <lambda> 13:43; main 13:11; <script> 11:1"
+            "joined task failed: division by zero at 5:3; slow 5:3; <lambda> 8:62; <lambda> 8:27"
         );
     }
 

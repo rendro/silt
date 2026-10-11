@@ -1754,8 +1754,8 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 
 /// Test-only re-export of `pg_timeout_err` so integration tests can
 /// lock the typed-timeout shape without needing a live DB. Returns the
-/// exact `Value` a postgres operation gives when its deadline passes,
-/// before it starts or while the task waits for it.
+/// exact `Value` a postgres operation gives when the time of its wait
+/// (`SILT_IO_TIMEOUT`) is over.
 #[doc(hidden)]
 pub fn pg_timeout_err_for_tests(msg: &str) -> Value {
     pg_timeout_err(crate::vm::IoFailure::Timeout(msg))

@@ -159,7 +159,7 @@ impl Vm {
 
     /// [`Vm::io`] for an operation that can be made to return:
     /// `stop` is called if the task stops waiting while the operation
-    /// runs (its deadline passed, it was cancelled, it was dropped at
+    /// runs (its time was over, it was cancelled, it was dropped at
     /// the end of the program), so that the thread of the operation
     /// ends.
     #[cfg(feature = "tcp-tls")]

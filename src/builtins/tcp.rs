@@ -565,14 +565,14 @@ fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() + Send + 'static {
 /// pool, and the task waits for its value.
 ///
 /// A wait that ends without that value ends the connection: its
-/// deadline passed (`task.deadline`, `SILT_IO_TIMEOUT`), its task was
-/// cancelled, or dropped with the program. The connection is shut down
-/// then, wherever the operation stood: it had not begun (its time was
-/// over before it started, and nothing is run), it was queued, it ran
-/// (the shutdown makes it return, and its thread end), or its value
-/// had come and nobody took it (what a read took is gone with it).
-/// What a timeout leaves of a connection does not depend on the
-/// moment at which it came.
+/// time was over (`SILT_IO_TIMEOUT`), its task was cancelled (so by
+/// a `task.deadline` that passed, whose function is a task), or
+/// dropped with the program. The connection is shut down then,
+/// wherever the operation stood: it was queued, it ran (the shutdown
+/// makes it return, and its thread end), or its value had come and
+/// nobody took it (what a read took is gone with it). What a timeout
+/// leaves of a connection does not depend on the moment at which it
+/// came.
 fn on_connection(
     vm: &mut Vm,
     stream: &Arc<TcpStreamHandle>,

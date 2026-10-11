@@ -629,7 +629,7 @@ impl IoPool {
 /// text.
 #[derive(Clone, Copy, Debug)]
 pub enum IoFailure<'a> {
-    /// A deadline passed (`task.deadline`, `SILT_IO_TIMEOUT`).
+    /// The wait's time was over (`SILT_IO_TIMEOUT`).
     Timeout(&'a str),
     /// The operation panicked.
     Panicked(&'a str),
