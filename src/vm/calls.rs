@@ -146,7 +146,10 @@ impl Vm {
         call: impl FnOnce(&mut Vm, &[Value]) -> T,
     ) -> T {
         let mut args = std::mem::take(&mut self.builtin_args);
-        args.extend(self.stack.drain(at..));
+        for value in &mut self.stack[at..] {
+            args.push(std::mem::replace(value, Value::Unit));
+        }
+        self.stack.truncate(at);
         let result = call(self, &args);
         args.clear();
         self.builtin_args = args;
