@@ -137,7 +137,8 @@ impl Vm {
     /// runs. They are moved to the VM's one list for them
     /// (`builtin_args`), which is out of the VM for the time of the
     /// call and back, emptied, after it: a call allocates no list of
-    /// its own. (A call from inside a call would find the VM's list
+    /// its own. The list is given up where the VM waits
+    /// (`Vm::deliver_native`). (A call from inside a call would find the VM's list
     /// empty and fill a new one. No builtin makes one: one that calls
     /// a function returns first, and the call is a frame.)
     pub(super) fn with_args<T>(

@@ -908,6 +908,10 @@ impl Vm {
                 }
                 Ok(Step::Park(wait)) => {
                     self.frames.push(Frame::Native(native));
+                    // A VM that waits holds no list for the arguments of
+                    // its next builtin: a program can have a hundred
+                    // thousand tasks waiting.
+                    self.builtin_args = Vec::new();
                     return Ok(Some(Slice::Parked(wait)));
                 }
                 Ok(Step::Yield) => {

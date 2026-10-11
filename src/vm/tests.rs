@@ -3615,6 +3615,48 @@ mod builtin_args {
         }
     }
 
+    /// A VM keeps the list from one call to the next, and gives it up
+    /// where it waits: a waiting task holds none.
+    #[test]
+    fn a_vm_that_waits_gives_the_list_up() {
+        use crate::vm::run::Slice;
+
+        let program = crate::session::testing::compile_str(
+            "\
+import channel
+import int
+fn main() {
+  let nobody = channel.new(0)
+  let n = int.abs(-1) + int.abs(-2)
+  channel.receive(nobody)
+}
+",
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.load(&program);
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(VmClosure {
+                function: Arc::new(program.functions[0].clone()),
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        // Step by step up to the wait.
+        let mut kept = 0;
+        loop {
+            match vm.run_frames(0, 1).expect("the program runs") {
+                Slice::OutOfBudget => kept = kept.max(vm.builtin_args.capacity()),
+                Slice::Parked(_) => break,
+                _ => panic!("the program waits"),
+            }
+            assert!(vm.builtin_args.is_empty());
+        }
+        assert!(kept >= 1, "the list was kept between the calls");
+        assert_eq!(vm.builtin_args.capacity(), 0);
+    }
+
     /// Run `main`'s code and give the VM back with what the run came
     /// to.
     fn ran(source: &str) -> (Vm, Result<Value, VmError>) {
