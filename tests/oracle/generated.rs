@@ -16,7 +16,7 @@
 
 use silt::Value;
 
-use crate::oracle::{Expect, Input, Source, Verdict, examine};
+use crate::oracle::{Expect, Finding, Input, Source, Verdict, examine};
 use crate::sweep::{check_listed, conclude, full, run, sample, skips, steps};
 
 /// How many programs a run generates.
@@ -473,6 +473,26 @@ fn minimise(mut expr: Expr, fails: impl Fn(&Expr) -> bool) -> Expr {
     expr
 }
 
+/// The smallest expression reached from `expr` that still has the
+/// finding `found`, with that finding as the smallest shows it:
+/// `finding_of` gives the finding of an expression. A candidate counts
+/// only when its finding is the SAME one, of the kind and about the
+/// same thing ([`Finding::what`]): an expression can have two defects,
+/// and a shrinker that takes any finding of the kind ends at the other
+/// one.
+fn smallest_with(
+    expr: Expr,
+    found: &Finding,
+    finding_of: impl Fn(&Expr) -> Option<Finding>,
+) -> (Expr, Finding) {
+    let same = |candidate: &Expr| {
+        finding_of(candidate).filter(|f| f.kind == found.kind && f.what == found.what)
+    };
+    let smallest = minimise(expr, |candidate| same(candidate).is_some());
+    let shown = same(&smallest).unwrap_or_else(|| found.clone());
+    (smallest, shown)
+}
+
 #[test]
 fn generated_programs_end_as_the_reference_evaluator_says() {
     let seed = match std::env::var("SILT_ORACLE_SEED") {
@@ -506,20 +526,20 @@ fn generated_programs_end_as_the_reference_evaluator_says() {
         // A finding is shown with the smallest program that has it.
         if let Verdict::Finding(finding) = verdict {
             let number: usize = input.name.rsplit('/').next().unwrap().parse().unwrap();
-            let kind = finding.kind;
-            let smallest = minimise(exprs[number].clone(), |candidate| {
-                let again = examine_within(&self::input(input.name.clone(), candidate));
-                matches!(again, Verdict::Finding(finding) if finding.kind == kind)
-            });
+            let (smallest, same) =
+                smallest_with(
+                    exprs[number].clone(),
+                    finding,
+                    |candidate| match examine_within(&self::input(input.name.clone(), candidate)) {
+                        Verdict::Finding(finding) => Some(finding),
+                        _ => None,
+                    },
+                );
             let end = match eval(&smallest, &mut Vec::new()) {
                 Ok(n) => format!("main returns {n}"),
                 Err(message) => format!("a runtime error: {message}"),
             };
-            if let Verdict::Finding(again) =
-                examine_within(&self::input(input.name.clone(), &smallest))
-            {
-                finding.detail = again.detail;
-            }
+            *finding = same;
             finding.detail.push_str(&format!(
                 "\nthe smallest program with the finding (the reference evaluator: {end}):\n{}",
                 program(&smallest)
@@ -635,4 +655,46 @@ fn a_program_that_ends_otherwise_than_expected_is_a_finding_and_is_minimised() {
         minimise(expr, multiplies),
         Expr::Binary(lit(1), '*', lit(1))
     );
+}
+
+/// An expression with two defects of one kind is cut down to the one
+/// that was found, not to whichever is left: here every product "is
+/// wrong in its value" and every `list.length` "is wrong in its
+/// stdout", both findings of the kind `expectation`.
+#[test]
+fn the_smallest_program_has_the_same_finding_not_another_of_its_kind() {
+    use crate::oracle::Kind;
+
+    fn has(expr: &Expr, wanted: &dyn Fn(&Expr) -> bool) -> bool {
+        wanted(expr) || smaller(expr).iter().any(|part| has(part, wanted))
+    }
+    let planted = |what: &str| Finding {
+        kind: Kind::Expectation,
+        what: what.to_string(),
+        detail: format!("planted: {what}"),
+    };
+    let finding_of = |expr: &Expr| {
+        if has(expr, &|e| matches!(e, Expr::Binary(_, '*', _))) {
+            Some(planted("main's value"))
+        } else if has(expr, &|e| matches!(e, Expr::ListLength(_))) {
+            Some(planted("stdout"))
+        } else {
+            None
+        }
+    };
+    let lit = |n| Box::new(Expr::Lit(n));
+    let both = Expr::Binary(
+        Box::new(Expr::ListLength(3)),
+        '+',
+        Box::new(Expr::Binary(lit(6), '*', Box::new(Expr::ListLength(2)))),
+    );
+    let found = finding_of(&both).unwrap();
+    assert_eq!(found.what, "main's value");
+    let (smallest, shown) = smallest_with(both.clone(), &found, finding_of);
+    assert_eq!(smallest, Expr::Binary(lit(1), '*', lit(1)));
+    assert_eq!(shown.what, "main's value");
+    // A shrinker that takes any finding of the kind takes the first
+    // part offered, the list's length, and ends at the other defect.
+    let any = minimise(both, |candidate| finding_of(candidate).is_some());
+    assert_eq!(any, Expr::ListLength(3));
 }

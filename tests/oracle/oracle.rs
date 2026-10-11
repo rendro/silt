@@ -268,15 +268,35 @@ impl Kind {
 #[derive(Debug, Clone)]
 pub struct Finding {
     pub kind: Kind,
+    /// What the finding is about, in words that do not depend on the
+    /// program's values: which part of the runs differs, which
+    /// expectation does not hold. Two findings of a kind are the same
+    /// finding when this is the same (a shrinker keeps to it).
+    pub what: String,
     pub detail: String,
 }
 
 impl Finding {
+    /// A finding that is about what `detail` says in its first line.
     pub fn new(kind: Kind, detail: impl Into<String>) -> Finding {
+        let detail = detail.into();
+        let what = detail.lines().next().unwrap_or_default().to_string();
+        Finding { kind, what, detail }
+    }
+
+    /// A finding about `what`.
+    fn about(kind: Kind, what: &str, detail: String) -> Finding {
         Finding {
             kind,
-            detail: detail.into(),
+            what: what.to_string(),
+            detail,
         }
+    }
+
+    /// The finding with the text `before` in front of its detail.
+    fn at(mut self, before: &str) -> Finding {
+        self.detail = format!("{before}: {}", self.detail);
+        self
     }
 }
 
@@ -663,8 +683,8 @@ fn examine_here(input: &Input, steps: Steps) -> Verdict {
     // How `ran` was cut short, when it was; `Err` when it broke step 5.
     let judge = |slice: usize, ran: &Run| -> Result<Option<Cut>, Verdict> {
         let broke = |broken: Finding| {
-            let detail = format!("the run at slice {slice}: {}", broken.detail);
-            Err(finding(broken.kind, detail))
+            let broken = broken.at(&format!("the run at slice {slice}"));
+            Err(Verdict::Finding(broken))
         };
         match broken(ran) {
             Some(broken) => broke(broken),
@@ -704,13 +724,14 @@ fn examine_here(input: &Input, steps: Steps) -> Verdict {
             runs[short] = again;
         }
         if let Some(cut) = cuts[short] {
+            let what = format!("ends at slice {} only", SLICES[1 - short]);
             let detail = format!(
                 "the program ends at slice {} ({}) and not at slice {}: {cut} ({tried} steps)",
                 SLICES[1 - short],
                 runs[1 - short].end.shown(),
                 SLICES[short],
             );
-            return finding(Kind::OneSlice, detail);
+            return Verdict::Finding(Finding::about(Kind::OneSlice, &what, detail));
         }
     }
     if let Some(cut) = cuts[0] {
@@ -723,15 +744,19 @@ fn examine_here(input: &Input, steps: Steps) -> Verdict {
             End::Panic(_) | End::Hang => false,
         });
         return match fault {
-            Some(run) if input.expect.succeeds => finding(Kind::Expectation, run.end.shown()),
+            Some(run) if input.expect.succeeds => {
+                let fault = Finding::about(Kind::Expectation, "success", run.end.shown());
+                Verdict::Finding(fault)
+            }
             _ => Verdict::Cut(cut),
         };
     }
     if compared == Compared::Everything
-        && let Some(detail) = difference(&runs[0], &runs[1])
+        && let Some((what, detail)) = difference(&runs[0], &runs[1])
     {
-        let detail = format!("slice {} against slice {}: {detail}", SLICES[0], SLICES[1]);
-        return finding(Kind::Differs, detail);
+        let differs = Finding::about(Kind::Differs, what, detail);
+        let slices = format!("slice {} against slice {}", SLICES[0], SLICES[1]);
+        return Verdict::Finding(differs.at(&slices));
     }
     if let Some(finding) = unexpected(&input.expect, &runs) {
         return Verdict::Finding(finding);
@@ -1021,84 +1046,81 @@ fn broken(run: &Run) -> Option<Finding> {
 /// What of the runs is not as `expect` says.
 fn unexpected(expect: &Expect, runs: &[Run]) -> Option<Finding> {
     for (slice, run) in SLICES.iter().zip(runs) {
-        let wrong = |detail: String| {
-            let detail = format!("the run at slice {slice}: {detail}");
-            Some(Finding::new(Kind::Expectation, detail))
+        let wrong = |what: &str, detail: String| {
+            let finding = Finding::about(Kind::Expectation, what, detail);
+            Some(finding.at(&format!("the run at slice {slice}")))
         };
         if expect.succeeds {
             match &run.end {
                 End::Value { failed: false, .. } => {}
-                End::Value { shown, .. } => return wrong(format!("main returned {shown}")),
-                End::Error { message, .. } => return wrong(format!("runtime error: {message}")),
+                End::Value { .. } | End::Error { .. } => return wrong("success", run.end.shown()),
                 End::Panic(_) | End::Hang => {}
             }
             if let Some(failure) = run.failures.first() {
-                return wrong(format!(
-                    "a task failed and nobody joined it: {}",
-                    failure.message
-                ));
+                let detail = format!("a task failed and nobody joined it: {}", failure.message);
+                return wrong("success", detail);
             }
             if !run.stderr.is_empty() {
-                return wrong(format!("a report on stderr:\n{}", run.stderr));
+                return wrong("success", format!("a report on stderr:\n{}", run.stderr));
             }
         }
-        let agrees = match (&expect.end, &run.end) {
-            (Some(Ok(value)), End::Value { shown, .. }) => *shown == format!("{value:?}"),
+        // What of the end is not the expected one.
+        let what = match (&expect.end, &run.end) {
+            (Some(Ok(value)), End::Value { shown, .. }) => {
+                (*shown != format!("{value:?}")).then_some("main's value")
+            }
             (
                 Some(Err(message)),
                 End::Error {
                     message: actual, ..
                 },
-            ) => message == actual,
-            (Some(_), End::Value { .. } | End::Error { .. }) => false,
-            (None, _) | (_, End::Panic(_) | End::Hang) => true,
+            ) => (message != actual).then_some("the runtime error"),
+            (Some(Ok(_)), End::Error { .. }) => Some("a runtime error for a value"),
+            (Some(Err(_)), End::Value { .. }) => Some("a value for a runtime error"),
+            (None, _) | (_, End::Panic(_) | End::Hang) => None,
         };
-        if !agrees {
-            let actual = match &run.end {
-                End::Value { shown, .. } => format!("main returned {shown}"),
-                End::Error { message, .. } => format!("runtime error: {message}"),
-                End::Panic(_) | End::Hang => unreachable!("judged before"),
-            };
+        if let Some(what) = what {
             let expected = match &expect.end {
                 Some(Ok(value)) => format!("main returns {value:?}"),
                 Some(Err(message)) => format!("runtime error: {message}"),
                 None => unreachable!("an end is expected"),
             };
-            return wrong(format!("{actual}; expected: {expected}"));
+            return wrong(what, format!("{}; expected: {expected}", run.end.shown()));
         }
         if let Some(stdout) = &expect.stdout
             && *stdout != run.stdout
         {
-            return wrong(format!(
-                "stdout is not the expected one:\n{}",
-                first_difference(stdout, &run.stdout)
-            ));
+            let at = first_difference(stdout, &run.stdout);
+            return wrong("stdout", format!("stdout is not the expected one:\n{at}"));
         }
     }
     None
 }
 
-/// Where the two runs differ; `None` when they agree.
-fn difference(first: &Run, second: &Run) -> Option<String> {
+/// Which part of the two runs differs, and how; `None` when they
+/// agree.
+fn difference(first: &Run, second: &Run) -> Option<(&'static str, String)> {
     if first.stdout != second.stdout {
         let at = first_difference(&first.stdout, &second.stdout);
-        return Some(format!("stdout differs:\n{at}"));
+        return Some(("stdout", format!("stdout differs:\n{at}")));
     }
     if first.stderr != second.stderr {
         let at = first_difference(&first.stderr, &second.stderr);
-        return Some(format!("stderr differs:\n{at}"));
+        return Some(("stderr", format!("stderr differs:\n{at}")));
     }
     if first.failures != second.failures {
-        return Some(format!(
+        let detail = format!(
             "the tasks that failed unjoined differ:\n  {:?}\n  {:?}",
             first.failures, second.failures
-        ));
+        );
+        return Some(("the unjoined failures", detail));
     }
     if first.end != second.end {
-        return Some(format!(
+        let detail = format!(
             "the runs end differently:\n  {:?}\n  {:?}",
             first.end, second.end
-        ));
+        );
+        return Some(("the end", detail));
     }
     None
 }
@@ -1154,27 +1176,28 @@ mod tests {
     fn two_runs_agree_only_in_everything() {
         let base = run("a\nb\n", "", "1");
         assert_eq!(difference(&base, &base.clone()), None);
-        let stdout = difference(&base, &run("a\nc\n", "", "1")).unwrap();
+        let (what, stdout) = difference(&base, &run("a\nc\n", "", "1")).unwrap();
+        assert_eq!(what, "stdout");
         assert!(
             stdout.contains("stdout differs") && stdout.contains("line 2"),
             "{stdout}"
         );
-        let shorter = difference(&base, &run("a\n", "", "1")).unwrap();
+        let (_, shorter) = difference(&base, &run("a\n", "", "1")).unwrap();
         assert!(shorter.contains("(no line)"), "{shorter}");
-        let newline = difference(&base, &run("a\nb", "", "1")).unwrap();
+        let (_, newline) = difference(&base, &run("a\nb", "", "1")).unwrap();
         assert!(newline.contains("the line ends differ"), "{newline}");
-        let stderr = difference(&base, &run("a\nb\n", "task 1 failed\n", "1")).unwrap();
-        assert!(stderr.contains("stderr differs"), "{stderr}");
+        let (what, _) = difference(&base, &run("a\nb\n", "task 1 failed\n", "1")).unwrap();
+        assert_eq!(what, "stderr");
         let mut with_failure = base.clone();
         with_failure.failures.push(TaskFailure {
             message: "division by zero".to_string(),
             type_confusion: false,
             out_of_steps: false,
         });
-        let failures = difference(&base, &with_failure).unwrap();
-        assert!(failures.contains("failed unjoined differ"), "{failures}");
-        let end = difference(&base, &run("a\nb\n", "", "2")).unwrap();
-        assert!(end.contains("end differently"), "{end}");
+        let (what, _) = difference(&base, &with_failure).unwrap();
+        assert_eq!(what, "the unjoined failures");
+        let (what, _) = difference(&base, &run("a\nb\n", "", "2")).unwrap();
+        assert_eq!(what, "the end");
         let mut failed = base.clone();
         failed.end = End::Error {
             message: "division by zero".to_string(),
