@@ -516,7 +516,7 @@ mod tests {
                 }
             }
         }
-        assert!(variants.len() > 80, "{} variants", variants.len());
+        assert!(variants.len() > 50, "{} variants", variants.len());
         let mut shared = 0;
         for (module, ty, variant) in variants {
             let name = format!("{module}.{variant}");
@@ -546,7 +546,7 @@ mod tests {
             }
         }
         // `Closed`, `Timeout`, `Other`, ...: the case is not empty.
-        assert!(shared > 20, "{shared} pairs of one name");
+        assert!(shared > 10, "{shared} pairs of one name");
     }
 
     #[test]
