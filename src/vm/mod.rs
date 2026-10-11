@@ -221,7 +221,7 @@ impl Vm {
     /// runs (its deadline passed, it was cancelled, it was dropped at
     /// the end of the program), so that the thread of the operation
     /// ends.
-    #[cfg(feature = "tcp")]
+    #[cfg(feature = "tcp-tls")]
     pub(crate) fn io_stoppable(
         &mut self,
         name: &'static str,
