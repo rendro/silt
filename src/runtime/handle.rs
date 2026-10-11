@@ -960,12 +960,25 @@ fn switched_meanwhile(error: &std::io::Error) -> bool {
         && error.kind() == std::io::ErrorKind::WouldBlock
 }
 
+/// How a task ended.
+struct Ended(Result<Value, VmError>);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        // On no native stack, however deep the value nests: a task may
+        // give the handle of a task that gave the handle of a task.
+        if let Ok(value) = &mut self.0 {
+            crate::value::drop_held(std::mem::replace(value, Value::Unit));
+        }
+    }
+}
+
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
 pub struct TaskHandle {
     pub id: usize,
     /// The task's result, set once: what it returned, the error it
     /// failed with, or that it was cancelled. A join waits for it.
-    result: Arc<Cell<Result<Value, VmError>>>,
+    result: Arc<Cell<Ended>>,
     /// Set by `task.cancel`. The scheduler reads it before each slice
     /// of the task and before each park, so a cancelled task runs no
     /// further and takes nothing.
@@ -1009,7 +1022,7 @@ impl TaskHandle {
     /// The task ended with `result`. `false` when the handle has a
     /// result already (the task was cancelled): the first stands.
     pub fn complete(&self, result: Result<Value, VmError>, wake: &dyn Wake) -> bool {
-        self.result.complete(result, wake).is_ok()
+        self.result.complete(Ended(result), wake).is_ok()
     }
 
     /// The task failed with `error`. `true` when that is the handle's
@@ -1021,7 +1034,7 @@ impl TaskHandle {
         }
         // Before the joiners are woken: one of them handles it.
         self.unjoined_failure.store(true, AtomicOrdering::Release);
-        self.result.complete(Err(error), wake).is_ok()
+        self.result.complete(Ended(Err(error)), wake).is_ok()
     }
 
     /// `task.cancel`: the task runs no further, and its result is the
@@ -1032,7 +1045,7 @@ impl TaskHandle {
         self.cancelled.store(true, AtomicOrdering::SeqCst);
         let _ = self
             .result
-            .complete(Err(VmError::new("cancelled".to_string())), wake);
+            .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
         self.mark_joined();
     }
 
@@ -1048,7 +1061,7 @@ impl TaskHandle {
 
     /// The result, once the task has one.
     pub fn try_get(&self) -> Option<Result<Value, VmError>> {
-        self.result.get().cloned()
+        self.result.get().map(|ended| ended.0.clone())
     }
 
     /// The failure of the task is handled: a join received it, or a
@@ -1068,7 +1081,7 @@ impl TaskHandle {
             return None;
         }
         match self.result.get() {
-            Some(Err(error)) => Some(error.clone()),
+            Some(Ended(Err(error))) => Some(error.clone()),
             _ => None,
         }
     }

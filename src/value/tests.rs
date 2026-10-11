@@ -642,13 +642,6 @@ fn values_of_every_kind_have_one_key() {
 #[test]
 fn a_deep_value_is_compared_and_hashed_without_the_native_stack() {
     const DEPTH: i64 = 50_000;
-    // Each value is taken apart at its end by a loop: dropping a value
-    // this deep still recurses. `next` gives the value one level in.
-    fn unlink(mut value: Value, next: impl Fn(&Value) -> Option<Value>) {
-        while let Some(inner) = next(&value) {
-            value = inner;
-        }
-    }
     let node = record_type(9103, "Node", &["tag", "next"]);
     // The next level is the last part of a level (of a record in a
     // list in a variant), where the walk waits for nothing; and its
@@ -658,22 +651,9 @@ fn a_deep_value_is_compared_and_hashed_without_the_native_stack() {
         let record = Value::record(node.clone(), vec![Value::Int(n), rest]);
         Value::variant(bv::OK, vec![Value::list(vec![record])])
     };
-    let last_next = |value: &Value| match value {
-        Value::Variant(variant) => variant.fields().last().cloned(),
-        Value::List(list) => list.last(),
-        Value::Record(record) => record.fields().last().cloned(),
-        _ => None,
-    };
     let first = |n: i64, rest: Value| Value::tuple(vec![rest, Value::Int(n)]);
-    let first_next = |value: &Value| match value {
-        Value::Tuple(items) => items.first().cloned(),
-        _ => None,
-    };
-    let shapes: [(
-        &dyn Fn(i64, Value) -> Value,
-        &dyn Fn(&Value) -> Option<Value>,
-    ); 2] = [(&last, &last_next), (&first, &first_next)];
-    for (shape, (wrap, next)) in shapes.into_iter().enumerate() {
+    let shapes: [&dyn Fn(i64, Value) -> Value; 2] = [&last, &first];
+    for (shape, wrap) in shapes.into_iter().enumerate() {
         let build =
             |innermost: i64| (0..DEPTH).fold(Value::Int(innermost), |rest, n| wrap(n, rest));
         let (a, b, c) = (build(0), build(0), build(1));
@@ -683,9 +663,6 @@ fn a_deep_value_is_compared_and_hashed_without_the_native_stack() {
         assert_eq!(a.cmp(&c), Ordering::Less, "shape {shape}");
         assert_eq!(hash_of(&a), hash_of(&b), "shape {shape}");
         assert_ne!(hash_of(&a), hash_of(&c), "shape {shape}");
-        for value in [a, b, c] {
-            unlink(value, next);
-        }
     }
 }
 
@@ -1017,6 +994,78 @@ fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
         Value::variant(bv::SOME, vec![Value::tuple(vec![Value::Int(n), rest])])
     });
     drop(chain);
+}
+
+/// A value nested 200,000 levels deep through any holder of values is
+/// dropped like any other: what a holder far inside holds is put aside
+/// and dropped by the outermost (src/value/deep.rs). A program nests a
+/// value through a list, a tuple, a map or a set alone with a function
+/// that calls itself at another type, and through a closure, a channel
+/// or the handle of a task with a loop. (Each of these was dropped
+/// once a level on the native stack: a thread of a test has a stack
+/// for a few thousand levels of it.)
+#[test]
+fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
+    use crate::bytecode::{VmClosure, call_global_script};
+    use crate::runtime::handle::TaskHandle;
+    use crate::runtime::sync::{Channel, TaskId, TrySend, Wake};
+
+    const DEPTH: i64 = 200_000;
+    struct Nobody;
+    impl Wake for Nobody {
+        fn wake(&self, _: TaskId) {}
+    }
+    let function = Arc::new(call_global_script(0, "f"));
+    let shapes: [&dyn Fn(i64, Value) -> Value; 10] = [
+        // A list, and a part of a list.
+        &|_, rest| Value::list(vec![rest]),
+        &|n, rest| {
+            let list = List::from(vec![Value::Int(n), rest, Value::Int(n)]);
+            Value::List(list.slice(1, 3))
+        },
+        &|n, rest| Value::tuple(vec![Value::Int(n), rest]),
+        // A map, of which the next level is a value, or a key; a set.
+        &|n, rest| Value::map(BTreeMap::from([(Value::Int(n), rest)])),
+        &|n, rest| Value::map(BTreeMap::from([(rest, Value::Int(n))])),
+        &|_, rest| Value::set(BTreeSet::from([rest])),
+        // A closure that has captured the next level.
+        &|_, rest| {
+            Value::VmClosure(Arc::new(VmClosure {
+                function: function.clone(),
+                upvalues: vec![rest],
+            }))
+        },
+        // A channel in which the next level waits.
+        &|n, rest| {
+            let channel = Channel::new(n as usize, 1);
+            assert!(matches!(channel.try_send(rest, &Nobody), TrySend::Sent));
+            Value::Channel(channel)
+        },
+        // The handle of a task that ended with the next level.
+        &|n, rest| {
+            let handle = TaskHandle::new(n as usize);
+            assert!(handle.complete(Ok(rest), &Nobody));
+            Value::Handle(Arc::new(handle))
+        },
+        // One kind of holder in another.
+        &|n, rest| match n % 4 {
+            0 => Value::list(vec![rest]),
+            1 => Value::tuple(vec![rest, Value::Int(n)]),
+            2 => Value::set(BTreeSet::from([rest])),
+            _ => Value::variant(bv::SOME, vec![rest]),
+        },
+    ];
+    for wrap in shapes {
+        let value = (0..DEPTH).fold(Value::Int(7), |rest, n| wrap(n, rest));
+        // The value is dropped here, a clone of its top first.
+        let again = value.clone();
+        drop(value);
+        drop(again);
+        // Nothing is left counted or put aside: a second one is
+        // dropped as the first was.
+        let value = (0..DEPTH).fold(Value::Int(7), |rest, n| wrap(n, rest));
+        drop(value);
+    }
 }
 
 #[test]

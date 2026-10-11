@@ -16,10 +16,10 @@
 //! [`List::position`], [`List::sum_ints`], [`List::product_ints`],
 //! [`List::sorted`], [`List::unique`]).
 
-use std::collections::BTreeSet;
-use std::fmt;
 use super::Value;
 use super::deep::Buf;
+use std::collections::BTreeSet;
+use std::fmt;
 
 /// The most elements a list that holds none (`a..b`) may have when it
 /// is made a list that holds them: reversed, written out, encoded.
@@ -33,11 +33,7 @@ pub struct List(Stored);
 #[derive(Clone)]
 enum Stored {
     /// `len` elements of `buf` from `start`.
-    Items {
-        buf: Buf,
-        start: usize,
-        len: usize,
-    },
+    Items { buf: Buf, start: usize, len: usize },
     /// The Ints from `lo` to `hi`, both included: `lo <= hi`, and at
     /// most [`MAX_LEN`] of them.
     Ints { lo: i64, hi: i64 },

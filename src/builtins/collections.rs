@@ -140,9 +140,7 @@ fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
 }
 
 fn as_set(out: &mut Vec<Value>) -> Result<Value, VmError> {
-    Ok(Value::set(
-        std::mem::take(out).into_iter().collect(),
-    ))
+    Ok(Value::set(std::mem::take(out).into_iter().collect()))
 }
 
 fn as_map(out: &mut BTreeMap<Value, Value>) -> Result<Value, VmError> {

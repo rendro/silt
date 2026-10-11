@@ -1,6 +1,5 @@
 //! The `regex.*` builtin functions.
 
-
 use super::typed::{builtins, unsound};
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError, iterate, next};

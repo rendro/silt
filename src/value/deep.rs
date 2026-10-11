@@ -3,20 +3,21 @@
 //! The last holder of a value drops what the value holds: the fields
 //! of a variant or a record, the elements of a list, a tuple or a set,
 //! the entries of a map, the values a closure has captured, the values
-//! that wait in a channel. What is held and is the last holder of a
-//! value drops that one's in turn: a list of a program's own, a
-//! million links long, was dropped a million calls deep, and
-//! overflowed the native stack. So the holders that are being dropped
-//! on a thread, each inside the one before, are counted, and past a
-//! few of them what a holder holds is put aside and dropped by the
-//! outermost when it is done with its own.
+//! that wait in a channel, the value a task ended with. What is held
+//! and is the last holder of a value drops that one's in turn: a list
+//! of a program's own, a million links long, was dropped a million
+//! calls deep, and overflowed the native stack. So the holders that
+//! are being dropped on a thread, each inside the one before, are
+//! counted, and past a few of them what a holder holds is put aside
+//! and dropped by the outermost when it is done with its own.
 //!
 //! Every holder a program can nest values through without bound drops
 //! what it holds through [`drop_held`]: an object ([`super::obj`]), the
 //! entries of a map and the members of a set ([`Entries`],
-//! [`Members`]), a closure (`bytecode::VmClosure`) and a channel
-//! (`runtime::sync::Channel`). The elements that lists and tuples share
-//! are counted where each of their holders is dropped ([`Buf`]).
+//! [`Members`]), a closure (`bytecode::VmClosure`), a channel
+//! (`runtime::sync::Channel`) and the handle of a task that has ended
+//! (`runtime::handle::TaskHandle`). The elements that lists and tuples
+//! share are counted where each of their holders is dropped ([`Buf`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,10 +42,17 @@ thread_local! {
 
 /// What a holder holds, put aside.
 pub(crate) enum Held {
+    Value(#[allow(dead_code)] Value),
     Values(#[allow(dead_code)] Box<[Value]>),
     Shared(#[allow(dead_code)] Arc<[Value]>),
     Entries(#[allow(dead_code)] BTreeMap<Value, Value>),
     Members(#[allow(dead_code)] BTreeSet<Value>),
+}
+
+impl From<Value> for Held {
+    fn from(value: Value) -> Held {
+        Held::Value(value)
+    }
 }
 
 impl From<Box<[Value]>> for Held {
@@ -80,6 +88,7 @@ impl From<BTreeSet<Value>> for Held {
 /// A holder starts to drop what it holds. True if it is too far in to
 /// do so where it is: it puts aside what it holds ([`put_aside`]).
 /// Either way [`leave`] follows.
+#[inline]
 fn enter() -> bool {
     let depth = DROPPING.get();
     DROPPING.set(depth + 1);
@@ -87,6 +96,8 @@ fn enter() -> bool {
 }
 
 /// Leave `held` to the outermost holder that is being dropped.
+#[cold]
+#[inline(never)]
 fn put_aside(held: Held) {
     // (A thread that is ending has nothing to put it into, and drops
     // it where it is.)
@@ -99,21 +110,32 @@ fn put_aside(held: Held) {
 }
 
 /// A holder has dropped what it holds, or put it aside. The outermost
-/// drops what was put aside, and what is put aside meanwhile.
+/// drops what was put aside.
+#[inline]
 fn leave() {
     let depth = DROPPING.get();
-    while depth == 1 && ASIDE.get() {
+    if depth == 1 && ASIDE.get() {
+        drop_aside();
+    }
+    DROPPING.set(depth - 1);
+}
+
+/// Drop what was put aside, and what is put aside meanwhile.
+#[cold]
+#[inline(never)]
+fn drop_aside() {
+    while ASIDE.get() {
         let next = PUT_ASIDE.try_with(|aside| aside.borrow_mut().pop());
         match next {
             Ok(Some(held)) => drop(held),
             _ => ASIDE.set(false),
         }
     }
-    DROPPING.set(depth - 1);
 }
 
 /// Drop `held`, which a holder that is being dropped has taken out of
 /// itself.
+#[inline]
 pub(crate) fn drop_held<T>(held: T)
 where
     Held: From<T>,
@@ -144,6 +166,7 @@ pub(super) struct Buf {
 struct Leave;
 
 impl Drop for Buf {
+    #[inline]
     fn drop(&mut self) {
         if enter() {
             put_aside(Held::Shared(std::mem::take(&mut self.items)));
@@ -152,6 +175,7 @@ impl Drop for Buf {
 }
 
 impl Drop for Leave {
+    #[inline]
     fn drop(&mut self) {
         leave();
     }
