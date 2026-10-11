@@ -535,6 +535,17 @@ fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() + Send + 'static {
     move || stream.shut_down()
 }
 
+/// The timeout of an operation on `stream` whose time is over when it
+/// begins (`task.deadline`): `None` if it is not. Such an operation
+/// has timed out like one whose time ends while it waits, and the
+/// connection is shut down as for that one: what a timeout leaves of a
+/// connection does not depend on the moment at which it came.
+fn timed_out_at_entry(vm: &Vm, stream: &Arc<TcpStreamHandle>) -> Option<Value> {
+    let timed_out = vm.deadline_exceeded_with(tcp_timeout_err)?;
+    stream.shut_down();
+    Some(timed_out)
+}
+
 // ── The functions ──────────────────────────────────────────────────────
 
 builtins! {
@@ -619,7 +630,7 @@ builtins! {
         // A close() that races with a read in flight surfaces the read's
         // actual result (typically Ok(empty) = EOF after shutdown). Only a
         // call on a stream that was closed before is rejected here.
-        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        if let Some(r) = timed_out_at_entry(vm, &stream) {
             return Ok(Step::Done(r));
         }
         if stream.is_closed() {
@@ -656,7 +667,7 @@ builtins! {
             return Ok(Step::Done(err(format!("n must be non-negative, got {n}"))));
         };
         let stream = stream.clone();
-        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        if let Some(r) = timed_out_at_entry(vm, &stream) {
             return Ok(Step::Done(r));
         }
         if stream.is_closed() {
@@ -673,7 +684,7 @@ builtins! {
 
     fn write(vm, stream: typed::TcpStream, data: Bytes) -> Result<Step, VmError> {
         let (stream, buf) = (stream.clone(), data.clone());
-        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        if let Some(r) = timed_out_at_entry(vm, &stream) {
             return Ok(Step::Done(r));
         }
         if stream.is_closed() {

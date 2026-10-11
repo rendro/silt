@@ -139,7 +139,10 @@ fn main() {{
 
 /// Eight reads time out (`task.deadline`). Their connections are shut
 /// down, so their threads end; a file read afterwards runs at once,
-/// and the connection of a read that timed out is closed.
+/// and the connection of a read that timed out is closed. (A read
+/// whose time was over before it began has timed out as well, with the
+/// connection shut down and no thread to end: the test does not
+/// depend on which of the two a read was.)
 #[test]
 fn timed_out_reads_free_their_threads() {
     let (listener, addr) = listener();
@@ -419,7 +422,10 @@ fn main() {
 /// A write blocks: the peer reads nothing and the buffers are full.
 /// When the deadline around it passes the task goes on, the connection
 /// is closed, the thread of the write ends, and a file read afterwards
-/// is not held up.
+/// is not held up. (If the deadline passes between two writes, before
+/// one has blocked, the next write times out where it begins, with the
+/// connection closed all the same: the test does not depend on where
+/// the deadline falls.)
 #[test]
 fn a_blocked_write_ends_when_its_deadline_passes() {
     let (listener, addr) = listener();

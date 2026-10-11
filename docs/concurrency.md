@@ -1248,7 +1248,9 @@ What becomes of the operation depends on what it is:
   `tcp.close`, which makes the operation return and frees its thread.
   The connection cannot be used afterwards: a read that timed out cannot
   be tried again. Give a read the time the peer may really take, and
-  treat a timeout as the end of the connection.
+  treat a timeout as the end of the connection. That holds for a read
+  or write that begins when the deadline has already passed as well: it
+  times out without touching the connection, and shuts it down.
 - **`tcp.accept`**: the accept is woken and gives up; the listener
   stays usable. (An accept that waits costs nothing: its thread sleeps
   in the system until a connection comes. To wake it the listener
