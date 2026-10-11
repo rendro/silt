@@ -1007,7 +1007,7 @@ impl Run {
 /// Whether `value` is the `Err(..)` of a `Result`: a `main` that
 /// returns one has failed.
 fn is_err(value: &Value) -> bool {
-    matches!(value, Value::Variant(tag, _) if tag.is(silt::typeinfo::bv::ERR))
+    matches!(value, Value::Variant(variant) if variant.is(silt::typeinfo::bv::ERR))
 }
 
 /// Step 5, but for a run that did not end, which the caller judges:
