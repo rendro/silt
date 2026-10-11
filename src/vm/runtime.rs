@@ -5,7 +5,7 @@ use regex::Regex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use crate::bytecode::VmClosure;
+use crate::bytecode::{Function, VmClosure};
 use crate::runtime::sync::{Cell, Fired, Wait};
 use crate::scheduler::{External, Scheduler};
 use crate::value::Value;
@@ -20,11 +20,99 @@ pub(crate) struct CallFrame {
     pub(crate) base_slot: usize,
 }
 
-/// Upper bound on how many elided tail-call frames we retain per physical
-/// frame before the oldest entries are dropped from the ring buffer. Used
-/// by the VM's parallel `tco_elided` diagnostic log. See `Vm::push_frame`,
-/// `Vm::pop_frame`, and the `Op::TailCall` dispatcher.
+/// How many of the tail calls of one frame the log keeps: the latest
+/// ones ([`TailCalls`]).
 pub(crate) const TCO_ELIDED_CAP: usize = 32;
+
+/// The callers that tail calls replaced: a tail call runs its callee
+/// in the caller's frame, so the frames no longer say who called. For
+/// each frame that has made tail calls, the log has the function the
+/// frame was running and where it had come to, for the latest
+/// [`TCO_ELIDED_CAP`] of them. `Vm::enrich_error` reads it, so that an
+/// error's call stack names the callers a chain of tail calls went
+/// through; a caller's name and place are looked up there, not here.
+///
+/// A frame's entries go when the frame does ([`TailCalls::prune`]): the
+/// log is in the order of the frames, and the frame on top is the one
+/// that logs. An entry costs no allocation.
+///
+/// Lock: `callback_frame_capture__tail_call_chain_keeps_callers` and
+/// `callback_frame_capture__tail_call_ring_buffer_caps_chain`
+/// (tests/golden/lang/errors), `vm::tests::error_places::in_a_tail_call`.
+#[derive(Default)]
+pub(crate) struct TailCalls {
+    /// The frames that have made tail calls, the innermost last.
+    frames: Vec<TailCaller>,
+    /// Their entries, in the order of `frames`: the function a frame
+    /// was running when it made a tail call, and its instruction
+    /// pointer then, past the call.
+    callers: Vec<(Arc<Function>, usize)>,
+}
+
+/// A frame that has made tail calls.
+struct TailCaller {
+    /// The frame's index in the VM's frames.
+    depth: usize,
+    /// Where its entries start. They are in the order they were logged
+    /// until there are [`TCO_ELIDED_CAP`] of them; from then on each
+    /// takes the place of the oldest.
+    start: usize,
+    /// How many tail calls the frame has made.
+    made: usize,
+}
+
+impl TailCalls {
+    /// Whether no frame has made a tail call.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// The frame at `depth`, the one on top, makes a tail call: it was
+    /// running `function` and had come to `ip`.
+    pub(crate) fn log(&mut self, depth: usize, function: Arc<Function>, ip: usize) {
+        if self.frames.last().is_none_or(|frame| frame.depth != depth) {
+            self.frames.push(TailCaller {
+                depth,
+                start: self.callers.len(),
+                made: 0,
+            });
+        }
+        let frame = self.frames.last_mut().expect("the frame is there now");
+        if frame.made < TCO_ELIDED_CAP {
+            self.callers.push((function, ip));
+        } else {
+            self.callers[frame.start + frame.made % TCO_ELIDED_CAP] = (function, ip);
+        }
+        frame.made += 1;
+    }
+
+    /// Drop the entries of the frames at `keep_depth` and above: those
+    /// frames are gone.
+    pub(crate) fn prune(&mut self, keep_depth: usize) {
+        while let Some(frame) = self.frames.last()
+            && frame.depth >= keep_depth
+        {
+            self.callers.truncate(frame.start);
+            self.frames.pop();
+        }
+    }
+
+    /// The entries, each with its frame's depth: the innermost frame's
+    /// first, and a frame's latest tail call first.
+    pub(crate) fn newest_first(&self) -> impl Iterator<Item = (usize, &Function, usize)> + '_ {
+        let mut end = self.callers.len();
+        self.frames.iter().rev().flat_map(move |frame| {
+            let callers = &self.callers[frame.start..end];
+            end = frame.start;
+            // The latest entry is before the place of the next one.
+            let (next, kept) = (frame.made % TCO_ELIDED_CAP, callers.len());
+            (0..kept).map(move |back| {
+                let (function, ip) = &callers[(next + kept - 1 - back) % kept];
+                (frame.depth, &**function, *ip)
+            })
+        })
+    }
+}
 
 // ── Frames ───────────────────────────────────────────────────────
 

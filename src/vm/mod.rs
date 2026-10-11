@@ -68,7 +68,7 @@ use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
 use crate::value::{Float, Value};
-use runtime::{IoPool, RegexCache};
+use runtime::{IoPool, RegexCache, TailCalls};
 
 // ── VM ────────────────────────────────────────────────────────────
 
@@ -122,19 +122,9 @@ pub struct Vm {
     /// deadline to restore when its callback returns.
     pub(crate) current_deadline: Option<Duration>,
 
-    /// Diagnostic log of callers that were elided by tail-call replacement.
-    /// Each entry is `(frame_depth, caller_name, caller_span)` where
-    /// `frame_depth` is the index in `self.frames` at which the TCO happened
-    /// (i.e. `self.frames.len() - 1` at that moment).  `enrich_error` reads
-    /// this log so tail-call chains still render a full call stack instead
-    /// of showing only the innermost callee.  Entries are pruned when the
-    /// frame at `frame_depth` pops, and the log is bounded per-depth by
-    /// `runtime::TCO_ELIDED_CAP` to cap memory under deeply recursive
-    /// tail-call loops.
-    ///
-    /// Lock: tests/lang/callback_frame_capture_tests.rs
-    /// `test_tail_call_chain_preserves_caller_frames_in_call_stack`.
-    pub(crate) tco_elided: Vec<(usize, String, crate::source::Span)>,
+    /// The callers that tail calls replaced, for an error's call stack
+    /// ([`TailCalls`]).
+    pub(crate) tco_elided: TailCalls,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, FIFO eviction —
@@ -297,7 +287,7 @@ impl Vm {
             cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
-            tco_elided: Vec::new(),
+            tco_elided: TailCalls::default(),
         }
     }
 
@@ -543,7 +533,7 @@ impl Vm {
             cancelled: None,
             current_deadline: None,
             regex_cache: RegexCache::new(),
-            tco_elided: Vec::new(),
+            tco_elided: TailCalls::default(),
         }
     }
 
@@ -640,22 +630,6 @@ impl Vm {
         }
     }
 
-    /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
-    /// entries that belong to frames no longer on the physical stack.
-    /// Called after any frame pop / truncate / split-off so stale
-    /// diagnostic state doesn't bleed across unrelated calls.
-    ///
-    /// The log is in the order of the depths: an entry is logged for
-    /// the frame on top, and this is called whenever a frame goes. So
-    /// the entries to drop are the last ones.
-    pub(crate) fn prune_tco_elided(&mut self, keep_depth: usize) {
-        while let Some((depth, _, _)) = self.tco_elided.last()
-            && *depth >= keep_depth
-        {
-            self.tco_elided.pop();
-        }
-    }
-
     // ── Error enrichment ─────────────────────────────────────────
 
     /// Enrich a VmError with the current instruction's source span and the
@@ -693,7 +667,7 @@ impl Vm {
         let mut stack = Vec::new();
         // The log is in the order of the depths, so its entries are
         // met from the end as the frames are.
-        let mut elided = self.tco_elided.iter().rev().peekable();
+        let mut elided = self.tco_elided.newest_first().peekable();
         for (depth, frame) in self.frames.iter().enumerate().rev() {
             let Frame::Code(frame) = frame else {
                 continue;
@@ -704,8 +678,11 @@ impl Vm {
             stack.push((func_name, span));
             // Newer (later-pushed) entries for this depth are more recent
             // callers, so they come first: the chain stays callee-first.
-            while let Some((_, name, caller_span)) = elided.next_if(|(d, _, _)| *d >= depth) {
-                stack.push((name.clone(), *caller_span));
+            // A caller's place is the tail call: the instruction before
+            // the one it had come to.
+            while let Some((_, caller, ip)) = elided.next_if(|(d, _, _)| *d >= depth) {
+                let span = caller.chunk().span_at(ip.saturating_sub(1));
+                stack.push((caller.name().to_string(), span));
             }
         }
         err.call_stack = stack;

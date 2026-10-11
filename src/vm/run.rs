@@ -225,7 +225,7 @@ impl Vm {
                 // belong to the just-popped frame slot so stale data
                 // can't bleed into later unrelated calls at this depth.
                 if !self.tco_elided.is_empty() {
-                    self.prune_tco_elided(self.frames.len());
+                    self.tco_elided.prune(self.frames.len());
                 }
                 // The function's own slot goes with its frame.
                 self.stack.truncate(base.saturating_sub(1));
@@ -941,7 +941,7 @@ impl Vm {
             }
         }
         self.stack.truncate(stack_floor);
-        self.prune_tco_elided(floor);
+        self.tco_elided.prune(floor);
         self.pending_input = None;
     }
 
@@ -1096,44 +1096,16 @@ impl Vm {
             self.stack[base + i] = self.stack[args_at + i].clone();
         }
         self.stack.truncate(base + argc);
-        // Record the caller that's about to be overwritten so
-        // `enrich_error` can still surface the logical call
-        // stack for runtime errors. The caller's name comes
-        // from its closure's function name; the caller's span
-        // points at the tail-call site (the op just before
-        // `frame.ip`, which the loop wrote back past it).
-        // Bounded by TCO_ELIDED_CAP entries per depth — on
-        // overflow we drop the oldest caller at this depth.
-        // The existing `render_call_stack` head/tail truncation
-        // then surfaces the remaining chain with a "... (N more
-        // frames)" marker for long chains.
-        //
-        // Lock: tests/lang/callback_frame_capture_tests.rs
-        // `test_tail_call_chain_preserves_caller_frames_in_call_stack`
-        // and `test_tail_call_chain_ring_buffer_caps_diagnostic_chain`.
+        // The caller, which the callee takes the place of, goes to the
+        // log, for the call stack of an error: its function and where
+        // it had come to, which is past the tail call. (No name and no
+        // place are looked up here: `Vm::enrich_error` does that.)
         let depth = self.frames.len().saturating_sub(1);
-        let (caller_name, caller_span) = {
-            let frame = self.frame();
-            let caller_ip = frame.ip.saturating_sub(1);
-            (
-                frame.closure.function.name().to_string(),
-                frame.closure.function.chunk().span_at(caller_ip),
-            )
-        };
-        // The entries of this depth are the log's last ones.
-        let at_depth = self
-            .tco_elided
-            .iter()
-            .rev()
-            .take_while(|(d, _, _)| *d == depth)
-            .count();
-        if at_depth >= crate::vm::runtime::TCO_ELIDED_CAP {
-            self.tco_elided.remove(self.tco_elided.len() - at_depth);
-        }
-        self.tco_elided.push((depth, caller_name, caller_span));
         let frame = self.frame_mut();
-        frame.closure = closure;
-        frame.ip = 0;
+        let caller = std::mem::replace(&mut frame.closure, closure);
+        let caller_ip = std::mem::replace(&mut frame.ip, 0);
+        self.tco_elided
+            .log(depth, caller.function.clone(), caller_ip);
     }
 
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
