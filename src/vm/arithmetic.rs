@@ -155,43 +155,10 @@ impl Vm {
 
     // ── Type compatibility ────────────────────────────────────────
 
-    /// Returns a discriminant used by [`check_same_type`] to decide whether
-    /// two values may be compared for equality.
-    pub(super) fn value_disc(val: &Value) -> u8 {
-        // These values are compared only for equality in `check_same_type`
-        // (never as `Ord`) and are not persisted anywhere — they are a
-        // compile-time-agreed label, not a stable serialization tag. So the
-        // numbers may be renumbered freely. A historical gap at `2` used to
-        // mark a now-removed variant; closed here since closing it is
-        // semantically invisible to all current callers.
-        match val {
-            Value::Int(_) => 0,
-            Value::Float(_) => 1,
-            Value::Bool(_) => 2,
-            Value::String(_) => 3,
-            Value::List(_) => 4,
-            Value::Map(_) => 5,
-            Value::Set(_) => 6,
-            Value::Tuple(_) => 7,
-            Value::Record(..) => 8,
-            Value::Variant(..) => 9,
-            Value::Unit => 10,
-            Value::Channel(_) => 11,
-            Value::Handle(_) => 12,
-            Value::VmClosure(_) => 13,
-            Value::BuiltinFn(_) | Value::HostFn(_) => 14,
-            Value::VariantConstructor(..) => 15,
-            Value::TypeDescriptor(_) => 16,
-            Value::PrimitiveDescriptor(_) => 17,
-            Value::Bytes(_) => 18,
-            Value::TcpListener(_) => 19,
-            Value::TcpStream(_) => 20,
-        }
-    }
-
-    /// Check that two values have compatible types for equality/comparison.
+    /// Check that two values are of one kind, as the operands of `==`
+    /// and `!=` are.
     pub(super) fn check_same_type(&self, a: &Value, b: &Value) -> Result<(), VmError> {
-        if Self::value_disc(a) != Self::value_disc(b) {
+        if std::mem::discriminant(a) != std::mem::discriminant(b) {
             return Err(VmError::type_confusion(format!(
                 "unsupported operation: cannot compare {} and {}",
                 a.kind(),
