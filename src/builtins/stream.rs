@@ -178,6 +178,20 @@ impl Pipe {
             }
         }
     }
+
+    /// Nobody reads the output any more, and the pipe has a value for
+    /// it: the pipe is over before its end. One on a connection shuts
+    /// the connection down, as one that is stopped in a wait does
+    /// (`abandon`): a source that is cut short ends its connection at
+    /// whatever moment its reader went.
+    fn cut_short(&mut self, vm: &Vm) {
+        if !self.finished
+            && let Some(stop) = self.stop.take()
+        {
+            stop();
+        }
+        self.finish(vm, None);
+    }
 }
 
 impl Native for Pipe {
@@ -198,7 +212,7 @@ impl Native for Pipe {
                 Fired::Arm(_, Outcome::Sent) => Got::Emitted,
                 // Nobody reads the output.
                 _ => {
-                    self.finish(vm, None);
+                    self.cut_short(vm);
                     return Ok(Step::Done(Value::Unit));
                 }
             },
@@ -240,8 +254,9 @@ impl Native for Pipe {
                     };
                     match out.try_send(value, vm.scheduler().wake()) {
                         TrySend::Sent => got = Got::Emitted,
+                        // Nobody reads the output.
                         TrySend::Closed(_) => {
-                            self.finish(vm, None);
+                            self.cut_short(vm);
                             return Ok(Step::Done(Value::Unit));
                         }
                         TrySend::Full(value) => {
@@ -1249,5 +1264,70 @@ builtins! {
                 None => file.flush().map_err(|e| err_io(&e)),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    /// A source like one on a connection: its items are what the test
+    /// sends, and `stop` (the shutdown of the connection) is a flag.
+    /// The VM, the source's output, the sender of the items, and the
+    /// flag.
+    fn source() -> (Vm, Arc<Channel>, mpsc::Sender<Value>, Arc<AtomicBool>) {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let (items, next) = mpsc::channel::<Value>();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flag = stopped.clone();
+        let stop: Stop = Arc::new(move || flag.store(true, Ordering::SeqCst));
+        let started = reading(&mut vm, "test.source", Some(stop), move || next.recv().ok());
+        let Ok(Step::Done(Value::Channel(out))) = started else {
+            panic!("the source did not start");
+        };
+        (vm, out, items, stopped)
+    }
+
+    /// Wait, for at most ten seconds, until `done` holds.
+    fn until(what: &str, done: impl Fn() -> bool) {
+        let limit = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < limit, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// The reader of a source on a connection is gone when the source
+    /// comes with an item for it: the source ends, and it shuts its
+    /// connection down, as it does when it is stopped in a read.
+    #[test]
+    fn a_source_that_finds_its_output_closed_stops_its_connection() {
+        let (vm, out, items, stopped) = source();
+        out.close(Close::default(), vm.scheduler().wake());
+        items.send(Value::Int(1)).expect("the source reads");
+        until("the connection was left open", || {
+            stopped.load(Ordering::SeqCst)
+        });
+    }
+
+    /// The same when the source waits with an item for room in its
+    /// output, which is full, and the reader goes then.
+    #[test]
+    fn a_source_whose_output_closes_while_it_waits_for_room_stops_its_connection() {
+        let (vm, out, items, stopped) = source();
+        for item in 0..=DEFAULT_CAPACITY {
+            items
+                .send(Value::Int(item as i64))
+                .expect("the source reads");
+        }
+        until("the source did not wait for room", || out.waiting().1 > 0);
+        assert!(!stopped.load(Ordering::SeqCst));
+        out.close(Close::default(), vm.scheduler().wake());
+        until("the connection was left open", || {
+            stopped.load(Ordering::SeqCst)
+        });
     }
 }

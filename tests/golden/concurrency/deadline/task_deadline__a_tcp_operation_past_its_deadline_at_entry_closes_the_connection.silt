@@ -1,0 +1,65 @@
+-- timeout: 10
+-- requires-feature: tcp
+-- A read or a write that begins when its deadline has already passed
+-- has timed out like one whose deadline passes while it waits: it
+-- gives TcpTimeout, and the connection is shut down. The peer sends a
+-- byte afterwards, which a connection that was still open would read;
+-- the next read says that the connection is closed.
+import bytes
+import task
+import tcp
+import time
+
+fn pair(listener) {
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  when let Ok(peer) = tcp.accept(listener) else {
+    panic("cannot accept")
+  }
+  (conn, peer)
+}
+
+fn afterwards(conn, peer, what) {
+  when let Ok(_) = tcp.write(peer, bytes.from_string("x")) else {
+    panic("the peer cannot write")
+  }
+  match tcp.read(conn, 16) {
+    Err(tcp.TcpClosed) -> println("{what}: timed out, then closed")
+    Ok(read) -> println("{what}: timed out, then still open (read {bytes.length(read)})")
+    Err(e) -> println("{what}: timed out, then {e.message()}")
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+
+  let (conn, peer) = pair(listener)
+  match task.deadline(time.ms(0), { -> tcp.read(conn, 16) }) {
+    Err(tcp.TcpTimeout) -> afterwards(conn, peer, "read at entry")
+    _ -> println("read at entry: no timeout")
+  }
+
+  let (conn, peer) = pair(listener)
+  match task.deadline(time.ms(0), { -> tcp.read_exact(conn, 4) }) {
+    Err(tcp.TcpTimeout) -> afterwards(conn, peer, "read_exact at entry")
+    _ -> println("read_exact at entry: no timeout")
+  }
+
+  let (conn, peer) = pair(listener)
+  match task.deadline(time.ms(0), { -> tcp.write(conn, bytes.from_string("x")) }) {
+    Err(tcp.TcpTimeout) -> afterwards(conn, peer, "write at entry")
+    _ -> println("write at entry: no timeout")
+  }
+
+  -- The deadline passes while the read waits, or, on a machine that
+  -- is slow enough, before it began or before a thread had taken it:
+  -- the same wherever the read stands then.
+  let (conn, peer) = pair(listener)
+  match task.deadline(time.ms(20), { -> tcp.read(conn, 16) }) {
+    Err(tcp.TcpTimeout) -> afterwards(conn, peer, "read in flight")
+    _ -> println("read in flight: no timeout")
+  }
+}
