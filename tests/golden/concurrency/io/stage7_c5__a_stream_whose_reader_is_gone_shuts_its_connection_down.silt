@@ -3,8 +3,8 @@
 -- The reader of a stream on a connection has gone when the source
 -- comes with its first line: the source ends there, and shuts its
 -- connection down like one that is stopped in a read. The peer sends
--- its lines when the stream is closed, waits for more, and reads the
--- end; a write on the connection then says closed.
+-- its lines when the stream is closed, waits for more, and sees the
+-- connection end; a write on the connection then says closed.
 import bytes
 import channel
 import stream
@@ -23,9 +23,15 @@ fn main() {
     }
     let _ = channel.receive(gone)
     let _ = tcp.write(conn, bytes.from_string("one\ntwo\n"))
+    -- The end of the connection is a read of no bytes, or an error
+    -- where the system resets a connection that is shut down with
+    -- bytes of the peer unread (Windows).
     match tcp.read(conn, 16) {
-      Ok(read) -> channel.send(seen, "the peer read {bytes.length(read)} bytes: the end")
-      Err(e) -> channel.send(seen, "the peer: {e.message()}")
+      Ok(read) -> match bytes.length(read) {
+        0 -> channel.send(seen, "the peer saw the connection end")
+        n -> channel.send(seen, "the peer read {n} bytes")
+      }
+      Err(_) -> channel.send(seen, "the peer saw the connection end")
     }
   }
   when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {

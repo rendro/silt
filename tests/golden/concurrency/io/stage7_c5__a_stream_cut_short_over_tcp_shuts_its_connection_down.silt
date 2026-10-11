@@ -3,7 +3,8 @@
 -- A pipeline on a connection that is cut short shuts the connection
 -- down, like a read that nobody waits for: `stream.first` takes the
 -- one line, the source stops, and the peer, which waits for more,
--- reads the end. After that a write on the connection says closed.
+-- sees the connection end. After that a write on the connection says
+-- closed.
 import bytes
 import channel
 import stream
@@ -21,9 +22,15 @@ fn main() {
     }
     let _ = tcp.write(conn, bytes.from_string("hello\n"))
     -- Nothing more is sent to the peer: what it reads next is the end.
+    -- The end of the connection is a read of no bytes, or an error
+    -- where the system resets a connection that is shut down with
+    -- bytes of the peer unread (Windows).
     match tcp.read(conn, 16) {
-      Ok(read) -> channel.send(seen, "the peer read {bytes.length(read)} bytes: the end")
-      Err(e) -> channel.send(seen, "the peer: {e.message()}")
+      Ok(read) -> match bytes.length(read) {
+        0 -> channel.send(seen, "the peer saw the connection end")
+        n -> channel.send(seen, "the peer read {n} bytes")
+      }
+      Err(_) -> channel.send(seen, "the peer saw the connection end")
     }
   }
   when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
