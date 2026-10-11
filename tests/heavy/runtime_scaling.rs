@@ -275,6 +275,72 @@ fn a_return_from_a_function_a_builtin_calls_costs_the_same_at_any_depth() {
     assert_deep_recursion_is_linear("folded");
 }
 
+/// A loop of 125,000 rounds that calls `size` of a record eight times
+/// a round, a million calls: as a method of a trait found where the
+/// code runs (the function knows its argument only as a type with the
+/// trait), or (`plain`) as a function.
+fn million_calls_program(plain: bool) -> String {
+    let (parameter, call) = match plain {
+        true => ("x: Box, times: Int) -> Int", "size(x)"),
+        false => ("x: a, times: Int) -> Int where a: Size", "x.size()"),
+    };
+    let calls = [call; 8].join(" + ");
+    format!(
+        "trait Size {{
+  fn size(self) -> Int
+}}
+
+type Box {{
+  n: Int,
+}}
+
+trait Size for Box {{
+  fn size(self) -> Int {{
+    self.n
+  }}
+}}
+
+fn size(b: Box) -> Int {{
+  b.n
+}}
+
+fn total({parameter} {{
+  loop i = 0, acc = 0 {{
+    match i >= times {{
+      true -> acc
+      false -> loop(i + 1, acc + {calls})
+    }}
+  }}
+}}
+
+fn main() {{
+  println(total(Box {{ n: 2 }}, 125000))
+}}
+"
+    )
+}
+
+/// A call of a method that is found where the code runs costs little
+/// more than a call of a function: the method is found by three
+/// numbers (the trait, the receiver's type, the id of the method's
+/// name) in one table. It was found by the method's name, a text, in a
+/// table of the impl in a table of the impls, and the type of a
+/// receiver that is no record was looked up by its name at every call:
+/// a million such calls took half as long again as a million calls of
+/// a function.
+#[test]
+fn a_method_found_where_the_code_runs_costs_little_more_than_a_function() {
+    let programs = Programs::new("methods");
+    let methods = programs.file("methods.silt", &million_calls_program(false));
+    let functions = programs.file("functions.silt", &million_calls_program(true));
+    assert_within(
+        1.35,
+        (&methods, "2000000"),
+        (&functions, "2000000"),
+        "a million calls of a method found where the code runs, against a million of a function",
+    );
+}
+
 /// A program of `functions` functions whose `main` starts `tasks`
 /// tasks that each wait for a message nobody sends, prints their
 /// number when every one of them runs, and waits for a line of input.

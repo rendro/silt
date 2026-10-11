@@ -8,6 +8,7 @@
 //! the emitter gives has passed the verifier ([`verify`](mod@verify)).
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
@@ -54,6 +55,39 @@ enum ConstantKey {
 
 // ── Global slots ───────────────────────────────────────────────────
 
+/// The hash of a method's key, three small numbers: each is mixed in
+/// with a rotation and a multiplication. (The hash a `HashMap` has by
+/// default is made to withstand keys an adversary chooses, and took
+/// longer than the call it found the method for.)
+#[derive(Default)]
+struct MethodHasher(u64);
+
+impl MethodHasher {
+    fn mix(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+impl Hasher for MethodHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.mix(u64::from(*byte));
+        }
+    }
+
+    fn write_u16(&mut self, n: u16) {
+        self.mix(u64::from(n));
+    }
+
+    fn write_u32(&mut self, n: u32) {
+        self.mix(u64::from(n));
+    }
+}
+
 /// The global slots of a program. Every top-level function, `let` and
 /// host function of its modules has one, and so has every method of an
 /// impl, by the impl's trait, the type it is for and the method's name.
@@ -73,7 +107,7 @@ pub struct Globals {
     method_ids: HashMap<String, u16>,
     /// The slot of each impl's method: by the impl's trait, the type it
     /// is for and the id of the method's name.
-    methods: HashMap<(TraitId, TypeId, u16), u16>,
+    methods: HashMap<(TraitId, TypeId, u16), u16, BuildHasherDefault<MethodHasher>>,
     /// The default methods of each trait: the body the trait writes,
     /// compiled once. An impl that leaves the method out has this slot
     /// as its method's.
