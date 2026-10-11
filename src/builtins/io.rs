@@ -464,13 +464,16 @@ pub(crate) mod env {
             Ok(())
         }
 
-        // std::env::vars() snapshots the environment at call time
-        // into an iterator. The iteration order is unspecified (on
-        // glibc it's roughly insertion order into `environ`; we
-        // don't sort, to avoid lying about stability). Each entry
-        // becomes a `(String, String)` tuple.
+        // A snapshot of the environment at call time. The iteration
+        // order is unspecified (on glibc it's roughly insertion order
+        // into `environ`; we don't sort, to avoid lying about
+        // stability). Each entry becomes a `(String, String)` tuple.
+        // A variable whose name or value is not Unicode is left out,
+        // as `env.get` gives `None` for it (`std::env::vars` would
+        // panic on it).
         fn vars() -> Vec<Value> {
-            std::env::vars()
+            std::env::vars_os()
+                .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
                 .map(|(k, v)| Value::tuple(vec![Value::String(k.into()), Value::String(v.into())]))
                 .collect()
         }

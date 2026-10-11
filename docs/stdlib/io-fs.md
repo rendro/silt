@@ -48,8 +48,11 @@ See also [bytes](bytes.md) for reading/writing binary data.
 io.args() -> List(String)
 ```
 
-Returns the command-line arguments as a list of strings, including the program
-name.
+Returns the program's own arguments as a list of strings: what the command
+line has after `--` (`silt run main.silt -- a b` gives `["a", "b"]`), and the
+empty list without it. Every one is text: silt refuses a command line with an
+argument that is not Unicode before the program starts (`silt: argument 4 is
+not valid Unicode`).
 
 ```silt
 import io
@@ -243,7 +246,9 @@ env.vars() -> List((String, String))
 
 Returns a snapshot of every environment variable as a list of
 `(name, value)` pairs. The list is materialized at call time and is
-not affected by subsequent `env.set` / `env.remove` calls.
+not affected by subsequent `env.set` / `env.remove` calls. A variable
+whose name or value is not Unicode is left out, as `env.get` gives
+`None` for it.
 
 ```silt
 import env

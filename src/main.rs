@@ -71,7 +71,20 @@ fn main() {
         libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
     }
 
-    let args: Vec<String> = env::args().collect();
+    // An argument that is not Unicode is no file, flag or text silt can
+    // take (`env::args` would panic on it): a usage error. The program's
+    // own name is only ever shown.
+    let mut args: Vec<String> = Vec::new();
+    for (at, arg) in env::args_os().enumerate() {
+        match arg.into_string() {
+            Ok(arg) => args.push(arg),
+            Err(arg) if at == 0 => args.push(arg.to_string_lossy().into_owned()),
+            Err(arg) => {
+                eprintln!("silt: argument {at} is not valid Unicode: {arg:?}");
+                process::exit(1);
+            }
+        }
+    }
     let join = std::thread::Builder::new()
         .name("silt-main".into())
         .stack_size(SILT_STACK_SIZE)
