@@ -3,7 +3,6 @@
 import test
 import test as t
 import test.{ assert_ne }
-import float
 import channel
 
 fn round_trip(c, value) {
@@ -39,16 +38,6 @@ fn main() {
   println("row 11")
   7 |> test.assert_ne(8, "message f")
   println("row 12")
-  println(float.to_string(1.5))
-  println("row 13")
-  println(float.to_string(2.5, 3))
-  println("row 14")
-  println(3.5 |> float.to_string())
-  println("row 15")
-  println(4.5 |> float.to_string)
-  println("row 16")
-  println(5.5 |> float.to_string(2))
-  println("row 17")
   channel.close(channel.new())
   println("row 18")
   println(round_trip(channel.new(4), 1))

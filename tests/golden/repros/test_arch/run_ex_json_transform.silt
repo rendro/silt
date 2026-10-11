@@ -95,7 +95,7 @@ fn main() {
   |> map.entries
   |> list.map { (dept, emps) ->
     let avg = avg_salary(emps)
-    (dept, float.to_string(avg, 2))
+    (dept, float.format(avg, 2))
   }
   |> map.from_entries
   dept_avg

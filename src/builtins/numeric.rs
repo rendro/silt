@@ -3,7 +3,7 @@
 use super::typed::builtins;
 use crate::typeinfo::bv;
 use crate::value::{Float, Value};
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::VmError;
 
 /// Locate the byte offset of the first character in `s` that could not
 /// plausibly be part of a numeric literal (base-10 int or decimal float).
@@ -138,17 +138,12 @@ pub(crate) mod int {
         fn to_float(n: i64) -> f64 {
             n as f64
         }
-
-        fn to_string(n: i64) -> String {
-            n.to_string()
-        }
     }
 }
 
 /// `float.*`
 pub(crate) mod float {
     use super::*;
-    use crate::builtins::typed::Called;
 
     builtins! {
         fn parse(s: &str) -> Value {
@@ -231,50 +226,23 @@ pub(crate) mod float {
             }
             Ok(x.clamp(lo, hi))
         }
-    }
 
-    /// `float.to_string(f)` and `float.to_string(f, decimals)`: the
-    /// second parameter may be left out, which no typed body can say
-    /// (the row has `optional_last`; the conventions step makes it two
-    /// functions). The one-argument form is the shortest representation
-    /// that reads back as the same float; with `decimals`, that many
-    /// decimal places.
-    pub(crate) fn to_string(_vm: &mut Vm, args: &[Value]) -> Called {
-        let (f, decimals) = match args {
-            [Value::Float(f)] => (f.get(), None),
-            [Value::Float(f), Value::Int(decimals)] => (f.get(), Some(*decimals)),
-            _ => return None,
-        };
-        let Some(decimals) = decimals else {
-            // Force a decimal point for whole-number floats so the
-            // result always parses as a float (`3.0` instead of `3`).
-            let s = if f.fract() == 0.0 {
-                format!("{f:.1}")
-            } else {
-                format!("{f}")
-            };
-            return Some(Ok(Step::Done(Value::String(s.into()))));
-        };
-        if decimals < 0 {
-            return Some(Err(VmError::new(
-                "float.to_string: decimals must be non-negative".into(),
-            )));
-        }
         // Rust's `{:.prec$}` formatter backs precision with a u16 and
         // panics with "Formatting argument out of range" for any value
-        // above `u16::MAX` (65535). `catch_builtin_panic` would turn
-        // that panic into a VmError, but std's panic handler still
-        // prints a noisy `thread 'main' panicked at ...` line to
-        // stderr, and the surfaced message is opaque to silt users.
-        // Reject out-of-range precision up front with a clean error.
-        let Ok(prec) = u16::try_from(decimals) else {
-            return Some(Err(VmError::new(format!(
-                "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
-            ))));
-        };
-        Some(Ok(Step::Done(Value::String(
-            format!("{:.prec$}", f, prec = prec as usize).into(),
-        ))))
+        // above `u16::MAX` (65535): such a precision is an error here.
+        fn format(f: f64, decimals: i64) -> Result<String, VmError> {
+            if decimals < 0 {
+                return Err(VmError::new(
+                    "float.format: decimals must be non-negative".into(),
+                ));
+            }
+            let Ok(prec) = u16::try_from(decimals) else {
+                return Err(VmError::new(format!(
+                    "float.format: decimals {decimals} exceeds maximum precision of 65535"
+                )));
+            };
+            Ok(format!("{:.prec$}", f, prec = prec as usize))
+        }
     }
 }
 
@@ -374,6 +342,7 @@ pub(crate) mod math {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vm::{Step, Vm};
 
     fn to_int(f: f64) -> Result<Value, VmError> {
         let mut vm = Vm::new(crate::vm::HostIo::process());

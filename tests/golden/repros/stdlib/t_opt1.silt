@@ -2,7 +2,8 @@
 import float
 import list
 import int
+import string
 fn main() {
-  println(list.map([1, 2], int.to_string))
-  println(list.map([1.5, 2.5], float.to_string))
+  println(list.map([1, 2], string.from))
+  println(list.map([1.5, 2.5], string.from))
 }

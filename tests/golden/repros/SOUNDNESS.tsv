@@ -24,7 +24,7 @@ repros/type_soundness/al8.silt	holds	accept	control: `a / b` at Float and at Int
 repros/type_soundness/an1.silt	holds	reject E0317	wrong type-argument counts in annotations
 repros/type_soundness/an2.silt	holds	reject E0301	a bare `Box` annotation narrows soundly
 repros/type_soundness/an3.silt	holds	reject E0301	as an2, in an impl
-repros/type_soundness/ar1.silt	holds	accept	control: the optional last argument of channel.new and float.to_string
+repros/type_soundness/ar1.silt	holds	accept	control: the optional last argument of channel.new
 repros/type_soundness/b1.silt	-	obsolete	fn lambda; ported: lang/soundness/b1.silt
 repros/type_soundness/b2.silt	holds	reject E0314	TS-2.4: `add("a", "b")`, `add(true, false)` through `fn add(a, b) { a + b }` (decision D2)
 repros/type_soundness/b3.silt	holds	reject E0314	TS-2.4: `+` on lists through a polymorphic function

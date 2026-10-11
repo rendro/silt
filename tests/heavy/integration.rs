@@ -119,7 +119,7 @@ import int
 fn main() {
   let total = 100
   let ratio = int.to_float(total) / 3.0
-  float.to_string(ratio, 2)
+  float.format(ratio, 2)
 }
     "#);
     assert_eq!(result, Value::String("33.33".into()));

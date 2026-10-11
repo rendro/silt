@@ -2,10 +2,11 @@
 import channel
 import test
 import float
+import string
 fn main() {
   let c = channel.new()
   test.assert(true)
-  println(float.to_string(1.5))
-  println(float.to_string(1.5, 3))
+  println(string.from(1.5))
+  println(float.format(1.5, 3))
   println(channel.timeout())
 }

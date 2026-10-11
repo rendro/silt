@@ -1,0 +1,20 @@
+-- One way from a number to its text: `string.from(x)` (what `println`
+-- and `"{x}"` show), and `float.format(f, decimals)` for a fixed number
+-- of decimal places.
+import float
+import list
+import string
+
+fn main() {
+  println(float.format(3.14159, 2))
+  println(float.format(42.0, 1))
+  println(float.format(2.5, 0))
+  println(float.format(-0.125, 2))
+  println(1.5 |> float.format(3))
+  println(string.from(42))
+  println(string.from(-7) == "{-7}")
+  println(string.from(1.5))
+  println(string.from(1.5) == "{1.5}")
+  println(list.map([1, 2, 3], string.from))
+  println(list.map([0.5, 0.25], string.from))
+}

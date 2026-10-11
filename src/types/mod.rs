@@ -566,8 +566,8 @@ impl Pred {
 /// `optional_last_param` is part of a function's signature: when `true`,
 /// a call may leave out the function's last parameter. Only the builtins
 /// whose implementation accepts the shorter call declare it
-/// (`test.assert`, `test.assert_eq`, `test.assert_ne`, `float.to_string`,
-/// `channel.new`); every other function requires exactly as many
+/// (`test.assert`, `test.assert_eq`, `test.assert_ne`, `channel.new`);
+/// every other function requires exactly as many
 /// arguments as it has parameters. The fact belongs to the named
 /// function, not to its type: a scheme made from a type alone
 /// (`generalize`, `mono`) never declares it, so a function value bound

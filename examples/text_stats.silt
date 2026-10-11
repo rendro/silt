@@ -123,7 +123,7 @@ fn main() {
       print_row("Words:", "{word_count}")
       print_row("Characters:", "{char_count}")
       print_row("Unique words:", "{unique_count}")
-      print_row("Avg word length:", float.to_string(avg_len, 2))
+      print_row("Avg word length:", float.format(avg_len, 2))
       print_row("Longest word:", longest)
       print_row("Shortest word:", shortest)
       print_header("Top {top_n} Most Frequent Words")

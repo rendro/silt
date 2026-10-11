@@ -762,13 +762,13 @@ fn test_e2e_variant_constructor() {
 }
 
 #[test]
-fn test_e2e_int_to_string() {
+fn test_e2e_string_from_int() {
     let result = run_vm(
         r#"
-            import int
+            import string
 
             fn main() {
-                int.to_string(42)
+                string.from(42)
             }
         "#,
     );

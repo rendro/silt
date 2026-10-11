@@ -18,7 +18,6 @@ Functions for parsing, converting, and comparing integers.
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
 | `parse` | `(String) -> Result(Int, ParseError)` | Parse string to integer |
 | `to_float` | `(Int) -> Float` | Convert to float |
-| `to_string` | `(Int) -> String` | Convert to string |
 
 
 ## `int.abs`
@@ -146,24 +145,6 @@ fn main() {
 ```
 
 
-## `int.to_string`
-
-```
-int.to_string(n: Int) -> String
-```
-
-Converts an integer to its string representation.
-
-```silt
-import int
-
-fn main() {
-  let s = int.to_string(42)
-  println(s) -- 42
-}
-```
-
-
 ---
 
 # float
@@ -190,12 +171,12 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
 | `clamp` | `(Float, Float, Float) -> Float` | Clamp value to `[lo, hi]` |
 | `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
+| `format` | `(Float, Int) -> String` | Decimal text with that many decimal places |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
 | `parse` | `(String) -> Result(Float, ParseError)` | Parse string to float |
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
-| `to_string` | `(Float, Int?) -> String` | Shortest round-trippable representation; with `decimals`, that many decimal places |
 | **Constants** | | |
 | `float.max_value` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
 | `float.min_value` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
@@ -273,6 +254,27 @@ import float
 fn main() {
   println(float.floor(3.9)) -- 3
   println(float.floor(-3.2)) -- -4
+}
+```
+
+
+## `float.format`
+
+```
+float.format(f: Float, decimals: Int) -> String
+```
+
+The decimal text of a float with exactly `decimals` decimal places, rounded
+to the nearest. `decimals` must not be negative. For the text a float is
+shown as (in `println`, in `"{f}"`), use `string.from(f)`.
+
+```silt
+import float
+
+fn main() {
+  println(float.format(3.14159, 2)) -- 3.14
+  println(float.format(42.0, 1)) -- 42.0
+  println(float.format(2.5, 0)) -- 2
 }
 ```
 
@@ -369,36 +371,6 @@ import float
 fn main() {
   println(float.to_int(3.9)) -- 3
   println(float.to_int(-3.9)) -- -3
-}
-```
-
-
-## `float.to_string`
-
-```
-float.to_string(f: Float) -> String
-float.to_string(f: Float, decimals: Int) -> String
-```
-
-Converts a float to its string representation.
-
-- **One-argument form:** returns the shortest round-trippable
-  representation. Whole-number floats always include a decimal point
-  (`3.0` rather than `3`) so the result parses back as a float.
-- **Two-argument form:** formats with exactly `decimals` decimal
-  places. `decimals` must be a non-negative `Int`.
-
-```silt
-import float
-
-fn main() {
-  -- 1-arg form: shortest round-trippable
-  println(float.to_string(3.14159)) -- 3.14159
-  println(float.to_string(42.0)) -- 42.0
-
-  -- 2-arg form: fixed decimal places
-  println(float.to_string(3.14159, 2)) -- 3.14
-  println(float.to_string(42.0, 0)) -- 42
 }
 ```
 

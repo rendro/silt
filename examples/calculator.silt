@@ -19,7 +19,7 @@ fn print_help() {
 }
 
 fn format(f) {
-  float.to_string(f, 4)
+  float.format(f, 4)
 }
 
 fn apply_binary(stack, op_name, op_fn) {

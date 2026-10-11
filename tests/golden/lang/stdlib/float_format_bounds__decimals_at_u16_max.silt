@@ -2,7 +2,7 @@
 import float
 import string
 fn main() {
-  let s = float.to_string(1.5, 65535)
+  let s = float.format(1.5, 65535)
   println(string.length(s))
   println(string.slice(s, 0, 3))
 }

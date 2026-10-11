@@ -210,11 +210,12 @@ return a string.
 import int
 import regex
 import result
+import string
 
 fn main() {
   let doubled = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
     let n = int.parse(m) |> result.unwrap_or(0)
-    int.to_string(n * 2)
+    string.from(n * 2)
   }
   println(doubled) -- a2 b44 c666
 }

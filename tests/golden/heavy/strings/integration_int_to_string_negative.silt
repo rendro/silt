@@ -1,7 +1,8 @@
 import io
 import int
+import string
 fn program() {
-  int.to_string(-7)
+  string.from(-7)
 }
 
 fn main() {
