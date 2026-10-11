@@ -3544,6 +3544,77 @@ mod builtin_args {
         vm.with_args(0, |_, args| assert_eq!(args, ints(&[7, 3])));
     }
 
+    /// A row of the test's own, with `body`.
+    fn row(body: crate::builtins::typed::TypedCall) -> Row {
+        Row {
+            signature: "fn probe(a: Bytes) -> ()",
+            summary: "a probe",
+            name: "probe",
+            module: "test",
+            params: Vec::new(),
+            optional_last: false,
+            feature: None,
+            enabled: true,
+            id: registry().named("println").expect("println").id,
+            body: Body::Typed(body),
+        }
+    }
+
+    /// The arguments are dropped when the body has returned, whatever
+    /// it returned: before its value is anybody's, before the frame it
+    /// goes on as is resumed for the first time, before its error is
+    /// looked at. (As when every call had a list of its own, which went
+    /// when the call was made.)
+    #[test]
+    fn the_arguments_are_dropped_when_the_body_has_returned() {
+        use crate::vm::calls::Entered;
+
+        struct Frame;
+        impl Native for Frame {
+            fn name(&self) -> &str {
+                "test.probe"
+            }
+            fn resume(&mut self, _: &mut Vm, _: Value) -> Result<Step, VmError> {
+                Ok(Step::Done(Value::Unit))
+            }
+        }
+        fn value(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            Some(Ok(Step::Done(Value::Unit)))
+        }
+        fn frame(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            Some(Ok(Step::Run(Box::new(Frame))))
+        }
+        fn fails(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            Some(Err(VmError::new("the probe failed".into())))
+        }
+        fn misfit(_: &mut Vm, _: &[Value]) -> crate::builtins::typed::Called {
+            None
+        }
+
+        // What the test and the argument hold: the bytes are held twice
+        // while the argument is there.
+        let held = Arc::new(vec![7u8]);
+        for (body, frames) in [
+            (value as crate::builtins::typed::TypedCall, 0),
+            (frame, 1),
+            (fails, 0),
+            (misfit, 0),
+        ] {
+            let row = row(body);
+            let mut vm = Vm::new(crate::HostIo::process());
+            vm.stack = vec![Value::Bytes(held.clone())];
+            let entered = vm.with_args(0, |vm, args| {
+                assert_eq!(Arc::strong_count(&held), 2);
+                vm.enter_row(&row, args)
+            });
+            assert_eq!(Arc::strong_count(&held), 1);
+            // (The frame is there, and has not been resumed.)
+            assert_eq!(vm.frames.len(), frames);
+            assert_eq!(matches!(entered, Ok(Entered::Native)), frames == 1);
+            assert!(vm.stack.is_empty());
+        }
+    }
+
     /// Run `main`'s code and give the VM back with what the run came
     /// to.
     fn ran(source: &str) -> (Vm, Result<Value, VmError>) {
@@ -3596,19 +3667,7 @@ fn main() {
         fn boom(_vm: &mut Vm, _args: &[Value]) -> crate::builtins::typed::Called {
             panic!("a panic in a builtin")
         }
-        let println = registry().named("println").expect("println");
-        let row = Row {
-            signature: "fn boom(a: Int, b: Int) -> ()",
-            summary: "panics",
-            name: "boom",
-            module: "test",
-            params: Vec::new(),
-            optional_last: false,
-            feature: None,
-            enabled: true,
-            id: println.id,
-            body: Body::Typed(boom),
-        };
+        let row = row(boom);
         let mut vm = Vm::new(crate::HostIo::process());
         vm.stack = ints(&[0, 1, 2]);
         let err = (vm.with_args(1, |vm, args| vm.enter_row(&row, args)).err())
