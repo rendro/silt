@@ -10,50 +10,30 @@ use crate::typeinfo::{Tag, TypeInfo};
 mod convert;
 mod fmt;
 mod key;
+mod list;
+mod obj;
 
 #[cfg(test)]
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub use fmt::{Shown, Written};
-
-/// Maximum number of elements that may be materialized from a range into a
-/// list, JSON array, or similar eager collection.  Prevents accidental OOM
-/// when a user writes something like `(1..1_000_000_000) |> list.reverse`.
-pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
-
-/// Return the number of elements in the inclusive range `lo..=hi`, or an error
-/// string if the count exceeds [`MAX_RANGE_MATERIALIZE`].
-pub(crate) fn checked_range_len(lo: i64, hi: i64) -> Result<usize, String> {
-    if lo > hi {
-        return Ok(0);
-    }
-    let len = (hi as i128 - lo as i128 + 1) as u128;
-    if len > MAX_RANGE_MATERIALIZE as u128 {
-        Err(format!(
-            "range {}..{} has {} elements; materializing more than {} is not allowed",
-            lo, hi, len, MAX_RANGE_MATERIALIZE,
-        ))
-    } else {
-        Ok(len as usize)
-    }
-}
+pub(crate) use list::MAX_RANGE_MATERIALIZE;
+pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub use obj::{Record, Variant};
 
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    String(String),
-    List(Arc<Vec<Value>>),
-    Range(i64, i64), // inclusive on both ends: start..end
+    String(Arc<str>),
+    List(List),
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
-    Tuple(Vec<Value>),
-    /// A record: its type and its fields by name.
-    Record(Arc<TypeInfo>, Arc<BTreeMap<String, Value>>),
-    /// A variant: which variant of which enum, and its fields.
-    Variant(Tag, Vec<Value>),
+    Tuple(Arc<[Value]>),
+    Record(Record),
+    Variant(Variant),
     VmClosure(Arc<bytecode::VmClosure>),
     /// A builtin function: its row of the builtin registry.
     BuiltinFn(BuiltinId),
@@ -67,7 +47,10 @@ pub enum Value {
     /// type, passed as a `type a` argument. Keeps `type T`-style values
     /// distinct from primitives (see `PrimitiveDescriptor`).
     TypeDescriptor(Arc<TypeInfo>),
-    PrimitiveDescriptor(String), // "Int", "Float", "String", "Bool" — for json.parse_map etc.
+    /// The token of a primitive type (`Int`, `Float`, `String`, `Bool`)
+    /// passed as a `type a` argument: its name, one of
+    /// [`crate::module::BUILTIN_PRIMITIVE_NAMES`].
+    PrimitiveDescriptor(&'static str),
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
     /// Immutable byte sequence. Structural equality and hashing — two
@@ -88,22 +71,58 @@ pub enum Value {
 }
 
 impl Value {
+    /// The list of `items`.
+    pub fn list(items: Vec<Value>) -> Value {
+        Value::List(List::from(items))
+    }
+
     /// The variant `tag` (a [`Tag`], or a builtin variant of
     /// [`crate::typeinfo::bv`]) with the fields `fields`.
     pub fn variant(tag: impl Into<Tag>, fields: Vec<Value>) -> Value {
-        Value::Variant(tag.into(), fields)
+        Value::Variant(Variant::new(tag.into(), fields))
     }
 
-    /// A record of the builtin record type `ty` (`ty::DATE`).
-    pub fn builtin_record(ty: crate::defs::TypeId, fields: BTreeMap<String, Value>) -> Value {
-        Value::Record(crate::typeinfo::builtin_type(ty).clone(), Arc::new(fields))
+    /// The tuple of `items`.
+    pub fn tuple(items: Vec<Value>) -> Value {
+        Value::Tuple(Arc::from(items))
+    }
+
+    /// The record of the type `ty` with the fields `fields`, in the
+    /// order the type declares them.
+    pub fn record(ty: Arc<TypeInfo>, fields: Vec<Value>) -> Value {
+        Value::Record(Record::new(ty, fields))
+    }
+
+    /// A record of the builtin record type `ty` (`ty::DATE`) with the
+    /// fields `fields`, named, in the order the type declares them.
+    pub fn builtin_record<const N: usize>(
+        ty: crate::defs::TypeId,
+        fields: [(&str, Value); N],
+    ) -> Value {
+        let ty = crate::typeinfo::builtin_type(ty);
+        debug_assert!(
+            ty.fields()
+                .iter()
+                .map(|(name, _)| &**name)
+                .eq(fields.iter().map(|(name, _)| *name)),
+            "the fields of {} are not {:?}",
+            ty.name,
+            fields.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+        );
+        let fields = fields.into_iter().map(|(_, value)| value).collect();
+        Value::record(ty.clone(), fields)
+    }
+
+    /// The anonymous record of the fields `fields`, whose names are
+    /// distinct.
+    pub fn anon_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+        Value::Record(Record::anon(fields.into_iter().collect()))
     }
 }
 
 impl Value {
     /// The value's kind, as an error names it: the name of the `Value`
-    /// variant. A range is a "Range", not a "List", though the two are
-    /// one type to a program: the error shows what the value is.
+    /// variant.
     ///
     /// Not for method dispatch: that is
     /// `crate::types::canonical::dispatch_type_for_value`.
@@ -114,7 +133,6 @@ impl Value {
             Value::Bool(_) => "Bool",
             Value::String(_) => "String",
             Value::List(_) => "List",
-            Value::Range(..) => "Range",
             Value::Map(_) => "Map",
             Value::Set(_) => "Set",
             Value::Tuple(_) => "Tuple",
@@ -141,18 +159,52 @@ impl Value {
 }
 
 impl Value {
-    /// Get the length of a list or range, if applicable.
-    pub fn collection_len(&self) -> Option<usize> {
-        match self {
-            Value::List(xs) => Some(xs.len()),
-            Value::Range(lo, hi) => {
-                if hi >= lo {
-                    (*hi as i128 - *lo as i128 + 1).try_into().ok()
-                } else {
-                    Some(0)
+    /// Whether the value is a function, or has one inside it: the one
+    /// answer of the run time to whether a value can be compared,
+    /// ordered or hashed. The checker rejects those of a value that
+    /// holds a function (`Equal`, `Compare` and `Hash` are decided by
+    /// structure); where its answer does not reach (a key a callback
+    /// gave to `list.sort_by`), this stands behind it: two functions
+    /// would be ordered by their addresses, differently from run to
+    /// run. A channel, a handle and a connection are equal by
+    /// identity, and are not functions.
+    ///
+    /// Asked by the VM's `compare` (src/vm/arithmetic.rs), the gate of
+    /// `==` and `!=` (src/vm/run.rs), the `equal`, `compare` and
+    /// `hash` methods (src/vm/dispatch.rs) and the collection builtins
+    /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by
+    /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
+    pub fn contains_fn(&self) -> bool {
+        // A worklist, not recursion: values nest as deep as a program
+        // builds them.
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::HostFn(_)
+                | Value::VariantConstructor(..) => {
+                    return true;
                 }
+                Value::List(items) => {
+                    // (A list that holds no element holds no function.)
+                    if let list::Elements::Items(items) = items.elements() {
+                        pending.extend(items);
+                    }
+                }
+                Value::Tuple(items) => pending.extend(items.iter()),
+                Value::Variant(variant) => pending.extend(variant.fields()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(record) => pending.extend(record.fields()),
+                _ => {}
             }
-            _ => None,
         }
+        false
     }
 }

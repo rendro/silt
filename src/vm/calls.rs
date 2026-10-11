@@ -145,7 +145,7 @@ impl Vm {
                         args.len()
                     )));
                 }
-                Ok(Entered::Value(Value::Variant(tag, args)))
+                Ok(Entered::Value(Value::variant(tag, args)))
             }
             other => Err(VmError::type_confusion(format!(
                 "cannot call value of type {}",

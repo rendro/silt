@@ -261,7 +261,7 @@ pub(crate) mod float {
             } else {
                 format!("{f}")
             };
-            return Some(Ok(Step::Done(Value::String(s))));
+            return Some(Ok(Step::Done(Value::String(s.into()))));
         };
         if decimals < 0 {
             return Some(Err(VmError::new(
@@ -280,11 +280,9 @@ pub(crate) mod float {
                 "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
             ))));
         };
-        Some(Ok(Step::Done(Value::String(format!(
-            "{:.prec$}",
-            f,
-            prec = prec as usize
-        )))))
+        Some(Ok(Step::Done(Value::String(
+            format!("{:.prec$}", f, prec = prec as usize).into(),
+        ))))
     }
 }
 

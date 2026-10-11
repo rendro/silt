@@ -53,14 +53,14 @@ fn err_utf8(offset: usize) -> Value {
     ))
 }
 
-fn err_hex(msg: impl Into<String>) -> Value {
+fn err_hex(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_HEX,
         vec![Value::String(msg.into())],
     ))
 }
 
-fn err_base64(msg: impl Into<String>) -> Value {
+fn err_base64(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_BASE64,
         vec![Value::String(msg.into())],
@@ -120,7 +120,7 @@ builtins! {
 
     fn to_string(b: Bytes) -> Value {
         match std::str::from_utf8(b) {
-            Ok(s) => ok(Value::String(s.to_string())),
+            Ok(s) => ok(Value::String(s.into())),
             Err(e) => err_utf8(e.valid_up_to()),
         }
     }
@@ -170,8 +170,9 @@ builtins! {
     }
 
     fn from_list(xs: List) -> Result<Value, VmError> {
+        xs.writable()?;
         let mut out = Vec::new();
-        for item in xs.to_vec()? {
+        for item in xs.iter() {
             let Value::Int(n) = item else {
                 return Err(unsound("bytes.from_list", "xs"));
             };
@@ -214,8 +215,9 @@ builtins! {
     }
 
     fn concat_all(parts: List) -> Result<Vec<u8>, VmError> {
+        parts.writable()?;
         let mut out = Vec::new();
-        for part in parts.to_vec()? {
+        for part in parts.iter() {
             let Value::Bytes(part) = part else {
                 return Err(unsound("bytes.concat_all", "parts"));
             };

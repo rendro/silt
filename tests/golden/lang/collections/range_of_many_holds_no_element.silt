@@ -1,0 +1,59 @@
+-- A range holds its two ends and no element, so what can be answered
+-- from the ends is: of a range of nine quintillion elements as of one
+-- of nine. (`list.sum` of it added four billion elements one by one
+-- before it found the overflow; `list.index_of` of an Int that is not
+-- there read it to its end.)
+import list
+
+fn main() {
+  let big = 1..9223372036854775807
+  println(list.length(big))
+  println(list.head(big))
+  println(list.last(big))
+  println(list.get(big, 41))
+  println(list.get(big, 9223372036854775806))
+  println(list.get(big, 9223372036854775807))
+  println(list.contains(big, 12345678901234))
+  println(list.contains(big, 0))
+  println(list.index_of(big, 12345678901234))
+  println(list.index_of(big, -5))
+  println(list.take(big, 4))
+  println(list.take(list.drop(big, 9223372036854775804), 99))
+  println(list.length(list.tail(big)))
+  println(big == big)
+  println(big == list.tail(big))
+  println(big < list.tail(big))
+  println(big.hash() == (1..9223372036854775807).hash())
+  println(big.hash() == list.tail(big).hash())
+  match big {
+    [a, b, ..rest] -> println("{a}, {b}, then {list.length(rest)} more")
+    _ -> println("no match")
+  }
+
+  -- Sums are of the ends too.
+  println(list.sum(1..100000000))
+  println(list.sum(-3000000000..3000000001))
+  println(list.sum(5..4))
+
+  -- A range is in order and has no element twice: sorted, and without
+  -- its repeats, it is itself, and none of its elements is made.
+  println(list.sort(big) == big)
+  println(list.take(list.sort(big), 3))
+  println(list.last(list.sort(0..10000000)))
+  println(list.unique(big) == big)
+  println(list.get(list.unique(big), 41))
+  println(list.length(list.unique(0..10000000)))
+
+  -- The product of a range that has 0 in it is 0. (Of `0..n` it was
+  -- found by multiplying 0 by each of the others, one by one, and of
+  -- `-100..100` it was the overflow of the product of the Ints up to
+  -- the 0.) It is 0 for a list that holds those elements, too.
+  println(list.product(0..9223372036854775807))
+  println(list.product(-9223372036854775807..9223372036854775807))
+  println(list.product(-100..100))
+  println(list.product(list.reverse(list.reverse(-100..100))))
+  println(list.product([9223372036854775807, 2, 0]))
+  println(list.product(1..20))
+  println(list.product(-3..-1))
+  println(list.product(5..4))
+}

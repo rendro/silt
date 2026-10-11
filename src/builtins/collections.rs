@@ -5,28 +5,8 @@ use std::sync::Arc;
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
+use crate::value::{IntTotal, MAX_RANGE_MATERIALIZE, Value};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
-
-impl List<'_> {
-    /// How many elements it has: a range can have more than an `Int`
-    /// counts.
-    fn len(self) -> u128 {
-        match self {
-            List::Items(items) => items.len() as u128,
-            List::Range(lo, hi) if hi < lo => 0,
-            List::Range(lo, hi) => (hi as i128 - lo as i128 + 1) as u128,
-        }
-    }
-
-    /// The list as the value it was.
-    fn value(self) -> Value {
-        match self {
-            List::Items(items) => Value::List(items.clone()),
-            List::Range(lo, hi) => Value::Range(lo, hi),
-        }
-    }
-}
 
 fn some(value: Value) -> Value {
     Value::variant(bv::SOME, vec![value])
@@ -44,27 +24,31 @@ fn none() -> Value {
 /// bound on the builtin signatures because that would reject currently
 /// working programs (e.g. sorting tuples via `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
 ///
-/// The contains-a-fn walk delegates to `Vm::value_contains_fn`
-/// (src/vm/mod.rs) — the SINGLE runtime-side oracle for every
-/// execution-site Compare/Equal/Hash gate (operator, dispatch, and
-/// builtin surfaces). Do not re-inline a local copy of the walker
-/// here: a new container `Value` variant added to one copy but not the
-/// other would silently split gate behavior between the operator and
-/// builtin surfaces. Single-definition is pinned by
-/// tests/meta/value_contains_fn_dedup_lock_tests.rs.
+/// The walk is `Value::contains_fn` (src/value/mod.rs), the one answer
+/// of the run time for every such gate (operator, method and builtin).
 fn ensure_no_fn<'a>(
     fn_name: &str,
     trait_name: &str,
     vals: impl IntoIterator<Item = &'a Value>,
 ) -> Result<(), VmError> {
-    for v in vals {
-        if Vm::value_contains_fn(v) {
-            return Err(VmError::new(format!(
-                "{fn_name}: type 'Fn' does not implement {trait_name}"
-            )));
-        }
+    match vals.into_iter().any(Value::contains_fn) {
+        true => Err(fn_gate(fn_name, trait_name)),
+        false => Ok(()),
     }
-    Ok(())
+}
+
+/// [`ensure_no_fn`] for the elements of a list.
+fn ensure_no_fn_in(fn_name: &str, trait_name: &str, xs: List) -> Result<(), VmError> {
+    match xs.contains_fn() {
+        true => Err(fn_gate(fn_name, trait_name)),
+        false => Ok(()),
+    }
+}
+
+fn fn_gate(fn_name: &str, trait_name: &str) -> VmError {
+    VmError::new(format!(
+        "{fn_name}: type 'Fn' does not implement {trait_name}"
+    ))
 }
 
 // ── The functions that call a function ───────────────────────────
@@ -79,6 +63,16 @@ fn truthy(v: &Value) -> bool {
         Value::Unit => false,
         _ => true,
     }
+}
+
+/// The list `xs` for a builtin that makes a list with an element for
+/// each of its elements, or for some of them: of a list that holds no
+/// element (`a..b`) there may be too many for that. (A builtin that
+/// only reads the elements, like `list.fold` or `list.find`, reads them
+/// one by one however many there are.)
+fn made(xs: List) -> Result<crate::value::List, VmError> {
+    xs.writable()?;
+    Ok(xs.clone())
 }
 
 /// The arguments of a function that takes the state and the item
@@ -100,7 +94,7 @@ fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
 /// The entries of a map as items.
 fn entries(m: &BTreeMap<Value, Value>) -> Vec<Value> {
     m.iter()
-        .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
+        .map(|(k, v)| Value::tuple(vec![k.clone(), v.clone()]))
         .collect()
 }
 
@@ -125,8 +119,25 @@ fn set_acc(acc: &mut Value, _item: Value, result: Value) -> Flow {
     next()
 }
 
+/// The list of the elements of `xs` and then those of `ys`:
+/// `list.concat(xs, ys)`, and `[..xs, ..ys]`.
+///
+/// Both sizes are checked before an element of either is made: two
+/// operands near the limit would make a list of 800 MB.
+pub(crate) fn concat(xs: List, ys: List) -> Result<Value, VmError> {
+    xs.writable()?;
+    ys.writable()?;
+    if xs.len() + ys.len() > MAX_RANGE_MATERIALIZE {
+        return Err(VmError::new(format!(
+            "concatenated list exceeds maximum size of {} elements",
+            MAX_RANGE_MATERIALIZE
+        )));
+    }
+    Ok(Value::List(xs.concat(ys)?))
+}
+
 fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
-    Ok(Value::List(Arc::new(std::mem::take(out))))
+    Ok(Value::list(std::mem::take(out)))
 }
 
 fn as_set(out: &mut Vec<Value>) -> Result<Value, VmError> {
@@ -156,24 +167,16 @@ fn too_long(name: &str) -> VmError {
 fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     match result {
         Value::List(inner) => {
-            // The cap applies to the final list size.
+            // Whether the list fits is checked before its elements are
+            // made, alone and added to the list so far: a callback that
+            // returns `0..i64::MAX` must not exhaust memory.
+            inner
+                .writable()
+                .map_err(|m| VmError::new(format!("list.flat_map: {m}")))?;
             if out.len().saturating_add(inner.len()) > MAX_RANGE_MATERIALIZE {
                 return Err(too_long("list.flat_map"));
             }
-            out.extend(inner.iter().cloned());
-        }
-        Value::Range(lo, hi) => {
-            // Check that this range fits the cap before materializing
-            // it, alone and added to the list so far: a callback that
-            // returns `0..i64::MAX` must not exhaust memory.
-            let range_len = checked_range_len(lo, hi)
-                .map_err(|m| VmError::new(format!("list.flat_map: {m}")))?;
-            if out.len().saturating_add(range_len) > MAX_RANGE_MATERIALIZE {
-                return Err(too_long("list.flat_map"));
-            }
-            if lo <= hi {
-                out.extend((lo..=hi).map(Value::Int));
-            }
+            out.extend(inner);
         }
         other => {
             if out.len() >= MAX_RANGE_MATERIALIZE {
@@ -187,10 +190,10 @@ fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
 
 fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     match result {
-        Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
-            out.push(fields[0].clone());
+        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
+            out.push(variant.fields()[0].clone());
         }
-        Value::Variant(ref tag, _) if tag.is(bv::NONE) => {}
+        Value::Variant(variant) if variant.is(bv::NONE) => {}
         other => out.push(other),
     }
     next()
@@ -198,12 +201,12 @@ fn filter_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
 
 fn fold_until_step(acc: &mut Value, _item: Value, result: Value) -> Flow {
     match result {
-        Value::Variant(ref tag, ref fields) if tag.is(bv::CONTINUE) && fields.len() == 1 => {
-            *acc = fields[0].clone();
+        Value::Variant(variant) if variant.is(bv::CONTINUE) && variant.fields().len() == 1 => {
+            *acc = variant.fields()[0].clone();
             next()
         }
-        Value::Variant(ref tag, ref fields) if tag.is(bv::STOP) && fields.len() == 1 => {
-            stop(fields[0].clone())
+        Value::Variant(variant) if variant.is(bv::STOP) && variant.fields().len() == 1 => {
+            stop(variant.fields()[0].clone())
         }
         other => {
             *acc = other;
@@ -272,8 +275,8 @@ impl Native for Unfold {
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.called {
             match input {
-                Value::Variant(ref tag, ref fields) if tag.is(bv::SOME) && fields.len() == 1 => {
-                    match &fields[0] {
+                Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
+                    match &variant.fields()[0] {
                         Value::Tuple(pair) if pair.len() == 2 => {
                             self.out.push(pair[0].clone());
                             if self.out.len() > MAX_RANGE_MATERIALIZE {
@@ -287,7 +290,7 @@ impl Native for Unfold {
                         }
                     }
                 }
-                Value::Variant(ref tag, _) if tag.is(bv::NONE) => {
+                Value::Variant(variant) if variant.is(bv::NONE) => {
                     return as_list(&mut self.out).map(Step::Done);
                 }
                 other => {
@@ -315,7 +318,7 @@ pub(crate) mod list {
         fn map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.map",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -327,7 +330,7 @@ pub(crate) mod list {
         fn filter(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.filter",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -336,26 +339,26 @@ pub(crate) mod list {
             ))
         }
 
-        fn each(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate("list.each", xs.to_vec()?, f.clone(), (), item_arg, ignore, unit))
+        fn each(xs: List, f: &Value) -> Step {
+            iterate("list.each", xs.clone(), f.clone(), (), item_arg, ignore, unit)
         }
 
-        fn fold(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn fold(xs: List, init: &Value, f: &Value) -> Step {
+            iterate(
                 "list.fold",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 init.clone(),
                 acc_and_item,
                 set_acc,
                 take_acc,
-            ))
+            )
         }
 
-        fn find(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn find(xs: List, f: &Value) -> Step {
+            iterate(
                 "list.find",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 (),
                 item_arg,
@@ -364,13 +367,13 @@ pub(crate) mod list {
                     false => next(),
                 },
                 |_| Ok(none()),
-            ))
+            )
         }
 
-        fn any(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn any(xs: List, f: &Value) -> Step {
+            iterate(
                 "list.any",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 (),
                 item_arg,
@@ -379,13 +382,13 @@ pub(crate) mod list {
                     false => next(),
                 },
                 |_| Ok(Value::Bool(false)),
-            ))
+            )
         }
 
-        fn all(xs: List, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn all(xs: List, f: &Value) -> Step {
+            iterate(
                 "list.all",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 (),
                 item_arg,
@@ -394,13 +397,13 @@ pub(crate) mod list {
                     false => stop(Value::Bool(false)),
                 },
                 |_| Ok(Value::Bool(true)),
-            ))
+            )
         }
 
         fn flat_map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.flat_map",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -412,7 +415,7 @@ pub(crate) mod list {
         fn filter_map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.filter_map",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -424,7 +427,7 @@ pub(crate) mod list {
         fn sort_by(xs: List, key: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.sort_by",
-                xs.to_vec()?,
+                made(xs)?,
                 key.clone(),
                 Vec::<(Value, Value)>::new(),
                 item_arg,
@@ -437,21 +440,21 @@ pub(crate) mod list {
                         a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                     });
                     let sorted = std::mem::take(keyed).into_iter().map(|(_, item)| item);
-                    Ok(Value::List(Arc::new(sorted.collect())))
+                    Ok(Value::list(sorted.collect()))
                 },
             ))
         }
 
-        fn fold_until(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn fold_until(xs: List, init: &Value, f: &Value) -> Step {
+            iterate(
                 "list.fold_until",
-                xs.to_vec()?,
+                xs.clone(),
                 f.clone(),
                 init.clone(),
                 acc_and_item,
                 fold_until_step,
                 take_acc,
-            ))
+            )
         }
 
         fn unfold(seed: &Value, f: &Value) -> Step {
@@ -466,7 +469,7 @@ pub(crate) mod list {
         fn group_by(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.group_by",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 BTreeMap::<Value, Vec<Value>>::new(),
                 item_arg,
@@ -478,16 +481,16 @@ pub(crate) mod list {
                 |groups| {
                     let groups = std::mem::take(groups).into_iter();
                     Ok(Value::Map(Arc::new(
-                        groups.map(|(k, v)| (k, Value::List(Arc::new(v)))).collect(),
+                        groups.map(|(k, v)| (k, Value::list(v))).collect(),
                     )))
                 },
             ))
         }
 
-        fn min_by(xs: List, key: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn min_by(xs: List, key: &Value) -> Step {
+            iterate(
                 "list.min_by",
-                xs.to_vec()?,
+                xs.clone(),
                 key.clone(),
                 None,
                 item_arg,
@@ -495,13 +498,13 @@ pub(crate) mod list {
                     best_step("list.min_by", std::cmp::Ordering::Less, best, item, key)
                 },
                 best_item,
-            ))
+            )
         }
 
-        fn max_by(xs: List, key: &Value) -> Result<Step, VmError> {
-            Ok(iterate(
+        fn max_by(xs: List, key: &Value) -> Step {
+            iterate(
                 "list.max_by",
-                xs.to_vec()?,
+                xs.clone(),
                 key.clone(),
                 None,
                 item_arg,
@@ -509,7 +512,7 @@ pub(crate) mod list {
                     best_step("list.max_by", std::cmp::Ordering::Greater, best, item, key)
                 },
                 best_item,
-            ))
+            )
         }
 
         // The running value, and the list of the values it had, the
@@ -517,7 +520,7 @@ pub(crate) mod list {
         fn scan(xs: List, init: &Value, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.scan",
-                xs.to_vec()?,
+                made(xs)?,
                 f.clone(),
                 (init.clone(), vec![init.clone()]),
                 |(running, _), item, stack| acc_and_item(running, item, stack),
@@ -538,7 +541,7 @@ pub(crate) mod list {
             // for two ranges can be more than a list may hold: checked
             // before anything is made.
             let expected = xs.len().min(ys.len());
-            if expected > MAX_RANGE_MATERIALIZE as u128 {
+            if expected > MAX_RANGE_MATERIALIZE {
                 return Err(VmError::new(format!(
                     "list.zip: result length {expected} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
                 )));
@@ -546,7 +549,7 @@ pub(crate) mod list {
             Ok(xs
                 .iter()
                 .zip(ys.iter())
-                .map(|(x, y)| Value::Tuple(vec![x, y]))
+                .map(|(x, y)| Value::tuple(vec![x, y]))
                 .collect())
         }
 
@@ -554,10 +557,9 @@ pub(crate) mod list {
             let mut result = Vec::new();
             for item in xs.iter() {
                 match item {
-                    Value::List(inner) => result.extend(inner.iter().cloned()),
-                    Value::Range(lo, hi) => {
-                        checked_range_len(lo, hi).map_err(VmError::new)?;
-                        result.extend((lo..=hi).map(Value::Int));
+                    Value::List(inner) => {
+                        inner.writable()?;
+                        result.extend(inner);
                     }
                     other => result.push(other),
                 }
@@ -572,24 +574,15 @@ pub(crate) mod list {
         }
 
         fn head(xs: List) -> Option<Value> {
-            xs.iter().next()
+            xs.first()
         }
 
         fn tail(xs: List) -> Value {
-            match xs {
-                List::Items(items) => {
-                    Value::List(Arc::new(items.get(1..).unwrap_or_default().to_vec()))
-                }
-                List::Range(lo, hi) if lo >= hi => Value::List(Arc::new(Vec::new())),
-                List::Range(lo, hi) => Value::Range(lo + 1, hi),
-            }
+            Value::List(xs.slice(1, xs.len()))
         }
 
         fn last(xs: List) -> Option<Value> {
-            match xs {
-                List::Items(items) => items.last().cloned(),
-                List::Range(lo, hi) => (lo <= hi).then_some(Value::Int(hi)),
-            }
+            xs.last()
         }
 
         fn reverse(xs: List) -> Result<Vec<Value>, VmError> {
@@ -599,57 +592,34 @@ pub(crate) mod list {
         }
 
         fn sort(xs: List) -> Result<Value, VmError> {
-            // A range is sorted as it is.
-            let List::Items(items) = xs else {
-                return Ok(xs.value());
-            };
             // Fn elements would sort by Arc pointer address (ASLR-
             // nondeterministic) — reject like the operator gates do.
-            ensure_no_fn("list.sort", "Compare", items.iter())?;
-            let mut sorted = (**items).clone();
-            sorted.sort();
-            Ok(Value::List(Arc::new(sorted)))
+            ensure_no_fn_in("list.sort", "Compare", xs)?;
+            Ok(Value::List(xs.sorted()))
         }
 
         fn unique(xs: List) -> Result<Value, VmError> {
-            // A range has no element twice.
-            let List::Items(items) = xs else {
-                return Ok(xs.value());
-            };
             // Fn elements would dedup by identity (Arc pointer / builtin
             // name) instead of erroring like `f == g` does.
-            ensure_no_fn("list.unique", "Equal", items.iter())?;
-            let mut seen = BTreeSet::new();
-            let unique = items.iter().filter(|x| seen.insert(*x)).cloned().collect();
-            Ok(Value::List(Arc::new(unique)))
+            ensure_no_fn_in("list.unique", "Equal", xs)?;
+            Ok(Value::List(xs.unique()))
         }
 
         fn contains(xs: List, elem: &Value) -> Result<bool, VmError> {
-            match xs {
-                List::Items(items) => {
-                    // Fn membership would silently answer via Arc identity
-                    // (`list.contains([f], g)` -> false) instead of erroring.
-                    ensure_no_fn("list.contains", "Equal", items.iter().chain([elem]))?;
-                    Ok(items.contains(elem))
-                }
-                List::Range(lo, hi) => {
-                    ensure_no_fn("list.contains", "Equal", [elem])?;
-                    Ok(matches!(elem, Value::Int(n) if (lo..=hi).contains(n)))
-                }
-            }
+            // Fn membership would silently answer via Arc identity
+            // (`list.contains([f], g)` -> false) instead of erroring.
+            ensure_no_fn_in("list.contains", "Equal", xs)?;
+            ensure_no_fn("list.contains", "Equal", [elem])?;
+            Ok(xs.contains(elem))
         }
 
-        // A range can have more elements than an `Int` counts
-        // (`i64::MIN..i64::MAX`).
+        // The list of the Ints between two far ends can have more
+        // elements than an `Int` counts.
         fn length(xs: List) -> Result<i64, VmError> {
             i64::try_from(xs.len()).map_err(|_| {
-                VmError::new(format!(
-                    "list.length overflow: {} too large to represent as Int",
-                    match xs {
-                        List::Items(_) => "list",
-                        List::Range(..) => "range",
-                    }
-                ))
+                VmError::new(
+                    "list.length overflow: the list has more elements than an Int counts".into(),
+                )
             })
         }
 
@@ -665,27 +635,12 @@ pub(crate) mod list {
             Ok(items)
         }
 
-        fn concat(xs: List, ys: List) -> Result<Vec<Value>, VmError> {
-            let mut result = xs.to_vec()?;
-            result.extend(ys.to_vec()?);
-            if result.len() > MAX_RANGE_MATERIALIZE {
-                return Err(VmError::new(format!(
-                    "concatenated list exceeds maximum size of {} elements",
-                    MAX_RANGE_MATERIALIZE
-                )));
-            }
-            Ok(result)
+        fn concat(xs: List, ys: List) -> Result<Value, VmError> {
+            super::concat(xs, ys)
         }
 
         fn get(xs: List, i: i64) -> Result<Option<Value>, VmError> {
-            let index = natural("list.get", "index", i)?;
-            Ok(match xs {
-                List::Items(items) => items.get(index).cloned(),
-                List::Range(lo, hi) => lo
-                    .checked_add(i)
-                    .filter(|at| *at <= hi)
-                    .map(Value::Int),
-            })
+            Ok(xs.get(natural("list.get", "index", i)?))
         }
 
         fn set(xs: List, index: i64, value: &Value) -> Result<Vec<Value>, VmError> {
@@ -700,55 +655,28 @@ pub(crate) mod list {
 
         fn take(xs: List, n: i64) -> Result<Value, VmError> {
             let count = natural("list.take", "count", n)?;
-            Ok(match xs {
-                List::Items(items) => {
-                    Value::List(Arc::new(items[..count.min(items.len())].to_vec()))
-                }
-                // (Taking no element is the empty list wherever the
-                // range begins: `lo + 0 - 1` is no Int for the least
-                // one.)
-                List::Range(..) if n == 0 => Value::List(Arc::new(Vec::new())),
-                List::Range(lo, hi) => {
-                    let new_hi = lo
-                        .checked_add(n)
-                        .and_then(|end| end.checked_sub(1))
-                        .map_or(hi, |end| end.min(hi));
-                    match new_hi < lo {
-                        true => Value::List(Arc::new(Vec::new())),
-                        false => Value::Range(lo, new_hi),
-                    }
-                }
-            })
+            Ok(Value::List(xs.slice(0, count)))
         }
 
         fn drop(xs: List, n: i64) -> Result<Value, VmError> {
             let count = natural("list.drop", "count", n)?;
-            Ok(match xs {
-                List::Items(items) => {
-                    Value::List(Arc::new(items[count.min(items.len())..].to_vec()))
-                }
-                List::Range(lo, hi) => match lo.checked_add(n).filter(|new_lo| *new_lo <= hi) {
-                    Some(new_lo) => Value::Range(new_lo, hi),
-                    None => Value::List(Arc::new(Vec::new())),
-                },
-            })
+            Ok(Value::List(xs.slice(count, xs.len())))
         }
 
         fn enumerate(xs: List) -> Result<Vec<Value>, VmError> {
-            let items = xs.to_vec()?.into_iter().enumerate();
+            xs.writable()?;
+            let items = xs.iter().enumerate();
             Ok(items
-                .map(|(i, item)| Value::Tuple(vec![Value::Int(i as i64), item]))
+                .map(|(i, item)| Value::tuple(vec![Value::Int(i as i64), item]))
                 .collect())
         }
 
         fn index_of(xs: List, target: &Value) -> Result<Option<Value>, VmError> {
             // Fn search would silently answer via Arc identity
             // (`list.index_of([f, g], g)` -> Some(1)) instead of erroring.
-            if let List::Items(items) = xs {
-                ensure_no_fn("list.index_of", "Equal", items.iter())?;
-            }
+            ensure_no_fn_in("list.index_of", "Equal", xs)?;
             ensure_no_fn("list.index_of", "Equal", [target])?;
-            let Some(at) = xs.iter().position(|item| item == *target) else {
+            let Some(at) = xs.position(target) else {
                 return Ok(None);
             };
             let at = i64::try_from(at).map_err(|_| {
@@ -768,16 +696,11 @@ pub(crate) mod list {
         }
 
         fn sum(xs: List) -> Result<i64, VmError> {
-            let mut total: i64 = 0;
-            for item in xs.iter() {
-                let Value::Int(n) = item else {
-                    return Err(unsound("list.sum", "xs"));
-                };
-                total = total
-                    .checked_add(n)
-                    .ok_or_else(|| VmError::new("list.sum overflow".into()))?;
+            match xs.sum_ints() {
+                IntTotal::Total(total) => Ok(total),
+                IntTotal::Overflow => Err(VmError::new("list.sum overflow".into())),
+                IntTotal::NotInts => Err(unsound("list.sum", "xs")),
             }
-            Ok(total)
         }
 
         fn sum_float(xs: List) -> Result<Value, VmError> {
@@ -794,16 +717,11 @@ pub(crate) mod list {
         }
 
         fn product(xs: List) -> Result<i64, VmError> {
-            let mut total: i64 = 1;
-            for item in xs.iter() {
-                let Value::Int(n) = item else {
-                    return Err(unsound("list.product", "xs"));
-                };
-                total = total
-                    .checked_mul(n)
-                    .ok_or_else(|| VmError::new("list.product overflow".into()))?;
+            match xs.product_ints() {
+                IntTotal::Total(total) => Ok(total),
+                IntTotal::Overflow => Err(VmError::new("list.product overflow".into())),
+                IntTotal::NotInts => Err(unsound("list.product", "xs")),
             }
-            Ok(total)
         }
 
         fn product_float(xs: List) -> Result<Value, VmError> {
@@ -858,9 +776,9 @@ pub(crate) mod map {
                 |kept, entry, keep| {
                     if truthy(&keep)
                         && let Value::Tuple(pair) = entry
-                        && let Ok([k, v]) = <[Value; 2]>::try_from(pair)
+                        && let [k, v] = &pair[..]
                     {
-                        kept.insert(k, v);
+                        kept.insert(k.clone(), v.clone());
                     }
                     next()
                 },
@@ -876,11 +794,11 @@ pub(crate) mod map {
                 BTreeMap::new(),
                 key_and_value,
                 |out, _, result| {
-                    let pair = match result {
-                        Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
+                    let pair = match &result {
+                        Value::Tuple(pair) => <&[Value; 2]>::try_from(&pair[..]).ok(),
                         _ => None,
                     };
-                    let [k, v] = pair.ok_or_else(|| unsound("map.map", "f"))?;
+                    let [k, v] = pair.ok_or_else(|| unsound("map.map", "f"))?.clone();
                     out.insert(k, v);
                     next()
                 },
@@ -954,11 +872,13 @@ pub(crate) mod map {
         fn from_entries(entries: List) -> Result<BTreeMap<Value, Value>, VmError> {
             let mut result = BTreeMap::new();
             for entry in entries.iter() {
-                let pair = match entry {
-                    Value::Tuple(pair) => <[Value; 2]>::try_from(pair).ok(),
+                let pair = match &entry {
+                    Value::Tuple(pair) => <&[Value; 2]>::try_from(&pair[..]).ok(),
                     _ => None,
                 };
-                let [key, value] = pair.ok_or_else(|| unsound("map.from_entries", "entries"))?;
+                let [key, value] = pair
+                    .ok_or_else(|| unsound("map.from_entries", "entries"))?
+                    .clone();
                 // Runtime Fn gate on the KEY only (values are never
                 // compared): `map.from_entries` has no `where` bound
                 // that rules a function out as a key, and such keys
@@ -1027,11 +947,11 @@ pub(crate) mod set {
         }
 
         fn from_list(xs: List) -> Result<BTreeSet<Value>, VmError> {
-            let items = xs.to_vec()?;
+            xs.writable()?;
             // A set of Fn values is BTree-ordered by Arc pointer address —
             // ASLR-nondeterministic iteration order. Reject at construction.
-            ensure_no_fn("set.from_list", "Compare", items.iter())?;
-            Ok(items.into_iter().collect())
+            ensure_no_fn_in("set.from_list", "Compare", xs)?;
+            Ok(xs.iter().collect())
         }
 
         fn to_list(s: Set) -> Vec<Value> {

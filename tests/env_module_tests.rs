@@ -14,7 +14,7 @@ fn run(input: &str) -> Value {
 
 fn expect_string(v: Value) -> String {
     match v {
-        Value::String(s) => s,
+        Value::String(s) => s.to_string(),
         other => panic!("expected String, got {other:?}"),
     }
 }

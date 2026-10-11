@@ -53,7 +53,7 @@
 //! [`Code::CompileLimit`] diagnostic at the instruction's span, never a
 //! wrapped value. A constant operand is a [`Const`] from
 //! [`Emitter::constant`]; what kind of constant an instruction needs (a
-//! string for `GetField`, a function for `MakeClosure`) is in the
+//! string for `GetFieldNamed`, a function for `MakeClosure`) is in the
 //! instruction table ([`ops`](super::ops)) and checked by the verifier.
 //!
 //! # Height

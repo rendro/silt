@@ -148,7 +148,10 @@ impl Vm {
                         "type '{name}' does not implement Display"
                     ))));
                 }
-                Some(Ok(Value::String(self.display_value(receiver))))
+                if let Err(too_long) = receiver.writable() {
+                    return Some(Err(too_long.into()));
+                }
+                Some(Ok(Value::String(self.display_value(receiver).into())))
             }
             "equal" => {
                 if extra_args.len() != 1 {
@@ -162,7 +165,7 @@ impl Vm {
                 // can launder such values past the typechecker's
                 // concrete-operand gate, and `PartialEq for Value` would
                 // silently answer with `Arc::ptr_eq` identity.
-                if Self::value_contains_fn(receiver) || Self::value_contains_fn(&extra_args[0]) {
+                if receiver.contains_fn() || extra_args[0].contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Equal".into(),
                     )));
@@ -184,7 +187,7 @@ impl Vm {
                 // `Arc::as_ptr` — an ASLR-nondeterministic result for a
                 // polymorphic `fn cmp(a: x, b: x) -> Int { a.compare(b) }`
                 // laundering a container of functions past the typechecker.
-                if Self::value_contains_fn(receiver) || Self::value_contains_fn(other) {
+                if receiver.contains_fn() || other.contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Compare".into(),
                     )));
@@ -200,13 +203,9 @@ impl Vm {
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: a list has Compare when its
-                    // elements do. Defer to the existing element-wise
-                    // ordering on `Value::cmp`, which already handles
-                    // List/Range pairings (see src/vm/arithmetic.rs:152).
-                    (Value::List(_), Value::List(_))
-                    | (Value::List(_), Value::Range(..))
-                    | (Value::Range(..), Value::List(_))
-                    | (Value::Range(..), Value::Range(..)) => receiver.cmp(other),
+                    // elements do, and is ordered element by element
+                    // (`Value::cmp`).
+                    (Value::List(_), Value::List(_)) => receiver.cmp(other),
                     // `Compare` is structural: `Ord for Value`
                     // (src/value/key.rs) orders records by their
                     // declared fields and variants by declaration, for
@@ -252,7 +251,7 @@ impl Vm {
                 // constant discriminant tag ("not meaningfully
                 // hashable", src/value/key.rs), so two distinct closures
                 // would hash identically and collide silently.
-                if Self::value_contains_fn(receiver) {
+                if receiver.contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Hash".into(),
                     )));
@@ -264,11 +263,6 @@ impl Vm {
                     | Value::Bool(_)
                     | Value::String(_)
                     | Value::List(_)
-                    // Range hashes via the same `impl Hash for Value`
-                    // (in src/value/key.rs); typechecker registers Hash for
-                    // every `List(T)` that flows through a `Hash` bound,
-                    // and `1..5` reaches dispatch as `Value::Range`.
-                    | Value::Range(..)
                     | Value::Tuple(_)
                     | Value::Map(_)
                     | Value::Set(_)

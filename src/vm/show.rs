@@ -41,7 +41,7 @@ impl Native for Showing {
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.calling {
             match input {
-                Value::String(text) => self.texts.push(text),
+                Value::String(text) => self.texts.push(text.to_string()),
                 other => {
                     return Err(VmError::type_confusion(format!(
                         "display returned {}, not a String",
@@ -75,8 +75,8 @@ impl Vm {
     /// record or a variant, is kept.
     fn written_slot(&self, value: &Value) -> Option<u16> {
         let ty = match value {
-            Value::Record(ty, _) => ty.id,
-            Value::Variant(tag, _) => tag.type_id(),
+            Value::Record(record) => record.type_id(),
+            Value::Variant(variant) => variant.type_id(),
             _ => return None,
         };
         self.global_slots.shown(ty)
@@ -110,6 +110,7 @@ impl Vm {
         value: &Value,
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
+        value.writable()?;
         if !self.global_slots.any_shown() {
             let text = self.display_value(value);
             return then(self, text);
@@ -157,12 +158,12 @@ impl Vm {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
         match self.shown(value) {
-            Ok(Step::Done(Value::String(text))) => text,
+            Ok(Step::Done(Value::String(text))) => text.to_string(),
             Ok(Step::Run(showing)) => {
                 self.push_native_frame(showing);
                 let run = self.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
                 match self.finish_run(run, floor, stack_floor) {
-                    Ok(Value::String(text)) => text,
+                    Ok(Value::String(text)) => text.to_string(),
                     _ => value.to_string(),
                 }
             }
@@ -172,6 +173,6 @@ impl Vm {
 
     /// [`Vm::show`] for what gives the text as its value.
     pub(crate) fn shown(&mut self, value: &Value) -> Result<Step, VmError> {
-        self.show(value, |_, text| Ok(Step::Done(Value::String(text))))
+        self.show(value, |_, text| Ok(Step::Done(Value::String(text.into()))))
     }
 }

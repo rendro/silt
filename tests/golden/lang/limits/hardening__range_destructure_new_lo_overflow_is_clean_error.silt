@@ -1,9 +1,0 @@
--- exit: 1
--- stderr-contains: range index overflow
-import list
-fn main() {
-  match 9223372036854775806..9223372036854775807 {
-    [a, b, ..rest] -> println(list.length(rest))
-    _ -> println("no match")
-  }
-}

@@ -936,7 +936,7 @@ mod tests {
         let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[closed]) else {
             panic!("ChannelError.message");
         };
-        assert_eq!(text, "channel closed with no more values");
+        assert_eq!(text, "channel closed with no more values".into());
     }
 
     /// A call whose arguments are not the row's (which no checked

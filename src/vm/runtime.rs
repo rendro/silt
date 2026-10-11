@@ -793,7 +793,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn failure(failure: IoFailure<'_>) -> Value {
-        Value::String(failure.text().to_string())
+        Value::String(failure.text().into())
     }
 
     fn pool(max: usize, idle: Duration) -> IoPool {
@@ -830,7 +830,7 @@ mod tests {
 
         let op = pool.submit(failure, || panic!("no such file"));
         match op.cell.get() {
-            Some(Value::String(msg)) => assert_eq!(msg, "panic: no such file"),
+            Some(Value::String(msg)) => assert_eq!(&**msg, "panic: no such file"),
             other => panic!("expected the typed failure, got {other:?}"),
         }
         assert!(op.in_flight.lock().is_none());
@@ -915,7 +915,7 @@ mod tests {
         let refused = pool.submit(failure, || Value::Int(3));
         match refused.cell.get() {
             Some(Value::String(msg)) => {
-                assert_eq!(msg, "too many I/O operations in flight (2)")
+                assert_eq!(&**msg, "too many I/O operations in flight (2)")
             }
             other => panic!("expected the refusal, got {other:?}"),
         }
@@ -958,7 +958,7 @@ mod tests {
         let refused = pool.submit(failure, || Value::Int(1));
         match refused.cell.get() {
             Some(Value::String(msg)) => assert_eq!(
-                msg,
+                &**msg,
                 &format!(
                     "too many I/O operations that nobody waits for are still running \
                      ({IO_POOL_UNHEARD_MAX}); they cannot be interrupted"

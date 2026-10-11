@@ -8,16 +8,24 @@
 //! an enum's order is its declaration order whatever else the program
 //! declares.
 //!
+//! A record value holds its fields in the order its type lists them,
+//! which is the order of the declaration, so the compiler reads a field
+//! of a record whose type it knows at its place there.
+//!
 //! The compiler builds a [`TypeInfo`] for each type of the program and
 //! hands the VM a [`TypeTable`] of them; the builtin types have theirs in
 //! a table of their own, with fixed ids ([`ty`]) and fixed variants
 //! ([`bv`]), so a builtin builds `Some(x)` as `Value::variant(bv::SOME,
-//! ..)`.
+//! ..)`. An anonymous record has no declaration: its type is the one of
+//! its set of field names ([`anon_record_type`]), which lists them in
+//! name order, and all these types share one id ([`ty::ANON_RECORD`]).
 
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
+
+use parking_lot::RwLock;
 
 use crate::defs::{DefId, TypeId};
 
@@ -37,9 +45,12 @@ pub struct TypeInfo {
 pub enum Shape {
     /// An enum: its variants in declaration order.
     Enum(Vec<VariantInfo>),
-    /// A record: its fields in declaration order, with the type of each
-    /// as far as the decoders of `json.parse` and `toml.parse` are
-    /// concerned. A builtin record lists none.
+    /// A record: its fields in declaration order (an anonymous record's
+    /// in name order), which is the order a record value holds them in,
+    /// with the type of each as far as the decoders of `json.parse` and
+    /// `toml.parse` are concerned. The fields of a builtin record and of
+    /// an anonymous one have none (`FieldType::undecoded`): the
+    /// decoders refuse such a type before they read a field.
     Record(Vec<(String, FieldType)>),
     /// A type whose values are not records or variants (`Int`, `List`).
     Opaque,
@@ -96,8 +107,19 @@ impl TypeInfo {
         }
     }
 
-    /// Whether this is the type of the records an anonymous record
-    /// literal builds, which stand for any record of their shape.
+    /// Whether this is a builtin type: one of the first definitions,
+    /// which a program's types come after.
+    pub fn is_builtin(&self) -> bool {
+        (self.id.0.0 as usize) < crate::defs::builtin_types().len()
+    }
+
+    /// Where a record of the type holds its field `name`.
+    pub fn field_index(&self, name: &str) -> Option<usize> {
+        self.fields().iter().position(|(field, _)| field == name)
+    }
+
+    /// Whether this is the type of an anonymous record: one of the
+    /// descriptions [`anon_record_type`] gives, which share one id.
     pub fn is_anon(&self) -> bool {
         self.id == ty::ANON_RECORD
     }
@@ -130,6 +152,14 @@ pub enum FieldType {
     Unsupported(String),
 }
 
+impl FieldType {
+    /// The type of a field no decoder is ever asked for: a builtin
+    /// record's, an anonymous record's.
+    fn undecoded() -> FieldType {
+        FieldType::Unsupported(String::new())
+    }
+}
+
 /// The variant of a variant value: its type and the position of its
 /// declaration in the type.
 #[derive(Clone)]
@@ -153,6 +183,11 @@ impl Tag {
 
     pub fn ty(&self) -> &Arc<TypeInfo> {
         &self.ty
+    }
+
+    /// The type alone.
+    pub fn into_ty(self) -> Arc<TypeInfo> {
+        self.ty
     }
 
     pub fn type_id(&self) -> TypeId {
@@ -489,19 +524,13 @@ const HANDLE_VARIANTS: &[(&str, &[(&str, usize)])] = &[
     ),
 ];
 
-/// The builtin record types a builtin builds.
-const BUILTIN_RECORDS: &[&str] = &[
-    "Date",
-    "Time",
-    "DateTime",
-    "Duration",
-    "Instant",
-    "FileStat",
-    "Response",
-    "Request",
-    "QueryResult",
-    "ExecResult",
-    "Notification",
+/// The builtin record types the builtin registry does not declare (the
+/// checker has them opaque: a program reads no field of them), with
+/// their fields. The other builtin records are the registry's `pub
+/// type` declarations.
+const OPAQUE_RECORDS: &[(&str, &[&str])] = &[
+    ("QueryResult", &["row_count", "rows"]),
+    ("ExecResult", &["affected", "returning"]),
 ];
 
 /// The description of every builtin type, indexed by id.
@@ -515,6 +544,17 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                 .chain(HANDLE_VARIANTS)
                 .map(|(name, variants)| (*name, *variants))
                 .collect();
+        let registry = crate::builtins::registry::registry();
+        let records: HashMap<&str, &[&str]> = registry
+            .types()
+            .filter_map(|(_, ty)| match &ty.shape {
+                crate::builtins::registry::TypeShape::Record(fields) => {
+                    Some((ty.name, fields.as_slice()))
+                }
+                crate::builtins::registry::TypeShape::Enum(_) => None,
+            })
+            .chain(OPAQUE_RECORDS.iter().copied())
+            .collect();
         crate::defs::builtin_types()
             .iter()
             .enumerate()
@@ -529,10 +569,17 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                             })
                             .collect(),
                     ),
-                    None if BUILTIN_RECORDS.contains(name) || k == ty::ANON_RECORD.0.0 as usize => {
-                        Shape::Record(Vec::new())
-                    }
-                    None => Shape::Opaque,
+                    None => match records.get(name) {
+                        Some(fields) => Shape::Record(
+                            fields
+                                .iter()
+                                .map(|field| ((*field).to_string(), FieldType::undecoded()))
+                                .collect(),
+                        ),
+                        // (The anonymous record without fields, `{}`.)
+                        None if k == ty::ANON_RECORD.0.0 as usize => Shape::Record(Vec::new()),
+                        None => Shape::Opaque,
+                    },
                 };
                 Arc::new(TypeInfo {
                     id: TypeId(DefId(k as u32)),
@@ -558,6 +605,59 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
             }]),
         })]
     })
+}
+
+/// The type of the anonymous records whose fields are `names`, which
+/// are in name order and distinct: one description for each set of
+/// names, made when it is first asked for and kept for the life of the
+/// process. A record literal's is a constant of its code; a rest
+/// pattern and a spread ask where the code runs.
+pub fn anon_record_type<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Arc<TypeInfo> {
+    // The descriptions by the hash of their names.
+    static TYPES: OnceLock<RwLock<HashMap<u64, Vec<Arc<TypeInfo>>>>> = OnceLock::new();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut count = 0usize;
+    for name in names.clone() {
+        name.hash(&mut hasher);
+        count += 1;
+    }
+    if count == 0 {
+        return builtin_type(ty::ANON_RECORD).clone();
+    }
+    let hash = hasher.finish();
+    let is_it = |info: &Arc<TypeInfo>| {
+        info.fields().len() == count
+            && info
+                .fields()
+                .iter()
+                .map(|(field, _)| &**field)
+                .eq(names.clone())
+    };
+    let types = TYPES.get_or_init(Default::default);
+    if let Some(known) = types
+        .read()
+        .get(&hash)
+        .and_then(|of| of.iter().find(|info| is_it(info)))
+    {
+        return known.clone();
+    }
+    let mut types = types.write();
+    let of_hash = types.entry(hash).or_default();
+    if let Some(known) = of_hash.iter().find(|info| is_it(info)) {
+        return known.clone();
+    }
+    let anon = builtin_type(ty::ANON_RECORD);
+    let info = Arc::new(TypeInfo {
+        id: anon.id,
+        name: anon.name.clone(),
+        shape: Shape::Record(
+            names
+                .map(|name| (name.to_string(), FieldType::undecoded()))
+                .collect(),
+        ),
+    });
+    of_hash.push(info.clone());
+    info
 }
 
 /// The description of the builtin type `id`. Panics on the id of a type
@@ -596,6 +696,65 @@ mod tests {
         });
         assert!(builtin_types().get(id.0 as usize).is_none());
         assert!(id.0 as usize >= crate::defs::builtin_types().len());
+    }
+
+    /// A builtin record type lists the fields its declaration in the
+    /// builtin registry gives it, in that order: the order a builtin
+    /// builds the record in, and the places the compiler reads its
+    /// fields at.
+    #[test]
+    fn a_builtin_record_type_lists_its_declared_fields() {
+        let fields = |id: TypeId| -> Vec<&str> {
+            let fields = builtin_type(id).fields().iter();
+            fields.map(|(name, _)| name.as_str()).collect()
+        };
+        assert_eq!(fields(ty::DATE), ["year", "month", "day"]);
+        assert_eq!(fields(ty::TIME), ["hour", "minute", "second", "ns"]);
+        assert_eq!(fields(ty::DATE_TIME), ["date", "time"]);
+        assert_eq!(fields(ty::DURATION), ["ns"]);
+        assert_eq!(fields(ty::INSTANT), ["epoch_ns"]);
+        assert_eq!(fields(ty::RESPONSE), ["status", "body", "headers"]);
+        assert_eq!(
+            fields(ty::REQUEST),
+            ["method", "path", "query", "headers", "body"]
+        );
+        assert_eq!(fields(ty::NOTIFICATION), ["channel", "payload", "pid"]);
+        assert_eq!(fields(ty::QUERY_RESULT), ["row_count", "rows"]);
+        assert_eq!(fields(ty::EXEC_RESULT), ["affected", "returning"]);
+        assert_eq!(fields(ty::FILE_STAT).len(), 9);
+        assert_eq!(fields(ty::FILE_STAT)[0], "size");
+        assert!(fields(ty::ANON_RECORD).is_empty());
+        // Every record type the registry declares, and no enum.
+        for (_, decl) in crate::builtins::registry::registry().types() {
+            let info = builtin_type_named(decl.name).expect("a builtin type");
+            match &decl.shape {
+                crate::builtins::registry::TypeShape::Record(declared) => {
+                    assert_eq!(&fields(info.id), declared, "{}", decl.name);
+                    assert!(info.is_builtin());
+                }
+                crate::builtins::registry::TypeShape::Enum(_) => {
+                    assert!(info.fields().is_empty(), "{}", decl.name);
+                }
+            }
+        }
+    }
+
+    /// One description for each set of names of an anonymous record.
+    #[test]
+    fn an_anonymous_record_type_is_made_once_for_its_names() {
+        let a = anon_record_type(["age", "name"].into_iter());
+        let b = anon_record_type(["age", "name"].into_iter());
+        let c = anon_record_type(["age", "names"].into_iter());
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!(!Arc::ptr_eq(&a, &c));
+        assert!(a.is_anon() && c.is_anon() && a.is_builtin());
+        assert_eq!(a.name, crate::defs::ANON_RECORD);
+        assert_eq!(a.field_index("name"), Some(1));
+        assert_eq!(a.field_index("names"), None);
+        assert!(Arc::ptr_eq(
+            &anon_record_type([].into_iter()),
+            builtin_type(ty::ANON_RECORD)
+        ));
     }
 
     /// Each `bv::` constant is the variant it is named after, with the

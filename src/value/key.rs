@@ -1,93 +1,187 @@
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use super::{MAX_RANGE_MATERIALIZE, Value};
-use crate::typeinfo::ty;
+use super::list::Elements;
+use super::{List, Record, Value, Variant};
+use crate::typeinfo::{TypeInfo, ty};
 
-/// Compare a named field in two record field maps.
-fn cmp_record_field(
-    a: &BTreeMap<String, Value>,
-    b: &BTreeMap<String, Value>,
-    key: &str,
-) -> Ordering {
-    match (a.get(key), b.get(key)) {
-        (Some(x), Some(y)) => x.cmp(y),
-        (Some(_), None) => Ordering::Greater,
-        (None, Some(_)) => Ordering::Less,
-        (None, None) => Ordering::Equal,
-    }
-}
-
-/// Materialized length of the inclusive range `lo..=hi`, clamped to 0 when
-/// empty and saturating to `i64::MAX` for ranges larger than `i64::MAX`
-/// elements (e.g. `i64::MIN..=i64::MAX`). Computed via `i128` to avoid
-/// overflow on the subtraction/addition. L2 fix: the old implementation
-/// computed `hi - lo + 1` directly in i64, which panicked in debug and
-/// wrapped in release builds for extreme ranges.
-fn range_len(lo: i64, hi: i64) -> i64 {
-    if lo > hi {
-        return 0;
-    }
-    let len = (hi as i128) - (lo as i128) + 1;
-    if len > i64::MAX as i128 {
-        i64::MAX
-    } else {
-        len as i64
-    }
-}
-
-/// Compare a `List` and a `Range` for equality. Returns `true` when the list
-/// has exactly the same materialized elements as the range (all `Int`s in
-/// ascending order from `lo` to `hi` inclusive).
-fn list_eq_range(list: &[Value], lo: i64, hi: i64) -> bool {
-    let len = range_len(lo, hi);
-    if list.len() as i64 != len {
-        return false;
-    }
-    if len == 0 {
-        return true;
-    }
-    // Zip the list against an increasing counter so the intent (one
-    // list item per integer in [lo, hi]) is structural.
-    for (cur, item) in (lo..=hi).zip(list.iter()) {
-        match item {
-            Value::Int(n) if *n == cur => {}
-            _ => return false,
-        }
-    }
-    true
-}
-
-/// Lexicographically compare a `List` and a `Range`.
+/// The order of a list that holds the elements `items` and the list
+/// of the Ints from `lo` to `hi`: element by element, and a list that
+/// ends first is the lesser.
 ///
-/// Treats the range as its materialized sequence of `Int`s from `lo` to `hi`
-/// inclusive. When `list_first` is true, `list` is the left-hand side; when
-/// false, the range is the left-hand side and the resulting ordering is
-/// reversed accordingly.
-pub(crate) fn cmp_list_range(list: &[Value], lo: i64, hi: i64, list_first: bool) -> Ordering {
-    let range_len = range_len(lo, hi);
-    let common = (list.len() as i64).min(range_len);
-    for i in 0..common {
-        let range_val = Value::Int(lo + i);
-        let list_item = &list[i as usize];
-        let ord = if list_first {
-            list_item.cmp(&range_val)
-        } else {
-            range_val.cmp(list_item)
-        };
-        if ord != Ordering::Equal {
-            return ord;
+/// Never inlined: comparing a value nested a million levels deep comes
+/// through `List`'s `eq` and `cmp` once a level, and with this loop
+/// inside them each level kept 112 bytes of the native stack where the
+/// comparison of two slices alone keeps none (it is their last call).
+/// tests/lang/deep_value_stack_tests.rs runs at that depth.
+#[inline(never)]
+fn cmp_items_ints(items: &[Value], lo: i64, hi: i64) -> Ordering {
+    for (item, n) in items.iter().zip(lo..=hi) {
+        let ordering = item.cmp(&Value::Int(n));
+        if ordering.is_ne() {
+            return ordering;
         }
     }
-    // Shared prefix is equal — the shorter side is less.
-    let list_len = list.len() as i64;
-    let len_ord = list_len.cmp(&range_len);
-    if list_first {
-        len_ord
-    } else {
-        len_ord.reverse()
+    (items.len() as u64).cmp(&(hi.abs_diff(lo) + 1))
+}
+
+/// Two lists are equal if they have the same elements, however each is
+/// stored.
+impl PartialEq for List {
+    fn eq(&self, other: &List) -> bool {
+        match (self.elements(), other.elements()) {
+            (Elements::Items(a), Elements::Items(b)) => a == b,
+            (Elements::Ints(a_lo, a_hi), Elements::Ints(b_lo, b_hi)) => {
+                a_lo == b_lo && a_hi == b_hi
+            }
+            (Elements::Items(items), Elements::Ints(lo, hi))
+            | (Elements::Ints(lo, hi), Elements::Items(items)) => {
+                cmp_items_ints(items, lo, hi).is_eq()
+            }
+        }
+    }
+}
+
+impl Eq for List {}
+
+impl PartialOrd for List {
+    fn partial_cmp(&self, other: &List) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for List {
+    fn cmp(&self, other: &List) -> Ordering {
+        match (self.elements(), other.elements()) {
+            (Elements::Items(a), Elements::Items(b)) => a.cmp(b),
+            // Of two runs of Ints the one that begins lower is the
+            // lesser, and of two that begin alike the shorter.
+            (Elements::Ints(a_lo, a_hi), Elements::Ints(b_lo, b_hi)) => {
+                a_lo.cmp(&b_lo).then(a_hi.cmp(&b_hi))
+            }
+            (Elements::Items(items), Elements::Ints(lo, hi)) => cmp_items_ints(items, lo, hi),
+            (Elements::Ints(lo, hi), Elements::Items(items)) => {
+                cmp_items_ints(items, lo, hi).reverse()
+            }
+        }
+    }
+}
+
+/// Equal lists hash alike however each is stored, and a list that
+/// holds no element (`0..4000000000`) is not walked for its hash: a
+/// list of Ints that each are one more than the one before is hashed
+/// by its length and its first element, whether it holds them or not.
+/// (A list that holds them is read once for that, up to the first
+/// element that does not fit, and its hash is as much work again.)
+impl Hash for List {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.len().hash(state);
+        if let Some((lo, _)) = self.ascending_ints() {
+            state.write_u8(1);
+            lo.hash(state);
+            return;
+        }
+        state.write_u8(0);
+        if let Elements::Items(items) = self.elements() {
+            for item in items {
+                item.hash(state);
+            }
+        }
+    }
+}
+
+/// Two variants are equal if they are the same variant of the same
+/// type and their fields are equal.
+impl PartialEq for Variant {
+    fn eq(&self, other: &Variant) -> bool {
+        self.ordinal() == other.ordinal()
+            && self.type_id() == other.type_id()
+            && self.fields() == other.fields()
+    }
+}
+
+impl Eq for Variant {}
+
+impl PartialOrd for Variant {
+    fn partial_cmp(&self, other: &Variant) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Variants of one type order by declaration, then by their fields;
+/// variants of two types (which a program cannot compare) by their
+/// types' ids.
+impl Ord for Variant {
+    fn cmp(&self, other: &Variant) -> Ordering {
+        match (self.type_id(), self.ordinal()).cmp(&(other.type_id(), other.ordinal())) {
+            Ordering::Equal => self.fields().cmp(other.fields()),
+            unequal => unequal,
+        }
+    }
+}
+
+/// Whether the type of `record` declares its fields in the order of
+/// their names (an anonymous record's type does).
+fn in_name_order(record: &Record) -> bool {
+    record.ty().fields().is_sorted_by(|(a, _), (b, _)| a <= b)
+}
+
+/// Whether records of the type `ty` are ordered by their fields in
+/// name order: a builtin record but `Date`, `Time` and `DateTime`,
+/// which like a record of a program's type go in the order of their
+/// declaration, the largest unit first.
+fn ordered_by_name(ty: &TypeInfo) -> bool {
+    ty.is_builtin() && !matches!(ty.id, ty::DATE | ty::TIME | ty::DATE_TIME)
+}
+
+/// Two records of one declared type are equal if their fields are.
+///
+/// The typechecker let a nominal record and an anonymous record of the
+/// same shape meet (`unify_anon_nominal`) with no change to the value,
+/// so when either side is anonymous the fields alone decide, by their
+/// names. Two nominal types (`Person{x:1}` vs `Car{x:1}`) are never
+/// unified and compare unequal.
+impl PartialEq for Record {
+    fn eq(&self, other: &Record) -> bool {
+        let (a, b) = (self.ty(), other.ty());
+        if Arc::ptr_eq(a, b) || (a.id == b.id && !a.is_anon()) {
+            return self.fields() == other.fields();
+        }
+        (a.is_anon() || b.is_anon()) && self.by_name() == other.by_name()
+    }
+}
+
+impl Eq for Record {}
+
+impl PartialOrd for Record {
+    fn partial_cmp(&self, other: &Record) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Records of one declared type order by their fields in the order the
+/// type declares them; records of two types by the types' ids.
+///
+/// Mirror the `<anon>` wildcard of `PartialEq`: when either side is an
+/// anonymous record, the typechecker has already decided these are the
+/// same type, and Ord must agree so that `a == b ⇒ cmp(a, b) == Equal`;
+/// otherwise BTreeSet / BTreeMap would treat equal values as distinct.
+/// An anonymous record, which has no declaration, orders by its fields
+/// in name order, and so does a builtin record (`ordered_by_name`).
+impl Ord for Record {
+    fn cmp(&self, other: &Record) -> Ordering {
+        let (a, b) = (self.ty(), other.ty());
+        if Arc::ptr_eq(a, b) && a.is_anon() {
+            return self.named().cmp(other.named());
+        }
+        if a.is_anon() || b.is_anon() {
+            return self.by_name().cmp(&other.by_name());
+        }
+        a.id.cmp(&b.id).then_with(|| match ordered_by_name(a) {
+            true => self.by_name().cmp(&other.by_name()),
+            false => self.fields().cmp(other.fields()),
+        })
     }
 }
 
@@ -99,42 +193,12 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
-            (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
+            (Value::Variant(a), Value::Variant(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
-            (Value::Range(a1, a2), Value::Range(b1, b2)) => {
-                // Two ranges are equal iff they materialize to the same
-                // sequence. Empty ranges (`lo > hi`) are all equal to each
-                // other regardless of their endpoints.
-                let (a_lo, a_hi) = (*a1, *a2);
-                let (b_lo, b_hi) = (*b1, *b2);
-                let a_empty = a_lo > a_hi;
-                let b_empty = b_lo > b_hi;
-                if a_empty || b_empty {
-                    a_empty && b_empty
-                } else {
-                    a_lo == b_lo && a_hi == b_hi
-                }
-            }
-            // Range vs List: the typechecker gives `Range(..)` the type
-            // `List(Int)`, so the two sides share a Silt type and must have
-            // a defined equality. Walk the range and list element-wise.
-            (Value::List(list), Value::Range(lo, hi)) => list_eq_range(list.as_ref(), *lo, *hi),
-            (Value::Range(lo, hi), Value::List(list)) => list_eq_range(list.as_ref(), *lo, *hi),
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
-            // The typechecker lets a nominal record and an anonymous
-            // record of the same shape meet (`unify_anon_nominal`) with
-            // no change to the value, so when either side is anonymous
-            // the fields alone decide. Two nominal types (`Person{x:1}`
-            // vs `Car{x:1}`) are never unified and compare unequal.
-            (Value::Record(ta, fa), Value::Record(tb, fb)) => {
-                if ta.is_anon() || tb.is_anon() {
-                    fa == fb
-                } else {
-                    ta.id == tb.id && fa == fb
-                }
-            }
+            (Value::Record(a), Value::Record(b)) => a == b,
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id == b.id,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id() == b.id(),
@@ -188,7 +252,6 @@ impl Ord for Value {
                 Value::Float(_) => 3,
                 Value::String(_) => 5,
                 Value::List(_) => 6,
-                Value::Range(..) => 6, // same discriminant as List for ordering
                 Value::Tuple(_) => 7,
                 Value::Map(_) => 8,
                 Value::Set(_) => 9,
@@ -224,72 +287,12 @@ impl Ord for Value {
                 a.partial_cmp(b).unwrap_or(Ordering::Equal)
             }
             (Value::String(a), Value::String(b)) => a.cmp(b),
-            (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
-            (Value::Range(a1, a2), Value::Range(b1, b2)) => {
-                // Lexicographically compare materialized ranges. Empty ranges
-                // (lo > hi) are all equal regardless of endpoints.
-                let (al, ah) = (*a1, *a2);
-                let (bl, bh) = (*b1, *b2);
-                let a_len = range_len(al, ah);
-                let b_len = range_len(bl, bh);
-                if a_len == 0 || b_len == 0 {
-                    a_len.cmp(&b_len)
-                } else {
-                    al.cmp(&bl).then_with(|| a_len.cmp(&b_len))
-                }
-            }
-            // Range vs List: walk element-wise. Required for Ord/PartialOrd
-            // consistency with PartialEq when the typechecker hands both
-            // sides the same `List(Int)` type.
-            (Value::List(list), Value::Range(lo, hi)) => {
-                cmp_list_range(list.as_ref(), *lo, *hi, true)
-            }
-            (Value::Range(lo, hi), Value::List(list)) => {
-                cmp_list_range(list.as_ref(), *lo, *hi, false)
-            }
+            (Value::List(a), Value::List(b)) => a.cmp(b),
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),
             (Value::Set(a), Value::Set(b)) => a.iter().cmp(b.iter()),
-            (Value::Record(ta, fa), Value::Record(tb, fb)) => {
-                // Mirror the `<anon>` wildcard of `PartialEq`: when either
-                // side is an anonymous record, the typechecker has
-                // already decided these are the same type, and Ord must
-                // agree so that `a == b ⇒ cmp(a, b) == Equal`; otherwise
-                // BTreeSet / BTreeMap would treat equal values as
-                // distinct. Records of one builtin time type order by
-                // their fields from the largest unit down; a record of
-                // a declared type by its fields in the order the type
-                // declares them; an anonymous record, which has no
-                // declaration, by its fields in name order.
-                if ta.is_anon() || tb.is_anon() {
-                    fa.iter().cmp(fb.iter())
-                } else {
-                    ta.id.cmp(&tb.id).then_with(|| match ta.id {
-                        ty::DATE => cmp_record_field(fa, fb, "year")
-                            .then_with(|| cmp_record_field(fa, fb, "month"))
-                            .then_with(|| cmp_record_field(fa, fb, "day")),
-                        ty::TIME => cmp_record_field(fa, fb, "hour")
-                            .then_with(|| cmp_record_field(fa, fb, "minute"))
-                            .then_with(|| cmp_record_field(fa, fb, "second"))
-                            .then_with(|| cmp_record_field(fa, fb, "ns")),
-                        ty::DATE_TIME => cmp_record_field(fa, fb, "date")
-                            .then_with(|| cmp_record_field(fa, fb, "time")),
-                        _ => match &ta.shape {
-                            crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
-                                declared
-                                    .iter()
-                                    .map(|(name, _)| cmp_record_field(fa, fb, name))
-                                    .find(|ordering| ordering.is_ne())
-                                    .unwrap_or(Ordering::Equal)
-                            }
-                            _ => fa.iter().cmp(fb.iter()),
-                        },
-                    })
-                }
-            }
-            // Variants of one enum order by declaration, then by their
-            // fields (see `Tag`'s `Ord`).
-            (Value::Variant(ta, fa), Value::Variant(tb, fb)) => ta.cmp(tb).then_with(|| fa.cmp(fb)),
+            (Value::Record(a), Value::Record(b)) => a.cmp(b),
+            (Value::Variant(a), Value::Variant(b)) => a.cmp(b),
             (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id().cmp(&b.id()),
@@ -322,12 +325,6 @@ impl Ord for Value {
 
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Explicit per-category tags (NOT `std::mem::discriminant(self)`):
-        // the Hash/Eq contract requires that `a == b ⇒ hash(a) == hash(b)`,
-        // and `PartialEq` admits a cross-discriminant equal pair:
-        // `List(xs) == Range(lo, hi)` when xs materializes the range.
-        // Therefore List and Range MUST share a tag AND hash the same
-        // materialized sequence.
         match self {
             Value::Unit => {
                 state.write_u8(0);
@@ -355,59 +352,14 @@ impl Hash for Value {
                 state.write_u8(4);
                 s.hash(state);
             }
-            // List and Range share tag 5 (any-list-shape). Range hashes its
-            // materialized `[Int(lo), Int(lo+1), ..., Int(hi)]` sequence so
-            // the contract holds: a `List` and a `Range` that compare equal
-            // produce the same byte stream into the hasher.
             Value::List(xs) => {
                 state.write_u8(5);
-                xs.len().hash(state);
-                for x in xs.iter() {
-                    x.hash(state);
-                }
-            }
-            // Round 92 (BROKEN): the element-by-element walk below used to be
-            // unconditional, so `(0..4_000_000_000).hash()` spun ~4e9
-            // iterations inside a single opcode — uninterruptible by the
-            // time-slice scheduler — and `0..i64::MAX` hung forever. The walk
-            // is now capped at `MAX_RANGE_MATERIALIZE`; over-cap ranges hash a
-            // closed form of their endpoints instead. This preserves the
-            // Hash/Eq contract (`a == b ⇒ hash(a) == hash(b)`, round 74):
-            //   - within the cap: identical byte stream to the equal `List`
-            //     (`tag 5, len, Int(lo) .. Int(hi)`), so List ↔ Range equal
-            //     pairs still hash equal;
-            //   - over the cap: every list-producing site enforces
-            //     `MAX_RANGE_MATERIALIZE` (vm/iter.rs, builtins/*), so no
-            //     `Value::List` can ever have > cap elements and no List can
-            //     compare equal to an over-cap Range. The only values equal
-            //     to such a Range are Ranges, and non-empty equal Ranges have
-            //     identical endpoints (see `PartialEq` ~line 1693), so
-            //     hashing `(len, lo, hi)` is contract-safe. (Empty ranges all
-            //     compare equal regardless of endpoints; they take the
-            //     `len == 0` path and hash only `(tag, 0)`, as before.)
-            // Doing the cap inside `impl Hash` (rather than erroring in the
-            // dispatch arm) also bounds nested walks for free: `.hash()`
-            // on records/variants/tuples/lists recurses into this arm for
-            // embedded range fields.
-            Value::Range(lo, hi) => {
-                state.write_u8(5);
-                let len = range_len(*lo, *hi);
-                (len as usize).hash(state);
-                if len > 0 {
-                    if len as u128 <= MAX_RANGE_MATERIALIZE as u128 {
-                        for n in *lo..=*hi {
-                            Value::Int(n).hash(state);
-                        }
-                    } else {
-                        lo.hash(state);
-                        hi.hash(state);
-                    }
-                }
+                xs.hash(state);
             }
             Value::Tuple(vs) => {
                 state.write_u8(6);
                 vs.len().hash(state);
-                for v in vs {
+                for v in vs.iter() {
                     v.hash(state);
                 }
             }
@@ -426,24 +378,31 @@ impl Hash for Value {
                     v.hash(state);
                 }
             }
-            Value::Record(_, fields) => {
+            Value::Record(record) => {
                 state.write_u8(9);
                 // Do NOT hash the type. `PartialEq` treats an anonymous
                 // record as equal to a nominal one with the same fields
                 // (the `<anon>` wildcard), so the Hash contract `a == b ⇒
                 // hash(a) == hash(b)` requires the same fields to hash to
-                // the same value whatever the type. Two distinct nominal
-                // types with the same fields (`Person{x:1}` vs
+                // the same value whatever the type, and so in one
+                // order whatever the type's: the names'. Two distinct
+                // nominal types with the same fields (`Person{x:1}` vs
                 // `Car{x:1}`) still compare unequal, so they just
                 // hash-collide and are told apart by Eq.
-                for (k, v) in fields.iter() {
-                    k.hash(state);
-                    v.hash(state);
+                let mut field = |(name, value): (&str, &Value)| {
+                    name.hash(state);
+                    value.hash(state);
+                };
+                match in_name_order(record) {
+                    true => record.named().for_each(&mut field),
+                    false => record.by_name().into_iter().for_each(&mut field),
                 }
             }
-            Value::Variant(tag, fields) => {
+            Value::Variant(variant) => {
                 state.write_u8(10);
-                tag.hash(state);
+                variant.type_id().hash(state);
+                variant.ordinal().hash(state);
+                let fields = variant.fields();
                 fields.len().hash(state);
                 for f in fields {
                     f.hash(state);
@@ -497,26 +456,5 @@ impl Hash for Value {
                 name.hash(state);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── range_len overflow regression (L2) ──────────────────────────
-
-    /// L2: `range_len(i64::MIN, i64::MAX)` used to overflow at
-    /// `hi - lo + 1`. After fix it must saturate to `i64::MAX`.
-    #[test]
-    fn range_len_no_overflow_on_full_i64_range() {
-        assert_eq!(range_len(i64::MIN, i64::MAX), i64::MAX);
-        assert_eq!(range_len(0, i64::MAX), i64::MAX);
-        assert_eq!(range_len(i64::MIN, 0), i64::MAX);
-        assert_eq!(range_len(i64::MIN, -1), i64::MAX);
-        // Normal small ranges still work.
-        assert_eq!(range_len(1, 5), 5);
-        assert_eq!(range_len(0, 0), 1);
-        assert_eq!(range_len(10, 5), 0); // empty
     }
 }
