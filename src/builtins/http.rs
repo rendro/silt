@@ -690,7 +690,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
 ///
 /// What is there to be read, and what the system takes of a response
 /// at once, is read and written where the task runs, without waiting
-/// ([`TcpStreamHandle::read_now`], [`TcpStreamHandle::write_now`]): a
+/// ([`TcpStreamHandle::read_now`], [`TcpStreamHandle::write_in_turn`]): a
 /// request that has arrived is answered without a thread changing
 /// hands. Whatever has to be waited for (a request that has not come,
 /// a body, a client that takes its response slowly) is an operation of
@@ -851,9 +851,21 @@ impl Conn {
             .submit(not_served, move || {
                 let mut before_body = |waits: bool| {
                     let _ = announced.complete((), scheduler.wake());
-                    match waits {
-                        true => stream.write_all(wire::CONTINUE),
-                        false => Ok(()),
+                    // The interim response is written like everything
+                    // that the connection's task writes itself: what
+                    // the system takes at once. The task may have its
+                    // last word to say meanwhile, and waits for this
+                    // write to say it. A client that waits takes these
+                    // bytes at once; where the system does not take
+                    // all of them (a client that sent requests ahead
+                    // and reads nothing), half an interim response
+                    // would stand before whatever came next: the
+                    // connection ends here.
+                    match !waits || stream.write_whole_in_turn(wire::CONTINUE) {
+                        true => Ok(()),
+                        false => Err(std::io::Error::other(
+                            "the client did not take the interim response",
+                        )),
                     }
                 };
                 let next = reader.lock().next(&mut before_body);
@@ -878,7 +890,7 @@ impl Conn {
     /// until the client has taken the rest, for at most
     /// [`wire::TRANSFER_TIME`].
     fn send(&mut self, vm: &mut Vm, bytes: Vec<u8>, then: Then) -> Go {
-        let written = self.stream.write_now(&bytes);
+        let written = self.stream.write_in_turn(&bytes);
         if written == bytes.len() {
             return self.sent(vm, then);
         }
@@ -1023,7 +1035,9 @@ impl Conn {
                     false => Conn::END,
                     true => {
                         let bytes = plain_response(vm, 408, wire::reason(408), Reply::LAST);
-                        let _ = self.stream.write_now(&bytes);
+                        // (After the interim response, if the reader's
+                        // thread is writing it.)
+                        let _ = self.stream.write_in_turn(&bytes);
                         self.stream.end_writes();
                         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
                             .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
@@ -1098,7 +1112,7 @@ impl crate::vm::Native for Conn {
                 };
                 let Some(e) = failure else {
                     let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
-                    let _ = self.stream.write_now(&bytes);
+                    let _ = self.stream.write_in_turn(&bytes);
                     return;
                 };
                 // The failure is handled here: it is logged, and not
@@ -1114,16 +1128,16 @@ impl crate::vm::Native for Conn {
                     .err(&format!("http.serve: handler error: {e}\n"));
                 if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
                     let bytes = plain_response(vm, 500, wire::reason(500), unavailable);
-                    let _ = self.stream.write_now(&bytes);
+                    let _ = self.stream.write_in_turn(&bytes);
                 }
             }
             // The answer that a task took over and could not send.
             ConnState::Answering { bytes, .. } => {
-                let _ = self.stream.write_now(&bytes);
+                let _ = self.stream.write_in_turn(&bytes);
             }
             ConnState::Reading { in_body: true, .. } => {
                 let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
-                let _ = self.stream.write_now(&bytes);
+                let _ = self.stream.write_in_turn(&bytes);
             }
             // Nothing is in flight: between requests, or the response
             // is on its way.

@@ -585,18 +585,40 @@ impl TcpStreamHandle {
         }
     }
 
-    /// Write what of `bytes` the system takes at once, without waiting
-    /// for anything, and say how much that was: for a writer that
-    /// must not wait where it is (a worker of the scheduler, a task
-    /// that is being dropped). Nothing if a write is in flight, or the
-    /// connection is closed or not a plain one.
+    /// Write what of `bytes` the system takes at once, and say how
+    /// much that was: for a writer that must not wait for the system
+    /// where it is (a worker of the scheduler, a task that is being
+    /// dropped). Nothing if the connection is closed or not a plain
+    /// one.
+    ///
+    /// The writer has its turn after a write that is in flight, and
+    /// waits for that turn. So this is for a connection on which no
+    /// write that waits for the system ([`TcpStreamHandle::write_all`])
+    /// is in flight when it is called: a connection of `http.serve`,
+    /// whose task writes nothing while the rest of a response is on
+    /// its way and ends the connection if it gives that up. Whoever
+    /// has the turn then is in a call of this kind itself: it asks
+    /// the system for what it takes at once, and does nothing else
+    /// under the lock. The wait is as long as that, and a thread of
+    /// the scheduler that waits here is not held: the other writer
+    /// needs nothing of the scheduler to finish.
     ///
     /// A read of the connection may be in flight on another thread
     /// meanwhile: it is not disturbed (see `send_now`).
-    pub fn write_now(&self, bytes: &[u8]) -> usize {
-        if self.is_closed() {
-            return 0;
-        }
+    pub fn write_in_turn(&self, bytes: &[u8]) -> usize {
+        self.write_at_once(bytes, false)
+    }
+
+    /// [`TcpStreamHandle::write_in_turn`] for bytes that mean nothing
+    /// in part (an interim response): whether the system took all of
+    /// them. If it did not, the connection is shut down before the
+    /// turn passes on: who writes next writes nothing, and not
+    /// something behind a part.
+    pub fn write_whole_in_turn(&self, bytes: &[u8]) -> bool {
+        self.write_at_once(bytes, true) == bytes.len()
+    }
+
+    fn write_at_once(&self, bytes: &[u8], whole: bool) -> usize {
         let TcpIo::Plain {
             socket,
             writing,
@@ -606,9 +628,12 @@ impl TcpStreamHandle {
         else {
             return 0;
         };
-        let Some(_turn) = writing.try_lock() else {
+        let _turn = writing.lock();
+        // Asked in its turn: a connection that the writer before shut
+        // down is closed for this one.
+        if self.is_closed() {
             return 0;
-        };
+        }
         let mut written = 0;
         while written < bytes.len() {
             match send_now(socket, switching, &bytes[written..]) {
@@ -617,6 +642,9 @@ impl TcpStreamHandle {
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
+        }
+        if whole && written < bytes.len() {
+            self.shut_down();
         }
         written
     }
@@ -1009,7 +1037,7 @@ mod tests {
         let mut written = 0;
         let mut full = false;
         for _ in 0..10_000 {
-            let n = conn.write_now(&chunk);
+            let n = conn.write_in_turn(&chunk);
             written += n;
             if n < chunk.len() {
                 full = true;
@@ -1023,7 +1051,7 @@ mod tests {
         // The reader is still waiting, and gets what the peer sends.
         for _ in 0..200 {
             peer.write_all(b"0123456789").expect("write");
-            let _ = conn.write_now(b"x");
+            let _ = conn.write_in_turn(b"x");
         }
         peer.shutdown(std::net::Shutdown::Write).expect("shutdown");
         let read = reader
@@ -1033,6 +1061,42 @@ mod tests {
         assert_eq!(read.len(), 2000);
         assert!(written > 0);
         assert_eq!(conn.read_now(&mut buf), Some(0));
+    }
+
+    /// Bytes that mean nothing in part are written whole, or the
+    /// connection ends with them: when the system takes no more for a
+    /// peer that reads nothing, the write says so, the connection is
+    /// closed for every writer that comes after, and the peer reads
+    /// what was written up to there and then the end.
+    #[test]
+    fn what_is_not_written_whole_ends_the_connection() {
+        use std::io::Read;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        let chunk = vec![b'w'; 64 * 1024];
+        let mut whole = 0;
+        while conn.write_whole_in_turn(&chunk) {
+            whole += 1;
+            assert!(
+                whole < 10_000,
+                "64 KiB x 10,000 were taken for a peer that reads nothing"
+            );
+        }
+        assert!(conn.is_closed());
+        assert_eq!(conn.write_in_turn(b"behind the part"), 0);
+        assert!(!conn.write_whole_in_turn(b"behind the part"));
+        // The whole chunks, a part of the last one, and nothing more.
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .expect("read timeout");
+        let mut all = Vec::new();
+        peer.read_to_end(&mut all).expect("the end");
+        assert!(
+            (whole * chunk.len()..(whole + 1) * chunk.len()).contains(&all.len()),
+            "{} bytes after {whole} whole chunks",
+            all.len()
+        );
+        assert!(all.iter().all(|byte| *byte == b'w'));
     }
 
     /// The form for systems without a call that does not wait: the
