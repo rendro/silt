@@ -482,7 +482,7 @@ fn through<const N: usize, V: Visit<N>>(
     let (names, mut runs) = match runs(values, visit)? {
         Runs::Of(names, runs) => (names, runs),
         Runs::Done => return Continue(()),
-        Runs::Not => return through_far(values, visit),
+        Runs::Not => return through_many(values, visit, depth),
     };
     loop {
         if V::NAMES
@@ -494,17 +494,53 @@ fn through<const N: usize, V: Visit<N>>(
         match first_of(&mut runs) {
             Among::All(next) => {
                 visit.heads(next)?;
-                if !has_parts(next[0]) {
-                    continue;
-                }
-                match depth < NEAR {
-                    true => through(next, visit, depth + 1)?,
-                    false => through_far(next, visit)?,
+                if has_parts(next[0]) {
+                    below(next, visit, depth)?;
                 }
             }
             Among::None => return Continue(()),
             Among::Some(ended) => return visit.uneven(ended),
         }
+    }
+}
+
+/// [`through`] for maps and for sets, whose parts are in no run.
+fn through_many<const N: usize, V: Visit<N>>(
+    values: [&Value; N],
+    visit: &mut V,
+    depth: usize,
+) -> ControlFlow<V::Stop> {
+    let (lens, mut parts) = Parts::of_many(values);
+    if let Some(lens) = lens {
+        visit.lens(lens)?;
+    }
+    loop {
+        match parts.next() {
+            Among::All(next) => {
+                visit.heads(next)?;
+                if has_parts(next[0]) {
+                    below(next, visit, depth)?;
+                }
+            }
+            Among::None => return Continue(()),
+            Among::Some(ended) => return visit.uneven(ended),
+        }
+    }
+}
+
+/// Go through the parts of `values`, which are parts of values `depth`
+/// levels down, with their heads visited and of one kind with parts:
+/// by a call if that is near where the walk began, with a stack of
+/// the walk's own if it is not.
+#[inline]
+fn below<const N: usize, V: Visit<N>>(
+    values: [&Value; N],
+    visit: &mut V,
+    depth: usize,
+) -> ControlFlow<V::Stop> {
+    match depth < NEAR {
+        true => through(values, visit, depth + 1),
+        false => through_far(values, visit),
     }
 }
 
@@ -530,8 +566,7 @@ fn parts<'a, const N: usize, V: Visit<N>>(
 }
 
 /// [`through`] with a stack of the walk's own for what it comes back
-/// to: for values nested deeper than a walk goes by calling itself,
-/// and for maps and sets.
+/// to: for values nested deeper than a walk goes by calling itself.
 fn through_far<'a, const N: usize, V: Visit<N>>(
     values: [&'a Value; N],
     visit: &mut V,

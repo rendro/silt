@@ -688,6 +688,61 @@ fn a_deep_value_is_compared_and_hashed_without_the_native_stack() {
     }
 }
 
+/// The walk goes down the first levels of a value by calling itself
+/// and the levels below with a stack of its own: what it finds does
+/// not depend on which. The hash of a value nested to any depth is the
+/// hash this test writes out by hand, and two values that differ at
+/// some depth are in the order of what differs there.
+#[test]
+fn the_key_of_a_value_does_not_depend_on_its_depth() {
+    use std::hash::Hasher;
+    // A value `depth` levels deep: a tuple of an Int, the value one
+    // level in (or the innermost Int) and a string.
+    fn nested(depth: usize, innermost: i64) -> Value {
+        (0..depth).fold(Value::Int(innermost), |inner, level| {
+            Value::tuple(vec![
+                Value::Int(level as i64),
+                inner,
+                Value::String("s".into()),
+            ])
+        })
+    }
+    // Its hash, written out: for a tuple its rank, the number of its
+    // items and the items; for an Int and a string its rank and it.
+    fn by_hand(depth: usize, innermost: i64, state: &mut DefaultHasher) {
+        match depth.checked_sub(1) {
+            None => {
+                state.write_u8(2);
+                innermost.hash(state);
+            }
+            Some(inner) => {
+                state.write_u8(6);
+                3usize.hash(state);
+                state.write_u8(2);
+                (inner as i64).hash(state);
+                by_hand(inner, innermost, state);
+                state.write_u8(4);
+                "s".hash(state);
+            }
+        }
+    }
+    for depth in [0, 1, 2, 15, 16, 17, 18, 33, 100] {
+        let value = nested(depth, 7);
+        let mut state = DefaultHasher::new();
+        by_hand(depth, 7, &mut state);
+        assert_eq!(hash_of(&value), state.finish(), "depth {depth}");
+        assert_eq!(value, nested(depth, 7), "depth {depth}");
+        assert_eq!(value.cmp(&nested(depth, 7)), Ordering::Equal);
+        assert_ne!(value, nested(depth, 8), "depth {depth}");
+        assert_eq!(
+            value.cmp(&nested(depth, 8)),
+            Ordering::Less,
+            "depth {depth}"
+        );
+        assert_eq!(nested(depth, 8).cmp(&value), Ordering::Greater);
+    }
+}
+
 /// A program's record type named like a builtin one prints as a
 /// record: Display is keyed by the builtin type's id, not its name.
 #[test]
