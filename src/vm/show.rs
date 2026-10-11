@@ -93,7 +93,7 @@ impl Vm {
         let Some(slot) = self.written_slot(value) else {
             return Ok(None);
         };
-        match self.globals.get(usize::from(slot)).cloned().flatten() {
+        match self.global(slot).cloned() {
             Some(display) => Ok(Some(display)),
             None => Err(VmError::type_confusion(format!(
                 "the `display` written for '{}' is called before it is set",

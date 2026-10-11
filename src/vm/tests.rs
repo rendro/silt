@@ -148,9 +148,40 @@ fn test_globals() {
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
-    vm.globals.push(None);
+    vm.globals = Arc::from([std::sync::OnceLock::new()]);
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(42));
+}
+
+/// The VM of a task has the program's global slots, not a copy of
+/// them; and a slot that is set again (a VM runs a second program)
+/// gets its value in slots of that VM's own, while a task of the
+/// first run keeps the ones it has.
+#[test]
+fn the_vm_of_a_task_shares_the_global_slots() {
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.globals = (0..3).map(|_| std::sync::OnceLock::new()).collect();
+    assert!(vm.set_global(0, Value::Int(1)));
+    let task = vm.spawn_child();
+    assert!(Arc::ptr_eq(&vm.globals, &task.globals));
+    // What is set later is the task's too.
+    assert!(vm.set_global(1, Value::Int(2)));
+    assert_eq!(task.global(1), Some(&Value::Int(2)));
+    assert_eq!(task.global(2), None);
+    assert!(!vm.set_global(3, Value::Int(0)));
+
+    assert!(vm.set_global(0, Value::Int(10)));
+    assert_eq!(vm.global(0), Some(&Value::Int(10)));
+    assert_eq!(vm.global(1), Some(&Value::Int(2)));
+    assert_eq!(task.global(0), Some(&Value::Int(1)));
+    assert!(!Arc::ptr_eq(&vm.globals, &task.globals));
+    // With no task holding them, the slots are set again where they
+    // are.
+    drop(task);
+    let slots = Arc::as_ptr(&vm.globals);
+    assert!(vm.set_global(1, Value::Int(20)));
+    assert_eq!(vm.global(1), Some(&Value::Int(20)));
+    assert!(std::ptr::eq(slots, Arc::as_ptr(&vm.globals)));
 }
 
 #[test]

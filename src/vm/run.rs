@@ -399,7 +399,7 @@ impl Vm {
         let method = self
             .global_slots
             .call_method(trait_index, receiver_type, method_name)
-            .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
+            .and_then(|slot| self.global(slot).cloned());
         if let Some(func) = method {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
@@ -652,8 +652,8 @@ impl Vm {
                 self.stack[base + slot] = value;
             }
             Instr::GetGlobal { slot } => {
-                let value = match self.globals.get(slot as usize) {
-                    Some(Some(value)) => value.clone(),
+                let value = match self.global(slot) {
+                    Some(value) => value.clone(),
                     // (The checker orders the top-level `let`s so that
                     // each is set before anything can read it, and the
                     // definitions are set before any `let` runs: no
@@ -668,14 +668,12 @@ impl Vm {
                 self.push(value);
             }
             Instr::SetGlobal { slot } => {
-                // A slot is installed the first time it is set: a VM that
-                // was handed no program (a test's) has none yet.
-                let slot = usize::from(slot);
                 let value = self.peek().clone();
-                if slot >= self.globals.len() {
-                    self.globals.resize(slot + 1, None);
+                if !self.set_global(slot, value) {
+                    return Err(VmError::type_confusion(format!(
+                        "the global slot {slot} is none of the program's"
+                    )));
                 }
-                self.globals[slot] = Some(value);
             }
             Instr::GetUpvalue { index } => {
                 let value = self.frame().closure.upvalues[index].clone();

@@ -274,3 +274,90 @@ fn a_return_costs_the_same_however_many_tail_calls_were_made() {
 fn a_return_from_a_function_a_builtin_calls_costs_the_same_at_any_depth() {
     assert_deep_recursion_is_linear("folded");
 }
+
+/// A program of `functions` functions whose `main` starts `tasks`
+/// tasks that each wait for a message nobody sends, prints their
+/// number when every one of them runs, and waits for a line of input.
+#[cfg(target_os = "linux")]
+fn waiting_tasks_program(functions: usize, tasks: usize) -> String {
+    let functions: String = (0..functions)
+        .map(|i| format!("fn g{i}(x: Int) -> Int {{\n  x + {i}\n}}\n\n"))
+        .collect();
+    format!(
+        "import channel
+import io
+import list
+import task
+
+{functions}fn main() {{
+  let never = channel.new(0)
+  let running = channel.new({tasks})
+  let handles = list.map(1..{tasks}) {{ i ->
+    task.spawn({{ ->
+      let _ = channel.send(running, i)
+      match channel.receive(never) {{
+        channel.Message(n) -> n + g0(i)
+        _ -> 0
+      }}
+    }})
+  }}
+  list.each(handles) {{ _ ->
+    let _ = channel.receive(running)
+  }}
+  println(list.length(handles))
+  let _ = io.read_line()
+}}
+"
+    )
+}
+
+/// A task is started with nothing of the program copied: the VMs of
+/// all tasks have the program's global slots in common. Each had a
+/// copy of them, so 5,000 waiting tasks of a program of 2,000
+/// functions held 400 MB; they hold some 30 MB.
+///
+/// What is measured is the most memory the program has had resident
+/// while its tasks wait (`VmHWM` of its process, which Linux gives).
+#[test]
+#[cfg(target_os = "linux")]
+fn five_thousand_waiting_tasks_share_the_programs_globals() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let programs = Programs::new("tasks");
+    let file = programs.file("tasks.silt", &waiting_tasks_program(2_000, 5_000));
+    let mut silt = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("silt runs");
+    // Every task runs, and waits or is about to.
+    let mut line = String::new();
+    BufReader::new(silt.stdout.as_mut().expect("the program's output"))
+        .read_line(&mut line)
+        .expect("the program's first line");
+    let status = std::fs::read_to_string(format!("/proc/{}/status", silt.id()))
+        .expect("the status of the program's process");
+    // (The program ends when it has its line.)
+    let mut stdin = silt.stdin.take().expect("the program's input");
+    stdin.write_all(b"\n").expect("a line for the program");
+    drop(stdin);
+    let output = silt.wait_with_output().expect("silt's output");
+    assert_eq!(
+        line.trim(),
+        "5000",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let resident: u64 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse().ok())
+        .expect("VmHWM, in kB");
+    assert!(
+        resident < 100 * 1024,
+        "5,000 waiting tasks of a program of 2,000 functions held {resident} kB"
+    );
+}
