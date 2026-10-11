@@ -173,6 +173,6 @@ fn golden_cases_that_run_and_succeed() {
         name.starts_with("tests/golden/") && !name.starts_with(REPROS)
     });
     let inputs = chosen(all);
-    let verdicts = run(&inputs, &skips);
+    let verdicts = run(&inputs);
     conclude("golden cases", &inputs, &verdicts, &skips);
 }

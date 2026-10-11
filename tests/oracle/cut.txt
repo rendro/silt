@@ -16,6 +16,11 @@ tests/golden/heavy/compute/stage7_perf__loop_sum.silt | a speed measurement: a l
 tests/golden/heavy/compute/stage7_perf__tail_calls.silt | a speed measurement: millions of tail calls
 tests/golden/lang/compiler/selection__impl_method_recursion_is_a_tail_call.silt | a tail-call depth test: millions of calls
 tests/golden/lang/compiler/selection__method_found_at_run_time_is_a_tail_call.silt | a tail-call depth test: millions of calls
+tests/golden/repros/compiler_vm/deep_nest_disp_1000000.silt | a value nested a million levels deep is built and shown: loops of millions of rounds
+tests/golden/repros/compiler_vm/deep_nest_drop_1000000.silt | a value nested a million levels deep is built and dropped: loops of millions of rounds
+tests/golden/repros/compiler_vm/deep_nest_eq_1000000.silt | a value nested a million levels deep is built and compared with `==`: loops of millions of rounds
+tests/golden/repros/compiler_vm/deep_nest_lt_1000000.silt | a value nested a million levels deep is built and compared with `<`: loops of millions of rounds
+tests/golden/repros/compiler_vm/deep_nest_set_1000000.silt | a value nested a million levels deep is built and put in a set: loops of millions of rounds
 tests/golden/repros/compiler_vm/mx_loop_nobind_nomatch.silt | `loop { loop() }`: it does not end
 tests/golden/repros/lang_design/cross_x4_loop_nobind.silt | `loop { loop() }`: it does not end
 tests/golden/repros/stdlib/t_ho1.silt | a speed measurement: five passes of callbacks over a list of a million

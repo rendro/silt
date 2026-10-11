@@ -238,11 +238,6 @@ pub enum Kind {
     InternalError,
     /// A run did not end.
     Hang,
-    /// A run ends the process it is in (an overflow of the native
-    /// stack). The oracle cannot see this from inside: an input that
-    /// does it is known by its line in the skip file, and is run
-    /// through the `silt` command instead (`sweep.rs`).
-    Abort,
     /// The program ends at one slice and is cut short at the other.
     OneSlice,
     /// The two runs disagree.
@@ -260,7 +255,6 @@ impl Kind {
             Kind::TypeConfusion => "type-confusion",
             Kind::InternalError => "internal-error",
             Kind::Hang => "hang",
-            Kind::Abort => "abort",
             Kind::OneSlice => "one-slice",
             Kind::Differs => "differs",
             Kind::Expectation => "expectation",

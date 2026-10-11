@@ -123,8 +123,8 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # A debug build, as the per-push suite: the inputs that
-      # tests/oracle/skip.txt lists as aborting do so in one.
+      # A debug build, as the per-push suite: a walk of a deep value
+      # that used the native stack would overflow it first in one.
       - name: cargo nextest (oracle, every input)
         env:
           SILT_ORACLE_FULL: "1"
