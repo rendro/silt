@@ -284,3 +284,33 @@ fn a_budget_of_no_steps_runs_nothing() {
         assert_eq!(output, "", "slice {slice:?}");
     }
 }
+
+/// `out_of_steps` marks what the budget did, and nothing else: a fault
+/// of the program's own code is that fault, with the flag unset, also
+/// when a task has used the budget up meanwhile. (`main` sleeps in a
+/// builtin, so its slice goes on to the fault; the task's 20,000 steps
+/// take a few milliseconds of the half second. Should they ever take
+/// longer, the test fails at its last line: it does not pass without
+/// the case it is about.)
+#[test]
+fn a_fault_of_the_program_is_not_the_budgets() {
+    let spin = "import task\nimport time\n\nfn spin() {\n  loop {\n    loop()\n  }\n}\n";
+    for (fault, message) in [
+        ("10 / (3 - 3)", "division by zero"),
+        (
+            "panic(\"a real fault of the program\")",
+            "a real fault of the program",
+        ),
+    ] {
+        let source = format!(
+            "{spin}\nfn main() {{\n  let _ = task.spawn(spin)\n  time.sleep(time.ms(500))\n  println(\"before the fault\")\n  {fault}\n}}\n"
+        );
+        let (result, output) = run_whole(&source, |vm| vm.set_step_budget(20_000));
+        let error = result.unwrap_err();
+        assert!(error.message.contains(message), "{error:?}");
+        assert!(!error.out_of_steps, "{error:?}");
+        assert!(output.starts_with("before the fault\n"), "{output}");
+        // The task was ended by the budget, and the runtime says so.
+        assert!(output.contains("the step budget is used up"), "{output}");
+    }
+}

@@ -259,7 +259,14 @@ impl Vm {
                         },
                         false => Blocks::Thread,
                     };
-                    self.woken = Some(scheduler.block_thread(wait, who)?);
+                    // A wait that cannot end (a deadlock) after the step
+                    // budget is used up is the budget's doing: the task
+                    // waited for was ended.
+                    let woken = scheduler.block_thread(wait, who).map_err(|mut e| {
+                        e.out_of_steps |= self.runtime.charge(0).is_err();
+                        e
+                    })?;
+                    self.woken = Some(woken);
                 }
             }
             // A thread whose slices all end in a wait never runs one
@@ -290,10 +297,7 @@ impl Vm {
         // The call stack is read off the frames this run leaves, which
         // must not stay: the next run on this VM (a REPL's next entry,
         // a stage's next item) would show them as its own.
-        let mut enriched = self.enrich_error(error);
-        // Whatever the error says, a program whose step budget is used
-        // up was ended by it (a deadlock: the task waited for is gone).
-        enriched.out_of_steps |= self.runtime.charge(0).is_err();
+        let enriched = self.enrich_error(error);
         self.unwind(floor, stack_floor);
         Err(enriched)
     }

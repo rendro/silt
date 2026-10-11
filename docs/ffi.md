@@ -408,7 +408,11 @@ full length, so the program may run up to one slice per thread more
 than its budget; with `set_time_slice(1)` the count is exact. The start
 of a wait counts as one step, so tasks that pass a value to and fro for
 ever end too. A wait that never ends is not ended by the budget: that is
-the deadlock check's, or the host drops the `Vm`.
+the deadlock check's, or the host drops the `Vm`. `out_of_steps` marks
+what the budget did: its own error, the error of a join of a task it
+ended, and a deadlock that follows (the task waited for is gone). A
+fault of the program itself, a division by zero or a `panic`, keeps it
+`false` even when a task has used the budget up.
 
 ## Error Surfacing
 

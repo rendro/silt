@@ -13,7 +13,8 @@ pub struct VmError {
     pub type_confusion: bool,
     /// If true, the program had run the steps its embedder gave it
     /// ([`Vm::set_step_budget`](super::Vm::set_step_budget)) and was
-    /// ended for it: by this error, or by one that followed from it.
+    /// ended for it: this is the budget's error, the error of a join
+    /// of a task it ended, or a deadlock that followed from it.
     pub out_of_steps: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
