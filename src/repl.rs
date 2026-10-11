@@ -707,6 +707,59 @@ mod tests {
         assert_eq!(value(&mut repl, "f(U(2))"), "U(2)");
     }
 
+    /// The session keeps the analysis of the last entry that ran, which
+    /// the next entry imports, and of no entry before it: an entry's
+    /// analysis holds every name the entry saw, so keeping all of them
+    /// cost the square of the session's length. What an earlier entry
+    /// declared is still seen, and an error that points into an earlier
+    /// entry still shows that entry's text and place.
+    #[test]
+    fn the_session_keeps_the_analysis_of_one_entry() {
+        /// Evaluate `input` and note its cell: that of an entry that
+        /// ran is the session's last, that of one that failed is where
+        /// its error points.
+        fn eval(repl: &mut Repl, cells: &mut Vec<ModuleId>, input: &str) -> Evaluation {
+            let evaluation = repl.eval(input);
+            cells.push(match evaluation.committed {
+                true => repl.committed.expect("an entry ran"),
+                false => (repl.session).module_of(evaluation.diagnostics[0].span.file),
+            });
+            evaluation
+        }
+        let analysed = |repl: &Repl, cells: &[ModuleId]| -> Vec<bool> {
+            (cells.iter())
+                .map(|cell| repl.session.module_analysis(*cell).is_some())
+                .collect()
+        };
+        let (mut repl, mut cells) = (repl(), Vec::new());
+        assert!(eval(&mut repl, &mut cells, "fn inverse(x) { 100 / x }").committed);
+        assert!(eval(&mut repl, &mut cells, "type P { x: Int }").committed);
+        assert_eq!(analysed(&repl, &cells), [false, true]);
+        // An entry that fails has its analysis until the next entry.
+        assert!(!eval(&mut repl, &mut cells, "let wrong: Int = \"s\"").committed);
+        assert_eq!(analysed(&repl, &cells), [false, true, true]);
+        assert!(!eval(&mut repl, &mut cells, "1 / 0").committed);
+        assert_eq!(analysed(&repl, &cells), [false, true, false, true]);
+        assert!(eval(&mut repl, &mut cells, "let p = P { x: 4 }").committed);
+        assert_eq!(analysed(&repl, &cells), [false, false, false, false, true]);
+
+        // What the first entries declared is there, by name and by type.
+        assert_eq!(value(&mut repl, "inverse(p.x)"), "25");
+        // An error in the code of the first entry: its text, its place.
+        let evaluation = repl.eval("inverse(p.x - 4)");
+        assert!(!evaluation.committed);
+        let shown: Vec<String> = (evaluation.diagnostics.iter())
+            .map(|d| repl.render(d))
+            .collect();
+        let shown = shown.join("\n");
+        assert!(shown.contains("division by zero"), "{shown}");
+        assert!(shown.contains("<repl:1>:1:17"), "{shown}");
+        assert!(shown.contains("1 | fn inverse(x) { 100 / x }"), "{shown}");
+        // A type error that names a type of the second entry.
+        let wrong = errors(&mut repl, "let q: P = 1");
+        assert_eq!(wrong, ["type mismatch: expected P, got Int"]);
+    }
+
     /// The error messages of `input`, which must not run.
     fn errors(repl: &mut Repl, input: &str) -> Vec<String> {
         let evaluation = repl.eval(input);

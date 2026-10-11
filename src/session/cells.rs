@@ -246,10 +246,30 @@ impl Cells {
         }
     }
 
+    /// The parsed cell `id` will not be checked again, and no later
+    /// cell imports it: `program`, its declarations as
+    /// [`Cells::prepare`] left them, gives up the names of the import
+    /// of the cell before it, which are every name the cell saw. (The
+    /// import itself stays: the graph counts a module's imports.)
+    pub fn release(&self, id: ModuleId, program: &mut ast::Program) {
+        let imported = self.info.get(&id).map_or(0, |info| info.cell_imports);
+        for decl in program.decls.iter_mut().take(imported) {
+            if let Decl::Import(ImportTarget::Items(_, items), _) = decl {
+                *items = Vec::new();
+            }
+        }
+    }
+
     /// Commit cell `id`, which ran: later cells see what it binds. Its
     /// declarations are `checked`; `modules` are the modules of its
-    /// program, whose code is installed now.
-    pub fn commit(&mut self, id: ModuleId, checked: &ast::Program, modules: &[ModuleId]) {
+    /// program, whose code is installed now. Gives the cell that was
+    /// the last committed one until now: no later cell imports it.
+    pub fn commit(
+        &mut self,
+        id: ModuleId,
+        checked: &ast::Program,
+        modules: &[ModuleId],
+    ) -> Option<ModuleId> {
         let info = &self.info[&id];
         for (name, span, kind, import) in &info.own {
             self.scope.insert(
@@ -285,11 +305,11 @@ impl Cells {
             }
         }
         self.dropped.retain(|cell| *cell != id);
-        self.last = Some(id);
         self.installed.extend(
             modules
                 .iter()
                 .filter(|module| !self.info.contains_key(module)),
         );
+        self.last.replace(id).filter(|before| *before != id)
     }
 }

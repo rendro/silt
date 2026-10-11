@@ -279,6 +279,7 @@ impl Session {
         // What an earlier cell that was not committed declared is gone.
         for cell in self.cells.take_dropped() {
             self.tables.forget(cell);
+            self.release_cell(cell);
         }
         self.cells.count += 1;
         let n = self.cells.count;
@@ -303,7 +304,29 @@ impl Session {
         let (Some(analysis), Some(result)) = (self.analyses.get(&id), self.results.get(&id)) else {
             return;
         };
-        self.cells.commit(id, &analysis.ast, &result.modules);
+        if let Some(before) = self.cells.commit(id, &analysis.ast, &result.modules) {
+            self.release_cell(before);
+        }
+    }
+
+    /// Give up what the session keeps of the REPL cell `cell` only to
+    /// check a cell that imports it: its [`ModuleAnalysis`] (its scope
+    /// and the types of its names, which are every name it saw) and
+    /// the names its parsed text imports from the cell before it. No
+    /// later cell imports it: a cell imports the last committed one,
+    /// and this one is committed no longer, or never was. Its text, its
+    /// definitions, what its check entered in the tables and its
+    /// [`Analysis`] stay: a diagnostic that points into it reads as
+    /// before, and it is never checked again.
+    ///
+    /// So a session keeps the analysis of one cell, not of every cell:
+    /// its memory grows with what the entries declare, not with the
+    /// entries times the names each of them sees.
+    fn release_cell(&mut self, cell: ModuleId) {
+        self.analyses.remove(&cell);
+        if let Some(program) = self.graph.ast_mut(cell) {
+            self.cells.release(cell, program);
+        }
     }
 
     /// The problems of the project the session is in: its manifests and
@@ -374,6 +397,8 @@ impl Session {
     }
 
     /// The check of module `id`, once [`Session::analyze`] has made it.
+    /// Of the REPL cells, the last committed one has it, and the one
+    /// being evaluated: an earlier cell's is given up.
     pub fn module_analysis(&self, id: ModuleId) -> Option<&ModuleAnalysis> {
         self.analyses.get(&id)
     }
