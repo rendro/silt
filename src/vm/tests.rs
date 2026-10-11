@@ -3485,6 +3485,141 @@ the step budget is used up at 5:11; twice 5:11; main 11:11; <script> 9:1"
     }
 }
 
+// ── The arguments of a builtin ──────────────────────────────────────
+//
+// A builtin's arguments leave the stack before its body runs, into the
+// VM's one list for them (`Vm::with_args`): no call has a list of its
+// own, and no body sees a slot of the stack.
+mod builtin_args {
+    use super::*;
+
+    fn ints(values: &[i64]) -> Vec<Value> {
+        values.iter().copied().map(Value::Int).collect()
+    }
+
+    #[test]
+    fn the_arguments_are_off_the_stack_and_the_list_is_used_again() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.stack = ints(&[1, 2, 3]);
+        let seen = vm.with_args(1, |vm, args| {
+            assert_eq!(vm.stack, ints(&[1]));
+            // What a body pushes is not among its arguments.
+            vm.stack.push(Value::Int(9));
+            args.to_vec()
+        });
+        assert_eq!(seen, ints(&[2, 3]));
+        assert_eq!(vm.stack, ints(&[1, 9]));
+        assert!(vm.builtin_args.is_empty());
+        let capacity = vm.builtin_args.capacity();
+        assert!(capacity >= 2);
+
+        // A call of no more arguments fits the list as it is.
+        for _ in 0..100 {
+            vm.stack.extend(ints(&[4, 5]));
+            vm.with_args(2, |_, args| assert_eq!(args, ints(&[4, 5])));
+            assert_eq!(vm.stack, ints(&[1, 9]));
+            assert!(vm.builtin_args.is_empty());
+            assert_eq!(vm.builtin_args.capacity(), capacity);
+        }
+        // No arguments: nothing leaves the stack.
+        vm.with_args(2, |vm, args| {
+            assert!(args.is_empty());
+            assert_eq!(vm.stack, ints(&[1, 9]));
+        });
+    }
+
+    #[test]
+    fn a_call_inside_a_call_has_arguments_of_its_own() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.stack = ints(&[1, 2]);
+        vm.with_args(0, |vm, outer| {
+            vm.stack = ints(&[7, 8, 9]);
+            let inner = vm.with_args(1, |_, inner| inner.to_vec());
+            assert_eq!(inner, ints(&[8, 9]));
+            assert_eq!(outer, ints(&[1, 2]));
+            assert_eq!(vm.stack, ints(&[7]));
+        });
+        assert!(vm.builtin_args.is_empty());
+        vm.stack.push(Value::Int(3));
+        vm.with_args(0, |_, args| assert_eq!(args, ints(&[7, 3])));
+    }
+
+    /// Run `main`'s code and give the VM back with what the run came
+    /// to.
+    fn ran(source: &str) -> (Vm, Result<Value, VmError>) {
+        let program =
+            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut vm = Vm::new(crate::HostIo::buffer(&crate::Buffer::new()));
+        let result = vm.run_program(&program);
+        (vm, result)
+    }
+
+    #[test]
+    fn every_way_to_call_a_builtin_leaves_the_list_empty() {
+        // By its instruction, as a value, as the callback of a builtin,
+        // and with a callback of its own that calls builtins.
+        let (vm, result) = ran("\
+import int
+import list
+import string
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+fn main() {
+  let direct = int.abs(-3) + string.length(\"four\")
+  let as_value = apply(int.abs, -5)
+  let callback = list.map([-1, -2], int.abs)
+  let nested = list.fold([1, 2, 3], 0) { acc, x -> acc + int.max(x, string.length(\"ab\")) }
+  println(callback)
+  direct + as_value + list.length(callback) + nested
+}
+");
+        assert_eq!(result.unwrap(), Value::Int(7 + 5 + 2 + 7));
+        assert!(vm.builtin_args.is_empty());
+        assert!(vm.builtin_args.capacity() >= 2);
+    }
+
+    #[test]
+    fn a_builtin_that_fails_leaves_the_list_empty() {
+        let (vm, result) = ran("\
+import list
+fn main() {
+  let xs = list.map(1..4) { x -> 10 / (x - 2) }
+  list.length(xs)
+}
+");
+        assert_eq!(result.unwrap_err().message, "division by zero");
+        assert!(vm.builtin_args.is_empty());
+
+        // A body that panics: the panic is an error of the call, and
+        // the list is the VM's again.
+        fn boom(_vm: &mut Vm, _args: &[Value]) -> crate::builtins::typed::Called {
+            panic!("a panic in a builtin")
+        }
+        let println = registry().named("println").expect("println");
+        let row = Row {
+            signature: "fn boom(a: Int, b: Int) -> ()",
+            summary: "panics",
+            name: "boom",
+            module: "test",
+            params: Vec::new(),
+            optional_last: false,
+            feature: None,
+            enabled: true,
+            id: println.id,
+            body: Body::Typed(boom),
+        };
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.stack = ints(&[0, 1, 2]);
+        let err = (vm.with_args(1, |vm, args| vm.enter_row(&row, args)).err())
+            .expect("the panic is an error");
+        assert!(err.message.contains("a panic in a builtin"), "{err}");
+        assert_eq!(vm.stack, ints(&[0]));
+        assert!(vm.builtin_args.is_empty());
+        assert!(vm.builtin_args.capacity() >= 2);
+    }
+}
+
 // ── The log of tail calls ───────────────────────────────────────────
 mod tail_calls {
     use super::*;
