@@ -1,18 +1,21 @@
 //! The key of a value: whether two values are equal, which of two
 //! comes first, and a value's hash.
 //!
-//! All three read a value the same way: as its head ([`Head`]: its
-//! kind, and what tells it from another value of the kind before its
-//! parts do) and its parts in order ([`Parts`]: the values it is made
-//! of). [`walk`] goes through one value, or through two side by side,
-//! part by part, and keeps what it has yet to visit in a stack of its
-//! own: a value nested a million levels deep is compared and hashed
-//! like any other, and the native stack does not bound it. [`Equal`],
-//! [`Order`] and [`Hashed`] say what is done at each step.
+//! All three read a value the same way: as its head (its kind, and
+//! what tells it from another value of the kind before its parts do)
+//! and its parts in order (the values it is made of). [`walk`] goes
+//! through one value, or through two side by side, part by part;
+//! [`Equal`], [`Order`] and [`Hashed`] say what is done at each step.
 //!
-//! The kinds of value are ranked in one place ([`Head::rank`]): the
-//! rank orders two values of different kinds, and is the first byte of
-//! a value's hash.
+//! The walk does not go down a value on the native stack: it calls
+//! itself for the first few levels ([`NEAR`]), which is all most
+//! values have, and below them keeps what it has yet to come back to
+//! in a stack of its own ([`through_far`]). A value nested a million
+//! levels deep is compared and hashed like any other.
+//!
+//! The kinds of value are ranked in one place ([`rank`]): the rank
+//! orders two values of different kinds, and is the first byte of a
+//! value's hash.
 //!
 //! A record is of its type: two records are equal if they are of one
 //! type and their fields are equal, and records of one type are in the
@@ -27,267 +30,318 @@ use std::ops::ControlFlow::{self, Break, Continue};
 use std::sync::Arc;
 
 use super::list::Elements;
-use super::{Float, List, Value};
-use crate::builtins::registry::BuiltinId;
-use crate::defs::TypeId;
-use crate::typeinfo::{FieldType, Tag, TypeInfo};
+use super::{List, Value};
+use crate::typeinfo::TypeInfo;
 
 // ── A value's head and its parts ───────────────────────────────────
+//
+// The head of a value is its kind, and what tells it from another
+// value of the kind before its parts do (all of the value, if it has
+// no parts): a number, a text, which variant of which type, which
+// channel. [`rank`], [`cmp_heads`] and [`hash_head`] read it.
 
-/// What a value is before its parts: its kind, and what tells it from
-/// another value of the kind (all of the value, if it has no parts).
-#[derive(Clone, Copy, PartialEq)]
-enum Head<'a> {
-    Unit,
-    Bool(bool),
-    Int(i64),
-    Float(Float),
-    Str(&'a str),
-    List,
-    Tuple,
-    Map,
-    Set,
-    Record(RecordType<'a>),
-    /// A variant: its type and the position of its declaration there.
-    Variant(TypeId, u16),
-    /// A channel, a task handle, a listener, a stream: which one.
-    Channel(usize),
-    Handle(usize),
-    Bytes(&'a [u8]),
-    TcpListener(usize),
-    TcpStream(usize),
-    /// A closure: where it is. (Two closures of one function with
-    /// different captures are two.)
-    Closure(usize),
-    Builtin(BuiltinId),
-    Constructor(&'a Tag),
-    Type(TypeId),
-    Primitive(&'static str),
-    /// A host function: its name.
-    HostFn(&'a str),
-}
-
-impl<'a> Head<'a> {
-    fn of(value: &'a Value) -> Head<'a> {
-        match value {
-            Value::Unit => Head::Unit,
-            Value::Bool(b) => Head::Bool(*b),
-            Value::Int(n) => Head::Int(*n),
-            Value::Float(f) => Head::Float(*f),
-            Value::String(s) => Head::Str(s),
-            Value::List(_) => Head::List,
-            Value::Tuple(_) => Head::Tuple,
-            Value::Map(_) => Head::Map,
-            Value::Set(_) => Head::Set,
-            Value::Record(record) => Head::Record(RecordType(record.ty())),
-            Value::Variant(variant) => Head::Variant(variant.type_id(), variant.ordinal()),
-            Value::Channel(channel) => Head::Channel(channel.id()),
-            Value::Handle(handle) => Head::Handle(handle.id),
-            Value::Bytes(bytes) => Head::Bytes(bytes),
-            Value::TcpListener(listener) => Head::TcpListener(listener.id),
-            Value::TcpStream(stream) => Head::TcpStream(stream.id),
-            Value::VmClosure(closure) => Head::Closure(Arc::as_ptr(closure) as usize),
-            Value::BuiltinFn(id) => Head::Builtin(*id),
-            Value::VariantConstructor(tag) => Head::Constructor(tag),
-            Value::TypeDescriptor(ty) => Head::Type(ty.id),
-            Value::PrimitiveDescriptor(name) => Head::Primitive(name),
-            Value::HostFn(host) => Head::HostFn(&host.name),
-        }
-    }
-
-    /// The rank of the value's kind: the one table of the kinds. A
-    /// value of a kind of lower rank comes before one of a higher, and
-    /// the rank is the first byte of a value's hash.
-    fn rank(&self) -> u8 {
-        match self {
-            Head::Unit => 0,
-            Head::Bool(_) => 1,
-            Head::Int(_) => 2,
-            Head::Float(_) => 3,
-            Head::Str(_) => 4,
-            Head::List => 5,
-            Head::Tuple => 6,
-            Head::Map => 7,
-            Head::Set => 8,
-            Head::Record(_) => 9,
-            Head::Variant(..) => 10,
-            Head::Channel(_) => 11,
-            Head::Handle(_) => 12,
-            Head::Bytes(_) => 13,
-            Head::TcpListener(_) => 14,
-            Head::TcpStream(_) => 15,
-            Head::Closure(_) => 16,
-            Head::Builtin(_) => 17,
-            Head::Constructor(_) => 18,
-            Head::Type(_) => 19,
-            Head::Primitive(_) => 20,
-            Head::HostFn(_) => 21,
-        }
-    }
-
-    /// The order of two heads: of one kind by what they hold (a kind
-    /// that holds nothing has one head), of two kinds by rank.
-    fn cmp(&self, other: &Head<'_>) -> Ordering {
-        match (self, other) {
-            (Head::Bool(a), Head::Bool(b)) => a.cmp(b),
-            (Head::Int(a), Head::Int(b)) => a.cmp(b),
-            (Head::Float(a), Head::Float(b)) => a.cmp(b),
-            (Head::Str(a), Head::Str(b)) => a.cmp(b),
-            (Head::Record(a), Head::Record(b)) => a.cmp(*b),
-            // Variants of one type order by declaration; variants of
-            // two types (which a program cannot compare) by the types.
-            (Head::Variant(a, at), Head::Variant(b, bt)) => (a, at).cmp(&(b, bt)),
-            (Head::Channel(a), Head::Channel(b))
-            | (Head::Handle(a), Head::Handle(b))
-            | (Head::TcpListener(a), Head::TcpListener(b))
-            | (Head::TcpStream(a), Head::TcpStream(b))
-            | (Head::Closure(a), Head::Closure(b)) => a.cmp(b),
-            (Head::Bytes(a), Head::Bytes(b)) => a.cmp(b),
-            (Head::Builtin(a), Head::Builtin(b)) => a.cmp(b),
-            (Head::Constructor(a), Head::Constructor(b)) => a.cmp(b),
-            (Head::Type(a), Head::Type(b)) => a.cmp(b),
-            (Head::Primitive(a), Head::Primitive(b)) | (Head::HostFn(a), Head::HostFn(b)) => {
-                a.cmp(b)
-            }
-            _ => self.rank().cmp(&other.rank()),
-        }
-    }
-
-    /// The head's part of a hash: its rank, then what it holds.
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u8(self.rank());
-        match *self {
-            Head::Unit | Head::List | Head::Tuple | Head::Map | Head::Set => {}
-            // (A record's fields are hashed with their names: its
-            // type adds nothing to them.)
-            Head::Record(_) => {}
-            // (No function has a hash: the VM refuses a value that
-            // holds one before it asks.)
-            Head::Closure(_) => {}
-            Head::Bool(b) => b.hash(state),
-            Head::Int(n) => n.hash(state),
-            Head::Float(f) => f.hash(state),
-            Head::Str(s) | Head::Primitive(s) | Head::HostFn(s) => s.hash(state),
-            Head::Variant(ty, ordinal) => {
-                ty.hash(state);
-                ordinal.hash(state);
-            }
-            Head::Channel(id) | Head::Handle(id) | Head::TcpListener(id) | Head::TcpStream(id) => {
-                id.hash(state)
-            }
-            Head::Bytes(bytes) => {
-                bytes.len().hash(state);
-                state.write(bytes);
-            }
-            Head::Builtin(id) => id.hash(state),
-            Head::Constructor(tag) => tag.hash(state),
-            Head::Type(id) => id.hash(state),
-        }
+/// The rank of the value's kind: the one table of the kinds. A value
+/// of a kind of lower rank comes before one of a higher, and the rank
+/// is the first byte of a value's hash.
+fn rank(value: &Value) -> u8 {
+    match value {
+        Value::Unit => 0,
+        Value::Bool(_) => 1,
+        Value::Int(_) => 2,
+        Value::Float(_) => 3,
+        Value::String(_) => 4,
+        Value::List(_) => 5,
+        Value::Tuple(_) => 6,
+        Value::Map(_) => 7,
+        Value::Set(_) => 8,
+        Value::Record(_) => 9,
+        Value::Variant(_) => 10,
+        Value::Channel(_) => 11,
+        Value::Handle(_) => 12,
+        Value::Bytes(_) => 13,
+        Value::TcpListener(_) => 14,
+        Value::TcpStream(_) => 15,
+        Value::VmClosure(_) => 16,
+        Value::BuiltinFn(_) => 17,
+        Value::VariantConstructor(_) => 18,
+        Value::TypeDescriptor(_) => 19,
+        Value::PrimitiveDescriptor(_) => 20,
+        Value::HostFn(_) => 21,
     }
 }
 
-/// A record's type as the record's key has it: the type's id, and for
-/// an anonymous record, whose types share one id, its field names.
-#[derive(Clone, Copy)]
-struct RecordType<'a>(&'a TypeInfo);
+/// Whether `value` is made of values: a value that is not is its head.
+#[inline]
+fn has_parts(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::List(_)
+            | Value::Tuple(_)
+            | Value::Map(_)
+            | Value::Set(_)
+            | Value::Record(_)
+            | Value::Variant(_)
+    )
+}
 
-impl<'a> RecordType<'a> {
-    fn names(self) -> impl Iterator<Item = &'a str> {
-        self.0.fields().iter().map(|(name, _)| &**name)
-    }
-
-    fn cmp(self, other: RecordType<'_>) -> Ordering {
-        if std::ptr::eq(self.0, other.0) {
-            return Ordering::Equal;
+/// The order of the heads of two values: of one kind by what the heads
+/// hold (a list's, a tuple's, a map's and a set's hold nothing), of
+/// two kinds by rank.
+#[inline(always)]
+fn cmp_heads(a: &Value, b: &Value) -> Ordering {
+    match (a, b) {
+        (Value::Int(a), Value::Int(b)) => a.cmp(b),
+        (Value::String(a), Value::String(b)) => a.cmp(b),
+        (Value::Float(a), Value::Float(b)) => a.cmp(b),
+        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+        (Value::Unit, Value::Unit)
+        | (Value::List(_), Value::List(_))
+        | (Value::Tuple(_), Value::Tuple(_))
+        | (Value::Map(_), Value::Map(_))
+        | (Value::Set(_), Value::Set(_)) => Ordering::Equal,
+        // Variants of one type order by declaration; variants of two
+        // types (which a program cannot compare) by the types.
+        (Value::Variant(a), Value::Variant(b)) => {
+            (a.type_id(), a.ordinal()).cmp(&(b.type_id(), b.ordinal()))
         }
-        self.0
-            .id
-            .cmp(&other.0.id)
-            .then_with(|| match self.0.is_anon() {
-                true => self.names().cmp(other.names()),
-                false => Ordering::Equal,
-            })
+        (Value::Record(a), Value::Record(b)) => cmp_record_types(a.ty(), b.ty()),
+        _ => cmp_other_heads(a, b),
     }
 }
 
-impl PartialEq for RecordType<'_> {
-    fn eq(&self, other: &RecordType<'_>) -> bool {
-        self.cmp(*other).is_eq()
+/// [`cmp_heads`] for the kinds a program seldom compares, and for two
+/// kinds.
+fn cmp_other_heads(a: &Value, b: &Value) -> Ordering {
+    match (a, b) {
+        (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
+        // A channel, a task handle, a listener, a stream: which one.
+        (Value::Channel(a), Value::Channel(b)) => a.id().cmp(&b.id()),
+        (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
+        (Value::TcpListener(a), Value::TcpListener(b)) => a.id.cmp(&b.id),
+        (Value::TcpStream(a), Value::TcpStream(b)) => a.id.cmp(&b.id),
+        // A closure: where it is. (Two closures of one function with
+        // different captures are two.)
+        (Value::VmClosure(a), Value::VmClosure(b)) => {
+            (Arc::as_ptr(a) as usize).cmp(&(Arc::as_ptr(b) as usize))
+        }
+        (Value::BuiltinFn(a), Value::BuiltinFn(b)) => a.cmp(b),
+        (Value::HostFn(a), Value::HostFn(b)) => a.name.cmp(&b.name),
+        (Value::VariantConstructor(a), Value::VariantConstructor(b)) => a.cmp(b),
+        (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
+        (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
+        _ => rank(a).cmp(&rank(b)),
     }
 }
 
-/// The parts of a value yet to be visited, in order: the values it is
-/// made of.
-enum Parts<'a> {
-    /// No parts: the value is its head.
+/// The order of the types of two records: by the types' ids, and for
+/// two anonymous records, whose types share one id, by their field
+/// names.
+#[inline]
+fn cmp_record_types(a: &Arc<TypeInfo>, b: &Arc<TypeInfo>) -> Ordering {
+    if Arc::ptr_eq(a, b) {
+        return Ordering::Equal;
+    }
+    a.id.cmp(&b.id).then_with(|| match a.is_anon() {
+        true => field_names(a).cmp(field_names(b)),
+        false => Ordering::Equal,
+    })
+}
+
+fn field_names(ty: &TypeInfo) -> impl Iterator<Item = &str> {
+    ty.fields().iter().map(|(name, _)| &**name)
+}
+
+/// The head's part of a hash: its rank, then what it holds.
+fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
+    state.write_u8(rank(value));
+    match value {
+        Value::Unit | Value::List(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) => {}
+        // (A record's fields are hashed with their names: its type
+        // adds nothing to them.)
+        Value::Record(_) => {}
+        // (No function has a hash: the VM refuses a value that holds
+        // one before it asks.)
+        Value::VmClosure(_) => {}
+        Value::Bool(b) => b.hash(state),
+        Value::Int(n) => n.hash(state),
+        Value::Float(f) => f.hash(state),
+        Value::String(s) => s.hash(state),
+        Value::Variant(variant) => {
+            variant.type_id().hash(state);
+            variant.ordinal().hash(state);
+        }
+        Value::Channel(channel) => channel.id().hash(state),
+        Value::Handle(handle) => handle.id.hash(state),
+        Value::Bytes(bytes) => {
+            bytes.len().hash(state);
+            state.write(bytes);
+        }
+        Value::TcpListener(listener) => listener.id.hash(state),
+        Value::TcpStream(stream) => stream.id.hash(state),
+        Value::BuiltinFn(id) => id.hash(state),
+        Value::HostFn(host) => host.name.hash(state),
+        Value::VariantConstructor(tag) => tag.hash(state),
+        Value::TypeDescriptor(ty) => ty.id.hash(state),
+        Value::PrimitiveDescriptor(name) => name.hash(state),
+    }
+}
+
+/// `N` things that are there or not, taken together.
+enum Among<T, const N: usize> {
+    All([T; N]),
     None,
-    /// The items of a tuple, the fields of a variant, the elements a
-    /// list holds.
-    Values(std::slice::Iter<'a, Value>),
-    /// The fields of a record, in the order its type declares them,
-    /// each with its name.
-    Fields(
-        std::slice::Iter<'a, (String, FieldType)>,
-        std::slice::Iter<'a, Value>,
-    ),
-    /// The entries of a map in key order, a key and then its value:
-    /// the entries left, and the value of the key last given.
-    Entries(btree_map::Iter<'a, Value, Value>, Option<&'a Value>),
-    /// The members of a set, in order.
-    Members(btree_set::Iter<'a, Value>),
+    /// Some are there: which are not.
+    Some([bool; N]),
 }
 
-/// A part of a value: the value, and its name if it is a record's
-/// field.
-type Part<'a> = (Option<&'a str>, &'a Value);
+#[inline]
+fn among<T: Copy, const N: usize>(items: [Option<T>; N]) -> Among<T, N> {
+    // (Written as loops: over two items they are a few instructions,
+    // where the adapters of an array's `map` were calls.)
+    let mut missing = [false; N];
+    let mut any = None;
+    for (missing, item) in missing.iter_mut().zip(&items) {
+        match item {
+            Some(item) => any = Some(*item),
+            None => *missing = true,
+        }
+    }
+    let Some(any) = any else {
+        return Among::None;
+    };
+    if missing.contains(&true) {
+        return Among::Some(missing);
+    }
+    let mut all = [any; N];
+    for (all, item) in all.iter_mut().zip(items) {
+        if let Some(item) = item {
+            *all = item;
+        }
+    }
+    Among::All(all)
+}
 
-impl<'a> Parts<'a> {
-    /// The parts of `value` that is no list, and their number if a
-    /// value of its kind may have any number of them.
-    fn of(value: &'a Value) -> (Option<usize>, Parts<'a>) {
-        match value {
-            Value::Tuple(items) => (Some(items.len()), Parts::Values(items.iter())),
-            Value::Variant(variant) => {
-                let fields = variant.fields();
-                (Some(fields.len()), Parts::Values(fields.iter()))
+/// The next of each of `iters`, taken together.
+#[inline]
+fn next_of<I: Iterator, const N: usize>(iters: &mut [I; N]) -> Among<I::Item, N>
+where
+    I::Item: Copy,
+{
+    let mut next = [None; N];
+    for (next, iter) in next.iter_mut().zip(iters) {
+        *next = iter.next();
+    }
+    among(next)
+}
+
+/// The first of each of `slices`, taken together and taken off.
+#[inline]
+fn first_of<'a, const N: usize>(slices: &mut [&'a [Value]; N]) -> Among<&'a Value, N> {
+    let mut next = [None; N];
+    for (next, slice) in next.iter_mut().zip(slices) {
+        if let Some((first, rest)) = slice.split_first() {
+            *next = Some(first);
+            *slice = rest;
+        }
+    }
+    among(next)
+}
+
+/// The parts yet to be visited of `N` values of one kind, side by
+/// side and in order: the values each is made of.
+///
+/// (Small, as the walk moves these about for every value with parts:
+/// what is left of a map and of a set is kept apart.)
+enum Parts<'a, const N: usize> {
+    /// The items of tuples, the fields of variants, the elements that
+    /// lists hold: those left.
+    Values([&'a [Value]; N]),
+    /// The fields of records, in the order the type of each declares
+    /// them; the type of the first names them.
+    Fields(&'a TypeInfo, [&'a [Value]; N]),
+    /// The entries of maps in key order, the keys of an entry and then
+    /// its values: the entries left, and the values of the keys last
+    /// given.
+    Entries(
+        [Box<btree_map::Iter<'a, Value, Value>>; N],
+        Option<[&'a Value; N]>,
+    ),
+    /// The members of sets, in order.
+    Members([Box<btree_set::Iter<'a, Value>>; N]),
+}
+
+impl<'a, const N: usize> Parts<'a, N> {
+    /// The entries of `values`, which are maps, or their members,
+    /// which are sets; and the number of them in each. (They are of
+    /// one kind, the first's.)
+    fn of_many(values: [&'a Value; N]) -> (Option<[usize; N]>, Parts<'a, N>) {
+        match values[0] {
+            Value::Map(first) => {
+                let maps = values.map(|value| match value {
+                    Value::Map(entries) => entries,
+                    _ => first,
+                });
+                let left = maps.map(|entries| Box::new(entries.iter()));
+                (
+                    Some(maps.map(|entries| entries.len())),
+                    Parts::Entries(left, None),
+                )
             }
-            Value::Record(record) => {
-                let names = record.ty().fields().iter();
-                (None, Parts::Fields(names, record.fields().iter()))
+            Value::Set(first) => {
+                let sets = values.map(|value| match value {
+                    Value::Set(members) => members,
+                    _ => first,
+                });
+                let left = sets.map(|members| Box::new(members.iter()));
+                (
+                    Some(sets.map(|members| members.len())),
+                    Parts::Members(left),
+                )
             }
-            Value::Map(entries) => (Some(entries.len()), Parts::Entries(entries.iter(), None)),
-            Value::Set(members) => (Some(members.len()), Parts::Members(members.iter())),
-            _ => (None, Parts::None),
+            _ => (None, Parts::Values([&[]; N])),
         }
     }
 
-    fn next(&mut self) -> Option<Part<'a>> {
+    /// The next part of each value.
+    #[inline]
+    fn next(&mut self) -> Among<&'a Value, N> {
         match self {
-            Parts::None => None,
-            Parts::Values(values) => values.next().map(|value| (None, value)),
-            Parts::Fields(names, values) => {
-                let value = values.next()?;
-                Some((names.next().map(|(name, _)| &**name), value))
-            }
-            Parts::Entries(entries, value) => match value.take() {
-                Some(value) => Some((None, value)),
-                None => {
-                    let (key, of_key) = entries.next()?;
-                    *value = Some(of_key);
-                    Some((None, key))
-                }
+            Parts::Values(values) | Parts::Fields(_, values) => first_of(values),
+            Parts::Entries(entries, values) => match values.take() {
+                Some(values) => Among::All(values),
+                None => match next_of(entries) {
+                    Among::All(next) => {
+                        *values = Some(next.map(|(_, value)| value));
+                        Among::All(next.map(|(key, _)| key))
+                    }
+                    Among::None => Among::None,
+                    Among::Some(ended) => Among::Some(ended),
+                },
             },
-            Parts::Members(members) => members.next().map(|member| (None, member)),
+            Parts::Members(members) => next_of(members),
         }
     }
 
-    /// Whether no part is left.
+    /// The name of the next part, if it is a record's field.
+    #[inline]
+    fn name(&self) -> Option<&'a str> {
+        match self {
+            Parts::Fields(ty, values) => next_name(ty, values[0]),
+            _ => None,
+        }
+    }
+
+    /// Whether no part of any of the values is left.
+    #[inline]
     fn is_done(&self) -> bool {
         match self {
-            Parts::None => true,
-            Parts::Values(values) | Parts::Fields(_, values) => values.len() == 0,
-            Parts::Entries(entries, value) => value.is_none() && entries.len() == 0,
-            Parts::Members(members) => members.len() == 0,
+            Parts::Values(values) | Parts::Fields(_, values) => {
+                values.iter().all(|values| values.is_empty())
+            }
+            Parts::Entries(entries, values) => {
+                values.is_none() && entries.iter().all(|entries| entries.len() == 0)
+            }
+            Parts::Members(members) => members.iter().all(|members| members.len() == 0),
         }
     }
 }
@@ -299,9 +353,13 @@ impl<'a> Parts<'a> {
 trait Visit<const N: usize> {
     type Stop;
 
+    /// Whether the walk tells the name of each record field it comes
+    /// to ([`Visit::name`]).
+    const NAMES: bool = false;
+
     /// The heads of `N` values, side by side. The walk goes on to
     /// their parts only if they are of one kind.
-    fn heads(&mut self, heads: [Head<'_>; N]) -> ControlFlow<Self::Stop>;
+    fn heads(&mut self, values: [&Value; N]) -> ControlFlow<Self::Stop>;
 
     /// The numbers of parts of `N` tuples, variants, maps or sets.
     fn lens(&mut self, lens: [usize; N]) -> ControlFlow<Self::Stop>;
@@ -319,115 +377,195 @@ trait Visit<const N: usize> {
     fn uneven(&mut self, ended: [bool; N]) -> ControlFlow<Self::Stop>;
 }
 
-/// Visit the head of each of `values`, and give their parts if the
-/// walk is to go through them.
-fn enter<'a, const N: usize, V: Visit<N>>(
+/// The parts of values that keep them in one run: the items of
+/// tuples, the fields of variants and of records, the elements that
+/// lists hold.
+enum Runs<'a, const N: usize> {
+    /// The parts of each value, and for records the type that names
+    /// them.
+    Of(Option<&'a TypeInfo>, [&'a [Value]; N]),
+    /// Lists that are answered for without their elements.
+    Done,
+    /// Maps or sets: their parts are in no run.
+    Not,
+}
+
+/// The parts of `values`, whose heads are visited and of one kind with
+/// parts, if the values keep them in one run; with the step of the
+/// visitor that comes before the parts.
+#[inline(always)]
+fn runs<'a, const N: usize, V: Visit<N>>(
     values: [&'a Value; N],
     visit: &mut V,
-) -> ControlFlow<V::Stop, [Parts<'a>; N]> {
-    visit.heads(values.map(Head::of))?;
-    // (The values are of one kind from here on: the visitor went on.
-    // One that is not is read as the first, and no harm is done.)
-    if let Value::List(first) = values[0] {
-        let lists = values.map(|value| match value {
-            Value::List(list) => list,
-            _ => first,
-        });
-        let through = visit.lists(lists)?;
-        return Continue(lists.map(|list| match list.elements() {
-            Elements::Items(items) if through => Parts::Values(items.iter()),
-            _ => Parts::None,
-        }));
-    }
-    let parts = values.map(Parts::of);
-    if let Among::All(lens) = among(parts.each_ref().map(|(len, _)| *len)) {
-        visit.lens(lens)?;
-    }
-    Continue(parts.map(|(_, parts)| parts))
-}
-
-/// `N` things that are there or not, taken together.
-enum Among<T, const N: usize> {
-    All([T; N]),
-    None,
-    /// Some are there: which are not.
-    Some([bool; N]),
-}
-
-fn among<T: Copy, const N: usize>(items: [Option<T>; N]) -> Among<T, N> {
-    let missing = items.map(|item| item.is_none());
-    match items.iter().flatten().next() {
-        None => Among::None,
-        Some(_) if missing.contains(&true) => Among::Some(missing),
-        Some(any) => Among::All(items.map(|item| item.unwrap_or(*any))),
-    }
-}
-
-/// The parts the walk has yet to come back to: a few of them in
-/// place, so that a value nested a few levels deep is walked without
-/// asking for memory.
-struct Waiting<T> {
-    near: [Option<T>; 4],
-    len: usize,
-    far: Vec<T>,
-}
-
-impl<T> Waiting<T> {
-    fn new() -> Waiting<T> {
-        Waiting {
-            near: [const { None }; 4],
-            len: 0,
-            far: Vec::new(),
+) -> ControlFlow<V::Stop, Runs<'a, N>> {
+    // (The values are of one kind, the first's: the visitor went on
+    // from their heads. One that is not has no parts here.)
+    let mut runs: [&'a [Value]; N] = [&[]; N];
+    match values[0] {
+        Value::Tuple(_) | Value::Variant(_) => {
+            let mut lens = [0; N];
+            for ((run, len), value) in runs.iter_mut().zip(&mut lens).zip(values) {
+                *run = match value {
+                    Value::Tuple(items) => items,
+                    Value::Variant(variant) => variant.fields(),
+                    _ => &[],
+                };
+                *len = run.len();
+            }
+            visit.lens(lens)?;
+            Continue(Runs::Of(None, runs))
         }
-    }
-
-    fn push(&mut self, item: T) {
-        match self.near.get_mut(self.len) {
-            Some(slot) => *slot = Some(item),
-            None => self.far.push(item),
+        Value::Record(first) => {
+            for (run, value) in runs.iter_mut().zip(values) {
+                if let Value::Record(record) = value {
+                    *run = record.fields();
+                }
+            }
+            Continue(Runs::Of(Some(first.ty()), runs))
         }
-        self.len += 1;
-    }
-
-    fn pop(&mut self) -> Option<T> {
-        self.len = self.len.checked_sub(1)?;
-        match self.near.get_mut(self.len) {
-            Some(slot) => slot.take(),
-            None => self.far.pop(),
+        Value::List(first) => {
+            let mut lists = [first; N];
+            for (list, value) in lists.iter_mut().zip(values) {
+                if let Value::List(of_value) = value {
+                    *list = of_value;
+                }
+            }
+            if !visit.lists(lists)? {
+                return Continue(Runs::Done);
+            }
+            for (run, list) in runs.iter_mut().zip(lists) {
+                if let Elements::Items(held) = list.elements() {
+                    *run = held;
+                }
+            }
+            Continue(Runs::Of(None, runs))
         }
+        _ => Continue(Runs::Not),
     }
+}
+
+/// The name of the next field of a record of the type `ty` of which
+/// the fields `left` are left: they are the last of the type's.
+#[inline]
+fn next_name<'a>(ty: &'a TypeInfo, left: &[Value]) -> Option<&'a str> {
+    let names = ty.fields();
+    let (name, _) = names.get(names.len().wrapping_sub(left.len()))?;
+    Some(name)
 }
 
 /// Go through `N` values side by side: their heads, then their parts
 /// in order, each part a value gone through the same way before the
 /// next. `Break` with the outcome of the step that stopped the walk.
-fn walk<'a, const N: usize, V: Visit<N>>(
+#[inline]
+fn walk<const N: usize, V: Visit<N>>(values: [&Value; N], visit: &mut V) -> ControlFlow<V::Stop> {
+    visit.heads(values)?;
+    match has_parts(values[0]) {
+        true => through(values, visit, 0),
+        false => Continue(()),
+    }
+}
+
+/// How many levels of a value the walk goes down by calling itself,
+/// with what it comes back to left in its frames: values are seldom
+/// nested deeper. Below that it keeps what it comes back to in a stack
+/// of its own ([`through_far`]), however deep the value goes.
+const NEAR: usize = 16;
+
+/// [`walk`] for values whose heads are visited and of one kind with
+/// parts, `depth` levels down from where the walk began: go through
+/// their parts.
+fn through<const N: usize, V: Visit<N>>(
+    values: [&Value; N],
+    visit: &mut V,
+    depth: usize,
+) -> ControlFlow<V::Stop> {
+    let (names, mut runs) = match runs(values, visit)? {
+        Runs::Of(names, runs) => (names, runs),
+        Runs::Done => return Continue(()),
+        Runs::Not => return through_far(values, visit),
+    };
+    loop {
+        if V::NAMES
+            && let Some(ty) = names
+            && let Some(name) = next_name(ty, runs[0])
+        {
+            visit.name(name);
+        }
+        match first_of(&mut runs) {
+            Among::All(next) => {
+                visit.heads(next)?;
+                if !has_parts(next[0]) {
+                    continue;
+                }
+                match depth < NEAR {
+                    true => through(next, visit, depth + 1)?,
+                    false => through_far(next, visit)?,
+                }
+            }
+            Among::None => return Continue(()),
+            Among::Some(ended) => return visit.uneven(ended),
+        }
+    }
+}
+
+/// The parts of `values`, whose heads are visited and of one kind with
+/// parts, if the walk is to go through them; with the step of the
+/// visitor that comes before the parts.
+fn parts<'a, const N: usize, V: Visit<N>>(
+    values: [&'a Value; N],
+    visit: &mut V,
+) -> ControlFlow<V::Stop, Option<Parts<'a, N>>> {
+    Continue(match runs(values, visit)? {
+        Runs::Of(Some(ty), runs) => Some(Parts::Fields(ty, runs)),
+        Runs::Of(None, runs) => Some(Parts::Values(runs)),
+        Runs::Done => None,
+        Runs::Not => {
+            let (lens, parts) = Parts::of_many(values);
+            if let Some(lens) = lens {
+                visit.lens(lens)?;
+            }
+            Some(parts)
+        }
+    })
+}
+
+/// [`through`] with a stack of the walk's own for what it comes back
+/// to: for values nested deeper than a walk goes by calling itself,
+/// and for maps and sets.
+fn through_far<'a, const N: usize, V: Visit<N>>(
     values: [&'a Value; N],
     visit: &mut V,
 ) -> ControlFlow<V::Stop> {
-    let mut parts = enter(values, visit)?;
-    let mut waiting: Waiting<[Parts<'a>; N]> = Waiting::new();
+    let Some(mut current) = parts(values, visit)? else {
+        return Continue(());
+    };
+    let mut waiting: Vec<Parts<'a, N>> = Vec::new();
     loop {
-        match among(parts.each_mut().map(Parts::next)) {
+        if V::NAMES
+            && let Some(name) = current.name()
+        {
+            visit.name(name);
+        }
+        match current.next() {
             Among::All(next) => {
-                if let Some(name) = next[0].0 {
-                    visit.name(name);
-                }
-                let inner = enter(next.map(|(_, value)| value), visit)?;
-                if inner.iter().all(Parts::is_done) {
+                visit.heads(next)?;
+                if !has_parts(next[0]) {
                     continue;
                 }
+                let Some(inner) = parts(next, visit)? else {
+                    continue;
+                };
                 // The parts of a part come first. (What has no part
                 // left need not be come back to: a chain of a million
                 // values, each the last part of the one before, waits
                 // for nothing.)
-                let outer = std::mem::replace(&mut parts, inner);
-                if !outer.iter().all(Parts::is_done) {
+                let outer = std::mem::replace(&mut current, inner);
+                if !outer.is_done() {
                     waiting.push(outer);
                 }
             }
             Among::None => match waiting.pop() {
-                Some(outer) => parts = outer,
+                Some(outer) => current = outer,
                 None => return Continue(()),
             },
             Among::Some(ended) => return visit.uneven(ended),
@@ -474,8 +612,9 @@ struct Equal;
 impl Visit<2> for Equal {
     type Stop = ();
 
-    fn heads(&mut self, [a, b]: [Head<'_>; 2]) -> ControlFlow<()> {
-        match a == b {
+    #[inline]
+    fn heads(&mut self, [a, b]: [&Value; 2]) -> ControlFlow<()> {
+        match cmp_heads(a, b).is_eq() {
             true => Continue(()),
             false => Break(()),
         }
@@ -511,8 +650,9 @@ struct Order;
 impl Visit<2> for Order {
     type Stop = Ordering;
 
-    fn heads(&mut self, [a, b]: [Head<'_>; 2]) -> ControlFlow<Ordering> {
-        match a.cmp(&b) {
+    #[inline]
+    fn heads(&mut self, [a, b]: [&Value; 2]) -> ControlFlow<Ordering> {
+        match cmp_heads(a, b) {
             Ordering::Equal => Continue(()),
             unequal => Break(unequal),
         }
@@ -546,8 +686,10 @@ struct Hashed<'h, H>(&'h mut H);
 impl<H: Hasher> Visit<1> for Hashed<'_, H> {
     type Stop = Infallible;
 
-    fn heads(&mut self, [head]: [Head<'_>; 1]) -> ControlFlow<Infallible> {
-        head.hash(self.0);
+    const NAMES: bool = true;
+
+    fn heads(&mut self, [value]: [&Value; 1]) -> ControlFlow<Infallible> {
+        hash_head(value, self.0);
         Continue(())
     }
 
