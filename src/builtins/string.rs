@@ -126,7 +126,8 @@ builtins! {
     }
 
     fn join(xs: List, sep: &str) -> Result<String, VmError> {
-        let shown: Vec<String> = xs.to_vec()?.iter().map(Value::to_string).collect();
+        xs.writable()?;
+        let shown: Vec<String> = xs.iter().map(|item| item.to_string()).collect();
         Ok(shown.join(sep))
     }
 

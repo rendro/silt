@@ -664,7 +664,8 @@ pub(crate) mod list {
         }
 
         fn enumerate(xs: List) -> Result<Vec<Value>, VmError> {
-            let items = xs.to_vec()?.into_iter().enumerate();
+            xs.writable()?;
+            let items = xs.iter().enumerate();
             Ok(items
                 .map(|(i, item)| Value::tuple(vec![Value::Int(i as i64), item]))
                 .collect())
@@ -946,11 +947,11 @@ pub(crate) mod set {
         }
 
         fn from_list(xs: List) -> Result<BTreeSet<Value>, VmError> {
-            let items = xs.to_vec()?;
+            xs.writable()?;
             // A set of Fn values is BTree-ordered by Arc pointer address —
             // ASLR-nondeterministic iteration order. Reject at construction.
-            ensure_no_fn("set.from_list", "Compare", items.iter())?;
-            Ok(items.into_iter().collect())
+            ensure_no_fn_in("set.from_list", "Compare", xs)?;
+            Ok(xs.iter().collect())
         }
 
         fn to_list(s: Set) -> Vec<Value> {

@@ -194,9 +194,10 @@ builtins! {
 
     // `key=value` segments joined with `&`.
     fn form_encode(pairs: List) -> Result<String, VmError> {
+        pairs.writable()?;
         let mut out = String::new();
-        for (at, pair) in pairs.to_vec()?.iter().enumerate() {
-            let pair = match pair {
+        for (at, pair) in pairs.iter().enumerate() {
+            let pair = match &pair {
                 Value::Tuple(pair) => &pair[..],
                 _ => &[],
             };

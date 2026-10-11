@@ -170,8 +170,9 @@ builtins! {
     }
 
     fn from_list(xs: List) -> Result<Value, VmError> {
+        xs.writable()?;
         let mut out = Vec::new();
-        for item in xs.to_vec()? {
+        for item in xs.iter() {
             let Value::Int(n) = item else {
                 return Err(unsound("bytes.from_list", "xs"));
             };
@@ -214,8 +215,9 @@ builtins! {
     }
 
     fn concat_all(parts: List) -> Result<Vec<u8>, VmError> {
+        parts.writable()?;
         let mut out = Vec::new();
-        for part in parts.to_vec()? {
+        for part in parts.iter() {
             let Value::Bytes(part) = part else {
                 return Err(unsound("bytes.concat_all", "parts"));
             };
