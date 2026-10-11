@@ -729,6 +729,7 @@ impl Session {
             Ok(_) if !entry_errors.is_empty() => Err(entry_errors),
             Ok(functions) => {
                 let globals = compiler.globals().clone();
+                let types = compiler.types();
                 if matches!(target, Entry::Cell) && self.cells.info.contains_key(&id) {
                     self.cells.globals = globals.clone();
                 }
@@ -743,7 +744,7 @@ impl Session {
                 };
                 Ok(Program {
                     functions,
-                    types: compiler.types(),
+                    types,
                     globals: Arc::new(globals),
                     entry,
                 })
@@ -760,7 +761,7 @@ impl Session {
     /// compiler takes them: numbered in graph order, with each import
     /// mapped to the unit of the module it names. For a REPL cell
     /// (`cell`), with what the earlier cells installed.
-    pub(crate) fn program_units(&self, id: ModuleId, cell: bool) -> ProgramUnits {
+    pub(crate) fn program_units(&self, id: ModuleId, cell: bool) -> ProgramUnits<'_> {
         let modules = &self.results[&id].modules;
         let index: HashMap<ModuleId, usize> =
             modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
@@ -771,14 +772,7 @@ impl Session {
         };
         ProgramUnits {
             defs: self.defs.clone(),
-            resolver: Arc::new(self.tables.resolver().clone()),
-            record_fields: Arc::new(
-                self.tables
-                    .record_fields()
-                    .into_iter()
-                    .map(|(ty, fields)| (ty.id, fields))
-                    .collect(),
-            ),
+            tables: &self.tables,
             earlier,
             modules: modules
                 .iter()

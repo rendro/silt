@@ -24,6 +24,7 @@ use crate::bytecode::ops::Limit;
 use crate::bytecode::{Asm, Const, Emitter, Function, Globals, Label, UpvalueDesc, VmClosure};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
+use crate::layers::Layers;
 use crate::module;
 use crate::source::Span;
 use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
@@ -228,7 +229,7 @@ pub struct ModuleUnit {
 /// which of them is the entry: the one compiled by `compile_program` or
 /// `compile_declarations`. The others are compiled where they are first
 /// imported.
-pub struct ProgramUnits {
+pub struct ProgramUnits<'a> {
     pub modules: Vec<ModuleUnit>,
     pub entry: usize,
     /// The definitions the resolver's slots name.
@@ -236,21 +237,21 @@ pub struct ProgramUnits {
     /// For a REPL entry: what the earlier entries left in the VM. Empty
     /// for any other program.
     pub earlier: EarlierCells,
-    /// The type aliases and associated-type bindings of the session:
-    /// impl targets are canonicalized with them, as the checker keyed
-    /// the impls.
-    pub resolver: Arc<Resolver>,
-    /// The fields of each record type of the session, with their types
-    /// as the checker inferred them, in declaration order.
-    pub record_fields: Arc<HashMap<crate::defs::TypeId, Vec<(Symbol, Type)>>>,
+    /// The tables the session's modules were checked into. Read from
+    /// them: the type aliases and associated-type bindings (impl
+    /// targets are canonicalized with them, as the checker keyed the
+    /// impls), and the fields of each record type, with their types as
+    /// the checker inferred them, in declaration order.
+    pub tables: &'a crate::typechecker::Tables,
 }
 
 /// What the earlier entries of a REPL session installed, which the entry
 /// being compiled uses but does not install again.
 #[derive(Default)]
 pub struct EarlierCells {
-    /// Their declarations, oldest first: the entry knows their types.
-    pub programs: Vec<Arc<Program>>,
+    /// Their type declarations, each by the span of its name: the entry
+    /// knows their types.
+    pub types: Layers<Span, Arc<crate::ast::TypeDecl>>,
     /// The modules installed already: an import of one compiles nothing.
     pub installed: HashSet<usize>,
     /// The global slots the earlier entries took. The entry's own
@@ -258,12 +259,12 @@ pub struct EarlierCells {
     pub globals: Globals,
 }
 
-pub struct Compiler {
+pub struct Compiler<'a> {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
     /// The modules of the program, from the session.
-    units: ProgramUnits,
+    units: ProgramUnits<'a>,
     /// The modules being compiled, innermost last: the importing module
     /// of an `import` met now is the last one, or the entry module.
     unit_stack: Vec<usize>,
@@ -286,7 +287,7 @@ pub struct Compiler {
 
 /// The names two or more types of the program's modules have (two
 /// modules' `Pt`): such a type prints qualified by its module's name.
-fn program_type_clashes(units: &ProgramUnits) -> HashSet<Symbol> {
+fn program_type_clashes(units: &ProgramUnits<'_>) -> HashSet<Symbol> {
     let mut seen: HashMap<Symbol, crate::defs::DefId> = HashMap::new();
     let mut clashing = HashSet::new();
     for unit in &units.modules {
@@ -338,11 +339,11 @@ fn too_many_method_names(span: Span) -> Diagnostic {
     limit_diagnostic(limit, span)
 }
 
-impl Compiler {
+impl<'a> Compiler<'a> {
     /// A compiler for the modules of a program, as the session analysed
     /// them. Every definition of the program that has a global slot gets
     /// it now, so code can use a definition compiled after it.
-    pub fn for_program(units: ProgramUnits) -> Result<Self, Diagnostic> {
+    pub fn for_program(units: ProgramUnits<'a>) -> Result<Self, Diagnostic> {
         let program_clashes = program_type_clashes(&units);
         let mut globals = units.earlier.globals.clone();
         let mut compiler = Self {
@@ -490,7 +491,7 @@ impl Compiler {
     /// methods, so registration and lookup keys agree across the
     /// typecheck → compile boundary.
     fn resolver(&self) -> &Resolver {
-        &self.units.resolver
+        self.units.tables.resolver()
     }
 
     /// The types the compiled code builds values of, for the VM.
@@ -2050,14 +2051,8 @@ impl Compiler {
 
     /// The declaration of the type declared with its name at `span`.
     fn type_declaration(&self, span: Span) -> Option<&crate::ast::TypeDecl> {
-        let programs = self
-            .units
-            .modules
-            .iter()
-            .map(|unit| &unit.program)
-            .chain(self.units.earlier.programs.iter());
-        for program in programs {
-            for decl in &program.decls {
+        for unit in &self.units.modules {
+            for decl in &unit.program.decls {
                 if let Decl::Type(td) = decl
                     && td.name_span == span
                 {
@@ -2065,7 +2060,7 @@ impl Compiler {
                 }
             }
         }
-        None
+        self.units.earlier.types.get(&span).map(|td| &**td)
     }
 
     /// The variant a resolution names (a constructor pattern, a variant
@@ -2400,18 +2395,15 @@ impl Compiler {
     /// The fields of the record type `id`, with their types as the
     /// checker inferred them (an alias is the type it stands for).
     fn record_fields(&self, id: crate::defs::TypeId) -> Vec<(Symbol, Type)> {
-        let fields = self
-            .units
-            .record_fields
-            .get(&id)
-            .cloned()
-            .unwrap_or_default();
-        fields
-            .into_iter()
+        let ty = TypeRef {
+            id,
+            name: self.units.defs.get(id.0).name,
+        };
+        (self.units.tables.record_fields_of(ty).iter())
             .map(|(name, ty)| {
                 (
-                    name,
-                    crate::types::canonical::canonicalize(self.resolver(), &ty),
+                    *name,
+                    crate::types::canonical::canonicalize(self.resolver(), ty),
                 )
             })
             .collect()
@@ -2863,9 +2855,9 @@ impl Compiler {
 
     /// Compile `operands` left to right so that their values are on the
     /// stack, in order, for the instruction the caller emits next.
-    fn compile_operands<'a>(
+    fn compile_operands<'e>(
         &mut self,
-        operands: impl IntoIterator<Item = &'a Expr>,
+        operands: impl IntoIterator<Item = &'e Expr>,
     ) -> Result<(), Diagnostic> {
         for operand in operands {
             self.compile_expr(operand)?;

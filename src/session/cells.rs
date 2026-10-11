@@ -26,6 +26,7 @@ use crate::ast::{self, Decl, ImportTarget};
 use crate::bytecode::Globals;
 use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
+use crate::layers::Layers;
 use crate::source::{FileId, Span};
 
 use super::graph::{ModuleId, cell_name};
@@ -93,7 +94,10 @@ pub(super) struct Cells {
     pub count: usize,
     pub info: HashMap<ModuleId, CellInfo>,
     /// The committed cells, oldest first.
-    committed: Vec<Committed>,
+    committed: Vec<ModuleId>,
+    /// Their type declarations, as checked, each by the span of its
+    /// name: a later cell's code knows those types.
+    types: Layers<Span, Arc<ast::TypeDecl>>,
     /// What binds each top-level name the committed cells bind.
     scope: HashMap<Symbol, Binder>,
     /// The modules (not cells) whose code the committed cells installed.
@@ -103,18 +107,10 @@ pub(super) struct Cells {
     pub globals: Globals,
 }
 
-/// A committed cell.
-struct Committed {
-    id: ModuleId,
-    /// Its type declarations, as checked, when it has any: a later cell's
-    /// code knows those types.
-    types: Option<Arc<ast::Program>>,
-}
-
 impl Cells {
     /// Whether the cell `id` is committed.
     pub fn is_committed(&self, id: ModuleId) -> bool {
-        self.committed.iter().any(|cell| cell.id == id)
+        self.committed.contains(&id)
     }
 
     /// Make the parsed cell `id`, the `n`th, see the committed cells: its
@@ -198,7 +194,7 @@ impl Cells {
             .committed
             .last()
             .map(|cell| {
-                let info = &self.info[&cell.id];
+                let info = &self.info[cell];
                 Decl::Import(
                     ImportTarget::Items(intern(&cell_name(info.n)), seen),
                     Span::point(info.file, 0),
@@ -227,11 +223,7 @@ impl Cells {
     /// a cell; `index` numbers the modules of its program.
     pub fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
         EarlierCells {
-            programs: self
-                .committed
-                .iter()
-                .filter_map(|cell| cell.types.clone())
-                .collect(),
+            types: self.types.clone(),
             installed: self
                 .installed
                 .iter()
@@ -274,21 +266,12 @@ impl Cells {
                 }
             }
         }
-        let types: Vec<Decl> = own
-            .iter()
-            .filter(|decl| matches!(decl, Decl::Type(_)))
-            .cloned()
-            .collect();
-        self.committed.push(Committed {
-            id,
-            types: (!types.is_empty()).then(|| {
-                Arc::new(ast::Program {
-                    decls: types,
-                    unknown: Vec::new(),
-                    statements: Default::default(),
-                })
-            }),
-        });
+        for decl in own {
+            if let Decl::Type(t) = decl {
+                self.types.insert(t.name_span, Arc::new(t.clone()));
+            }
+        }
+        self.committed.push(id);
         self.installed.extend(
             modules
                 .iter()

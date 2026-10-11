@@ -48,7 +48,7 @@ fn add_row<L: Clone>(
 
 /// A map that is cheap to copy. A key is given its value once.
 #[derive(Debug)]
-pub(super) struct Layers<K, V, S = RandomState> {
+pub struct Layers<K, V, S = RandomState> {
     /// Oldest first, which is largest first.
     layers: Vec<Arc<HashMap<K, V, S>>>,
 }
@@ -103,7 +103,7 @@ where
 
 /// A list that is cheap to copy, and that grows at its end.
 #[derive(Debug)]
-pub(super) struct Rows<T> {
+pub struct Rows<T> {
     /// Oldest first, which is largest first: the rows of the list in
     /// order.
     layers: Vec<Arc<Vec<T>>>,

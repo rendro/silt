@@ -465,6 +465,12 @@ impl Tables {
             .collect()
     }
 
+    /// The fields of the record type `ty`, with their types, in
+    /// declaration order; none for a type that is no record.
+    pub fn record_fields_of(&self, ty: TypeRef) -> &[(Symbol, Type)] {
+        self.records.get(&ty).map_or(&[], |info| &info.fields)
+    }
+
     /// Every method a value has, as (the type impls key the value's type
     /// by, the method's name): those of the impls that take `self`, and those of the
     /// structural traits (of a builtin type, the traits it is stamped

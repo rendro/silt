@@ -13,17 +13,16 @@ use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
 use crate::defs::{DefId, TraitId, TypeId};
+use crate::layers::{Layers, Rows};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
 pub mod emit;
-mod layers;
 pub mod ops;
 pub mod verify;
 
 pub use emit::Emitter;
-use layers::{Layers, Rows};
 pub use ops::{Asm, Instr, Op, Operands, decode};
 pub use verify::{VerifyError, verify};
 
@@ -97,7 +96,7 @@ impl Hasher for MethodHasher {
 /// an entry makes again is a new definition with a slot of its own.
 ///
 /// A copy is cheap however many slots there are (its tables are in
-/// layers that the copies share, see `bytecode/layers.rs`): the
+/// layers that the copies share, see `layers.rs`): the
 /// session, the compiler of each entry, the VM and the VMs of the
 /// tasks each have one, and each entry makes new ones.
 #[derive(Debug, Clone, Default)]
