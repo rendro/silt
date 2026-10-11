@@ -3551,7 +3551,6 @@ mod builtin_args {
             name: "probe",
             module: "test",
             params: Vec::new(),
-            optional_last: false,
             feature: None,
             enabled: true,
             id: registry().named("println").expect("println").id,
