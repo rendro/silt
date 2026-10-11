@@ -102,9 +102,7 @@ fn main() {
   print_row("Name", "Age", "Score", "Grade", "")
   print_separator()
   students
-    |> list.each { s ->
-      print_row(s.name, string.from(s.age), string.from(s.score), s.grade, "")
-    }
+    |> list.each { s -> print_row(s.name, string.from(s.age), string.from(s.score), s.grade, "") }
   -- Print column statistics
   println("\n=== Column Statistics ===\n")
   let stat_header_c1 = "Stat" |> string.pad_right(10, " ")
@@ -142,9 +140,7 @@ fn main() {
   print_row("Name", "Age", "Score", "Grade", "")
   print_separator()
   honor
-    |> list.each { s ->
-      print_row(s.name, string.from(s.age), string.from(s.score), s.grade, "")
-    }
+    |> list.each { s -> print_row(s.name, string.from(s.age), string.from(s.score), s.grade, "") }
   println("\nTotal honor students: {list.length(honor)}")
   -- Sort: all students by score descending
   println("\n=== Students Sorted by Score (Descending) ===\n")
