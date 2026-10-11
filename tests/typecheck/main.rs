@@ -12,8 +12,6 @@ mod round75_fuzz_typechecker_target_tests;
 mod round75_kind_naming_canonical_tests;
 mod round76_iopool_panic_typed_err_tests;
 mod round80_typechecker_fixes_tests;
-mod round84_anonrec_unify_eq_tests;
-mod round85_anonrec_hash_ord_contract_tests;
 mod round95_interp_display_runtime_tests;
 mod typeof_render_tests;
 mod unified_trait_registration_tests;

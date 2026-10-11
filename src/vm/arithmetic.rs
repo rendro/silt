@@ -45,24 +45,27 @@ impl Vm {
                 }
                 _ => unreachable!(),
             },
-            (Value::Float(a), Value::Float(b)) => match op {
-                Op::Add => finite_float(a + b, &format!("{a} + {b}"))?,
-                Op::Sub => finite_float(a - b, &format!("{a} - {b}"))?,
-                Op::Mul => finite_float(a * b, &format!("{a} * {b}"))?,
-                Op::Div => {
-                    if *b == 0.0 {
-                        return Err(VmError::new("float division by zero".to_string()));
+            (Value::Float(a), Value::Float(b)) => {
+                let (a, b) = (a.get(), b.get());
+                match op {
+                    Op::Add => finite_float(a + b, &format!("{a} + {b}"))?,
+                    Op::Sub => finite_float(a - b, &format!("{a} - {b}"))?,
+                    Op::Mul => finite_float(a * b, &format!("{a} * {b}"))?,
+                    Op::Div => {
+                        if b == 0.0 {
+                            return Err(VmError::new("float division by zero".to_string()));
+                        }
+                        finite_float(a / b, &format!("{a} / {b}"))?
                     }
-                    finite_float(a / b, &format!("{a} / {b}"))?
-                }
-                Op::Mod => {
-                    if *b == 0.0 {
-                        return Err(VmError::new("modulo by zero".to_string()));
+                    Op::Mod => {
+                        if b == 0.0 {
+                            return Err(VmError::new("modulo by zero".to_string()));
+                        }
+                        finite_float(a % b, &format!("{a} % {b}"))?
                     }
-                    finite_float(a % b, &format!("{a} % {b}"))?
+                    _ => unreachable!(),
                 }
-                _ => unreachable!(),
-            },
+            }
             _ => {
                 let op_name = match op {
                     Op::Add => "+",
@@ -103,26 +106,13 @@ impl Vm {
         let a = self.pop();
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            // A Float is always finite, so `partial_cmp` always answers;
-            // `Equal` is the same safety net `Value::cmp` uses.
-            (Value::Float(a), Value::Float(b)) => {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            }
+            (Value::Float(a), Value::Float(b)) => a.cmp(b),
             (Value::String(a), Value::String(b)) => a.cmp(b),
             // Lists are ordered element by element (`Value::cmp`), after
             // the function-leaf gate (see `ordering_with_fn_gate` below).
             (Value::List(_), Value::List(_)) => Self::ordering_with_fn_gate(&a, &b)?,
-            // Round 85: mirror the `<anon>`-wildcard logic from
-            // `Value::PartialEq`/`Ord` (src/value/key.rs).
-            // The typechecker normally rejects source-level ordering of
-            // anon-shaped records, but this is defensive for cases
-            // where a nominal flows through `unify_anon_nominal` and
-            // ends up compared against an anon-typed value at runtime —
-            // the same-type guard alone would skip the dispatch and
-            // fall to the catch-all error.
-            (Value::Record(ra), Value::Record(rb))
-                if ra.type_id() == rb.type_id() || ra.ty().is_anon() || rb.ty().is_anon() =>
-            {
+            // Records of one type are ordered by their fields.
+            (Value::Record(ra), Value::Record(rb)) if ra.type_id() == rb.type_id() => {
                 Self::ordering_with_fn_gate(&a, &b)?
             }
             (Value::Variant(..), Value::Variant(..)) => Self::ordering_with_fn_gate(&a, &b)?,
@@ -165,43 +155,10 @@ impl Vm {
 
     // ── Type compatibility ────────────────────────────────────────
 
-    /// Returns a discriminant used by [`check_same_type`] to decide whether
-    /// two values may be compared for equality.
-    pub(super) fn value_disc(val: &Value) -> u8 {
-        // These values are compared only for equality in `check_same_type`
-        // (never as `Ord`) and are not persisted anywhere — they are a
-        // compile-time-agreed label, not a stable serialization tag. So the
-        // numbers may be renumbered freely. A historical gap at `2` used to
-        // mark a now-removed variant; closed here since closing it is
-        // semantically invisible to all current callers.
-        match val {
-            Value::Int(_) => 0,
-            Value::Float(_) => 1,
-            Value::Bool(_) => 2,
-            Value::String(_) => 3,
-            Value::List(_) => 4,
-            Value::Map(_) => 5,
-            Value::Set(_) => 6,
-            Value::Tuple(_) => 7,
-            Value::Record(..) => 8,
-            Value::Variant(..) => 9,
-            Value::Unit => 10,
-            Value::Channel(_) => 11,
-            Value::Handle(_) => 12,
-            Value::VmClosure(_) => 13,
-            Value::BuiltinFn(_) | Value::HostFn(_) => 14,
-            Value::VariantConstructor(..) => 15,
-            Value::TypeDescriptor(_) => 16,
-            Value::PrimitiveDescriptor(_) => 17,
-            Value::Bytes(_) => 18,
-            Value::TcpListener(_) => 19,
-            Value::TcpStream(_) => 20,
-        }
-    }
-
-    /// Check that two values have compatible types for equality/comparison.
+    /// Check that two values are of one kind, as the operands of `==`
+    /// and `!=` are.
     pub(super) fn check_same_type(&self, a: &Value, b: &Value) -> Result<(), VmError> {
-        if Self::value_disc(a) != Self::value_disc(b) {
+        if std::mem::discriminant(a) != std::mem::discriminant(b) {
             return Err(VmError::type_confusion(format!(
                 "unsupported operation: cannot compare {} and {}",
                 a.kind(),

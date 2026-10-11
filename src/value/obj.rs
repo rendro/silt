@@ -15,6 +15,7 @@
 //! its name ([`Record::get`]) and all with their names
 //! ([`Record::named`]).
 
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use super::Value;
@@ -27,6 +28,61 @@ struct Obj {
     ty: Arc<TypeInfo>,
     /// In the order the type declares them.
     fields: Box<[Value]>,
+}
+
+// ── Dropping a deep value ──────────────────────────────────────────
+//
+// The last holder of an object drops its fields, and a field that is
+// the last holder of an object drops that one's: a list of a program's
+// own, a million links long, was dropped a million calls deep, and
+// overflowed the native stack. So the objects being dropped, each
+// inside the one before, are counted, and past a few of them the
+// fields of an object are put aside and dropped by the outermost when
+// it is done with its own. (A value can only be nested without bound
+// through a type that holds itself, which is a variant or a record at
+// each level: the other values between two objects are as many as
+// their type has, and are dropped as they are.)
+
+/// How many objects drop their fields each inside the one before; the
+/// fields of one further in are put aside.
+const NEAR_DROPS: usize = 64;
+
+thread_local! {
+    /// How many objects are dropping their fields on this thread, each
+    /// inside the one before.
+    static DROPPING: Cell<usize> = const { Cell::new(0) };
+    /// Whether fields are put aside.
+    static ASIDE: Cell<bool> = const { Cell::new(false) };
+    /// The fields put aside.
+    static PUT_ASIDE: RefCell<Vec<Box<[Value]>>> = const { RefCell::new(Vec::new()) };
+}
+
+impl Drop for Obj {
+    fn drop(&mut self) {
+        let fields = std::mem::take(&mut self.fields);
+        let depth = DROPPING.get();
+        if depth >= NEAR_DROPS {
+            // (A thread that is ending has nothing to put them into,
+            // and drops them where it is.)
+            if PUT_ASIDE
+                .try_with(|aside| aside.borrow_mut().push(fields))
+                .is_ok()
+            {
+                ASIDE.set(true);
+            }
+            return;
+        }
+        DROPPING.set(depth + 1);
+        drop(fields);
+        while depth == 0 && ASIDE.get() {
+            let next = PUT_ASIDE.try_with(|aside| aside.borrow_mut().pop());
+            match next {
+                Ok(Some(fields)) => drop(fields),
+                _ => ASIDE.set(false),
+            }
+        }
+        DROPPING.set(depth);
+    }
 }
 
 /// A variant: `None`, `Some(1)`, `Link(1, rest)`.
@@ -187,17 +243,6 @@ impl Record {
     pub fn named(&self) -> impl ExactSizeIterator<Item = (&str, &Value)> + Clone {
         let names = self.0.ty.fields().iter().map(|(name, _)| &**name);
         names.zip(self.0.fields.iter())
-    }
-
-    /// The fields with their names, in name order: the order of an
-    /// anonymous record. A builtin record is shown and ordered in it
-    /// (src/value/fmt.rs, src/value/key.rs), every record is hashed in
-    /// it, and an anonymous record is compared with a declared one in
-    /// it.
-    pub(super) fn by_name(&self) -> Vec<(&str, &Value)> {
-        let mut fields: Vec<(&str, &Value)> = self.named().collect();
-        fields.sort_by_key(|(name, _)| *name);
-        fields
     }
 
     /// The record with `values` as its fields `names`: `r.{ x: 1 }`,

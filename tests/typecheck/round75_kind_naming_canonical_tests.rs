@@ -94,7 +94,7 @@ fn build_all_variants() -> AllVariants {
 
     AllVariants {
         int: Value::Int(7),
-        float: Value::Float(1.5),
+        float: Value::Float(silt::value::Float::new(1.5).expect("a finite number")),
         bool_: Value::Bool(true),
         string: Value::String("hi".into()),
         list: Value::list(vec![Value::Int(1)]),

@@ -540,10 +540,7 @@ impl Vm {
                             return Err(VmError::new(format!("integer overflow: negate {n}")));
                         }
                     },
-                    Value::Float(n) => {
-                        let result = if -n == 0.0 { 0.0 } else { -n };
-                        self.push(Value::Float(result));
-                    }
+                    Value::Float(n) => self.push(Value::Float(-n)),
                     other => {
                         return Err(VmError::type_confusion(format!(
                             "cannot negate {}",
@@ -906,7 +903,7 @@ impl Vm {
             Instr::TestFloatRange { lo, hi } => {
                 let chunk = self.chunk();
                 let result = match (self.peek(), chunk.constant(lo), chunk.constant(hi)) {
-                    (Value::Float(n), Value::Float(lo), Value::Float(hi)) => *n >= *lo && *n <= *hi,
+                    (Value::Float(n), Value::Float(lo), Value::Float(hi)) => n >= lo && n <= hi,
                     _ => false,
                 };
                 self.push(Value::Bool(result));

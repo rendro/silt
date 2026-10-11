@@ -8,6 +8,7 @@ use crate::runtime::sync::Channel;
 use crate::typeinfo::{Tag, TypeInfo};
 
 mod convert;
+mod float;
 mod fmt;
 mod key;
 mod list;
@@ -17,6 +18,7 @@ mod obj;
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
+pub use float::Float;
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
@@ -25,7 +27,7 @@ pub use obj::{Record, Variant};
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
-    Float(f64),
+    Float(Float),
     Bool(bool),
     String(Arc<str>),
     List(List),

@@ -45,7 +45,7 @@ use std::sync::Arc;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
-use crate::value::Value;
+use crate::value::{Float, Value};
 use crate::vm::{Vm, VmError};
 
 use super::json::{decodable_record, field_record_type, unsupported_field_type_message};
@@ -149,7 +149,7 @@ fn toml_type_name(v: &::toml::Value) -> &'static str {
 fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
     Ok(match v {
         Value::Int(n) => ::toml::Value::Integer(*n),
-        Value::Float(f) => ::toml::Value::Float(*f),
+        Value::Float(f) => ::toml::Value::Float(f.get()),
         Value::Bool(b) => ::toml::Value::Boolean(*b),
         Value::String(s) => ::toml::Value::String(s.to_string()),
         Value::List(xs) => {
@@ -462,12 +462,12 @@ fn toml_to_typed_value(
         },
         FieldType::Float => match tv {
             // A `Float` is finite, so TOML's `nan` and `inf` do not decode.
-            ::toml::Value::Float(f) if f.is_finite() => {
-                Ok(crate::builtins::numeric::float_value(*f))
-            }
-            ::toml::Value::Float(_) => Err(mismatch("Float", "a non-finite float")),
+            ::toml::Value::Float(f) => match Float::new(*f) {
+                Some(f) => Ok(Value::Float(f)),
+                None => Err(mismatch("Float", "a non-finite float")),
+            },
             // TOML integers coerce to Float the way JSON numbers do.
-            ::toml::Value::Integer(n) => Ok(Value::Float(*n as f64)),
+            ::toml::Value::Integer(n) => Ok(Value::Float(Float::from(*n))),
             _ => Err(mismatch("Float", toml_type_name(tv))),
         },
         FieldType::Bool => match tv {

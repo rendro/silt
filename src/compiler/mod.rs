@@ -1118,7 +1118,7 @@ impl Compiler {
             }
 
             ExprKind::Float(n) => {
-                let idx = self.add_constant(Value::Float(*n), span)?;
+                let idx = self.float_constant(*n, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
@@ -2750,6 +2750,19 @@ impl Compiler {
         self.emitter().constant(value, span)
     }
 
+    /// The constant of the Float a literal writes. (The lexer refuses a
+    /// literal that is no finite number.)
+    fn float_constant(&mut self, n: f64, span: Span) -> Result<Const, Diagnostic> {
+        let float = crate::value::Float::new(n).ok_or_else(|| {
+            Diagnostic::error(
+                Code::CompilerBug,
+                span,
+                format!("compiler bug: the float literal {n} is no finite number"),
+            )
+        })?;
+        self.add_constant(Value::Float(float), span)
+    }
+
     /// The string constants of `names`, in order.
     fn name_constants(&mut self, names: &[Symbol], span: Span) -> Result<Vec<Const>, Diagnostic> {
         names
@@ -3054,7 +3067,7 @@ mod tests {
             main.chunk()
                 .constants()
                 .iter()
-                .any(|c| matches!(c, Value::Float(f) if (*f - 4.25).abs() < f64::EPSILON))
+                .any(|c| matches!(c, Value::Float(f) if f.get() == 4.25))
         );
     }
 

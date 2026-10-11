@@ -46,12 +46,41 @@ fn record_type(id: u32, name: &str, fields: &[&str]) -> Arc<TypeInfo> {
 
 // ── Hash/Eq consistency ────────────────────────────────────────
 
+/// The Float `f`, a finite number, as a value.
+fn float(f: f64) -> Value {
+    Value::Float(Float::new(f).expect("a finite number"))
+}
+
+/// A Float is finite and there is one zero: `-0.0` is made `0.0`, a NaN
+/// and the infinities are no Floats. So a Float is its own key: equal
+/// Floats are the same bits and hash alike, and any two are in order.
 #[test]
-fn hash_eq_float_zero_and_neg_zero() {
-    let pos = Value::Float(0.0);
-    let neg = Value::Float(-0.0);
-    assert_eq!(pos, neg, "0.0 and -0.0 should be equal");
-    assert_eq!(hash_of(&pos), hash_of(&neg), "0.0 and -0.0 must hash equal");
+fn a_float_is_finite_and_has_one_zero() {
+    let (zero, negative) = (Float::new(0.0), Float::new(-0.0));
+    assert_eq!(zero, negative);
+    let zero = zero.expect("a Float");
+    assert!(zero.get().is_sign_positive());
+    assert!(negative.expect("a Float").get().is_sign_positive());
+    assert_eq!(hash_of(&float(0.0)), hash_of(&float(-0.0)));
+    assert_eq!(format!("{}", float(-0.0)), "0");
+    for none in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(Float::new(none), None);
+    }
+    for some in [f64::MAX, f64::MIN, f64::MIN_POSITIVE, -1.5e-300] {
+        assert_eq!(Float::new(some).map(Float::get), Some(some));
+    }
+    // What stays among the Floats: a Float negated, an Int as a Float.
+    assert_eq!(-zero, zero);
+    assert!((-zero).get().is_sign_positive());
+    assert_eq!((-Float::new(1.5).expect("a Float")).get(), -1.5);
+    assert_eq!(Float::from(i64::MAX).get(), i64::MAX as f64);
+    assert!(Float::from(0).get().is_sign_positive());
+    // The order is the numbers'.
+    let ascending = [f64::MIN, -2.0, -1e-300, 0.0, 1e-300, 2.0, f64::MAX];
+    for pair in ascending.windows(2) {
+        assert!(float(pair[0]) < float(pair[1]), "{} < {}", pair[0], pair[1]);
+        assert_ne!(hash_of(&float(pair[0])), hash_of(&float(pair[1])));
+    }
 }
 
 #[test]
@@ -114,7 +143,7 @@ fn nested_list_eq() {
 
 #[test]
 fn different_variant_types_not_equal() {
-    assert_ne!(Value::Int(1), Value::Float(1.0));
+    assert_ne!(Value::Int(1), float(1.0));
     assert_ne!(Value::Int(0), Value::Bool(false));
     assert_ne!(Value::String("1".into()), Value::Int(1));
 }
@@ -151,19 +180,6 @@ fn ord_int_ordering() {
 fn ord_string_ordering() {
     assert!(Value::String("apple".into()) < Value::String("banana".into()));
     assert!(Value::String("a".into()) < Value::String("b".into()));
-}
-
-#[test]
-fn ord_float_normal() {
-    assert!(Value::Float(1.0) < Value::Float(2.0));
-    assert!(Value::Float(-1.0) < Value::Float(0.0));
-}
-
-#[test]
-fn ord_float_nan_fallback() {
-    let nan = Value::Float(f64::NAN);
-    let _ = nan.cmp(&Value::Float(0.0));
-    let _ = nan.cmp(&nan);
 }
 
 #[test]
@@ -473,7 +489,7 @@ fn anonymous_records_of_one_set_of_names_share_a_type() {
 }
 
 /// A builtin record is built with its fields named, in the order its
-/// type declares them, and is shown and ordered in name order.
+/// type declares them, and is written and ordered in that order.
 #[test]
 fn a_builtin_record_has_the_fields_its_type_declares() {
     let date = make_date(2024, 3, 9);
@@ -485,8 +501,247 @@ fn a_builtin_record_has_the_fields_its_type_declares() {
         [Value::Int(2024), Value::Int(3), Value::Int(9)]
     );
     assert_eq!(record.get("month"), Some(&Value::Int(3)));
-    assert_eq!(date.format_silt(), "Date {day: 9, month: 3, year: 2024}");
+    assert_eq!(date.format_silt(), "Date {year: 2024, month: 3, day: 9}");
+    assert_eq!(date.to_string(), "2024-03-09");
     assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
+}
+
+/// A record is of its type. Records of two declared types with the
+/// same fields are two values, and an anonymous record is not a
+/// declared one of the same fields: not equal, in the order of their
+/// types, and two members of a set. (An anonymous record once stood
+/// for any record of its fields, in `==`, in the order and in the
+/// hash: what a set held depended on the order its members came in.)
+#[test]
+fn a_record_is_of_its_type() {
+    let person = Value::record(record_type(9100, "Person", &["x"]), vec![Value::Int(1)]);
+    let again = Value::record(record_type(9100, "Person", &["x"]), vec![Value::Int(1)]);
+    let car = Value::record(record_type(9101, "Car", &["x"]), vec![Value::Int(1)]);
+    let anon = Value::anon_record([("x", Value::Int(1))]);
+
+    // One type, described twice: one value.
+    assert_eq!(person, again);
+    assert_eq!(person.cmp(&again), Ordering::Equal);
+    assert_eq!(hash_of(&person), hash_of(&again));
+
+    for (a, b) in [(&person, &car), (&person, &anon), (&car, &anon)] {
+        assert_ne!(a, b);
+        assert_ne!(a.cmp(b), Ordering::Equal);
+        assert_eq!(a.cmp(b), b.cmp(a).reverse());
+    }
+    for order in [
+        [&person, &car, &anon],
+        [&anon, &car, &person],
+        [&car, &anon, &person],
+    ] {
+        let members: BTreeSet<Value> = order.into_iter().cloned().collect();
+        assert_eq!(members.len(), 3);
+        let hashed: std::collections::HashSet<Value> = order.into_iter().cloned().collect();
+        assert_eq!(hashed.len(), 3);
+    }
+
+    // Anonymous records of other fields are other values, and each is
+    // itself.
+    let wider = Value::anon_record([("x", Value::Int(1)), ("y", Value::Int(2))]);
+    let named = Value::anon_record([("z", Value::Int(1))]);
+    assert_ne!(anon, wider);
+    assert_ne!(anon, named);
+    assert_ne!(anon.cmp(&wider), Ordering::Equal);
+    assert_ne!(anon.cmp(&named), Ordering::Equal);
+    assert_eq!(anon, Value::anon_record([("x", Value::Int(1))]));
+    assert_ne!(anon, Value::anon_record([("x", Value::Int(2))]));
+    assert!(anon < Value::anon_record([("x", Value::Int(2))]));
+}
+
+/// Records of one type are in the order of their fields as the type
+/// declares them, a builtin record like any other; and a record's hash
+/// goes through its fields in that order.
+#[test]
+fn records_are_ordered_and_hashed_in_declaration_order() {
+    let ty = record_type(9102, "Ver", &["major", "build"]);
+    let ver = |major, build| Value::record(ty.clone(), vec![Value::Int(major), Value::Int(build)]);
+    assert!(ver(1, 9) < ver(2, 0));
+    assert!(ver(2, 0) < ver(2, 1));
+    assert_eq!(ver(2, 1).cmp(&ver(2, 1)), Ordering::Equal);
+    assert_eq!(hash_of(&ver(2, 1)), hash_of(&ver(2, 1)));
+    assert_ne!(hash_of(&ver(2, 1)), hash_of(&ver(1, 2)));
+
+    // `Response` declares `status` before `body`: the status decides.
+    let response = |status, body: &str| {
+        let headers = Value::Map(Arc::new(BTreeMap::new()));
+        let body = Value::String(body.into());
+        Value::builtin_record(
+            ty::RESPONSE,
+            [
+                ("status", Value::Int(status)),
+                ("body", body),
+                ("headers", headers),
+            ],
+        )
+    };
+    assert!(response(200, "z") < response(404, "a"));
+    assert!(response(200, "a") < response(200, "b"));
+    assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
+    assert!(make_time(7, 59, 59, 0) < make_time(8, 0, 0, 0));
+}
+
+/// Values of two kinds are in the order of the kinds, one table for
+/// the order and for the first byte of the hash; values of one kind
+/// that are equal are in no order and hash alike.
+#[test]
+fn values_of_every_kind_have_one_key() {
+    let none = Value::variant(bv::NONE, vec![]);
+    let ascending = [
+        Value::Unit,
+        Value::Bool(false),
+        Value::Bool(true),
+        Value::Int(-1),
+        Value::Int(7),
+        float(-0.5),
+        float(7.0),
+        Value::String("a".into()),
+        Value::String("b".into()),
+        Value::list(vec![]),
+        Value::list(vec![Value::Int(1)]),
+        Value::list(vec![Value::Int(1), Value::Int(0)]),
+        Value::list(vec![Value::Int(2)]),
+        Value::tuple(vec![Value::Int(1), Value::Int(2)]),
+        Value::tuple(vec![Value::Int(1), Value::Int(3)]),
+        Value::Map(Arc::new(BTreeMap::from([(Value::Int(1), Value::Int(1))]))),
+        Value::Map(Arc::new(BTreeMap::from([(Value::Int(1), Value::Int(2))]))),
+        Value::Set(Arc::new(BTreeSet::from([Value::Int(1)]))),
+        Value::Set(Arc::new(BTreeSet::from([Value::Int(1), Value::Int(2)]))),
+        Value::anon_record([("x", Value::Int(1))]),
+        Value::variant(bv::OK, vec![Value::Int(1)]),
+        Value::variant(bv::OK, vec![Value::Int(2)]),
+        Value::variant(bv::ERR, vec![Value::Int(0)]),
+        Value::variant(bv::SOME, vec![none.clone()]),
+        none,
+        Value::Bytes(Arc::new(vec![1, 2])),
+        Value::Bytes(Arc::new(vec![1, 3])),
+    ];
+    for (at, a) in ascending.iter().enumerate() {
+        assert_eq!(a, &a.clone());
+        assert_eq!(a.cmp(&a.clone()), Ordering::Equal);
+        assert_eq!(hash_of(a), hash_of(&a.clone()));
+        for b in &ascending[at + 1..] {
+            assert_eq!(a.cmp(b), Ordering::Less, "{a:?} < {b:?}");
+            assert_eq!(b.cmp(a), Ordering::Greater, "{b:?} > {a:?}");
+            assert_ne!(a, b);
+            assert_ne!(hash_of(a), hash_of(b), "{a:?} and {b:?}");
+        }
+    }
+}
+
+/// The key of a value nested 50,000 levels deep is found like any
+/// other's: the walk keeps what it has yet to visit in a stack of its
+/// own, and a chain in which each value is the last part of the one
+/// before waits for nothing. (The comparison recursed once a level:
+/// a thread of a test has a stack for a few thousand levels of it.
+/// The goldens under lang/values go to a million levels.)
+#[test]
+fn a_deep_value_is_compared_and_hashed_without_the_native_stack() {
+    const DEPTH: i64 = 50_000;
+    // Each value is taken apart at its end by a loop: dropping a value
+    // this deep still recurses. `next` gives the value one level in.
+    fn unlink(mut value: Value, next: impl Fn(&Value) -> Option<Value>) {
+        while let Some(inner) = next(&value) {
+            value = inner;
+        }
+    }
+    let node = record_type(9103, "Node", &["tag", "next"]);
+    // The next level is the last part of a level (of a record in a
+    // list in a variant), where the walk waits for nothing; and its
+    // first part (of a tuple), where the walk comes back to each
+    // level.
+    let last = |n: i64, rest: Value| {
+        let record = Value::record(node.clone(), vec![Value::Int(n), rest]);
+        Value::variant(bv::OK, vec![Value::list(vec![record])])
+    };
+    let last_next = |value: &Value| match value {
+        Value::Variant(variant) => variant.fields().last().cloned(),
+        Value::List(list) => list.last(),
+        Value::Record(record) => record.fields().last().cloned(),
+        _ => None,
+    };
+    let first = |n: i64, rest: Value| Value::tuple(vec![rest, Value::Int(n)]);
+    let first_next = |value: &Value| match value {
+        Value::Tuple(items) => items.first().cloned(),
+        _ => None,
+    };
+    let shapes: [(
+        &dyn Fn(i64, Value) -> Value,
+        &dyn Fn(&Value) -> Option<Value>,
+    ); 2] = [(&last, &last_next), (&first, &first_next)];
+    for (shape, (wrap, next)) in shapes.into_iter().enumerate() {
+        let build =
+            |innermost: i64| (0..DEPTH).fold(Value::Int(innermost), |rest, n| wrap(n, rest));
+        let (a, b, c) = (build(0), build(0), build(1));
+        assert!(a == b, "shape {shape}");
+        assert!(a != c, "shape {shape}");
+        assert_eq!(a.cmp(&b), Ordering::Equal, "shape {shape}");
+        assert_eq!(a.cmp(&c), Ordering::Less, "shape {shape}");
+        assert_eq!(hash_of(&a), hash_of(&b), "shape {shape}");
+        assert_ne!(hash_of(&a), hash_of(&c), "shape {shape}");
+        for value in [a, b, c] {
+            unlink(value, next);
+        }
+    }
+}
+
+/// The walk goes down the first levels of a value by calling itself
+/// and the levels below with a stack of its own: what it finds does
+/// not depend on which. The hash of a value nested to any depth is the
+/// hash this test writes out by hand, and two values that differ at
+/// some depth are in the order of what differs there.
+#[test]
+fn the_key_of_a_value_does_not_depend_on_its_depth() {
+    use std::hash::Hasher;
+    // A value `depth` levels deep: a tuple of an Int, the value one
+    // level in (or the innermost Int) and a string.
+    fn nested(depth: usize, innermost: i64) -> Value {
+        (0..depth).fold(Value::Int(innermost), |inner, level| {
+            Value::tuple(vec![
+                Value::Int(level as i64),
+                inner,
+                Value::String("s".into()),
+            ])
+        })
+    }
+    // Its hash, written out: for a tuple its rank, the number of its
+    // items and the items; for an Int and a string its rank and it.
+    fn by_hand(depth: usize, innermost: i64, state: &mut DefaultHasher) {
+        match depth.checked_sub(1) {
+            None => {
+                state.write_u8(2);
+                innermost.hash(state);
+            }
+            Some(inner) => {
+                state.write_u8(6);
+                3usize.hash(state);
+                state.write_u8(2);
+                (inner as i64).hash(state);
+                by_hand(inner, innermost, state);
+                state.write_u8(4);
+                "s".hash(state);
+            }
+        }
+    }
+    for depth in [0, 1, 2, 15, 16, 17, 18, 33, 100] {
+        let value = nested(depth, 7);
+        let mut state = DefaultHasher::new();
+        by_hand(depth, 7, &mut state);
+        assert_eq!(hash_of(&value), state.finish(), "depth {depth}");
+        assert_eq!(value, nested(depth, 7), "depth {depth}");
+        assert_eq!(value.cmp(&nested(depth, 7)), Ordering::Equal);
+        assert_ne!(value, nested(depth, 8), "depth {depth}");
+        assert_eq!(
+            value.cmp(&nested(depth, 8)),
+            Ordering::Less,
+            "depth {depth}"
+        );
+        assert_eq!(nested(depth, 8).cmp(&value), Ordering::Greater);
+    }
 }
 
 /// A program's record type named like a builtin one prints as a
@@ -501,7 +756,7 @@ fn a_program_type_named_time_is_not_the_builtin_time() {
 fn ord_cross_type_by_discriminant() {
     assert!(Value::Unit < Value::Bool(true));
     assert!(Value::Bool(false) < Value::Int(0));
-    assert!(Value::Int(0) < Value::Float(0.0));
+    assert!(Value::Int(0) < float(0.0));
 }
 
 // ── Display formatting ─────────────────────────────────────────
@@ -514,7 +769,7 @@ fn display_int() {
 
 #[test]
 fn display_float() {
-    assert_eq!(format!("{}", Value::Float(4.25)), "4.25");
+    assert_eq!(format!("{}", float(4.25)), "4.25");
 }
 
 #[test]
@@ -585,6 +840,183 @@ fn display_generic_record() {
     let ty = record_type(9003, "Point", &["x", "y"]);
     let rec = Value::record(ty, vec![Value::Int(10), Value::Int(20)]);
     assert_eq!(format!("{}", rec), "Point {x: 10, y: 20}");
+}
+
+/// One formatter writes a value in two ways: as it is shown, and as it
+/// is inspected. Each value here with its two texts.
+#[test]
+fn a_value_is_shown_and_inspected_by_one_formatter() {
+    let text = |s: &str| Value::String(s.into());
+    let point = record_type(9200, "Point", &["y", "x"]);
+    let println = crate::builtins::registry::registry()
+        .named("println")
+        .expect("println")
+        .value();
+    let cases: Vec<(Value, &str, &str)> = vec![
+        (Value::Unit, "()", "()"),
+        (Value::Int(-7), "-7", "-7"),
+        (float(1.5), "1.5", "1.5"),
+        (Value::Bool(true), "true", "true"),
+        (text("a b"), "a b", "\"a b\""),
+        // A tuple of one item is written as a program writes it.
+        (Value::tuple(vec![Value::Int(1)]), "(1,)", "(1,)"),
+        (Value::tuple(vec![text("x")]), "(x,)", "(\"x\",)"),
+        (
+            Value::tuple(vec![Value::tuple(vec![Value::Int(1)]), Value::Int(2)]),
+            "((1,), 2)",
+            "((1,), 2)",
+        ),
+        (
+            Value::tuple(vec![Value::Int(1), text("x")]),
+            "(1, x)",
+            "(1, \"x\")",
+        ),
+        (Value::list(vec![]), "[]", "[]"),
+        (
+            Value::list(vec![text("a"), text("b")]),
+            "[a, b]",
+            "[\"a\", \"b\"]",
+        ),
+        (Value::List(ints(1, 3)), "[1, 2, 3]", "[1, 2, 3]"),
+        (
+            Value::List(ints(0, MAX_RANGE_MATERIALIZE as i64)),
+            "[0, 1, 2, ..., 10000000]",
+            "[0, 1, 2, ..., 10000000]",
+        ),
+        // A key that is a string is in quotes however the map is
+        // written; a key that has parts is written like any value.
+        (
+            Value::Map(Arc::new(BTreeMap::from([
+                (text("k"), text("v")),
+                (text("l"), Value::list(vec![Value::Int(1)])),
+            ]))),
+            "#{\"k\": v, \"l\": [1]}",
+            "#{\"k\": \"v\", \"l\": [1]}",
+        ),
+        (
+            Value::Map(Arc::new(BTreeMap::from([(
+                Value::tuple(vec![Value::Int(1), text("a")]),
+                Value::Int(2),
+            )]))),
+            "#{(1, a): 2}",
+            "#{(1, \"a\"): 2}",
+        ),
+        (Value::Map(Arc::new(BTreeMap::new())), "#{}", "#{}"),
+        (
+            Value::Set(Arc::new(BTreeSet::from([text("b"), text("a")]))),
+            "#[a, b]",
+            "#[\"a\", \"b\"]",
+        ),
+        // A record in the order its type declares its fields; an
+        // anonymous one without a name; one without fields.
+        (
+            Value::record(point.clone(), vec![Value::Int(2), text("one")]),
+            "Point {y: 2, x: one}",
+            "Point {y: 2, x: \"one\"}",
+        ),
+        (
+            Value::anon_record([("b", Value::Int(2)), ("a", text("x"))]),
+            "{a: x, b: 2}",
+            "{a: \"x\", b: 2}",
+        ),
+        (
+            Value::record(record_type(9201, "Empty", &[]), vec![]),
+            "Empty {}",
+            "Empty {}",
+        ),
+        // A builtin record of time is shown as its text and inspected
+        // as the record it is, its fields as its type declares them.
+        (
+            make_date(2024, 3, 9),
+            "2024-03-09",
+            "Date {year: 2024, month: 3, day: 9}",
+        ),
+        (
+            make_time(7, 30, 5, 0),
+            "07:30:05",
+            "Time {hour: 7, minute: 30, second: 5, ns: 0}",
+        ),
+        (
+            Value::list(vec![make_date(2024, 3, 9)]),
+            "[2024-03-09]",
+            "[Date {year: 2024, month: 3, day: 9}]",
+        ),
+        (Value::variant(bv::NONE, vec![]), "None", "None"),
+        (
+            Value::variant(bv::SOME, vec![text("x")]),
+            "Some(x)",
+            "Some(\"x\")",
+        ),
+        (
+            Value::variant(bv::OK, vec![Value::tuple(vec![Value::Int(1), Value::Unit])]),
+            "Ok((1, ()))",
+            "Ok((1, ()))",
+        ),
+        // A builtin error is shown as its message.
+        (
+            Value::variant(bv::IO_NOT_FOUND, vec![text("f.txt")]),
+            "file not found: f.txt",
+            "IoNotFound(\"f.txt\")",
+        ),
+        (println, "<builtin:println>", "<fn>"),
+        (
+            Value::Bytes(Arc::new(vec![1, 255])),
+            "bytes(01 ff, length: 2)",
+            "bytes(01 ff, length: 2)",
+        ),
+    ];
+    for (value, shown, inspected) in &cases {
+        assert_eq!(&value.to_string(), shown);
+        assert_eq!(&value.format_silt(), inspected);
+        // Rust's `{:?}` is the value inspected.
+        assert_eq!(&format!("{value:?}"), inspected);
+    }
+}
+
+/// A value nested 100,000 levels deep is written like any other: the
+/// formatter keeps what it has begun in a stack of its own. And it is
+/// dropped like any other: the fields of an object far inside are put
+/// aside and dropped by the outermost. (Each recursed once a level: a
+/// thread of a test has a stack for a few thousand levels of it.)
+#[test]
+fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
+    const DEPTH: usize = 100_000;
+    let node = record_type(9202, "Node", &["next", "tag"]);
+    let shapes: [(&dyn Fn(Value) -> Value, &str, &str); 3] = [
+        // A variant in a variant.
+        (&|rest| Value::variant(bv::SOME, vec![rest]), "Some(", ")"),
+        // A list in a variant, and a tuple of one in it.
+        (
+            &|rest| Value::variant(bv::OK, vec![Value::list(vec![Value::tuple(vec![rest])])]),
+            "Ok([(",
+            ",)])",
+        ),
+        // A record whose first field is the next level.
+        (
+            &|rest| Value::record(node.clone(), vec![rest, Value::Int(1)]),
+            "Node {next: ",
+            ", tag: 1}",
+        ),
+    ];
+    for (wrap, open, close) in shapes {
+        let value = (0..DEPTH).fold(Value::Int(7), |rest, _| wrap(rest));
+        for text in [value.to_string(), value.format_silt()] {
+            assert_eq!(text.len(), DEPTH * (open.len() + close.len()) + 1);
+            assert!(text.starts_with(&open.repeat(3)));
+            assert!(text.ends_with(&close.repeat(3)));
+            assert!(text.contains(&format!("{open}7{close}")));
+        }
+        assert!(value.writable().is_ok());
+        // The value is dropped here, a clone of its top first.
+        let again = value.clone();
+        drop(value);
+        drop(again);
+    }
+    // A chain ten times as long, of a list of a program's own.
+    let chain = (0..10 * DEPTH as i64).fold(Value::variant(bv::NONE, vec![]), |rest, n| {
+        Value::variant(bv::SOME, vec![Value::tuple(vec![Value::Int(n), rest])])
+    });
+    drop(chain);
 }
 
 #[test]
@@ -978,8 +1410,8 @@ fn the_product_of_a_list_of_ints() {
 #[test]
 fn a_list_in_order_and_without_its_repeats() {
     for xs in both() {
-        assert_eq!(xs.sorted(), xs);
-        assert_eq!(xs.unique(), xs);
+        assert_eq!(Value::List(xs.sorted()), Value::List(xs.clone()));
+        assert_eq!(Value::List(xs.unique()), Value::List(xs));
     }
     let mixed = made([3, 1, 3, 2, 1]);
     assert_eq!(elements(&mixed.sorted()), elements(&made([1, 1, 2, 3, 3])));

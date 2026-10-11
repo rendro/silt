@@ -9,7 +9,7 @@ use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
-use crate::value::Value;
+use crate::value::{Float, Value};
 use crate::vm::{Vm, VmError};
 
 // ── Field types for JSON / TOML parsing ──────────────────────────────
@@ -156,7 +156,7 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
 fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
     Ok(match v {
         Value::Int(n) => serde_json::Value::Number((*n).into()),
-        Value::Float(f) => serde_json::Number::from_f64(*f)
+        Value::Float(f) => serde_json::Number::from_f64(f.get())
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Value::Bool(b) => serde_json::Value::Bool(*b),
@@ -415,13 +415,10 @@ fn json_to_typed_value(
             _ => Err(mismatch("Int", json_type_name(json))),
         },
         FieldType::Float => match json {
-            serde_json::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Ok(crate::builtins::numeric::float_value(f))
-                } else {
-                    Err(unknown("expected Float, got non-numeric number".into()))
-                }
-            }
+            serde_json::Value::Number(n) => match n.as_f64().and_then(Float::new) {
+                Some(f) => Ok(Value::Float(f)),
+                None => Err(unknown("expected Float, got non-numeric number".into())),
+            },
             _ => Err(mismatch("Float", json_type_name(json))),
         },
         FieldType::Bool => match json {

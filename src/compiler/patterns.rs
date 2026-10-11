@@ -96,7 +96,7 @@ impl Compiler {
             }
 
             PatternKind::Float(n) => {
-                let idx = self.add_constant(Value::Float(*n), span)?;
+                let idx = self.float_constant(*n, span)?;
                 self.emit(Asm::TestEqual { k: idx }, span)?;
                 let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
@@ -131,8 +131,8 @@ impl Compiler {
             }
 
             PatternKind::FloatRange(lo, hi) => {
-                let lo_idx = self.add_constant(Value::Float(*lo), span)?;
-                let hi_idx = self.add_constant(Value::Float(*hi), span)?;
+                let lo_idx = self.float_constant(*lo, span)?;
+                let hi_idx = self.float_constant(*hi, span)?;
                 self.emit(
                     Asm::TestFloatRange {
                         lo: lo_idx,

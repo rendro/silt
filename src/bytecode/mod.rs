@@ -380,7 +380,7 @@ impl Chunk {
             Value::Int(n) => Some(ConstantKey::Int(*n)),
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
             Value::String(s) => Some(ConstantKey::String(s.clone())),
-            Value::Float(f) => Some(ConstantKey::Float(f.to_bits())),
+            Value::Float(f) => Some(ConstantKey::Float(f.get().to_bits())),
             Value::VariantConstructor(tag) => {
                 Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
             }
