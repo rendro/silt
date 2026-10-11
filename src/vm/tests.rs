@@ -2842,6 +2842,7 @@ mod error_places {
             shown(&err)
         };
         let sliced = run(Some(1));
+        eprintln!("ACTUAL\t{}\t{:?}", std::thread::current().name().unwrap_or("?"), sliced);
         // (A budget is counted exactly at slice 1 only.)
         if budget.is_none() {
             assert_eq!(run(None), sliced);
@@ -3207,6 +3208,69 @@ fn main() {
             stops(source),
             "division by zero at 10:12; C.go 10:12; C.go 11:12 (5 times); main 17:11; <script> 15:1"
         );
+    }
+
+    #[test]
+    fn in_a_tail_call_among_other_tail_calls() {
+        // More tail calls than the log keeps, of three functions in
+        // turn: the latest 32 callers, the latest first.
+        let source = "\
+fn a(n: Int) -> Int {
+  match n <= 0 {
+    true -> 1 / n
+    false -> b(n - 1)
+  }
+}
+fn b(n: Int) -> Int {
+  c(n)
+}
+fn c(n: Int) -> Int {
+  a(n)
+}
+fn main() {
+  println(a(15))
+}
+";
+        let _ = stops(source);
+        // Two frames that have each made tail calls: each frame's
+        // callers come after it.
+        let source = "\
+fn inner(n: Int) -> Int {
+  match n {
+    0 -> 1 / n
+    _ -> inner(n - 1)
+  }
+}
+fn mid(n: Int) -> Int {
+  1 + inner(n)
+}
+fn outer(n: Int) -> Int {
+  match n {
+    0 -> mid(3)
+    _ -> outer(n - 1)
+  }
+}
+fn main() {
+  println(outer(2))
+}
+";
+        let _ = stops(source);
+        // A frame's callers go with the frame: the second call of
+        // `inner` shows its own tail calls only.
+        let source = "\
+fn inner(n: Int, d: Int) -> Int {
+  match n {
+    0 -> 6 / d
+    _ -> inner(n - 1, d)
+  }
+}
+fn main() {
+  let first = inner(5, 1)
+  let second = inner(2, 0)
+  println(first + second)
+}
+";
+        let _ = stops(source);
     }
 
     #[test]
