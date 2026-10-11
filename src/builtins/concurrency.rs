@@ -16,8 +16,10 @@ use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Native, Step, Vm, VmError};
 
-/// Build the canonical closed-channel-send VmError (message wording is
-/// pinned by tests in `tests/lang/error_tests.rs` and `tests/heavy/integration.rs`).
+/// A send on a closed channel is a runtime error, whichever function
+/// was to send: `channel.send`, `channel.try_send`, or a
+/// `channel.select` with a `Send` arm on the channel. This is the
+/// error, which names the channel.
 fn closed_channel_send_err(id: usize) -> VmError {
     VmError::new(format!("send on closed channel {id}"))
 }
@@ -127,8 +129,14 @@ pub(crate) mod channel {
             ch.close(Close::default(), vm.scheduler().wake());
         }
 
-        fn try_send(vm, ch: Chan, value: &Value) -> bool {
-            matches!(ch.try_send(value.clone(), vm.scheduler().wake()), TrySend::Sent)
+        // `true` if the value was sent, `false` if there is no room and
+        // no receiver for it now.
+        fn try_send(vm, ch: Chan, value: &Value) -> Result<bool, VmError> {
+            match ch.try_send(value.clone(), vm.scheduler().wake()) {
+                TrySend::Sent => Ok(true),
+                TrySend::Full(_) => Ok(false),
+                TrySend::Closed(_) => Err(closed_channel_send_err(ch.id())),
+            }
         }
 
         fn try_receive(vm, ch: Chan) -> Value {
@@ -146,10 +154,20 @@ pub(crate) mod channel {
                     "channel.select requires at least one operation".into(),
                 ));
             }
-            let channels: Vec<Arc<Channel>> = arms
+            // A `Send` arm on a closed channel is the error of a send
+            // on it, whatever the other arms could do.
+            if let Some(closed) = arms.iter().find_map(|arm| match arm {
+                Arm::Send(ch, _) if ch.is_closed() => Some(ch.id()),
+                _ => None,
+            }) {
+                return Err(closed_channel_send_err(closed));
+            }
+            // Each arm's channel, and whether the arm sends.
+            let channels: Vec<(Arc<Channel>, bool)> = arms
                 .iter()
                 .map(|arm| match arm {
-                    Arm::Recv(ch) | Arm::Send(ch, _) => ch.clone(),
+                    Arm::Recv(ch) => (ch.clone(), false),
+                    Arm::Send(ch, _) => (ch.clone(), true),
                     Arm::Cell(_) => unreachable!("a select has channel arms"),
                 })
                 .collect();
@@ -163,13 +181,18 @@ pub(crate) mod channel {
                         "internal VM error: a select ended without an arm".into(),
                     ));
                 };
+                let (channel, sends) = &channels[arm];
                 let outcome = match outcome {
                     Outcome::Received(value) => message(value),
                     Outcome::Sent => Value::variant(bv::SENT, vec![]),
+                    // The channel was closed while the arm waited to send.
+                    Outcome::Closed(_) if *sends => {
+                        return Err(closed_channel_send_err(channel.id()));
+                    }
                     Outcome::Closed(_) | Outcome::Done => closed(),
                 };
                 Ok(Step::Done(Value::tuple(vec![
-                    Value::Channel(channels[arm].clone()),
+                    Value::Channel(channel.clone()),
                     outcome,
                 ])))
             }))

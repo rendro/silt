@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: send on closed channel 0
+-- A send on a closed channel is a runtime error, whichever function was
+-- to send. `channel.try_send` says `false` for a channel that has no
+-- room; a closed channel is not one of those.
+import channel
+
+fn main() {
+  let ch = channel.new(1)
+  println(channel.try_send(ch, 1))
+  println(channel.try_send(ch, 2))
+  channel.close(ch)
+  println(channel.receive(ch))
+  println(channel.try_send(ch, 3))
+  println("not reached")
+}

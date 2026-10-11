@@ -218,6 +218,53 @@ fn main() {
 /// scheduler's own, and one step.
 const SLICES: [Option<usize>; 3] = [None, Some(2000), Some(1)];
 
+/// A send on a closed channel is one error at every time slice,
+/// whichever function was to send and wherever the call stands: on the
+/// program's own thread, in a task, inside a callback of a builtin,
+/// inside a stage of a stream.
+#[test]
+fn a_send_on_a_closed_channel_is_the_same_error_at_every_slice() {
+    let doors = [
+        ("send", "channel.send(closed, 1)"),
+        ("try_send", "channel.try_send(closed, 1)"),
+        ("a Send arm", "channel.select([channel.Send(closed, 1)])"),
+        (
+            "a Send arm beside a Recv arm that is ready",
+            "channel.select([channel.Recv(closed), channel.Send(closed, 1)])",
+        ),
+        (
+            "in a task",
+            "task.join(task.spawn({ -> channel.try_send(closed, 1) }))",
+        ),
+        (
+            "in a callback",
+            "list.map([1, 2]) { x -> channel.try_send(closed, x) }",
+        ),
+        (
+            "in a stream stage",
+            "stream.from_list([1, 2]) |> stream.map { x -> channel.try_send(closed, x) } |> stream.collect",
+        ),
+    ];
+    for (what, door) in doors {
+        let source = format!(
+            "import channel\nimport list\nimport stream\nimport task\n\nfn main() {{\n  let closed = channel.new(4)\n  channel.close(closed)\n  let _ = {door}\n  println(\"not reached\")\n}}\n"
+        );
+        for slice in SLICES {
+            let (result, output) = run_with(&source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            let error = result.expect_err(what);
+            assert!(
+                error.ends_with("send on closed channel 0"),
+                "{what} at slice {slice:?}: {error}"
+            );
+            assert_eq!(output, "", "{what} at slice {slice:?}");
+        }
+    }
+}
+
 /// `source` under a budget of `steps` at each of [`SLICES`]: it ends,
 /// and with `out_of_steps`. (A program that the budget does not end
 /// does not end at all: there is no timeout here.)

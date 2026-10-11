@@ -144,7 +144,12 @@ channel.close(ch)
 
 Signals that no more values will be sent on this channel. After closing:
 
-- **Sends** on the closed channel produce a runtime error.
+- **A send on the closed channel is a runtime error**, `send on closed
+  channel N`, whichever function was to send: `channel.send`,
+  `channel.try_send`, or a `channel.select` that has a `Send` arm on the
+  channel. A send that was waiting when the channel was closed fails the
+  same way. So a channel is closed by the side that sends on it, or after
+  the senders are done.
 - **Receives** drain any remaining buffered values as `Message(value)`. Once
   the buffer is empty, `channel.receive` returns `Closed`.
 
@@ -160,8 +165,9 @@ println(channel.try_send(ch, "c")) -- false (buffer full)
 ```
 
 Attempts to send without blocking. Returns `true` if the value was placed in
-the buffer, or `false` if the buffer is full or the channel is closed. Never
-yields to the scheduler.
+the buffer (or handed to a receiver that waits), or `false` if there is no
+room for it now. Never yields to the scheduler. On a closed channel it is the
+runtime error of every send on one, not `false`.
 
 ### Non-blocking receive: `channel.try_receive(ch)`
 
@@ -711,7 +717,11 @@ priority -- the choice is fair, not ordered.
 If no branch is ready, the task is parked on all of them at once. Whoever
 makes one possible (a sender, a receiver, a close) completes that branch for
 the select, and only that one: a select performs exactly one of its
-operations. A closed channel is ready: its branch gives `(channel, Closed)`.
+operations. A closed channel is ready for a `Recv`: that branch gives
+`(channel, Closed)`. A `Send` on a closed channel is no branch at all: a
+select that has one is the runtime error of a send on a closed channel,
+whatever its other branches could do, and so is one whose channel is
+closed while it waits to send.
 A select never meets itself: a `Send` and a `Recv` on the same channel in
 one select do not complete each other. If no task can make progress, the
 deadlock is reported.

@@ -185,6 +185,11 @@ won and the outcome:
 - `(ch, Closed)` — a `Recv` arm's channel is closed and drained.
 - `(ch, Sent)` — a `Send` arm completed (the value was handed off).
 
+A send on a closed channel is a runtime error (`send on closed channel N`),
+as in `channel.send` and `channel.try_send`: a select with a `Send` arm on a
+closed channel raises it, whatever its other arms could do, and so does one
+whose channel is closed while it waits to send.
+
 Receive and send arms can be mixed freely in the same call.
 
 Receive-only form:
@@ -230,7 +235,10 @@ channel.send(ch: Channel(a), value: a) -> ()
 ```
 
 Sends a value into the channel. Parks the task if the buffer is full, allowing
-other tasks to run until space opens up.
+other tasks to run until space opens up. A send on a closed channel is a
+runtime error (`send on closed channel N`), also for a send that was waiting
+when the channel was closed, as in `channel.try_send` and in a `Send` arm of
+`channel.select`.
 
 ```silt
 import channel
@@ -301,8 +309,10 @@ fn main() {
 channel.try_send(ch: Channel(a), value: a) -> Bool
 ```
 
-Non-blocking send. Returns `true` if the value was successfully buffered,
-`false` if the buffer is full or the channel is closed.
+Non-blocking send. Returns `true` if the value was buffered or handed to a
+receiver that waits, `false` if there is no room for it now. A send on a
+closed channel is a runtime error (`send on closed channel N`), as in
+`channel.send` and in a `Send` arm of `channel.select`.
 
 ```silt
 import channel
