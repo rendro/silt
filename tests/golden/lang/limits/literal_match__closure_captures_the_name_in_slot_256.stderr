@@ -1,0 +1,5 @@
+error[compile]: too many values in the frame below a local that a closure captures: 256 (the limit is 255)
+ --> literal_match__closure_captures_the_name_in_slot_256.silt:263:10
+     |
+ 263 |     k -> { -> k }
+     |          ^^^^^^^^ too many values in the frame below a local that a closure captures: 256 (the limit is 255)

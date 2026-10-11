@@ -1,14 +1,16 @@
 //! Main execution loop and opcode dispatch.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
-use crate::bytecode::{Instr, Op, VmClosure};
+use crate::bytecode::{Chunk, Instr, Op, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
 use crate::value::{List, Record, Value};
 
+use super::arithmetic::{arithmetic, check_same_type, ordering};
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
 use super::{Vm, VmError};
@@ -41,16 +43,102 @@ fn equality_operand_violation(val: &Value) -> Option<&'static str> {
     if val.contains_fn() { Some("Fn") } else { None }
 }
 
-/// What running one instruction did.
+/// The operands of `==` and `!=`, if the two can be compared so.
+fn equality_operands(a: &Value, b: &Value) -> Result<(), VmError> {
+    check_same_type(a, b)?;
+    // Reject function-shaped operands at the execution site: the
+    // typechecker skips this bound on still-polymorphic operands
+    // and relies on the VM to catch it (see
+    // `equality_operand_violation`). Both operands are checked:
+    // the gate recurses into containers, and a shared
+    // discriminant no longer implies a shared violation (an
+    // empty list and a list of closures both have the List
+    // discriminant).
+    match equality_operand_violation(a).or_else(|| equality_operand_violation(b)) {
+        Some(name) => Err(VmError::type_confusion(format!(
+            "type '{name}' does not implement Equal"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// What an instruction did that a method of the VM ran for the loop.
 pub(super) enum DispatchResult {
-    /// Go on with the next instruction of the frame on top (a call put
-    /// the callee's frame there).
+    /// Go on with the next instruction of the function's frame on top
+    /// (a call put the callee's frame there).
     Continue,
-    /// The frame on top is finished, with this value: `Return`, or `?`
-    /// on an `Err` or a `None`. The frame is still there.
-    Return(Value),
     /// A builtin's frame is on top, not resumed yet.
     Native,
+}
+
+/// What the instruction loop keeps in variables of the function's
+/// frame on top of `frames`, the one of the instruction being run: the
+/// closure, its function's constants and code, the instruction pointer
+/// and the frame's first slot.
+#[inline(always)]
+fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
+    let Some(Frame::Code(frame)) = frames.last() else {
+        unreachable!("an instruction runs in a function's frame")
+    };
+    let chunk = frame.closure.function.chunk();
+    (
+        &frame.closure,
+        chunk,
+        chunk.code(),
+        frame.ip,
+        frame.base_slot,
+    )
+}
+
+// The code a VM runs has passed the bytecode verifier
+// (`crate::bytecode::verify`): an instruction finds the values it
+// takes on the stack, its slots in the frame and its constants in
+// the pool, of the kinds it needs. The accessors below do not look
+// for anything else.
+
+/// A copy of `value`, for the instructions that read a slot or a
+/// constant: a number, a Bool or unit is copied here, in the loop; a
+/// value of any other kind is cloned, a call. (The kinds that are
+/// copied are named: one that is added later is cloned until it is
+/// named here.)
+#[inline(always)]
+fn copy(value: &Value) -> Value {
+    match value {
+        Value::Int(n) => Value::Int(*n),
+        Value::Float(f) => Value::Float(*f),
+        Value::Bool(b) => Value::Bool(*b),
+        Value::Unit => Value::Unit,
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => value.clone(),
+    }
+}
+
+#[inline(always)]
+fn pop(stack: &mut Vec<Value>) -> Value {
+    stack.pop().expect("verified code pops a value it pushed")
+}
+
+#[inline(always)]
+fn peek(stack: &[Value]) -> &Value {
+    stack
+        .last()
+        .expect("verified code looks at a value it pushed")
 }
 
 /// How a run of the instruction loop ended ([`Vm::run_frames`]).
@@ -99,42 +187,696 @@ impl Vm {
                 return Ok(end);
             }
         }
+
+        // The loop keeps the state of the function's frame on top in
+        // variables of its own: the closure, its constants and its
+        // code, the instruction pointer and the frame's first slot. An
+        // instruction that works on these and on the stack touches no
+        // frame.
+        //
+        // The frame's own `ip` is behind while the loop runs. It is
+        // written back (`save!`) before the loop is left, and before
+        // anything else reads the frames or puts one on top: a call
+        // (the caller's `ip` is where it goes on), a tail call (the
+        // log), a builtin, a method of the VM that can fail (an error's
+        // place is read off the frames). The variables are read again
+        // (`load!`) when the frame on top may be another one, and after
+        // every method that takes the whole VM: they borrow from the
+        // frames, so the compiler asks for it.
+        let (mut closure, mut chunk, mut code, mut ip, mut base) = loaded(&self.frames);
+        macro_rules! load {
+            () => {
+                (closure, chunk, code, ip, base) = loaded(&self.frames)
+            };
+        }
+        macro_rules! save {
+            () => {
+                self.frame_mut().ip = ip
+            };
+        }
+        // An error of the instruction being run. Its frame is on top:
+        // nothing that fails in the loop has changed the frames.
+        macro_rules! fail {
+            ($error:expr) => {{
+                let error = $error;
+                save!();
+                return Err(error);
+            }};
+        }
+        macro_rules! ok {
+            ($result:expr) => {
+                match $result {
+                    Ok(value) => value,
+                    Err(error) => fail!(error),
+                }
+            };
+        }
+        // Give a value to the frame on top, which need not be a
+        // function's, and go on with the function's frame that is on
+        // top after that. (An error here has the frames as `deliver`
+        // left them, each with its `ip`: it is not `fail!`'s.)
+        macro_rules! deliver {
+            ($value:expr) => {{
+                // (A copy, so that the loop's own count stays in a
+                // register.)
+                let mut left = budget;
+                let end = self.deliver(floor, $value, &mut left)?;
+                budget = left;
+                if let Some(end) = end {
+                    return Ok(end);
+                }
+                load!();
+            }};
+        }
+        // The frame on top is finished, with this value: `Return`, or
+        // `?` on an `Err` or a `None`.
+        macro_rules! returned {
+            ($value:expr) => {{
+                let value = $value;
+                self.frames.pop();
+                // Prune any tail-call elided diagnostic entries that
+                // belong to the just-popped frame slot so stale data
+                // can't bleed into later unrelated calls at this depth.
+                if !self.tco_elided.is_empty() {
+                    self.tco_elided.prune(self.frames.len());
+                }
+                // The function's own slot goes with its frame.
+                self.stack.truncate(base.saturating_sub(1));
+                deliver!(value);
+            }};
+        }
+        // Go on after an instruction that a method of the VM ran.
+        macro_rules! go_on {
+            ($result:expr) => {
+                match $result {
+                    DispatchResult::Continue => load!(),
+                    DispatchResult::Native => deliver!(Value::Unit),
+                }
+            };
+        }
+        macro_rules! arithmetic {
+            ($op:expr) => {{
+                let b = pop(&mut self.stack);
+                let a = pop(&mut self.stack);
+                let value = ok!(arithmetic($op, &a, &b));
+                self.stack.push(value);
+            }};
+        }
+        macro_rules! compare {
+            ($holds:expr) => {{
+                let b = pop(&mut self.stack);
+                let a = pop(&mut self.stack);
+                let ordering = ok!(ordering(&a, &b));
+                self.stack.push(Value::Bool($holds(ordering)));
+            }};
+        }
+
         loop {
             if budget == 0 {
+                save!();
                 return Ok(Slice::OutOfBudget);
             }
             budget -= 1;
-            let instr = self.fetch();
-            let end = match self.dispatch_one(instr)? {
-                DispatchResult::Continue => continue,
-                DispatchResult::Return(result) => {
-                    let Some(Frame::Code(finished)) = self.frames.pop() else {
-                        unreachable!("an instruction runs in a function's frame")
-                    };
-                    // Prune any tail-call elided diagnostic entries that
-                    // belong to the just-popped frame slot so stale data
-                    // can't bleed into later unrelated calls at this depth.
-                    if !self.tco_elided.is_empty() {
-                        self.prune_tco_elided(self.frames.len());
+            let (instr, next) = decode(code, ip).expect("verified code decodes");
+            ip = next;
+            match instr {
+                Instr::Constant { k } => self.stack.push(copy(chunk.constant(k))),
+                Instr::Unit => self.stack.push(Value::Unit),
+                Instr::True => self.stack.push(Value::Bool(true)),
+                Instr::False => self.stack.push(Value::Bool(false)),
+                Instr::Add => arithmetic!(Op::Add),
+                Instr::Sub => arithmetic!(Op::Sub),
+                Instr::Mul => arithmetic!(Op::Mul),
+                Instr::Div => arithmetic!(Op::Div),
+                Instr::Mod => arithmetic!(Op::Mod),
+                Instr::Eq => {
+                    let b = pop(&mut self.stack);
+                    let a = pop(&mut self.stack);
+                    ok!(equality_operands(&a, &b));
+                    self.stack.push(Value::Bool(a == b));
+                }
+                Instr::Neq => {
+                    let b = pop(&mut self.stack);
+                    let a = pop(&mut self.stack);
+                    ok!(equality_operands(&a, &b));
+                    self.stack.push(Value::Bool(a != b));
+                }
+                Instr::Lt => compare!(Ordering::is_lt),
+                Instr::Gt => compare!(Ordering::is_gt),
+                Instr::Leq => compare!(Ordering::is_le),
+                Instr::Geq => compare!(Ordering::is_ge),
+                Instr::Negate => match pop(&mut self.stack) {
+                    Value::Int(n) => match n.checked_neg() {
+                        Some(v) => self.stack.push(Value::Int(v)),
+                        None => fail!(VmError::new(format!("integer overflow: negate {n}"))),
+                    },
+                    Value::Float(n) => self.stack.push(Value::Float(-n)),
+                    other => fail!(VmError::type_confusion(format!(
+                        "cannot negate {}",
+                        self.user_facing_type_name(&other)
+                    ))),
+                },
+                Instr::Not => match pop(&mut self.stack) {
+                    Value::Bool(b) => self.stack.push(Value::Bool(!b)),
+                    other => fail!(VmError::type_confusion(format!(
+                        "cannot apply 'not' to {}",
+                        self.user_facing_type_name(&other)
+                    ))),
+                },
+                Instr::DisplayValue => {
+                    let val = pop(&mut self.stack);
+                    match &val {
+                        Value::String(_) => self.stack.push(val),
+                        // Mirror the typechecker's string-interpolation Display
+                        // gate (inference.rs ~2654): the typechecker's
+                        // `type_name_for_impl` reduces a *concrete* operand to a
+                        // canonical name and rejects interpolation when that name
+                        // is absent from the Display `trait_impl_set` — which
+                        // excludes every first-class value that has no Display
+                        // impl: function-shaped values (`Fn`), `Channel`,
+                        // `Handle` (task handles), `TcpListener` / `TcpStream`
+                        // (opaque resources left explicitly unprintable, see
+                        // mod.rs ~7878), and the descriptor values
+                        // (`TypeDescriptor` / `PrimitiveDescriptor`). For a
+                        // polymorphic type variable the operand type is still
+                        // `Var` at the interpolation site (type_name_for_impl ->
+                        // None), so the compile-time gate is skipped and the value
+                        // reaches here. Erroring at the execution site closes the
+                        // silent-wrong-behavior hole and matches how a polymorphic
+                        // `x > y` on incomparable values (e.g. two Channels) errors
+                        // at runtime rather than silently producing a result.
+                        //
+                        // The rejected set is sourced from the single predicate
+                        // `value_implements_display` (below) so the runtime gate
+                        // and the surface-name reporting cannot drift from
+                        // `Value::kind`. Parity is locked by
+                        // tests/typecheck/round95_interp_display_runtime_tests.rs.
+                        _ if !Self::value_implements_display(&val) => {
+                            // Report the canonical surface name so the runtime
+                            // message matches the typechecker's compile-time one
+                            // (which names `Type::Fun` -> "Fn", not the per-shape
+                            // `BuiltinFn` / `VariantConstructor` tags). Function-
+                            // shaped values, Channel, Handle and the Tcp resources
+                            // collapse to their canonical name via
+                            // `dispatch_type_name`; the descriptor values
+                            // (whose canonical name is the *carried* type name)
+                            // fall back to their kind so the diagnostic
+                            // names the descriptor kind, not the reflected type.
+                            let name = match &val {
+                                Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
+                                    val.kind().to_string()
+                                }
+                                _ => crate::types::canonical::dispatch_type_name(&val),
+                            };
+                            fail!(VmError::type_confusion(format!(
+                                "type '{name}' does not implement Display \
+                                 (required for string interpolation)"
+                            )));
+                        }
+                        _ => {
+                            save!();
+                            let step = ok!(self.shown(&val));
+                            go_on!(ok!(self.enter_step(step)));
+                        }
                     }
-                    // The function's own slot goes with its frame.
-                    self.stack.truncate(finished.base_slot.saturating_sub(1));
-                    // (A copy, so that the loop's own count stays in a
-                    // register.)
-                    let mut left = budget;
-                    let end = self.deliver(floor, result, &mut left)?;
-                    budget = left;
-                    end
                 }
-                DispatchResult::Native => {
-                    let mut left = budget;
-                    let end = self.deliver(floor, Value::Unit, &mut left)?;
-                    budget = left;
-                    end
+                Instr::StringConcat { count } => {
+                    let start = self.stack.len() - count;
+                    // Pre-calculate total capacity to avoid reallocations
+                    let mut total_len = 0;
+                    for i in start..self.stack.len() {
+                        if let Value::String(ref s) = self.stack[i] {
+                            total_len += s.len();
+                        } else {
+                            fail!(VmError::type_confusion(format!(
+                                "string interpolation requires string values, got {} \
+                                 — call `.to_string()` or `.display()` on the value first",
+                                self.user_facing_type_name(&self.stack[i])
+                            )));
+                        }
+                    }
+                    let mut result = String::with_capacity(total_len);
+                    for i in start..self.stack.len() {
+                        if let Value::String(ref s) = self.stack[i] {
+                            result.push_str(s);
+                        }
+                    }
+                    self.stack.truncate(start);
+                    self.stack.push(Value::String(result.into()));
                 }
-            };
-            if let Some(end) = end {
-                return Ok(end);
+                Instr::GetLocal { slot } => {
+                    let value = copy(&self.stack[base + slot]);
+                    self.stack.push(value);
+                }
+                Instr::SetLocal { slot } => {
+                    let value = copy(peek(&self.stack));
+                    self.stack[base + slot] = value;
+                }
+                Instr::GetGlobal { slot } => match self.global(slot) {
+                    Some(value) => {
+                        let value = value.clone();
+                        self.stack.push(value);
+                    }
+                    // (The checker orders the top-level `let`s so that
+                    // each is set before anything can read it, and the
+                    // definitions are set before any `let` runs: no
+                    // checked program that is run as a whole comes
+                    // here. A task of an earlier REPL entry does, when
+                    // it runs a closure of a later entry that names
+                    // what that entry defined.)
+                    None => fail!(VmError::type_confusion(format!(
+                        "the global '{}' is read before it is set",
+                        self.global_slots.name(slot)
+                    ))),
+                },
+                Instr::SetGlobal { slot } => {
+                    let value = peek(&self.stack).clone();
+                    save!();
+                    if !self.set_global(slot, value) {
+                        fail!(VmError::type_confusion(format!(
+                            "the global slot {slot} is none of the program's"
+                        )));
+                    }
+                    load!();
+                }
+                Instr::GetUpvalue { index } => self.stack.push(copy(&closure.upvalues[index])),
+                Instr::Call { argc } => {
+                    let func_slot = self.stack.len() - 1 - argc;
+                    let callee = self.stack[func_slot].clone();
+                    save!();
+                    let entered = ok!(self.call_value(callee, argc, func_slot));
+                    go_on!(self.entered(entered));
+                }
+                Instr::TailCall { argc } => {
+                    let func_slot = self.stack.len() - 1 - argc;
+                    let callee = self.stack[func_slot].clone();
+                    save!();
+                    if let Value::VmClosure(callee) = callee {
+                        if argc != callee.function.arity() {
+                            fail!(VmError::type_confusion(format!(
+                                "function '{}' expects {} arguments, got {}",
+                                callee.function.name(),
+                                callee.function.arity(),
+                                argc
+                            )));
+                        }
+                        self.reuse_frame(callee, func_slot + 1, argc);
+                        load!();
+                    } else {
+                        let entered = ok!(self.call_value(callee, argc, func_slot));
+                        go_on!(self.entered(entered));
+                    }
+                }
+                Instr::Return => returned!(pop(&mut self.stack)),
+                Instr::CallBuiltin { builtin, argc } => {
+                    save!();
+                    let args_at = self.stack.len() - argc;
+                    let entered =
+                        ok!(self.with_args(args_at, |vm, args| vm.enter_builtin(builtin, args)));
+                    go_on!(self.entered(entered));
+                }
+                Instr::MakeClosure { f, captures } => {
+                    let upvalues = captures
+                        .iter(code)
+                        .map(|capture| {
+                            let index = capture.index;
+                            match capture.is_local {
+                                true => self.stack[base + index].clone(),
+                                false => closure.upvalues[index].clone(),
+                            }
+                        })
+                        .collect();
+                    let function = chunk.closure(f).function.clone();
+                    self.stack
+                        .push(Value::VmClosure(Arc::new(VmClosure { function, upvalues })));
+                }
+                Instr::MakeTuple { count } => {
+                    let start = self.stack.len() - count;
+                    let elements = self.stack.drain(start..).collect();
+                    self.stack.push(Value::Tuple(elements));
+                }
+                Instr::MakeList { count } => {
+                    let start = self.stack.len() - count;
+                    let elements = self.stack.drain(start..).collect();
+                    self.stack.push(Value::List(elements));
+                }
+                Instr::MakeMap { pairs } => {
+                    let total = pairs * 2;
+                    let start = self.stack.len() - total;
+                    let mut map = BTreeMap::new();
+                    for i in (start..self.stack.len()).step_by(2) {
+                        map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
+                    }
+                    self.stack.truncate(start);
+                    self.stack.push(Value::map(map));
+                }
+                Instr::MakeSet { count } => {
+                    let start = self.stack.len() - count;
+                    let mut set = BTreeSet::new();
+                    for i in start..self.stack.len() {
+                        set.insert(self.stack[i].clone());
+                    }
+                    self.stack.truncate(start);
+                    self.stack.push(Value::set(set));
+                }
+                Instr::MakeRecord { ty, fields } => {
+                    let start = self.stack.len() - fields.len();
+                    let values: Vec<Value> = self.stack.drain(start..).collect();
+                    let ty = chunk.type_info(ty).clone();
+                    let names = fields.iter(code).map(|k| chunk.string(k));
+                    let record = ok!(Record::written(ty, names, values).ok_or_else(|| {
+                        VmError::type_confusion("a record literal's fields are not its type's")
+                    }));
+                    self.stack.push(Value::Record(record));
+                }
+                Instr::RecordUpdate { fields } => {
+                    // Functional record update, `r.{ x: 1 }`, and the
+                    // fields written after a spread, `{...r, x: 1}`, whose
+                    // base is the anonymous record `DestructRecordRest`
+                    // made of `r`: see `Record::updated`.
+                    let start = self.stack.len() - fields.len();
+                    let values: Vec<Value> = self.stack.drain(start..).collect();
+                    let base = pop(&mut self.stack);
+                    let Value::Record(base) = base else {
+                        fail!(VmError::type_confusion(format!(
+                            "record update `.{{...}}` requires a record, got {}",
+                            self.user_facing_type_name(&base)
+                        )));
+                    };
+                    let names = fields.iter(code).map(|k| chunk.string(k));
+                    let updated = ok!(base.updated(names, values).ok_or_else(|| {
+                        VmError::type_confusion(
+                            "record update `.{...}` of a field the record has not",
+                        )
+                    }));
+                    self.stack.push(Value::Record(updated));
+                }
+                Instr::MakeRange => {
+                    let end = pop(&mut self.stack);
+                    let start = pop(&mut self.stack);
+                    if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
+                        let ints = ok!(List::ints(*a, *b).map_err(VmError::from));
+                        self.stack.push(Value::List(ints));
+                    } else {
+                        fail!(VmError::type_confusion(format!(
+                            "range `a..b` requires two Int operands, got {} and {}",
+                            self.user_facing_type_name(&start),
+                            self.user_facing_type_name(&end)
+                        )));
+                    }
+                }
+                Instr::ListConcat => {
+                    let b = pop(&mut self.stack);
+                    let a = pop(&mut self.stack);
+                    let (Value::List(a), Value::List(b)) = (a, b) else {
+                        fail!(VmError::type_confusion(
+                            "ListConcat: an operand is not a list",
+                        ));
+                    };
+                    let list = ok!(crate::builtins::collections::concat(&a, &b));
+                    self.stack.push(list);
+                }
+                Instr::GetField { index } => {
+                    let target = pop(&mut self.stack);
+                    let field = match &target {
+                        Value::Record(record) => record.fields().get(index).cloned(),
+                        _ => None,
+                    };
+                    let field = ok!(field.ok_or_else(|| {
+                        VmError::type_confusion(format!(
+                            "cannot access field {index} of {}",
+                            self.user_facing_type_name(&target)
+                        ))
+                    }));
+                    self.stack.push(field);
+                }
+                Instr::GetFieldNamed { name } => {
+                    let target = pop(&mut self.stack);
+                    let name = chunk.string(name);
+                    let field = match &target {
+                        Value::Record(record) => ok!(record.get(name).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!("record has no field '{name}'"))
+                        })),
+                        other => fail!(VmError::type_confusion(format!(
+                            "cannot access field '{}' on {}",
+                            name,
+                            self.user_facing_type_name(other)
+                        ))),
+                    };
+                    self.stack.push(field);
+                }
+                Instr::Jump { to } => ip = to,
+                Instr::JumpIfFalse { to } => {
+                    let val = pop(&mut self.stack);
+                    if self.is_falsy(&val) {
+                        ip = to;
+                    }
+                }
+                Instr::JumpIfTrue { to } => {
+                    let val = pop(&mut self.stack);
+                    if self.is_truthy(&val) {
+                        ip = to;
+                    }
+                }
+                Instr::Pop => {
+                    pop(&mut self.stack);
+                }
+                Instr::Dup => {
+                    let val = peek(&self.stack).clone();
+                    self.stack.push(val);
+                }
+                Instr::TestTag { tag } => {
+                    let expected = chunk.tag(tag);
+                    let result = matches!(peek(&self.stack), Value::Variant(variant) if variant.has_tag(expected));
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestEqual { k } => {
+                    let result = peek(&self.stack) == chunk.constant(k);
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestTupleLen { len } => {
+                    let val = peek(&self.stack);
+                    let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestListMin { len: min_len } => {
+                    let val = peek(&self.stack);
+                    let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestListExact { len } => {
+                    let val = peek(&self.stack);
+                    let result = matches!(val, Value::List(xs) if xs.len() == len);
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestIntRange { lo, hi } => {
+                    let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi)) {
+                        (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestFloatRange { lo, hi } => {
+                    let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi)) {
+                        (Value::Float(n), Value::Float(lo), Value::Float(hi)) => n >= lo && n <= hi,
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::DestructTuple { index } => {
+                    let val = peek(&self.stack).clone();
+                    if let Value::Tuple(elems) = val {
+                        let elem = ok!(elems.get(index).ok_or_else(|| {
+                            VmError::type_confusion(format!(
+                                "tuple destructure: expected at least {} elements, got {}",
+                                index + 1,
+                                elems.len()
+                            ))
+                        }));
+                        self.stack.push(elem.clone());
+                    } else {
+                        fail!(VmError::type_confusion(format!(
+                            "tuple destructure: expected tuple, got {}",
+                            self.user_facing_type_name(&val)
+                        )));
+                    }
+                }
+                Instr::DestructVariant { index } => {
+                    let field = match peek(&self.stack) {
+                        Value::Variant(variant) => {
+                            let fields = variant.fields();
+                            ok!(fields.get(index).cloned().ok_or_else(|| {
+                                VmError::type_confusion(format!(
+                                    "variant destructure: field index {} out of bounds (variant has {} fields)",
+                                    index,
+                                    fields.len()
+                                ))
+                            }))
+                        }
+                        other => fail!(VmError::type_confusion(format!(
+                            "variant destructure: expected variant, got {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    };
+                    self.stack.push(field);
+                }
+                Instr::DestructList { index } => {
+                    let element = match peek(&self.stack) {
+                        Value::List(xs) => ok!(xs.get(index).ok_or_else(|| {
+                            VmError::type_confusion(format!(
+                                "list destructure: expected at least {} elements, got {}",
+                                index + 1,
+                                xs.len()
+                            ))
+                        })),
+                        other => fail!(VmError::type_confusion(format!(
+                            "list destructure: expected list, got {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    };
+                    self.stack.push(element);
+                }
+                Instr::DestructListRest { start } => {
+                    let rest = match peek(&self.stack) {
+                        Value::List(xs) if start <= xs.len() => xs.slice(start, xs.len()),
+                        Value::List(xs) => fail!(VmError::type_confusion(format!(
+                            "list destructure: rest pattern start {} exceeds list length {}",
+                            start,
+                            xs.len()
+                        ))),
+                        other => fail!(VmError::type_confusion(format!(
+                            "list destructure: expected list, got {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    };
+                    self.stack.push(Value::List(rest));
+                }
+                Instr::DestructRecordField { index } => {
+                    let field = match peek(&self.stack) {
+                        Value::Record(record) => record.fields().get(index).cloned(),
+                        _ => None,
+                    };
+                    let field = ok!(field.ok_or_else(|| {
+                        VmError::type_confusion(format!(
+                            "record destructure: no field {index} in {}",
+                            self.user_facing_type_name(peek(&self.stack))
+                        ))
+                    }));
+                    self.stack.push(field);
+                }
+                Instr::DestructRecordFieldNamed { name } => {
+                    let name = chunk.string(name);
+                    let field = match peek(&self.stack) {
+                        Value::Record(record) => ok!(record.get(name).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!("record has no field '{name}'"))
+                        })),
+                        other => fail!(VmError::type_confusion(format!(
+                            "record destructure: expected record, got {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    };
+                    self.stack.push(field);
+                }
+                Instr::DestructRecordRest { excluded } => {
+                    let val = pop(&mut self.stack);
+                    let Value::Record(record) = &val else {
+                        fail!(VmError::type_confusion(format!(
+                            "record rest destructure: expected record, got {}",
+                            self.user_facing_type_name(&val)
+                        )));
+                    };
+                    let rest = record.rest(excluded.iter(code).map(|k| chunk.string(k)));
+                    self.stack.push(Value::Record(rest));
+                }
+                Instr::TestRecordTag { ty } => {
+                    let expected = chunk.type_info(ty).id;
+                    let result = matches!(peek(&self.stack), Value::Record(record) if record.type_id() == expected);
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::TestMapHasKey { key } => {
+                    // (The key is the constant itself, a String.)
+                    let result = match peek(&self.stack) {
+                        Value::Map(map) => map.contains_key(chunk.constant(key)),
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(result));
+                }
+                Instr::DestructMapValue { key } => {
+                    // (The key is the constant itself, a String.)
+                    let value = match peek(&self.stack) {
+                        Value::Map(map) => {
+                            ok!(map.get(chunk.constant(key)).cloned().ok_or_else(|| {
+                                VmError::type_confusion(format!(
+                                    "map has no key '{}'",
+                                    chunk.string(key)
+                                ))
+                            }))
+                        }
+                        other => fail!(VmError::type_confusion(format!(
+                            "map destructure: expected map, got {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    };
+                    self.stack.push(value);
+                }
+                Instr::Recur {
+                    argc: arg_count,
+                    first: first_slot,
+                } => {
+                    let start = self.stack.len() - arg_count;
+                    for i in 0..arg_count {
+                        self.stack[base + first_slot + i] = copy(&self.stack[start + i]);
+                    }
+                    // Truncate all the way back to just after loop bindings.
+                    self.stack.truncate(base + first_slot + arg_count);
+                }
+                Instr::QuestionMark => {
+                    let val = peek(&self.stack).clone();
+                    match val {
+                        Value::Variant(variant) => match variant {
+                            _ if variant.is(bv::OK) || variant.is(bv::SOME) => {
+                                pop(&mut self.stack);
+                                self.stack.push(match variant.fields() {
+                                    [value] => value.clone(),
+                                    _ => Value::Unit,
+                                });
+                            }
+                            _ if variant.is(bv::ERR) || variant.is(bv::NONE) => {
+                                returned!(pop(&mut self.stack));
+                            }
+                            _ => fail!(VmError::type_confusion(format!(
+                                "`?` applies only to Result or Option; got variant `{}`",
+                                variant.name()
+                            ))),
+                        },
+                        _ => fail!(VmError::type_confusion(format!(
+                            "`?` applies only to Result or Option; got {}",
+                            self.user_facing_type_name(&val)
+                        ))),
+                    }
+                }
+                Instr::Panic => {
+                    let msg = pop(&mut self.stack);
+                    save!();
+                    let step =
+                        ok!(self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}")))));
+                    go_on!(ok!(self.enter_step(step)));
+                }
+                Instr::CallMethod { method, argc, of } => {
+                    save!();
+                    go_on!(ok!(self.call_method(method, argc, of, false)));
+                }
+                Instr::TailCallMethod { method, argc, of } => {
+                    save!();
+                    go_on!(ok!(self.call_method(method, argc, of, true)));
+                }
+                Instr::Slide { slot } => {
+                    // Keep the top value, cut the frame back to `slot` values
+                    // and put the value on top of them.
+                    let value = pop(&mut self.stack);
+                    self.stack.truncate(base + slot);
+                    self.stack.push(value);
+                }
             }
         }
     }
@@ -143,7 +885,27 @@ impl Vm {
     /// the stack, and the instruction loop goes on (`None`); a
     /// builtin's frame is resumed with it, until one calls a function
     /// (`None`) or the run ends.
+    #[inline(always)]
     fn deliver(
+        &mut self,
+        floor: usize,
+        value: Value,
+        budget: &mut usize,
+    ) -> Result<Option<Slice>, VmError> {
+        // (Where a function's return comes to, as a rule: no call.)
+        if self.frames.len() == floor {
+            return Ok(Some(Slice::Done(value)));
+        }
+        if let Some(Frame::Code(_)) = self.frames.last() {
+            self.push(value);
+            return Ok(None);
+        }
+        self.deliver_native(floor, value, budget)
+    }
+
+    /// [`Vm::deliver`] to a builtin's frame, and to whatever frame is on
+    /// top when that one is done.
+    fn deliver_native(
         &mut self,
         floor: usize,
         mut value: Value,
@@ -179,6 +941,10 @@ impl Vm {
                 }
                 Ok(Step::Park(wait)) => {
                     self.frames.push(Frame::Native(native));
+                    // A VM that waits holds no list for the arguments of
+                    // its next builtin: a program can have a hundred
+                    // thousand tasks waiting.
+                    self.builtin_args = Vec::new();
                     return Ok(Some(Slice::Parked(wait)));
                 }
                 Ok(Step::Yield) => {
@@ -213,7 +979,7 @@ impl Vm {
             }
         }
         self.stack.truncate(stack_floor);
-        self.prune_tco_elided(floor);
+        self.tco_elided.prune(floor);
         self.pending_input = None;
     }
 
@@ -368,44 +1134,16 @@ impl Vm {
             self.stack[base + i] = self.stack[args_at + i].clone();
         }
         self.stack.truncate(base + argc);
-        // Record the caller that's about to be overwritten so
-        // `enrich_error` can still surface the logical call
-        // stack for runtime errors. The caller's name comes
-        // from its closure's function name; the caller's span
-        // points at the tail-call site (the op just before
-        // `frame.ip`, which `fetch` has stepped past it).
-        // Bounded by TCO_ELIDED_CAP entries per depth — on
-        // overflow we drop the oldest caller at this depth.
-        // The existing `render_call_stack` head/tail truncation
-        // then surfaces the remaining chain with a "... (N more
-        // frames)" marker for long chains.
-        //
-        // Lock: tests/lang/callback_frame_capture_tests.rs
-        // `test_tail_call_chain_preserves_caller_frames_in_call_stack`
-        // and `test_tail_call_chain_ring_buffer_caps_diagnostic_chain`.
+        // The caller, which the callee takes the place of, goes to the
+        // log, for the call stack of an error: its function and where
+        // it had come to, which is past the tail call. (No name and no
+        // place are looked up here: `Vm::enrich_error` does that.)
         let depth = self.frames.len().saturating_sub(1);
-        let (caller_name, caller_span) = {
-            let frame = self.frame();
-            let caller_ip = frame.ip.saturating_sub(1);
-            (
-                frame.closure.function.name().to_string(),
-                frame.closure.function.chunk().span_at(caller_ip),
-            )
-        };
-        // The entries of this depth are the log's last ones.
-        let at_depth = self
-            .tco_elided
-            .iter()
-            .rev()
-            .take_while(|(d, _, _)| *d == depth)
-            .count();
-        if at_depth >= crate::vm::runtime::TCO_ELIDED_CAP {
-            self.tco_elided.remove(self.tco_elided.len() - at_depth);
-        }
-        self.tco_elided.push((depth, caller_name, caller_span));
         let frame = self.frame_mut();
-        frame.closure = closure;
-        frame.ip = 0;
+        let caller = std::mem::replace(&mut frame.closure, closure);
+        let caller_ip = std::mem::replace(&mut frame.ip, 0);
+        self.tco_elided
+            .log(depth, caller.function.clone(), caller_ip);
     }
 
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
@@ -420,15 +1158,17 @@ impl Vm {
         tail: bool,
     ) -> Result<DispatchResult, VmError> {
         let receiver_slot = self.stack.len() - argc;
-        let receiver = self.stack[receiver_slot].clone();
-        let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
+        // (The receiver is looked at where it is: a method of an impl
+        // is found by its type alone.)
+        let receiver = &self.stack[receiver_slot];
+        let receiver_type = crate::types::canonical::dispatch_type_for_value(receiver);
         // Descriptor-as-receiver (e.g. `Int.default()`,
         // `body.decode(Todo)` where the descriptor is piped in) is
         // a dispatch key, not a value argument. The method's
         // compiled body never has a slot for it — skip it when
         // assembling the argument vector.
         let descriptor_receiver = matches!(
-            &receiver,
+            receiver,
             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
         );
         // The method of an impl is found by three numbers: the trait,
@@ -466,6 +1206,7 @@ impl Vm {
         }
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.
+        let receiver = self.stack[receiver_slot].clone();
         let slots = self.global_slots.clone();
         // (The compiler checks each function against the globals of
         // the program it is compiled into. Code of a later REPL entry
@@ -498,8 +1239,7 @@ impl Vm {
             && let Some(module) = registry().error_module(variant.ty().id)
             && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
         {
-            let args = self.stack.split_off(receiver_slot);
-            let entered = self.enter_row(row, &args)?;
+            let entered = self.with_args(receiver_slot, |vm, args| vm.enter_row(row, args))?;
             return Ok(self.entered(entered));
         }
         // A builtin trait's method the type has natively (display,
@@ -528,656 +1268,6 @@ impl Vm {
             }
         }
 
-        Ok(DispatchResult::Continue)
-    }
-
-    /// Run the instruction `instr`, which [`Vm::fetch`] has stepped
-    /// past.
-    pub(super) fn dispatch_one(&mut self, instr: Instr) -> Result<DispatchResult, VmError> {
-        match instr {
-            Instr::Constant { k } => {
-                let value = self.chunk().constant(k).clone();
-                self.push(value);
-            }
-            Instr::Unit => self.push(Value::Unit),
-            Instr::True => self.push(Value::Bool(true)),
-            Instr::False => self.push(Value::Bool(false)),
-            Instr::Add => self.binary_arithmetic(Op::Add)?,
-            Instr::Sub => self.binary_arithmetic(Op::Sub)?,
-            Instr::Mul => self.binary_arithmetic(Op::Mul)?,
-            Instr::Div => self.binary_arithmetic(Op::Div)?,
-            Instr::Mod => self.binary_arithmetic(Op::Mod)?,
-            Instr::Eq => {
-                let b = self.pop();
-                let a = self.pop();
-                self.check_same_type(&a, &b)?;
-                // Reject function-shaped operands at the execution site: the
-                // typechecker skips this bound on still-polymorphic operands
-                // and relies on the VM to catch it (see
-                // `equality_operand_violation`). Both operands are checked:
-                // the gate recurses into containers, and a shared
-                // discriminant no longer implies a shared violation (an
-                // empty list and a list of closures both have the List
-                // discriminant).
-                if let Some(name) =
-                    equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
-                {
-                    return Err(VmError::type_confusion(format!(
-                        "type '{name}' does not implement Equal"
-                    )));
-                }
-                self.push(Value::Bool(a == b));
-            }
-            Instr::Neq => {
-                let b = self.pop();
-                let a = self.pop();
-                self.check_same_type(&a, &b)?;
-                if let Some(name) =
-                    equality_operand_violation(&a).or_else(|| equality_operand_violation(&b))
-                {
-                    return Err(VmError::type_confusion(format!(
-                        "type '{name}' does not implement Equal"
-                    )));
-                }
-                self.push(Value::Bool(a != b));
-            }
-            Instr::Lt => self.compare(|ord| ord.is_lt())?,
-            Instr::Gt => self.compare(|ord| ord.is_gt())?,
-            Instr::Leq => self.compare(|ord| ord.is_le())?,
-            Instr::Geq => self.compare(|ord| ord.is_ge())?,
-            Instr::Negate => {
-                let val = self.pop();
-                match val {
-                    Value::Int(n) => match n.checked_neg() {
-                        Some(v) => self.push(Value::Int(v)),
-                        None => {
-                            return Err(VmError::new(format!("integer overflow: negate {n}")));
-                        }
-                    },
-                    Value::Float(n) => self.push(Value::Float(-n)),
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "cannot negate {}",
-                            self.user_facing_type_name(&other)
-                        )));
-                    }
-                }
-            }
-            Instr::Not => {
-                let val = self.pop();
-                match val {
-                    Value::Bool(b) => self.push(Value::Bool(!b)),
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "cannot apply 'not' to {}",
-                            self.user_facing_type_name(&other)
-                        )));
-                    }
-                }
-            }
-            Instr::DisplayValue => {
-                let val = self.pop();
-                match &val {
-                    Value::String(_) => self.push(val),
-                    // Mirror the typechecker's string-interpolation Display
-                    // gate (inference.rs ~2654): the typechecker's
-                    // `type_name_for_impl` reduces a *concrete* operand to a
-                    // canonical name and rejects interpolation when that name
-                    // is absent from the Display `trait_impl_set` — which
-                    // excludes every first-class value that has no Display
-                    // impl: function-shaped values (`Fn`), `Channel`,
-                    // `Handle` (task handles), `TcpListener` / `TcpStream`
-                    // (opaque resources left explicitly unprintable, see
-                    // mod.rs ~7878), and the descriptor values
-                    // (`TypeDescriptor` / `PrimitiveDescriptor`). For a
-                    // polymorphic type variable the operand type is still
-                    // `Var` at the interpolation site (type_name_for_impl ->
-                    // None), so the compile-time gate is skipped and the value
-                    // reaches here. Erroring at the execution site closes the
-                    // silent-wrong-behavior hole and matches how a polymorphic
-                    // `x > y` on incomparable values (e.g. two Channels) errors
-                    // at runtime rather than silently producing a result.
-                    //
-                    // The rejected set is sourced from the single predicate
-                    // `value_implements_display` (below) so the runtime gate
-                    // and the surface-name reporting cannot drift from
-                    // `Value::kind`. Parity is locked by
-                    // tests/typecheck/round95_interp_display_runtime_tests.rs.
-                    _ if !Self::value_implements_display(&val) => {
-                        // Report the canonical surface name so the runtime
-                        // message matches the typechecker's compile-time one
-                        // (which names `Type::Fun` -> "Fn", not the per-shape
-                        // `BuiltinFn` / `VariantConstructor` tags). Function-
-                        // shaped values, Channel, Handle and the Tcp resources
-                        // collapse to their canonical name via
-                        // `dispatch_type_name`; the descriptor values
-                        // (whose canonical name is the *carried* type name)
-                        // fall back to their kind so the diagnostic
-                        // names the descriptor kind, not the reflected type.
-                        let name = match &val {
-                            Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
-                                val.kind().to_string()
-                            }
-                            _ => crate::types::canonical::dispatch_type_name(&val),
-                        };
-                        return Err(VmError::type_confusion(format!(
-                            "type '{name}' does not implement Display \
-                             (required for string interpolation)"
-                        )));
-                    }
-                    _ => {
-                        let step = self.shown(&val)?;
-                        return self.enter_step(step);
-                    }
-                }
-            }
-            Instr::StringConcat { count } => {
-                let start = self.stack.len() - count;
-                // Pre-calculate total capacity to avoid reallocations
-                let mut total_len = 0;
-                for i in start..self.stack.len() {
-                    if let Value::String(ref s) = self.stack[i] {
-                        total_len += s.len();
-                    } else {
-                        return Err(VmError::type_confusion(format!(
-                            "string interpolation requires string values, got {} \
-                             — call `.to_string()` or `.display()` on the value first",
-                            self.user_facing_type_name(&self.stack[i])
-                        )));
-                    }
-                }
-                let mut result = String::with_capacity(total_len);
-                for i in start..self.stack.len() {
-                    if let Value::String(ref s) = self.stack[i] {
-                        result.push_str(s);
-                    }
-                }
-                self.stack.truncate(start);
-                self.push(Value::String(result.into()));
-            }
-            Instr::GetLocal { slot } => {
-                let base = self.frame().base_slot;
-                let value = self.stack[base + slot].clone();
-                self.push(value);
-            }
-            Instr::SetLocal { slot } => {
-                let base = self.frame().base_slot;
-                let value = self.peek().clone();
-                self.stack[base + slot] = value;
-            }
-            Instr::GetGlobal { slot } => {
-                let value = match self.global(slot) {
-                    Some(value) => value.clone(),
-                    // (The checker orders the top-level `let`s so that
-                    // each is set before anything can read it, and the
-                    // definitions are set before any `let` runs: no
-                    // checked program that is run as a whole comes
-                    // here. A task of an earlier REPL entry does, when
-                    // it runs a closure of a later entry that names
-                    // what that entry defined.)
-                    _ => {
-                        return Err(VmError::type_confusion(format!(
-                            "the global '{}' is read before it is set",
-                            self.global_slots.name(slot)
-                        )));
-                    }
-                };
-                self.push(value);
-            }
-            Instr::SetGlobal { slot } => {
-                let value = self.peek().clone();
-                if !self.set_global(slot, value) {
-                    return Err(VmError::type_confusion(format!(
-                        "the global slot {slot} is none of the program's"
-                    )));
-                }
-            }
-            Instr::GetUpvalue { index } => {
-                let value = self.frame().closure.upvalues[index].clone();
-                self.push(value);
-            }
-            Instr::Call { argc } => {
-                let func_slot = self.stack.len() - 1 - argc;
-                let func_val = self.stack[func_slot].clone();
-                let entered = self.call_value(func_val, argc, func_slot)?;
-                return Ok(self.entered(entered));
-            }
-            Instr::TailCall { argc } => {
-                let func_slot = self.stack.len() - 1 - argc;
-                let func_val = self.stack[func_slot].clone();
-                if let Value::VmClosure(closure) = func_val {
-                    if argc != closure.function.arity() {
-                        return Err(VmError::type_confusion(format!(
-                            "function '{}' expects {} arguments, got {}",
-                            closure.function.name(),
-                            closure.function.arity(),
-                            argc
-                        )));
-                    }
-                    self.reuse_frame(closure, func_slot + 1, argc);
-                } else {
-                    let entered = self.call_value(func_val, argc, func_slot)?;
-                    return Ok(self.entered(entered));
-                }
-            }
-            Instr::Return => {
-                let result = self.pop();
-                return Ok(DispatchResult::Return(result));
-            }
-            Instr::CallBuiltin { builtin, argc } => {
-                let args = self.stack.split_off(self.stack.len() - argc);
-                let entered = self.enter_builtin(builtin, &args)?;
-                return Ok(self.entered(entered));
-            }
-            Instr::MakeClosure { f, captures } => {
-                let frame = self.frame();
-                let chunk = frame.closure.function.chunk();
-                let upvalues = captures
-                    .iter(chunk.code())
-                    .map(|capture| {
-                        let index = capture.index;
-                        match capture.is_local {
-                            true => self.stack[frame.base_slot + index].clone(),
-                            false => frame.closure.upvalues[index].clone(),
-                        }
-                    })
-                    .collect();
-                let function = chunk.closure(f).function.clone();
-                self.push(Value::VmClosure(Arc::new(VmClosure { function, upvalues })));
-            }
-            Instr::MakeTuple { count } => {
-                let start = self.stack.len() - count;
-                let elements = self.stack.drain(start..).collect();
-                self.push(Value::Tuple(elements));
-            }
-            Instr::MakeList { count } => {
-                let start = self.stack.len() - count;
-                let elements = self.stack.drain(start..).collect();
-                self.push(Value::List(elements));
-            }
-            Instr::MakeMap { pairs } => {
-                let total = pairs * 2;
-                let start = self.stack.len() - total;
-                let mut map = BTreeMap::new();
-                for i in (start..self.stack.len()).step_by(2) {
-                    map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
-                }
-                self.stack.truncate(start);
-                self.push(Value::map(map));
-            }
-            Instr::MakeSet { count } => {
-                let start = self.stack.len() - count;
-                let mut set = BTreeSet::new();
-                for i in start..self.stack.len() {
-                    set.insert(self.stack[i].clone());
-                }
-                self.stack.truncate(start);
-                self.push(Value::set(set));
-            }
-            Instr::MakeRecord { ty, fields } => {
-                let start = self.stack.len() - fields.len();
-                let values: Vec<Value> = self.stack.drain(start..).collect();
-                let chunk = self.chunk();
-                let ty = chunk.type_info(ty).clone();
-                let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
-                let record = Record::written(ty, names, values).ok_or_else(|| {
-                    VmError::type_confusion("a record literal's fields are not its type's")
-                })?;
-                self.push(Value::Record(record));
-            }
-            Instr::RecordUpdate { fields } => {
-                // Functional record update, `r.{ x: 1 }`, and the
-                // fields written after a spread, `{...r, x: 1}`, whose
-                // base is the anonymous record `DestructRecordRest`
-                // made of `r`: see `Record::updated`.
-                let start = self.stack.len() - fields.len();
-                let values: Vec<Value> = self.stack.drain(start..).collect();
-                let base = self.pop();
-                let Value::Record(base) = base else {
-                    return Err(VmError::type_confusion(format!(
-                        "record update `.{{...}}` requires a record, got {}",
-                        self.user_facing_type_name(&base)
-                    )));
-                };
-                let chunk = self.chunk();
-                let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
-                let updated = base.updated(names, values).ok_or_else(|| {
-                    VmError::type_confusion("record update `.{...}` of a field the record has not")
-                })?;
-                self.push(Value::Record(updated));
-            }
-            Instr::MakeRange => {
-                let end = self.pop();
-                let start = self.pop();
-                if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
-                    self.push(Value::List(List::ints(*a, *b)?));
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "range `a..b` requires two Int operands, got {} and {}",
-                        self.user_facing_type_name(&start),
-                        self.user_facing_type_name(&end)
-                    )));
-                }
-            }
-            Instr::ListConcat => {
-                let b = self.pop();
-                let a = self.pop();
-                let (Value::List(a), Value::List(b)) = (a, b) else {
-                    return Err(VmError::type_confusion(
-                        "ListConcat: an operand is not a list",
-                    ));
-                };
-                self.push(crate::builtins::collections::concat(&a, &b)?);
-            }
-            Instr::GetField { index } => {
-                let target = self.pop();
-                let field = match &target {
-                    Value::Record(record) => record.fields().get(index).cloned(),
-                    _ => None,
-                };
-                let field = field.ok_or_else(|| {
-                    VmError::type_confusion(format!(
-                        "cannot access field {index} of {}",
-                        self.user_facing_type_name(&target)
-                    ))
-                })?;
-                self.push(field);
-            }
-            Instr::GetFieldNamed { name } => {
-                let target = self.pop();
-                let name = self.chunk().string(name);
-                let field = match &target {
-                    Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
-                        VmError::type_confusion(format!("record has no field '{name}'"))
-                    })?,
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "cannot access field '{}' on {}",
-                            name,
-                            self.user_facing_type_name(other)
-                        )));
-                    }
-                };
-                self.push(field);
-            }
-            Instr::Jump { to } => {
-                self.frame_mut().ip = to;
-            }
-            Instr::JumpIfFalse { to } => {
-                let val = self.pop();
-                if self.is_falsy(&val) {
-                    self.frame_mut().ip = to;
-                }
-            }
-            Instr::JumpIfTrue { to } => {
-                let val = self.pop();
-                if self.is_truthy(&val) {
-                    self.frame_mut().ip = to;
-                }
-            }
-            Instr::Pop => {
-                self.pop();
-            }
-            Instr::Dup => {
-                let val = self.peek().clone();
-                self.push(val);
-            }
-            Instr::TestTag { tag } => {
-                let expected = self.chunk().tag(tag);
-                let result =
-                    matches!(self.peek(), Value::Variant(variant) if variant.has_tag(expected));
-                self.push(Value::Bool(result));
-            }
-            Instr::TestEqual { k } => {
-                let result = self.peek() == self.chunk().constant(k);
-                self.push(Value::Bool(result));
-            }
-            Instr::TestTupleLen { len } => {
-                let val = self.peek();
-                let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
-                self.push(Value::Bool(result));
-            }
-            Instr::TestListMin { len: min_len } => {
-                let val = self.peek();
-                let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
-                self.push(Value::Bool(result));
-            }
-            Instr::TestListExact { len } => {
-                let val = self.peek();
-                let result = matches!(val, Value::List(xs) if xs.len() == len);
-                self.push(Value::Bool(result));
-            }
-            Instr::TestIntRange { lo, hi } => {
-                let chunk = self.chunk();
-                let result = match (self.peek(), chunk.constant(lo), chunk.constant(hi)) {
-                    (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
-                    _ => false,
-                };
-                self.push(Value::Bool(result));
-            }
-            Instr::TestFloatRange { lo, hi } => {
-                let chunk = self.chunk();
-                let result = match (self.peek(), chunk.constant(lo), chunk.constant(hi)) {
-                    (Value::Float(n), Value::Float(lo), Value::Float(hi)) => n >= lo && n <= hi,
-                    _ => false,
-                };
-                self.push(Value::Bool(result));
-            }
-            Instr::DestructTuple { index } => {
-                let val = self.peek().clone();
-                if let Value::Tuple(elems) = val {
-                    let elem = elems.get(index).ok_or_else(|| {
-                        VmError::type_confusion(format!(
-                            "tuple destructure: expected at least {} elements, got {}",
-                            index + 1,
-                            elems.len()
-                        ))
-                    })?;
-                    self.push(elem.clone());
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "tuple destructure: expected tuple, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
-            }
-            Instr::DestructVariant { index } => {
-                let field = match self.peek() {
-                    Value::Variant(variant) => {
-                        let fields = variant.fields();
-                        fields.get(index).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!(
-                                "variant destructure: field index {} out of bounds (variant has {} fields)",
-                                index,
-                                fields.len()
-                            ))
-                        })?
-                    }
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "variant destructure: expected variant, got {}",
-                            self.user_facing_type_name(other)
-                        )));
-                    }
-                };
-                self.push(field);
-            }
-            Instr::DestructList { index } => {
-                let element = match self.peek() {
-                    Value::List(xs) => xs.get(index).ok_or_else(|| {
-                        VmError::type_confusion(format!(
-                            "list destructure: expected at least {} elements, got {}",
-                            index + 1,
-                            xs.len()
-                        ))
-                    })?,
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "list destructure: expected list, got {}",
-                            self.user_facing_type_name(other)
-                        )));
-                    }
-                };
-                self.push(element);
-            }
-            Instr::DestructListRest { start } => {
-                let rest = match self.peek() {
-                    Value::List(xs) if start <= xs.len() => xs.slice(start, xs.len()),
-                    Value::List(xs) => {
-                        return Err(VmError::type_confusion(format!(
-                            "list destructure: rest pattern start {} exceeds list length {}",
-                            start,
-                            xs.len()
-                        )));
-                    }
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "list destructure: expected list, got {}",
-                            self.user_facing_type_name(other)
-                        )));
-                    }
-                };
-                self.push(Value::List(rest));
-            }
-            Instr::DestructRecordField { index } => {
-                let field = match self.peek() {
-                    Value::Record(record) => record.fields().get(index).cloned(),
-                    _ => None,
-                };
-                let field = field.ok_or_else(|| {
-                    VmError::type_confusion(format!(
-                        "record destructure: no field {index} in {}",
-                        self.user_facing_type_name(self.peek())
-                    ))
-                })?;
-                self.push(field);
-            }
-            Instr::DestructRecordFieldNamed { name } => {
-                let name = self.chunk().string(name);
-                let field = match self.peek() {
-                    Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
-                        VmError::type_confusion(format!("record has no field '{name}'"))
-                    })?,
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "record destructure: expected record, got {}",
-                            self.user_facing_type_name(other)
-                        )));
-                    }
-                };
-                self.push(field);
-            }
-            Instr::DestructRecordRest { excluded } => {
-                let val = self.pop();
-                let Value::Record(record) = &val else {
-                    return Err(VmError::type_confusion(format!(
-                        "record rest destructure: expected record, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                };
-                let chunk = self.chunk();
-                let rest = record.rest(excluded.iter(chunk.code()).map(|k| chunk.string(k)));
-                self.push(Value::Record(rest));
-            }
-            Instr::TestRecordTag { ty } => {
-                let expected = self.chunk().type_info(ty).id;
-                let result =
-                    matches!(self.peek(), Value::Record(record) if record.type_id() == expected);
-                self.push(Value::Bool(result));
-            }
-            Instr::TestMapHasKey { key } => {
-                // (The key is the constant itself, a String.)
-                let result = match self.peek() {
-                    Value::Map(map) => map.contains_key(self.chunk().constant(key)),
-                    _ => false,
-                };
-                self.push(Value::Bool(result));
-            }
-            Instr::DestructMapValue { key } => {
-                // (The key is the constant itself, a String.)
-                let value = match self.peek() {
-                    Value::Map(map) => {
-                        let chunk = self.chunk();
-                        map.get(chunk.constant(key)).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!(
-                                "map has no key '{}'",
-                                chunk.string(key)
-                            ))
-                        })?
-                    }
-                    other => {
-                        return Err(VmError::type_confusion(format!(
-                            "map destructure: expected map, got {}",
-                            self.user_facing_type_name(other)
-                        )));
-                    }
-                };
-                self.push(value);
-            }
-            Instr::Recur {
-                argc: arg_count,
-                first: first_slot,
-            } => {
-                let base = self.frame().base_slot;
-                let start = self.stack.len() - arg_count;
-                for i in 0..arg_count {
-                    self.stack[base + first_slot + i] = self.stack[start + i].clone();
-                }
-                // Truncate all the way back to just after loop bindings.
-                self.stack.truncate(base + first_slot + arg_count);
-            }
-            Instr::QuestionMark => {
-                let val = self.peek().clone();
-                match val {
-                    Value::Variant(variant) => match variant {
-                        _ if variant.is(bv::OK) || variant.is(bv::SOME) => {
-                            self.pop();
-                            self.push(match variant.fields() {
-                                [value] => value.clone(),
-                                _ => Value::Unit,
-                            });
-                        }
-                        _ if variant.is(bv::ERR) || variant.is(bv::NONE) => {
-                            let value = self.pop();
-                            return Ok(DispatchResult::Return(value));
-                        }
-                        _ => {
-                            return Err(VmError::type_confusion(format!(
-                                "`?` applies only to Result or Option; got variant `{}`",
-                                variant.name()
-                            )));
-                        }
-                    },
-                    _ => {
-                        return Err(VmError::type_confusion(format!(
-                            "`?` applies only to Result or Option; got {}",
-                            self.user_facing_type_name(&val)
-                        )));
-                    }
-                }
-            }
-            Instr::Panic => {
-                let msg = self.pop();
-                let step =
-                    self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}"))))?;
-                return self.enter_step(step);
-            }
-            Instr::CallMethod { method, argc, of } => {
-                return self.call_method(method, argc, of, false);
-            }
-            Instr::TailCallMethod { method, argc, of } => {
-                return self.call_method(method, argc, of, true);
-            }
-            Instr::Slide { slot } => {
-                // Keep the top value, cut the frame back to `slot` values
-                // and put the value on top of them.
-                let base = self.frame().base_slot;
-                let value = self.pop();
-                let target = base + slot;
-                self.stack.truncate(target);
-                self.push(value);
-            }
-        }
         Ok(DispatchResult::Continue)
     }
 }

@@ -1,0 +1,72 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:sum>
+0003  SetGlobal            0     ; sum
+0006  Pop
+0007  Constant             1     ; <fn:fib>
+0010  SetGlobal            1     ; fib
+0013  Pop
+0014  Constant             2     ; <fn:main>
+0017  SetGlobal            2     ; main
+0020  Pop
+0021  GetGlobal            2     ; main
+0024  Call                 0
+0026  Return
+
+== sum (arity=1, upvalues=0) ==
+0000  Constant             0     ; 0
+0003  Constant             0     ; 0
+0006  GetLocal             1
+0009  GetLocal             0
+0012  Geq
+0013  JumpIfFalse          8     -> 0024
+0016  GetLocal             2
+0019  Jump                 23    -> 0047
+0024  GetLocal             1
+0027  Constant             1     ; 1
+0030  Add
+0031  GetLocal             2
+0034  GetLocal             1
+0037  Add
+0038  Recur                2  slot 1
+0042  Jump                 -41   -> 0006
+0047  Slide                1
+0050  Return
+
+== fib (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  TestEqual            0     ; 0
+0006  JumpIfFalse          9     -> 0018
+0009  Pop
+0010  Constant             0     ; 0
+0013  Jump                 41    -> 0059
+0018  TestEqual            1     ; 1
+0021  JumpIfFalse          9     -> 0033
+0024  Pop
+0025  Constant             1     ; 1
+0028  Jump                 26    -> 0059
+0033  Pop
+0034  GetGlobal            1     ; fib
+0037  GetLocal             0
+0040  Constant             1     ; 1
+0043  Sub
+0044  Call                 1
+0046  GetGlobal            1     ; fib
+0049  GetLocal             0
+0052  Constant             2     ; 2
+0055  Sub
+0056  Call                 1
+0058  Add
+0059  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; sum
+0006  Constant             1     ; 10
+0009  Call                 1
+0011  GetGlobal            1     ; fib
+0014  Constant             1     ; 10
+0017  Call                 1
+0019  Add
+0020  TailCall             1
+0022  Return
+
