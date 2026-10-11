@@ -425,19 +425,12 @@ builtins! {
             return Ok(Step::Done(Value::Unit));
         };
         let duration = std::time::Duration::from_nanos(nanos);
-        // The program's own thread asks the clock to sleep (`Clock::sleep`),
-        // for no longer than up to the task deadline in effect.
+        // The program's own thread asks the clock to sleep (`Clock::sleep`).
         if !vm.spawned {
-            let left = match vm.current_deadline {
-                Some(deadline) => duration.min(deadline.saturating_sub(vm.runtime.io.monotonic())),
-                None => duration,
-            };
-            vm.runtime.io.sleep(left);
+            vm.runtime.io.sleep(duration);
             return Ok(Step::Done(Value::Unit));
         }
-        // A task waits for the clock to reach the end of the sleep, or the
-        // task deadline if that comes first: time.sleep returns Unit, not a
-        // Result, so a deadline only ends the sleep.
+        // A task waits for the clock to reach the end of the sleep.
         let end =
             vm.runtime.io.deadline_after(duration).ok_or_else(|| {
                 VmError::new("cannot start a timer: the duration is out of range".into())
@@ -445,9 +438,6 @@ builtins! {
         if let Some(failure) = vm.runtime.io.clock_failure() {
             return Err(VmError::new(failure));
         }
-        let end = vm
-            .current_deadline
-            .map_or(end, |deadline| end.min(deadline));
         let wait = Wait::new(Vec::new()).deadline(Some(end));
         Ok(vm.park("time.sleep", wait, |_, _| Ok(Step::Done(Value::Unit))))
     }

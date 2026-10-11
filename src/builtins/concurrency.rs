@@ -319,26 +319,17 @@ impl Native for Each {
     }
 }
 
-/// Spawn a child task with an optional scoped deadline, a reading of
-/// the host clock. Shared by `task.spawn` (deadline = None) and
-/// `task.spawn_until` (deadline = Some(now + dur)). Returns the Handle wrapping the
-/// spawned task; propagates scheduler.submit errors unchanged.
-fn spawn_with_deadline(
-    vm: &mut Vm,
-    f: &Value,
-    deadline: Option<Duration>,
-) -> Result<Value, VmError> {
+/// Start `f` as a task of whoever spawns it: the owner of the task
+/// that runs this, or the owner the front end set for the program.
+/// The handle of the task; an error of `scheduler.submit` as it is.
+fn start(vm: &mut Vm, f: &Value) -> Result<Arc<TaskHandle>, VmError> {
     let task_id = vm.next_task_id();
-    // The task belongs to whoever spawns it: the owner of the task that
-    // runs this, or the owner the front end set for the program.
     let handle = Arc::new(TaskHandle::with_owner(
         task_id,
         vm.scheduler().current_owner(),
     ));
 
     let mut child_vm = vm.spawn_child();
-    child_vm.current_deadline = deadline;
-
     match f {
         Value::VmClosure(closure) => child_vm.start_task(closure.clone()),
         // Any other function (a builtin, a host function): the task
@@ -350,7 +341,7 @@ fn spawn_with_deadline(
         .submit(task_id, child_vm, handle.clone())
         .map_err(VmError::new)?;
 
-    Ok(Value::Handle(handle))
+    Ok(handle)
 }
 
 /// The body of a task that is no function of silt's own code
@@ -371,25 +362,38 @@ impl Native for Body {
     }
 }
 
-/// `task.deadline(dur, fn)`: runs `fn` with a scoped wall-clock
-/// deadline of `dur` from now. A wait for I/O inside the callback
-/// ends at the deadline, with `Err("I/O timeout (task.deadline
-/// exceeded)")` in the module's typed shape. I/O builtins also check at entry and
-/// return the same Err immediately if the deadline is already past.
+/// What `TaskError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("Timeout", []) => "the function did not return before its deadline".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
+        _ => return None,
+    })
+}
+
+/// `task.deadline(dur, f)`: `Ok(f())`, or `Err(Timeout)` if `f` has not
+/// returned when `dur` has passed; `f` is then ended as a cancelled
+/// task is.
 ///
-/// Pure-CPU work inside the callback is NOT interrupted — this matches
-/// Go's context.WithDeadline semantics.
+/// `f` runs as a task of its own, and the caller waits for it or for
+/// the deadline, whichever comes first. So the deadline bounds every
+/// wait of `f` alike (I/O, a sleep, a channel, a join, a wait deep
+/// inside a callback of a builtin or a stage of a stream), because it
+/// is not the waits that are bounded but the wait for `f`. A cancelled
+/// task runs no further slice, and a wait of it ends without taking or
+/// sending anything; an I/O operation of it that can be made to return
+/// is (a connection is shut down).
 ///
-/// A nested task.deadline tightens the deadline (earliest wins); a
-/// looser inner deadline cannot extend an outer one. The deadline stays
-/// in effect while the task is parked inside the callback.
+/// The frame owns the task: if the frame is dropped while it waits
+/// (the caller was itself cancelled, by an outer `task.deadline` or by
+/// `task.cancel`, or the program ended), the task is cancelled too.
+/// That is how a deadline around a deadline ends the inner function.
 struct Deadline {
-    after: Duration,
-    /// The function, until it is called.
-    callback: Option<Value>,
-    /// The deadline that was in effect outside, while the callback
-    /// runs.
-    outer: Option<Option<Duration>>,
+    task: Arc<TaskHandle>,
+    /// When the wait for the task ends, as a reading of the host clock;
+    /// `None` once the frame waits.
+    until: Option<Duration>,
 }
 
 impl Native for Deadline {
@@ -397,25 +401,31 @@ impl Native for Deadline {
         "task.deadline"
     }
 
-    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if let Some(callee) = self.callback.take() {
-            let outer = vm.current_deadline;
-            self.outer = Some(outer);
-            // Tighten: earliest of current and new wins.
-            vm.current_deadline = match (outer, vm.runtime.io.deadline_after(self.after)) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (None, x) | (x, None) => x,
-            };
-            return Ok(vm.call(callee, []));
+    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        if let Some(until) = self.until.take() {
+            let wait = Wait::new(vec![Arm::Cell(self.task.done())]).deadline(Some(until));
+            return Ok(Step::Park(wait));
         }
-        self.abandon(vm);
-        Ok(Step::Done(input))
+        match vm.woken()? {
+            Fired::Deadline => {
+                vm.scheduler().cancel(&self.task);
+                let timeout = Value::variant(bv::TASK_TIMEOUT, vec![]);
+                Ok(Step::Done(Value::variant(bv::ERR, vec![timeout])))
+            }
+            _ => {
+                let result = self.task.try_get().ok_or_else(|| {
+                    VmError::new("internal VM error: a deadline's wait ended before its task".into())
+                })?;
+                // The function's failure is the caller's, as if the
+                // caller had called the function itself.
+                self.task.mark_joined();
+                Ok(Step::Done(Value::variant(bv::OK, vec![result?])))
+            }
+        }
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
-        if let Some(outer) = self.outer.take() {
-            vm.current_deadline = outer;
-        }
+        vm.scheduler().cancel(&self.task);
     }
 }
 
@@ -439,16 +449,18 @@ pub(crate) mod task {
     use super::*;
 
     builtins! {
-        fn deadline(dur: time::Duration, f: &Value) -> Result<Step, VmError> {
-            Ok(Step::Run(Box::new(Deadline {
-                after: span("task.deadline", dur)?,
-                callback: Some(f.clone()),
-                outer: None,
-            })))
+        fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
+            let after = span("task.deadline", dur)?;
+            let until = vm.runtime.io.deadline_after(after).ok_or_else(no_timer)?;
+            if let Some(failure) = vm.runtime.io.clock_failure() {
+                return Err(VmError::new(failure));
+            }
+            let task = start(vm, f)?;
+            Ok(Step::Run(Box::new(Deadline { task, until: Some(until) })))
         }
 
         fn spawn(vm, f: &Value) -> Result<Value, VmError> {
-            spawn_with_deadline(vm, f, None)
+            Ok(Value::Handle(start(vm, f)?))
         }
 
         fn join(vm, handle: Handle) -> Result<Step, VmError> {
@@ -473,15 +485,6 @@ pub(crate) mod task {
         // result that came first.
         fn cancel(vm, handle: Handle) {
             vm.scheduler().cancel(handle);
-        }
-
-        // A task that runs with a scoped wall-clock deadline. Equivalent
-        // to `task.spawn { -> task.deadline(dur, fn) }` minus the
-        // closure-wrapping boilerplate.
-        fn spawn_until(vm, dur: time::Duration, f: &Value) -> Result<Value, VmError> {
-            let after = span("task.spawn_until", dur)?;
-            let deadline = vm.runtime.io.deadline_after(after);
-            spawn_with_deadline(vm, f, deadline)
         }
     }
 }

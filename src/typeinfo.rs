@@ -364,6 +364,7 @@ pub mod ty {
     pub const CRYPTO_ERROR: TypeId = TypeId(DefId(34));
     pub const ENCODING_ERROR: TypeId = TypeId(DefId(35));
     pub const UUID_ERROR: TypeId = TypeId(DefId(36));
+    pub const TASK_ERROR: TypeId = TypeId(DefId(37));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -434,6 +435,8 @@ pub mod bv {
     pub const ENCODING_OTHER: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 2);
     pub const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
     pub const UUID_OTHER: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 1);
+    pub const TASK_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 0);
+    pub const TASK_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 1);
     pub const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
     pub const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
     pub const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
@@ -522,6 +525,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "CryptoError",
     "EncodingError",
     "UuidError",
+    "TaskError",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -843,6 +847,8 @@ mod tests {
             (bv::ENCODING_OTHER, "Other"),
             (bv::UUID_INVALID, "Invalid"),
             (bv::UUID_OTHER, "Other"),
+            (bv::TASK_TIMEOUT, "Timeout"),
+            (bv::TASK_OTHER, "Other"),
             (bv::HTTP_CONNECT, "Connect"),
             (bv::HTTP_TLS, "Tls"),
             (bv::HTTP_TIMEOUT, "Timeout"),

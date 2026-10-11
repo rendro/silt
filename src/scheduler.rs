@@ -113,26 +113,10 @@ fn parse_duration(s: &str) -> Option<Duration> {
     }
 }
 
-/// Which deadline ended a wait for I/O: it is named in the error.
-/// `Global` comes from `SILT_IO_TIMEOUT`; `Task` comes from a scoped
-/// `task.deadline(dur, fn)` block.
-#[derive(Clone, Copy)]
-pub(crate) enum DeadlineSource {
-    Global,
-    Task,
-}
-
-impl DeadlineSource {
-    /// User-visible message surfaced as the inner String of the `Err`
-    /// variant when an I/O times out. Silt-side match arms pattern on
-    /// this exact text, so it is part of the public contract.
-    pub(crate) fn message(self) -> &'static str {
-        match self {
-            DeadlineSource::Global => "I/O timeout (SILT_IO_TIMEOUT exceeded)",
-            DeadlineSource::Task => "I/O timeout (task.deadline exceeded)",
-        }
-    }
-}
+/// What the error of an I/O operation says when the wait for it ended
+/// at `SILT_IO_TIMEOUT`. (A `task.deadline` ends the function it runs,
+/// not a wait of it: see `builtins::concurrency`.)
+pub(crate) const IO_TIMEOUT: &str = "I/O timeout (SILT_IO_TIMEOUT exceeded)";
 
 /// Result of running a task's VM for one time slice.
 pub(crate) enum SliceResult {
@@ -557,23 +541,12 @@ impl Scheduler {
         self.inner.timer_armed();
     }
 
-    /// When a wait for I/O that starts now ends without a result: the
-    /// earlier of `SILT_IO_TIMEOUT` from now and the task deadline.
-    pub(crate) fn io_deadline(
-        &self,
-        task_deadline: Option<Duration>,
-    ) -> Option<(Duration, DeadlineSource)> {
-        let global = self
-            .inner
+    /// When a wait for I/O that starts now ends without a result:
+    /// `SILT_IO_TIMEOUT` from now, if it is set.
+    pub(crate) fn io_deadline(&self) -> Option<Duration> {
+        self.inner
             .global_io_timeout
             .and_then(|timeout| self.inner.io.deadline_after(timeout))
-            .map(|deadline| (deadline, DeadlineSource::Global));
-        let task = task_deadline.map(|deadline| (deadline, DeadlineSource::Task));
-        match (global, task) {
-            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
-            (Some(x), None) | (None, Some(x)) => Some(x),
-            (None, None) => None,
-        }
     }
 
     /// The calling thread starts to run silt code of its own: it counts
@@ -712,7 +685,7 @@ impl Scheduler {
     /// the error when the program is deadlocked. The other error is
     /// that the program has ended.
     pub(crate) fn block_thread(&self, wait: Wait, who: Blocks) -> Result<Fired, VmError> {
-        let main = matches!(who, Blocks::Program { .. });
+        let main = matches!(who, Blocks::Program);
         let inner = &self.inner;
         let _counted = self.enter();
         let group = inner.group(inner.current_owner());
@@ -762,14 +735,7 @@ impl Scheduler {
                     // counterparty of the wait is missing: it is
                     // reported before the verdict.
                     let _ = report_unjoined_failures(inner);
-                    // A deadline that is in effect did not end the
-                    // wait: the report says what it bounds.
-                    match who {
-                        Blocks::Program { in_deadline: true } => {
-                            verdict.with_help(DEADLINE_DOES_NOT_BOUND)
-                        }
-                        _ => verdict,
-                    }
+                    verdict
                 }
                 None => VmError::new("the VM that ran the program has been dropped".into()),
             }),
@@ -1313,15 +1279,7 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                 Some(id) => format!("task <handle:{id}>"),
                 None => "a thread of the runtime".to_string(),
             };
-            // A deadline that is in effect for the task does not end
-            // this wait: said, since it is what one may expect of it.
-            let in_deadline = match waiting.sleeper {
-                Sleeper::Task(task) if task.vm.current_deadline.is_some() => {
-                    " (inside a task.deadline, which does not bound this wait)"
-                }
-                _ => "",
-            };
-            format!("{who} waits {}{in_deadline}", on.join(", or "))
+            format!("{who} waits {}", on.join(", or "))
         })
         .collect();
     if others.len() > LISTED {
@@ -1607,14 +1565,9 @@ thread_local! {
 pub(crate) enum Blocks {
     /// A thread of the runtime.
     Thread,
-    /// The program's own, which is told of a deadlock; `in_deadline`
-    /// if a `task.deadline` is in effect for its code.
-    Program { in_deadline: bool },
+    /// The program's own, which is told of a deadlock.
+    Program,
 }
-
-/// What a deadlock report says when a `task.deadline` is in effect for
-/// the code that waits: the deadline is for I/O and sleeps.
-const DEADLINE_DOES_NOT_BOUND: &str = "task.deadline does not bound channel waits; use channel.receive_timeout or a channel.timeout arm";
 
 /// What the report of a failure that nobody joined advises.
 const UNJOINED_FAILURE_HELP: &str =

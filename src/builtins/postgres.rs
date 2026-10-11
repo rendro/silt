@@ -1941,10 +1941,6 @@ builtins! {
         // but we still wait for its completion before returning so LISTEN
         // errors propagate cleanly. Use the same entry-guard dance as
         // query/execute to park-and-resume the scheduled task.
-        if let Some(r) = vm.deadline_exceeded_with(pg_timeout_err) {
-            return Ok(Ok(Step::Done(r)));
-        }
-
         // Blocking work we submit to io_pool: checkout + LISTEN. On success
         // we spawn the long-lived worker and return the silt channel; on
         // failure we return the PostgresError without spawning. We need a handle
@@ -1974,7 +1970,7 @@ builtins! {
             ok(Value::Channel(worker_channel))
         };
 
-        Ok(vm.io_started("postgres", pg_timeout_err, work))
+        Ok(vm.io("postgres", pg_timeout_err, work))
     }
 
     // Fires a NOTIFY, on a pool or in a transaction. Uses

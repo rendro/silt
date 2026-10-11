@@ -579,10 +579,6 @@ fn on_connection(
     op: impl FnOnce() -> Value + Send + 'static,
 ) -> Result<Step, VmError> {
     let unheard = stopper(stream);
-    if let Some(timed_out) = vm.deadline_exceeded_with(tcp_timeout_err) {
-        unheard();
-        return Ok(Step::Done(timed_out));
-    }
     // A close() that races with an operation in flight surfaces that
     // operation's own result. Only a call on a connection that was
     // closed before is rejected here.
