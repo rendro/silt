@@ -1125,15 +1125,17 @@ impl Vm {
         tail: bool,
     ) -> Result<DispatchResult, VmError> {
         let receiver_slot = self.stack.len() - argc;
-        let receiver = self.stack[receiver_slot].clone();
-        let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
+        // (The receiver is looked at where it is: a method of an impl
+        // is found by its type alone.)
+        let receiver = &self.stack[receiver_slot];
+        let receiver_type = crate::types::canonical::dispatch_type_for_value(receiver);
         // Descriptor-as-receiver (e.g. `Int.default()`,
         // `body.decode(Todo)` where the descriptor is piped in) is
         // a dispatch key, not a value argument. The method's
         // compiled body never has a slot for it — skip it when
         // assembling the argument vector.
         let descriptor_receiver = matches!(
-            &receiver,
+            receiver,
             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
         );
         // The method of an impl is found by three numbers: the trait,
@@ -1171,6 +1173,7 @@ impl Vm {
         }
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.
+        let receiver = self.stack[receiver_slot].clone();
         let slots = self.global_slots.clone();
         // (The compiler checks each function against the globals of
         // the program it is compiled into. Code of a later REPL entry
