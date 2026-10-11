@@ -166,10 +166,11 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         Value::Int(n) => n.hash(state),
         Value::Float(f) => f.hash(state),
         Value::String(s) => s.hash(state),
-        Value::Variant(variant) => {
-            variant.type_id().hash(state);
-            variant.ordinal().hash(state);
-        }
+        // (Which variant of its type, and nothing of the type: the
+        // keys of one map are of one type, and a hash that held the
+        // type's id would be another when a type is declared before
+        // it.)
+        Value::Variant(variant) => variant.ordinal().hash(state),
         Value::Channel(channel) => channel.id().hash(state),
         Value::Handle(handle) => handle.id.hash(state),
         Value::Bytes(bytes) => {

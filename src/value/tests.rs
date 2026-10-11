@@ -258,6 +258,36 @@ fn variants_of_one_name_in_two_enums_stay_apart() {
     assert_eq!(hash_of(&value(&a, "Red")), hash_of(&value(&a, "Red")));
 }
 
+/// The hash of a variant is its kind, which variant of its type it is,
+/// and its fields with their number, and nothing of the type: the same
+/// when the type has
+/// another id (another type is declared before it), and the hash this
+/// test writes out by hand.
+#[test]
+fn the_hash_of_a_variant_holds_nothing_of_its_type() {
+    use crate::defs::{DefId, TypeId};
+    let shape = |id: u32, name: &str| {
+        TypeInfo::new_enum(TypeId(DefId(id)), name, &[("Dot", 0), ("Box", 2)])
+    };
+    let boxed = |ty: &Arc<TypeInfo>| {
+        let tag = Tag::named(ty, "Box").expect("a variant");
+        Value::variant(tag, vec![Value::Int(3), Value::Int(4)])
+    };
+    let (here, there) = (shape(9010, "Shape"), shape(9011, "Other"));
+    assert_eq!(hash_of(&boxed(&here)), hash_of(&boxed(&there)));
+    let mut by_hand = DefaultHasher::new();
+    // The variant: its rank, its place in the type and the number of
+    // its fields. The two Ints.
+    by_hand.write_u8(10);
+    1u16.hash(&mut by_hand);
+    2usize.hash(&mut by_hand);
+    for field in [3i64, 4] {
+        by_hand.write_u8(2);
+        field.hash(&mut by_hand);
+    }
+    assert_eq!(hash_of(&boxed(&here)), by_hand.finish());
+}
+
 /// A variant without fields is its type, counted once more: nothing
 /// is made for it. A variant with fields is made once, and a clone of
 /// it has the same fields, not a copy of them.

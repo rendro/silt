@@ -290,8 +290,13 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
         }
         Value::VariantConstructor(tag) => ::toml::Value::String(tag.name().into()),
         _ => {
+            // (To a program every function is an `Fn`.)
+            let kind = match v.is_fn() {
+                true => "Fn",
+                false => v.kind(),
+            };
             return Err(VmError::new(format!(
-                "{caller}: unsupported value kind {v:?}"
+                "{caller}: unsupported value kind {kind}"
             )));
         }
     })
