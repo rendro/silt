@@ -209,3 +209,68 @@ fn a_walk_of_a_chain_of_variants_takes_time_as_its_length() {
         "making and walking a chain of 64,000 variants, against one of 2,000",
     );
 }
+
+/// A recursion `depth` deep, five times: `plain`, in which every
+/// second call is a tail call (`hop` calls `plain` as its last act),
+/// or `folded`, in which every call is made by a function `list.fold`
+/// calls and is that function's last act.
+fn deep_recursion_program(recursion: &str, depth: usize) -> String {
+    format!(
+        "import list
+
+fn hop(n) {{
+  plain(n)
+}}
+
+fn plain(n) {{
+  match n {{
+    0 -> 0
+    _ -> 1 + hop(n - 1)
+  }}
+}}
+
+fn folded(n) {{
+  match n {{
+    0 -> 0
+    _ -> 1 + list.fold([n - 1], 0) {{ _, x -> folded(x) }}
+  }}
+}}
+
+fn main() {{
+  let depths = list.map(1..5) {{ _ -> {recursion}({depth}) }}
+  println(list.sum(depths))
+}}
+"
+    )
+}
+
+/// Assert that the recursion at twice the depth takes about twice as
+/// long: at most three and a half times.
+fn assert_deep_recursion_is_linear(recursion: &str) {
+    let programs = Programs::new(recursion);
+    let deep = programs.file("deep.silt", &deep_recursion_program(recursion, 80_000));
+    let half = programs.file("half.silt", &deep_recursion_program(recursion, 40_000));
+    assert_within(
+        3.5,
+        (&deep, "400000"),
+        (&half, "200000"),
+        &format!("`{recursion}` 80,000 calls deep, against 40,000"),
+    );
+}
+
+/// A return costs the same however many tail calls the calls in
+/// progress have made: a recursion in which every second call is a
+/// tail call takes about twice as long when it is twice as deep. It
+/// took four times as long when every return went through the record
+/// of all the callers that tail calls had replaced.
+#[test]
+fn a_return_costs_the_same_however_many_tail_calls_were_made() {
+    assert_deep_recursion_is_linear("plain");
+}
+
+/// The same for a function that `list.fold` calls and whose body is a
+/// tail call.
+#[test]
+fn a_return_from_a_function_a_builtin_calls_costs_the_same_at_any_depth() {
+    assert_deep_recursion_is_linear("folded");
+}
