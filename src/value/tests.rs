@@ -842,6 +842,183 @@ fn display_generic_record() {
     assert_eq!(format!("{}", rec), "Point {x: 10, y: 20}");
 }
 
+/// One formatter writes a value in two ways: as it is shown, and as it
+/// is inspected. Each value here with its two texts.
+#[test]
+fn a_value_is_shown_and_inspected_by_one_formatter() {
+    let text = |s: &str| Value::String(s.into());
+    let point = record_type(9200, "Point", &["y", "x"]);
+    let println = crate::builtins::registry::registry()
+        .named("println")
+        .expect("println")
+        .value();
+    let cases: Vec<(Value, &str, &str)> = vec![
+        (Value::Unit, "()", "()"),
+        (Value::Int(-7), "-7", "-7"),
+        (float(1.5), "1.5", "1.5"),
+        (Value::Bool(true), "true", "true"),
+        (text("a b"), "a b", "\"a b\""),
+        // A tuple of one item is written as a program writes it.
+        (Value::tuple(vec![Value::Int(1)]), "(1,)", "(1,)"),
+        (Value::tuple(vec![text("x")]), "(x,)", "(\"x\",)"),
+        (
+            Value::tuple(vec![Value::tuple(vec![Value::Int(1)]), Value::Int(2)]),
+            "((1,), 2)",
+            "((1,), 2)",
+        ),
+        (
+            Value::tuple(vec![Value::Int(1), text("x")]),
+            "(1, x)",
+            "(1, \"x\")",
+        ),
+        (Value::list(vec![]), "[]", "[]"),
+        (
+            Value::list(vec![text("a"), text("b")]),
+            "[a, b]",
+            "[\"a\", \"b\"]",
+        ),
+        (Value::List(ints(1, 3)), "[1, 2, 3]", "[1, 2, 3]"),
+        (
+            Value::List(ints(0, MAX_RANGE_MATERIALIZE as i64)),
+            "[0, 1, 2, ..., 10000000]",
+            "[0, 1, 2, ..., 10000000]",
+        ),
+        // A key that is a string is in quotes however the map is
+        // written; a key that has parts is written like any value.
+        (
+            Value::Map(Arc::new(BTreeMap::from([
+                (text("k"), text("v")),
+                (text("l"), Value::list(vec![Value::Int(1)])),
+            ]))),
+            "#{\"k\": v, \"l\": [1]}",
+            "#{\"k\": \"v\", \"l\": [1]}",
+        ),
+        (
+            Value::Map(Arc::new(BTreeMap::from([(
+                Value::tuple(vec![Value::Int(1), text("a")]),
+                Value::Int(2),
+            )]))),
+            "#{(1, a): 2}",
+            "#{(1, \"a\"): 2}",
+        ),
+        (Value::Map(Arc::new(BTreeMap::new())), "#{}", "#{}"),
+        (
+            Value::Set(Arc::new(BTreeSet::from([text("b"), text("a")]))),
+            "#[a, b]",
+            "#[\"a\", \"b\"]",
+        ),
+        // A record in the order its type declares its fields; an
+        // anonymous one without a name; one without fields.
+        (
+            Value::record(point.clone(), vec![Value::Int(2), text("one")]),
+            "Point {y: 2, x: one}",
+            "Point {y: 2, x: \"one\"}",
+        ),
+        (
+            Value::anon_record([("b", Value::Int(2)), ("a", text("x"))]),
+            "{a: x, b: 2}",
+            "{a: \"x\", b: 2}",
+        ),
+        (
+            Value::record(record_type(9201, "Empty", &[]), vec![]),
+            "Empty {}",
+            "Empty {}",
+        ),
+        // A builtin record of time is shown as its text and inspected
+        // as the record it is, its fields as its type declares them.
+        (
+            make_date(2024, 3, 9),
+            "2024-03-09",
+            "Date {year: 2024, month: 3, day: 9}",
+        ),
+        (
+            make_time(7, 30, 5, 0),
+            "07:30:05",
+            "Time {hour: 7, minute: 30, second: 5, ns: 0}",
+        ),
+        (
+            Value::list(vec![make_date(2024, 3, 9)]),
+            "[2024-03-09]",
+            "[Date {year: 2024, month: 3, day: 9}]",
+        ),
+        (Value::variant(bv::NONE, vec![]), "None", "None"),
+        (
+            Value::variant(bv::SOME, vec![text("x")]),
+            "Some(x)",
+            "Some(\"x\")",
+        ),
+        (
+            Value::variant(bv::OK, vec![Value::tuple(vec![Value::Int(1), Value::Unit])]),
+            "Ok((1, ()))",
+            "Ok((1, ()))",
+        ),
+        // A builtin error is shown as its message.
+        (
+            Value::variant(bv::IO_NOT_FOUND, vec![text("f.txt")]),
+            "file not found: f.txt",
+            "IoNotFound(\"f.txt\")",
+        ),
+        (println, "<builtin:println>", "<fn>"),
+        (
+            Value::Bytes(Arc::new(vec![1, 255])),
+            "bytes(01 ff, length: 2)",
+            "bytes(01 ff, length: 2)",
+        ),
+    ];
+    for (value, shown, inspected) in &cases {
+        assert_eq!(&value.to_string(), shown);
+        assert_eq!(&value.format_silt(), inspected);
+        // Rust's `{:?}` is the value inspected.
+        assert_eq!(&format!("{value:?}"), inspected);
+    }
+}
+
+/// A value nested 100,000 levels deep is written like any other: the
+/// formatter keeps what it has begun in a stack of its own. And it is
+/// dropped like any other: the fields of an object far inside are put
+/// aside and dropped by the outermost. (Each recursed once a level: a
+/// thread of a test has a stack for a few thousand levels of it.)
+#[test]
+fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
+    const DEPTH: usize = 100_000;
+    let node = record_type(9202, "Node", &["next", "tag"]);
+    let shapes: [(&dyn Fn(Value) -> Value, &str, &str); 3] = [
+        // A variant in a variant.
+        (&|rest| Value::variant(bv::SOME, vec![rest]), "Some(", ")"),
+        // A list in a variant, and a tuple of one in it.
+        (
+            &|rest| Value::variant(bv::OK, vec![Value::list(vec![Value::tuple(vec![rest])])]),
+            "Ok([(",
+            ",)])",
+        ),
+        // A record whose first field is the next level.
+        (
+            &|rest| Value::record(node.clone(), vec![rest, Value::Int(1)]),
+            "Node {next: ",
+            ", tag: 1}",
+        ),
+    ];
+    for (wrap, open, close) in shapes {
+        let value = (0..DEPTH).fold(Value::Int(7), |rest, _| wrap(rest));
+        for text in [value.to_string(), value.format_silt()] {
+            assert_eq!(text.len(), DEPTH * (open.len() + close.len()) + 1);
+            assert!(text.starts_with(&open.repeat(3)));
+            assert!(text.ends_with(&close.repeat(3)));
+            assert!(text.contains(&format!("{open}7{close}")));
+        }
+        assert!(value.writable().is_ok());
+        // The value is dropped here, a clone of its top first.
+        let again = value.clone();
+        drop(value);
+        drop(again);
+    }
+    // A chain ten times as long, of a list of a program's own.
+    let chain = (0..10 * DEPTH as i64).fold(Value::variant(bv::NONE, vec![]), |rest, n| {
+        Value::variant(bv::SOME, vec![Value::tuple(vec![Value::Int(n), rest])])
+    });
+    drop(chain);
+}
+
 #[test]
 fn display_set() {
     let mut s = BTreeSet::new();
