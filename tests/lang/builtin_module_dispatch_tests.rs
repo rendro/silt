@@ -41,7 +41,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "stream" => "stream.from_list([1])",
         "uuid" => "uuid.nil()",
         "http" if cfg!(feature = "http") => "http.segments(\"/a/b\")",
-        "postgres" if cfg!(feature = "postgres") => "postgres.uuidv7()",
+        "postgres" if cfg!(feature = "postgres") => "postgres.connect(\"not a url\")",
         // Port 1 on loopback refuses at once; the call returns an Err.
         "tcp" if cfg!(feature = "tcp") => "tcp.connect(\"127.0.0.1:1\")",
         "http" | "postgres" | "tcp" => return Some(None),

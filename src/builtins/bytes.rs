@@ -233,10 +233,6 @@ builtins! {
         }
     }
 
-    fn eq(a: Bytes, b: Bytes) -> bool {
-        a == b
-    }
-
     // ── Search / prefix / suffix / split ──────────────────────────────
 
     fn index_of(b: Bytes, needle: Bytes) -> Option<Value> {

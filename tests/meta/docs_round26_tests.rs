@@ -154,7 +154,6 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
         "postgres.cursor_close",
         "postgres.listen",
         "postgres.notify",
-        "postgres.uuidv7",
     ];
     let mut missing: Vec<&str> = Vec::new();
     for name in REQUIRED_BUILTINS {

@@ -3,7 +3,7 @@ import time
 fn program() {
   -- Construct a known instant: 2024-01-01T00:00:00 UTC
   let dt_utc = time.datetime(must_date(2024, 1, 1), must_time(0, 0, 0))
-  let instant = time.from_utc(dt_utc)
+  let instant = time.to_instant(dt_utc, 0)
   -- Convert to UTC+9 (Tokyo)
   let tokyo = instant |> time.to_datetime(540)
   tokyo.date.year == 2024 && tokyo.time.hour == 9

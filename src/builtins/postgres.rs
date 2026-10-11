@@ -1911,14 +1911,6 @@ builtins! {
         remove_pool(pool.0);
     }
 
-    // A fresh UUID v7 (RFC 9562). Time-ordered: first 48 bits are Unix
-    // timestamp in ms, remainder is random. Good for B-tree primary keys
-    // (monotonic inserts) while being unguessable. Returned as a
-    // lowercase hyphenated string.
-    fn uuidv7(vm) -> String {
-        super::uuid::now_v7(vm).to_string()
-    }
-
     // `postgres.listen(pool, channel_name)` — open a notification
     // listener. Returns `Result(Channel, PgError)`. On success the channel
     // yields `Notification` records until the underlying conn dies or the

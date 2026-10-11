@@ -101,9 +101,9 @@ fn main() {
   let elapsed = time.since(start, later)
   println("added 60s: {elapsed}")
   -- ── Conversion (instant <-> datetime) ───────────────────────────────
-  let utc_dt = now |> time.to_utc
+  let utc_dt = now |> time.to_datetime(0)
   println("UTC: {utc_dt}")
-  let roundtrip = utc_dt |> time.from_utc
+  let roundtrip = utc_dt |> time.to_instant(0)
   println("roundtrip epoch_ns matches: {roundtrip.epoch_ns == now.epoch_ns}")
   -- With offset (UTC+9 for Tokyo)
   let tokyo_dt = now |> time.to_datetime(540)

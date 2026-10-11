@@ -68,7 +68,6 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 |----------|-----------|
 | `collect` | `(Channel(a)) -> List(a)` |
 | `fold` | `(Channel(a), b, Fn(b, a) -> b) -> b` |
-| `each` | `(Channel(a), Fn(a) -> ()) -> ()` |
 | `count` | `(Channel(a)) -> Int` |
 | `first` | `(Channel(a)) -> Option(a)` |
 | `last` | `(Channel(a)) -> Option(a)` |

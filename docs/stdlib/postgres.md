@@ -41,11 +41,10 @@ unifies them against whatever your `pg.silt` library defines.
 | `cursor_close` | `(PgCursor) -> Result((), PgError)` | Release a cursor and its underlying connection |
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PgError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PgError)` | NOTIFY a channel with a payload |
-| `uuidv7` | `() -> String` | Generate a time-ordered UUIDv7 (RFC 9562) |
 
 ## Cooperative I/O
 
-Every fallible op above (except `uuidv7`) cooperates with silt's task
+Every fallible op above cooperates with silt's task
 scheduler: when called from inside a `task.spawn`'d task, it submits
 the request to silt's I/O pool and yields the task slot until the
 response arrives. From silt's perspective the call looks synchronous.
@@ -93,6 +92,7 @@ does not consume a slot from the regular query pool.
 -- QueryResult, ExecResult, and PgCursor.
 import pg
 import postgres
+import uuid
 
 fn main() {
   match postgres.connect("postgresql://localhost/app") {
@@ -102,7 +102,7 @@ fn main() {
         let _ = postgres.execute(
           tx,
           "INSERT INTO users (id, name) VALUES ($1, $2)",
-          [VStr(postgres.uuidv7()), VStr("alice")],
+          [VStr(uuid.v7()), VStr("alice")],
         )?
         postgres.query(tx, "SELECT count(*) FROM users", [])
       })
@@ -123,9 +123,9 @@ fn main() {
 - The `Value` parameter ADT (`VInt`, `VStr`, `VBool`, `VFloat`, `VNull`,
   `VList`) is declared in the user's `pg.silt`, not here — the builtin
   module references it by name only.
-- `postgres.uuidv7` produces a time-ordered UUID suitable for use as a
-  primary key; collisions within the same millisecond are disambiguated
-  with random bits per RFC 9562.
+- `uuid.v7` produces a time-ordered UUID suitable for use as a primary
+  key; collisions within the same millisecond are disambiguated with
+  random bits per RFC 9562.
 - `postgres-tls` pulls in `native-tls` / `postgres-native-tls` and
   therefore depends on the system TLS stack (OpenSSL / Schannel /
   SecureTransport depending on platform).

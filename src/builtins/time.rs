@@ -542,14 +542,6 @@ builtins! {
         Instant::of_utc(utc)
     }
 
-    fn to_utc(instant: Instant) -> Result<Value, VmError> {
-        Ok(make_datetime(instant.utc()?))
-    }
-
-    fn from_utc(datetime: DateTime) -> Result<Value, VmError> {
-        Instant::of_utc(datetime.naive()?)
-    }
-
     fn format(datetime: DateTime, pattern: &str) -> Result<String, VmError> {
         let datetime = datetime.naive()?;
         validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;

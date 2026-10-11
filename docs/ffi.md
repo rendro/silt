@@ -312,7 +312,7 @@ import time
 fn main() {
   println("started")
   time.sleep(time.minutes(90))
-  println(time.now() |> time.to_utc |> time.format("%H:%M"))
+  println(time.now() |> time.to_datetime(0) |> time.format("%H:%M"))
 }
 "#;
 let file = session.set_overlay(Path::new("main.silt"), source.to_string());

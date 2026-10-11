@@ -22,7 +22,6 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `concat_all` | `(List(Bytes)) -> Bytes` | Concatenate every element of a list |
 | `empty` | `() -> Bytes` | Zero-length byte sequence |
 | `ends_with` | `(Bytes, Bytes) -> Bool` | True if `b` ends with `suffix` |
-| `eq` | `(Bytes, Bytes) -> Bool` | Structural byte-by-byte comparison |
 | `from_base64` | `(String) -> Result(Bytes, BytesError)` | Decode base64 string |
 | `from_hex` | `(String) -> Result(Bytes, BytesError)` | Decode hex string (case-insensitive) |
 | `from_list` | `(List(Int)) -> Result(Bytes, BytesError)` | Build from a list of byte values (0..=255) |

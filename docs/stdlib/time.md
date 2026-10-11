@@ -77,8 +77,6 @@ yields a rendered string when variant branching isn't needed.
 | `datetime` | `(Date, Time) -> DateTime` | Combine date and time (infallible) |
 | `to_datetime` | `(Instant, Int) -> DateTime` | Convert instant to local datetime with UTC offset in minutes |
 | `to_instant` | `(DateTime, Int) -> Instant` | Convert local datetime to instant with UTC offset in minutes |
-| `to_utc` | `(Instant) -> DateTime` | Convert instant to UTC datetime (shorthand for offset=0) |
-| `from_utc` | `(DateTime) -> Instant` | Convert UTC datetime to instant (shorthand for offset=0) |
 | `format` | `(DateTime, String) -> String` | Format datetime with strftime pattern |
 | `format_date` | `(Date, String) -> String` | Format date with strftime pattern |
 | `parse` | `(String, String) -> Result(DateTime, TimeError)` | Parse string into datetime with strftime pattern |
@@ -229,42 +227,6 @@ fn main() -> Result(Unit, time.TimeError) {
   let instant = time.to_instant(dt, 0)
   println(instant.epoch_ns)
   Ok(())
-}
-```
-
-
-## `time.to_utc`
-
-```
-time.to_utc(instant: Instant) -> DateTime
-```
-
-Shorthand for `time.to_datetime(instant, 0)`.
-
-```silt
-import time
-
-fn main() {
-  println(time.now() |> time.to_utc) -- 2026-04-06T18:46:09.005723612
-}
-```
-
-
-## `time.from_utc`
-
-```
-time.from_utc(datetime: DateTime) -> Instant
-```
-
-Shorthand for `time.to_instant(datetime, 0)`.
-
-```silt
-import time
-
-fn main() {
-  let dt = time.now() |> time.to_utc
-  let back = dt |> time.from_utc
-  println(back.epoch_ns)
 }
 ```
 

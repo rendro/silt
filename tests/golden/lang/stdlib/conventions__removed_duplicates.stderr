@@ -1,0 +1,35 @@
+error[type]: module 'bytes' has no member 'eq'
+ --> conventions__removed_duplicates.silt:14:11
+    |
+ 14 |   println(bytes.eq(b, b))
+    |           ^^^^^^^^ module 'bytes' has no member 'eq'
+
+error[type]: module 'time' has no member 'to_utc'
+ --> conventions__removed_duplicates.silt:15:11
+    |
+ 15 |   println(time.to_utc(time.now()))
+    |           ^^^^^^^^^^^ module 'time' has no member 'to_utc'
+
+error[type]: module 'time' has no member 'from_utc'
+ --> conventions__removed_duplicates.silt:16:11
+    |
+ 16 |   println(time.from_utc(time.to_datetime(time.now(), 0)))
+    |           ^^^^^^^^^^^^^ module 'time' has no member 'from_utc'
+
+error[type]: module 'crypto' has no member 'md5_hex'
+ --> conventions__removed_duplicates.silt:17:11
+    |
+ 17 |   println(crypto.md5_hex(b))
+    |           ^^^^^^^^^^^^^^ module 'crypto' has no member 'md5_hex'
+
+error[type]: module 'crypto' has no member 'blake2b_hex'
+ --> conventions__removed_duplicates.silt:18:11
+    |
+ 18 |   println(crypto.blake2b_hex(b))
+    |           ^^^^^^^^^^^^^^^^^^ module 'crypto' has no member 'blake2b_hex'
+
+error[type]: module 'stream' has no member 'each'
+ --> conventions__removed_duplicates.silt:19:3
+    |
+ 19 |   stream.each(stream.from_list([1]), println)
+    |   ^^^^^^^^^^^ module 'stream' has no member 'each'

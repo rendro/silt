@@ -23,7 +23,7 @@ use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
 
-use super::common::{err, nibble_to_hex, ok};
+use super::common::{err, ok};
 use super::typed::{Bytes, builtins};
 use crate::value::Value;
 use crate::vm::VmError;
@@ -32,17 +32,6 @@ use crate::vm::VmError;
 /// cap documented in `docs/stdlib/crypto.md`; this is a sanity guard against accidental giant allocations, not a
 /// security boundary.
 const RANDOM_BYTES_CAP: i64 = 1_048_576;
-
-/// Lower-case hex encoding, with the digit table every hex-emitting
-/// builtin shares (`nibble_to_hex`).
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push(nibble_to_hex(b >> 4, false));
-        out.push(nibble_to_hex(b & 0x0f, false));
-    }
-    out
-}
 
 builtins! {
     // ── Hashes ─────────────────────────────────────────────────────────
@@ -64,20 +53,12 @@ builtins! {
         Md5::digest(data.as_slice()).to_vec()
     }
 
-    fn md5_hex(data: Bytes) -> String {
-        hex_encode(&Md5::digest(data.as_slice()))
-    }
-
     // Blake2b512 = BLAKE2b at the full 512-bit (64-byte) output width,
     // per RFC 7693. Faster than SHA-512 on 64-bit hardware and with a
     // cleaner design than SHA-2; preferred for new protocols unless
     // there's a specific reason to match a SHA-family spec.
     fn blake2b(data: Bytes) -> Vec<u8> {
         Blake2b512::digest(data.as_slice()).to_vec()
-    }
-
-    fn blake2b_hex(data: Bytes) -> String {
-        hex_encode(&Blake2b512::digest(data.as_slice()))
     }
 
     // ── HMAC ───────────────────────────────────────────────────────────

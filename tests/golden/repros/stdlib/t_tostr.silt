@@ -24,7 +24,7 @@ fn main() {
   println(io.inspect(Some("x")))
   let b1 = bytes.from_string("ab")
   let b2 = bytes.from_string("ab")
-  println(bytes.eq(b1, b2))
+  println(b1 == b2)
   println(b1 == b2)
   println(b1)
   println(io.inspect(b1))

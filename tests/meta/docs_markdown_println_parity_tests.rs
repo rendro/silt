@@ -94,7 +94,6 @@ const DENY_SUBSTRINGS: &[&str] = &[
     "time.sleep",
     "time.now",
     "time.today",
-    "time.to_utc",
     // Random sources.
     "math.random",
     "uuid.v4",

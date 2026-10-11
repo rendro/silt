@@ -1177,18 +1177,6 @@ builtins! {
         })
     }
 
-    fn each(ch: Chan, f: &Value) -> Result<Step, VmError> {
-        let (ch, callback) = (ch.clone(), f.clone());
-        sink("stream.each", ch, move |got| {
-            Ok(match got {
-                Got::Start | Got::Returned(_) => Next::Take(0),
-                Got::Value(_, v) => Next::Call(callback.clone(), vec![v]),
-                Got::End => Next::Done(Value::Unit),
-                _ => return unexpected(),
-            })
-        })
-    }
-
     fn count(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
         let mut n: i64 = 0;

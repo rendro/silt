@@ -57,8 +57,8 @@ error[type]: unknown type 'Value'
 error[type]: module 'postgres' is not imported
  --> feature__types_of_a_module_whose_feature_is_not_built.silt:19:11
     |
- 19 |   println(postgres.uuidv7())
-    |           ^^^^^^^^^^^^^^^ module 'postgres' is not imported
+ 19 |   println(postgres.close(1))
+    |           ^^^^^^^^^^^^^^ module 'postgres' is not imported
   = help: module `postgres` is not part of this build of silt: it needs the cargo feature `postgres`
 
 error[type]: unknown type 'PgError'

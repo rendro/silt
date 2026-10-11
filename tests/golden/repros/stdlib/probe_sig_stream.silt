@@ -9,7 +9,6 @@ fn main() {
   let v_stream_dedup: Int = stream.dedup
   let v_stream_drop: Int = stream.drop
   let v_stream_drop_while: Int = stream.drop_while
-  let v_stream_each: Int = stream.each
   let v_stream_file_chunks: Int = stream.file_chunks
   let v_stream_file_lines: Int = stream.file_lines
   let v_stream_filter: Int = stream.filter

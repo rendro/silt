@@ -435,7 +435,7 @@ fn time_now_reads_the_clock() {
     let source = r#"
 import time
 fn main() {
-  let dt = time.now() |> time.to_utc
+  let dt = time.now() |> time.to_datetime(0)
   println(time.format(dt, "%Y-%m-%d %H:%M:%S"))
 }
 "#;
@@ -855,7 +855,7 @@ import time
 fn main() {
   println("started")
   time.sleep(time.minutes(90))
-  println(time.now() |> time.to_utc |> time.format("%H:%M"))
+  println(time.now() |> time.to_datetime(0) |> time.format("%H:%M"))
 }
 "#;
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());
