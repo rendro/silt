@@ -418,7 +418,8 @@ trait Size for Other{i} {{
             )
         })
         .collect();
-    let calls = [format!("x.{method}()"); 8].join(" + ");
+    let call = format!("x.{method}()");
+    let calls = [call.as_str(); 8].join(" + ");
     format!(
         "trait Size {{
   fn {method}(self) -> Int
