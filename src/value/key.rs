@@ -468,9 +468,10 @@ fn walk<const N: usize, V: Visit<N>>(values: [&Value; N], visit: &mut V) -> Cont
 
 /// How many levels of a value the walk goes down by calling itself,
 /// with what it comes back to left in its frames: values are seldom
-/// nested deeper. Below that it keeps what it comes back to in a stack
-/// of its own ([`through_far`]), however deep the value goes.
-const NEAR: usize = 16;
+/// nested deeper, and a level costs about half as much so as it does
+/// below, where the walk keeps what it comes back to in a stack of its
+/// own ([`through_far`]), however deep the value goes.
+const NEAR: usize = 64;
 
 /// [`walk`] for values whose heads are visited and of one kind with
 /// parts, `depth` levels down from where the walk began: go through
@@ -493,39 +494,74 @@ fn through<const N: usize, V: Visit<N>>(
             visit.name(name);
         }
         match first_of(&mut runs) {
-            Among::All(next) => {
-                visit.heads(next)?;
-                if has_parts(next[0]) {
-                    below(next, visit, depth)?;
-                }
-            }
+            Among::All(next) => part(next, visit, depth)?,
             Among::None => return Continue(()),
             Among::Some(ended) => return visit.uneven(ended),
         }
     }
 }
 
-/// [`through`] for maps and for sets, whose parts are in no run.
+/// [`through`] for maps and for sets, whose parts are in no run: the
+/// entries of the maps side by side in key order, the keys of an entry
+/// and then its values, or the members of the sets in order. (What is
+/// left of each is in this frame, where [`through_far`] keeps it in a
+/// [`Parts`] it can put on its stack.)
 fn through_many<const N: usize, V: Visit<N>>(
     values: [&Value; N],
     visit: &mut V,
     depth: usize,
 ) -> ControlFlow<V::Stop> {
-    let (lens, mut parts) = Parts::of_many(values);
-    if let Some(lens) = lens {
-        visit.lens(lens)?;
-    }
-    loop {
-        match parts.next() {
-            Among::All(next) => {
-                visit.heads(next)?;
-                if has_parts(next[0]) {
-                    below(next, visit, depth)?;
+    // (The values are of one kind, the first's.)
+    match values[0] {
+        Value::Map(first) => {
+            let maps = values.map(|value| match value {
+                Value::Map(entries) => entries,
+                _ => first,
+            });
+            visit.lens(maps.map(|entries| entries.len()))?;
+            let mut left = maps.map(|entries| entries.iter());
+            loop {
+                match next_of(&mut left) {
+                    Among::All(entries) => {
+                        part(entries.map(|(key, _)| key), visit, depth)?;
+                        part(entries.map(|(_, value)| value), visit, depth)?;
+                    }
+                    Among::None => return Continue(()),
+                    Among::Some(ended) => return visit.uneven(ended),
                 }
             }
-            Among::None => return Continue(()),
-            Among::Some(ended) => return visit.uneven(ended),
         }
+        Value::Set(first) => {
+            let sets = values.map(|value| match value {
+                Value::Set(members) => members,
+                _ => first,
+            });
+            visit.lens(sets.map(|members| members.len()))?;
+            let mut left = sets.map(|members| members.iter());
+            loop {
+                match next_of(&mut left) {
+                    Among::All(members) => part(members, visit, depth)?,
+                    Among::None => return Continue(()),
+                    Among::Some(ended) => return visit.uneven(ended),
+                }
+            }
+        }
+        _ => Continue(()),
+    }
+}
+
+/// Go through `values`, which are parts of values `depth` levels down:
+/// their heads, and their parts if they are of one kind with parts.
+#[inline(always)]
+fn part<const N: usize, V: Visit<N>>(
+    values: [&Value; N],
+    visit: &mut V,
+    depth: usize,
+) -> ControlFlow<V::Stop> {
+    visit.heads(values)?;
+    match has_parts(values[0]) {
+        true => below(values, visit, depth),
+        false => Continue(()),
     }
 }
 
