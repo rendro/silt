@@ -924,9 +924,18 @@ impl Inner {
     /// or it computed on past it. It unwinds as a cancelled task does:
     /// no further instruction of it runs, and what its frames hold is
     /// given up.
+    ///
+    /// That comes first, and then the task's end is told: whoever
+    /// waits for it (`task.deadline`) finds the function's I/O given
+    /// up, a connection it was reading shut down.
     fn expire_task(&self, task: Task) {
-        task.handle.expire(&self.parking);
-        self.end_task(task);
+        let Task {
+            vm, handle, group, ..
+        } = task;
+        drop(vm);
+        handle.expire(&self.parking);
+        drop(handle);
+        self.ended(&group);
     }
 
     /// Whether the time of the task is over (`TaskHandle::deadline`).
@@ -961,9 +970,14 @@ impl Inner {
         } = task;
         drop(vm);
         drop(handle);
+        self.ended(&group);
+    }
+
+    /// A task of `group` is gone: it counts no longer.
+    fn ended(&self, group: &Group) {
         self.spawned.fetch_sub(1, Ordering::SeqCst);
         group.live.fetch_sub(1, Ordering::SeqCst);
-        self.check(&group);
+        self.check(group);
     }
 
     /// The wait of `sleeper` has ended.
