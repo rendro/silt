@@ -342,3 +342,208 @@ fn parking_deep_in_callbacks_costs_the_same_at_any_depth() {
         "10,000 parks 900 calls deep, against 10,000 at the top",
     );
 }
+
+/// A fan-in of `senders` tasks that each send three numbers to one
+/// channel of sixteen places, where most of them wait their turn; the
+/// program prints the sum of what arrived.
+fn fan_in_program(senders: usize) -> String {
+    format!(
+        "import channel
+import list
+import task
+
+fn fan_in(senders) {{
+  let ch = channel.new(16)
+  let hs = 1..senders |> list.map {{ i -> task.spawn({{ ->
+    1..3 |> list.each {{ j -> channel.send(ch, i + j) }}
+  }}) }}
+  let sum = loop left = senders * 3, acc = 0 {{
+    match left {{
+      0 -> acc
+      _ -> match channel.receive(ch) {{
+        channel.Message(v) -> loop(left - 1, acc + v)
+        _ -> acc
+      }}
+    }}
+  }}
+  hs |> list.each {{ h -> task.join(h) }}
+  sum
+}}
+
+fn main() {{
+  println(fan_in({senders}))
+}}
+"
+    )
+}
+
+/// Many tasks parked on one channel cost time in proportion to their
+/// number, not to its square: with four times the senders the fan-in
+/// takes about four times as long, at most eight times. (When leaving
+/// the channel's queue meant searching it, four times the senders took
+/// sixteen times as long.)
+#[test]
+fn parked_senders_cost_time_in_proportion() {
+    let programs = Programs::new("fan_in");
+    let large = programs.file("large.silt", &fan_in_program(20_000));
+    let small = programs.file("small.silt", &fan_in_program(5_000));
+    assert_within(
+        8.0,
+        (&large, "600150000"),
+        (&small, "37537500"),
+        "a fan-in of 20,000 senders, against one of 5,000",
+    );
+}
+
+/// A loop of 125,000 rounds that calls `size` of a record eight times
+/// a round, a million calls: as a method of a trait found where the
+/// code runs (the function knows its argument only as a type with the
+/// trait), or (`plain`) as a function.
+fn million_calls_program(plain: bool) -> String {
+    let (parameter, call) = match plain {
+        true => ("x: Box, times: Int) -> Int", "size(x)"),
+        false => ("x: a, times: Int) -> Int where a: Size", "x.size()"),
+    };
+    let calls = [call; 8].join(" + ");
+    format!(
+        "trait Size {{
+  fn size(self) -> Int
+}}
+
+type Box {{
+  n: Int,
+}}
+
+trait Size for Box {{
+  fn size(self) -> Int {{
+    self.n
+  }}
+}}
+
+fn size(b: Box) -> Int {{
+  b.n
+}}
+
+fn total({parameter} {{
+  loop i = 0, acc = 0 {{
+    match i >= times {{
+      true -> acc
+      false -> loop(i + 1, acc + {calls})
+    }}
+  }}
+}}
+
+fn main() {{
+  println(total(Box {{ n: 2 }}, 125000))
+}}
+"
+    )
+}
+
+/// A call of a method that is found where the code runs costs little
+/// more than a call of a function: the method is found by three
+/// numbers (the trait, the receiver's type, the id of the method's
+/// name) in one table. It was found by the method's name, a text, in a
+/// table of the impl in a table of the impls, and the type of a
+/// receiver that is no record was looked up by its name at every call:
+/// a million such calls took half as long again as a million calls of
+/// a function.
+#[test]
+fn a_method_found_where_the_code_runs_costs_little_more_than_a_function() {
+    let programs = Programs::new("methods");
+    let methods = programs.file("methods.silt", &million_calls_program(false));
+    let functions = programs.file("functions.silt", &million_calls_program(true));
+    assert_within(
+        1.35,
+        (&methods, "2000000"),
+        (&functions, "2000000"),
+        "a million calls of a method found where the code runs, against a million of a function",
+    );
+}
+
+/// A program of `functions` functions whose `main` starts `tasks`
+/// tasks that each wait for a message nobody sends, prints their
+/// number when every one of them runs, and waits for a line of input.
+#[cfg(target_os = "linux")]
+fn waiting_tasks_program(functions: usize, tasks: usize) -> String {
+    let functions: String = (0..functions)
+        .map(|i| format!("fn g{i}(x: Int) -> Int {{\n  x + {i}\n}}\n\n"))
+        .collect();
+    format!(
+        "import channel
+import io
+import list
+import task
+
+{functions}fn main() {{
+  let never = channel.new(0)
+  let running = channel.new({tasks})
+  let handles = list.map(1..{tasks}) {{ i ->
+    task.spawn({{ ->
+      let _ = channel.send(running, i)
+      match channel.receive(never) {{
+        channel.Message(n) -> n + g0(i)
+        _ -> 0
+      }}
+    }})
+  }}
+  list.each(handles) {{ _ ->
+    let _ = channel.receive(running)
+  }}
+  println(list.length(handles))
+  let _ = io.read_line()
+}}
+"
+    )
+}
+
+/// A task is started with nothing of the program copied: the VMs of
+/// all tasks have the program's global slots in common. Each had a
+/// copy of them, so 5,000 waiting tasks of a program of 2,000
+/// functions held 400 MB; they hold some 30 MB.
+///
+/// What is measured is the most memory the program has had resident
+/// while its tasks wait (`VmHWM` of its process, which Linux gives).
+#[test]
+#[cfg(target_os = "linux")]
+fn five_thousand_waiting_tasks_share_the_programs_globals() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let programs = Programs::new("tasks");
+    let file = programs.file("tasks.silt", &waiting_tasks_program(2_000, 5_000));
+    let mut silt = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("silt runs");
+    // Every task runs, and waits or is about to.
+    let mut line = String::new();
+    BufReader::new(silt.stdout.as_mut().expect("the program's output"))
+        .read_line(&mut line)
+        .expect("the program's first line");
+    let status = std::fs::read_to_string(format!("/proc/{}/status", silt.id()))
+        .expect("the status of the program's process");
+    // (The program ends when it has its line.)
+    let mut stdin = silt.stdin.take().expect("the program's input");
+    stdin.write_all(b"\n").expect("a line for the program");
+    drop(stdin);
+    let output = silt.wait_with_output().expect("silt's output");
+    assert_eq!(
+        line.trim(),
+        "5000",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let resident: u64 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse().ok())
+        .expect("VmHWM, in kB");
+    assert!(
+        resident < 100 * 1024,
+        "5,000 waiting tasks of a program of 2,000 functions held {resident} kB"
+    );
+}

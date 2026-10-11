@@ -1,8 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::Value;
 use super::list::Elements;
+use super::{Float, Value};
 use crate::typeinfo::bv;
 use crate::vm::VmError;
 
@@ -164,7 +164,7 @@ impl IntoValue for i64 {
 impl FromValue for f64 {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
-            Value::Float(n) => Ok(*n),
+            Value::Float(n) => Ok(n.get()),
             Value::Int(n) => Ok(*n as f64),
             other => Err(format!("expected Float, got {}", other.kind())),
         }
@@ -177,10 +177,9 @@ impl IntoValue for f64 {
         // infinite result has no silt value, so it is an error rather
         // than a `Float` that every comparison, hash and container path
         // would mishandle.
-        if !self.is_finite() {
-            return Err(format!("non-finite float result: {self}"));
-        }
-        Ok(Value::Float(if self == 0.0 { 0.0 } else { self }))
+        Float::new(self)
+            .map(Value::Float)
+            .ok_or_else(|| format!("non-finite float result: {self}"))
     }
 }
 

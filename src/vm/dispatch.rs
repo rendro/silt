@@ -194,12 +194,7 @@ impl Vm {
                 }
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
-                    // A Float is always finite, so `partial_cmp` always
-                    // answers; `Equal` is the same safety net `Value::cmp`
-                    // uses.
-                    (Value::Float(a), Value::Float(b)) => {
-                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                    }
+                    (Value::Float(a), Value::Float(b)) => a.cmp(b),
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: a list has Compare when its

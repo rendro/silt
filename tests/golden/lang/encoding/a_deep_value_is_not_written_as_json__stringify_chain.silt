@@ -1,0 +1,63 @@
+-- timeout: 120
+-- exit: 1
+-- stderr-contains: json.stringify: the value is nested more than 1000 levels deep
+-- A value nested more than 1,000 levels deep is not written as JSON:
+-- `json.stringify` ends the program with a runtime error, as it does for
+-- any value it cannot write (here a chain of a type of the program,
+-- 200,000 levels deep). It went down the value on the native stack,
+-- and such a value overflowed it and aborted the program. A value
+-- 1,000 levels deep is written.
+import json
+import string
+
+type Chain {
+  End,
+  Link(Int, Chain),
+}
+
+type Row {
+  v: Int,
+  next: Option(Row),
+}
+
+type Tree {
+  Leaf,
+  Node(List(Tree)),
+}
+
+-- A chain of `n` links: `End` is `n` levels in.
+fn chain(n: Int) -> Chain {
+  loop i = 0, acc = End {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Link(i % 10, acc))
+    }
+  }
+}
+
+-- `n` rows, each the `next` of the one before: the fields of the last
+-- are `n` levels in.
+fn rows(n: Int) -> Row {
+  loop i = 1, acc = Row { v: 0, next: None } {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Row { v: i % 10, next: Some(acc) })
+    }
+  }
+}
+
+-- A tree of `n` nodes, each in the list of the one before: `Leaf` is
+-- `2 * n` levels in (a list in a variant at each).
+fn tree(n: Int) -> Tree {
+  loop i = 0, acc = Leaf {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Node([acc]))
+    }
+  }
+}
+
+fn main() {
+  println(string.length(json.stringify(chain(1000))) > 0)
+  println(string.length(json.stringify(chain(200000))))
+}

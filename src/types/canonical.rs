@@ -7,8 +7,6 @@
 //!
 //! The current reduction set is:
 //!
-//! - `Type::Range(t) -> Type::List(t)` (Range is a nominal zero-cost
-//!   alias of List).
 //! - User `type Foo = Bar` alias expansion: a `Type::Generic(name, args)`
 //!   whose `name` is registered in the [`Resolver`] alias registry
 //!   expands to its stored target with `args` substituted (Phase D).
@@ -31,11 +29,8 @@
 //! ## Display vs canonical name
 //!
 //! [`canonical_name`] is the runtime-dispatch oracle, not a diagnostic
-//! renderer. `Range(Int)` displays as `"Range(Int)"` (via
-//! `impl Display for Type` in the parent module) but canonicalises to
-//! `"List"`. A future `display_name(ty)` helper will preserve the
-//! source-level spelling for diagnostics; this module deliberately does
-//! not.
+//! renderer: an alias written in the source is shown as the type it
+//! stands for.
 //!
 //! ## Phase D: user type aliases (and the alias registry)
 //!
@@ -223,7 +218,7 @@ impl Resolver {
     ///
     /// Called by the typechecker when processing a `TraitImpl`: for
     /// each `type Item = X` binding, the target's canonical head is
-    /// computed (so `Range` and `List` collapse to the same key) and
+    /// computed (so an alias and its target collapse to the same key) and
     /// the resolved type is stored. Re-registering the same triple
     /// overwrites the previous entry (matches the alias-registry
     /// convention; the typechecker enforces uniqueness via its
@@ -312,7 +307,7 @@ impl Resolver {
                 }
                 self.find_assoc_cycle(receiver, visited)
             }
-            Type::List(inner) | Type::Range(inner) | Type::Set(inner) | Type::Channel(inner) => {
+            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
                 self.find_assoc_cycle(inner, visited)
             }
             Type::Map(k, v) => self
@@ -382,7 +377,6 @@ impl Resolver {
 ///
 /// Recursive structural walk. The current reduction set is:
 ///
-/// - `Type::Range(t)` -> `Type::List(canonicalize(t))`
 /// - `Type::Generic(name, args)` whose `name` is a registered alias ->
 ///   the alias's stored target with `args` substituted into its
 ///   parameters, then canonicalised. (A name cannot be declared as
@@ -397,14 +391,6 @@ impl Resolver {
 /// variables are returned unchanged.
 pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
     match ty {
-        // ── Primary reduction: Range collapses to List ─────────────
-        // Range is a nominal zero-cost alias of List in silt
-        // (see Type::Range docs in src/types/mod.rs). The typechecker,
-        // compiler, and VM all need to treat them as the same type for
-        // dispatch and equality; canonicalising at the boundary is the
-        // single point where that invariant is enforced.
-        Type::Range(inner) => Type::List(Box::new(canonicalize(resolver, inner))),
-
         // ── Phase D: user-declared aliases ─────────────────────────
         // A `Type::Generic(name, args)` whose `name` is a registered
         // alias expands by substituting `args` into the alias's
@@ -581,11 +567,7 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Unit => "Unit".to_string(),
 
         // ── Containers ─────────────────────────────────────────────
-        // Range collapses to List per the canonicalisation rule. This
-        // is the dispatch oracle `dispatch_type_for_value` consults:
-        // returning "Range" here would miss the methods the compiler
-        // keys under `List`.
-        Type::List(_) | Type::Range(_) => "List".to_string(),
+        Type::List(_) => "List".to_string(),
         Type::Map(_, _) => "Map".to_string(),
         Type::Set(_) => "Set".to_string(),
         Type::Channel(_) => "Channel".to_string(),
@@ -621,9 +603,6 @@ pub fn canonical_name(ty: &Type) -> String {
 /// surface alias of a builtin type, the builtin type, or for a user
 /// alias, the head of the type it stands for.
 ///
-/// - `Range` -> `List` (`Range` is a nominal alias of `List`, so
-///   Range-targeted impls register under the key both List and Range
-///   receivers reach at dispatch time).
 /// - `Fun` -> `Fn` (the surface alias of the function-type name — the
 ///   VM dispatches closures under `"Fn"`, so a `trait T for Fun` impl
 ///   must register there too).
@@ -634,9 +613,6 @@ pub fn canonical_name(ty: &Type) -> String {
 /// Any other type is its own head. (`()` is not a type name: it is
 /// written `Unit` in an impl target.)
 pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
-    if ty.is_builtin("Range") {
-        return TypeRef::builtin("List");
-    }
     if ty.is_builtin("Fun") {
         return TypeRef::builtin("Fn");
     }
@@ -664,7 +640,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         Type::Bool => "Bool",
         Type::String => "String",
         Type::Unit => "Unit",
-        Type::List(_) | Type::Range(_) => "List",
+        Type::List(_) => "List",
         Type::Map(_, _) => "Map",
         Type::Set(_) => "Set",
         Type::Channel(_) => "Channel",
@@ -691,31 +667,77 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
 /// variant constructor) is an `Fn`: the typechecker types each as
 /// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
 pub fn dispatch_type_for_value(val: &Value) -> TypeId {
-    let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
+    let kinds = kind_types();
     match val {
         Value::Variant(variant) => variant.type_id(),
         Value::Record(record) => record.type_id(),
         Value::TypeDescriptor(ty) => ty.id,
         Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
-        Value::Int(_) => builtin(Type::Int),
-        Value::Float(_) => builtin(Type::Float),
-        Value::Bool(_) => builtin(Type::Bool),
-        Value::String(_) => builtin(Type::String),
-        Value::List(_) => builtin(Type::List(Box::new(Type::Unit))),
-        Value::Map(_) => builtin(Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
-        Value::Set(_) => builtin(Type::Set(Box::new(Type::Unit))),
-        Value::Tuple(_) => builtin(Type::Tuple(vec![])),
-        Value::Channel(_) => builtin(Type::Channel(Box::new(Type::Unit))),
+        Value::Int(_) => kinds.int,
+        Value::Float(_) => kinds.float,
+        Value::Bool(_) => kinds.bool,
+        Value::String(_) => kinds.string,
+        Value::List(_) => kinds.list,
+        Value::Map(_) => kinds.map,
+        Value::Set(_) => kinds.set,
+        Value::Tuple(_) => kinds.tuple,
+        Value::Channel(_) => kinds.channel,
         Value::VmClosure(_)
         | Value::BuiltinFn(_)
         | Value::HostFn(_)
-        | Value::VariantConstructor(..) => builtin(Type::Fun(vec![], Box::new(Type::Unit))),
-        Value::Unit => builtin(Type::Unit),
-        Value::Bytes(_) => TypeRef::builtin("Bytes").id,
-        Value::Handle(_) => TypeRef::builtin("Handle").id,
-        Value::TcpListener(_) => TypeRef::builtin("TcpListener").id,
-        Value::TcpStream(_) => TypeRef::builtin("TcpStream").id,
+        | Value::VariantConstructor(..) => kinds.function,
+        Value::Unit => kinds.unit,
+        Value::Bytes(_) => kinds.bytes,
+        Value::Handle(_) => kinds.handle,
+        Value::TcpListener(_) => kinds.tcp_listener,
+        Value::TcpStream(_) => kinds.tcp_stream,
     }
+}
+
+/// The builtin type of each kind of value that is no record and no
+/// variant, found once: a method call that finds its method where the
+/// code runs asks for the type of its receiver every time.
+struct KindTypes {
+    int: TypeId,
+    float: TypeId,
+    bool: TypeId,
+    string: TypeId,
+    list: TypeId,
+    map: TypeId,
+    set: TypeId,
+    tuple: TypeId,
+    channel: TypeId,
+    function: TypeId,
+    unit: TypeId,
+    bytes: TypeId,
+    handle: TypeId,
+    tcp_listener: TypeId,
+    tcp_stream: TypeId,
+}
+
+fn kind_types() -> &'static KindTypes {
+    static KINDS: std::sync::OnceLock<KindTypes> = std::sync::OnceLock::new();
+    KINDS.get_or_init(|| {
+        let of = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
+        let unit = || Box::new(Type::Unit);
+        KindTypes {
+            int: of(Type::Int),
+            float: of(Type::Float),
+            bool: of(Type::Bool),
+            string: of(Type::String),
+            list: of(Type::List(unit())),
+            map: of(Type::Map(unit(), unit())),
+            set: of(Type::Set(unit())),
+            tuple: of(Type::Tuple(vec![])),
+            channel: of(Type::Channel(unit())),
+            function: of(Type::Fun(vec![], unit())),
+            unit: of(Type::Unit),
+            bytes: TypeRef::builtin("Bytes").id,
+            handle: TypeRef::builtin("Handle").id,
+            tcp_listener: TypeRef::builtin("TcpListener").id,
+            tcp_stream: TypeRef::builtin("TcpStream").id,
+        }
+    })
 }
 
 /// The name of the type [`dispatch_type_for_value`] gives, as messages
@@ -762,7 +784,6 @@ mod tests {
             "String" => Some(Type::String),
             "Unit" | "()" => Some(Type::Unit),
             "List" => Some(Type::List(Box::new(Type::Int))),
-            "Range" => Some(Type::Range(Box::new(Type::Int))),
             "Map" => Some(Type::Map(Box::new(Type::Int), Box::new(Type::Int))),
             "Set" => Some(Type::Set(Box::new(Type::Int))),
             "Channel" => Some(Type::Channel(Box::new(Type::Int))),
@@ -778,117 +799,6 @@ mod tests {
     // ── canonicalize: reductions ───────────────────────────────────
 
     #[test]
-    fn canonicalize_range_becomes_list() {
-        let r = Type::Range(Box::new(Type::Int));
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &r), Type::List(Box::new(Type::Int)));
-    }
-
-    #[test]
-    fn canonicalize_nested_range_in_fun() {
-        let f = Type::Fun(
-            vec![Type::Range(Box::new(Type::Int))],
-            Box::new(Type::Range(Box::new(Type::Bool))),
-        );
-        let expected = Type::Fun(
-            vec![Type::List(Box::new(Type::Int))],
-            Box::new(Type::List(Box::new(Type::Bool))),
-        );
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &f), expected);
-    }
-
-    #[test]
-    fn canonicalize_range_in_tuple() {
-        let t = Type::Tuple(vec![
-            Type::Range(Box::new(Type::Int)),
-            Type::String,
-            Type::Range(Box::new(Type::Bool)),
-        ]);
-        let expected = Type::Tuple(vec![
-            Type::List(Box::new(Type::Int)),
-            Type::String,
-            Type::List(Box::new(Type::Bool)),
-        ]);
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &t), expected);
-    }
-
-    #[test]
-    fn canonicalize_range_in_list() {
-        // List of Range collapses to List of List.
-        let t = Type::List(Box::new(Type::Range(Box::new(Type::Int))));
-        let expected = Type::List(Box::new(Type::List(Box::new(Type::Int))));
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &t), expected);
-    }
-
-    #[test]
-    fn canonicalize_range_in_map_key_and_value() {
-        let t = Type::Map(
-            Box::new(Type::Range(Box::new(Type::Int))),
-            Box::new(Type::Range(Box::new(Type::Bool))),
-        );
-        let expected = Type::Map(
-            Box::new(Type::List(Box::new(Type::Int))),
-            Box::new(Type::List(Box::new(Type::Bool))),
-        );
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &t), expected);
-    }
-
-    #[test]
-    fn canonicalize_range_in_set_and_channel() {
-        let s = Type::Set(Box::new(Type::Range(Box::new(Type::Int))));
-        let res = Resolver::new();
-        assert_eq!(
-            canonicalize(&res, &s),
-            Type::Set(Box::new(Type::List(Box::new(Type::Int))))
-        );
-        let c = Type::Channel(Box::new(Type::Range(Box::new(Type::Int))));
-        assert_eq!(
-            canonicalize(&res, &c),
-            Type::Channel(Box::new(Type::List(Box::new(Type::Int))))
-        );
-    }
-
-    #[test]
-    fn canonicalize_range_in_generic_args() {
-        let name = TypeRef::builtin("Result");
-        let g = Type::Generic(name, vec![Type::Range(Box::new(Type::Int)), Type::String]);
-        let expected = Type::Generic(name, vec![Type::List(Box::new(Type::Int)), Type::String]);
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &g), expected);
-    }
-
-    #[test]
-    fn canonicalize_deeply_nested_range() {
-        // Fn(Map(String, Tuple(Range(Int), Set(Range(Bool))))) -> ...
-        let t = Type::Fun(
-            vec![Type::Map(
-                Box::new(Type::String),
-                Box::new(Type::Tuple(vec![
-                    Type::Range(Box::new(Type::Int)),
-                    Type::Set(Box::new(Type::Range(Box::new(Type::Bool)))),
-                ])),
-            )],
-            Box::new(Type::Unit),
-        );
-        let expected = Type::Fun(
-            vec![Type::Map(
-                Box::new(Type::String),
-                Box::new(Type::Tuple(vec![
-                    Type::List(Box::new(Type::Int)),
-                    Type::Set(Box::new(Type::List(Box::new(Type::Bool)))),
-                ])),
-            )],
-            Box::new(Type::Unit),
-        );
-        let res = Resolver::new();
-        assert_eq!(canonicalize(&res, &t), expected);
-    }
-
-    #[test]
     fn canonicalize_idempotent() {
         // canonicalize(canonicalize(t)) == canonicalize(t) for a
         // representative cross-section of shapes. Locks in the
@@ -897,19 +807,15 @@ mod tests {
         // reducer must not change it.
         let cases = [
             Type::Int,
-            Type::Range(Box::new(Type::Int)),
-            Type::List(Box::new(Type::Range(Box::new(Type::Int)))),
+            Type::List(Box::new(Type::List(Box::new(Type::Int)))),
             Type::Fun(
-                vec![Type::Range(Box::new(Type::Int))],
-                Box::new(Type::Range(Box::new(Type::Bool))),
+                vec![Type::List(Box::new(Type::Int))],
+                Box::new(Type::Set(Box::new(Type::Bool))),
             ),
-            Type::Tuple(vec![
-                Type::Range(Box::new(Type::Int)),
-                Type::Range(Box::new(Type::Bool)),
-            ]),
+            Type::Tuple(vec![Type::List(Box::new(Type::Int)), Type::Bool]),
             Type::Map(
-                Box::new(Type::Range(Box::new(Type::Int))),
-                Box::new(Type::Range(Box::new(Type::String))),
+                Box::new(Type::Int),
+                Box::new(Type::List(Box::new(Type::String))),
             ),
             Type::Var(7),
             Type::Error,
@@ -946,31 +852,6 @@ mod tests {
     // ── types_equal ────────────────────────────────────────────────
 
     #[test]
-    fn types_equal_range_eq_list() {
-        let res = Resolver::new();
-        assert!(types_equal(
-            &res,
-            &Type::Range(Box::new(Type::Int)),
-            &Type::List(Box::new(Type::Int))
-        ));
-        // And symmetrically.
-        assert!(types_equal(
-            &res,
-            &Type::List(Box::new(Type::Int)),
-            &Type::Range(Box::new(Type::Int))
-        ));
-    }
-
-    #[test]
-    fn types_equal_range_in_compound_position_eq_list() {
-        // Tuple(Range(Int), Bool) == Tuple(List(Int), Bool)
-        let a = Type::Tuple(vec![Type::Range(Box::new(Type::Int)), Type::Bool]);
-        let b = Type::Tuple(vec![Type::List(Box::new(Type::Int)), Type::Bool]);
-        let res = Resolver::new();
-        assert!(types_equal(&res, &a, &b));
-    }
-
-    #[test]
     fn types_equal_distinct_primitives_not_equal() {
         let res = Resolver::new();
         assert!(!types_equal(&res, &Type::Int, &Type::Float));
@@ -987,11 +868,6 @@ mod tests {
             &Type::List(Box::new(Type::Int)),
             &Type::List(Box::new(Type::String))
         ));
-        assert!(!types_equal(
-            &res,
-            &Type::Range(Box::new(Type::Int)),
-            &Type::List(Box::new(Type::Bool))
-        ));
     }
 
     #[test]
@@ -999,7 +875,7 @@ mod tests {
         let res = Resolver::new();
         for t in [
             Type::Int,
-            Type::Range(Box::new(Type::Int)),
+            Type::List(Box::new(Type::Int)),
             Type::Fun(vec![Type::Int], Box::new(Type::Bool)),
             Type::Tuple(vec![Type::Int, Type::String]),
             Type::Var(3),
@@ -1041,14 +917,6 @@ mod tests {
     #[test]
     fn canonical_name_int_is_int() {
         assert_eq!(canonical_name(&Type::Int), "Int");
-    }
-
-    #[test]
-    fn canonical_name_range_is_list() {
-        // The whole point of canonicalisation: dispatch by canonical
-        // name must collapse Range to List. Phase C wires this into
-        // the VM; this test is the unit-level invariant.
-        assert_eq!(canonical_name(&Type::Range(Box::new(Type::Int))), "List");
     }
 
     #[test]
@@ -1106,16 +974,15 @@ mod tests {
     fn canonical_name_covers_every_builtin_with_a_type_variant() {
         // For every entry in BUILTIN_TYPES that maps onto a Type
         // variant, canonical_name on that variant must equal the
-        // builtin's surface name (with two documented exceptions:
-        // `Range` canonicalises to `"List"`; `()` is the surface
-        // alias for `Unit` and shares the `"Unit"` canonical form).
+        // builtin's surface name (with one documented exception: `()`
+        // is the surface alias for `Unit` and shares the `"Unit"`
+        // canonical form).
         for b in BUILTIN_TYPES {
             let Some(t) = type_for_builtin(b.name) else {
                 continue; // e.g. Handle: no Type variant
             };
             let got = canonical_name(&t);
             let expected = match b.name {
-                "Range" => "List",
                 "()" => "Unit",
                 "Fun" => "Fn", // Fn and Fun are surface aliases for Type::Fun
                 other => other,
@@ -1149,15 +1016,6 @@ mod tests {
     // ── canonical_head ─────────────────────────────────────────────
 
     #[test]
-    fn canonical_head_collapses_range_to_list() {
-        let res = Resolver::new();
-        assert_eq!(
-            canonical_head(&res, TypeRef::builtin("Range")),
-            TypeRef::builtin("List")
-        );
-    }
-
-    #[test]
     fn canonical_head_round_trips_unrelated_types() {
         let res = Resolver::new();
         let types = ["Int", "List", "Map", "Set", "Tuple"]
@@ -1185,7 +1043,7 @@ mod tests {
     fn dispatch_type_for_value_primitives() {
         assert_eq!(dispatch_type_for_value(&Value::Int(0)), builtin_id("Int"));
         assert_eq!(
-            dispatch_type_for_value(&Value::Float(0.0)),
+            dispatch_type_for_value(&Value::Float(crate::value::Float::from(0))),
             builtin_id("Float")
         );
         assert_eq!(

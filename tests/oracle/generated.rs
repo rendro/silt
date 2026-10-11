@@ -509,7 +509,7 @@ fn generated_programs_end_as_the_reference_evaluator_says() {
     check_listed(&all, |name| name.starts_with("generated/"));
     let skips = skips();
     let inputs = chosen(all);
-    let mut verdicts = run(&inputs, &skips);
+    let mut verdicts = run(&inputs);
 
     let mut overflows = 0;
     for (input, (verdict, _)) in inputs.iter().zip(&mut verdicts) {

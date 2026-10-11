@@ -1276,13 +1276,10 @@ impl TypeChecker {
     /// The type a resolved Type's impls are keyed by. Returns `None` if
     /// the type is unresolved (still a type variable) or has no head.
     ///
-    /// Phase B: routes through `crate::types::canonical::canonicalize` so
-    /// that `Range(T)` collapses to `List(T)` before name lookup. The
-    /// dedicated Range arm is therefore no longer needed (it became
-    /// unreachable once the input was canonicalised). This is the single
-    /// source of truth for the dispatch-name oracle on the typechecker
-    /// side; the VM and compiler will reach the same conclusion via
-    /// `canonical_name` in phase C.
+    /// Routes through `crate::types::canonical::canonicalize` so that an
+    /// alias collapses to the type it stands for before name lookup.
+    /// This is the single source of truth for the dispatch-name oracle
+    /// on the typechecker side.
     pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<TypeRef> {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
         match &ty {
@@ -1315,9 +1312,6 @@ impl TypeChecker {
     /// params-then-return. Anything else (Int, String, Record without type
     /// params, etc.) has no positional args. Used by `verify_trait_obligation`
     /// to walk into an impl's where-clause obligations.
-    ///
-    /// Phase B: canonicalise the input first so a Range receiver supplies
-    /// its element type via the List arm rather than a dedicated Range arm.
     pub(super) fn type_args_of(&self, ty: &Type) -> Vec<Type> {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
         match &ty {
@@ -1540,7 +1534,6 @@ impl TypeChecker {
             Type::Fun(..) => leaf(self, "Fn", None),
             Type::Channel(_) if tr.is_builtin("Equal") => None,
             Type::List(_)
-            | Type::Range(_)
             | Type::Set(_)
             | Type::Map(..)
             | Type::Tuple(_)
@@ -1555,7 +1548,7 @@ impl TypeChecker {
                     return leaf(self, &resolve(head.name), None);
                 }
                 let parts: Vec<(String, Type)> = match &ty {
-                    Type::List(t) | Type::Range(t) | Type::Set(t) => {
+                    Type::List(t) | Type::Set(t) => {
                         vec![("element".to_string(), (**t).clone())]
                     }
                     Type::Map(k, v) => vec![
@@ -1983,9 +1976,7 @@ impl TypeChecker {
     /// structurally equal. Used by `verify_trait_obligation` to reject
     /// `where a: TryInto(Int)` when only `TryInto(Float) for ...` exists.
     ///
-    /// Phase B: canonicalise both sides at entry. The recursive walk
-    /// then never sees `Type::Range`; the dedicated `(Range, Range)`
-    /// pair-arm is unreachable and removed.
+    /// Both sides are canonicalised at entry.
     pub(super) fn trait_arg_compatible(&self, a: &Type, b: &Type) -> bool {
         let a = crate::types::canonical::canonicalize(&self.tables.resolver, a);
         let b = crate::types::canonical::canonicalize(&self.tables.resolver, b);

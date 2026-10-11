@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use super::Value;
+use super::deep::drop_held;
 use crate::defs::TypeId;
 use crate::typeinfo::{BuiltinVariant, Tag, TypeInfo, anon_record_type};
 
@@ -27,6 +28,13 @@ struct Obj {
     ty: Arc<TypeInfo>,
     /// In the order the type declares them.
     fields: Box<[Value]>,
+}
+
+impl Drop for Obj {
+    fn drop(&mut self) {
+        // On no native stack, however deep the fields nest.
+        drop_held(std::mem::take(&mut self.fields));
+    }
 }
 
 /// A variant: `None`, `Some(1)`, `Link(1, rest)`.
@@ -187,17 +195,6 @@ impl Record {
     pub fn named(&self) -> impl ExactSizeIterator<Item = (&str, &Value)> + Clone {
         let names = self.0.ty.fields().iter().map(|(name, _)| &**name);
         names.zip(self.0.fields.iter())
-    }
-
-    /// The fields with their names, in name order: the order of an
-    /// anonymous record. A builtin record is shown and ordered in it
-    /// (src/value/fmt.rs, src/value/key.rs), every record is hashed in
-    /// it, and an anonymous record is compared with a declared one in
-    /// it.
-    pub(super) fn by_name(&self) -> Vec<(&str, &Value)> {
-        let mut fields: Vec<(&str, &Value)> = self.named().collect();
-        fields.sort_by_key(|(name, _)| *name);
-        fields
     }
 
     /// The record with `values` as its fields `names`: `r.{ x: 1 }`,

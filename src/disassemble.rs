@@ -11,7 +11,14 @@ use crate::value::Value;
 
 /// Format a constant value for a disassembly comment.
 fn constant_comment(chunk: &Chunk, k: Const) -> String {
-    format!("{:?}", chunk.constant(k))
+    match chunk.constant(k) {
+        // A function is shown by its name; any other constant as a
+        // program writes it.
+        function @ (Value::VmClosure(_) | Value::BuiltinFn(_) | Value::HostFn(_)) => {
+            format!("{function}")
+        }
+        constant => format!("{constant:?}"),
+    }
 }
 
 /// The lines of a list of names: one continuation line per entry, with
@@ -161,10 +168,12 @@ fn disassemble_instruction(
         Instr::CallBuiltin { builtin, argc } => {
             format!("{offset:04}  {name:<20} {argc:<5} ; {builtin}")
         }
-        // CallMethod: the method name, argc, and the trait whose method
-        // it calls (shown after the name when the call names one).
+        // CallMethod: the id of the method's name, argc, and the name
+        // with the trait whose method it calls (shown after the name
+        // when the call names one).
         Instr::CallMethod { method, argc, of } | Instr::TailCallMethod { method, argc, of } => {
-            let line = with_constant_and_count(method, argc);
+            let named = globals.method_name(method).unwrap_or("?");
+            let line = format!("{offset:04}  {name:<20} {method:<5} {argc:<3} ; \"{named}\"");
             match globals.trait_name(of) {
                 Some(t) => format!("{line} of {t}"),
                 None => line,
@@ -482,21 +491,24 @@ mod tests {
 
     #[test]
     fn test_call_method_format() {
-        let output = disassembly(1, 0, |e| {
-            let method = e.constant(Value::String("len".into()), span()).unwrap();
-            e.emit(
-                Asm::CallMethod {
-                    method,
-                    argc: 1,
-                    of: 0,
-                },
-                span(),
-            )
-            .unwrap();
-            e.emit(Asm::Return, span()).unwrap();
-        });
+        // The method is named by the id of its name among the
+        // program's method names, and shown by the name.
+        let mut globals = Globals::default();
+        assert_eq!(globals.method_id("size"), Some(0));
+        let method = globals.method_id("len").expect("an id");
+        assert_eq!((method, globals.method_id("len")), (1, Some(1)));
+        let mut emitter = Emitter::new("test".into(), 1, span()).unwrap();
+        let call = Asm::CallMethod {
+            method,
+            argc: 1,
+            of: 0,
+        };
+        emitter.emit(call, span()).unwrap();
+        emitter.emit(Asm::Return, span()).unwrap();
+        let function = emitter.finish(0).unwrap_or_else(|e| panic!("{e:?}"));
+        let output = disassemble_function(&function, &globals);
         assert!(
-            output.contains("0000  CallMethod           0     1   ; \"len\"\n"),
+            output.contains("0000  CallMethod           1     1   ; \"len\"\n"),
             "{output}"
         );
         // The next instruction is decoded after the trait operand.

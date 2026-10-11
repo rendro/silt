@@ -756,19 +756,6 @@ impl TypeChecker {
                 .extend(ti.methods.iter().map(|m| m.name));
             return;
         }
-        // Phase B: canonicalise the target-type symbol so an impl
-        // `trait Foo for Range(a)` registers under the same key
-        // (`"List"`) that dispatch lookup will use for both `Range(_)`
-        // and `List(_)` receivers. Round 61's
-        // dispatch fix collapsed receivers to `List` at runtime; with phase B's `type_name_for_impl`
-        // canonicalising at the lookup side too, the impl table
-        // would otherwise be unreachable for an explicitly
-        // Range-targeted impl. Without this canonicalisation the
-        // round-61 lock test
-        // `user_trait_method_on_list_dispatches_for_range_receiver`
-        // (and its siblings) regresses to "type 'Range' does not
-        // implement trait 'Foo'".
-        //
         // Round-23 GAP #1: reject trait impls whose target type was never
         // declared: `trait Greet for Widget { ... }` with no `type
         // Widget` would attach methods to a phantom type. A lowercase
@@ -927,8 +914,7 @@ impl TypeChecker {
                     .unwrap_or(0);
                 if user_arity == 0 {
                     // Bare builtin-container targets (`trait T for List`,
-                    // Map/Set/Channel; a bare `Range` target arrives here
-                    // as `List` via `canonical_head`) mirror
+                    // Map/Set/Channel) mirror
                     // `resolve_type_expr`'s bare-name annotation
                     // semantics: synthesize a fresh var per element slot
                     // so the self_type unifies with any concrete receiver
@@ -1064,9 +1050,6 @@ impl TypeChecker {
                 match builtin_type_name(written).unwrap_or_default() {
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Range" if resolved_args.len() == 1 => {
-                        Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
                     "Set" if resolved_args.len() == 1 => {
                         Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
@@ -1324,8 +1307,8 @@ impl TypeChecker {
             }
             let resolved = self.resolve_type_expr(&binding.ty, &mut impl_param_map);
             // Register into the canonical assoc-binding registry. The
-            // registry keys on the canonical target head (so Range and
-            // List collapse), parallel to method_table's
+            // registry keys on the canonical target head (so an alias
+            // and its target collapse), parallel to method_table's
             // canonical_head routing above. Round 76 BROKEN T1:
             // the registry refuses self- or mutually-referential
             // bindings that would otherwise drive `canonicalize` into

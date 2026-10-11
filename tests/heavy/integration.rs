@@ -2,6 +2,11 @@ use silt::value::Value;
 
 use crate::port_file::PortFile;
 
+/// The Float `f`, a finite number, as a value.
+fn float(f: f64) -> Value {
+    Value::Float(silt::value::Float::new(f).expect("a finite number"))
+}
+
 fn run(input: &str) -> Value {
     silt::session::testing::run_str(input).unwrap_or_else(|e| panic!("{e}"))
 }
@@ -828,28 +833,28 @@ fn test_float_named_constants() {
 import float
 fn main() { float.max_value }
     "#),
-        Value::Float(f64::MAX)
+        float(f64::MAX)
     );
     assert_eq!(
         run(r#"
 import float
 fn main() { float.min_value }
     "#),
-        Value::Float(f64::MIN)
+        float(f64::MIN)
     );
     assert_eq!(
         run(r#"
 import float
 fn main() { float.epsilon }
     "#),
-        Value::Float(f64::EPSILON)
+        float(f64::EPSILON)
     );
     assert_eq!(
         run(r#"
 import float
 fn main() { float.min_positive }
     "#),
-        Value::Float(f64::MIN_POSITIVE)
+        float(f64::MIN_POSITIVE)
     );
 }
 
@@ -860,14 +865,14 @@ fn test_math_sin_cos() {
 import math
 fn main() { math.sin(0.0) }
     "#),
-        Value::Float(0.0)
+        float(0.0)
     );
     assert_eq!(
         run(r#"
 import math
 fn main() { math.cos(0.0) }
     "#),
-        Value::Float(1.0)
+        float(1.0)
     );
 }
 
@@ -878,7 +883,7 @@ fn test_math_atan() {
 import math
 fn main() { math.atan(0.0) }
     "#),
-        Value::Float(0.0)
+        float(0.0)
     );
 }
 
@@ -889,7 +894,7 @@ fn test_math_atan2() {
 import math
 fn main() { math.atan2(0.0, 1.0) }
     "#),
-        Value::Float(0.0)
+        float(0.0)
     );
 }
 
@@ -900,6 +905,6 @@ fn test_math_tan() {
 import math
 fn main() { math.tan(0.0) }
     "#),
-        Value::Float(0.0)
+        float(0.0)
     );
 }

@@ -31,6 +31,7 @@
 //! | `Upvalue` | `u8` | `usize` | `usize` | below the function's upvalue count |
 //! | `Global` | `u16` | `u16` | `u16` | |
 //! | `Trait` | `u16` | `u16` | `u16` | |
+//! | `Method` | `u16` | `u16` | `u16` | |
 //! | `Builtin` | `u16` | [`BuiltinId`] | [`BuiltinId`] | a function row of the builtin registry that is built |
 //! | `Const` | `u16` | [`Const`] | [`Const`] | in the pool |
 //! | `Str`, `Tag`, `Type`, `Func`, `Int`, `Float` | `u16` | [`Const`] | [`Const`] | in the pool, of that kind |
@@ -297,6 +298,9 @@ macro_rules! asm_ty {
     (Trait, $lt:lifetime) => {
         u16
     };
+    (Method, $lt:lifetime) => {
+        u16
+    };
     (Builtin, $lt:lifetime) => {
         BuiltinId
     };
@@ -344,6 +348,7 @@ macro_rules! instr_ty {
     (Upvalue) => { usize };
     (Global) => { u16 };
     (Trait) => { u16 };
+    (Method) => { u16 };
     (Builtin) => { BuiltinId };
     (Const) => { Const };
     (Str) => { Const };
@@ -379,6 +384,9 @@ macro_rules! encode_operand {
         $w.u16($v)
     };
     (Trait, $v:expr, $what:expr, $w:expr) => {
+        $w.u16($v)
+    };
+    (Method, $v:expr, $what:expr, $w:expr) => {
         $w.u16($v)
     };
     (Builtin, $v:expr, $what:expr, $w:expr) => {
@@ -455,6 +463,9 @@ macro_rules! decode_operand {
     (Trait, $r:expr) => {
         $r.u16()?
     };
+    (Method, $r:expr) => {
+        $r.u16()?
+    };
     (Builtin, $r:expr) => {
         BuiltinId($r.u16()?)
     };
@@ -514,6 +525,9 @@ macro_rules! checked_operand {
         Operand::Plain
     };
     (Trait, $v:expr) => {
+        Operand::Plain
+    };
+    (Method, $v:expr) => {
         Operand::Plain
     };
     (Builtin, $v:expr) => {
@@ -885,16 +899,17 @@ ops! {
     /// Panic with message string on TOS.
     Panic => pops 1, pushes 0, end;
 
-    /// Runtime method dispatch: the method named by the constant, of the
+    /// Runtime method dispatch: the method whose name `method` is the
+    /// id of ([`Globals::method_id`](super::Globals::method_id)), of the
     /// impl of the trait `of` names (see
     /// [`Globals::call_method`](super::Globals::call_method)) for the
     /// receiver's type, else the builtin trait's native method; call it
     /// with the top `argc` values, the receiver first.
-    CallMethod { method: Str, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
+    CallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
     /// `CallMethod` in tail position: a method that is a closure runs
     /// in the current frame. Followed by `Return`, which returns the
     /// result of any other.
-    TailCallMethod { method: Str, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
+    TailCallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
 
     /// Move TOS down to the frame's slot `slot` and drop every value
     /// that was above that slot: pop TOS, cut the frame back to `slot`

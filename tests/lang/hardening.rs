@@ -11,13 +11,14 @@ use silt::value::Value;
 fn test_float_ord_consistency() {
     // Verify that Value::Float ordering is consistent with equality.
     // Two equal floats must compare as Equal.
-    let a = Value::Float(1.5);
-    let b = Value::Float(1.5);
+    let float = |f: f64| Value::Float(silt::value::Float::new(f).expect("a finite number"));
+    let a = float(1.5);
+    let b = float(1.5);
     assert_eq!(a, b);
     assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
 
     // Different floats should order correctly.
-    let c = Value::Float(2.0);
+    let c = float(2.0);
     assert_eq!(a.cmp(&c), std::cmp::Ordering::Less);
     assert_eq!(c.cmp(&a), std::cmp::Ordering::Greater);
 }

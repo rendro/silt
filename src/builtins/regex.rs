@@ -1,7 +1,5 @@
 //! The `regex.*` builtin functions.
 
-use std::sync::Arc;
-
 use super::typed::{builtins, unsound};
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError, iterate, next};
@@ -151,6 +149,6 @@ builtins! {
             let m = caps.name(name)?;
             Some((string(name), string(m.as_str())))
         });
-        Ok(Some(Value::Map(Arc::new(named.collect()))))
+        Ok(Some(Value::map(named.collect())))
     }
 }

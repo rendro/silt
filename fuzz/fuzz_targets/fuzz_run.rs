@@ -17,11 +17,9 @@ use libfuzzer_sys::fuzz_target;
 // end is cut short and is no finding. The oracle gives a program that
 // sleeps a clock that leaps, so a sleep takes no time.
 //
-// The budget is small on purpose. A fuzzer finds the slow programs
-// first, and a program that nests a value 100,000 deep needs a million
-// steps to build it: showing or comparing such a value overflows the
-// native stack (see `abort` in tests/oracle/skip.txt), which is known
-// and would be all this target reports.
+// The budget is what the oracle's suite gives a program
+// (tests/oracle/sweep.rs): enough to nest a value 100,000 deep and to
+// show, compare and drop it.
 #[allow(dead_code)]
 #[path = "../../tests/oracle/oracle.rs"]
 mod oracle;
@@ -31,8 +29,8 @@ use oracle::{Expect, Input, Source, Steps, Verdict, examine};
 /// The step budget of each run, and of the one repeat of a run that
 /// was cut short where the other one ended.
 const STEPS: Steps = Steps {
-    each: 200_000,
-    again: 400_000,
+    each: 1_000_000,
+    again: 2_000_000,
 };
 
 fuzz_target!(|data: &[u8]| {

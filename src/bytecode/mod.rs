@@ -8,6 +8,7 @@
 //! the emitter gives has passed the verifier ([`verify`](mod@verify)).
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
@@ -54,6 +55,39 @@ enum ConstantKey {
 
 // ── Global slots ───────────────────────────────────────────────────
 
+/// The hash of a method's key, three small numbers: each is mixed in
+/// with a rotation and a multiplication. (The hash a `HashMap` has by
+/// default is made to withstand keys an adversary chooses, and took
+/// longer than the call it found the method for.)
+#[derive(Default)]
+struct MethodHasher(u64);
+
+impl MethodHasher {
+    fn mix(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+impl Hasher for MethodHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.mix(u64::from(*byte));
+        }
+    }
+
+    fn write_u16(&mut self, n: u16) {
+        self.mix(u64::from(n));
+    }
+
+    fn write_u32(&mut self, n: u32) {
+        self.mix(u64::from(n));
+    }
+}
+
 /// The global slots of a program. Every top-level function, `let` and
 /// host function of its modules has one, and so has every method of an
 /// impl, by the impl's trait, the type it is for and the method's name.
@@ -65,7 +99,15 @@ pub struct Globals {
     /// show it.
     names: Vec<String>,
     defs: HashMap<DefId, u16>,
-    methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
+    /// The names of the program's methods, each once: a method is
+    /// named by its place here (a `CallMethod`'s operand, a key of
+    /// `methods`), so a call that finds its method where the code runs
+    /// compares no text.
+    method_names: Vec<String>,
+    method_ids: HashMap<String, u16>,
+    /// The slot of each impl's method: by the impl's trait, the type it
+    /// is for and the id of the method's name.
+    methods: HashMap<(TraitId, TypeId, u16), u16, BuildHasherDefault<MethodHasher>>,
     /// The default methods of each trait: the body the trait writes,
     /// compiled once. An impl that leaves the method out has this slot
     /// as its method's.
@@ -100,7 +142,33 @@ impl Globals {
     /// The slot of the method `method` of the impl of the trait `t` for
     /// the type `ty`.
     pub fn method(&self, t: TraitId, ty: TypeId, method: &str) -> Option<u16> {
-        self.methods.get(&(t, ty))?.get(method).copied()
+        let method = *self.method_ids.get(method)?;
+        self.methods.get(&(t, ty, method)).copied()
+    }
+
+    /// The id of the method name `method`: the `CallMethod` operand of
+    /// a call of a method of that name. A new one the first time the
+    /// name is met; `None` when 65,536 names have ids already.
+    pub fn method_id(&mut self, method: &str) -> Option<u16> {
+        if let Some(id) = self.method_ids.get(method) {
+            return Some(*id);
+        }
+        let id = u16::try_from(self.method_names.len()).ok()?;
+        self.method_names.push(method.to_string());
+        self.method_ids.insert(method.to_string(), id);
+        Some(id)
+    }
+
+    /// The method name a `CallMethod` operand names.
+    pub fn method_name(&self, method: u16) -> Option<&str> {
+        self.method_names
+            .get(usize::from(method))
+            .map(String::as_str)
+    }
+
+    /// The number of method names a `CallMethod` operand can name.
+    pub fn method_count(&self) -> usize {
+        self.method_names.len()
     }
 
     /// The number of traits a `CallMethod` operand can name.
@@ -108,10 +176,12 @@ impl Globals {
         self.traits.len()
     }
 
-    /// [`Globals::method`] for a `CallMethod` trait operand.
-    pub fn call_method(&self, trait_index: u16, ty: TypeId, method: &str) -> Option<u16> {
+    /// [`Globals::method`] for the operands of a `CallMethod`: the
+    /// trait and the method's name by what the instruction holds of
+    /// them.
+    pub fn call_method(&self, trait_index: u16, ty: TypeId, method: u16) -> Option<u16> {
         let (t, _) = self.traits.get(trait_index as usize)?;
-        self.method(*t, ty, method)
+        self.methods.get(&(*t, ty, method)).copied()
     }
 
     /// The name of slot `slot`.
@@ -208,15 +278,15 @@ impl Globals {
     }
 
     /// The impl of the trait `t` for the type `ty` leaves `method` out:
-    /// its method is the trait's default, in `slot`.
-    pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) {
-        if self.method(t, ty, method).is_some() {
-            return;
+    /// its method is the trait's default, in `slot`. `None` when the
+    /// name of the method would need an id and none is left
+    /// ([`Globals::method_id`]).
+    pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) -> Option<()> {
+        if self.method(t, ty, method).is_none() {
+            let method = self.method_id(method)?;
+            self.methods.insert((t, ty, method), slot);
         }
-        self.methods
-            .entry((t, ty))
-            .or_default()
-            .insert(method.to_string(), slot);
+        Some(())
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for
@@ -233,11 +303,9 @@ impl Globals {
         if let Some(slot) = self.method(t, ty, method) {
             return Some(slot);
         }
+        let id = self.method_id(method)?;
         let slot = self.add(name)?;
-        self.methods
-            .entry((t, ty))
-            .or_default()
-            .insert(method.to_string(), slot);
+        self.methods.insert((t, ty, id), slot);
         if method == "display" && crate::defs::builtin_trait_id("Display") == Some(t) {
             self.shown.insert(ty, slot);
             self.shown_bits |= Self::shown_bit(ty);
@@ -380,7 +448,7 @@ impl Chunk {
             Value::Int(n) => Some(ConstantKey::Int(*n)),
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
             Value::String(s) => Some(ConstantKey::String(s.clone())),
-            Value::Float(f) => Some(ConstantKey::Float(f.to_bits())),
+            Value::Float(f) => Some(ConstantKey::Float(f.get().to_bits())),
             Value::VariantConstructor(tag) => {
                 Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
             }
@@ -537,4 +605,14 @@ pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
 pub struct VmClosure {
     pub function: Arc<Function>,
     pub upvalues: Vec<Value>,
+}
+
+impl Drop for VmClosure {
+    fn drop(&mut self) {
+        // On no native stack, however deep the captured values nest:
+        // a closure may capture a closure that captures a closure.
+        if !self.upvalues.is_empty() {
+            crate::value::drop_held(std::mem::take(&mut self.upvalues));
+        }
+    }
 }

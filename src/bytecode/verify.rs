@@ -110,6 +110,15 @@ pub fn verify_globals(function: &Function, globals: &super::Globals) -> Result<(
                     globals.trait_count()
                 ))
             }
+            Instr::CallMethod { method, .. } | Instr::TailCallMethod { method, .. }
+                if usize::from(method) >= globals.method_count() =>
+            {
+                Some(format!(
+                    "`{}` names method {method} of {}",
+                    instr.op().name(),
+                    globals.method_count()
+                ))
+            }
             _ => None,
         };
         if let Some(what) = what {
@@ -647,6 +656,17 @@ mod tests {
             verify_globals(&function, &globals).unwrap_err().to_string(),
             "at offset 1: `CallMethod` names trait 0 of 0"
         );
+        // Of a trait it has, a method name it has not; and one it has.
+        let mut globals = globals;
+        let display = crate::defs::builtin_trait_id("Display").expect("a builtin trait");
+        assert_eq!(globals.trait_index(display, "Display".into()), Some(0));
+        assert_eq!(
+            verify_globals(&function, &globals).unwrap_err().to_string(),
+            "at offset 1: `CallMethod` names method 0 of 0"
+        );
+        assert_eq!(globals.method_id("display"), Some(0));
+        assert_eq!(verify_globals(&function, &globals), Ok(()));
+        let globals = crate::bytecode::Globals::default();
         // A global slot the program does not have.
         let code = vec![op(Op::GetGlobal), 3, 0, op(Op::Return)];
         let function = Function::unverified(0, 0, code, Vec::new());

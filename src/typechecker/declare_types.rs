@@ -27,7 +27,7 @@ impl TypeChecker {
         }
         // Round 80 BROKEN B3: a type-decl whose name shadows a builtin
         // scalar/container type (Int, Float, Bool, String, Unit, List,
-        // Range, Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
+        // Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
         // TcpListener, TcpStream — the authoritative list is
         // `BUILTIN_TYPES` in `src/types/builtins.rs`) silently overwrote
         // the builtin binding, and what was then said of the type's
@@ -471,7 +471,7 @@ impl TypeChecker {
                 }
                 None
             }
-            Type::List(inner) | Type::Range(inner) | Type::Set(inner) | Type::Channel(inner) => {
+            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
                 self.find_alias_cycle(inner, visiting)
             }
             Type::Map(k, v) => self

@@ -151,15 +151,13 @@ Both have precedence 90 — tighter than any binary arithmetic, looser than `as`
 
 ## Range (`..`)
 
-`a..b` is an inclusive range from `a` to `b`. It has type `Range(Int)`, a
-nominal wrapper that converts implicitly to and from `List(Int)`, so ranges
-work anywhere a list does:
+`a..b` is an inclusive range from `a` to `b`. It has type `List(Int)`: a
+range is a list, and works anywhere a list does:
 
 ```silt
 println(1..100 |> list.sum())     -- 5050
 (1..n) |> list.each { i -> ... }
-let r: Range(Int) = 1..10         -- annotated
-let xs: List(Int) = 1..10         -- implicit Range→List
+let xs: List(Int) = 1..10
 ```
 
 Ranges are lazy: a range holds its two ends and no element, so

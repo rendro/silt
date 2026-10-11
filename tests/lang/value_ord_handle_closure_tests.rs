@@ -191,11 +191,9 @@ fn btreeset_of_distinct_variant_constructors_retains_all() {
 /// table in `Ord::cmp`).
 #[test]
 fn ord_discriminant_ordering_preserved() {
-    assert_eq!(Value::Int(1).cmp(&Value::Float(0.0)), Ordering::Less);
-    assert_eq!(
-        Value::Float(1e9).cmp(&Value::String("".into())),
-        Ordering::Less
-    );
+    let float = |f: f64| Value::Float(silt::value::Float::new(f).expect("a finite number"));
+    assert_eq!(Value::Int(1).cmp(&float(0.0)), Ordering::Less);
+    assert_eq!(float(1e9).cmp(&Value::String("".into())), Ordering::Less);
     assert_eq!(
         Value::String("".into()).cmp(&Value::list(vec![])),
         Ordering::Less

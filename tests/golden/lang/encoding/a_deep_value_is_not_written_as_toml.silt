@@ -1,0 +1,81 @@
+-- timeout: 120
+-- A value nested more than 1,000 levels deep is not written as TOML:
+-- `toml.stringify` and `toml.pretty` give the `TomlError` they give for
+-- any value TOML has no form for, at 1,001 levels as at 200,000. (They
+-- went down the value on the native stack, and one 200,000 levels deep
+-- overflowed it and aborted the program.) A value 1,000 levels deep is
+-- written.
+import string
+import toml
+
+type Chain {
+  End,
+  Link(Int, Chain),
+}
+
+type Row {
+  v: Int,
+  next: Option(Row),
+}
+
+type Tree {
+  Leaf,
+  Node(List(Tree)),
+}
+
+-- A chain of `n` links: `End` is `n` levels in.
+fn chain(n: Int) -> Chain {
+  loop i = 0, acc = End {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Link(i % 10, acc))
+    }
+  }
+}
+
+-- `n` rows, each the `next` of the one before: the fields of the last
+-- are `n` levels in.
+fn rows(n: Int) -> Row {
+  loop i = 1, acc = Row { v: 0, next: None } {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Row { v: i % 10, next: Some(acc) })
+    }
+  }
+}
+
+-- A tree of `n` nodes, each in the list of the one before: `Leaf` is
+-- `2 * n` levels in (a list in a variant at each).
+fn tree(n: Int) -> Tree {
+  loop i = 0, acc = Leaf {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Node([acc]))
+    }
+  }
+}
+
+type Doc {
+  top: Tree,
+  links: Chain,
+}
+
+fn written(result: Result(String, toml.TomlError)) -> String {
+  match result {
+    Ok(text) -> "written, {string.length(text)} characters"
+    Err(e) -> "{e}"
+  }
+}
+
+fn main() {
+  println(written(toml.stringify(rows(1000))))
+  println(written(toml.stringify(rows(1001))))
+  println(written(toml.pretty(rows(1001))))
+  println(written(toml.stringify(rows(200000))))
+  println(written(toml.pretty(Doc { top: tree(100000), links: End })))
+  println(written(toml.stringify(Doc { top: Leaf, links: chain(200000) })))
+  match toml.stringify(rows(200000)) {
+    Err(toml.TomlUnknown(_)) -> println("the error is a TomlUnknown")
+    _ -> println("another result")
+  }
+}

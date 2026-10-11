@@ -1,6 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: Range(Int)
+-- `a..b` has the type `List(Int)`, and a diagnostic says so.
+-- stderr-contains: type mismatch: expected String, got List(Int)
 fn main() {
     let s: String = 1..10
     s

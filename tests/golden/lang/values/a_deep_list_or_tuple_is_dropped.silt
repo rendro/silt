@@ -1,0 +1,30 @@
+-- timeout: 60
+-- A value nested 400,000 levels deep through lists alone, or tuples
+-- alone, is dropped like any other. No type describes such a value: a
+-- function that calls itself with its argument inside a list makes it,
+-- a level deeper at each call, and it is dropped when the last call
+-- returns. (The drop went down the value on the native stack and
+-- aborted the program at two million levels in a debug build, at five
+-- in a release build: the release test
+-- tests/lang/deep_value_stack_tests.rs goes there. At this depth the
+-- case is what the same drop of a map or a set is held against.)
+fn in_lists(x: a, n: Int) -> Int where a: Hash + Equal {
+  match n <= 0 {
+    true -> 0
+    false -> in_lists([x], n - 1)
+  }
+}
+
+fn in_tuples(x: a, n: Int) -> Int where a: Hash + Equal {
+  match n <= 0 {
+    true -> 0
+    false -> in_tuples((n, x), n - 1)
+  }
+}
+
+fn main() {
+  println(in_lists(1, 400000))
+  println("a list in a list, 400,000 deep, is dropped")
+  println(in_tuples(1, 400000))
+  println("a tuple in a tuple, 400,000 deep, is dropped")
+}

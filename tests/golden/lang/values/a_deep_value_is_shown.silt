@@ -1,0 +1,63 @@
+-- timeout: 120
+-- A value nested 200,000 levels deep is shown and inspected like any
+-- other, alone, inside another value, and with a `Display` impl of the
+-- program at each level: the text of a value is written without going
+-- down the value on the native stack. (Showing a value half as deep
+-- overflowed it and aborted the program.)
+import io
+import string
+
+type Chain {
+  End,
+  Link(Int, Chain),
+}
+
+type Tag {
+  n: Int,
+}
+
+trait Display for Tag {
+  fn display(self) -> String {
+    "t{self.n % 10}"
+  }
+}
+
+type Tagged {
+  Stop,
+  Go(Tag, Tagged),
+}
+
+fn chain(n: Int) -> Chain {
+  loop i = 0, acc = End {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Link(i % 10, acc))
+    }
+  }
+}
+
+fn tagged(n: Int) -> Tagged {
+  loop i = 0, acc = Stop {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, Go(Tag { n: i }, acc))
+    }
+  }
+}
+
+fn main() {
+  let c = chain(200000)
+  let shown = "{c}"
+  println(string.length(shown))
+  println(string.slice(shown, 0, 36))
+  println(string.slice(shown, string.length(shown) - 24, string.length(shown)))
+  println(string.length(io.inspect(c)))
+  println(string.length("{[(c, "in a tuple"), (End, "beside it")]}"))
+  println(string.length("{#{ c: 1 }}"))
+
+  let t = tagged(90000)
+  let text = "{t}"
+  println(string.length(text))
+  println(string.slice(text, 0, 30))
+  println(string.length(io.inspect(t)))
+}

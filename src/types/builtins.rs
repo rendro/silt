@@ -36,7 +36,7 @@ pub enum BuiltinKind {
     /// `Bool`, `String`, `Unit`, and the surface alias `()`.
     Primitive,
     /// Parameterized container, callable, or resource type: `List`,
-    /// `Range`, `Map`, `Set`, `Channel`, `Tuple`, `Fn`, `Fun`, `Handle`.
+    /// `Map`, `Set`, `Channel`, `Tuple`, `Fn`, `Fun`, `Handle`.
     Container,
 }
 
@@ -98,11 +98,6 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
     // ── Containers / callables / resources ─────────────────────────
     BuiltinType {
         name: "List",
-        arity: Some(1),
-        kind: BuiltinKind::Container,
-    },
-    BuiltinType {
-        name: "Range",
         arity: Some(1),
         kind: BuiltinKind::Container,
     },

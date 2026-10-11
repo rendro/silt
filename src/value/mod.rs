@@ -8,30 +8,37 @@ use crate::runtime::sync::Channel;
 use crate::typeinfo::{Tag, TypeInfo};
 
 mod convert;
+mod deep;
+mod float;
 mod fmt;
 mod key;
 mod list;
 mod obj;
+mod tuple;
 
 #[cfg(test)]
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
+pub(crate) use deep::drop_held;
+pub use deep::{Entries, Members};
+pub use float::Float;
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
 pub use obj::{Record, Variant};
+pub use tuple::Tuple;
 
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
-    Float(f64),
+    Float(Float),
     Bool(bool),
     String(Arc<str>),
     List(List),
-    Map(Arc<BTreeMap<Value, Value>>),
-    Set(Arc<BTreeSet<Value>>),
-    Tuple(Arc<[Value]>),
+    Map(Arc<Entries>),
+    Set(Arc<Members>),
+    Tuple(Tuple),
     Record(Record),
     Variant(Variant),
     VmClosure(Arc<bytecode::VmClosure>),
@@ -84,7 +91,17 @@ impl Value {
 
     /// The tuple of `items`.
     pub fn tuple(items: Vec<Value>) -> Value {
-        Value::Tuple(Arc::from(items))
+        Value::Tuple(Tuple::from(items))
+    }
+
+    /// The map of `entries`.
+    pub fn map(entries: BTreeMap<Value, Value>) -> Value {
+        Value::Map(Arc::new(Entries::from(entries)))
+    }
+
+    /// The set of `members`.
+    pub fn set(members: BTreeSet<Value>) -> Value {
+        Value::Set(Arc::new(Members::from(members)))
     }
 
     /// The record of the type `ty` with the fields `fields`, in the
@@ -159,6 +176,19 @@ impl Value {
 }
 
 impl Value {
+    /// Whether the value is a function: a closure, a builtin function, a
+    /// host function or a variant's constructor. To a program each is an
+    /// `Fn`.
+    pub fn is_fn(&self) -> bool {
+        matches!(
+            self,
+            Value::VmClosure(_)
+                | Value::BuiltinFn(_)
+                | Value::HostFn(_)
+                | Value::VariantConstructor(..)
+        )
+    }
+
     /// Whether the value is a function, or has one inside it: the one
     /// answer of the run time to whether a value can be compared,
     /// ordered or hashed. The checker rejects those of a value that
@@ -180,12 +210,7 @@ impl Value {
         let mut pending = vec![self];
         while let Some(value) = pending.pop() {
             match value {
-                Value::VmClosure(_)
-                | Value::BuiltinFn(_)
-                | Value::HostFn(_)
-                | Value::VariantConstructor(..) => {
-                    return true;
-                }
+                value if value.is_fn() => return true,
                 Value::List(items) => {
                     // (A list that holds no element holds no function.)
                     if let list::Elements::Items(items) = items.elements() {

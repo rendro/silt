@@ -1,0 +1,28 @@
+-- timeout: 120
+-- `Some(x)` is written as `x` is, as JSON and as TOML, and is no level
+-- of nesting: a `Some` in a `Some` a million deep is written as the
+-- value in the innermost. (Nothing else is seen through: a variant of
+-- one field and a record of one field are a level each. The encoders
+-- went down the chain on the native stack, and this one overflowed
+-- it.) No type describes such a value: a function that calls itself
+-- with its argument in a `Some` makes it.
+import json
+import toml
+
+fn written(x: a, n: Int) -> String {
+  match n <= 0 {
+    true -> {
+      let table = match toml.stringify(#{"k": x}) {
+        Ok(text) -> text
+        Err(e) -> "{e}"
+      }
+      "{json.stringify(x)} {json.pretty([x])} {table}"
+    }
+    false -> written(Some(x), n - 1)
+  }
+}
+
+fn main() {
+  println(written(7, 3))
+  println(written(7, 1000000))
+}

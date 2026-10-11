@@ -409,20 +409,16 @@ impl Vm {
     }
 
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
-    /// named by the constant `method`, of the trait `trait_index` names,
-    /// for the type of the receiver, the first of the top `argc`
-    /// values.
+    /// whose name has the id `method`, of the trait `trait_index`
+    /// names, for the type of the receiver, the first of the top
+    /// `argc` values.
     fn call_method(
         &mut self,
-        method: crate::bytecode::Const,
+        method: u16,
         argc: usize,
         trait_index: u16,
         tail: bool,
     ) -> Result<DispatchResult, VmError> {
-        // As for a builtin's name: the method's stays in the
-        // constants.
-        let closure = self.frame().closure.clone();
-        let method_name = closure.function.chunk().string(method);
         let receiver_slot = self.stack.len() - argc;
         let receiver = self.stack[receiver_slot].clone();
         let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
@@ -435,17 +431,13 @@ impl Vm {
             &receiver,
             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
         );
-        // (The compiler checks each function against the globals.)
-        if usize::from(trait_index) >= self.global_slots.trait_count() {
-            return Err(VmError::type_confusion(format!(
-                "the call of method '{method_name}' names a trait the program does not have"
-            )));
-        }
-        let method = self
+        // The method of an impl is found by three numbers: the trait,
+        // the receiver's type, and the name's id. No text is compared.
+        let found = self
             .global_slots
-            .call_method(trait_index, receiver_type, method_name)
-            .and_then(|slot| self.globals.get(slot as usize).cloned().flatten());
-        if let Some(func) = method {
+            .call_method(trait_index, receiver_type, method)
+            .and_then(|slot| self.global(slot).cloned());
+        if let Some(func) = found {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
             if tail && let Value::VmClosure(closure) = &func {
@@ -471,6 +463,23 @@ impl Vm {
             let argc = self.stack.len() - receiver_slot - 1;
             let entered = self.call_value(func, argc, receiver_slot)?;
             return Ok(self.entered(entered));
+        }
+        // No impl has the method for the receiver's type: what the
+        // call does then goes by the method's name.
+        let slots = self.global_slots.clone();
+        // (The compiler checks each function against the globals of
+        // the program it is compiled into. Code of a later REPL entry
+        // that a task of an earlier entry runs is the exception: the
+        // task has the globals of its own entry.)
+        let Some(method_name) = slots.method_name(method) else {
+            return Err(VmError::type_confusion(
+                "the call of a method names a method the program does not have",
+            ));
+        };
+        if usize::from(trait_index) >= slots.trait_count() {
+            return Err(VmError::type_confusion(format!(
+                "the call of method '{method_name}' names a trait the program does not have"
+            )));
         }
         // `display` of a value whose parts a written impl may show.
         if method_name == "display"
@@ -585,10 +594,7 @@ impl Vm {
                             return Err(VmError::new(format!("integer overflow: negate {n}")));
                         }
                     },
-                    Value::Float(n) => {
-                        let result = if -n == 0.0 { 0.0 } else { -n };
-                        self.push(Value::Float(result));
-                    }
+                    Value::Float(n) => self.push(Value::Float(-n)),
                     other => {
                         return Err(VmError::type_confusion(format!(
                             "cannot negate {}",
@@ -700,12 +706,15 @@ impl Vm {
                 self.stack[base + slot] = value;
             }
             Instr::GetGlobal { slot } => {
-                let value = match self.globals.get(slot as usize) {
-                    Some(Some(value)) => value.clone(),
+                let value = match self.global(slot) {
+                    Some(value) => value.clone(),
                     // (The checker orders the top-level `let`s so that
                     // each is set before anything can read it, and the
                     // definitions are set before any `let` runs: no
-                    // checked program comes here.)
+                    // checked program that is run as a whole comes
+                    // here. A task of an earlier REPL entry does, when
+                    // it runs a closure of a later entry that names
+                    // what that entry defined.)
                     _ => {
                         return Err(VmError::type_confusion(format!(
                             "the global '{}' is read before it is set",
@@ -716,14 +725,12 @@ impl Vm {
                 self.push(value);
             }
             Instr::SetGlobal { slot } => {
-                // A slot is installed the first time it is set: a VM that
-                // was handed no program (a test's) has none yet.
-                let slot = usize::from(slot);
                 let value = self.peek().clone();
-                if slot >= self.globals.len() {
-                    self.globals.resize(slot + 1, None);
+                if !self.set_global(slot, value) {
+                    return Err(VmError::type_confusion(format!(
+                        "the global slot {slot} is none of the program's"
+                    )));
                 }
-                self.globals[slot] = Some(value);
             }
             Instr::GetUpvalue { index } => {
                 let value = self.frame().closure.upvalues[index].clone();
@@ -796,7 +803,7 @@ impl Vm {
                     map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Map(Arc::new(map)));
+                self.push(Value::map(map));
             }
             Instr::MakeSet { count } => {
                 let start = self.stack.len() - count;
@@ -805,7 +812,7 @@ impl Vm {
                     set.insert(self.stack[i].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Set(Arc::new(set)));
+                self.push(Value::set(set));
             }
             Instr::MakeRecord { ty, fields } => {
                 let start = self.stack.len() - fields.len();
@@ -951,7 +958,7 @@ impl Vm {
             Instr::TestFloatRange { lo, hi } => {
                 let chunk = self.chunk();
                 let result = match (self.peek(), chunk.constant(lo), chunk.constant(hi)) {
-                    (Value::Float(n), Value::Float(lo), Value::Float(hi)) => *n >= *lo && *n <= *hi,
+                    (Value::Float(n), Value::Float(lo), Value::Float(hi)) => n >= lo && n <= hi,
                     _ => false,
                 };
                 self.push(Value::Bool(result));

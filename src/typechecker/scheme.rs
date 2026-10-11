@@ -15,7 +15,7 @@ fn row_listings(ty: &Type) -> Vec<(TyVar, std::collections::BTreeMap<Symbol, Typ
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
             }
-            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
             Type::Map(k, v) => {
                 walk(k, out);
                 walk(v, out);

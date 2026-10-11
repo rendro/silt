@@ -1,0 +1,60 @@
+-- timeout: 120
+-- Two values nested 200,000 levels deep are compared, ordered, hashed
+-- and made members of a set like any others: what makes a value equal
+-- to another, less than it, and its hash is found without going down
+-- the value on the native stack. (Each of these overflowed it and
+-- aborted the program: a debug build below 200,000 levels.)
+import set
+
+type Nest {
+  Leaf(Int),
+  Node(List(Nest)),
+}
+
+-- A chain in which each level is the first part of the one above, so
+-- that the rest of every level is still to come when the next is
+-- gone into.
+type Chain {
+  End(Int),
+  More((Chain, Int)),
+}
+
+fn nest(depth: Int, innermost: Int) -> Nest {
+  loop i = 0, acc = Leaf(innermost) {
+    match i >= depth {
+      true -> acc
+      false -> loop(i + 1, Node([acc]))
+    }
+  }
+}
+
+fn chain(depth: Int, innermost: Int) -> Chain {
+  loop i = 0, acc = End(innermost) {
+    match i >= depth {
+      true -> acc
+      false -> loop(i + 1, More((acc, i)))
+    }
+  }
+}
+
+fn main() {
+  let a = nest(200000, 0)
+  let b = nest(200000, 0)
+  let c = nest(200000, 1)
+  println(a == b)
+  println(a == c)
+  println(a < c)
+  println(c < a)
+  println(a.hash() == b.hash())
+  println(a.hash() == c.hash())
+  println(set.length(set.from_list([a, b, c])))
+
+  let p = chain(50000, 0)
+  let q = chain(50000, 0)
+  let r = chain(50000, 1)
+  println(p == q)
+  println(p == r)
+  println(p < r)
+  println(p.hash() == q.hash())
+  println(set.length(set.from_list([p, q, r])))
+}

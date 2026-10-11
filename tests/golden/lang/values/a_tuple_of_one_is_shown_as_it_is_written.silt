@@ -1,0 +1,19 @@
+-- A tuple of one item is shown as a program writes it, `(1,)`: `(1)`
+-- is the Int in parentheses, and was what the tuple was shown as.
+import io
+
+fn main() {
+  let one = (1,)
+  println(one)
+  println(("a",))
+  println(io.inspect(("a",)))
+  println(((1,),))
+  println([(1,), (2,)])
+  println((1, 2))
+  println(((1,), "b"))
+  println(())
+  println("{one} and {(one, one)}")
+  let (n,) = one
+  println(n)
+  println(one == (1,))
+}

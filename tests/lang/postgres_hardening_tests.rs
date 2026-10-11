@@ -25,7 +25,6 @@
 #![allow(clippy::mutable_key_type)]
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use silt::builtins::postgres::{
     EffectiveSslMode, read_max_pool_size_for_tests, redact_pg_message,
@@ -84,7 +83,7 @@ fn explicit_sslmode_values_are_honoured() {
 // ── LOW-1: postgres.connect_with exposes max_pool_size ─────────────
 
 fn empty_map_value() -> Value {
-    Value::Map(Arc::new(BTreeMap::new()))
+    Value::map(BTreeMap::new())
 }
 
 fn map_with(pairs: &[(&str, Value)]) -> Value {
@@ -92,7 +91,7 @@ fn map_with(pairs: &[(&str, Value)]) -> Value {
     for (k, v) in pairs {
         m.insert(Value::String((*k).into()), v.clone());
     }
-    Value::Map(Arc::new(m))
+    Value::map(m)
 }
 
 /// `connect_with(url, #{})` accepts the empty opts bag — i.e. the

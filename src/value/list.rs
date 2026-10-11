@@ -16,11 +16,10 @@
 //! [`List::position`], [`List::sum_ints`], [`List::product_ints`],
 //! [`List::sorted`], [`List::unique`]).
 
+use super::Value;
+use super::deep::Buf;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
-
-use super::Value;
 
 /// The most elements a list that holds none (`a..b`) may have when it
 /// is made a list that holds them: reversed, written out, encoded.
@@ -34,11 +33,7 @@ pub struct List(Stored);
 #[derive(Clone)]
 enum Stored {
     /// `len` elements of `buf` from `start`.
-    Items {
-        buf: Arc<[Value]>,
-        start: usize,
-        len: usize,
-    },
+    Items { buf: Buf, start: usize, len: usize },
     /// The Ints from `lo` to `hi`, both included: `lo <= hi`, and at
     /// most [`MAX_LEN`] of them.
     Ints { lo: i64, hi: i64 },
@@ -413,7 +408,7 @@ impl From<Vec<Value>> for List {
     fn from(items: Vec<Value>) -> List {
         let len = items.len();
         List(Stored::Items {
-            buf: Arc::from(items),
+            buf: Buf::from(items),
             start: 0,
             len,
         })
@@ -422,7 +417,7 @@ impl From<Vec<Value>> for List {
 
 impl FromIterator<Value> for List {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> List {
-        let buf: Arc<[Value]> = items.into_iter().collect();
+        let buf: Buf = items.into_iter().collect();
         let len = buf.len();
         List(Stored::Items { buf, start: 0, len })
     }

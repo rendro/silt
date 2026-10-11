@@ -4,6 +4,11 @@ use crate::bytecode::{Asm, Emitter, Function};
 use crate::source::Span;
 use crate::typeinfo::bv;
 
+/// The Float `f`, a finite number, as a value.
+fn float(f: f64) -> Value {
+    Value::Float(crate::value::Float::new(f).expect("a finite number"))
+}
+
 /// Helper: build a function of `arity` parameters with the emitter.
 fn make_function_of(arity: u8, build: impl FnOnce(&mut Emitter)) -> Arc<Function> {
     let mut emitter = Emitter::new("<test>".to_string(), usize::from(arity), span()).unwrap();
@@ -81,8 +86,8 @@ fn test_arithmetic_expression() {
 #[test]
 fn test_float_arithmetic() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(1.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.5), span()).unwrap();
+        let a = e.constant(float(1.5), span()).unwrap();
+        let b = e.constant(float(2.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Add, span()).unwrap();
@@ -90,7 +95,7 @@ fn test_float_arithmetic() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(4.0));
+    assert_eq!(result, float(4.0));
 }
 
 #[test]
@@ -143,9 +148,40 @@ fn test_globals() {
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
-    vm.globals.push(None);
+    vm.globals = Arc::from([std::sync::OnceLock::new()]);
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(42));
+}
+
+/// The VM of a task has the program's global slots, not a copy of
+/// them; and a slot that is set again (a VM runs a second program)
+/// gets its value in slots of that VM's own, while a task of the
+/// first run keeps the ones it has.
+#[test]
+fn the_vm_of_a_task_shares_the_global_slots() {
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.globals = (0..3).map(|_| std::sync::OnceLock::new()).collect();
+    assert!(vm.set_global(0, Value::Int(1)));
+    let task = vm.spawn_child();
+    assert!(Arc::ptr_eq(&vm.globals, &task.globals));
+    // What is set later is the task's too.
+    assert!(vm.set_global(1, Value::Int(2)));
+    assert_eq!(task.global(1), Some(&Value::Int(2)));
+    assert_eq!(task.global(2), None);
+    assert!(!vm.set_global(3, Value::Int(0)));
+
+    assert!(vm.set_global(0, Value::Int(10)));
+    assert_eq!(vm.global(0), Some(&Value::Int(10)));
+    assert_eq!(vm.global(1), Some(&Value::Int(2)));
+    assert_eq!(task.global(0), Some(&Value::Int(1)));
+    assert!(!Arc::ptr_eq(&vm.globals, &task.globals));
+    // With no task holding them, the slots are set again where they
+    // are.
+    drop(task);
+    let slots = Arc::as_ptr(&vm.globals);
+    assert!(vm.set_global(1, Value::Int(20)));
+    assert_eq!(vm.global(1), Some(&Value::Int(20)));
+    assert!(std::ptr::eq(slots, Arc::as_ptr(&vm.globals)));
 }
 
 #[test]
@@ -362,8 +398,8 @@ fn test_sub_int_underflow() {
 #[test]
 fn test_sub_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(5.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.25), span()).unwrap();
+        let a = e.constant(float(5.5), span()).unwrap();
+        let b = e.constant(float(2.25), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Sub, span()).unwrap();
@@ -371,7 +407,7 @@ fn test_sub_float() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(3.25));
+    assert_eq!(result, float(3.25));
 }
 
 #[test]
@@ -408,8 +444,8 @@ fn test_mod_int_by_zero() {
 #[test]
 fn test_mod_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(5.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.0), span()).unwrap();
+        let a = e.constant(float(5.5), span()).unwrap();
+        let b = e.constant(float(2.0), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Mod, span()).unwrap();
@@ -417,7 +453,7 @@ fn test_mod_float() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(1.5));
+    assert_eq!(result, float(1.5));
 }
 
 #[test]
@@ -438,8 +474,8 @@ fn test_gt_int() {
 #[test]
 fn test_gt_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(1.5), span()).unwrap();
-        let b = e.constant(Value::Float(2.5), span()).unwrap();
+        let a = e.constant(float(1.5), span()).unwrap();
+        let b = e.constant(float(2.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Gt, span()).unwrap();
@@ -468,8 +504,8 @@ fn test_geq_int() {
 #[test]
 fn test_geq_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(4.0), span()).unwrap();
-        let b = e.constant(Value::Float(4.5), span()).unwrap();
+        let a = e.constant(float(4.0), span()).unwrap();
+        let b = e.constant(float(4.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Geq, span()).unwrap();
@@ -498,8 +534,8 @@ fn test_leq_int() {
 #[test]
 fn test_leq_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(2.5), span()).unwrap();
-        let b = e.constant(Value::Float(1.5), span()).unwrap();
+        let a = e.constant(float(2.5), span()).unwrap();
+        let b = e.constant(float(1.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Leq, span()).unwrap();
@@ -513,14 +549,14 @@ fn test_leq_float() {
 #[test]
 fn test_negate_float() {
     let script = make_function(|e| {
-        let a = e.constant(Value::Float(3.5), span()).unwrap();
+        let a = e.constant(float(3.5), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Negate, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Float(-3.5));
+    assert_eq!(result, float(-3.5));
 }
 
 #[test]
@@ -2054,7 +2090,7 @@ fn test_type_decl_variant_with_fields() {
             }
         "#,
     );
-    assert_eq!(result, Value::Float(5.0));
+    assert_eq!(result, float(5.0));
 }
 
 #[test]
@@ -2673,7 +2709,7 @@ mod type_confusion {
     fn arithmetic_on_an_int_and_a_float() {
         confused("cannot mix Int and Float", |e| {
             push(e, Value::Int(1));
-            push(e, Value::Float(2.5));
+            push(e, float(2.5));
             e.emit(Asm::Sub, span()).unwrap();
         });
     }
@@ -2735,6 +2771,37 @@ mod type_confusion {
         });
     }
 
+    /// To a program every function is an `Fn`: a closure against a
+    /// builtin function, or against a variant's constructor, is refused
+    /// with the words two closures are refused with.
+    #[test]
+    fn functions_of_different_kinds_are_functions() {
+        let builtin = || Value::BuiltinFn(crate::builtins::registry::BuiltinId(0));
+        let constructor = || Value::VariantConstructor(bv::SOME.tag());
+        for other in [builtin, constructor] {
+            confused("type 'Fn' does not implement Equal", |e| {
+                push(e, function(1));
+                push(e, other());
+                e.emit(Asm::Eq, span()).unwrap();
+            });
+            confused("type 'Fn' does not implement Equal", |e| {
+                push(e, other());
+                push(e, function(1));
+                e.emit(Asm::Neq, span()).unwrap();
+            });
+            confused("type 'Fn' does not implement Compare", |e| {
+                push(e, function(1));
+                push(e, other());
+                e.emit(Asm::Lt, span()).unwrap();
+            });
+        }
+        confused("type 'Fn' does not implement Compare", |e| {
+            push(e, function(1));
+            push(e, function(1));
+            e.emit(Asm::Lt, span()).unwrap();
+        });
+    }
+
     #[test]
     fn interpolation_of_a_part_that_is_no_string() {
         confused(
@@ -2787,13 +2854,12 @@ mod type_confusion {
     }
 
     #[test]
-    fn method_call_that_names_no_trait_of_the_program() {
-        confused("names a trait the program does not have", |e| {
+    fn method_call_that_names_no_method_of_the_program() {
+        confused("names a method the program does not have", |e| {
             push(e, Value::Int(1));
-            let method = name(e, "nope");
             e.emit(
                 Asm::CallMethod {
-                    method,
+                    method: 0,
                     argc: 1,
                     of: 0,
                 },
@@ -2958,7 +3024,7 @@ mod type_confusion {
             e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });
         confused("map has no key 'k'", |e| {
-            push(e, Value::Map(Arc::new(BTreeMap::new())));
+            push(e, Value::map(BTreeMap::new()));
             let k = name(e, "k");
             e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });

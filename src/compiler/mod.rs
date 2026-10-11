@@ -59,7 +59,7 @@ const DECODING_BUILTINS: &[&str] = &[
 
 /// The field types the decoders support, as shown in compile errors.
 const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
-     Bool, Date, Time, DateTime, List(T), Range(T), Option(T), Map(String, T), tuples, \
+     Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
      non-generic record types, and aliases of these";
 
 /// The record types a field type names.
@@ -326,6 +326,18 @@ fn too_many_globals(count: usize, span: Span) -> Diagnostic {
     limit_diagnostic(limit, span)
 }
 
+/// A program names more methods than the operand of a method call can
+/// tell apart: the call, or the impl that leaves a default method to
+/// its trait, at `span` names one more.
+fn too_many_method_names(span: Span) -> Diagnostic {
+    let limit = Limit {
+        what: "names of methods a program calls",
+        count: usize::from(u16::MAX) + 2,
+        max: usize::from(u16::MAX) + 1,
+    };
+    limit_diagnostic(limit, span)
+}
+
 impl Compiler {
     /// A compiler for the modules of a program, as the session analysed
     /// them. Every definition of the program that has a global slot gets
@@ -446,7 +458,9 @@ impl Compiler {
                 .iter()
                 .any(|written| resolve(written.name) == method)
             {
-                globals.default_for(t, ty, &method, slot);
+                globals
+                    .default_for(t, ty, &method, slot)
+                    .ok_or_else(|| too_many_method_names(ti.trait_name_span))?;
             }
         }
         Ok(())
@@ -741,9 +755,9 @@ impl Compiler {
             Decl::TraitImpl(trait_impl) => {
                 // Compile each method into the global slot of the method
                 // of the impl's type: the canonical head of its target, as
-                // the typechecker keys impls (`Range` is `List`, an alias
-                // is the type it stands for), so the VM finds it by the
-                // type of the receiver.
+                // the typechecker keys impls (an alias is the type it
+                // stands for), so the VM finds it by the type of the
+                // receiver.
                 // An impl whose target names no type (`trait Display
                 // for a`) is never dispatched to: it has no code.
                 let (Some(ty), Some(t)) = (self.impl_type(trait_impl), self.impl_trait(trait_impl))
@@ -1118,7 +1132,7 @@ impl Compiler {
             }
 
             ExprKind::Float(n) => {
-                let idx = self.add_constant(Value::Float(*n), span)?;
+                let idx = self.float_constant(*n, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
@@ -2245,8 +2259,8 @@ impl Compiler {
     }
 
     /// The type the impl `ti` is for, as the checker keys impls and the
-    /// VM dispatches: the canonical head of its target (`Range` is
-    /// `List`, an alias is the type it stands for). `None` for a target
+    /// VM dispatches: the canonical head of its target (an alias is
+    /// the type it stands for). `None` for a target
     /// that names no type (`trait Display for a`).
     fn impl_type(&self, ti: &crate::ast::TraitImpl) -> Option<crate::defs::TypeId> {
         let written = match ti.target_res {
@@ -2298,7 +2312,10 @@ impl Compiler {
         tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let method = self.add_constant(Value::String(resolve(method).into()), span)?;
+        let method = self
+            .globals
+            .method_id(&resolve(method))
+            .ok_or_else(|| too_many_method_names(span))?;
         let name = self.units.defs.get(t.0).name;
         let of = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
             let limit = Limit {
@@ -2410,9 +2427,7 @@ impl Compiler {
             Type::Float => Ok(FieldType::Float),
             Type::String => Ok(FieldType::String),
             Type::Bool => Ok(FieldType::Bool),
-            // A range type is described like the list type it is the
-            // same type as.
-            Type::List(elem) | Type::Range(elem) => Ok(FieldType::List(Box::new(
+            Type::List(elem) => Ok(FieldType::List(Box::new(
                 self.describe_field_type(elem, records)?,
             ))),
             // The keys of a JSON object or a TOML table are strings.
@@ -2750,6 +2765,19 @@ impl Compiler {
         self.emitter().constant(value, span)
     }
 
+    /// The constant of the Float a literal writes. (The lexer refuses a
+    /// literal that is no finite number.)
+    fn float_constant(&mut self, n: f64, span: Span) -> Result<Const, Diagnostic> {
+        let float = crate::value::Float::new(n).ok_or_else(|| {
+            Diagnostic::error(
+                Code::CompilerBug,
+                span,
+                format!("compiler bug: the float literal {n} is no finite number"),
+            )
+        })?;
+        self.add_constant(Value::Float(float), span)
+    }
+
     /// The string constants of `names`, in order.
     fn name_constants(&mut self, names: &[Symbol], span: Span) -> Result<Vec<Const>, Diagnostic> {
         names
@@ -3054,7 +3082,7 @@ mod tests {
             main.chunk()
                 .constants()
                 .iter()
-                .any(|c| matches!(c, Value::Float(f) if (*f - 4.25).abs() < f64::EPSILON))
+                .any(|c| matches!(c, Value::Float(f) if f.get() == 4.25))
         );
     }
 

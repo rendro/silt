@@ -122,9 +122,7 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
         Type::AnonRecord { fields, tail } => {
             matches!(tail, RowTail::Closed) && fields.values().all(|t| builtin_through(checker, t))
         }
-        Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => {
-            builtin_through(checker, t)
-        }
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => builtin_through(checker, t),
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
         // A type the code does not know here: any type.
@@ -245,9 +243,7 @@ impl TypeChecker {
                     self.parts_shown(field, declared, parts);
                 }
             }
-            Type::List(t) | Type::Range(t) | Type::Set(t) | Type::Channel(t) => {
-                self.parts_shown(t, declared, parts)
-            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.parts_shown(t, declared, parts),
             Type::Map(k, v) => {
                 self.parts_shown(k, declared, parts);
                 self.parts_shown(v, declared, parts);

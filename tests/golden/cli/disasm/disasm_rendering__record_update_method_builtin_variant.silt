@@ -6,9 +6,9 @@
 -- stdout-contains: == main (arity=0, upvalues=0) ==
 -- stdout-contains: RecordUpdate         1
 -- stdout-contains: |  field 3     ; "x"
--- stdout-contains: CallMethod           7     1   ; "display" of Display
+-- stdout-contains: CallMethod           0     1   ; "display" of Display
 -- stdout-contains: CallBuiltin          1     ; string.length
--- stdout-contains: Constant             9     ; <constructor:Circle>
+-- stdout-contains: Constant             8     ; <constructor:Circle>
 import string
 
 type Point { x: Int, y: Int }

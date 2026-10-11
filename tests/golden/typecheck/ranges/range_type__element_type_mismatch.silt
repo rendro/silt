@@ -2,6 +2,6 @@
 -- exit: 1
 -- stderr-contains: type mismatch: expected String, got Int
 fn main() {
-    let r: Range(String) = 1..10
+    let r: List(String) = 1..10
     r
 }

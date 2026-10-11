@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{FieldType, TypeInfo, bv};
-use crate::value::Value;
+use crate::value::{Entries, Members, Value};
 use crate::vm::{Step, Vm, VmError};
 
 /// What a typed call gives: what the body did, or `None` if the
@@ -58,7 +58,7 @@ impl<'a> Arg<'a> for i64 {
 impl<'a> Arg<'a> for f64 {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::Float(f) => Some(*f),
+            Value::Float(f) => Some(f.get()),
             _ => None,
         }
     }
@@ -146,10 +146,10 @@ impl<'a> Arg<'a> for &'a Arc<TcpListenerHandle> {
 }
 
 /// A `Map` argument.
-pub(crate) type Map<'a> = &'a Arc<BTreeMap<Value, Value>>;
+pub(crate) type Map<'a> = &'a Arc<Entries>;
 
 /// A `Set` argument.
-pub(crate) type Set<'a> = &'a Arc<BTreeSet<Value>>;
+pub(crate) type Set<'a> = &'a Arc<Members>;
 
 /// The error of a body that finds, in what it was given for the
 /// parameter `param`, a value that the parameter's type does not have:
@@ -164,7 +164,7 @@ pub(crate) fn unsound(name: &str, param: &str) -> VmError {
 }
 
 /// A `Map`.
-impl<'a> Arg<'a> for &'a Arc<BTreeMap<Value, Value>> {
+impl<'a> Arg<'a> for &'a Arc<Entries> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::Map(map) => Some(map),
@@ -174,7 +174,7 @@ impl<'a> Arg<'a> for &'a Arc<BTreeMap<Value, Value>> {
 }
 
 /// A `Set`.
-impl<'a> Arg<'a> for &'a Arc<BTreeSet<Value>> {
+impl<'a> Arg<'a> for &'a Arc<Members> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::Set(set) => Some(set),
@@ -256,11 +256,17 @@ impl Ret for bool {
 
 /// A `Float`: finite, as every float a body computes from floats with
 /// an operation that cannot leave them is; one that can goes through
-/// `numeric::checked_float`. (`-0.0` becomes `0.0`: see
-/// `numeric::float_value`.)
+/// `numeric::checked_float` and says what overflowed. (A body that
+/// gave a number that is no `Float` all the same is a defect of silt,
+/// and an error here, not a value.)
 impl Ret for f64 {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(super::numeric::float_value(self)))
+        match crate::value::Float::new(self) {
+            Some(float) => Ok(Step::Done(Value::Float(float))),
+            None => Err(VmError::type_confusion(format!(
+                "a builtin's result is no Float: {self}"
+            ))),
+        }
     }
 }
 
@@ -287,14 +293,14 @@ impl Ret for Vec<u8> {
 /// A `Map`.
 impl Ret for BTreeMap<Value, Value> {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::Map(Arc::new(self))))
+        Ok(Step::Done(Value::map(self)))
     }
 }
 
 /// A `Set`.
 impl Ret for BTreeSet<Value> {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::Set(Arc::new(self))))
+        Ok(Step::Done(Value::set(self)))
     }
 }
 

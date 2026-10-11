@@ -84,7 +84,7 @@ fn fuzz_corpora_and_examples() {
     });
     let skips = skips();
     let inputs = chosen(all);
-    let verdicts = run(&inputs, &skips);
+    let verdicts = run(&inputs);
     // The seeds written for `fuzz_run` are programs the oracle runs to
     // their end: one that it does not is no seed.
     let mut seeds = 0;
@@ -114,6 +114,6 @@ fn repro_corpus() {
     check_listed(&all, |name| name.starts_with(REPROS));
     let skips = skips();
     let inputs = chosen(all);
-    let verdicts = run(&inputs, &skips);
+    let verdicts = run(&inputs);
     conclude("repro corpus", &inputs, &verdicts, &skips);
 }

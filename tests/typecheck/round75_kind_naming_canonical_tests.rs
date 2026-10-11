@@ -94,20 +94,20 @@ fn build_all_variants() -> AllVariants {
 
     AllVariants {
         int: Value::Int(7),
-        float: Value::Float(1.5),
+        float: Value::Float(silt::value::Float::new(1.5).expect("a finite number")),
         bool_: Value::Bool(true),
         string: Value::String("hi".into()),
         list: Value::list(vec![Value::Int(1)]),
-        map: Value::Map(Arc::new({
+        map: Value::map({
             let mut m = BTreeMap::new();
             m.insert(Value::String("k".into()), Value::Int(1));
             m
-        })),
-        set: Value::Set(Arc::new({
+        }),
+        set: Value::set({
             let mut s = BTreeSet::new();
             s.insert(Value::Int(1));
             s
-        })),
+        }),
         tuple: Value::tuple(vec![Value::Int(1), Value::Int(2)]),
         record: Value::record(point_type(), vec![Value::Int(1)]),
         // A variant names its enum type.

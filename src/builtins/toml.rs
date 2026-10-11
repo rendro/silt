@@ -45,10 +45,12 @@ use std::sync::Arc;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
-use crate::value::Value;
+use crate::value::{Float, Value};
 use crate::vm::{Vm, VmError};
 
-use super::json::{decodable_record, field_record_type, unsupported_field_type_message};
+use super::json::{
+    decodable_record, ensure_encodable_depth, field_record_type, unsupported_field_type_message,
+};
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
 
@@ -146,15 +148,27 @@ fn toml_type_name(v: &::toml::Value) -> &'static str {
 /// cannot represent (e.g. `Unit`, non-finite floats at the top level — TOML
 /// 1.0 technically permits `nan`/`inf` but we emit the closest valid
 /// representation and reject ambiguous ones like `Unit`).
-fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
+///
+/// `v` is `level` levels inside the value `caller` writes.
+fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value, VmError> {
+    ensure_encodable_depth(caller, level)?;
+    let inner = |v: &Value| value_to_toml(caller, v, level + 1);
+    // `Some(x)` is written as `x` is, and is no level of its own.
+    let mut v = v;
+    while let Value::Variant(variant) = v
+        && variant.is(bv::SOME)
+        && let [content] = variant.fields()
+    {
+        v = content;
+    }
     Ok(match v {
         Value::Int(n) => ::toml::Value::Integer(*n),
-        Value::Float(f) => ::toml::Value::Float(*f),
+        Value::Float(f) => ::toml::Value::Float(f.get()),
         Value::Bool(b) => ::toml::Value::Boolean(*b),
         Value::String(s) => ::toml::Value::String(s.to_string()),
         Value::List(xs) => {
             xs.writable()?;
-            let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_toml(&x)).collect();
+            let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
             ::toml::Value::Array(items?)
         }
         Value::Map(m) => {
@@ -164,12 +178,12 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                     Value::String(s) => s.to_string(),
                     other => other.to_string(),
                 };
-                table.insert(key, value_to_toml(v)?);
+                table.insert(key, inner(v)?);
             }
             ::toml::Value::Table(table)
         }
         Value::Tuple(vs) => {
-            let items: Result<Vec<_>, _> = vs.iter().map(value_to_toml).collect();
+            let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
             ::toml::Value::Array(items?)
         }
         Value::Record(fields) => {
@@ -245,7 +259,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                 {
                     continue;
                 }
-                table.insert(k.to_string(), value_to_toml(v)?);
+                table.insert(k.to_string(), inner(v)?);
             }
             ::toml::Value::Table(table)
         }
@@ -257,9 +271,6 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
             // placeholder so serialization does not fail outright.
             ::toml::Value::String(String::new())
         }
-        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
-            value_to_toml(&variant.fields()[0])?
-        }
         Value::Variant(variant) => {
             let mut table = ::toml::map::Map::new();
             table.insert(
@@ -267,20 +278,25 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                 ::toml::Value::String(variant.name().into()),
             );
             if !variant.fields().is_empty() {
-                let items: Result<Vec<_>, _> = variant.fields().iter().map(value_to_toml).collect();
+                let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
                 table.insert("fields".into(), ::toml::Value::Array(items?));
             }
             ::toml::Value::Table(table)
         }
         Value::Unit => {
-            return Err(VmError::new(
-                "toml.stringify: TOML cannot represent Unit".into(),
-            ));
+            return Err(VmError::new(format!(
+                "{caller}: TOML cannot represent Unit"
+            )));
         }
         Value::VariantConstructor(tag) => ::toml::Value::String(tag.name().into()),
         _ => {
+            // (To a program every function is an `Fn`.)
+            let kind = match v.is_fn() {
+                true => "Fn",
+                false => v.kind(),
+            };
             return Err(VmError::new(format!(
-                "toml.stringify: unsupported value kind {v:?}"
+                "{caller}: unsupported value kind {kind}"
             )));
         }
     })
@@ -290,11 +306,11 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
 /// scalar or array at top level is not a valid document. We therefore only
 /// accept `Record`, `Map`, or `Table`-shaped values here; everything else
 /// returns a descriptive `Err`.
-fn value_to_top_level_toml(v: &Value) -> Result<::toml::Value, VmError> {
-    match value_to_toml(v)? {
+fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<::toml::Value, VmError> {
+    match value_to_toml(caller, v, 0)? {
         t @ ::toml::Value::Table(_) => Ok(t),
         other => Err(VmError::new(format!(
-            "toml.stringify: top-level value must be a table/record, got {}",
+            "{caller}: top-level value must be a table/record, got {}",
             toml_type_name(&other)
         ))),
     }
@@ -425,7 +441,7 @@ fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Valu
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::Map(Arc::new(map))]))
+    Ok(Value::variant(bv::OK, vec![Value::map(map)]))
 }
 
 fn toml_to_typed_value(
@@ -462,12 +478,12 @@ fn toml_to_typed_value(
         },
         FieldType::Float => match tv {
             // A `Float` is finite, so TOML's `nan` and `inf` do not decode.
-            ::toml::Value::Float(f) if f.is_finite() => {
-                Ok(crate::builtins::numeric::float_value(*f))
-            }
-            ::toml::Value::Float(_) => Err(mismatch("Float", "a non-finite float")),
+            ::toml::Value::Float(f) => match Float::new(*f) {
+                Some(f) => Ok(Value::Float(f)),
+                None => Err(mismatch("Float", "a non-finite float")),
+            },
             // TOML integers coerce to Float the way JSON numbers do.
-            ::toml::Value::Integer(n) => Ok(Value::Float(*n as f64)),
+            ::toml::Value::Integer(n) => Ok(Value::Float(Float::from(*n))),
             _ => Err(mismatch("Float", toml_type_name(tv))),
         },
         FieldType::Bool => match tv {
@@ -497,7 +513,7 @@ fn toml_to_typed_value(
                     let val = toml_to_typed_value(vm, item, inner)?;
                     map.insert(Value::String(key.clone().into()), val);
                 }
-                Ok(Value::Map(Arc::new(map)))
+                Ok(Value::map(map))
             }
             _ => Err(mismatch("Map", toml_type_name(tv))),
         },
@@ -611,13 +627,14 @@ fn written(
     value: &Value,
     write: fn(&::toml::Value) -> Result<String, ::toml::ser::Error>,
 ) -> Value {
-    let tv = match value_to_top_level_toml(value) {
+    let caller = format!("toml.{name}");
+    let tv = match value_to_top_level_toml(&caller, value) {
         Ok(tv) => tv,
         Err(e) => return toml_unknown_err(e.message),
     };
     match write(&tv) {
         Ok(s) => Value::variant(bv::OK, vec![Value::String(s.into())]),
-        Err(e) => toml_unknown_err(format!("toml.{name}: {e}")),
+        Err(e) => toml_unknown_err(format!("{caller}: {e}")),
     }
 }
 
@@ -669,5 +686,63 @@ builtins! {
 
     fn pretty(value: &Value) -> Value {
         written("pretty", value, ::toml::to_string_pretty)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins::json::MAX_ENCODE_DEPTH;
+
+    /// The deepest value the encoder writes (a map in a list in a map,
+    /// and so on) is written on a stack of 16 MiB, the least a thread
+    /// that runs silt code has (`scheduler::WORKER_STACK_BYTES` where
+    /// pointers have 32 bits), in a debug build too; and a value one
+    /// level deeper is refused with a `TomlUnknown`.
+    #[test]
+    fn the_deepest_value_is_written_on_the_smallest_stack() {
+        let (written, refused) = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                // `levels` levels above the Int: a map at the even
+                // ones, a list of it at the odd ones.
+                let nested = |levels: usize| {
+                    (0..levels)
+                        .rev()
+                        .fold(Value::Int(1), |inner, level| match level % 2 {
+                            0 => Value::map(BTreeMap::from([(Value::String("k".into()), inner)])),
+                            _ => Value::list(vec![inner]),
+                        })
+                };
+                let text = written("stringify", &nested(MAX_ENCODE_DEPTH), ::toml::to_string);
+                let pretty = written(
+                    "pretty",
+                    &nested(MAX_ENCODE_DEPTH),
+                    ::toml::to_string_pretty,
+                );
+                let refused = written(
+                    "pretty",
+                    &nested(MAX_ENCODE_DEPTH + 1),
+                    ::toml::to_string_pretty,
+                );
+                (
+                    [text, pretty].map(|v| v.to_string().len()),
+                    format!("{refused:?}"),
+                )
+            })
+            .expect("a thread")
+            .join()
+            .expect("the thread ends");
+        assert!(
+            written.iter().all(|len| *len > MAX_ENCODE_DEPTH),
+            "{written:?}"
+        );
+        assert_eq!(
+            refused,
+            format!(
+                "Err(TomlUnknown(\"toml.pretty: the value is nested more than \
+                 {MAX_ENCODE_DEPTH} levels deep\"))"
+            )
+        );
     }
 }

@@ -59,15 +59,15 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value
 }
 
 use regex::Regex;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
 use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
-use crate::value::Value;
+use crate::value::{Float, Value};
 use runtime::{IoPool, RegexCache};
 
 // ── VM ────────────────────────────────────────────────────────────
@@ -86,9 +86,11 @@ pub struct Vm {
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
     pub(crate) stack: Vec<Value>,
-    /// The values of the program's global slots; `None` until the
-    /// definition's code has run.
-    pub(crate) globals: Vec<Option<Value>>,
+    /// The values of the program's global slots, each unset until its
+    /// definition's code has run. The VMs of the program's tasks have
+    /// the same slots, not a copy of them: a task starts with nothing
+    /// to copy, however many definitions the program has.
+    pub(crate) globals: Arc<[OnceLock<Value>]>,
     /// What each global slot is, and the slot of each impl method.
     pub(crate) global_slots: Arc<Globals>,
     /// The program's types, by id: the decoders find the record types
@@ -155,13 +157,12 @@ impl Drop for Vm {
     }
 }
 
-/// Create a finite float Value, returning an error if the result is NaN or Infinity.
-/// Also canonicalizes -0.0 to 0.0.
+/// The Float `f`, the result of the operation `op_desc`: an error if
+/// it is none (a NaN or an infinity).
 fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
-    if !f.is_finite() {
-        return Err(VmError::new(format!("float overflow: {op_desc}")));
-    }
-    Ok(Value::Float(if f == 0.0 { 0.0 } else { f }))
+    Float::new(f)
+        .map(Value::Float)
+        .ok_or_else(|| VmError::new(format!("float overflow: {op_desc}")))
 }
 
 impl Vm {
@@ -286,7 +287,7 @@ impl Vm {
             pending_input: None,
             native_frames: 0,
             stack: Vec::new(),
-            globals: Vec::new(),
+            globals: Arc::from([]),
             global_slots: Arc::new(Globals::default()),
             types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
@@ -478,11 +479,51 @@ impl Vm {
     pub(crate) fn load(&mut self, program: &crate::session::Program) {
         Arc::make_mut(&mut self.types).extend(&program.types);
         self.global_slots = program.globals.clone();
-        self.globals.resize(self.global_slots.len(), None);
+        // More slots than the VM has: those it has, with their values,
+        // and the new ones after them. (A task that still runs keeps
+        // the slots it was started with.)
+        let slots = self.global_slots.len();
+        if slots > self.globals.len() {
+            let unset = std::iter::repeat_with(OnceLock::new);
+            self.globals = (self.globals.iter().cloned())
+                .chain(unset)
+                .take(slots)
+                .collect();
+        }
+    }
+
+    /// The value of the global slot `slot`, if it is set.
+    pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
+        self.globals.get(usize::from(slot))?.get()
+    }
+
+    /// Set the global slot `slot`. `false` if the VM has no such slot.
+    pub(crate) fn set_global(&mut self, slot: u16, value: Value) -> bool {
+        let slot = usize::from(slot);
+        let Some(unset) = self.globals.get(slot) else {
+            return false;
+        };
+        // A slot is set once in the life of a program, and every VM of
+        // the program sees it. One that has a value has it from a
+        // program this VM ran before (another program, or this one
+        // again): this VM then goes on with slots of its own, and a
+        // task of the earlier run keeps the ones it has.
+        if let Err(value) = unset.set(value) {
+            let again = OnceLock::from(value);
+            match Arc::get_mut(&mut self.globals) {
+                Some(slots) => slots[slot] = again,
+                None => {
+                    let mut slots: Vec<OnceLock<Value>> = self.globals.iter().cloned().collect();
+                    slots[slot] = again;
+                    self.globals = slots.into();
+                }
+            }
+        }
+        true
     }
 
     /// Create a child VM that shares runtime state (the scheduler, timers, the I/O pool)
-    /// via Arc and clones per-task state (globals, the program's types).
+    /// and the program's (its global slots, its types) via Arc.
     /// Used for thread-per-task spawning.
     pub(crate) fn spawn_child(&self) -> Self {
         Vm {
