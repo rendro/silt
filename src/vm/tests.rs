@@ -2823,13 +2823,12 @@ mod type_confusion {
     }
 
     #[test]
-    fn method_call_that_names_no_trait_of_the_program() {
-        confused("names a trait the program does not have", |e| {
+    fn method_call_that_names_no_method_of_the_program() {
+        confused("names a method the program does not have", |e| {
             push(e, Value::Int(1));
-            let method = name(e, "nope");
             e.emit(
                 Asm::CallMethod {
-                    method,
+                    method: 0,
                     argc: 1,
                     of: 0,
                 },

@@ -65,7 +65,15 @@ pub struct Globals {
     /// show it.
     names: Vec<String>,
     defs: HashMap<DefId, u16>,
-    methods: HashMap<(TraitId, TypeId), HashMap<String, u16>>,
+    /// The names of the program's methods, each once: a method is
+    /// named by its place here (a `CallMethod`'s operand, a key of
+    /// `methods`), so a call that finds its method where the code runs
+    /// compares no text.
+    method_names: Vec<String>,
+    method_ids: HashMap<String, u16>,
+    /// The slot of each impl's method: by the impl's trait, the type it
+    /// is for and the id of the method's name.
+    methods: HashMap<(TraitId, TypeId, u16), u16>,
     /// The default methods of each trait: the body the trait writes,
     /// compiled once. An impl that leaves the method out has this slot
     /// as its method's.
@@ -100,7 +108,33 @@ impl Globals {
     /// The slot of the method `method` of the impl of the trait `t` for
     /// the type `ty`.
     pub fn method(&self, t: TraitId, ty: TypeId, method: &str) -> Option<u16> {
-        self.methods.get(&(t, ty))?.get(method).copied()
+        let method = *self.method_ids.get(method)?;
+        self.methods.get(&(t, ty, method)).copied()
+    }
+
+    /// The id of the method name `method`: the `CallMethod` operand of
+    /// a call of a method of that name. A new one the first time the
+    /// name is met; `None` when 65,536 names have ids already.
+    pub fn method_id(&mut self, method: &str) -> Option<u16> {
+        if let Some(id) = self.method_ids.get(method) {
+            return Some(*id);
+        }
+        let id = u16::try_from(self.method_names.len()).ok()?;
+        self.method_names.push(method.to_string());
+        self.method_ids.insert(method.to_string(), id);
+        Some(id)
+    }
+
+    /// The method name a `CallMethod` operand names.
+    pub fn method_name(&self, method: u16) -> Option<&str> {
+        self.method_names
+            .get(usize::from(method))
+            .map(String::as_str)
+    }
+
+    /// The number of method names a `CallMethod` operand can name.
+    pub fn method_count(&self) -> usize {
+        self.method_names.len()
     }
 
     /// The number of traits a `CallMethod` operand can name.
@@ -108,10 +142,12 @@ impl Globals {
         self.traits.len()
     }
 
-    /// [`Globals::method`] for a `CallMethod` trait operand.
-    pub fn call_method(&self, trait_index: u16, ty: TypeId, method: &str) -> Option<u16> {
+    /// [`Globals::method`] for the operands of a `CallMethod`: the
+    /// trait and the method's name by what the instruction holds of
+    /// them.
+    pub fn call_method(&self, trait_index: u16, ty: TypeId, method: u16) -> Option<u16> {
         let (t, _) = self.traits.get(trait_index as usize)?;
-        self.method(*t, ty, method)
+        self.methods.get(&(*t, ty, method)).copied()
     }
 
     /// The name of slot `slot`.
@@ -213,10 +249,9 @@ impl Globals {
         if self.method(t, ty, method).is_some() {
             return;
         }
-        self.methods
-            .entry((t, ty))
-            .or_default()
-            .insert(method.to_string(), slot);
+        if let Some(method) = self.method_id(method) {
+            self.methods.insert((t, ty, method), slot);
+        }
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for
@@ -233,11 +268,9 @@ impl Globals {
         if let Some(slot) = self.method(t, ty, method) {
             return Some(slot);
         }
+        let id = self.method_id(method)?;
         let slot = self.add(name)?;
-        self.methods
-            .entry((t, ty))
-            .or_default()
-            .insert(method.to_string(), slot);
+        self.methods.insert((t, ty, id), slot);
         if method == "display" && crate::defs::builtin_trait_id("Display") == Some(t) {
             self.shown.insert(ty, slot);
             self.shown_bits |= Self::shown_bit(ty);

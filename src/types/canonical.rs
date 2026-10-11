@@ -691,31 +691,77 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
 /// variant constructor) is an `Fn`: the typechecker types each as
 /// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
 pub fn dispatch_type_for_value(val: &Value) -> TypeId {
-    let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
+    let kinds = kind_types();
     match val {
         Value::Variant(variant) => variant.type_id(),
         Value::Record(record) => record.type_id(),
         Value::TypeDescriptor(ty) => ty.id,
         Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
-        Value::Int(_) => builtin(Type::Int),
-        Value::Float(_) => builtin(Type::Float),
-        Value::Bool(_) => builtin(Type::Bool),
-        Value::String(_) => builtin(Type::String),
-        Value::List(_) => builtin(Type::List(Box::new(Type::Unit))),
-        Value::Map(_) => builtin(Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
-        Value::Set(_) => builtin(Type::Set(Box::new(Type::Unit))),
-        Value::Tuple(_) => builtin(Type::Tuple(vec![])),
-        Value::Channel(_) => builtin(Type::Channel(Box::new(Type::Unit))),
+        Value::Int(_) => kinds.int,
+        Value::Float(_) => kinds.float,
+        Value::Bool(_) => kinds.bool,
+        Value::String(_) => kinds.string,
+        Value::List(_) => kinds.list,
+        Value::Map(_) => kinds.map,
+        Value::Set(_) => kinds.set,
+        Value::Tuple(_) => kinds.tuple,
+        Value::Channel(_) => kinds.channel,
         Value::VmClosure(_)
         | Value::BuiltinFn(_)
         | Value::HostFn(_)
-        | Value::VariantConstructor(..) => builtin(Type::Fun(vec![], Box::new(Type::Unit))),
-        Value::Unit => builtin(Type::Unit),
-        Value::Bytes(_) => TypeRef::builtin("Bytes").id,
-        Value::Handle(_) => TypeRef::builtin("Handle").id,
-        Value::TcpListener(_) => TypeRef::builtin("TcpListener").id,
-        Value::TcpStream(_) => TypeRef::builtin("TcpStream").id,
+        | Value::VariantConstructor(..) => kinds.function,
+        Value::Unit => kinds.unit,
+        Value::Bytes(_) => kinds.bytes,
+        Value::Handle(_) => kinds.handle,
+        Value::TcpListener(_) => kinds.tcp_listener,
+        Value::TcpStream(_) => kinds.tcp_stream,
     }
+}
+
+/// The builtin type of each kind of value that is no record and no
+/// variant, found once: a method call that finds its method where the
+/// code runs asks for the type of its receiver every time.
+struct KindTypes {
+    int: TypeId,
+    float: TypeId,
+    bool: TypeId,
+    string: TypeId,
+    list: TypeId,
+    map: TypeId,
+    set: TypeId,
+    tuple: TypeId,
+    channel: TypeId,
+    function: TypeId,
+    unit: TypeId,
+    bytes: TypeId,
+    handle: TypeId,
+    tcp_listener: TypeId,
+    tcp_stream: TypeId,
+}
+
+fn kind_types() -> &'static KindTypes {
+    static KINDS: std::sync::OnceLock<KindTypes> = std::sync::OnceLock::new();
+    KINDS.get_or_init(|| {
+        let of = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
+        let unit = || Box::new(Type::Unit);
+        KindTypes {
+            int: of(Type::Int),
+            float: of(Type::Float),
+            bool: of(Type::Bool),
+            string: of(Type::String),
+            list: of(Type::List(unit())),
+            map: of(Type::Map(unit(), unit())),
+            set: of(Type::Set(unit())),
+            tuple: of(Type::Tuple(vec![])),
+            channel: of(Type::Channel(unit())),
+            function: of(Type::Fun(vec![], unit())),
+            unit: of(Type::Unit),
+            bytes: TypeRef::builtin("Bytes").id,
+            handle: TypeRef::builtin("Handle").id,
+            tcp_listener: TypeRef::builtin("TcpListener").id,
+            tcp_stream: TypeRef::builtin("TcpStream").id,
+        }
+    })
 }
 
 /// The name of the type [`dispatch_type_for_value`] gives, as messages

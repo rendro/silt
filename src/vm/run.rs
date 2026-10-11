@@ -364,20 +364,16 @@ impl Vm {
     }
 
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
-    /// named by the constant `method`, of the trait `trait_index` names,
-    /// for the type of the receiver, the first of the top `argc`
-    /// values.
+    /// whose name has the id `method`, of the trait `trait_index`
+    /// names, for the type of the receiver, the first of the top
+    /// `argc` values.
     fn call_method(
         &mut self,
-        method: crate::bytecode::Const,
+        method: u16,
         argc: usize,
         trait_index: u16,
         tail: bool,
     ) -> Result<DispatchResult, VmError> {
-        // As for a builtin's name: the method's stays in the
-        // constants.
-        let closure = self.frame().closure.clone();
-        let method_name = closure.function.chunk().string(method);
         let receiver_slot = self.stack.len() - argc;
         let receiver = self.stack[receiver_slot].clone();
         let receiver_type = crate::types::canonical::dispatch_type_for_value(&receiver);
@@ -390,17 +386,13 @@ impl Vm {
             &receiver,
             Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
         );
-        // (The compiler checks each function against the globals.)
-        if usize::from(trait_index) >= self.global_slots.trait_count() {
-            return Err(VmError::type_confusion(format!(
-                "the call of method '{method_name}' names a trait the program does not have"
-            )));
-        }
-        let method = self
+        // The method of an impl is found by three numbers: the trait,
+        // the receiver's type, and the name's id. No text is compared.
+        let found = self
             .global_slots
-            .call_method(trait_index, receiver_type, method_name)
+            .call_method(trait_index, receiver_type, method)
             .and_then(|slot| self.global(slot).cloned());
-        if let Some(func) = method {
+        if let Some(func) = found {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
             if tail && let Value::VmClosure(closure) = &func {
@@ -426,6 +418,20 @@ impl Vm {
             let argc = self.stack.len() - receiver_slot - 1;
             let entered = self.call_value(func, argc, receiver_slot)?;
             return Ok(self.entered(entered));
+        }
+        // No impl has the method for the receiver's type: what the
+        // call does then goes by the method's name.
+        let slots = self.global_slots.clone();
+        // (The compiler checks each function against the globals.)
+        let Some(method_name) = slots.method_name(method) else {
+            return Err(VmError::type_confusion(
+                "the call of a method names a method the program does not have",
+            ));
+        };
+        if usize::from(trait_index) >= slots.trait_count() {
+            return Err(VmError::type_confusion(format!(
+                "the call of method '{method_name}' names a trait the program does not have"
+            )));
         }
         // `display` of a value whose parts a written impl may show.
         if method_name == "display"
