@@ -621,24 +621,6 @@ impl Vm {
         self.stack.push(value);
     }
 
-    // The code a VM runs has passed the bytecode verifier
-    // (`crate::bytecode::verify`): an instruction finds the values it
-    // takes on the stack, its slots in the frame and its constants in
-    // the pool, of the kinds it needs. The accessors below do not look
-    // for anything else.
-
-    fn pop(&mut self) -> Value {
-        self.stack
-            .pop()
-            .expect("verified code pops a value it pushed")
-    }
-
-    fn peek(&self) -> &Value {
-        self.stack
-            .last()
-            .expect("verified code looks at a value it pushed")
-    }
-
     // ── Frame access ──────────────────────────────────────────────
 
     /// The frame of the instruction being run.
@@ -656,23 +638,6 @@ impl Vm {
             Some(Frame::Code(frame)) => frame,
             _ => unreachable!("an instruction runs in a function's frame"),
         }
-    }
-
-    /// The code and constants of the function being run.
-    fn chunk(&self) -> &crate::bytecode::Chunk {
-        self.frame().closure.function.chunk()
-    }
-
-    /// Decode the instruction at the instruction pointer and step past
-    /// it.
-    #[inline(always)]
-    fn fetch(&mut self) -> crate::bytecode::Instr {
-        let frame = self.frame_mut();
-        let (instr, next) =
-            crate::bytecode::decode(frame.closure.function.chunk().code(), frame.ip)
-                .expect("verified code decodes");
-        frame.ip = next;
-        instr
     }
 
     /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
