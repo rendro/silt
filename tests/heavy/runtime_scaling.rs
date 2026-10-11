@@ -343,6 +343,58 @@ fn parking_deep_in_callbacks_costs_the_same_at_any_depth() {
     );
 }
 
+/// A fan-in of `senders` tasks that each send three numbers to one
+/// channel of sixteen places, where most of them wait their turn; the
+/// program prints the sum of what arrived.
+fn fan_in_program(senders: usize) -> String {
+    format!(
+        "import channel
+import list
+import task
+
+fn fan_in(senders) {{
+  let ch = channel.new(16)
+  let hs = 1..senders |> list.map {{ i -> task.spawn({{ ->
+    1..3 |> list.each {{ j -> channel.send(ch, i + j) }}
+  }}) }}
+  let sum = loop left = senders * 3, acc = 0 {{
+    match left {{
+      0 -> acc
+      _ -> match channel.receive(ch) {{
+        channel.Message(v) -> loop(left - 1, acc + v)
+        _ -> acc
+      }}
+    }}
+  }}
+  hs |> list.each {{ h -> task.join(h) }}
+  sum
+}}
+
+fn main() {{
+  println(fan_in({senders}))
+}}
+"
+    )
+}
+
+/// Many tasks parked on one channel cost time in proportion to their
+/// number, not to its square: with four times the senders the fan-in
+/// takes about four times as long, at most eight times. (When leaving
+/// the channel's queue meant searching it, four times the senders took
+/// sixteen times as long.)
+#[test]
+fn parked_senders_cost_time_in_proportion() {
+    let programs = Programs::new("fan_in");
+    let large = programs.file("large.silt", &fan_in_program(20_000));
+    let small = programs.file("small.silt", &fan_in_program(5_000));
+    assert_within(
+        8.0,
+        (&large, "600150000"),
+        (&small, "37537500"),
+        "a fan-in of 20,000 senders, against one of 5,000",
+    );
+}
+
 /// A loop of 125,000 rounds that calls `size` of a record eight times
 /// a round, a million calls: as a method of a trait found where the
 /// code runs (the function knows its argument only as a type with the
