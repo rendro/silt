@@ -1,0 +1,29 @@
+-- The hash of a variant is which variant of its type it is, and its
+-- fields: nothing of the type. Two enums that are declared alike hash
+-- alike, variant for variant. (The hash held the id of the type, a
+-- number that depends on how many types are declared before it: a
+-- type added to a program changed the hash of every value of the
+-- enums after it, and so did a builtin type added to silt.)
+type Here {
+  Dot,
+  Box(Int, Int),
+}
+
+type Between {
+  v: Int,
+}
+
+type There {
+  Point,
+  Rect(Int, Int),
+}
+
+fn main() {
+  println(Dot.hash() == Point.hash())
+  println(Box(3, 4).hash() == Rect(3, 4).hash())
+  println([Box(3, 4), Dot].hash() == [Rect(3, 4), Point].hash())
+  -- Which variant it is, and its fields, are in the hash.
+  println(Dot.hash() == Box(0, 0).hash())
+  println(Box(3, 4).hash() == Box(4, 3).hash())
+  println(Between { v: 1 }.hash() == Between { v: 1 }.hash())
+}
