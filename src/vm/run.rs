@@ -96,6 +96,39 @@ fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
 // the pool, of the kinds it needs. The accessors below do not look
 // for anything else.
 
+/// A copy of `value`, for the instructions that read a slot or a
+/// constant: a number, a Bool or unit is copied here, in the loop; a
+/// value of any other kind is cloned, a call. (The kinds that are
+/// copied are named: one that is added later is cloned until it is
+/// named here.)
+#[inline(always)]
+fn copy(value: &Value) -> Value {
+    match value {
+        Value::Int(n) => Value::Int(*n),
+        Value::Float(f) => Value::Float(*f),
+        Value::Bool(b) => Value::Bool(*b),
+        Value::Unit => Value::Unit,
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => value.clone(),
+    }
+}
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -267,7 +300,7 @@ impl Vm {
             let (instr, next) = decode(code, ip).expect("verified code decodes");
             ip = next;
             match instr {
-                Instr::Constant { k } => self.stack.push(chunk.constant(k).clone()),
+                Instr::Constant { k } => self.stack.push(copy(chunk.constant(k))),
                 Instr::Unit => self.stack.push(Value::Unit),
                 Instr::True => self.stack.push(Value::Bool(true)),
                 Instr::False => self.stack.push(Value::Bool(false)),
@@ -392,11 +425,11 @@ impl Vm {
                     self.stack.push(Value::String(result.into()));
                 }
                 Instr::GetLocal { slot } => {
-                    let value = self.stack[base + slot].clone();
+                    let value = copy(&self.stack[base + slot]);
                     self.stack.push(value);
                 }
                 Instr::SetLocal { slot } => {
-                    let value = peek(&self.stack).clone();
+                    let value = copy(peek(&self.stack));
                     self.stack[base + slot] = value;
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
@@ -426,7 +459,7 @@ impl Vm {
                     }
                     load!();
                 }
-                Instr::GetUpvalue { index } => self.stack.push(closure.upvalues[index].clone()),
+                Instr::GetUpvalue { index } => self.stack.push(copy(&closure.upvalues[index])),
                 Instr::Call { argc } => {
                     let func_slot = self.stack.len() - 1 - argc;
                     let callee = self.stack[func_slot].clone();
@@ -792,7 +825,7 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        self.stack[base + first_slot + i] = self.stack[start + i].clone();
+                        self.stack[base + first_slot + i] = copy(&self.stack[start + i]);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
