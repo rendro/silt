@@ -345,7 +345,24 @@ impl Value {
             Value::Float(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "{s}"),
-            Value::List(xs) => write_list(f, xs, |item, f| item.show(f, written)),
+            // The elements that are there are written from this frame:
+            // through `write_list` each list of a deeply nested value
+            // kept a frame of its own beside this one, and a value of
+            // 500,000 levels, which was shown before a list was a
+            // view, overflowed the native stack.
+            Value::List(xs) => match xs.elements() {
+                Elements::Items(items) => {
+                    f.write_str("[")?;
+                    for (i, item) in items.iter().enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        item.show(f, written)?;
+                    }
+                    f.write_str("]")
+                }
+                Elements::Ints(..) => write_list(f, xs, |item, f| item.show(f, written)),
+            },
             Value::Map(m) => {
                 write!(f, "#{{")?;
                 for (i, (k, v)) in m.iter().enumerate() {
