@@ -1188,3 +1188,61 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
         );
     }
 }
+
+/// The time for a body is over in the moment in which the server has
+/// told the client to send it (`100 Continue`): the client is told
+/// that as well (408), like any client whose body did not come. The
+/// interim response is written by the thread of the pool that reads
+/// the request, and the 408 where the connection's task runs: however
+/// the two writes fall together, the 408 is not lost.
+///
+/// How they fall together is the system's to decide, and nothing that
+/// a client or the clock can arrange: the test makes the moment many
+/// times over, and a connection that ends without a word fails it. A
+/// run in which the two never met shows nothing.
+#[test]
+fn a_last_word_right_behind_the_interim_response_is_not_lost() {
+    const CONNECTIONS: usize = 2000;
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    // The connections that have no answer yet. (One whose wait for
+    // the body began after the clock moved is answered when the clock
+    // moves again.)
+    let mut unanswered: Vec<Client> = Vec::new();
+    let look = |unanswered: &mut Vec<Client>| {
+        unanswered.retain_mut(|client| {
+            if !client.has_word() {
+                return true;
+            }
+            let last = client.rest();
+            assert!(
+                last.starts_with(b"HTTP/1.1 408 "),
+                "the server ended a connection whose body did not come without its 408: {:?}",
+                String::from_utf8_lossy(&last)
+            );
+            false
+        });
+    };
+    for _ in 0..CONNECTIONS {
+        let mut client = server.connect();
+        client.send(
+            b"POST /slow HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+        );
+        let mut line = String::new();
+        client.0.read_line(&mut line).expect("the interim response");
+        assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
+        client.0.read_line(&mut line).expect("its end");
+        clock.advance(TRANSFER_TIME + Duration::from_secs(1));
+        unanswered.push(client);
+        look(&mut unanswered);
+    }
+    advance_until(
+        &clock,
+        TRANSFER_TIME,
+        "a body that does not come is waited for without end",
+        || {
+            look(&mut unanswered);
+            unanswered.is_empty()
+        },
+    );
+}
