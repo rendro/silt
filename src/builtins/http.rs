@@ -18,12 +18,12 @@ use super::typed::{Arg, Map, TcpListener, unsound};
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
 use crate::runtime::sync::{Arm, Cell, Fired, Wait};
+use crate::typeinfo::bv;
 #[cfg(feature = "http")]
-use crate::typeinfo::{BuiltinVariant, bv, ty};
+use crate::typeinfo::{BuiltinVariant, ty};
 use crate::value::Value;
-use crate::vm::VmError;
 #[cfg(feature = "http")]
-use crate::vm::{Step, Vm};
+use crate::vm::{Step, Vm, VmError};
 #[cfg(feature = "http")]
 use parking_lot::Mutex;
 
