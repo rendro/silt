@@ -174,20 +174,24 @@ fn main() {
   println(named_true_first(false))
   println([number(0), number(1), number(-3), number(5)])
   let minus_zero = 0.0 * -1.0
-  println([
-    float_literals(0.0),
-    float_literals(minus_zero),
-    float_literals(-1.5),
-    float_literals(2.5),
-    float_literals(0.25),
-  ])
-  println([
-    string_literals(""),
-    string_literals("a"),
-    string_literals("é"),
-    string_literals("é"),
-    string_literals("b"),
-  ])
+  println(
+    [
+      float_literals(0.0),
+      float_literals(minus_zero),
+      float_literals(-1.5),
+      float_literals(2.5),
+      float_literals(0.25),
+    ],
+  )
+  println(
+    [
+      string_literals(""),
+      string_literals("a"),
+      string_literals("é"),
+      string_literals("é"),
+      string_literals("b"),
+    ],
+  )
   println(bump(7) + bump(1))
   println([nested(true, 0), nested(true, 4), nested(false, 9), nested(false, 1)])
   println(early(true) + early(false))
