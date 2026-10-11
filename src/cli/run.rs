@@ -158,14 +158,14 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
 /// and `silt test` alike. The payload is shown with [`silt::Vm::show_text`],
 /// as `println` would write it.
 pub(crate) fn returned_err(value: &silt::Value) -> Option<&silt::Value> {
-    let silt::Value::Variant(tag, fields) = value else {
+    let silt::Value::Variant(variant) = value else {
         return None;
     };
-    if !tag.is(silt::typeinfo::bv::ERR) {
+    if !variant.is(silt::typeinfo::bv::ERR) {
         return None;
     }
     // (Result's Err carries exactly one payload.)
-    Some(fields.first().unwrap_or(value))
+    Some(variant.fields().first().unwrap_or(value))
 }
 
 /// The span of the name of the top-level function `name` of `program`.

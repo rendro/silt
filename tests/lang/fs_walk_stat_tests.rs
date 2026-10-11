@@ -58,9 +58,9 @@ fn run(input: &str) -> Value {
 /// Expect an `Ok(inner)` variant; return `inner`.
 fn ok_inner(v: Value) -> Value {
     match v {
-        Value::Variant(tag, args) if tag.is(bv::OK) => {
-            assert_eq!(args.len(), 1, "Ok variant should carry one payload");
-            args.into_iter().next().unwrap()
+        Value::Variant(ok) if ok.is(bv::OK) => {
+            assert_eq!(ok.fields().len(), 1, "Ok variant should carry one payload");
+            ok.fields()[0].clone()
         }
         other => panic!("expected Ok(_) variant, got {other:?}"),
     }
@@ -76,28 +76,28 @@ fn ok_inner(v: Value) -> Value {
 /// `trait Error for IoError` does at runtime.
 fn err_msg(v: Value) -> String {
     match v {
-        Value::Variant(tag, args) if tag.is(bv::ERR) => match args.into_iter().next() {
+        Value::Variant(err) if err.is(bv::ERR) => match err.fields().first() {
             // Still accept bare strings in case any caller ever hands us
             // one, but the modern path is the IoError variant arm below.
-            Some(Value::String(s)) => s,
-            Some(Value::Variant(inner_tag, inner_args)) => {
-                let first_str = |vs: Vec<Value>| -> String {
-                    match vs.into_iter().next() {
-                        Some(Value::String(s)) => s,
+            Some(Value::String(s)) => s.to_string(),
+            Some(Value::Variant(error)) => {
+                let first_str = |vs: &[Value]| -> String {
+                    match vs.first() {
+                        Some(Value::String(s)) => s.to_string(),
                         other => format!("<non-string payload: {other:?}>"),
                     }
                 };
-                match inner_tag.name() {
-                    "IoNotFound" => format!("file not found: {}", first_str(inner_args)),
+                match error.name() {
+                    "IoNotFound" => format!("file not found: {}", first_str(error.fields())),
                     "IoPermissionDenied" => {
-                        format!("permission denied: {}", first_str(inner_args))
+                        format!("permission denied: {}", first_str(error.fields()))
                     }
-                    "IoAlreadyExists" => format!("already exists: {}", first_str(inner_args)),
-                    "IoInvalidInput" => format!("invalid input: {}", first_str(inner_args)),
+                    "IoAlreadyExists" => format!("already exists: {}", first_str(error.fields())),
+                    "IoInvalidInput" => format!("invalid input: {}", first_str(error.fields())),
                     "IoInterrupted" => "operation interrupted".into(),
                     "IoUnexpectedEof" => "unexpected end of file".into(),
                     "IoWriteZero" => "zero-byte write".into(),
-                    "IoUnknown" => first_str(inner_args),
+                    "IoUnknown" => first_str(error.fields()),
                     other => format!("unknown IoError variant: {other}"),
                 }
             }
@@ -107,10 +107,16 @@ fn err_msg(v: Value) -> String {
     }
 }
 
-/// Extract the BTreeMap backing a Record value.
+/// The type name of a Record value, and its fields by name.
 fn record_fields(v: Value) -> (String, BTreeMap<String, Value>) {
     match v {
-        Value::Record(ty, fields) => (ty.name.clone(), (*fields).clone()),
+        Value::Record(record) => (
+            record.ty().name.clone(),
+            record
+                .named()
+                .map(|(name, value)| (name.to_string(), value.clone()))
+                .collect(),
+        ),
         other => panic!("expected Record, got {other:?}"),
     }
 }
@@ -194,10 +200,11 @@ fn main() {{
     // filesystem. We don't assert the inner structure beyond "it's a
     // Some variant"; the clock details are covered by time.* tests.
     match fields.get("accessed") {
-        Some(Value::Variant(tag, _)) => {
+        Some(Value::Variant(option)) => {
             assert!(
-                tag.is(bv::SOME) || tag.is(bv::NONE),
-                "accessed should be Option variant, got tag {tag}"
+                option.is(bv::SOME) || option.is(bv::NONE),
+                "accessed should be Option variant, got option {}",
+                option.name()
             );
         }
         other => panic!("accessed field missing or not a variant: {other:?}"),
@@ -205,10 +212,11 @@ fn main() {{
     // created: may legitimately be None on older ext4 or some network
     // filesystems. Just assert it's an Option variant.
     match fields.get("created") {
-        Some(Value::Variant(tag, _)) => {
+        Some(Value::Variant(option)) => {
             assert!(
-                tag.is(bv::SOME) || tag.is(bv::NONE),
-                "created should be Option variant, got tag {tag}"
+                option.is(bv::SOME) || option.is(bv::NONE),
+                "created should be Option variant, got option {}",
+                option.name()
             );
         }
         other => panic!("created field missing or not a variant: {other:?}"),
@@ -292,7 +300,7 @@ fn main() {{
             // read_link returns the raw target as stored, not the
             // canonicalized resolution. Since we symlinked with an
             // absolute path, that's what we expect back.
-            assert_eq!(s, target.to_string_lossy());
+            assert_eq!(s, target.to_string_lossy().into());
         }
         other => panic!("expected String target, got {other:?}"),
     }
@@ -320,7 +328,7 @@ fn main() {{
     let result = run(&input);
     assert_eq!(
         result,
-        Value::Tuple(vec![Value::Bool(false), Value::Bool(true)])
+        Value::tuple(vec![Value::Bool(false), Value::Bool(true)])
     );
 }
 

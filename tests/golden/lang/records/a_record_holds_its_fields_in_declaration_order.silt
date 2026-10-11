@@ -1,0 +1,141 @@
+-- A record value holds its fields in the order its type declares
+-- them, and code that knows the type reads a field at its place:
+-- whatever order a literal, an update or a pattern writes the fields
+-- in, and whether the record is read where its type is known, behind
+-- an open row, or as an anonymous record, the same field is read.
+import json
+import list
+import map
+import set
+import time
+import toml
+
+-- (Not declared in the order of the names.)
+type Ver {
+  major: Int,
+  build: Int,
+  label: String,
+}
+
+type Pair(a) {
+  right: a,
+  left: a,
+}
+
+type Op {
+  name: String,
+  apply: Fn(Int) -> Int,
+}
+
+fn major(r: { major: Int, ...rest }) -> Int {
+  r.major
+}
+
+fn build(r) {
+  r.build
+}
+
+fn pass(r: { build: Int, ...rest }) -> { build: Int, ...rest } {
+  let { build: seen } = r
+  match r.build == seen {
+    true -> r
+    false -> r
+  }
+}
+
+fn describe(v: Ver) -> String {
+  match v {
+    Ver { label: "none", major, build } -> "unlabelled {major}.{build}"
+    Ver { build: 0, major, .. } -> "first of {major}"
+    Ver { major, build, label } -> "{label} {major}.{build}"
+  }
+}
+
+fn main() {
+  -- Written in three orders, one record.
+  let a = Ver { major: 1, build: 9, label: "a" }
+  let b = Ver { label: "a", build: 9, major: 1 }
+  let c = Ver { build: 9, label: "a", major: 1 }
+  println(a)
+  println(a == b)
+  println(b == c)
+  println("{b.major} {b.build} {b.label}")
+  println("{c.major} {c.build} {c.label}")
+
+  -- An update names fields in any order, and makes a record of its own.
+  let d = a.{ label: "d", major: 2 }
+  println(d)
+  println(a)
+  println(describe(a))
+  println(describe(d.{ build: 0 }))
+  println(describe(d.{ label: "none" }))
+
+  -- A pattern in a `let`, with the fields in another order.
+  let Ver { label, major: m, build: n } = d
+  println("{label} {m} {n}")
+
+  -- Behind an open row the record is itself, and its fields are found
+  -- by their names; so are an anonymous record's.
+  println(major(a))
+  println(build(a))
+  println(pass(a))
+  println(pass(a).label)
+  let anon = { major: 7, label: "anon", build: 3 }
+  println(anon)
+  println("{anon.major} {anon.build} {anon.label}")
+  println(major(anon))
+  println(build(anon))
+  println(pass(anon).label)
+
+  -- The rest of a record and a spread are anonymous records.
+  let { build: left_out, ...others } = a
+  println(left_out)
+  println(others)
+  println(others.label)
+  let wider = { ...a, patch: 4 }
+  println(wider)
+  println("{wider.major} {wider.patch}")
+  let over = { ...a, build: 30 }
+  println(over)
+  println({ ...a } == { label: "a", major: 1, build: 9 })
+
+  -- A record of a type with parameters, of records, and of a function.
+  let p = Pair { left: a, right: d }
+  println(p.left.label)
+  println(p.right.major)
+  let Pair { left: Ver { build, .. }, right } = p
+  println("{build} {right.label}")
+  let op = Op { apply: { n -> n * 2 }, name: "twice" }
+  println("{op.name} {op.apply(21)}")
+
+  -- Order is the declaration's, `major` first; equal records are one
+  -- element of a set and one key of a map.
+  println(Ver { major: 1, build: 9, label: "z" } < Ver { major: 2, build: 0, label: "a" })
+  println(list.sort([d, a, Ver { major: 1, build: 2, label: "s" }]))
+  println(set.length(set.from_list([a, b, c, d])))
+  let seen = map.set(map.set(#{}, a, "first"), c, "second")
+  println(map.get(seen, b))
+  println(a.hash() == c.hash())
+
+  -- A decoder builds the record its type declares.
+  match json.parse("\{\"label\": \"j\", \"build\": 5, \"major\": 4}", Ver) {
+    Ok(v) -> println("{v} {v.major} {v.build} {v.label}")
+    Err(e) -> println("json: {e}")
+  }
+  match toml.parse("build = 6\nlabel = \"t\"\nmajor = 5", Ver) {
+    Ok(v) -> println("{v} {v.major} {v.build} {v.label}")
+    Err(e) -> println("toml: {e}")
+  }
+  println(json.stringify(a))
+
+  -- A builtin record: built by a builtin, and written as a literal.
+  let day = time.Date { day: 9, year: 2024, month: 3 }
+  println(day)
+  println("{day.year} {day.month} {day.day}")
+  let at = time.DateTime { time: time.Time { ns: 0, hour: 7, second: 5, minute: 30 }, date: day }
+  println(at)
+  println("{at.date.year} {at.time.hour} {at.time.minute}")
+  let time.Date { month, .. } = time.add_days(day, 30)
+  println(month)
+  println(day < time.Date { year: 2024, month: 10, day: 1 })
+}

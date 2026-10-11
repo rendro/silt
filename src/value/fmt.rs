@@ -1,7 +1,107 @@
 use std::fmt;
 
-use super::Value;
+use super::list::Elements;
+use super::{List, Record, TooLong, Value};
 use crate::typeinfo::ty;
+
+/// What the formatters write of a list.
+enum Part<'a> {
+    Item(&'a Value),
+    /// The elements between the third and the last of a list that
+    /// cannot be written out.
+    Gap,
+}
+
+/// The parts of `xs` in the order they are written: its elements. Of a
+/// list that cannot be written out ([`List::writable`]) they are its
+/// first three elements, the gap and its last element: a program is
+/// refused the text of such a list ([`Value::writable`]), and a host
+/// that formats the value all the same gets this.
+fn list_parts(xs: &List, mut write: impl FnMut(Part<'_>) -> fmt::Result) -> fmt::Result {
+    match xs.elements() {
+        Elements::Items(items) => items.iter().try_for_each(|item| write(Part::Item(item))),
+        Elements::Ints(lo, hi) if xs.writable().is_ok() => {
+            (lo..=hi).try_for_each(|n| write(Part::Item(&Value::Int(n))))
+        }
+        Elements::Ints(lo, hi) => {
+            (lo..lo + 3).try_for_each(|n| write(Part::Item(&Value::Int(n))))?;
+            write(Part::Gap)?;
+            write(Part::Item(&Value::Int(hi)))
+        }
+    }
+}
+
+/// `[`, the parts of `xs` as `item` writes them, with `, ` between
+/// them, and `]`.
+fn write_list(
+    f: &mut fmt::Formatter<'_>,
+    xs: &List,
+    mut item: impl FnMut(&Value, &mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str("[")?;
+    let mut first = true;
+    list_parts(xs, |part| {
+        if !std::mem::take(&mut first) {
+            f.write_str(", ")?;
+        }
+        match part {
+            Part::Item(value) => item(value, f),
+            Part::Gap => f.write_str("..."),
+        }
+    })?;
+    f.write_str("]")
+}
+
+impl fmt::Debug for List {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_list(f, self, |item, f| write!(f, "{item:?}"))
+    }
+}
+
+impl Value {
+    /// Whether the value can be written out: `Err` if a list in it
+    /// cannot ([`List::writable`]). Showing a value to a program
+    /// (`println`, interpolation, `io.inspect`) asks this first, and
+    /// the error is the program's.
+    pub fn writable(&self) -> Result<(), TooLong> {
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::List(items) => {
+                    items.writable()?;
+                    if let Elements::Items(items) = items.elements() {
+                        pending.extend(items);
+                    }
+                }
+                Value::Tuple(items) => pending.extend(items.iter()),
+                Value::Variant(variant) => pending.extend(variant.fields()),
+                Value::Set(items) => pending.extend(items.iter()),
+                Value::Map(entries) => {
+                    for (k, v) in entries.iter() {
+                        pending.push(k);
+                        pending.push(v);
+                    }
+                }
+                Value::Record(record) => pending.extend(record.fields()),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for Record {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {{", self.ty().name)?;
+        for (i, (k, v)) in record_fields(self).into_iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{k}: {v:?}")?;
+        }
+        write!(f, "}}")
+    }
+}
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -10,8 +110,7 @@ impl fmt::Debug for Value {
             Value::Float(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "\"{s}\""),
-            Value::List(xs) => f.debug_list().entries(xs.iter()).finish(),
-            Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
+            Value::List(xs) => xs.fmt(f),
             Value::Map(m) => f.debug_map().entries(m.iter()).finish(),
             Value::Set(s) => {
                 write!(f, "#[")?;
@@ -25,22 +124,14 @@ impl fmt::Debug for Value {
             }
             Value::Tuple(vs) => {
                 let mut t = f.debug_tuple("");
-                for v in vs {
+                for v in vs.iter() {
                     t.field(v);
                 }
                 t.finish()
             }
-            Value::Record(ty, fields) => {
-                write!(f, "{} {{", ty.name)?;
-                for (i, (k, v)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{k}: {v:?}")?;
-                }
-                write!(f, "}}")
-            }
-            Value::Variant(name, fields) => {
+            Value::Record(record) => record.fmt(f),
+            Value::Variant(variant) => {
+                let (name, fields) = (variant.name(), variant.fields());
                 if fields.is_empty() {
                     write!(f, "{name}")
                 } else {
@@ -83,10 +174,14 @@ impl Value {
             Value::Bool(b) => format!("{b}"),
             Value::String(s) => format!("\"{s}\""),
             Value::List(xs) => {
-                let items: Vec<String> = xs.iter().map(|v| v.format_silt()).collect();
-                format!("[{}]", items.join(", "))
+                struct Inspected<'a>(&'a List);
+                impl fmt::Display for Inspected<'_> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        write_list(f, self.0, |item, f| f.write_str(&item.format_silt()))
+                    }
+                }
+                Inspected(xs).to_string()
             }
-            Value::Range(lo, hi) => format!("{lo}..{hi}"),
             Value::Map(m) => {
                 let items: Vec<String> = m
                     .iter()
@@ -102,8 +197,10 @@ impl Value {
                 let items: Vec<String> = vs.iter().map(|v| v.format_silt()).collect();
                 format!("({})", items.join(", "))
             }
-            Value::Record(ty, fields) => {
-                let items: Vec<String> = record_fields(ty, fields)
+            Value::Record(record) => {
+                let ty = record.ty();
+                let items: Vec<String> = record_fields(record)
+                    .into_iter()
                     .map(|(k, v)| format!("{k}: {}", v.format_silt()))
                     .collect();
                 // (An anonymous record is written without a name.)
@@ -112,9 +209,10 @@ impl Value {
                     false => format!("{} {{{}}}", ty.name, items.join(", ")),
                 }
             }
-            Value::Variant(name, fields) => {
+            Value::Variant(variant) => {
+                let (name, fields) = (variant.name(), variant.fields());
                 if fields.is_empty() {
-                    name.name().to_string()
+                    name.to_string()
                 } else {
                     let items: Vec<String> = fields.iter().map(|v| v.format_silt()).collect();
                     format!("{name}({})", items.join(", "))
@@ -136,60 +234,12 @@ impl Value {
 }
 
 /// The fields of a record in the order they are written in, in every
-/// text of it: the order the type declares them in; an anonymous
-/// record's, which has no declaration, in name order.
-fn record_fields<'a>(
-    ty: &'a crate::typeinfo::TypeInfo,
-    fields: &'a std::collections::BTreeMap<String, Value>,
-) -> RecordFields<'a> {
-    match &ty.shape {
-        crate::typeinfo::Shape::Record(declared) if !declared.is_empty() => {
-            RecordFields::Declared {
-                declared: declared.iter(),
-                fields,
-                in_step: Some(fields.iter()),
-            }
-        }
-        _ => RecordFields::Named(fields.iter()),
-    }
-}
-
-/// See [`record_fields`].
-enum RecordFields<'a> {
-    Declared {
-        declared: std::slice::Iter<'a, (String, crate::typeinfo::FieldType)>,
-        fields: &'a std::collections::BTreeMap<String, Value>,
-        /// The fields in name order, for as long as the declaration
-        /// has gone in that order too: the next declared field is then
-        /// the next of these, and is not looked up.
-        in_step: Option<std::collections::btree_map::Iter<'a, String, Value>>,
-    },
-    Named(std::collections::btree_map::Iter<'a, String, Value>),
-}
-
-impl<'a> Iterator for RecordFields<'a> {
-    type Item = (&'a str, &'a Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            RecordFields::Declared {
-                declared,
-                fields,
-                in_step,
-            } => loop {
-                let (name, _) = declared.next()?;
-                if let Some(by_name) = in_step {
-                    match by_name.next() {
-                        Some((key, value)) if key == name => return Some((name.as_str(), value)),
-                        _ => *in_step = None,
-                    }
-                }
-                if let Some(value) = fields.get(name.as_str()) {
-                    return Some((name.as_str(), value));
-                }
-            },
-            RecordFields::Named(fields) => fields.next().map(|(name, v)| (name.as_str(), v)),
-        }
+/// text of it: the order the type declares them in; a builtin record's,
+/// and an anonymous record's, which has no declaration, in name order.
+fn record_fields(record: &Record) -> Vec<(&str, &Value)> {
+    match record.ty().is_builtin() {
+        true => record.by_name(),
+        false => record.named().collect(),
     }
 }
 
@@ -295,17 +345,24 @@ impl Value {
             Value::Float(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "{s}"),
-            Value::List(xs) => {
-                write!(f, "[")?;
-                for (i, v) in xs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
+            // The elements that are there are written from this frame:
+            // through `write_list` each list of a deeply nested value
+            // kept a frame of its own beside this one, and a value of
+            // 500,000 levels, which was shown before a list was a
+            // view, overflowed the native stack.
+            Value::List(xs) => match xs.elements() {
+                Elements::Items(items) => {
+                    f.write_str("[")?;
+                    for (i, item) in items.iter().enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        item.show(f, written)?;
                     }
-                    v.show(f, written)?;
+                    f.write_str("]")
                 }
-                write!(f, "]")
-            }
-            Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
+                Elements::Ints(..) => write_list(f, xs, |item, f| item.show(f, written)),
+            },
             Value::Map(m) => {
                 write!(f, "#{{")?;
                 for (i, (k, v)) in m.iter().enumerate() {
@@ -342,18 +399,18 @@ impl Value {
                 }
                 write!(f, ")")
             }
-            Value::Record(ty, fields) => match ty.id {
+            Value::Record(record) => match record.type_id() {
                 ty::DATE => {
-                    let y = val_i64(fields.get("year"));
-                    let m = val_i64(fields.get("month"));
-                    let d = val_i64(fields.get("day"));
+                    let y = val_i64(record.get("year"));
+                    let m = val_i64(record.get("month"));
+                    let d = val_i64(record.get("day"));
                     write!(f, "{y:04}-{m:02}-{d:02}")
                 }
                 ty::TIME => {
-                    let h = val_i64(fields.get("hour"));
-                    let m = val_i64(fields.get("minute"));
-                    let s = val_i64(fields.get("second"));
-                    let ns = val_i64(fields.get("ns"));
+                    let h = val_i64(record.get("hour"));
+                    let m = val_i64(record.get("minute"));
+                    let s = val_i64(record.get("second"));
+                    let ns = val_i64(record.get("ns"));
                     if ns > 0 {
                         write!(f, "{h:02}:{m:02}:{s:02}.{ns:09}")
                     } else {
@@ -361,21 +418,21 @@ impl Value {
                     }
                 }
                 ty::DATE_TIME => {
-                    if let (Some(date), Some(time)) = (fields.get("date"), fields.get("time")) {
+                    if let (Some(date), Some(time)) = (record.get("date"), record.get("time")) {
                         write!(f, "{date}T{time}")
                     } else {
                         write!(f, "DateTime {{}}")
                     }
                 }
-                ty::DURATION => fmt_duration(f, val_i64(fields.get("ns"))),
+                ty::DURATION => fmt_duration(f, val_i64(record.get("ns"))),
                 _ => {
                     // (An anonymous record is written without a name.)
-                    if !ty.is_anon() {
-                        f.write_str(&ty.name)?;
+                    if !record.ty().is_anon() {
+                        f.write_str(&record.ty().name)?;
                         f.write_str(" ")?;
                     }
                     f.write_str("{")?;
-                    for (i, (k, v)) in record_fields(ty, fields).enumerate() {
+                    for (i, (k, v)) in record_fields(record).into_iter().enumerate() {
                         if i > 0 {
                             f.write_str(", ")?;
                         }
@@ -386,13 +443,14 @@ impl Value {
                     f.write_str("}")
                 }
             },
-            Value::Variant(name, fields) => {
+            Value::Variant(variant) => {
                 // Stdlib error variants render via
                 // their `Error::message()` implementation so that
                 // `format!("{e}")` and `e.message()` produce the same
                 // text — the "one way" principle. User enums are
                 // unaffected (the registry only covers stdlib errors).
-                if let Some(msg) = crate::builtins::error_text(name, fields.as_slice()) {
+                let (name, fields) = (variant.name(), variant.fields());
+                if let Some(msg) = crate::builtins::error_text(variant) {
                     return write!(f, "{msg}");
                 }
                 if fields.is_empty() {

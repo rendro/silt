@@ -3,7 +3,7 @@
 //! An error that names the kind of a value names it with
 //! `Value::kind`: a TitleCase name for every `Value` variant, never a
 //! generic word ("value"), an article ("a function") or a lowercase
-//! form ("range"). `Vm::user_facing_type_name` differs from it only
+//! form ("tuple"). `Vm::user_facing_type_name` differs from it only
 //! by four deliberate
 //! aliases (`Record` → record name, `Variant` → parent enum / tag,
 //! `VariantConstructor` / `TypeDescriptor` / `PrimitiveDescriptor` →
@@ -50,7 +50,6 @@ struct AllVariants {
     bool_: Value,
     string: Value,
     list: Value,
-    range: Value,
     map: Value,
     set: Value,
     tuple: Value,
@@ -74,7 +73,7 @@ fn point_type() -> Arc<silt::typeinfo::TypeInfo> {
     silt::typeinfo::TypeInfo::new_record(
         silt::defs::TypeId(silt::defs::DefId(9000)),
         "Point",
-        Vec::new(),
+        vec![("x".to_string(), silt::typeinfo::FieldType::Int)],
     )
 }
 
@@ -93,16 +92,12 @@ fn build_all_variants() -> AllVariants {
     let tcp_listener_handle = TcpListenerHandle::new(1, fresh_listener);
     let tcp_stream_handle = TcpStreamHandle::plain(2, client_stream);
 
-    let mut record_fields = BTreeMap::new();
-    record_fields.insert("x".to_string(), Value::Int(1));
-
     AllVariants {
         int: Value::Int(7),
         float: Value::Float(1.5),
         bool_: Value::Bool(true),
-        string: Value::String("hi".to_string()),
-        list: Value::List(Arc::new(vec![Value::Int(1)])),
-        range: Value::Range(0, 5),
+        string: Value::String("hi".into()),
+        list: Value::list(vec![Value::Int(1)]),
         map: Value::Map(Arc::new({
             let mut m = BTreeMap::new();
             m.insert(Value::String("k".into()), Value::Int(1));
@@ -113,8 +108,8 @@ fn build_all_variants() -> AllVariants {
             s.insert(Value::Int(1));
             s
         })),
-        tuple: Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
-        record: Value::Record(point_type(), Arc::new(record_fields)),
+        tuple: Value::tuple(vec![Value::Int(1), Value::Int(2)]),
+        record: Value::record(point_type(), vec![Value::Int(1)]),
         // A variant names its enum type.
         variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
@@ -124,7 +119,7 @@ fn build_all_variants() -> AllVariants {
         builtin_fn: builtin("println"),
         variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
         type_descriptor: Value::TypeDescriptor(point_type()),
-        primitive_descriptor: Value::PrimitiveDescriptor("Int".to_string()),
+        primitive_descriptor: Value::PrimitiveDescriptor("Int"),
         channel: Value::Channel(Channel::new(0, 0)),
         handle: Value::Handle(Arc::new(TaskHandle::new(0))),
         bytes: Value::Bytes(Arc::new(vec![1, 2, 3])),
@@ -142,7 +137,6 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
     f(&av.bool_, "Bool");
     f(&av.string, "String");
     f(&av.list, "List");
-    f(&av.range, "Range");
     f(&av.map, "Map");
     f(&av.set, "Set");
     f(&av.tuple, "Tuple");
@@ -176,8 +170,8 @@ fn kind_is_titlecase_for_all_value_variants() {
 #[test]
 fn user_facing_type_name_titlecase_aligned_with_kind() {
     // Pre-fix `user_facing_type_name` returned lowercase + indefinite-
-    // article forms ("range", "tuple", "a function", "a channel", ...)
-    // for values whose kind is TitleCase ("Range", "Tuple",
+    // article forms ("tuple", "a function", "a channel", ...)
+    // for values whose kind is TitleCase ("Tuple",
     // "Fn", "Channel", ...). Post-fix the two paths agree byte-for-byte
     // except for four deliberate aliases that carry semantic content:
     //
@@ -204,7 +198,7 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
             "user_facing_type_name regressed to indefinite-article \
              form for {v:?}: {ufn:?}"
         );
-        // No lowercase head (catches "range", "tuple"). The very first
+        // No lowercase head (catches "tuple"). The very first
         // character must be uppercase or a backtick (descriptor form
         // begins with TitleCase head).
         let first = ufn.chars().next().unwrap_or(' ');
@@ -216,8 +210,8 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
         // Match-by-shape: equality with type_name OR a documented
         // deliberate alias: a variant is named by its enum type.
         let ok = match v {
-            Value::Record(ty, _) => ufn == ty.name,
-            Value::Variant(tag, _) => ufn == tag.ty().name,
+            Value::Record(record) => ufn == record.ty().name,
+            Value::Variant(variant) => ufn == variant.ty().name,
             Value::VariantConstructor(tag) => ufn == format!("VariantConstructor `{tag}`"),
             Value::TypeDescriptor(ty) => ufn == format!("TypeDescriptor `{}`", ty.name),
             Value::PrimitiveDescriptor(name) => ufn == format!("PrimitiveDescriptor `{name}`"),

@@ -1,7 +1,6 @@
 //! IO, filesystem and environment builtin functions (`io.*`, `fs.*`,
 //! `env.*`).
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -124,7 +123,7 @@ pub(crate) fn io_error_to_variant(err: &std::io::Error, path: &str) -> Value {
         _ => (bv::IO_UNKNOWN, Some(err.to_string())),
     };
     match arg {
-        Some(a) => Value::variant(variant, vec![Value::String(a)]),
+        Some(a) => Value::variant(variant, vec![Value::String(a.into())]),
         None => Value::variant(variant, vec![]),
     }
 }
@@ -140,7 +139,7 @@ pub(crate) fn io_result_err(err: &std::io::Error, path: &str) -> Value {
 /// for cases where no underlying `std::io::Error` exists (e.g. the
 /// `fs.walk` entry-cap cutoff). Keeps the result type
 /// `Result(T, IoError)` uniform.
-pub(crate) fn io_result_err_unknown<S: Into<String>>(msg: S) -> Value {
+pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
     io_err(Value::variant(
         bv::IO_UNKNOWN,
         vec![Value::String(msg.into())],
@@ -160,7 +159,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("IoInterrupted", []) => "operation interrupted".to_string(),
         ("IoUnexpectedEof", []) => "unexpected end of file".to_string(),
         ("IoWriteZero", []) => "zero-byte write".to_string(),
-        ("IoUnknown", [Value::String(m)]) => m.clone(),
+        ("IoUnknown", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -171,19 +170,22 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
     io_err(Value::variant(
         bv::IO_UNKNOWN,
-        vec![Value::String(failure.text().to_string())],
+        vec![Value::String(failure.text().into())],
     ))
 }
 
 builtins! {
-    fn inspect(x: &Value) -> String {
-        x.format_silt()
+    fn inspect(x: &Value) -> Result<String, VmError> {
+        x.writable()?;
+        Ok(x.format_silt())
     }
 
     fn read_file(vm, path: &str) -> Result<Step, VmError> {
         let path = path.to_string();
         vm.io("io.read_file", io_unknown_err, move || {
-            result(std::fs::read_to_string(&path), &path, Value::String)
+            result(std::fs::read_to_string(&path), &path, |text| {
+                Value::String(text.into())
+            })
         })
     }
 
@@ -202,7 +204,7 @@ builtins! {
                 // match-against-Err loops terminate cleanly instead of
                 // spinning on "".
                 Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
-                Ok(_) => fs_ok(Value::String(line.trim_end().to_string())),
+                Ok(_) => fs_ok(Value::String(line.trim_end().into())),
                 Err(e) => io_result_err(&e, ""),
             }
         })
@@ -211,7 +213,8 @@ builtins! {
     // Only the program args explicitly forwarded by the CLI past a `--`
     // separator (`silt run script.silt -- foo bar` → `["foo", "bar"]`).
     fn args() -> Vec<Value> {
-        program_args().into_iter().map(Value::String).collect()
+        let args = program_args().into_iter();
+        args.map(|arg| Value::String(arg.into())).collect()
     }
 }
 
@@ -238,11 +241,11 @@ pub(crate) mod fs {
             let names = std::fs::read_dir(path).and_then(|entries| {
                 let names = entries.map(|entry| {
                     let name = entry?.file_name();
-                    Ok(Value::String(name.to_string_lossy().into_owned()))
+                    Ok(Value::String(name.to_string_lossy().into_owned().into()))
                 });
                 names.collect::<std::io::Result<Vec<Value>>>()
             });
-            result(names, path, |names| Value::List(Arc::new(names)))
+            result(names, path, Value::list)
         }
 
         fn mkdir(path: &str) -> Value {
@@ -305,7 +308,7 @@ pub(crate) mod fs {
                 // statx(2) on Linux, and not exposed at all on some
                 // Unixes. Both map to Option(DateTime) so callers can
                 // pattern-match rather than probe for sentinels.
-                let fields = [
+                Value::builtin_record(ty::FILE_STAT, [
                     ("size", Value::Int(md.len() as i64)),
                     ("is_file", Value::Bool(md.is_file())),
                     ("is_dir", Value::Bool(md.is_dir())),
@@ -315,10 +318,7 @@ pub(crate) mod fs {
                     ("mode", Value::Int(mode)),
                     ("accessed", system_time_to_option_datetime(md.accessed())),
                     ("created", system_time_to_option_datetime(md.created())),
-                ];
-                let fields: BTreeMap<String, Value> =
-                    fields.into_iter().map(|(name, value)| (name.into(), value)).collect();
-                Value::builtin_record(ty::FILE_STAT, fields)
+                ])
             })
         }
 
@@ -329,7 +329,7 @@ pub(crate) mod fs {
 
         fn read_link(path: &str) -> Value {
             result(std::fs::read_link(path), path, |target| {
-                Value::String(target.to_string_lossy().into_owned())
+                Value::String(target.to_string_lossy().into_owned().into())
             })
         }
 
@@ -369,9 +369,9 @@ pub(crate) mod fs {
                 let path = entry.path();
                 let absolute = std::fs::canonicalize(path);
                 let shown = absolute.as_deref().unwrap_or(path).to_string_lossy();
-                out.push(Value::String(shown.into_owned()));
+                out.push(Value::String(shown.into_owned().into()));
             }
-            fs_ok(Value::List(Arc::new(out)))
+            fs_ok(Value::list(out))
         }
 
         fn glob(pattern: &str) -> Value {
@@ -383,7 +383,7 @@ pub(crate) mod fs {
                 Err(e) => {
                     return io_err(Value::variant(
                         bv::IO_INVALID_INPUT,
-                        vec![Value::String(e.to_string())],
+                        vec![Value::String(e.to_string().into())],
                     ));
                 }
             };
@@ -395,12 +395,12 @@ pub(crate) mod fs {
                     ));
                 }
                 match entry {
-                    Ok(path) => out.push(Value::String(path.to_string_lossy().into_owned())),
+                    Ok(path) => out.push(Value::String(path.to_string_lossy().into_owned().into())),
                     // glob's per-entry error wraps std::io::Error.
                     Err(e) => return io_result_err(e.error(), pattern),
                 }
             }
-            fs_ok(Value::List(Arc::new(out)))
+            fs_ok(Value::list(out))
         }
     }
 }
@@ -437,7 +437,8 @@ pub(crate) mod env {
 
     builtins! {
         fn get(key: &str) -> Option<Value> {
-            std::env::var(key).ok().map(Value::String)
+            let value = std::env::var(key).ok();
+            value.map(|value| Value::String(value.into()))
         }
 
         fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
@@ -470,7 +471,7 @@ pub(crate) mod env {
         // becomes a `(String, String)` tuple.
         fn vars() -> Vec<Value> {
             std::env::vars()
-                .map(|(k, v)| Value::Tuple(vec![Value::String(k), Value::String(v)]))
+                .map(|(k, v)| Value::tuple(vec![Value::String(k.into()), Value::String(v.into())]))
                 .collect()
         }
     }

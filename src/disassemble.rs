@@ -108,6 +108,8 @@ fn disassemble_instruction(
         | Instr::DestructVariant { index: n }
         | Instr::DestructList { index: n }
         | Instr::DestructListRest { start: n }
+        | Instr::GetField { index: n }
+        | Instr::DestructRecordField { index: n }
         | Instr::GetLocal { slot: n }
         | Instr::SetLocal { slot: n }
         | Instr::Slide { slot: n }
@@ -129,8 +131,8 @@ fn disassemble_instruction(
 
         Instr::Constant { k }
         | Instr::TestEqual { k }
-        | Instr::GetField { name: k }
-        | Instr::DestructRecordField { name: k }
+        | Instr::GetFieldNamed { name: k }
+        | Instr::DestructRecordFieldNamed { name: k }
         | Instr::TestRecordTag { ty: k }
         | Instr::TestMapHasKey { key: k }
         | Instr::DestructMapValue { key: k } => with_constant(k),

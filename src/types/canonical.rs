@@ -687,24 +687,21 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
 /// `Todo.decode(...)` route to impls of `Int` / `Todo`.
 ///
 /// The mapping mirrors [`canonical_name`] applied to each `Value`
-/// variant's corresponding [`Type`] — in particular `Value::Range(..)`
-/// is a `List`, because the type system collapses `Range(t)` to
-/// `List(t)` and the compiler keys `for Range(a)` impls under `List`.
-/// Every function-shaped value (a closure, a builtin, a host function, a
+/// variant's corresponding [`Type`]. Every function-shaped value (a closure, a builtin, a host function, a
 /// variant constructor) is an `Fn`: the typechecker types each as
 /// `Type::Fun(..)`, so a `trait T for Fn` impl serves them all.
 pub fn dispatch_type_for_value(val: &Value) -> TypeId {
     let builtin = |ty: Type| TypeRef::builtin(&canonical_name(&ty)).id;
     match val {
-        Value::Variant(tag, _) => tag.type_id(),
-        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.id,
+        Value::Variant(variant) => variant.type_id(),
+        Value::Record(record) => record.type_id(),
+        Value::TypeDescriptor(ty) => ty.id,
         Value::PrimitiveDescriptor(name) => TypeRef::builtin(name).id,
         Value::Int(_) => builtin(Type::Int),
         Value::Float(_) => builtin(Type::Float),
         Value::Bool(_) => builtin(Type::Bool),
         Value::String(_) => builtin(Type::String),
         Value::List(_) => builtin(Type::List(Box::new(Type::Unit))),
-        Value::Range(..) => builtin(Type::Range(Box::new(Type::Unit))),
         Value::Map(_) => builtin(Type::Map(Box::new(Type::Unit), Box::new(Type::Unit))),
         Value::Set(_) => builtin(Type::Set(Box::new(Type::Unit))),
         Value::Tuple(_) => builtin(Type::Tuple(vec![])),
@@ -725,8 +722,9 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
 /// show it.
 pub fn dispatch_type_name(val: &Value) -> String {
     match val {
-        Value::Variant(tag, _) => tag.ty().name.clone(),
-        Value::Record(ty, _) | Value::TypeDescriptor(ty) => ty.name.clone(),
+        Value::Variant(variant) => variant.ty().name.clone(),
+        Value::Record(record) => record.ty().name.clone(),
+        Value::TypeDescriptor(ty) => ty.name.clone(),
         _ => crate::typeinfo::builtin_type(dispatch_type_for_value(val))
             .name
             .clone(),
@@ -1178,17 +1176,8 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_type_for_value_range_is_list() {
-        // The whole-stack invariant: a Range receiver dispatches under
-        // the type the compiler keys `for List(a)` impls by.
-        let v = Value::Range(1, 5);
-        assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
-        assert_eq!(dispatch_type_name(&v), "List");
-    }
-
-    #[test]
     fn dispatch_type_for_value_list_is_list() {
-        let v = Value::List(std::sync::Arc::new(vec![]));
+        let v = Value::list(vec![]);
         assert_eq!(dispatch_type_for_value(&v), builtin_id("List"));
     }
 
@@ -1204,7 +1193,7 @@ mod tests {
             builtin_id("Bool")
         );
         assert_eq!(
-            dispatch_type_for_value(&Value::String(String::new())),
+            dispatch_type_for_value(&Value::String(String::new().into())),
             builtin_id("String")
         );
         assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("Unit"));
@@ -1212,7 +1201,14 @@ mod tests {
 
     #[test]
     fn dispatch_type_for_value_record_uses_carried_type() {
-        let v = Value::builtin_record(crate::typeinfo::ty::DATE, Default::default());
+        let v = Value::builtin_record(
+            crate::typeinfo::ty::DATE,
+            [
+                ("year", Value::Int(2024)),
+                ("month", Value::Int(1)),
+                ("day", Value::Int(2)),
+            ],
+        );
         assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::DATE);
         assert_eq!(dispatch_type_name(&v), "Date");
     }
@@ -1226,7 +1222,7 @@ mod tests {
             crate::typeinfo::ty::WEEKDAY
         );
         assert_eq!(
-            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int".to_string())),
+            dispatch_type_for_value(&Value::PrimitiveDescriptor("Int")),
             builtin_id("Int")
         );
     }

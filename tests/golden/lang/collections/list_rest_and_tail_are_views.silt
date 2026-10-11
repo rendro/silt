@@ -1,0 +1,79 @@
+-- `[h, ..t]`, `list.tail`, `list.drop` and `list.take` give a list that
+-- shares its elements with the list it came from: taking one costs the
+-- same whatever the length, so a walk of 40,000 elements by head and
+-- rest is 40,000 steps and not 800,000,000 element copies (it took a
+-- minute, in a debug build, when each rest was a copy).
+import list
+import map
+import set
+
+fn sum(xs: List(Int), acc: Int) -> Int {
+  match xs {
+    [] -> acc
+    [h, ..t] -> sum(t, acc + h)
+  }
+}
+
+fn count_by_tail(xs: List(Int), n: Int) -> Int {
+  match list.head(xs) {
+    None -> n
+    Some(_) -> count_by_tail(list.tail(xs), n + 1)
+  }
+}
+
+fn count_by_drop(xs: List(Int), n: Int) -> Int {
+  match xs {
+    [] -> n
+    _ -> count_by_drop(list.drop(xs, 1), n + 1)
+  }
+}
+
+fn pairs(xs: List(Int), acc: Int) -> Int {
+  match xs {
+    [a, b, ..rest] -> pairs(rest, acc + a * b)
+    _ -> acc
+  }
+}
+
+fn main() {
+  let xs = list.map(1..40000) { x -> x * 2 }
+  println(sum(xs, 0))
+  println(count_by_tail(xs, 0))
+  println(count_by_drop(xs, 0))
+  println(pairs(xs, 0))
+
+  -- A part of a list is a list like any other.
+  let ys = [10, 20, 30, 40, 50]
+  let rest = match ys {
+    [_, ..rest] -> rest
+    _ -> []
+  }
+  let middle = list.take(list.drop(ys, 1), 3)
+  println(rest)
+  println(middle)
+  println(list.tail(middle))
+  println(list.tail(list.tail(list.tail(list.tail(middle)))))
+  println(list.take(ys, 0))
+  println(list.take(ys, 99))
+  println(list.drop(ys, 99))
+  println(list.length(rest))
+  println(list.last(middle))
+  println(list.get(middle, 2))
+  println(list.get(middle, 3))
+  println(list.reverse(middle))
+  println(list.append(middle, 99))
+  println(list.concat(middle, rest))
+  println([0, ..middle, ..rest])
+  println(list.map(middle) { x -> x + 1 })
+  println(list.fold(rest, 0) { acc, x -> acc + x })
+
+  -- It is equal to, ordered with, and hashed as the list of the same
+  -- elements made any other way; the list it came from is as it was.
+  println(middle == [20, 30, 40])
+  println(rest == list.drop(ys, 1))
+  println(middle < rest)
+  println(list.sort([rest, middle, [20, 30]]))
+  println(set.length(#[middle, [20, 30, 40], list.take(rest, 3)]))
+  println(map.get(#{[20, 30, 40]: "found"}, middle))
+  println(ys)
+}

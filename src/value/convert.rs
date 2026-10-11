@@ -1,7 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::{Value, checked_range_len};
+use super::Value;
+use super::list::Elements;
 use crate::typeinfo::bv;
 use crate::vm::VmError;
 
@@ -52,27 +53,30 @@ impl HostShape {
             | (HostShape::String, Value::String(_))
             | (HostShape::Bytes, Value::Bytes(_))
             | (HostShape::Unit, Value::Unit) => true,
-            (HostShape::List(item), Value::List(items)) => items.iter().all(|v| item.admits(v)),
-            (HostShape::List(item), Value::Range(..)) => item.admits(&Value::Int(0)),
+            (HostShape::List(item), Value::List(items)) => match items.elements() {
+                Elements::Items(items) => items.iter().all(|v| item.admits(v)),
+                Elements::Ints(lo, _) => item.admits(&Value::Int(lo)),
+            },
             (HostShape::Set(item), Value::Set(items)) => items.iter().all(|v| item.admits(v)),
             (HostShape::Map(k, v), Value::Map(entries)) => entries
                 .iter()
                 .all(|(key, value)| k.admits(key) && v.admits(value)),
-            (HostShape::Option(item), Value::Variant(tag, payload)) => match payload.as_slice() {
-                [v] if tag.is(bv::SOME) => item.admits(v),
-                [] => tag.is(bv::NONE),
+            (HostShape::Option(item), Value::Variant(variant)) => match variant.fields() {
+                [v] if variant.is(bv::SOME) => item.admits(v),
+                [] => variant.is(bv::NONE),
                 _ => false,
             },
-            (HostShape::Result(ok, err), Value::Variant(tag, payload)) => {
-                match payload.as_slice() {
-                    [v] if tag.is(bv::OK) => ok.admits(v),
-                    [v] if tag.is(bv::ERR) => err.admits(v),
-                    _ => false,
-                }
-            }
+            (HostShape::Result(ok, err), Value::Variant(variant)) => match variant.fields() {
+                [v] if variant.is(bv::OK) => ok.admits(v),
+                [v] if variant.is(bv::ERR) => err.admits(v),
+                _ => false,
+            },
             (HostShape::Tuple(items), Value::Tuple(values)) => {
                 items.len() == values.len()
-                    && items.iter().zip(values).all(|(item, v)| item.admits(v))
+                    && items
+                        .iter()
+                        .zip(values.iter())
+                        .all(|(item, v)| item.admits(v))
             }
             _ => false,
         }
@@ -198,7 +202,7 @@ impl IntoValue for bool {
 impl FromValue for String {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
-            Value::String(s) => Ok(s.clone()),
+            Value::String(s) => Ok(s.to_string()),
             other => Err(format!("expected String, got {}", other.kind())),
         }
     }
@@ -206,13 +210,13 @@ impl FromValue for String {
 
 impl IntoValue for String {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::String(self))
+        Ok(Value::String(self.into()))
     }
 }
 
 impl IntoValue for &str {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::String(self.to_string()))
+        Ok(Value::String(self.into()))
     }
 }
 
@@ -234,11 +238,7 @@ impl IntoValue for () {
 impl FromValue for Vec<Value> {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
-            Value::List(xs) => Ok(xs.as_ref().clone()),
-            Value::Range(lo, hi) => {
-                checked_range_len(*lo, *hi)?;
-                Ok((*lo..=*hi).map(Value::Int).collect())
-            }
+            Value::List(xs) => xs.to_vec().map_err(|too_long| too_long.to_string()),
             other => Err(format!("expected List, got {}", other.kind())),
         }
     }
@@ -246,7 +246,7 @@ impl FromValue for Vec<Value> {
 
 impl IntoValue for Vec<Value> {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::List(Arc::new(self)))
+        Ok(Value::list(self))
     }
 }
 
@@ -263,7 +263,7 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
             Ok(v) => Value::variant(bv::OK, vec![v.into_value()?]),
-            Err(e) => Value::variant(bv::ERR, vec![Value::String(e)]),
+            Err(e) => Value::variant(bv::ERR, vec![Value::String(e.into())]),
         })
     }
 }

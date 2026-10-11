@@ -1,15 +1,12 @@
 //! The `time.*` builtin functions.
 
-use std::collections::BTreeMap;
-
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::typed::{Arg, builtins};
-use crate::bytecode::record_type_matches;
 use crate::defs::TypeId;
 use crate::runtime::sync::Wait;
 use crate::typeinfo::{bv, ty};
-use crate::value::Value;
+use crate::value::{Record, Value};
 use crate::vm::{Step, VmError};
 
 /// Compute (year, month, day) from Unix epoch seconds.
@@ -51,9 +48,9 @@ fn days_in(year: i32, month: u32) -> u32 {
 fn time_parse_err(err: chrono::ParseError) -> Value {
     let msg = err.to_string();
     let inner = if msg.contains("out of range") {
-        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg)])
+        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg.into())])
     } else {
-        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg)])
+        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg.into())])
     };
     Value::variant(bv::ERR, vec![inner])
 }
@@ -65,7 +62,7 @@ fn time_out_of_range_err(msg: String) -> Value {
         bv::ERR,
         vec![Value::variant(
             bv::TIME_OUT_OF_RANGE,
-            vec![Value::String(msg)],
+            vec![Value::String(msg.into())],
         )],
     )
 }
@@ -84,59 +81,62 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 
 /// Build a Silt `Date` record Value from chrono NaiveDate.
 pub(crate) fn make_date(d: NaiveDate) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("year".into(), Value::Int(d.year() as i64));
-    fields.insert("month".into(), Value::Int(d.month() as i64));
-    fields.insert("day".into(), Value::Int(d.day() as i64));
-    Value::builtin_record(ty::DATE, fields)
+    Value::builtin_record(
+        ty::DATE,
+        [
+            ("year", Value::Int(d.year() as i64)),
+            ("month", Value::Int(d.month() as i64)),
+            ("day", Value::Int(d.day() as i64)),
+        ],
+    )
 }
 
 /// Build a Silt `Time` record Value from chrono NaiveTime.
 pub(crate) fn make_time(t: NaiveTime) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("hour".into(), Value::Int(t.hour() as i64));
-    fields.insert("minute".into(), Value::Int(t.minute() as i64));
-    fields.insert("second".into(), Value::Int(t.second() as i64));
-    fields.insert("ns".into(), Value::Int(t.nanosecond() as i64));
-    Value::builtin_record(ty::TIME, fields)
+    Value::builtin_record(
+        ty::TIME,
+        [
+            ("hour", Value::Int(t.hour() as i64)),
+            ("minute", Value::Int(t.minute() as i64)),
+            ("second", Value::Int(t.second() as i64)),
+            ("ns", Value::Int(t.nanosecond() as i64)),
+        ],
+    )
 }
 
 /// Build a Silt `DateTime` record Value from chrono NaiveDateTime.
 pub(crate) fn make_datetime(dt: NaiveDateTime) -> Value {
-    let date_val = make_date(dt.date());
-    let time_val = make_time(dt.time());
-    let mut fields = BTreeMap::new();
-    fields.insert("date".into(), date_val);
-    fields.insert("time".into(), time_val);
-    Value::builtin_record(ty::DATE_TIME, fields)
+    Value::builtin_record(
+        ty::DATE_TIME,
+        [
+            ("date", make_date(dt.date())),
+            ("time", make_time(dt.time())),
+        ],
+    )
 }
 
 /// Build a Silt `Instant` record Value.
 fn make_instant(epoch_ns: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("epoch_ns".into(), Value::Int(epoch_ns));
-    Value::builtin_record(ty::INSTANT, fields)
+    Value::builtin_record(ty::INSTANT, [("epoch_ns", Value::Int(epoch_ns))])
 }
 
 /// Build a Silt `Duration` record Value.
 fn make_duration(ns: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("ns".into(), Value::Int(ns));
-    Value::builtin_record(ty::DURATION, fields)
+    Value::builtin_record(ty::DURATION, [("ns", Value::Int(ns))])
 }
 
 // ── The arguments ───────────────────────────────────────────────────
 
-/// The fields of `value`, if it is a record of the builtin type `ty`.
-fn record(value: &Value, ty: TypeId) -> Option<&BTreeMap<String, Value>> {
+/// `value`, if it is a record of the builtin type `ty`.
+fn record(value: &Value, ty: TypeId) -> Option<&Record> {
     match value {
-        Value::Record(name, fields) if record_type_matches(name, ty) => Some(fields),
+        Value::Record(record) if record.type_id() == ty => Some(record),
         _ => None,
     }
 }
 
 /// The `Int` field `name` of a record.
-fn int(fields: &BTreeMap<String, Value>, name: &str) -> Option<i64> {
+fn int(fields: &Record, name: &str) -> Option<i64> {
     i64::take(fields.get(name)?)
 }
 
@@ -709,5 +709,41 @@ builtins! {
 
     fn is_leap_year(year: i64) -> Result<bool, VmError> {
         Ok(leap(as_i32("time.is_leap_year", "year", year)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The records the module builds have the fields of their types,
+    /// in the types' order (`Value::builtin_record` says so in a debug
+    /// build), and are read back as what they were built from.
+    #[test]
+    fn the_records_of_the_module_have_their_types_fields() {
+        let day = NaiveDate::from_ymd_opt(2024, 3, 9).expect("a date");
+        let clock = NaiveTime::from_hms_nano_opt(7, 30, 5, 42).expect("a time");
+        let date = make_date(day);
+        let time = make_time(clock);
+        let both = make_datetime(day.and_time(clock));
+        assert_eq!(date.to_string(), "2024-03-09");
+        assert_eq!(time.to_string(), "07:30:05.000000042");
+        assert_eq!(both.to_string(), "2024-03-09T07:30:05.000000042");
+        assert_eq!(make_instant(7).to_string(), "Instant {epoch_ns: 7}");
+        assert_eq!(make_duration(1_500_000_000).to_string(), "1.500s");
+
+        let read = Date::take(&date).expect("a Date");
+        assert_eq!((read.year, read.month, read.day), (2024, 3, 9));
+        let read = Time::take(&time).expect("a Time");
+        assert_eq!(
+            (read.hour, read.minute, read.second, read.ns),
+            (7, 30, 5, 42)
+        );
+        let Value::Record(record) = &both else {
+            panic!("a record");
+        };
+        assert_eq!(record.fields(), [date, time]);
+        // (A record of another type is none of these.)
+        assert!(Date::take(&both).is_none());
     }
 }

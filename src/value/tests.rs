@@ -11,20 +11,37 @@ fn hash_of(v: &Value) -> u64 {
 }
 
 fn make_date(year: i64, month: i64, day: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("year".to_string(), Value::Int(year));
-    fields.insert("month".to_string(), Value::Int(month));
-    fields.insert("day".to_string(), Value::Int(day));
-    Value::builtin_record(ty::DATE, fields)
+    Value::builtin_record(
+        ty::DATE,
+        [
+            ("year", Value::Int(year)),
+            ("month", Value::Int(month)),
+            ("day", Value::Int(day)),
+        ],
+    )
 }
 
 fn make_time(hour: i64, minute: i64, second: i64, ns: i64) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("hour".to_string(), Value::Int(hour));
-    fields.insert("minute".to_string(), Value::Int(minute));
-    fields.insert("second".to_string(), Value::Int(second));
-    fields.insert("ns".to_string(), Value::Int(ns));
-    Value::builtin_record(ty::TIME, fields)
+    Value::builtin_record(
+        ty::TIME,
+        [
+            ("hour", Value::Int(hour)),
+            ("minute", Value::Int(minute)),
+            ("second", Value::Int(second)),
+            ("ns", Value::Int(ns)),
+        ],
+    )
+}
+
+/// The record type `name` with the id `id` and the `Int` fields
+/// `fields`.
+fn record_type(id: u32, name: &str, fields: &[&str]) -> Arc<TypeInfo> {
+    use crate::defs::{DefId, TypeId};
+    use crate::typeinfo::FieldType;
+    let fields = fields
+        .iter()
+        .map(|field| (field.to_string(), FieldType::Int));
+    TypeInfo::new_record(TypeId(DefId(id)), name, fields.collect())
 }
 
 // ── Hash/Eq consistency ────────────────────────────────────────
@@ -55,8 +72,8 @@ fn hash_eq_string_values() {
 
 #[test]
 fn hash_eq_list_values() {
-    let a = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]));
-    let b = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]));
+    let a = Value::list(vec![Value::Int(1), Value::Int(2)]);
+    let b = Value::list(vec![Value::Int(1), Value::Int(2)]);
     assert_eq!(a, b);
     assert_eq!(hash_of(&a), hash_of(&b));
 }
@@ -81,17 +98,17 @@ fn hash_eq_variant_values() {
 
 #[test]
 fn empty_list_eq() {
-    let a = Value::List(Arc::new(vec![]));
-    let b = Value::List(Arc::new(vec![]));
+    let a = Value::list(vec![]);
+    let b = Value::list(vec![]);
     assert_eq!(a, b);
 }
 
 #[test]
 fn nested_list_eq() {
-    let inner1 = Value::List(Arc::new(vec![Value::Int(1)]));
-    let inner2 = Value::List(Arc::new(vec![Value::Int(1)]));
-    let a = Value::List(Arc::new(vec![inner1]));
-    let b = Value::List(Arc::new(vec![inner2]));
+    let inner1 = Value::list(vec![Value::Int(1)]);
+    let inner2 = Value::list(vec![Value::Int(1)]);
+    let a = Value::list(vec![inner1]);
+    let b = Value::list(vec![inner2]);
     assert_eq!(a, b);
 }
 
@@ -109,15 +126,15 @@ fn unit_eq() {
 
 #[test]
 fn tuple_eq() {
-    let a = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
-    let b = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let a = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let b = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
     assert_eq!(a, b);
 }
 
 #[test]
 fn tuple_neq_different_lengths() {
-    let a = Value::Tuple(vec![Value::Int(1)]);
-    let b = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
+    let a = Value::tuple(vec![Value::Int(1)]);
+    let b = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
     assert_ne!(a, b);
 }
 
@@ -217,7 +234,7 @@ fn variants_of_one_name_in_two_enums_stay_apart() {
     let a = TypeInfo::new_enum(TypeId(DefId(9000)), "A", &[("Red", 0), ("Blue", 0)]);
     let b = TypeInfo::new_enum(TypeId(DefId(9001)), "B", &[("Blue", 0), ("Red", 0)]);
     let value = |ty: &Arc<TypeInfo>, name: &str| {
-        Value::Variant(Tag::named(ty, name).expect("a variant"), vec![])
+        Value::variant(Tag::named(ty, name).expect("a variant"), vec![])
     };
     assert!(value(&a, "Red") < value(&a, "Blue"));
     assert!(value(&b, "Blue") < value(&b, "Red"));
@@ -225,15 +242,258 @@ fn variants_of_one_name_in_two_enums_stay_apart() {
     assert_eq!(hash_of(&value(&a, "Red")), hash_of(&value(&a, "Red")));
 }
 
+/// A variant without fields is its type, counted once more: nothing
+/// is made for it. A variant with fields is made once, and a clone of
+/// it has the same fields, not a copy of them.
+#[test]
+fn a_variant_is_shared_not_copied() {
+    use crate::defs::{DefId, TypeId};
+    let ty = TypeInfo::new_enum(TypeId(DefId(9003)), "Chain", &[("End", 0), ("Link", 2)]);
+    let tag = |name: &str| Tag::named(&ty, name).expect("a variant");
+    let held = Arc::strong_count(&ty);
+
+    let end = Value::variant(tag("End"), vec![]);
+    let ends = vec![end.clone(); 3];
+    assert_eq!(Arc::strong_count(&ty), held + 4);
+    let Value::Variant(variant) = &end else {
+        panic!("a variant");
+    };
+    assert_eq!((variant.name(), variant.ordinal()), ("End", 0));
+    assert!(variant.fields().is_empty());
+    assert!(Arc::ptr_eq(variant.ty(), &ty));
+    drop(ends);
+
+    let link = Value::variant(tag("Link"), vec![Value::Int(1), end.clone()]);
+    let copy = link.clone();
+    let (Value::Variant(first), Value::Variant(second)) = (&link, &copy) else {
+        panic!("two variants");
+    };
+    assert_eq!((first.name(), first.ordinal()), ("Link", 1));
+    assert_eq!(first.fields(), [Value::Int(1), end.clone()]);
+    assert!(std::ptr::eq(first.fields(), second.fields()));
+    assert!(Arc::ptr_eq(first.ty(), &ty) && first.has_tag(&tag("Link")));
+    assert_eq!(link, copy);
+    assert_eq!(hash_of(&link), hash_of(&copy));
+
+    drop((end, link, copy));
+    assert_eq!(Arc::strong_count(&ty), held);
+}
+
+/// A clone of a string or of a tuple is the same text and the same
+/// items, counted once more.
+#[test]
+fn a_string_and_a_tuple_are_shared_not_copied() {
+    let text = Value::String("silt".repeat(1000).into());
+    let tuple = Value::tuple(vec![text.clone(), Value::Int(1)]);
+    let (text_again, tuple_again) = (text.clone(), tuple.clone());
+    let (Value::String(a), Value::String(b)) = (&text, &text_again) else {
+        panic!("two strings");
+    };
+    assert!(Arc::ptr_eq(a, b));
+    assert_eq!(Arc::strong_count(a), 3, "the two names' and the tuple's");
+    let (Value::Tuple(a), Value::Tuple(b)) = (&tuple, &tuple_again) else {
+        panic!("two tuples");
+    };
+    assert!(Arc::ptr_eq(a, b));
+    assert_eq!(a[..], [text.clone(), Value::Int(1)]);
+}
+
+/// A record holds its fields in the order its type declares them,
+/// however a literal writes them; a field is found by its name, and a
+/// clone of the record has the same fields, not a copy of them.
+#[test]
+fn a_record_holds_its_fields_in_declaration_order() {
+    let ty = record_type(9004, "Ver", &["major", "build", "label"]);
+    let values = vec![Value::Int(7), Value::Int(1), Value::Int(9)];
+    let written = Record::written(ty.clone(), ["label", "major", "build"].into_iter(), values)
+        .expect("the type's fields");
+    assert_eq!(
+        written.fields(),
+        [Value::Int(1), Value::Int(9), Value::Int(7)]
+    );
+    let names: Vec<&str> = written.named().map(|(name, _)| name).collect();
+    assert_eq!(names, ["major", "build", "label"]);
+    assert_eq!(written.get("build"), Some(&Value::Int(9)));
+    assert_eq!(written.get("patch"), None);
+    assert!(Arc::ptr_eq(written.ty(), &ty));
+    let record = Value::Record(written.clone());
+    assert_eq!(
+        record,
+        Value::record(
+            ty.clone(),
+            vec![Value::Int(1), Value::Int(9), Value::Int(7)]
+        )
+    );
+    assert_eq!(format!("{record}"), "Ver {major: 1, build: 9, label: 7}");
+    assert!(std::ptr::eq(written.clone().fields(), written.fields()));
+
+    // Not the type's fields: one missing, one too many, one twice.
+    let two = || vec![Value::Int(1), Value::Int(2)];
+    let three = || vec![Value::Int(1), Value::Int(2), Value::Int(3)];
+    assert!(Record::written(ty.clone(), ["major", "build"].into_iter(), two()).is_none());
+    assert!(
+        Record::written(ty.clone(), ["major", "build", "patch"].into_iter(), three()).is_none()
+    );
+    assert!(
+        Record::written(ty.clone(), ["major", "build", "build"].into_iter(), three()).is_none()
+    );
+
+    // Order is the declaration's: `major` first, whatever the names'.
+    let ver = |major, build| {
+        Value::record(
+            ty.clone(),
+            vec![Value::Int(major), Value::Int(build), Value::Int(0)],
+        )
+    };
+    assert!(ver(1, 9) < ver(2, 0));
+}
+
+/// An update of fields a record has replaces them and keeps the type;
+/// the one holder of a record updates it where it is.
+#[test]
+fn a_record_update_replaces_fields_by_name() {
+    let ty = record_type(9005, "Pt", &["y", "x"]);
+    let record = Record::written(
+        ty.clone(),
+        ["y", "x"].into_iter(),
+        vec![Value::Int(1), Value::Int(2)],
+    )
+    .expect("the type's fields");
+    let kept = record.clone();
+    let updated = record
+        .updated(["x"].into_iter(), vec![Value::Int(5)])
+        .expect("a field of the record");
+    assert_eq!(updated.fields(), [Value::Int(1), Value::Int(5)]);
+    assert_eq!(kept.fields(), [Value::Int(1), Value::Int(2)]);
+    assert!(Arc::ptr_eq(updated.ty(), &ty));
+
+    let at = updated.fields().as_ptr();
+    let again = updated
+        .updated(["y", "x"].into_iter(), vec![Value::Int(8), Value::Int(9)])
+        .expect("fields of the record");
+    assert_eq!(again.fields(), [Value::Int(8), Value::Int(9)]);
+    assert_eq!(
+        again.fields().as_ptr(),
+        at,
+        "no other holder: updated in place"
+    );
+
+    // A declared record has the fields of its type and no other.
+    assert!(
+        again
+            .updated(["z"].into_iter(), vec![Value::Int(0)])
+            .is_none()
+    );
+}
+
+/// Anonymous records of one set of field names have one type, whose
+/// fields are in name order; a field added to one makes a record of
+/// the larger set, and the rest of a record is an anonymous record.
+#[test]
+fn anonymous_records_of_one_set_of_names_share_a_type() {
+    let fields = |record: &Value| -> Vec<(String, Value)> {
+        let Value::Record(record) = record else {
+            panic!("a record");
+        };
+        let named = record.named();
+        named
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect()
+    };
+    let ty = |record: &Value| match record {
+        Value::Record(record) => record.ty().clone(),
+        _ => panic!("a record"),
+    };
+    let a = Value::anon_record([("y", Value::Int(2)), ("x", Value::Int(1))]);
+    let b = Value::anon_record([("x", Value::Int(1)), ("y", Value::Int(2))]);
+    assert!(Arc::ptr_eq(&ty(&a), &ty(&b)));
+    assert!(ty(&a).is_anon());
+    assert_eq!(
+        fields(&a),
+        [
+            ("x".to_string(), Value::Int(1)),
+            ("y".to_string(), Value::Int(2))
+        ]
+    );
+    assert_eq!(a, b);
+    assert_eq!(hash_of(&a), hash_of(&b));
+    assert_eq!(format!("{a}"), "{x: 1, y: 2}");
+
+    let other = Value::anon_record([("x", Value::Int(1)), ("z", Value::Int(2))]);
+    assert!(!Arc::ptr_eq(&ty(&a), &ty(&other)));
+    assert_ne!(a, other);
+    let none = Value::anon_record([]);
+    assert!(Arc::ptr_eq(
+        &ty(&none),
+        crate::typeinfo::builtin_type(ty::ANON_RECORD)
+    ));
+    assert_eq!(format!("{none}"), "{}");
+
+    // A spread's written fields: one the record has is replaced, one
+    // it has not is added.
+    let (Value::Record(base), Value::Record(wider)) = (&a, &other) else {
+        panic!("two records");
+    };
+    let replaced = base
+        .clone()
+        .updated(["y"].into_iter(), vec![Value::Int(7)])
+        .expect("an anonymous record");
+    assert!(Arc::ptr_eq(replaced.ty(), base.ty()));
+    assert_eq!(replaced.fields(), [Value::Int(1), Value::Int(7)]);
+    let added = base
+        .clone()
+        .updated(["z", "x"].into_iter(), vec![Value::Int(2), Value::Int(1)])
+        .expect("an anonymous record");
+    let added = Value::Record(added);
+    assert_eq!(format!("{added}"), "{x: 1, y: 2, z: 2}");
+    assert_eq!(base.fields(), [Value::Int(1), Value::Int(2)]);
+
+    // The rest of a record: of an anonymous record with nothing left
+    // out, the record; of a declared record, an anonymous record.
+    assert!(std::ptr::eq(
+        base.rest([].into_iter()).fields(),
+        base.fields()
+    ));
+    assert_eq!(
+        Value::Record(wider.rest(["x"].into_iter())),
+        Value::anon_record([("z", Value::Int(2))])
+    );
+    let pt = Value::record(
+        record_type(9006, "Pt", &["y", "x"]),
+        vec![Value::Int(2), Value::Int(1)],
+    );
+    let Value::Record(declared) = &pt else {
+        panic!("a record");
+    };
+    let rest = Value::Record(declared.rest([].into_iter()));
+    assert!(ty(&rest).is_anon());
+    assert_eq!(format!("{pt}"), "Pt {y: 2, x: 1}");
+    assert_eq!(format!("{rest}"), "{x: 1, y: 2}");
+    assert_eq!(rest, a);
+}
+
+/// A builtin record is built with its fields named, in the order its
+/// type declares them, and is shown and ordered in name order.
+#[test]
+fn a_builtin_record_has_the_fields_its_type_declares() {
+    let date = make_date(2024, 3, 9);
+    let Value::Record(record) = &date else {
+        panic!("a record");
+    };
+    assert_eq!(
+        record.fields(),
+        [Value::Int(2024), Value::Int(3), Value::Int(9)]
+    );
+    assert_eq!(record.get("month"), Some(&Value::Int(3)));
+    assert_eq!(date.format_silt(), "Date {day: 9, month: 3, year: 2024}");
+    assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
+}
+
 /// A program's record type named like a builtin one prints as a
 /// record: Display is keyed by the builtin type's id, not its name.
 #[test]
 fn a_program_type_named_time_is_not_the_builtin_time() {
-    use crate::defs::{DefId, TypeId};
-    let ty = TypeInfo::new_record(TypeId(DefId(9002)), "Time", Vec::new());
-    let mut fields = BTreeMap::new();
-    fields.insert("h".to_string(), Value::Int(1));
-    let rec = Value::Record(ty, Arc::new(fields));
+    let rec = Value::record(record_type(9002, "Time", &["h"]), vec![Value::Int(1)]);
     assert_eq!(format!("{rec}"), "Time {h: 1}");
 }
 
@@ -275,24 +535,19 @@ fn display_unit() {
 
 #[test]
 fn display_list() {
-    let list = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+    let list = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     assert_eq!(format!("{}", list), "[1, 2, 3]");
 }
 
 #[test]
 fn display_empty_list() {
-    let list = Value::List(Arc::new(vec![]));
+    let list = Value::list(vec![]);
     assert_eq!(format!("{}", list), "[]");
 }
 
 #[test]
-fn display_range() {
-    assert_eq!(format!("{}", Value::Range(1, 10)), "1..10");
-}
-
-#[test]
 fn display_tuple() {
-    let tuple = Value::Tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let tuple = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
     assert_eq!(format!("{}", tuple), "(1, x)");
 }
 
@@ -327,15 +582,8 @@ fn display_time_record_with_ns() {
 
 #[test]
 fn display_generic_record() {
-    let mut fields = BTreeMap::new();
-    fields.insert("x".to_string(), Value::Int(10));
-    fields.insert("y".to_string(), Value::Int(20));
-    let ty = TypeInfo::new_record(
-        crate::defs::TypeId(crate::defs::DefId(9003)),
-        "Point",
-        Vec::new(),
-    );
-    let rec = Value::Record(ty, Arc::new(fields));
+    let ty = record_type(9003, "Point", &["x", "y"]);
+    let rec = Value::record(ty, vec![Value::Int(10), Value::Int(20)]);
     assert_eq!(format!("{}", rec), "Point {x: 10, y: 20}");
 }
 
@@ -360,4 +608,390 @@ fn display_builtin_fn() {
         ),
         "<builtin:println>"
     );
+}
+
+// ── Lists ──────────────────────────────────────────────────────
+
+/// The list that holds the Ints `items`.
+fn made(items: impl IntoIterator<Item = i64>) -> List {
+    items.into_iter().map(Value::Int).collect()
+}
+
+/// The list of the Ints from `lo` to `hi`, which holds none.
+fn ints(lo: i64, hi: i64) -> List {
+    List::ints(lo, hi).expect("a list")
+}
+
+fn elements(list: &List) -> Vec<Value> {
+    list.to_vec().expect("few elements")
+}
+
+/// Each way of storing the Ints from 0 to 9.
+fn both() -> [List; 2] {
+    [made(0..10), ints(0, 9)]
+}
+
+#[test]
+fn a_part_of_a_list_is_the_list_of_its_elements() {
+    for xs in both() {
+        let part = xs.slice(3, 7);
+        assert_eq!(part.len(), 4);
+        assert_eq!(elements(&part), elements(&made(3..7)));
+        assert_eq!(part.get(0), Some(Value::Int(3)));
+        assert_eq!(part.first(), Some(Value::Int(3)));
+        assert_eq!(part.last(), Some(Value::Int(6)));
+        assert_eq!(part.get(4), None);
+        // A part of a part counts from the part's beginning.
+        assert_eq!(elements(&part.slice(1, 3)), elements(&made(4..6)));
+        assert_eq!(xs.len(), 10);
+    }
+}
+
+/// Two lists as one: the elements of the first and then those of the
+/// second, however each is stored, and a part of a list as well as a
+/// whole one. A list that holds no element is made one that holds
+/// them, if they are few enough.
+#[test]
+fn two_lists_as_one_list() {
+    for xs in both() {
+        for ys in [made(10..13), ints(10, 12)] {
+            let joined = xs.concat(&ys).expect("few enough elements");
+            assert_eq!(joined.len(), 13);
+            assert_eq!(elements(&joined), elements(&made(0..13)));
+            assert_eq!(xs.len(), 10);
+            // Parts of lists.
+            let parts = xs
+                .slice(8, 10)
+                .concat(&ys.slice(1, 2))
+                .expect("three elements");
+            assert_eq!(
+                elements(&parts),
+                [Value::Int(8), Value::Int(9), Value::Int(11)]
+            );
+        }
+        let none = List::new();
+        assert_eq!(
+            elements(&xs.concat(&none).expect("the list")),
+            elements(&xs)
+        );
+        assert_eq!(
+            elements(&none.concat(&xs).expect("the list")),
+            elements(&xs)
+        );
+        assert!(none.concat(&none).expect("no element").is_empty());
+    }
+    let cap = MAX_RANGE_MATERIALIZE as i64;
+    let long = ints(1, cap + 1);
+    let short = made(0..1);
+    assert!(long.concat(&short).is_err());
+    assert!(short.concat(&long).is_err());
+    assert!(long.concat(&List::new()).is_err());
+}
+
+/// A part of a list shares the list's buffer if it is a quarter of the
+/// buffer or more, and has a buffer of its own if it is less: a list
+/// keeps at most four times its own elements from being freed.
+#[test]
+fn a_short_part_of_a_list_does_not_keep_the_list() {
+    let big = made(0..1000);
+    let (len, at) = big.buffer().expect("a list that holds its elements");
+    assert_eq!(len, 1000);
+
+    // The rest after the first element, and any part of a quarter or
+    // more, is a part of the same buffer.
+    for part in [big.slice(1, 1000), big.slice(0, 250), big.slice(750, 1000)] {
+        assert_eq!(part.buffer(), Some((1000, at)));
+    }
+    // A shorter part holds its own elements and no others.
+    for (from, to) in [(0, 1), (999, 1000), (300, 549), (0, 249)] {
+        let part = big.slice(from, to);
+        let (held, apart) = part.buffer().expect("a list that holds its elements");
+        assert_eq!(held, to - from, "{from}..{to}");
+        assert_ne!(apart, at);
+        assert_eq!(elements(&part), elements(&made(from as i64..to as i64)));
+    }
+    // A part of a part is measured against the buffer, not the part.
+    let rest = big.slice(500, 1000).slice(100, 400);
+    assert_eq!(rest.buffer(), Some((1000, at)));
+    let rest = big.slice(500, 1000).slice(100, 349);
+    assert_eq!(rest.buffer().map(|(held, _)| held), Some(249));
+    // A list that holds no element has no buffer to keep.
+    assert_eq!(ints(0, 999).slice(3, 4).buffer(), None);
+}
+
+/// A walk down a list by its rest (`[h, ..t]`, `list.tail`) copies a
+/// third of the list in all, whatever its length: each rest is the
+/// same buffer until it is less than a quarter of it.
+#[test]
+fn a_walk_down_a_list_copies_a_third_of_it() {
+    for n in [1_000usize, 64_000] {
+        let mut rest = made(0..n as i64);
+        let mut buffer = rest.buffer();
+        let (mut copied, mut buffers) = (0, 0);
+        while !rest.is_empty() {
+            rest = rest.slice(1, rest.len());
+            if rest.buffer() != buffer && !rest.is_empty() {
+                copied += rest.len();
+                buffers += 1;
+            }
+            buffer = rest.buffer();
+        }
+        assert!(copied <= n / 3, "{copied} elements copied in a walk of {n}");
+        assert!(copied >= n / 4, "{copied} elements copied in a walk of {n}");
+        assert!(buffers <= 10, "{buffers} buffers in a walk of {n}");
+    }
+}
+
+#[test]
+fn a_bound_of_a_part_past_the_end_is_the_end() {
+    for xs in both() {
+        assert_eq!(elements(&xs.slice(8, 99)), elements(&made(8..10)));
+        assert!(xs.slice(10, 10).is_empty());
+        assert!(xs.slice(99, 100).is_empty());
+        assert!(xs.slice(3, 1).is_empty());
+    }
+    assert!(List::new().slice(0, 1).is_empty());
+    assert!(List::new().first().is_none());
+    assert!(List::new().last().is_none());
+}
+
+#[test]
+fn a_list_is_read_from_both_ends() {
+    for xs in both() {
+        let part = xs.slice(1, 5);
+        let forward: Vec<Value> = part.iter().collect();
+        let backward: Vec<Value> = part.iter().rev().collect();
+        assert_eq!(forward, elements(&made(1..5)));
+        assert_eq!(backward, elements(&made((1..5).rev())));
+        assert_eq!(part.iter().len(), 4);
+        let owned: Vec<Value> = part.into_iter().collect();
+        assert_eq!(owned, forward);
+    }
+}
+
+#[test]
+fn a_list_is_equal_ordered_and_hashed_by_its_elements_however_it_is_stored() {
+    let stored = [
+        Value::List(made(0..6).slice(2, 5)),
+        Value::List(made(2..5)),
+        Value::List(ints(2, 4)),
+        Value::List(ints(0, 9).slice(2, 5)),
+    ];
+    for a in &stored {
+        assert_eq!(a.to_string(), "[2, 3, 4]");
+        assert_eq!(format!("{a:?}"), "[2, 3, 4]");
+        assert_eq!(a.format_silt(), "[2, 3, 4]");
+        for b in &stored {
+            assert_eq!(a, b);
+            assert_eq!(a.cmp(b), Ordering::Equal);
+            assert_eq!(hash_of(a), hash_of(b));
+        }
+        // A list that goes on is the greater, one that begins higher
+        // too, however each is stored.
+        for longer in [made(2..6), ints(2, 5)] {
+            assert_eq!(a.cmp(&Value::List(longer.clone())), Ordering::Less);
+            assert_eq!(Value::List(longer).cmp(a), Ordering::Greater);
+        }
+        for higher in [made(3..4), ints(3, 3)] {
+            assert_eq!(a.cmp(&Value::List(higher.clone())), Ordering::Less);
+            assert_eq!(Value::List(higher).cmp(a), Ordering::Greater);
+        }
+        assert_ne!(
+            *a,
+            Value::list(vec![Value::Int(2), Value::Int(3), Value::Int(5)])
+        );
+    }
+    // One element, and none.
+    assert_eq!(Value::List(ints(7, 7)), Value::List(made(7..8)));
+    assert_eq!(
+        hash_of(&Value::List(ints(7, 7))),
+        hash_of(&Value::List(made(7..8)))
+    );
+    assert_eq!(Value::List(ints(5, 1)), Value::List(List::new()));
+    assert_eq!(
+        hash_of(&Value::List(ints(5, 1))),
+        hash_of(&Value::List(List::new()))
+    );
+    // Lists that differ hash apart (these two did not, when a range
+    // over the cap was hashed by its ends and a list by its elements).
+    assert_ne!(
+        hash_of(&Value::List(made(0..5))),
+        hash_of(&Value::List(made([0, 1, 2, 3, 5])))
+    );
+}
+
+#[test]
+fn a_list_of_the_ints_between_two_ends_holds_none_of_them() {
+    let all = ints(1, i64::MAX);
+    assert_eq!(all.len(), i64::MAX as usize);
+    assert_eq!(all.get(0), Some(Value::Int(1)));
+    assert_eq!(all.last(), Some(Value::Int(i64::MAX)));
+    assert_eq!(all.get(i64::MAX as usize), None);
+    assert!(all.contains(&Value::Int(77)));
+    assert!(!all.contains(&Value::Int(0)));
+    assert!(!all.contains(&Value::Unit));
+    assert_eq!(all.position(&Value::Int(77)), Some(76));
+    assert_eq!(all.position(&Value::Int(0)), None);
+    let rest = all.slice(1, all.len());
+    assert_eq!(rest.first(), Some(Value::Int(2)));
+    assert_eq!(rest.len(), i64::MAX as usize - 1);
+    let end = all.slice(all.len() - 2, all.len());
+    assert_eq!(elements(&end), elements(&made([i64::MAX - 1, i64::MAX])));
+    // Its hash and its order are read off its ends.
+    assert_eq!(
+        hash_of(&Value::List(all.clone())),
+        hash_of(&Value::List(ints(1, i64::MAX)))
+    );
+    assert_ne!(
+        hash_of(&Value::List(all.clone())),
+        hash_of(&Value::List(rest.clone()))
+    );
+    assert!(Value::List(all.clone()) < Value::List(rest));
+    assert!(Value::List(all.slice(0, 5)) < Value::List(all.clone()));
+    // The least Int, and the greatest, as ends.
+    let low = ints(i64::MIN, i64::MIN + 8);
+    assert_eq!(low.len(), 9);
+    assert_eq!(low.slice(9, 9).len(), 0);
+    assert_eq!(low.last(), Some(Value::Int(i64::MIN + 8)));
+}
+
+#[test]
+fn a_list_has_at_most_as_many_elements_as_its_length_counts() {
+    // More elements than an Int counts, by one: a list.
+    let naturals = ints(0, i64::MAX);
+    assert_eq!(naturals.len(), 1 << 63);
+    assert_eq!(naturals.last(), Some(Value::Int(i64::MAX)));
+    // All the Ints but the greatest: the index of an element can be
+    // more than an Int holds.
+    let most = ints(i64::MIN, i64::MAX - 1);
+    assert_eq!(most.len(), usize::MAX);
+    assert_eq!(most.get(usize::MAX - 1), Some(Value::Int(i64::MAX - 1)));
+    assert_eq!(most.get(usize::MAX), None);
+    assert_eq!(most.position(&Value::Int(5)), Some((1 << 63) + 5));
+    let upper = most.slice((1 << 63) + 5, usize::MAX);
+    assert_eq!(upper.first(), Some(Value::Int(5)));
+    assert_eq!(upper.last(), Some(Value::Int(i64::MAX - 1)));
+    // All the Ints there are: one too many.
+    let too_long = List::ints(i64::MIN, i64::MAX).expect_err("one too many");
+    assert_eq!(
+        too_long.to_string(),
+        "range -9223372036854775808..9223372036854775807 has 18446744073709551616 elements: \
+         a list has at most 18446744073709551615"
+    );
+    assert!(List::ints(i64::MAX, i64::MIN).expect("empty").is_empty());
+}
+
+#[test]
+fn the_elements_of_a_long_list_that_holds_none_are_not_made() {
+    let cap = MAX_RANGE_MATERIALIZE as i64;
+    assert_eq!(ints(1, cap).writable(), Ok(()));
+    let long = ints(0, cap);
+    assert_eq!(
+        long.to_vec().expect_err("too long").to_string(),
+        "range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed"
+    );
+    assert_eq!(long.writable(), long.to_vec().map(|_| ()));
+    // A value that holds such a list is not written out for a program;
+    // a host that formats it gets the ends.
+    let holder = Value::tuple(vec![Value::Int(1), Value::List(long.clone())]);
+    assert_eq!(holder.writable(), long.writable());
+    assert_eq!(holder.to_string(), "(1, [0, 1, 2, ..., 10000000])");
+    assert_eq!(holder.format_silt(), "(1, [0, 1, 2, ..., 10000000])");
+    assert_eq!(format!("{holder:?}"), "(1, [0, 1, 2, ..., 10000000])");
+    // A list that holds its elements is written out whatever its
+    // length.
+    assert_eq!(Value::List(made(0..4)).writable(), Ok(()));
+}
+
+fn total(total: IntTotal) -> Result<i64, &'static str> {
+    match total {
+        IntTotal::Total(total) => Ok(total),
+        IntTotal::Overflow => Err("overflow"),
+        IntTotal::NotInts => Err("not ints"),
+    }
+}
+
+#[test]
+fn the_sum_of_a_list_of_ints() {
+    let sum = |list: &List| total(list.sum_ints());
+    for xs in both() {
+        assert_eq!(sum(&xs), Ok(45));
+    }
+    assert_eq!(sum(&List::new()), Ok(0));
+    assert_eq!(sum(&ints(-5, 5)), Ok(0));
+    assert_eq!(sum(&ints(-7, -3)), Ok(-25));
+    assert_eq!(sum(&ints(1, 4_294_967_295)), Ok(9_223_372_034_707_292_160));
+    assert_eq!(sum(&ints(1, 4_294_967_296)), Err("overflow"));
+    assert_eq!(sum(&ints(1, i64::MAX)), Err("overflow"));
+    assert_eq!(sum(&ints(i64::MIN, -2)), Err("overflow"));
+    assert_eq!(sum(&ints(i64::MIN + 1, i64::MAX)), Ok(0));
+    assert_eq!(sum(&ints(i64::MIN + 1, i64::MAX - 1)), Ok(-i64::MAX));
+    assert_eq!(sum(&ints(i64::MIN, i64::MAX - 1)), Err("overflow"));
+    assert_eq!(sum(&ints(i64::MIN, i64::MAX - 2)), Err("overflow"));
+    assert_eq!(sum(&made([i64::MAX, 1])), Err("overflow"));
+    assert_eq!(
+        sum(&[Value::Int(1), Value::Unit].into_iter().collect()),
+        Err("not ints")
+    );
+}
+
+#[test]
+fn the_product_of_a_list_of_ints() {
+    let product = |list: &List| total(list.product_ints());
+    for xs in both() {
+        assert_eq!(product(&xs), Ok(0));
+    }
+    assert_eq!(product(&List::new()), Ok(1));
+    // However a list is stored, its product is the same.
+    for (lo, hi) in [(1, 20), (1, 21), (-20, -1), (-21, -1), (-3, -1), (7, 7)] {
+        assert_eq!(
+            product(&ints(lo, hi)),
+            product(&made(lo..=hi)),
+            "{lo}..{hi}"
+        );
+    }
+    assert_eq!(product(&ints(1, 20)), Ok(2_432_902_008_176_640_000));
+    assert_eq!(product(&ints(1, 21)), Err("overflow"));
+    assert_eq!(product(&ints(-3, -1)), Ok(-6));
+    assert_eq!(product(&ints(i64::MIN, i64::MIN)), Ok(i64::MIN));
+    assert_eq!(product(&ints(i64::MIN, i64::MIN + 1)), Err("overflow"));
+    // A 0 among the elements is the product, and no element of a list
+    // that holds none is visited for it: the product of the others may
+    // be no `Int`, and there may be nine quintillion of them.
+    for (lo, hi) in [(-100, 100), (0, 100), (-100, 0), (0, 0)] {
+        assert_eq!(product(&ints(lo, hi)), Ok(0), "{lo}..{hi}");
+        assert_eq!(product(&made(lo..=hi)), Ok(0), "{lo}..{hi}");
+    }
+    assert_eq!(product(&ints(0, i64::MAX)), Ok(0));
+    assert_eq!(product(&ints(i64::MIN, 0)), Ok(0));
+    assert_eq!(product(&ints(i64::MIN + 1, i64::MAX)), Ok(0));
+    assert_eq!(product(&ints(1, i64::MAX)), Err("overflow"));
+    assert_eq!(product(&ints(i64::MIN, -1)), Err("overflow"));
+    assert_eq!(product(&made([i64::MAX, 2])), Err("overflow"));
+    assert_eq!(product(&made([i64::MAX, 2, 0])), Ok(0));
+    assert_eq!(
+        product(&[Value::Int(1), Value::Unit].into_iter().collect()),
+        Err("not ints")
+    );
+}
+
+#[test]
+fn a_list_in_order_and_without_its_repeats() {
+    for xs in both() {
+        assert_eq!(xs.sorted(), xs);
+        assert_eq!(xs.unique(), xs);
+    }
+    let mixed = made([3, 1, 3, 2, 1]);
+    assert_eq!(elements(&mixed.sorted()), elements(&made([1, 1, 2, 3, 3])));
+    assert_eq!(elements(&mixed.unique()), elements(&made([3, 1, 2])));
+    assert!(List::new().sorted().is_empty());
+    assert!(List::new().unique().is_empty());
+    // A list that holds no element is in order and has none twice:
+    // none of its elements is made, however many there are.
+    let long = ints(1, i64::MAX);
+    assert!(long.to_vec().is_err());
+    assert_eq!(long.sorted().len(), long.len());
+    assert_eq!(long.sorted().last(), Some(Value::Int(i64::MAX)));
+    assert_eq!(long.unique().len(), long.len());
+    assert_eq!(long.unique().get(41), Some(Value::Int(42)));
 }

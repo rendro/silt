@@ -35,7 +35,7 @@ fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::TCP_UNKNOWN, vec![Value::String(why.to_string())])
+            Value::variant(bv::TCP_UNKNOWN, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
@@ -49,7 +49,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("TcpTls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
         ("TcpClosed", []) => "tcp connection closed".to_string(),
         ("TcpTimeout", []) => "tcp operation timed out".to_string(),
-        ("TcpUnknown", [Value::String(m)]) => m.clone(),
+        ("TcpUnknown", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -98,7 +98,7 @@ mod tls {
                     Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                     Err(e) => Value::variant(
                         bv::ERR,
-                        vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
+                        vec![Value::variant(bv::TCP_TLS, vec![Value::String(e.into())])],
                     ),
                 }
             })
@@ -171,7 +171,7 @@ mod tls {
             Err(e) if e == SERVED => err(e),
             Err(e) => Value::variant(
                 bv::ERR,
-                vec![Value::variant(bv::TCP_TLS, vec![Value::String(e)])],
+                vec![Value::variant(bv::TCP_TLS, vec![Value::String(e.into())])],
             ),
         }
     }
@@ -430,13 +430,13 @@ fn tcp_error_to_variant(err: &std::io::Error) -> Value {
         | ErrorKind::AddrNotAvailable
         | ErrorKind::HostUnreachable
         | ErrorKind::NetworkUnreachable => {
-            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg)])
+            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg.into())])
         }
         ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
             Value::variant(bv::TCP_CLOSED, vec![])
         }
         ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
-        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg)]),
+        _ => Value::variant(bv::TCP_UNKNOWN, vec![Value::String(msg.into())]),
     }
 }
 
@@ -447,7 +447,7 @@ fn tcp_io_err(err: &std::io::Error) -> Value {
 
 /// Build `Err(TcpUnknown(msg))` for string-form failures (TLS stringly
 /// errors from the rustls code path; ad-hoc arg/validation failures).
-fn err(s: impl Into<String>) -> Value {
+fn err(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
         bv::ERR,
         vec![Value::variant(
@@ -518,9 +518,9 @@ pub(crate) fn accept_op(
         // the operation's value holds it. It is a client's, and goes
         // to the next accept.
         .unheard_with(move |value| {
-            if let Value::Variant(tag, fields) = value
-                && tag.is(bv::OK)
-                && let [Value::TcpStream(conn)] = &fields[..]
+            if let Value::Variant(variant) = value
+                && variant.is(bv::OK)
+                && let [Value::TcpStream(conn)] = variant.fields()
                 && let Some(socket) = conn.socket()
             {
                 listener.keep(socket);
@@ -570,7 +570,7 @@ builtins! {
             return err_closed();
         }
         match stream.peer_addr() {
-            Ok(addr) => ok(Value::String(addr.to_string())),
+            Ok(addr) => ok(Value::String(addr.to_string().into())),
             Err(e) => tcp_io_err(&e),
         }
     }

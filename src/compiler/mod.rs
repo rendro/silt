@@ -88,6 +88,21 @@ struct UndecodableField {
     part: String,
 }
 
+// ── Reading a field ──────────────────────────────────────────────────
+
+/// How code reads a field of a record.
+#[derive(Clone, Copy)]
+enum FieldRead {
+    /// At the place the record's type declares the field: the type is a
+    /// declared record the compiler knows (the receiver's checked type,
+    /// the type a pattern names).
+    Slot(usize),
+    /// By its name, in the type of the record that is there when the
+    /// code runs: an anonymous record, or a record behind an open row
+    /// (`{x: T, ...r}`), which a declared record flows into as itself.
+    Named(Symbol),
+}
+
 // ── Bind destruct kind ───────────────────────────────────────────────
 
 /// Describes how to destructure a sub-value from a compound pattern.
@@ -96,7 +111,7 @@ enum BindDestructKind {
     Tuple(usize),
     List(usize),
     ListRest(usize),
-    RecordField(Symbol),
+    RecordField(FieldRead),
     /// Anonymous record `...rest` capture: produces a new record containing
     /// every field of the parent record except those listed here.
     RecordRest(Vec<Symbol>),
@@ -1116,7 +1131,7 @@ impl Compiler {
             }
 
             ExprKind::StringLit(s) => {
-                let idx = self.add_constant(Value::String(s.clone()), span)?;
+                let idx = self.add_constant(Value::String(s.clone().into()), span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
@@ -1297,8 +1312,7 @@ impl Compiler {
             // the checker.)
             ExprKind::FieldAccess(expr, field, _) => {
                 self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(resolve(*field)), span)?;
-                self.emit(Asm::GetField { name: name_idx }, span)?;
+                self.emit_get_field(self.receiver_field(expr, *field), span)?;
             }
 
             ExprKind::StringInterp(parts) => {
@@ -1306,7 +1320,7 @@ impl Compiler {
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
-                            let idx = self.add_constant(Value::String(s.clone()), span)?;
+                            let idx = self.add_constant(Value::String(s.clone().into()), span)?;
                             self.emit(Asm::Constant { k: idx }, span)?;
                         }
                         StringPart::Expr(e) => {
@@ -1519,13 +1533,14 @@ impl Compiler {
                     self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
                 } else {
                     // Closed anon record literal: same encoding as nominal
-                    // RecordCreate but with the anonymous record type,
-                    // which every run-time record-type check accepts (see
-                    // `bytecode::record_type_matches`).
+                    // RecordCreate but with the type of the anonymous
+                    // records of these fields.
                     let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                     self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                    let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
-                    let ty = self.add_constant(Value::TypeDescriptor(anon.clone()), span)?;
+                    let mut names: Vec<String> = field_names.iter().map(|n| resolve(*n)).collect();
+                    names.sort();
+                    let anon = crate::typeinfo::anon_record_type(names.iter().map(|n| &**n));
+                    let ty = self.add_constant(Value::TypeDescriptor(anon), span)?;
                     let fields = self.name_constants(&field_names, span)?;
                     self.emit(
                         Asm::MakeRecord {
@@ -1830,8 +1845,7 @@ impl Compiler {
             // The function a field holds: an ordinary call of it.
             Some(Selection::FieldCall) => {
                 self.compile_expr(receiver)?;
-                let name = self.add_constant(Value::String(resolve(method)), span)?;
-                self.emit(Asm::GetField { name }, span)?;
+                self.emit_get_field(self.receiver_field(receiver, method), span)?;
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
@@ -2072,6 +2086,48 @@ impl Compiler {
         }
     }
 
+    /// How the field `field` of the record `receiver` evaluates to is
+    /// read: at its place, if the checker gave the receiver a declared
+    /// record type.
+    fn receiver_field(&self, receiver: &Expr, field: Symbol) -> FieldRead {
+        let declared = match &receiver.ty {
+            Some(Type::Generic(ty, _)) => Some(self.type_info(ty.id)),
+            _ => None,
+        };
+        Self::field_read(declared.as_deref(), field)
+    }
+
+    /// How the field `field` of a record is read: at its place in the
+    /// declared type `ty`, by its name without one.
+    fn field_read(ty: Option<&TypeInfo>, field: Symbol) -> FieldRead {
+        match ty.and_then(|ty| ty.field_index(&resolve(field))) {
+            Some(slot) => FieldRead::Slot(slot),
+            None => FieldRead::Named(field),
+        }
+    }
+
+    /// Replace the record on top of the stack with its field.
+    fn emit_get_field(&mut self, field: FieldRead, span: Span) -> Result<(), Diagnostic> {
+        match field {
+            FieldRead::Slot(index) => self.emit(Asm::GetField { index }, span),
+            FieldRead::Named(name) => {
+                let name = self.add_constant(Value::String(resolve(name).into()), span)?;
+                self.emit(Asm::GetFieldNamed { name }, span)
+            }
+        }
+    }
+
+    /// Push the field of the record on top of the stack.
+    fn emit_destruct_field(&mut self, field: FieldRead, span: Span) -> Result<(), Diagnostic> {
+        match field {
+            FieldRead::Slot(index) => self.emit(Asm::DestructRecordField { index }, span),
+            FieldRead::Named(name) => {
+                let name = self.add_constant(Value::String(resolve(name).into()), span)?;
+                self.emit(Asm::DestructRecordFieldNamed { name }, span)
+            }
+        }
+    }
+
     /// The type a resolution names, if it names a record or enum type.
     fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
         let Some(crate::defs::Res::Def(id)) = res else {
@@ -2093,9 +2149,11 @@ impl Compiler {
         if crate::defs::builtin_types()
             .get(ty.id.0.0 as usize)
             .is_some()
-            && module::BUILTIN_PRIMITIVE_NAMES.contains(&name.as_str())
+            && let Some(primitive) = module::BUILTIN_PRIMITIVE_NAMES
+                .iter()
+                .find(|primitive| **primitive == name)
         {
-            return Some(Value::PrimitiveDescriptor(name));
+            return Some(Value::PrimitiveDescriptor(primitive));
         }
         Some(Value::TypeDescriptor(self.type_info(ty.id)))
     }
@@ -2240,7 +2298,7 @@ impl Compiler {
         tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let method = self.add_constant(Value::String(resolve(method)), span)?;
+        let method = self.add_constant(Value::String(resolve(method).into()), span)?;
         let name = self.units.defs.get(t.0).name;
         let of = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
             let limit = Limit {
@@ -2309,7 +2367,7 @@ impl Compiler {
     fn variant_value(&self, expr: &Expr) -> Option<Value> {
         let tag = self.variant_tag(Some(expr.res?))?;
         Some(match tag.arity() {
-            0 => Value::Variant(tag, Vec::new()),
+            0 => Value::variant(tag, Vec::new()),
             _ => Value::VariantConstructor(tag),
         })
     }
@@ -2696,7 +2754,7 @@ impl Compiler {
     fn name_constants(&mut self, names: &[Symbol], span: Span) -> Result<Vec<Const>, Diagnostic> {
         names
             .iter()
-            .map(|name| self.add_constant(Value::String(resolve(*name)), span))
+            .map(|name| self.add_constant(Value::String(resolve(*name).into()), span))
             .collect()
     }
 
@@ -2932,7 +2990,7 @@ mod tests {
         chunk
             .constants()
             .iter()
-            .any(|c| matches!(c, Value::String(v) if v == s))
+            .any(|c| matches!(c, Value::String(v) if **v == *s))
     }
 
     /// Check if an int constant exists in the chunk.
@@ -3295,6 +3353,71 @@ fn main() {
         assert!(has_op(main.chunk(), Op::GetField));
     }
 
+    /// A field of a record whose declared type the checker knows is
+    /// read at the place the type declares it, in an expression and in
+    /// a pattern that names the type; a field of an anonymous record,
+    /// and of a record behind an open row (which a declared record
+    /// flows into as itself), by its name.
+    #[test]
+    fn test_field_reads_at_a_place_or_by_name() {
+        use crate::bytecode::Instr;
+        let fns = compile(
+            r#"
+type User { name: String, age: Int }
+type Pair(a) { left: a, right: a }
+fn age(u: User) -> Int { u.age }
+fn right(p: Pair(Int)) -> Int { p.right }
+fn called(p: Pair(Fn(Int) -> Int)) -> Int { p.right(1) }
+fn bound(u: User) -> Int {
+    let User { age, name: _ } = u
+    age
+}
+fn matched(u: User) -> Int {
+    match u {
+        User { name: "a", age } -> age
+        User { age: 3, .. } -> 0
+        _ -> 1
+    }
+}
+fn open(r: {age: Int, ...rest}) -> Int { r.age }
+fn closed(r: {name: String, age: Int}) -> Int { r.age }
+fn inferred(r) { r.age }
+fn rest(r: {name: String, age: Int}) -> Int {
+    let {age, ...others} = r
+    age
+}
+"#,
+        );
+        let reads = |name: &str| -> Vec<String> {
+            let chunk = find_fn(&fns, name).chunk();
+            chunk
+                .instrs()
+                .filter_map(|(_, instr)| match instr {
+                    Instr::GetField { index } => Some(format!("get {index}")),
+                    Instr::DestructRecordField { index } => Some(format!("destruct {index}")),
+                    Instr::GetFieldNamed { name } => Some(format!("get {}", chunk.string(name))),
+                    Instr::DestructRecordFieldNamed { name } => {
+                        Some(format!("destruct {}", chunk.string(name)))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(reads("age"), ["get 1"]);
+        assert_eq!(reads("right"), ["get 1"]);
+        assert_eq!(reads("called"), ["get 1"]);
+        assert_eq!(reads("bound"), ["destruct 1"]);
+        assert_eq!(
+            reads("matched"),
+            ["destruct 0", "destruct 1", "destruct 1"],
+            "the tests of `name` and of `age`, then the binding of `age`"
+        );
+        assert_eq!(reads("open"), ["get age"]);
+        assert_eq!(reads("closed"), ["get age"]);
+        assert_eq!(reads("inferred"), ["get age"]);
+        assert_eq!(reads("rest"), ["destruct age"]);
+    }
+
     // ── Enum type declarations ─────────────────────────────────────
 
     #[test]
@@ -3309,12 +3432,12 @@ fn main() { Red }
         // A nullary variant is a Variant value, a constant where it is
         // used; the enum's description lists every variant.
         assert!(main.chunk().constants().iter().any(
-            |c| matches!(c, Value::Variant(tag, fields) if tag.name() == "Red" && fields.is_empty())
+            |c| matches!(c, Value::Variant(variant) if variant.name() == "Red" && variant.fields().is_empty())
         ));
-        let Some(Value::Variant(tag, _)) = main.chunk().constants().first() else {
+        let Some(Value::Variant(red)) = main.chunk().constants().first() else {
             panic!("main's first constant is the variant");
         };
-        let names: Vec<&str> = tag
+        let names: Vec<&str> = red
             .ty()
             .variants()
             .iter()
@@ -3688,7 +3811,7 @@ fn main() {
         assert!(has_op(shown.chunk(), Op::TailCallMethod));
         // A field that holds a function is read and called.
         let field = find_fn(&fns, "field");
-        assert!(has_op(field.chunk(), Op::GetField));
+        assert!(has_op(field.chunk(), Op::GetFieldNamed));
         assert!(!has_op(field.chunk(), Op::CallMethod));
     }
 

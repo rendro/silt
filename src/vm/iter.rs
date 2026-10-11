@@ -4,7 +4,7 @@
 
 use std::ops::ControlFlow;
 
-use crate::value::Value;
+use crate::value::{IntoIter, List, Value};
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
@@ -30,10 +30,12 @@ pub(crate) type Args<S> = fn(&S, &Value, &mut Vec<Value>);
 /// state `S` of its own (`list.map`: the results so far).
 struct Iterate<S> {
     name: &'static str,
-    items: Vec<Value>,
-    /// How many items a call was made for: the call that is running is
-    /// the one for the item before this index.
-    called: usize,
+    /// The items no call was made for yet. They are taken one by one
+    /// from the list as it is: no item is copied before its call, so a
+    /// builtin that stops at the first item has read one.
+    items: IntoIter,
+    /// The item of the call that is running.
+    current: Option<Value>,
     callback: Value,
     state: S,
     args: Args<S>,
@@ -47,20 +49,19 @@ impl<S: Send> Native for Iterate<S> {
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if let Some(done) = self.called.checked_sub(1) {
-            // The item is the step's now: nothing reads it again.
-            let item = std::mem::replace(&mut self.items[done], Value::Unit);
-            if let ControlFlow::Break(value) = (self.step)(&mut self.state, item, input)? {
-                return Ok(Step::Done(value));
-            }
+        if let Some(item) = self.current.take()
+            && let ControlFlow::Break(value) = (self.step)(&mut self.state, item, input)?
+        {
+            return Ok(Step::Done(value));
         }
-        let Some(item) = self.items.get(self.called) else {
+        let Some(item) = self.items.next() else {
             return (self.finish)(&mut self.state).map(Step::Done);
         };
-        self.called += 1;
-        Ok(vm.call_step(self.callback.clone(), |stack| {
-            (self.args)(&self.state, item, stack)
-        }))
+        let call = vm.call_step(self.callback.clone(), |stack| {
+            (self.args)(&self.state, &item, stack)
+        });
+        self.current = Some(item);
+        Ok(call)
     }
 }
 
@@ -70,7 +71,7 @@ impl<S: Send> Native for Iterate<S> {
 /// with no items, the builtin's value is `finish(state)`.
 pub(crate) fn iterate<S: Send + 'static>(
     name: &'static str,
-    items: Vec<Value>,
+    items: impl Into<List>,
     callback: Value,
     state: S,
     args: Args<S>,
@@ -79,8 +80,8 @@ pub(crate) fn iterate<S: Send + 'static>(
 ) -> Step {
     Step::Run(Box::new(Iterate {
         name,
-        items,
-        called: 0,
+        items: items.into().into_iter(),
+        current: None,
         callback,
         state,
         args,

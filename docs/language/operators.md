@@ -162,10 +162,15 @@ let r: Range(Int) = 1..10         -- annotated
 let xs: List(Int) = 1..10         -- implicit Range→List
 ```
 
-Ranges are lazy — they don't allocate memory until iterated, so
-`1..1000000` is cheap. `Range` is a distinct runtime variant
-(`Value::Range(lo, hi)`), not a materialized list, and the iteration
-helpers in `list.*` walk it without first expanding it into a `List(Int)`.
+Ranges are lazy: a range holds its two ends and no element, so
+`1..1000000` is cheap, and so are its length, its last element, its tail
+and `list.contains`. In every other respect it is the list of its
+elements: `println(1..3)` prints `[1, 2, 3]`, and `1..3 == [1, 2, 3]`.
+What needs every element at once (printing the range, `list.reverse`,
+`json.stringify`) is a runtime error for a range of more than 10,000,000
+elements. A range can have more elements than an `Int` counts
+(`0..9223372036854775807`); `list.length` of such a range is a runtime
+error, and so is the range of all the Ints there are.
 
 Range binds tighter than `|>` so `1..10 |> list.sum()` needs no parens, and looser than arithmetic so `a+1..b-1` works.
 

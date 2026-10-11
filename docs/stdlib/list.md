@@ -573,7 +573,8 @@ list.product(xs: List(Int)) -> Int
 ```
 
 Returns the product of all elements. Returns `1` on an empty list. Overflow
-is a runtime error.
+is a runtime error; the product of a list that has a `0` in it is `0`,
+whatever the product of the other elements is.
 
 ```silt
 import list
@@ -581,6 +582,7 @@ import list
 fn main() {
   println(list.product([1, 2, 3, 4])) -- 24
   println(list.product([])) -- 1
+  println(list.product(-100..100)) -- 0
 }
 ```
 

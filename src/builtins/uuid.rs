@@ -57,7 +57,7 @@ builtins! {
     /// canonical form on success, `Err(msg)` on malformed input.
     fn parse(s: &str) -> Value {
         match ::uuid::Uuid::parse_str(s) {
-            Ok(u) => ok(Value::String(u.hyphenated().to_string())),
+            Ok(u) => ok(Value::String(u.hyphenated().to_string().into())),
             Err(e) => err(format!("invalid uuid: {e}")),
         }
     }

@@ -8,7 +8,7 @@ use crate::vm::{Step, Vm, VmError, call_then};
 /// The one field of `value`, if it is the variant `tag` with one.
 fn field(value: &Value, tag: BuiltinVariant) -> Option<&Value> {
     match value {
-        Value::Variant(name, fields) if name.is(tag) => match fields.as_slice() {
+        Value::Variant(variant) if variant.is(tag) => match variant.fields() {
             [field] => Some(field),
             _ => None,
         },
@@ -43,7 +43,7 @@ struct Opt<'a> {
 impl<'a> Arg<'a> for Opt<'a> {
     fn take(whole: &'a Value) -> Option<Self> {
         let inner = match whole {
-            Value::Variant(name, fields) if name.is(bv::NONE) && fields.is_empty() => None,
+            Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => None,
             _ => Some(field(whole, bv::SOME)?),
         };
         Some(Opt { whole, inner })

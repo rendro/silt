@@ -29,14 +29,21 @@ mod with_feature {
     #[test]
     fn pg_timeout_err_returns_typed_pg_error_variant() {
         let v = pg_timeout_err_for_tests("watchdog: deadline exceeded");
-        let Value::Variant(outer_tag, outer_fields) = &v else {
+        let Value::Variant(outer_tag) = &v else {
             panic!("expected Value::Variant, got {v:?}");
         };
         assert_eq!(outer_tag.name(), "Err", "outer tag must be `Err`");
-        assert_eq!(outer_fields.len(), 1, "Err must carry exactly one payload");
+        assert_eq!(
+            outer_tag.fields().len(),
+            1,
+            "Err must carry exactly one payload"
+        );
 
-        let Value::Variant(inner_tag, inner_fields) = &outer_fields[0] else {
-            panic!("expected inner Value::Variant, got {:?}", outer_fields[0]);
+        let Value::Variant(inner_tag) = &outer_tag.fields()[0] else {
+            panic!(
+                "expected inner Value::Variant, got {:?}",
+                outer_tag.fields()[0]
+            );
         };
         assert_eq!(
             inner_tag.name(),
@@ -45,9 +52,10 @@ mod with_feature {
              not `IoUnknown` (the IoError default)",
         );
         assert!(
-            inner_fields.is_empty(),
+            inner_tag.fields().is_empty(),
             "PgTimeout is nullary in the typechecker registry, but \
-             pg_timeout_err produced fields: {inner_fields:?}",
+             pg_timeout_err produced fields: {:?}",
+            inner_tag.fields(),
         );
     }
 
@@ -58,11 +66,14 @@ mod with_feature {
     #[test]
     fn pg_timeout_err_is_not_io_unknown() {
         let v = pg_timeout_err_for_tests("any message");
-        let Value::Variant(_, outer_fields) = &v else {
+        let Value::Variant(variant) = &v else {
             panic!("expected Value::Variant, got {v:?}");
         };
-        let Value::Variant(inner_tag, _) = &outer_fields[0] else {
-            panic!("expected inner Value::Variant, got {:?}", outer_fields[0]);
+        let Value::Variant(inner_tag) = &variant.fields()[0] else {
+            panic!(
+                "expected inner Value::Variant, got {:?}",
+                variant.fields()[0]
+            );
         };
         assert_ne!(
             inner_tag.name(),

@@ -653,12 +653,11 @@ impl Vm {
 
     pub(crate) fn display_value(&self, val: &Value) -> String {
         match val {
-            Value::String(s) => s.clone(),
+            Value::String(s) => s.to_string(),
             Value::Int(n) => n.to_string(),
             Value::Bool(true) => "true".to_string(),
             Value::Bool(false) => "false".to_string(),
             Value::Float(f) => f.to_string(),
-            Value::Range(lo, hi) => format!("{lo}..{hi}"),
             _ => format!("{val}"),
         }
     }
@@ -716,63 +715,6 @@ impl Vm {
         )
     }
 
-    /// Whether a runtime value is, or transitively CONTAINS, a
-    /// function-shaped leaf (`VmClosure` / `BuiltinFn` /
-    /// `VariantConstructor`) — the single runtime-side oracle for the
-    /// execution-site Compare/Equal gates, the sibling of
-    /// `value_implements_display` above.
-    ///
-    /// The checker rejects comparing or ordering a value that holds a
-    /// function, for a concrete operand and through a bound alike
-    /// (`Equal` and `Compare` are decided by structure). Without a
-    /// runtime backstop such
-    /// functions past the typechecker. Without a runtime backstop such
-    /// values fell into `Value::cmp` / `PartialEq for Value`, which order
-    /// closures by `Arc::as_ptr` (src/value/key.rs) — an ASLR-nondeterministic
-    /// Bool for ordering and a silent identity-equality Bool for `==`.
-    ///
-    /// Consulted by the container arms of `compare()`
-    /// (src/vm/arithmetic.rs), the `Op::Eq` / `Op::Neq` gate
-    /// (`equality_operand_violation`, src/vm/run.rs), the
-    /// `"equal"` / `"compare"` / `"hash"` trait-method arms of
-    /// `dispatch_trait_method` (src/vm/dispatch.rs), and the collection
-    /// builtin backstop `ensure_no_fn` (src/builtins/collections.rs).
-    /// Locked by tests/typecheck/container_fn_compare_runtime_gate_tests.rs; this
-    /// being the ONLY definition of the walker is locked by
-    /// tests/meta/value_contains_fn_dedup_lock_tests.rs.
-    ///
-    /// `Range` / `Bytes` and the scalar leaves can never contain a
-    /// function, and Channel / Handle / TcpListener / TcpStream stay
-    /// equatable-by-identity (round-96 parity), so all fall to `false`.
-    pub fn value_contains_fn(val: &Value) -> bool {
-        // A worklist, not recursion: values nest as deep as a program
-        // builds them, and the native stack a recursive walk needs per
-        // level depends on how the compiler happened to inline it.
-        let mut pending = vec![val];
-        while let Some(value) = pending.pop() {
-            match value {
-                Value::VmClosure(_)
-                | Value::BuiltinFn(_)
-                | Value::HostFn(_)
-                | Value::VariantConstructor(..) => {
-                    return true;
-                }
-                Value::List(items) => pending.extend(items.iter()),
-                Value::Tuple(items) | Value::Variant(_, items) => pending.extend(items.iter()),
-                Value::Set(items) => pending.extend(items.iter()),
-                Value::Map(entries) => {
-                    for (k, v) in entries.iter() {
-                        pending.push(k);
-                        pending.push(v);
-                    }
-                }
-                Value::Record(_, fields) => pending.extend(fields.values()),
-                _ => {}
-            }
-        }
-        false
-    }
-
     /// Human-readable type name for error messages. Renders descriptor
     /// and function-shaped values in surface-syntax terms rather than
     /// leaking internal `Value` variant names.
@@ -794,9 +736,9 @@ impl Vm {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.
-            Value::Record(ty, _) if ty.is_anon() => "an anonymous record".to_string(),
-            Value::Record(ty, _) => ty.name.clone(),
-            Value::Variant(tag, _) => tag.ty().name.clone(),
+            Value::Record(record) if record.ty().is_anon() => "an anonymous record".to_string(),
+            Value::Record(record) => record.ty().name.clone(),
+            Value::Variant(variant) => variant.ty().name.clone(),
             Value::VariantConstructor(tag) => {
                 format!("VariantConstructor `{tag}`")
             }

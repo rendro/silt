@@ -5,13 +5,13 @@
 //! `postgres` crate + `r2d2_postgres` connection pool, mirroring the
 //! pattern used by the `http` builtin (sync ureq + io_pool bridge).
 //!
-//! Pool handles are opaque to silt code: a `Value::Variant("PgPool",
-//! [Value::Int(id)])` carries an integer id into a process-global side
+//! Pool handles are opaque to silt code: a `PgPool` variant with one
+//! field, an `Int`, carries an integer id into a process-global side
 //! table that owns the actual `r2d2::Pool`. Explicit `postgres.close`
 //! is required to drop the pool.
 //!
 //! Transactions pin a single `r2d2::PooledConnection` for the callback's
-//! entire lifetime. A `Value::Variant("PgTx", [Value::Int(id)])` handle
+//! entire lifetime. A `PgTx` variant with one field, an `Int`,
 //! identifies the pinned connection in a separate registry. `query` /
 //! `execute` accept either a `PgPool` (fresh checkout per call) or a
 //! `PgTx` (reuses the pinned conn), so statements inside `transact`'s
@@ -51,7 +51,7 @@ fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::PG_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::PG_UNKNOWN, vec![Value::String(why.to_string())])
+            Value::variant(bv::PG_UNKNOWN, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
@@ -344,7 +344,7 @@ pub fn redact_pg_message(s: &str) -> String {
 fn pg_connect(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_CONNECT,
-        vec![Value::String(redact_pg_message(&msg.into()))],
+        vec![Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
@@ -352,7 +352,7 @@ fn pg_connect(msg: impl Into<String>) -> Value {
 fn pg_tls(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_TLS,
-        vec![Value::String(redact_pg_message(&msg.into()))],
+        vec![Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
@@ -360,7 +360,7 @@ fn pg_tls(msg: impl Into<String>) -> Value {
 fn pg_unknown(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_UNKNOWN,
-        vec![Value::String(redact_pg_message(&msg.into()))],
+        vec![Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
@@ -377,16 +377,16 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
             // 57014: query_canceled (statement_timeout fires with this).
             "57014" => Value::variant(bv::PG_TIMEOUT, vec![]),
             // 42703: undefined_column.
-            "42703" => Value::variant(bv::PG_NO_SUCH_COLUMN, vec![Value::String(message)]),
+            "42703" => Value::variant(bv::PG_NO_SUCH_COLUMN, vec![Value::String(message.into())]),
             code if code.starts_with("28") => {
-                Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message)])
+                Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message.into())])
             }
             code if code.starts_with("08") => {
-                Value::variant(bv::PG_CONNECT, vec![Value::String(message)])
+                Value::variant(bv::PG_CONNECT, vec![Value::String(message.into())])
             }
             code => Value::variant(
                 bv::PG_QUERY,
-                vec![Value::String(message), Value::String(code.to_string())],
+                vec![Value::String(message.into()), Value::String(code.into())],
             ),
         }
     } else {
@@ -404,7 +404,7 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         {
             Value::variant(bv::PG_CLOSED, vec![])
         } else {
-            Value::variant(bv::PG_UNKNOWN, vec![Value::String(scrubbed)])
+            Value::variant(bv::PG_UNKNOWN, vec![Value::String(scrubbed.into())])
         }
     }
 }
@@ -439,7 +439,7 @@ fn wrap_v_int(n: i64) -> Value {
     Value::variant(bv::V_INT, vec![Value::Int(n)])
 }
 fn wrap_v_str(s: String) -> Value {
-    Value::variant(bv::V_STR, vec![Value::String(s)])
+    Value::variant(bv::V_STR, vec![Value::String(s.into())])
 }
 fn wrap_v_bool(b: bool) -> Value {
     Value::variant(bv::V_BOOL, vec![Value::Bool(b)])
@@ -456,7 +456,7 @@ fn wrap_v_null() -> Value {
     Value::variant(bv::V_NULL, vec![])
 }
 fn wrap_v_list(xs: Vec<Value>) -> Value {
-    Value::variant(bv::V_LIST, vec![Value::List(Arc::new(xs))])
+    Value::variant(bv::V_LIST, vec![Value::list(xs)])
 }
 
 /// Convert a Postgres column cell to a silt-side wrapped `VXxx` `Value`.
@@ -701,37 +701,37 @@ impl ToSql for NoneText {
 
 /// Convert a silt-side wrapped `Value` ADT instance to an owned `SqlParam`.
 fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
-    let Value::Variant(tag, payload) = v else {
+    let Value::Variant(param) = v else {
         return Err(format!(
             "postgres requires Value variant (VInt/VStr/...), got {}",
             v.kind()
         ));
     };
-    if !tag.of(ty::PG_VALUE) {
+    if !param.of(ty::PG_VALUE) {
         return Err(format!(
             "postgres requires Value variant (VInt/VStr/...), got {}",
-            tag.ty().name
+            param.ty().name
         ));
     }
-    match tag.name() {
+    match param.name() {
         "VNull" => Ok(SqlParam::Null),
-        "VInt" => match payload.first() {
+        "VInt" => match param.fields().first() {
             Some(Value::Int(n)) => Ok(SqlParam::Int8(*n)),
             other => Err(format!("postgres: VInt payload must be Int, got {other:?}")),
         },
-        "VStr" => match payload.first() {
-            Some(Value::String(s)) => Ok(SqlParam::Text(MaybeUuidText(s.clone()))),
+        "VStr" => match param.fields().first() {
+            Some(Value::String(s)) => Ok(SqlParam::Text(MaybeUuidText(s.to_string()))),
             other => Err(format!(
                 "postgres: VStr payload must be String, got {other:?}"
             )),
         },
-        "VBool" => match payload.first() {
+        "VBool" => match param.fields().first() {
             Some(Value::Bool(b)) => Ok(SqlParam::Bool(*b)),
             other => Err(format!(
                 "postgres: VBool payload must be Bool, got {other:?}"
             )),
         },
-        "VFloat" => match payload.first() {
+        "VFloat" => match param.fields().first() {
             Some(Value::Float(f)) => Ok(SqlParam::Float8(*f)),
             // Some silt programs store integers in Float slots; coerce.
             Some(Value::Int(n)) => Ok(SqlParam::Float8(*n as f64)),
@@ -739,8 +739,10 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
                 "postgres: VFloat payload must be Float, got {other:?}"
             )),
         },
-        "VList" => match payload.first() {
-            Some(Value::List(xs)) => list_to_array_param(xs),
+        "VList" => match param.fields().first() {
+            Some(Value::List(xs)) => {
+                list_to_array_param(&xs.to_vec().map_err(|too_long| too_long.to_string())?)
+            }
             other => Err(format!(
                 "postgres: VList payload must be List, got {other:?}"
             )),
@@ -758,10 +760,10 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
     // Inspect the first non-null element to pick a type.
     let mut elem_kind: Option<&str> = None;
     for x in xs {
-        if let Value::Variant(tag, _) = x
-            && !tag.is(bv::V_NULL)
+        if let Value::Variant(variant) = x
+            && !variant.is(bv::V_NULL)
         {
-            elem_kind = Some(tag.name());
+            elem_kind = Some(variant.name());
             break;
         }
     }
@@ -771,11 +773,13 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<bool>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t.is(bv::V_BOOL) => match p.first() {
-                        Some(Value::Bool(b)) => out.push(Some(*b)),
-                        _ => return Err("postgres: bad VBool in array".into()),
-                    },
-                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
+                    Value::Variant(variant) if variant.is(bv::V_BOOL) => {
+                        match variant.fields().first() {
+                            Some(Value::Bool(b)) => out.push(Some(*b)),
+                            _ => return Err("postgres: bad VBool in array".into()),
+                        }
+                    }
+                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
                     _ => return Err("postgres: mixed-type array (expected Bool)".into()),
                 }
             }
@@ -785,11 +789,13 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<i64>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t.is(bv::V_INT) => match p.first() {
-                        Some(Value::Int(n)) => out.push(Some(*n)),
-                        _ => return Err("postgres: bad VInt in array".into()),
-                    },
-                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
+                    Value::Variant(variant) if variant.is(bv::V_INT) => {
+                        match variant.fields().first() {
+                            Some(Value::Int(n)) => out.push(Some(*n)),
+                            _ => return Err("postgres: bad VInt in array".into()),
+                        }
+                    }
+                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
                     _ => return Err("postgres: mixed-type array (expected Int)".into()),
                 }
             }
@@ -799,12 +805,14 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<f64>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t.is(bv::V_FLOAT) => match p.first() {
-                        Some(Value::Float(f)) => out.push(Some(*f)),
-                        Some(Value::Int(n)) => out.push(Some(*n as f64)),
-                        _ => return Err("postgres: bad VFloat in array".into()),
-                    },
-                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
+                    Value::Variant(variant) if variant.is(bv::V_FLOAT) => {
+                        match variant.fields().first() {
+                            Some(Value::Float(f)) => out.push(Some(*f)),
+                            Some(Value::Int(n)) => out.push(Some(*n as f64)),
+                            _ => return Err("postgres: bad VFloat in array".into()),
+                        }
+                    }
+                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
                     _ => return Err("postgres: mixed-type array (expected Float)".into()),
                 }
             }
@@ -815,11 +823,13 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
             let mut out: Vec<Option<String>> = Vec::with_capacity(xs.len());
             for x in xs {
                 match x {
-                    Value::Variant(t, p) if t.is(bv::V_STR) => match p.first() {
-                        Some(Value::String(s)) => out.push(Some(s.clone())),
-                        _ => return Err("postgres: bad VStr in array".into()),
-                    },
-                    Value::Variant(t, _) if t.is(bv::V_NULL) => out.push(None),
+                    Value::Variant(variant) if variant.is(bv::V_STR) => {
+                        match variant.fields().first() {
+                            Some(Value::String(s)) => out.push(Some(s.to_string())),
+                            _ => return Err("postgres: bad VStr in array".into()),
+                        }
+                    }
+                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
                     _ => {
                         return Err("postgres: nested arrays / mixed types not supported".into());
                     }
@@ -835,7 +845,7 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
 fn row_to_map(row: &postgres::Row) -> Value {
     let mut map: BTreeMap<Value, Value> = BTreeMap::new();
     for (idx, col) in row.columns().iter().enumerate() {
-        let key = Value::String(col.name().to_string());
+        let key = Value::String(col.name().into());
         map.insert(key, pg_cell_to_value(row, idx));
     }
     Value::Map(Arc::new(map))
@@ -843,17 +853,23 @@ fn row_to_map(row: &postgres::Row) -> Value {
 
 fn make_query_result(rows: Vec<Value>) -> Value {
     let row_count = rows.len() as i64;
-    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert("rows".to_string(), Value::List(Arc::new(rows)));
-    fields.insert("row_count".to_string(), Value::Int(row_count));
-    Value::builtin_record(ty::QUERY_RESULT, fields)
+    Value::builtin_record(
+        ty::QUERY_RESULT,
+        [
+            ("row_count", Value::Int(row_count)),
+            ("rows", Value::list(rows)),
+        ],
+    )
 }
 
 fn make_exec_result(affected: u64, returning: Vec<Value>) -> Value {
-    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert("affected".to_string(), Value::Int(affected as i64));
-    fields.insert("returning".to_string(), Value::List(Arc::new(returning)));
-    Value::builtin_record(ty::EXEC_RESULT, fields)
+    Value::builtin_record(
+        ty::EXEC_RESULT,
+        [
+            ("affected", Value::Int(affected as i64)),
+            ("returning", Value::list(returning)),
+        ],
+    )
 }
 
 // ── Handle helpers ──────────────────────────────────────────────────
@@ -876,7 +892,7 @@ fn make_cursor_handle(id: u64) -> Value {
 /// less than 0.
 fn handle_id(value: &Value, tag: BuiltinVariant) -> Option<u64> {
     match value {
-        Value::Variant(name, payload) if name.is(tag) => match payload.as_slice() {
+        Value::Variant(variant) if variant.is(tag) => match variant.fields() {
             [Value::Int(id)] => u64::try_from(*id).ok(),
             _ => None,
         },
@@ -1001,7 +1017,7 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
     Err(other_error(format!(
         "postgres requires PgPool or PgTx, got {}",
         match conn {
-            Value::Variant(tag, _) => tag.name(),
+            Value::Variant(variant) => variant.name(),
             other => other.kind(),
         }
     )))
@@ -1503,7 +1519,7 @@ fn do_cursor_next(cursor_id: u64) -> Value {
         }
     };
     if entry.exhausted {
-        return ok(Value::List(Arc::new(Vec::new())));
+        return ok(Value::list(Vec::new()));
     }
     let cell = match lookup_tx(entry.tx_id) {
         Some(c) => c,
@@ -1528,7 +1544,7 @@ fn do_cursor_next(cursor_id: u64) -> Value {
             if (n as u64) < entry.batch_size {
                 update_cursor_exhausted(cursor_id, true);
             }
-            ok(Value::List(Arc::new(mapped)))
+            ok(Value::list(mapped))
         }
         Err(e) => err(pg_error_to_variant(&e)),
     }
@@ -1604,17 +1620,18 @@ fn is_valid_ident(s: &str) -> bool {
 
 /// Build a silt `Notification` record from a tokio-postgres notification.
 fn notification_to_record(n: &postgres::Notification) -> Value {
-    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-    fields.insert(
-        "channel".to_string(),
-        Value::String(n.channel().to_string()),
-    );
-    fields.insert(
-        "payload".to_string(),
-        Value::String(n.payload().to_string()),
-    );
-    fields.insert("pid".to_string(), Value::Int(n.process_id() as i64));
-    Value::builtin_record(ty::NOTIFICATION, fields)
+    make_notification(n.channel(), n.payload(), n.process_id() as i64)
+}
+
+fn make_notification(channel: &str, payload: &str, pid: i64) -> Value {
+    Value::builtin_record(
+        ty::NOTIFICATION,
+        [
+            ("channel", Value::String(channel.into())),
+            ("payload", Value::String(payload.into())),
+            ("pid", Value::Int(pid)),
+        ],
+    )
 }
 
 /// Long-lived worker for `listen`. Owns the `PooledConnection` for the
@@ -1728,7 +1745,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("PgClosed", []) => "postgres connection closed".to_string(),
         ("PgTimeout", []) => "postgres operation timed out".to_string(),
         ("PgTxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
-        ("PgUnknown", [Value::String(m)]) => m.clone(),
+        ("PgUnknown", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -2059,8 +2076,8 @@ fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
 
     match returned {
         Some(v) => match &v {
-            Value::Variant(tag, _) if tag.is(bv::OK) => finalise("COMMIT", cell).unwrap_or(v),
-            Value::Variant(tag, _) if tag.is(bv::ERR) => {
+            Value::Variant(variant) if variant.is(bv::OK) => finalise("COMMIT", cell).unwrap_or(v),
+            Value::Variant(variant) if variant.is(bv::ERR) => {
                 let _ = finalise("ROLLBACK", cell);
                 v
             }
@@ -2082,6 +2099,22 @@ fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The records the module builds have the fields of their types,
+    /// in the types' order (`Value::builtin_record` says so in a debug
+    /// build), and are shown under their names.
+    #[test]
+    fn the_records_of_the_module_have_their_types_fields() {
+        let rows = make_query_result(vec![Value::Int(1), Value::Int(2)]);
+        assert_eq!(rows.to_string(), "QueryResult {row_count: 2, rows: [1, 2]}");
+        let done = make_exec_result(3, vec![]);
+        assert_eq!(done.to_string(), "ExecResult {affected: 3, returning: []}");
+        let told = make_notification("jobs", "42", 7);
+        assert_eq!(
+            told.to_string(),
+            "Notification {channel: jobs, payload: 42, pid: 7}"
+        );
+    }
 
     #[test]
     fn strip_ssl_params_preserves_rest() {
@@ -2130,20 +2163,20 @@ mod tests {
     #[cfg(not(feature = "postgres-tls"))]
     fn connect_require_without_tls_feature_errors() {
         let result = do_connect("postgres://x:y@127.0.0.1/db?sslmode=require".to_string());
-        let Value::Variant(tag, payload) = &result else {
+        let Value::Variant(outer) = &result else {
             panic!("expected Variant, got {result:?}");
         };
-        assert_eq!(tag.name(), "Err", "expected Err, got {tag}");
-        let inner = payload.first().expect("err payload");
-        let Value::Variant(etag, epayload) = inner else {
+        assert_eq!(outer.name(), "Err");
+        let inner = outer.fields().first().expect("err payload");
+        let Value::Variant(error) = inner else {
             panic!("expected inner Variant, got {inner:?}");
         };
         // Error redesign Phase 2: non-TLS builds that are asked for
         // TLS now surface `PgTls(msg)` instead of the legacy
         // `ConnectionError`. The message text still mentions TLS /
         // postgres-tls so operators see the feature-flag hint.
-        assert_eq!(etag.name(), "PgTls");
-        let Some(Value::String(msg)) = epayload.first() else {
+        assert_eq!(error.name(), "PgTls");
+        let Some(Value::String(msg)) = error.fields().first() else {
             panic!("expected message string");
         };
         assert!(msg.contains("TLS"), "message: {msg}");
@@ -2157,15 +2190,15 @@ mod tests {
         for mode in ["verify-ca", "verify-full"] {
             let url = format!("postgres://x:y@127.0.0.1/db?sslmode={mode}");
             let result = do_connect(url);
-            let Value::Variant(tag, payload) = &result else {
+            let Value::Variant(outer) = &result else {
                 panic!("expected Variant for {mode}");
             };
-            assert_eq!(tag.name(), "Err", "{mode} should Err");
-            let inner = payload.first().expect("err payload");
-            let Value::Variant(_, epayload) = inner else {
+            assert_eq!(outer.name(), "Err", "{mode} should Err");
+            let inner = outer.fields().first().expect("err payload");
+            let Value::Variant(error) = inner else {
                 panic!("expected inner Variant for {mode}");
             };
-            let Some(Value::String(msg)) = epayload.first() else {
+            let Some(Value::String(msg)) = error.fields().first() else {
                 panic!("expected message string for {mode}");
             };
             assert!(
@@ -2265,43 +2298,44 @@ mod tests {
         let result = do_connect(
             "postgres://silt_orm:silt_orm_dev@127.0.0.1/silt_orm_test?sslmode=disable".to_string(),
         );
-        let Value::Variant(tag, payload) = &result else {
+        let Value::Variant(connected) = &result else {
             panic!("expected Variant, got {result:?}");
         };
-        assert_eq!(tag.name(), "Ok", "connect failed: {result:?}");
-        let handle = payload.first().cloned().expect("pool handle");
+        assert_eq!(connected.name(), "Ok", "connect failed: {result:?}");
+        let handle = connected.fields().first().cloned().expect("pool handle");
         let handle = PoolHandle::take(&handle).expect("a pool handle");
         let pool = handle.open().expect("registered");
 
         let q = do_query(ExecutorRef::Pool(pool), "SELECT 1".to_string(), Vec::new());
-        let Value::Variant(qtag, qpayload) = &q else {
+        let Value::Variant(queried) = &q else {
             panic!("expected Variant from query: {q:?}");
         };
-        assert_eq!(qtag.name(), "Ok", "query failed: {q:?}");
+        assert_eq!(queried.name(), "Ok", "query failed: {q:?}");
         // Payload is `QueryResult { rows: [...] }`. Pull out the rows
         // list and confirm one row with `?column?` = 1.
-        let record = qpayload.first().expect("query result record");
-        let Value::Record(_, fields) = record else {
+        let record = queried.fields().first().expect("query result record");
+        let Value::Record(fields) = record else {
             panic!("expected Record, got {record:?}");
         };
         let rows = fields.get("rows").expect("rows field");
         let Value::List(rows) = rows else {
             panic!("expected rows list, got {rows:?}");
         };
+        let rows = rows.to_vec().expect("a list of rows");
         assert_eq!(rows.len(), 1, "expected 1 row, got {}", rows.len());
         // Each row is a `Map<Value::String, Value>`.
         let Value::Map(row_map) = &rows[0] else {
             panic!("expected row Map, got {:?}", rows[0]);
         };
         let col = row_map
-            .get(&Value::String("?column?".to_string()))
+            .get(&Value::String("?column?".into()))
             .expect("column ?column? missing");
         // Wrapped in VInt variant.
-        let Value::Variant(vtag, vpayload) = col else {
+        let Value::Variant(cell) = col else {
             panic!("expected VInt variant, got {col:?}");
         };
-        assert_eq!(vtag.name(), "VInt");
-        assert_eq!(vpayload.first(), Some(&Value::Int(1)));
+        assert_eq!(cell.name(), "VInt");
+        assert_eq!(cell.fields().first(), Some(&Value::Int(1)));
 
         let _ = remove_pool(handle.0);
     }

@@ -102,7 +102,7 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
             .expect("List")
             .clone(),
     );
-    let prim_desc = Value::PrimitiveDescriptor("Int".to_string());
+    let prim_desc = Value::PrimitiveDescriptor("Int");
     for v in [&handle, &type_desc, &prim_desc] {
         assert!(
             !Vm::value_implements_display(v),
@@ -114,7 +114,7 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
         Value::Int(1),
         Value::String("x".into()),
         Value::Bool(true),
-        Value::List(Arc::new(vec![Value::Int(1)])),
+        Value::list(vec![Value::Int(1)]),
         Value::Unit,
     ] {
         assert!(
