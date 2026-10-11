@@ -16,7 +16,11 @@
 //!    the same failures of tasks that nobody joined, the same value of
 //!    `main` or the same error.
 //! 5. No run may end in a `type_confusion` error, in an internal error
-//!    or in a panic, and no task of it either; and every run ends.
+//!    or in a panic, and no task of it either; and every run ends. A
+//!    panic counts on whatever thread it happens: one on a thread of
+//!    the scheduler takes that thread and leaves the program waiting,
+//!    so the oracle records every panic of the process ([`Panics`]) and
+//!    judges a run by the panics recorded while it ran.
 //!
 //! Each run has a step budget (`Vm::set_step_budget`). A program that
 //! uses it up in either run is cut short: it was held to step 5 as far
@@ -38,8 +42,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once};
+use std::time::{Duration, Instant};
 
 use silt::builtins::registry::registry;
 use silt::bytecode::{Function, Instr};
@@ -320,6 +324,89 @@ struct TaskFailure {
     out_of_steps: bool,
 }
 
+/// The panics of the process, as the panic hook records them.
+///
+/// A panic belongs to a run when it happened on the run's own thread,
+/// or on a thread without a name while the run was in progress: the
+/// threads of the runtime (the scheduler's workers, the timer, the I/O
+/// pool) have none, and nothing says which VM one of them serves. So
+/// when two runs are in progress side by side, a panic on such a thread
+/// is laid to both; a suite in which that happens has failed anyway. A
+/// panic on any other named thread (a test's own) is no run's.
+#[derive(Default)]
+struct Panics {
+    /// The name of the thread and what the panic said, in order.
+    recorded: Mutex<Vec<(Option<String>, String)>>,
+}
+
+static PANICS: Panics = Panics {
+    recorded: Mutex::new(Vec::new()),
+};
+
+impl Panics {
+    fn recorded(&self) -> MutexGuard<'_, Vec<(Option<String>, String)>> {
+        self.recorded.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn record(&self, thread: Option<&str>, text: String) {
+        self.recorded().push((thread.map(str::to_string), text));
+    }
+
+    /// How many panics there have been: what a run remembers when it
+    /// starts.
+    fn mark(&self) -> usize {
+        self.recorded().len()
+    }
+
+    /// The panics since `mark` that belong to the run whose thread is
+    /// named `run`.
+    fn of_run(&self, mark: usize, run: &str) -> Vec<String> {
+        let recorded = self.recorded();
+        let mine = recorded
+            .iter()
+            .skip(mark)
+            .filter(|(thread, _)| match thread {
+                None => true,
+                Some(name) => name == run,
+            });
+        mine.map(|(thread, text)| match thread {
+            Some(_) => text.clone(),
+            None => format!("on a thread of the runtime: {text}"),
+        })
+        .collect()
+    }
+}
+
+/// Have every panic of the process recorded in [`PANICS`], and then
+/// handled as before (printed; a fuzz target's hook ends the process).
+fn record_panics() {
+    static HOOKED: Once = Once::new();
+    HOOKED.call_once(|| {
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let said = match info.payload().downcast_ref::<&'static str>() {
+                Some(text) => (*text).to_string(),
+                None => match info.payload().downcast_ref::<String>() {
+                    Some(text) => text.clone(),
+                    None => "(a panic without a message)".to_string(),
+                },
+            };
+            let text = match info.location() {
+                Some(at) => format!("{said} ({}:{})", at.file(), at.line()),
+                None => said,
+            };
+            PANICS.record(std::thread::current().name(), text);
+            before(info);
+        }));
+    });
+}
+
+/// How long a run in which a panic was recorded is given to end by
+/// itself before it is given up: a panic that a builtin caught is an
+/// error of the program a moment later; one that took a thread of the
+/// scheduler leaves the program waiting for ever.
+const AFTER_A_PANIC: Duration = Duration::from_secs(2);
+
 /// What a run left behind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Run {
@@ -329,6 +416,8 @@ struct Run {
     /// The tasks that failed unjoined, sorted: the order in which they
     /// fail is the scheduler's.
     failures: Vec<TaskFailure>,
+    /// The panics recorded while it ran ([`Panics::of_run`]).
+    panics: Vec<String>,
     end: End,
 }
 
@@ -676,6 +765,7 @@ enum Time {
 /// [`Time::Still`] may have tasks, whose failures are taken when it has
 /// ended.
 fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
+    record_panics();
     let (stdout, stderr) = (Buffer::new(), Buffer::new());
     let io = HostIo::new(stdout.clone(), stderr.clone());
     let io = match time {
@@ -685,12 +775,15 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
     };
     let tasks = time != Time::Still;
     let program = program.clone();
+    let owner = NEXT_OWNER.fetch_add(1, Ordering::SeqCst);
+    let name = format!("oracle-run-{owner}");
+    let mark = PANICS.mark();
     let (ended, end) = mpsc::sync_channel(1);
     let thread = std::thread::Builder::new()
+        .name(name.clone())
         .stack_size(STACK_BYTES)
         .spawn(move || {
             silt::scheduler::collect_unjoined_failures();
-            let owner = NEXT_OWNER.fetch_add(1, Ordering::SeqCst);
             if tasks {
                 GATE.enter();
             }
@@ -728,26 +821,43 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
             let _ = ended.send((end, failures));
         })
         .expect("a thread for the run");
-    let (end, failures) = match end.recv_timeout(watchdog(steps)) {
-        Ok(ended) => {
-            let _ = thread.join();
-            ended
+    // The run is waited for in short looks, so that one in which a
+    // thread of the runtime has panicked is not waited out.
+    let started = Instant::now();
+    let mut panicked = None;
+    let given_up = |end: End| {
+        if tasks {
+            GATE.hung();
         }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            if tasks {
-                GATE.hung();
+        (end, Vec::new())
+    };
+    let (end, failures) = loop {
+        match end.recv_timeout(Duration::from_millis(20)) {
+            Ok(ended) => {
+                let _ = thread.join();
+                break ended;
             }
-            (End::Hang, Vec::new())
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let end = End::Panic("the run's thread ended without a result".into());
+                break (end, Vec::new());
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let end = End::Panic("the run's thread ended without a result".into());
-            (end, Vec::new())
+        if panicked.is_none() && !PANICS.of_run(mark, &name).is_empty() {
+            panicked = Some(Instant::now());
+        }
+        if panicked.is_some_and(|at| at.elapsed() > AFTER_A_PANIC) {
+            break given_up(End::Hang);
+        }
+        if started.elapsed() > watchdog(steps) {
+            break given_up(End::Hang);
         }
     };
     Run {
         stdout: stdout.contents(),
         stderr: stderr.contents(),
         failures,
+        panics: PANICS.of_run(mark, &name),
         end,
     }
 }
@@ -775,6 +885,11 @@ fn is_err(value: &Value) -> bool {
 /// Step 5: what no run may end in.
 fn broken(run: &Run) -> Option<Finding> {
     let finding = |kind, detail: &str| Some(Finding::new(kind, detail));
+    // A panic first: what else the run shows (that it did not end, as
+    // a rule) follows from it.
+    if let Some(panic) = run.panics.first() {
+        return finding(Kind::Panic, panic);
+    }
     match &run.end {
         End::Panic(text) => return finding(Kind::Panic, text),
         End::Hang => return finding(Kind::Hang, "no end within the watchdog's time"),
@@ -917,13 +1032,14 @@ fn panic_text(payload: &Box<dyn std::any::Any + Send>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{End, Run, TaskFailure, difference};
+    use super::{End, Kind, PANICS, Panics, Run, TaskFailure, broken, difference, record_panics};
 
     fn run(stdout: &str, stderr: &str, value: &str) -> Run {
         Run {
             stdout: stdout.to_string(),
             stderr: stderr.to_string(),
             failures: Vec::new(),
+            panics: Vec::new(),
             end: End::Value {
                 shown: value.to_string(),
                 failed: false,
@@ -964,5 +1080,65 @@ mod tests {
             whole: String::new(),
         };
         assert!(difference(&base, &failed).is_some());
+    }
+
+    /// A panic belongs to the run on whose thread it happened, and to
+    /// every run in progress when the thread has no name; a panic on
+    /// another named thread is no run's.
+    #[test]
+    fn a_panic_is_laid_to_the_runs_it_may_be_of() {
+        let panics = Panics::default();
+        panics.record(Some("oracle-run-1"), "before the mark".into());
+        let mark = panics.mark();
+        panics.record(Some("oracle-run-7"), "in the run".into());
+        panics.record(Some("oracle-run-8"), "in another run".into());
+        panics.record(Some("selfcheck::a_test"), "in a test".into());
+        panics.record(None, "in a worker".into());
+        assert_eq!(
+            panics.of_run(mark, "oracle-run-7"),
+            ["in the run", "on a thread of the runtime: in a worker"]
+        );
+        assert_eq!(
+            panics.of_run(mark, "oracle-run-1"),
+            ["on a thread of the runtime: in a worker"]
+        );
+        assert!(panics.of_run(panics.mark(), "oracle-run-7").is_empty());
+    }
+
+    /// A run with a recorded panic is a `panic` finding, whatever its
+    /// end: one that ended well, and one that did not end.
+    #[test]
+    fn a_run_with_a_recorded_panic_is_judged_by_it() {
+        let mut ended = run("out\n", "", "1");
+        assert!(broken(&ended).is_none());
+        ended.panics.push("on a thread of the runtime: boom".into());
+        let finding = broken(&ended).unwrap();
+        assert_eq!(finding.kind, Kind::Panic);
+        assert!(finding.detail.contains("boom"), "{}", finding.detail);
+        let mut hung = ended.clone();
+        hung.end = End::Hang;
+        assert_eq!(broken(&hung).unwrap().kind, Kind::Panic);
+        hung.panics.clear();
+        assert_eq!(broken(&hung).unwrap().kind, Kind::Hang);
+    }
+
+    /// The hook records a panic of any thread of the process, with the
+    /// thread's name and the place. (The thread here has a name that no
+    /// run has, so no run of a test beside this one is judged by it.)
+    #[test]
+    fn the_hook_records_a_panic_on_any_thread() {
+        record_panics();
+        let mark = PANICS.mark();
+        let thread = std::thread::Builder::new()
+            .name("oracle-hook-test".into())
+            .spawn(|| panic!("a panic for the hook"))
+            .unwrap();
+        assert!(thread.join().is_err());
+        let recorded = PANICS.of_run(mark, "oracle-hook-test");
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert!(
+            recorded[0].starts_with("a panic for the hook (tests"),
+            "{recorded:?}"
+        );
     }
 }
