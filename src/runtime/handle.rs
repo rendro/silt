@@ -400,6 +400,19 @@ pub enum Taken {
     Part,
 }
 
+/// What a write that takes its turn does with the connection before
+/// the turn passes on.
+#[derive(Clone, Copy)]
+enum Turn {
+    /// Nothing.
+    Passes,
+    /// It shuts the connection down if the system took a part of its
+    /// bytes.
+    WholeOrNothing,
+    /// It ends the writes.
+    EndsWrites,
+}
+
 /// A connection.
 ///
 /// A plain TCP connection is read and written at the same time: a
@@ -617,7 +630,16 @@ impl TcpStreamHandle {
     /// A read of the connection may be in flight on another thread
     /// meanwhile: it is not disturbed (see `send_now`).
     pub fn write_in_turn(&self, bytes: &[u8]) -> usize {
-        self.write_at_once(bytes, false)
+        self.write_at_once(bytes, Turn::Passes)
+    }
+
+    /// [`TcpStreamHandle::write_in_turn`] for the last bytes that are
+    /// written on the connection (a last word): the writes are ended
+    /// in the same turn ([`TcpStreamHandle::end_writes`]), so that no
+    /// other writer comes between the two. One whose turn comes later
+    /// writes nothing.
+    pub fn write_last_in_turn(&self, bytes: &[u8]) -> usize {
+        self.write_at_once(bytes, Turn::EndsWrites)
     }
 
     /// [`TcpStreamHandle::write_in_turn`] for bytes that mean nothing
@@ -628,14 +650,14 @@ impl TcpStreamHandle {
     /// took nothing, nothing of them stands on the connection, which
     /// is as it was.
     pub fn write_whole_in_turn(&self, bytes: &[u8]) -> Taken {
-        match self.write_at_once(bytes, true) {
+        match self.write_at_once(bytes, Turn::WholeOrNothing) {
             0 => Taken::Nothing,
             taken if taken == bytes.len() => Taken::All,
             _ => Taken::Part,
         }
     }
 
-    fn write_at_once(&self, bytes: &[u8], whole: bool) -> usize {
+    fn write_at_once(&self, bytes: &[u8], turn: Turn) -> usize {
         let TcpIo::Plain {
             socket,
             writing,
@@ -664,8 +686,16 @@ impl TcpStreamHandle {
                 Err(_) => break,
             }
         }
-        if whole && (1..bytes.len()).contains(&written) {
-            self.shut_down();
+        match turn {
+            Turn::Passes => {}
+            Turn::WholeOrNothing => {
+                if (1..bytes.len()).contains(&written) {
+                    self.shut_down();
+                }
+            }
+            Turn::EndsWrites => {
+                let _ = socket.shutdown(std::net::Shutdown::Write);
+            }
         }
         #[cfg(any(test, feature = "test-hooks"))]
         tell_write_watches(self, WriteMoment::Written);
@@ -1202,6 +1232,33 @@ mod tests {
         let (ones, rest) = all.split_at(FIRST - 1);
         assert!(ones.iter().all(|byte| *byte == b'1'));
         assert_eq!(rest, b"second");
+    }
+
+    /// A last word and the end of the writes are one turn: the peer
+    /// reads the word and then the end, a writer whose turn comes
+    /// later writes nothing, and the connection still reads.
+    #[test]
+    fn a_last_write_ends_the_writes_in_its_turn() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .expect("read timeout");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        assert_eq!(conn.write_last_in_turn(b"the last word"), 13);
+        assert_eq!(conn.write_in_turn(b"behind it"), 0);
+        assert_eq!(conn.write_whole_in_turn(b"behind it"), Taken::Nothing);
+        assert!(!conn.is_closed());
+        let mut all = Vec::new();
+        peer.read_to_end(&mut all).expect("the end");
+        assert_eq!(all, b"the last word");
+        peer.write_all(b"heard").expect("write");
+        let mut heard = [0u8; 5];
+        let mut read = 0;
+        while read < heard.len() {
+            read += conn.read(&mut heard[read..]).expect("a read");
+        }
+        assert_eq!(&heard, b"heard");
     }
 
     /// Bytes that mean nothing in part are written whole or not at

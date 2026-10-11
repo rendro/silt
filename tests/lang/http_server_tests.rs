@@ -1358,6 +1358,96 @@ fn an_interim_response_that_the_system_does_not_take_is_skipped() {
     }
 }
 
+/// A last word and the end of the writes are one turn of the
+/// connection's writes. An interim response whose writer waits for
+/// the turn while the 408 is written comes to a connection whose
+/// writes are ended, and is left out: the client reads the 408 and the
+/// end, with nothing between or behind them, and is heard out.
+///
+/// By order, with the hook of the writes: the writer of the 408 is
+/// held in its turn; the rest of the head is sent, and the reader's
+/// thread comes to wait for the turn with the interim response; then
+/// the 408's writer is let go.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn nothing_is_written_behind_a_last_word() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Mutex, mpsc};
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    let head = format!(
+        "POST /late HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {}\r\n",
+        2 * 1024 * 1024
+    );
+    let patience = Instant::now() + PATIENCE;
+    let (mut client, go, waits, _watching) = loop {
+        assert!(
+            Instant::now() < patience,
+            "a head that stops is never answered"
+        );
+        let mut client = server.connect();
+        let this = client.0.get_ref().local_addr().expect("the client's end");
+        // The first write on the connection is the 408: its writer
+        // stays in its turn until `go` is dropped. A writer that
+        // finds the turn taken is the interim response's.
+        let (go, held) = mpsc::channel::<()>();
+        let held = Mutex::new(Some(held));
+        let waits = Arc::new(AtomicBool::new(false));
+        let waiting = waits.clone();
+        let watching = watch_writes(move |conn, moment| {
+            if conn.peer_addr().ok() != Some(this) {
+                return;
+            }
+            match moment {
+                WriteMoment::Written => {
+                    let held = held.lock().expect("the first write").take();
+                    if let Some(held) = held {
+                        let _ = held.recv();
+                    }
+                }
+                WriteMoment::Waits => waiting.store(true, Ordering::SeqCst),
+            }
+        });
+        client.send(head.as_bytes());
+        // (As in `an_interim_response_that_the_system_does_not_take_
+        // is_skipped`: the clock stands from when the server makes its
+        // answer, and a connection that was closed without a word had
+        // nothing of its head read in time.)
+        let asked = clock.asked();
+        while clock.asked() == asked && !client.has_word() {
+            assert!(
+                Instant::now() < patience,
+                "a head that stops is waited for without end"
+            );
+            clock.advance(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(2));
+        }
+        if clock.asked() != asked {
+            break (client, go, waits, watching);
+        }
+    };
+    assert_eq!(client.response().status, 408);
+    client.send(b"\r\n");
+    while !waits.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < patience,
+            "the interim response did not wait for its turn"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    drop(go);
+    assert_eq!(
+        client.rest(),
+        b"",
+        "something was written behind the last word"
+    );
+    for _ in 0..4096 {
+        let taken = client.0.get_mut().write_all(&[b'b'; 256]);
+        assert!(taken.is_ok(), "the server stopped hearing the client out");
+    }
+}
+
 /// A client keeps its connection, asks for a response that is larger
 /// than what the system takes for a client that does not read, and has
 /// its next request there already, which asks for `100 Continue`. When

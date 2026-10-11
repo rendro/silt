@@ -1044,10 +1044,15 @@ impl Conn {
                     false => Conn::END,
                     true => {
                         let bytes = plain_response(vm, 408, wire::reason(408), Reply::LAST);
-                        // (After the interim response, if the reader's
-                        // thread is writing it.)
-                        let _ = self.stream.write_in_turn(&bytes);
-                        self.stream.end_writes();
+                        // The last word and the end of the writes are
+                        // one turn: after the interim response, if the
+                        // reader's thread is writing it, and with
+                        // nothing between the two. An interim response
+                        // that the reader's thread comes to write
+                        // later finds the writes ended and is left
+                        // out: the reader reads on, and the client is
+                        // heard out.
+                        let _ = self.stream.write_last_in_turn(&bytes);
                         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
                             .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
                         self.state = ConnState::Draining(op);
