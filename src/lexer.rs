@@ -418,31 +418,35 @@ impl Lexer {
     /// that is no token becomes a `Token::Error`, the error is recorded
     /// (`Lexed::errors`), and the lexer goes on behind it. With the
     /// first error that is not kept (`Lexed::more_errors`) the tokens
-    /// end: the lexer goes on only to count, and the rest of the text is
-    /// one `Token::Error`.
+    /// end: the lexer goes on only to count, and the rest of the text,
+    /// from the token of that error (or from its `{-`, when it is the
+    /// error of a comment that is not closed), is one `Token::Error`.
     pub fn tokenize(&mut self) -> Lexed {
-        let mut tokens = Vec::new();
-        // Where the token starts with which the tokens end.
-        let mut cut: Option<Span> = None;
+        let mut tokens: Vec<Tok> = Vec::new();
+        // Whether the tokens have ended: the last of them is the token
+        // of the rest, which ends where the text ends.
+        let mut cut = false;
         loop {
             let (kind, start) = self.next_token();
             let is_eof = kind == Token::Eof;
-            if cut.is_none() && self.more_errors > 0 && !is_eof {
-                cut = Some(start);
-            }
-            match cut {
-                // Counting: nothing is kept but the comments in front of
-                // the cut, which the token of the rest carries.
-                Some(_) if !is_eof => {
-                    self.comments.truncate(self.gap_comments as usize);
+            if cut {
+                // Counting: nothing of the rest is kept.
+                self.comments.truncate(self.gap_comments as usize);
+                if !is_eof {
                     continue;
                 }
-                Some(cut) => {
-                    self.comments.truncate(self.gap_comments as usize);
-                    self.push_token(&mut tokens, Token::Error, cut);
-                    self.gap_newlines = 0;
+                if let Some(rest) = tokens.last_mut() {
+                    rest.span = self.since(rest.span);
                 }
-                None => {}
+                self.gap_newlines = 0;
+            } else if self.more_errors > 0 {
+                // The token of the first error that is not kept (every
+                // error is raised in a token: see `next_token` for a
+                // comment that is not closed). The rest starts with it
+                // and carries the comments in front of it.
+                self.push_token(&mut tokens, Token::Error, start);
+                cut = true;
+                continue;
             }
             self.push_token(&mut tokens, kind, start);
             if is_eof {
@@ -571,9 +575,10 @@ impl Lexer {
         }
     }
 
-    /// Skip to the end of the block comment whose `{-` was just read. One
-    /// that is not closed is an error and runs to the end of the text.
-    fn skip_block_comment(&mut self) {
+    /// Skip to the end of the block comment whose `{-` was just read, and
+    /// say whether it is closed. One that is not is an error and runs to
+    /// the end of the text.
+    fn skip_block_comment(&mut self) -> bool {
         // We've already consumed `{-`
         let mut depth = 1;
         let start = self.span();
@@ -597,10 +602,11 @@ impl Lexer {
                             "unterminated block comment",
                         )
                     });
-                    return;
+                    return false;
                 }
             }
         }
+        true
     }
 
     fn scan_string(&mut self, is_continuation: bool, start: Span) -> Scanned {
@@ -980,7 +986,13 @@ impl Lexer {
                     let comment_span = self.span();
                     self.advance_char();
                     self.advance_char();
-                    self.skip_block_comment();
+                    let closed = self.skip_block_comment();
+                    // One that is not closed, with an error that is not
+                    // kept, is no comment: it is text that is no token,
+                    // with which the tokens end (see `tokenize`).
+                    if !closed && self.more_errors > 0 {
+                        return (Token::Error, comment_span);
+                    }
                     self.record_comment(CommentKind::Block, comment_span);
                     self.skip_whitespace();
                     continue;
@@ -1924,6 +1936,114 @@ mod tests {
         // Text without an error is not cut, however long.
         let lexed = Lexer::new(crate::source::FileId::default(), &"x ".repeat(1000)).tokenize();
         assert_eq!((lexed.tokens.len(), lexed.more_errors), (1001, 0));
+    }
+
+    /// What the lexer makes of `text`, which keeps the lexer's
+    /// invariants (`check_lexer_invariants`).
+    fn lex_invariant(text: &str) -> Lexed {
+        let lexed = Lexer::new(crate::source::FileId::default(), text).tokenize();
+        assert_eq!(
+            crate::fuzz_invariants::check_lexer_invariants(text, &lexed),
+            Ok(()),
+            "{text:?}"
+        );
+        lexed
+    }
+
+    /// The token of the rest of `text` (the one in front of the Eof) as
+    /// it is written, with its line breaks and the comments it carries.
+    fn rest_of<'a>(text: &'a str, lexed: &'a Lexed) -> (&'a str, u8, Vec<&'a str>) {
+        let [.., rest, eof] = &lexed.tokens[..] else {
+            panic!("{:?}", lexed.tokens);
+        };
+        assert_eq!((&rest.kind, &eof.kind), (&Token::Error, &Token::Eof));
+        // Nothing of the rest is kept: the Eof has no trivia.
+        assert_eq!((eof.newlines_before, eof.comments.len()), (0, 0));
+        (
+            &text[rest.span.start as usize..rest.span.end as usize],
+            rest.newlines_before,
+            lexed
+                .comments_before(rest)
+                .iter()
+                .map(|comment| comment.text(text))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn test_a_comment_that_is_not_closed_is_the_rest_when_its_error_is_not_kept() {
+        // Fifty errors that are kept. The error of the comment behind
+        // them is the first that is not, and no token follows it: the
+        // comment is the rest of the text, and no comment.
+        let kept = "@ 1 ".repeat(MAX_SYNTAX_ERRORS);
+        for (behind, rest, newlines, comments) in [
+            ("{-", "{-", 0, vec![]),
+            ("\n{- a {- b -} c\nd\n", "{- a {- b -} c\nd\n", 1, vec![]),
+            // The comments in front of it are comments.
+            ("-- c\n{- d -}\n\n{- e", "{- e", 2, vec!["-- c", "{- d -}"]),
+        ] {
+            let text = format!("{kept}{behind}");
+            let lexed = lex_invariant(&text);
+            assert_eq!(
+                (lexed.errors.len(), lexed.more_errors, lexed.cut_short),
+                (MAX_SYNTAX_ERRORS, 1, true),
+                "{behind:?}"
+            );
+            assert_eq!(
+                rest_of(&text, &lexed),
+                (rest, newlines, comments.clone()),
+                "{behind:?}"
+            );
+            assert_eq!(lexed.comments.len(), comments.len(), "{behind:?}");
+        }
+        // Behind an error that is not kept it is of that error's rest.
+        let text = format!("{kept}@ 1 {{- x");
+        let lexed = lex_invariant(&text);
+        assert_eq!(lexed.more_errors, 2);
+        assert_eq!(rest_of(&text, &lexed), ("@ 1 {- x", 0, vec![]));
+        // With an error that is kept it is a comment, and no token.
+        let text = format!("{}{{- x", "@ 1 ".repeat(MAX_SYNTAX_ERRORS - 1));
+        let lexed = lex_invariant(&text);
+        assert_eq!(
+            (lexed.errors.len(), lexed.more_errors, lexed.cut_short),
+            (MAX_SYNTAX_ERRORS, 0, true)
+        );
+        assert_eq!(lexed.tokens[lexed.tokens.len() - 2].kind, Token::Int(1));
+        assert_eq!(lexed.comments.len(), 1);
+        assert_eq!(lexed.comments[0].text(&text), "{- x");
+    }
+
+    #[test]
+    fn test_the_text_of_the_randomised_test_that_ends_in_an_open_comment() {
+        // The text for which `lexer_never_panics` (tests/lang) failed:
+        // fifty errors, and `{-` at its end.
+        let text = "\u{1920}\u{1f300}#\u{c92}\\A\\\u{1ee05}~\u{1c90}%\u{116c0}\u{1f1e6}\u{108e0}\
+                    \u{2500}\u{1ee7e}@\u{10b40}\u{1f300}&\u{1e8d0}\u{a840}\\\u{11700}#\u{10b41}\
+                    \u{1face}\u{11d0b}\u{2ff0}\u{10594}{\u{17f0}:\u{3a3}#\u{fb00}&\u{16af0}\
+                    \u{2d30}\u{ffe0}A\u{a1}\u{11335}<\u{ab28}]\u{ae}$\u{124a}\u{a1}\u{b47}\
+                    \u{1f7e0}\u{b01}\u{fffc}\u{1e000}#\u{10d40}\u{10100}{-";
+        let lexed = lex_invariant(text);
+        assert_eq!(
+            (lexed.errors.len(), lexed.more_errors),
+            (MAX_SYNTAX_ERRORS, 1)
+        );
+        assert_eq!(rest_of(text, &lexed), ("{-", 0, vec![]));
+    }
+
+    #[test]
+    fn test_the_token_of_the_rest_carries_what_stands_in_front_of_it() {
+        // The comments and the line break in front of the first error
+        // that is not kept are in front of the token of the rest; the
+        // comments and line breaks behind it are of the rest.
+        let kept = "@ 1 ".repeat(MAX_SYNTAX_ERRORS);
+        let text = format!("{kept}-- c\n@ x\n\n\n-- d\n{{- e -}}\ny\n");
+        let lexed = lex_invariant(&text);
+        assert_eq!(lexed.more_errors, 1);
+        assert_eq!(
+            rest_of(&text, &lexed),
+            ("@ x\n\n\n-- d\n{- e -}\ny\n", 1, vec!["-- c"])
+        );
+        assert_eq!(lexed.comments.len(), 1);
     }
 
     #[test]
