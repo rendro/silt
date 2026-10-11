@@ -1,0 +1,43 @@
+-- verdict: same
+-- What the rule does not reject: an impl for an enum (a variant's
+-- fields have no names), a field named like a method of a trait the
+-- type does not implement, a function named like a field, a method
+-- named like a field of another record, an anonymous record. A call
+-- `r.run(x)` on a record calls the function its field holds, also where
+-- the record's type is decided after the call is read (a closure's
+-- parameter).
+import list
+type Shape { Circle(Int), Square(Int) }
+trait Area { fn area(self) -> Int }
+trait Area for Shape {
+  fn area(self) -> Int {
+    match self {
+      Circle(r) -> r * r * 3
+      Square(s) -> s * s
+    }
+  }
+}
+trait Run { fn run(self, x: Int) -> Int }
+trait Run for Int { fn run(self, x: Int) -> Int { self + x } }
+type H { run: Fn(Int) -> Int, area: Int }
+type Other { n: Int }
+trait Run for Other { fn run(self, x: Int) -> Int { self.n * x } }
+fn run(x: Int) -> Int { x * 2 }
+fn bounded(r: a, x: Int) -> Int where a: Run { r.run(x) }
+fn inferred(r, x) { r.run(x) }
+fn main() {
+  let h = H { run: { x -> x + 1 }, area: 9 }
+  println(h.run(1))
+  println(1 |> h.run)
+  println(h.area)
+  println(3.run(4))
+  println(Other { n: 5 }.run(2))
+  println(bounded(Other { n: 5 }, 3))
+  println(run(5))
+  println(Circle(2).area())
+  let anon = {run: { x -> x - 1 }}
+  println(anon.run(0))
+  let hs = [h, H { run: { x -> x * 10 }, area: 0 }]
+  println(list.map(hs, { r -> r.run(7) }))
+  println(inferred(Other { n: 5 }, 4))
+}

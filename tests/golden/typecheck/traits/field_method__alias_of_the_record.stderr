@@ -1,0 +1,10 @@
+error[type]: method 'run' of the impl of 'Run' for 'A' is named like a field of 'H'
+ --> field_method__alias_of_the_record.silt:7:22
+   |
+ 7 | trait Run for A { fn run(self) -> Int { 1 } }
+   |                      ^^^ method 'run' of the impl of 'Run' for 'A' is named like a field of 'H'
+ ::: field_method__alias_of_the_record.silt:4:10
+   |
+ 4 | type H { run: Int }
+   |          --- the field 'run' of 'H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

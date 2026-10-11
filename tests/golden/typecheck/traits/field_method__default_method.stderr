@@ -1,0 +1,21 @@
+error[type]: the impl of 'Run' for 'H' takes the default method 'run' of the trait, which is named like a field of 'H'
+ --> field_method__default_method.silt:13:1
+    |
+ 13 | trait Run for H {
+    | ^^^^^^^^^^^^^^^^^ the impl of 'Run' for 'H' takes the default method 'run' of the trait, which is named like a field of 'H'
+ ::: field_method__default_method.silt:12:10
+    |
+ 12 | type H { run: Int, name: String }
+    |          --- the field 'run' of 'H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field
+
+error[type]: method 'name' of the impl of 'Run' for 'H' is named like a field of 'H'
+ --> field_method__default_method.silt:14:6
+    |
+ 14 |   fn name(self) -> String { "h" }
+    |      ^^^^ method 'name' of the impl of 'Run' for 'H' is named like a field of 'H'
+ ::: field_method__default_method.silt:12:20
+    |
+ 12 | type H { run: Int, name: String }
+    |                    ---- the field 'name' of 'H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

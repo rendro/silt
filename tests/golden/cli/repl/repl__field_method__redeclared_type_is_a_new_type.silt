@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: type H { n: Int }\ntrait Run { fn run(self) -> Int }\ntrait Run for H { fn run(self) -> Int { 7 } }\nlet old = H { n: 2 }\ntype H { run: Int, n: Int }\nlet new = H { run: 1, n: 2 }\nold.run()\nnew.run\nfn bounded(r: a) -> Int where a: Run { r.run() }\nbounded(old)\nbounded(new)\ntrait Run for H { fn run(self) -> Int { 8 } }\n:quit\n
+-- A type declared again is a new type with no impls (stage 5 decision
+-- D4): declaring `H` again with a field `run` is no clash with the impl
+-- of `Run` for the old `H`, which the old values keep. The new `H` has
+-- no `Run`; an impl of it for the new `H` is the error.

@@ -1,0 +1,10 @@
+error[type]: the impl of 'Base' for 'H' takes the default method 'size' of the trait, which is named like a field of 'H'
+ --> field_method__supertrait_default_method.silt:9:1
+   |
+ 9 | trait Base for H {}
+   | ^^^^^^^^^^^^^^^^^^^ the impl of 'Base' for 'H' takes the default method 'size' of the trait, which is named like a field of 'H'
+ ::: field_method__supertrait_default_method.silt:8:10
+   |
+ 8 | type H { size: Int }
+   |          ---- the field 'size' of 'H'
+  = help: a field and a method of one type cannot share a name: rename the method or the field

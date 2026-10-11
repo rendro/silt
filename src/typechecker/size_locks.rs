@@ -23,9 +23,10 @@ fn enum_info_size_locked() {
 
 #[test]
 fn record_info_size_locked() {
+    // `field_spans`: where an impl's method named like a field points.
     assert_eq!(
         std::mem::size_of::<RecordInfo>(),
-        24,
+        48,
         "RecordInfo size changed — see module doc"
     );
 }

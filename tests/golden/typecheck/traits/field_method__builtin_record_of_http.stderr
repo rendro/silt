@@ -1,0 +1,13 @@
+error[type]: method 'body' of the impl of 'Size' for 'Response' is named like a field of 'Response'
+ --> field_method__builtin_record_of_http.silt:8:35
+   |
+ 8 | trait Size for http.Response { fn body(self) -> Int { 1 } }
+   |                                   ^^^^ method 'body' of the impl of 'Size' for 'Response' is named like a field of 'Response'
+  = help: a field and a method of one type cannot share a name: rename the method or the field
+
+error[type]: the impl of 'Route' for 'Request' takes the default method 'path' of the trait, which is named like a field of 'Request'
+ --> field_method__builtin_record_of_http.silt:10:1
+    |
+ 10 | trait Route for http.Request {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the impl of 'Route' for 'Request' takes the default method 'path' of the trait, which is named like a field of 'Request'
+  = help: a field and a method of one type cannot share a name: rename the method or the field
