@@ -23,11 +23,3 @@ tests/golden/repros/compiler_vm/deep_nest_drop_1000000.silt | abort | deep value
 tests/golden/repros/compiler_vm/deep_nest_eq_1000000.silt | abort | deep value: == overflows the native stack (V3)
 tests/golden/repros/compiler_vm/deep_nest_lt_1000000.silt | abort | deep value: < overflows the native stack (V3)
 tests/golden/repros/compiler_vm/deep_nest_set_1000000.silt | abort | deep value: hashing overflows the native stack (V3)
-
-# The step budget charges a builtin that gives its slice away
-# (`channel.each` after each item, `Step::Yield`) as a slice that ran
-# its full length: 2,000 steps at slice 2000, one at slice 1. A program
-# that leans on such a builtin uses its budget up 2,000 times faster at
-# the one slice than at the other. A defect of the budget's count
-# (`Vm::set_step_budget`), not of the program or the scheduler.
-tests/golden/heavy/concurrency/stage7_v2__parking_deep_in_callbacks_costs_the_same_at_any_depth.silt | one-slice | the step budget counts a yield as a whole slice (X1, reported)

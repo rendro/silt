@@ -330,3 +330,40 @@ fn a_fault_of_the_program_is_not_the_budgets() {
         assert!(output.contains("the step budget is used up"), "{output}");
     }
 }
+
+/// A builtin that gives the rest of its slice away after each item
+/// (`channel.each`, a stage of a stream) has not run a slice to its
+/// end: it costs the budget one step, not the slice's 2,000. So a
+/// program that leans on one needs about the same budget at every
+/// slice. Each of these handles 3,000 items; at 2,000 steps an item
+/// they would need six million.
+#[test]
+fn a_slice_given_away_costs_one_step_at_any_slice() {
+    let feed = "fn feed(ch) {\n  loop i = 0 {\n    match i >= 3000 {\n      true -> channel.close(ch)\n      false -> {\n        channel.send(ch, i)\n        loop(i + 1)\n      }\n    }\n  }\n}\n";
+    let on_main = format!(
+        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  channel.each(ch) {{ n -> n + 1 }}\n  task.join(feeder)\n  println(\"done\")\n}}\n"
+    );
+    let in_a_task = format!(
+        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  task.join(task.spawn({{ -> channel.each(ch) {{ n -> n + 1 }} }}))\n  task.join(feeder)\n  println(\"done\")\n}}\n"
+    );
+    let stages = "import stream\n\nfn main() {\n  let total = stream.from_range(1, 3000)\n    |> stream.map { n -> n + 1 }\n    |> stream.filter { n -> n % 2 == 0 }\n    |> stream.fold(0) { acc, n -> acc + n }\n  println(total)\n  println(\"done\")\n}\n";
+    for (what, source) in [
+        ("channel.each on main", on_main.as_str()),
+        ("channel.each in a task", in_a_task.as_str()),
+        ("stream stages", stages),
+    ] {
+        for slice in SLICES {
+            let (result, output) = run_whole(source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+                vm.set_step_budget(600_000);
+            });
+            assert!(result.is_ok(), "{what}, slice {slice:?}: {result:?}");
+            assert!(
+                output.ends_with("done\n"),
+                "{what}, slice {slice:?}: {output}"
+            );
+        }
+    }
+}

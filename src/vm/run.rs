@@ -59,6 +59,9 @@ pub(super) enum Slice {
     Done(Value),
     /// The budget is used up; the frames can go on.
     OutOfBudget,
+    /// A builtin gave the rest of the slice away ([`Step::Yield`]); the
+    /// frames can go on.
+    Yielded,
     /// A builtin's frame waits for this (see [`Step::Park`]).
     Parked(Wait),
 }
@@ -180,7 +183,7 @@ impl Vm {
                 }
                 Ok(Step::Yield) => {
                     self.frames.push(Frame::Native(native));
-                    return Ok(Some(Slice::OutOfBudget));
+                    return Ok(Some(Slice::Yielded));
                 }
                 Ok(Step::Call { callee, argc }) => {
                     self.frames.push(Frame::Native(native));
@@ -236,6 +239,11 @@ impl Vm {
                 // The frame gave way to other tasks, which a thread
                 // of its own has no need to.
                 Slice::OutOfBudget => self.runtime.charge(self.own_slice())?,
+                // A slice given away is a step of the budget, like a
+                // wait: it did not run its full length.
+                Slice::Yielded => {
+                    let _ = self.runtime.charge(1);
+                }
                 Slice::Parked(wait) => {
                     // A wait is a step of the budget (the error comes
                     // before the next slice).
@@ -276,7 +284,7 @@ impl Vm {
     ) -> Result<Value, VmError> {
         let error = match run {
             Ok(Slice::Done(value)) => return Ok(value),
-            Ok(Slice::OutOfBudget | Slice::Parked(_)) => {
+            Ok(Slice::OutOfBudget | Slice::Yielded | Slice::Parked(_)) => {
                 VmError::new("internal VM error: a run to the end stopped before it".into())
             }
             Err(e) => e,
@@ -305,6 +313,11 @@ impl Vm {
                 Ok(()) => SliceResult::Yielded,
                 Err(e) => SliceResult::Failed(e),
             },
+            Ok(Slice::Yielded) => {
+                // A slice given away is a step of the budget.
+                let _ = self.runtime.charge(1);
+                SliceResult::Yielded
+            }
             Ok(Slice::Parked(wait)) => {
                 // A wait is a step of the budget: the task ends where
                 // its next slice would start.
