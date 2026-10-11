@@ -1,11 +1,12 @@
--- timeout: 120
--- A value nested a million levels deep through maps alone is dropped
+-- timeout: 60
+-- A value nested 400,000 levels deep through maps alone is dropped
 -- like any other, whether each level is a value of the next map or a
 -- key of it. No type describes such a value: a function that calls
 -- itself with its argument inside a map makes it, a level deeper at
 -- each call, and it is dropped when the last call returns. (The drop
 -- went down the value on the native stack and aborted the program at
--- less than half the depth.)
+-- this depth in a debug build, at two million in a release build: the
+-- release test tests/lang/deep_value_stack_tests.rs goes there.)
 fn as_values(x: a, n: Int) -> Int where a: Hash + Equal {
   match n <= 0 {
     true -> 0
@@ -21,8 +22,8 @@ fn as_keys(x: a, n: Int) -> Int where a: Hash + Equal {
 }
 
 fn main() {
-  println(as_values(1, 1000000))
-  println("a map that is a value of a map, a million deep, is dropped")
-  println(as_keys(1, 1000000))
-  println("a map that is a key of a map, a million deep, is dropped")
+  println(as_values(1, 400000))
+  println("a map that is a value of a map, 400,000 deep, is dropped")
+  println(as_keys(1, 400000))
+  println("a map that is a key of a map, 400,000 deep, is dropped")
 }

@@ -1,4 +1,4 @@
 0
-a map that is a value of a map, a million deep, is dropped
+a map that is a value of a map, 400,000 deep, is dropped
 0
-a map that is a key of a map, a million deep, is dropped
+a map that is a key of a map, 400,000 deep, is dropped
