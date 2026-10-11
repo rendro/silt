@@ -63,9 +63,10 @@ const MAX_TASKS: usize = 100_000;
 /// Stack size of every scheduler worker thread, in bytes.
 ///
 /// A silt call takes a frame of the VM and no native stack, however it
-/// is made. What still recurses on the worker's native stack is the
-/// work on a value that is nested deeply (comparing, printing or
-/// dropping a list of lists of lists ...): a program can build one as
+/// is made, and a value that is nested deeply is compared, hashed,
+/// shown and dropped on none. What still recurses on the worker's
+/// native stack is a builtin's own walk of such a value (encoding a
+/// list of lists of lists ... as JSON): a program can build one as
 /// deep as it can recurse, and the platform default for a spawned
 /// thread (2 MiB) overflows on values the main thread handles. A
 /// native stack overflow aborts the whole process.
