@@ -33,13 +33,14 @@ default features in your `Cargo.toml`.
 
 Every fallible `tcp.*` call returns `Result(T, TcpError)`. Variants are
 narrow by design — the socket failure space is small once you strip
-out the OS-specific noise:
+out the OS-specific noise. A variant says what failed:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(msg)` | `String` | TCP / DNS connect failure |
+| `Connect(msg)` | `String` | `tcp.connect` (or the connection of `tcp.connect_tls`) made no connection: refused, unreachable, no such host |
+| `Bind(msg)` | `String` | `tcp.listen` bound no listener: the address is in use, is not this machine's, is no address |
 | `Tls(msg)` | `String` | TLS handshake failure |
-| `Closed` | — | connection closed (broken pipe, peer reset) |
+| `Closed` | — | the connection is closed: by `tcp.close`, or by the other end, however the system reports that (a reset, an abort, a broken pipe, an end of data in the middle of a `read_exact`) |
 | `Timeout` | — | op exceeded its deadline |
 | `Other(msg)` | `String` | unclassified socket failure |
 

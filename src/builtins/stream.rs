@@ -403,31 +403,6 @@ fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     )
 }
 
-/// Wrap an `io::Error` into `Err(TcpError)` — used by tcp-backed stream
-/// sources and `write_to_tcp`.
-#[cfg(feature = "tcp")]
-fn err_tcp(e: &std::io::Error) -> Value {
-    use std::io::ErrorKind;
-    let msg = e.to_string();
-    let inner = match e.kind() {
-        ErrorKind::ConnectionRefused
-        | ErrorKind::ConnectionReset
-        | ErrorKind::NotConnected
-        | ErrorKind::AddrInUse
-        | ErrorKind::AddrNotAvailable
-        | ErrorKind::HostUnreachable
-        | ErrorKind::NetworkUnreachable => {
-            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg.into())])
-        }
-        ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
-            Value::variant(bv::TCP_CLOSED, vec![])
-        }
-        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
-        _ => Value::variant(bv::TCP_OTHER, vec![Value::String(msg.into())]),
-    };
-    Value::variant(bv::ERR, vec![inner])
-}
-
 /// For a source or a sink on `stream`: its operations return when the
 /// connection is shut down.
 #[cfg(feature = "tcp")]
@@ -696,7 +671,7 @@ builtins! {
                         buf.truncate(read);
                         Some(ok(Value::Bytes(Arc::new(buf))))
                     }
-                    Err(e) => Some(err_tcp(&e)),
+                    Err(e) => Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
                 }
             },
         )
@@ -733,7 +708,7 @@ builtins! {
                         break;
                     }
                     Ok(_) => current.push(byte[0]),
-                    Err(e) => return Some(err_tcp(&e)),
+                    Err(e) => return Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
                 }
             }
             let line = String::from_utf8_lossy(&current).to_string();
@@ -1229,7 +1204,7 @@ builtins! {
             let Some(bytes) = bytes else {
                 return Ok(());
             };
-            stream_handle.write_all(bytes).map_err(|e| err_tcp(&e))
+            stream_handle.write_all(bytes).map_err(|e| super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))
         })
     }
 

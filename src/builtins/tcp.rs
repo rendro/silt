@@ -46,6 +46,7 @@ fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
         ("Connect", [Value::String(m)]) => format!("tcp connect failed: {m}"),
+        ("Bind", [Value::String(m)]) => format!("tcp listen failed: {m}"),
         ("Tls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
         ("Closed", []) => "tcp connection closed".to_string(),
         ("Timeout", []) => "tcp operation timed out".to_string(),
@@ -79,8 +80,8 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        Accepted, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, VmError, err, served,
-        tcp_timeout_err,
+        Accepted, Doing, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, VmError, err,
+        served, tcp_io_err, tcp_timeout_err,
     };
     use crate::builtins::typed::{self, Bytes, builtins};
     use crate::runtime::handle::ReadWrite;
@@ -96,7 +97,8 @@ mod tls {
             vm.io("tcp", tcp_timeout_err, move || {
                 match do_connect_tls(&addr, &hostname, next_id) {
                     Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                    Err(e) => Value::variant(
+                    Err(NoTls::Connection(e)) => tcp_io_err(Doing::Connecting, &e),
+                    Err(NoTls::Tls(e)) => Value::variant(
                         bv::ERR,
                         vec![Value::variant(bv::TCP_TLS, vec![Value::String(e.into())])],
                     ),
@@ -176,11 +178,24 @@ mod tls {
         }
     }
 
+    /// Why `tcp.connect_tls` made no connection: none at all, or none
+    /// that speaks TLS with the host.
+    enum NoTls {
+        Connection(std::io::Error),
+        Tls(String),
+    }
+
+    impl From<String> for NoTls {
+        fn from(why: String) -> NoTls {
+            NoTls::Tls(why)
+        }
+    }
+
     fn do_connect_tls(
         addr: &str,
         hostname: &str,
         next_id: usize,
-    ) -> Result<Arc<TcpStreamHandle>, String> {
+    ) -> Result<Arc<TcpStreamHandle>, NoTls> {
         let mut roots = RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let config = ClientConfig::builder()
@@ -190,7 +205,7 @@ mod tls {
             .map_err(|e| format!("invalid hostname '{hostname}': {e}"))?;
         let conn = ClientConnection::new(Arc::new(config), server_name)
             .map_err(|e| format!("client connection setup: {e}"))?;
-        let sock = TcpStream::connect(addr).map_err(|e| format!("tcp connect {addr}: {e}"))?;
+        let sock = TcpStream::connect(addr).map_err(NoTls::Connection)?;
         // Clone the fd for the shutdown side-channel BEFORE handing the
         // socket to rustls. `StreamOwned` takes the socket by value, and
         // once inside rustls we can no longer reach the raw fd through
@@ -199,13 +214,14 @@ mod tls {
         let socket = sock
             .try_clone()
             .map_err(|e| format!("tcp connect {addr}: {e}"))?;
-        TcpStreamHandle::whole(next_id, &socket, move || {
+        let whole = TcpStreamHandle::whole(next_id, &socket, move || {
             let stream = rustls::StreamOwned::new(conn, sock);
             let mut wrapper = ClientStreamWrapper { inner: stream };
             // The handshake fails here rather than at the first read.
             wrapper.complete_io_handshake()?;
             Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
-        })
+        })?;
+        Ok(whole)
     }
 
     fn do_accept_tls(
@@ -418,31 +434,44 @@ mod tls {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-/// Classify a `std::io::Error` into a `TcpError` variant.
-fn tcp_error_to_variant(err: &std::io::Error) -> Value {
-    use std::io::ErrorKind;
-    let msg = err.to_string();
-    match err.kind() {
-        ErrorKind::ConnectionRefused
-        | ErrorKind::ConnectionReset
-        | ErrorKind::NotConnected
-        | ErrorKind::AddrInUse
-        | ErrorKind::AddrNotAvailable
-        | ErrorKind::HostUnreachable
-        | ErrorKind::NetworkUnreachable => {
-            Value::variant(bv::TCP_CONNECT, vec![Value::String(msg.into())])
-        }
-        ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
-            Value::variant(bv::TCP_CLOSED, vec![])
-        }
-        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::TCP_TIMEOUT, vec![]),
-        _ => Value::variant(bv::TCP_OTHER, vec![Value::String(msg.into())]),
-    }
+/// What a tcp operation that failed was doing: it says which variant
+/// of `TcpError` its failure is.
+#[derive(Clone, Copy)]
+pub(crate) enum Doing {
+    /// `tcp.connect`: no connection was made.
+    Connecting,
+    /// `tcp.listen`: no listener was bound.
+    Binding,
+    /// Anything on a connection or a listener that exists.
+    Using,
 }
 
-/// Build `Err(TcpError)` from a `std::io::Error`.
-fn tcp_io_err(err: &std::io::Error) -> Value {
-    Value::variant(bv::ERR, vec![tcp_error_to_variant(err)])
+/// `Err(TcpError)` of the failure `err` of an operation.
+///
+/// A deadline that passed is `Timeout` whatever the operation. A
+/// connect that fails is `Connect`, a listen that fails `Bind`, each
+/// with the system's reason. On a connection that exists, the other
+/// end going away is `Closed` however the system reports it (a reset,
+/// an abort, a broken pipe, an end of data in the middle of a read),
+/// and anything else is `Other`.
+pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
+    use std::io::ErrorKind;
+    let reason = || vec![Value::String(err.to_string().into())];
+    let variant = match (err.kind(), doing) {
+        (ErrorKind::TimedOut | ErrorKind::WouldBlock, _) => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        (_, Doing::Connecting) => Value::variant(bv::TCP_CONNECT, reason()),
+        (_, Doing::Binding) => Value::variant(bv::TCP_BIND, reason()),
+        (
+            ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::NotConnected
+            | ErrorKind::UnexpectedEof,
+            Doing::Using,
+        ) => Value::variant(bv::TCP_CLOSED, vec![]),
+        (_, Doing::Using) => Value::variant(bv::TCP_OTHER, reason()),
+    };
+    Value::variant(bv::ERR, vec![variant])
 }
 
 /// Build `Err(Other(msg))` for string-form failures (TLS stringly
@@ -506,7 +535,7 @@ pub(crate) fn accept_op(
                 Ok(Accepted::GivenUp) => err_closed(),
                 // A server took the listener while the accept waited.
                 Ok(Accepted::Served) => err(SERVED),
-                Err(e) => tcp_io_err(&e),
+                Err(e) => tcp_io_err(Doing::Using, &e),
             }
         })
         .stop_with(stop)
@@ -581,7 +610,7 @@ builtins! {
                 listener.widen_backlog();
                 ok(Value::TcpListener(Arc::new(listener)))
             }
-            Err(e) => tcp_io_err(&e),
+            Err(e) => tcp_io_err(Doing::Binding, &e),
         }
     }
 
@@ -604,7 +633,7 @@ builtins! {
         }
         match stream.peer_addr() {
             Ok(addr) => ok(Value::String(addr.to_string().into())),
-            Err(e) => tcp_io_err(&e),
+            Err(e) => tcp_io_err(Doing::Using, &e),
         }
     }
 
@@ -614,7 +643,7 @@ builtins! {
         }
         match stream.set_nodelay(on) {
             Ok(()) => ok(Value::Unit),
-            Err(e) => tcp_io_err(&e),
+            Err(e) => tcp_io_err(Doing::Using, &e),
         }
     }
 
@@ -637,7 +666,7 @@ builtins! {
                     bv::OK,
                     vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
                 ),
-                Err(e) => tcp_io_err(&e),
+                Err(e) => tcp_io_err(Doing::Connecting, &e),
             }
         })
     }
@@ -667,7 +696,7 @@ builtins! {
                     if stream.is_closed() {
                         Value::variant(bv::OK, vec![Value::Bytes(Arc::new(Vec::new()))])
                     } else {
-                        tcp_io_err(&e)
+                        tcp_io_err(Doing::Using, &e)
                     }
                 }
             }
@@ -682,7 +711,7 @@ builtins! {
         on_connection(vm, &stream.clone(), move || {
             match stream.read_exact(n) {
                 Ok(buf) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
-                Err(e) => tcp_io_err(&e),
+                Err(e) => tcp_io_err(Doing::Using, &e),
             }
         })
     }
@@ -692,8 +721,68 @@ builtins! {
         on_connection(vm, &stream.clone(), move || {
             match stream.write_all(&buf) {
                 Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
-                Err(e) => tcp_io_err(&e),
+                Err(e) => tcp_io_err(Doing::Using, &e),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    /// The variant of `Err(TcpError)` that `tcp_io_err` makes.
+    fn variant(doing: Doing, kind: ErrorKind) -> String {
+        let Value::Variant(result) = tcp_io_err(doing, &Error::from(kind)) else {
+            panic!("an Err");
+        };
+        assert!(result.is(bv::ERR));
+        match result.fields() {
+            [Value::Variant(error)] => error.name().to_string(),
+            other => panic!("one TcpError, not {other:?}"),
+        }
+    }
+
+    /// The other end going away is `Closed` on a connection, however the
+    /// system reports it: a reset read is no failed connect.
+    #[test]
+    fn a_connection_the_other_end_dropped_is_closed() {
+        for kind in [
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionAborted,
+            ErrorKind::BrokenPipe,
+            ErrorKind::NotConnected,
+            ErrorKind::UnexpectedEof,
+        ] {
+            assert_eq!(variant(Doing::Using, kind), "Closed", "{kind:?}");
+        }
+        assert_eq!(variant(Doing::Using, ErrorKind::PermissionDenied), "Other");
+    }
+
+    /// A connect that fails is `Connect` and a listen that fails `Bind`,
+    /// whatever the reason; a deadline that passed is `Timeout` for
+    /// every operation.
+    #[test]
+    fn a_failure_is_named_after_the_operation() {
+        for kind in [
+            ErrorKind::ConnectionRefused,
+            ErrorKind::ConnectionReset,
+            ErrorKind::AddrNotAvailable,
+            ErrorKind::InvalidInput,
+        ] {
+            assert_eq!(variant(Doing::Connecting, kind), "Connect", "{kind:?}");
+        }
+        for kind in [
+            ErrorKind::AddrInUse,
+            ErrorKind::AddrNotAvailable,
+            ErrorKind::PermissionDenied,
+        ] {
+            assert_eq!(variant(Doing::Binding, kind), "Bind", "{kind:?}");
+        }
+        for doing in [Doing::Connecting, Doing::Binding, Doing::Using] {
+            assert_eq!(variant(doing, ErrorKind::TimedOut), "Timeout");
+            assert_eq!(variant(doing, ErrorKind::WouldBlock), "Timeout");
+        }
     }
 }

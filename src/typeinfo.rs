@@ -456,10 +456,11 @@ pub mod bv {
     pub const PG_TXN_ABORTED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 8);
     pub const PG_OTHER: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 9);
     pub const TCP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 0);
-    pub const TCP_TLS: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 1);
-    pub const TCP_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 2);
-    pub const TCP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 3);
-    pub const TCP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 4);
+    pub const TCP_BIND: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 1);
+    pub const TCP_TLS: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 2);
+    pub const TCP_CLOSED: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 3);
+    pub const TCP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 4);
+    pub const TCP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 5);
     pub const TIME_PARSE_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 0);
     pub const TIME_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 1);
     pub const TIME_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
@@ -864,6 +865,7 @@ mod tests {
             (bv::PG_TXN_ABORTED, "TxnAborted"),
             (bv::PG_OTHER, "Other"),
             (bv::TCP_CONNECT, "Connect"),
+            (bv::TCP_BIND, "Bind"),
             (bv::TCP_TLS, "Tls"),
             (bv::TCP_CLOSED, "Closed"),
             (bv::TCP_TIMEOUT, "Timeout"),

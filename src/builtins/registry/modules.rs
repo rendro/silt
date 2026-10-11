@@ -552,7 +552,7 @@ pub(super) fn modules() -> Vec<Module> {
             feature: "tcp",
             page: "tcp.md",
             types: "\
-                pub type TcpError { Connect(String), Tls(String), Closed, Timeout, Other(String) }\n\
+                pub type TcpError { Connect(String), Bind(String), Tls(String), Closed, Timeout, Other(String) }\n\
             ",
             opaque: [("TcpListener", 0), ("TcpStream", 0)],
             error: "TcpError" => tcp::error_text,

@@ -111,9 +111,10 @@ its own (`float.Empty` is not `int.Empty`).
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(String)` | message | tcp/dns connect failure |
+| `Connect(String)` | message | `tcp.connect` made no connection (refused, unreachable, no such host) |
+| `Bind(String)` | message | `tcp.listen` bound no listener (address in use, not this machine's, no address) |
 | `Tls(String)` | message | TLS handshake failure |
-| `Closed` | — | connection closed (broken pipe, peer reset) |
+| `Closed` | — | connection closed, by this end or the other (also a reset, an abort, a broken pipe) |
 | `Timeout` | — | op exceeded its deadline |
 | `Other(String)` | message | unclassified socket failure |
 
