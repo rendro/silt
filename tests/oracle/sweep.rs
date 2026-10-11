@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::oracle::{Compared, Cut, Finding, Input, Kind, Source, Verdict, examine};
+use crate::oracle::{Compared, Cut, Finding, Input, Kind, Source, Steps, Verdict, examine};
 
 /// The threads of a sweep in the suite: the tests of the binary run
 /// side by side, and a program with tasks starts a worker for each CPU.
@@ -41,17 +41,30 @@ pub fn full() -> bool {
 /// The steps a run may take: in the suite, enough for all but the
 /// programs that measure speed; in a full sweep, what such a program
 /// takes at slice 1 within the watchdog's time. A program that needs
-/// more is cut short and counted.
+/// more at both slices is cut short and counted.
 const STEPS: u64 = 1_000_000;
 const STEPS_FULL: u64 = 20_000_000;
 
-/// The step budget of each run.
-pub fn steps() -> u64 {
-    match std::env::var("SILT_ORACLE_STEPS") {
+/// The step budgets of each input's runs: `SILT_ORACLE_STEPS`, or the
+/// suite's or the full sweep's. A run that is cut short where the other
+/// one ended is repeated with the full sweep's budget, or with twice
+/// the budget when that is more (a full sweep's own repeat).
+pub fn steps() -> Steps {
+    let each = match std::env::var("SILT_ORACLE_STEPS") {
         Ok(steps) => steps.parse().expect("SILT_ORACLE_STEPS is a number"),
         Err(_) if full() => STEPS_FULL,
         Err(_) => STEPS,
+    };
+    Steps {
+        each,
+        again: STEPS_FULL.max(each.saturating_mul(2)),
     }
+}
+
+/// Whether the sweep is the full one with its own budget: the one whose
+/// cut inputs `tests/oracle/cut.txt` lists.
+fn pinned() -> bool {
+    full() && std::env::var_os("SILT_ORACLE_STEPS").is_none()
 }
 
 /// One line of the skip file: an input whose finding is known and
@@ -64,37 +77,65 @@ pub struct Skip {
     pub what: String,
 }
 
-/// The skip file, `tests/oracle/skip.txt`: one line for each input with
-/// a known finding, `<input> | <kind> | <what it is>`. Empty lines and
-/// lines that start with `#` say nothing.
-pub fn skips() -> Vec<Skip> {
-    let path = repo_root().join("tests/oracle/skip.txt");
-    let text = std::fs::read_to_string(&path).expect("tests/oracle/skip.txt");
-    let mut skips = Vec::new();
+/// The lines of the file `name` in `tests/oracle/`, each cut at `|`
+/// into `fields` trimmed fields, the last of which says something.
+/// Empty lines and lines that start with `#` are no lines.
+fn lines_of(name: &str, fields: usize) -> Vec<Vec<String>> {
+    let path = repo_root().join("tests/oracle").join(name);
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("tests/oracle/{name}: {e}"));
+    let mut lines = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let fields: Vec<&str> = line.splitn(3, '|').map(str::trim).collect();
-        let [input, kind, what] = fields[..] else {
-            panic!(
-                "tests/oracle/skip.txt:{}: not `<input> | <kind> | <what>`",
-                index + 1
-            );
-        };
+        let cut: Vec<String> = line
+            .splitn(fields, '|')
+            .map(|f| f.trim().to_string())
+            .collect();
         assert!(
-            !what.is_empty(),
-            "tests/oracle/skip.txt:{}: the entry does not say what the finding is",
+            cut.len() == fields && cut.iter().all(|field| !field.is_empty()),
+            "tests/oracle/{name}:{}: not {fields} fields with `|` between them",
             index + 1
         );
-        skips.push(Skip {
-            input: input.to_string(),
-            kind: kind.to_string(),
-            what: what.to_string(),
-        });
+        lines.push(cut);
     }
-    skips
+    lines
+}
+
+/// The skip file, `tests/oracle/skip.txt`: one line for each input with
+/// a known finding, `<input> | <kind> | <what it is>`.
+pub fn skips() -> Vec<Skip> {
+    let skip = |line: Vec<String>| {
+        let [input, kind, what] = <[String; 3]>::try_from(line).expect("three fields");
+        Skip { input, kind, what }
+    };
+    lines_of("skip.txt", 3).into_iter().map(skip).collect()
+}
+
+/// `tests/oracle/cut.txt`: the inputs that a full sweep cuts short at
+/// both slices, each with why it needs so many steps, `<input> | <why>`.
+fn cuts() -> Vec<(String, String)> {
+    let cut = |line: Vec<String>| {
+        let [input, why] = <[String; 2]>::try_from(line).expect("two fields");
+        (input, why)
+    };
+    lines_of("cut.txt", 2).into_iter().map(cut).collect()
+}
+
+/// Fail unless every line of the skip file and of the cut file whose
+/// input `belongs` to a class names one of `all`, the inputs of the
+/// class: a line that names nothing would never be looked at.
+pub fn check_listed(all: &[Input], belongs: impl Fn(&str) -> bool) {
+    let skipped = skips().into_iter().map(|skip| ("skip.txt", skip.input));
+    let cut = cuts().into_iter().map(|(input, _)| ("cut.txt", input));
+    for (file, input) in skipped.chain(cut) {
+        assert!(
+            !belongs(&input) || all.iter().any(|known| known.name == input),
+            "tests/oracle/{file} names {input}, which is no input of the oracle"
+        );
+    }
 }
 
 /// The inputs of `all` a test runs: all of them when the sweep is full,
@@ -228,7 +269,9 @@ pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
 /// Count `verdicts`, write the counts, and fail the test unless the
 /// findings are exactly those the skip file lists for these inputs:
 /// a finding that is not listed is new, and an entry whose input has
-/// no such finding any more is to be removed.
+/// no such finding any more is to be removed. In the full sweep the
+/// inputs that are cut short must be exactly those the cut file lists
+/// ([`cuts`]): a program that stops ending is cut short too.
 pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], skips: &[Skip]) {
     let mut not_run: BTreeMap<String, usize> = BTreeMap::new();
     let mut cut: BTreeMap<Cut, usize> = BTreeMap::new();
@@ -236,7 +279,23 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
     let mut listed = Vec::new();
     let mut new = Vec::new();
     let mut stale = Vec::new();
+    let mut unpinned = Vec::new();
+    let cut_file = cuts();
     for (input, (verdict, _)) in inputs.iter().zip(verdicts) {
+        if pinned() {
+            let listed = cut_file.iter().find(|(name, _)| *name == input.name);
+            match (verdict, listed) {
+                (Verdict::Cut(why), None) => unpinned.push(format!(
+                    "{}: cut short ({why}) and not in tests/oracle/cut.txt",
+                    input.name
+                )),
+                (Verdict::Cut(_), Some(_)) | (_, None) => {}
+                (_, Some((_, why))) => unpinned.push(format!(
+                    "{}: in tests/oracle/cut.txt ({why}) and not cut short",
+                    input.name
+                )),
+            }
+        }
         let entry = skips.iter().find(|skip| skip.input == input.name);
         let finding = match verdict {
             Verdict::NotRun(why) => {
@@ -274,7 +333,7 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
     let mut report = format!(
         "oracle, {what}: {} inputs, {} steps a run\n",
         inputs.len(),
-        steps()
+        steps().each
     );
     let count = |compared| passed.get(&compared).copied().unwrap_or(0);
     report.push_str(&format!(
@@ -292,6 +351,7 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
         ("findings the skip file lists", &listed),
         ("NEW findings", &new),
         ("skip entries to remove", &stale),
+        ("cut short otherwise than the cut file says", &unpinned),
     ] {
         report.push_str(&format!("  {title}: {}\n", lines.len()));
         for line in lines {
@@ -321,10 +381,12 @@ pub fn conclude(what: &str, inputs: &[Input], verdicts: &[(Verdict, Duration)], 
         file.write_all(lines.as_bytes()).expect("write the report");
     }
     assert!(
-        new.is_empty() && stale.is_empty(),
-        "the oracle's findings are not those of tests/oracle/skip.txt \
-         ({} new, {} entries to remove):\n{report}",
+        new.is_empty() && stale.is_empty() && unpinned.is_empty(),
+        "the oracle's findings are not those of tests/oracle/skip.txt, or its cut inputs \
+         not those of tests/oracle/cut.txt ({} new, {} entries to remove, {} cut otherwise):\n\
+         {report}",
         new.len(),
-        stale.len()
+        stale.len(),
+        unpinned.len()
     );
 }

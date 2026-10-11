@@ -13,7 +13,7 @@ use std::path::Path;
 
 use crate::goldens::{REPROS, collect_cases, plain_input};
 use crate::oracle::{Expect, Input, Source, Verdict};
-use crate::sweep::{conclude, name_of, repo_root, run, sample, skips};
+use crate::sweep::{check_listed, conclude, name_of, repo_root, run, sample, skips};
 
 /// Without `SILT_ORACLE_FULL`, every n-th repro is run: the corpus has
 /// programs that take a minute (lists and values built by copying),
@@ -62,19 +62,6 @@ fn distinct(inputs: Vec<Input>) -> Vec<Input> {
         .collect()
 }
 
-/// The skip entries under `prefix` name inputs of `all`.
-fn check_skips(all: &[Input], prefixes: &[&str]) {
-    for skip in skips() {
-        if prefixes.iter().any(|prefix| skip.input.starts_with(prefix)) {
-            assert!(
-                all.iter().any(|input| input.name == skip.input),
-                "tests/oracle/skip.txt names {}, which is no input of the oracle",
-                skip.input
-            );
-        }
-    }
-}
-
 #[test]
 fn fuzz_corpora_and_examples() {
     let root = repo_root();
@@ -97,7 +84,9 @@ fn fuzz_corpora_and_examples() {
     files_of(&root.join("examples"), &mut all);
     let all = distinct(all);
     assert!(all.len() > 80, "only {} corpus texts", all.len());
-    check_skips(&all, &["fuzz/corpus/", "examples/"]);
+    check_listed(&all, |name| {
+        name.starts_with("fuzz/corpus/") || name.starts_with("examples/")
+    });
     let skips = skips();
     let inputs = sample(all, 1, &skips);
     let verdicts = run(&inputs, &skips);
@@ -127,7 +116,7 @@ fn repro_corpus() {
     collect_cases(&repo_root().join(REPROS), &mut cases);
     let all: Vec<Input> = cases.iter().filter_map(|case| plain_input(case)).collect();
     assert!(all.len() > 1000, "only {} repros", all.len());
-    check_skips(&all, &[REPROS]);
+    check_listed(&all, |name| name.starts_with(REPROS));
     let skips = skips();
     let inputs = sample(all, REPRO_STEP, &skips);
     let verdicts = run(&inputs, &skips);

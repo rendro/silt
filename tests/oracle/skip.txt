@@ -5,8 +5,8 @@
 #
 # <input> is the input's name in the oracle's report, <kind> the kind of
 # its finding (panic, compiler-bug, verifier, type-confusion,
-# internal-error, hang, abort, slow, differs, expectation). The suite fails on
-# a finding that has no line here, and on a line whose input has no such
+# internal-error, hang, abort, slow, one-slice, differs, expectation). The suite
+# fails on a finding that has no line here, and on a line whose input has no such
 # finding any more: remove the line with the fix.
 #
 # An input of the kind `abort` ends the process that runs it, so the
@@ -33,3 +33,11 @@ tests/golden/repros/compiler_vm/deep_nest_set_1000000.silt | abort | deep value:
 # build, 72 s in release (1,000 / 2,000 / 4,000 take 1.6 / 7 / 33 s:
 # each step copies the list so far; stage 7 step V3).
 tests/golden/repros/compiler_vm/deep_build_8000.silt | slow | a loop over a cons list copies it at every step (V3)
+
+# The step budget charges a builtin that gives its slice away
+# (`channel.each` after each item, `Step::Yield`) as a slice that ran
+# its full length: 2,000 steps at slice 2000, one at slice 1. A program
+# that leans on such a builtin uses its budget up 2,000 times faster at
+# the one slice than at the other. A defect of the budget's count
+# (`Vm::set_step_budget`), not of the program or the scheduler.
+tests/golden/heavy/concurrency/stage7_v2__parking_deep_in_callbacks_costs_the_same_at_any_depth.silt | one-slice | the step budget counts a yield as a whole slice (X1, reported)

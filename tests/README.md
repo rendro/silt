@@ -89,7 +89,24 @@ streams, the clock or the system's random source is compared only where
 a golden case's exact `.stdout` says what it writes.
 
 Each run has a step budget (`Vm::set_step_budget`). A program that uses
-it up is cut short: it is counted, and nothing of it is compared.
+it up at both slices is cut short: it is counted, and nothing of it is
+compared. One that ends at one slice and is cut short at the other is a
+finding (`one-slice`), after the run that was cut has been repeated
+once with the full sweep's budget: a program that a fault keeps from
+going on after a slice boundary looks exactly so. A full sweep also
+holds the inputs it cuts short against `tests/oracle/cut.txt`, which
+lists each with the reason it needs so many steps: an input that is cut
+short and not listed fails the sweep, and so does a listed one that is
+no longer cut.
+
+A golden case that is run and must end well is a program the `silt`
+command checks, compiles and runs: when the oracle's own session does
+not get it to run (a check error, no `main`), that is a finding too,
+not a case that is "not run".
+
+A panic counts on whatever thread it happens. The suite records every
+panic of its process, and a run during which a thread of the runtime
+panicked is a `panic` finding, whether or not the run then ends.
 
 Its inputs, by class:
 

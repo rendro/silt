@@ -23,8 +23,18 @@
 //!    judges a run by the panics recorded while it ran.
 //!
 //! Each run has a step budget (`Vm::set_step_budget`). A program that
-//! uses it up in either run is cut short: it was held to step 5 as far
-//! as it ran, and nothing of it is compared ([`Verdict::Cut`]).
+//! uses it up in both runs is cut short: it was held to step 5 as far
+//! as it ran, and nothing of it is compared ([`Verdict::Cut`]). One
+//! that ends at one slice and not at the other is a finding
+//! ([`Kind::OneSlice`]): a fault that keeps a program from going on
+//! after a slice boundary looks exactly so. (The run that was cut is
+//! first repeated with a larger budget, [`Steps::again`]: a program
+//! may need a little more at one slice than at the other.)
+//!
+//! The order of judgement: what broke step 5 in whatever ran; then a
+//! program that ends at one slice only; then one that is cut short at
+//! both; then a difference of the two runs; then what is known of the
+//! program from elsewhere ([`Expect`]).
 //!
 //! What is compared in step 4 depends on the builtins the program's
 //! code names. The runtime runs tasks on several threads and reads the
@@ -139,11 +149,23 @@ pub enum Source {
     Package(PathBuf),
 }
 
+/// The step budgets of an input's runs.
+#[derive(Debug, Clone, Copy)]
+pub struct Steps {
+    /// The budget of each of the two runs.
+    pub each: u64,
+    /// The budget with which a run that was cut short is repeated when
+    /// the other one ended; no repeat unless it is larger than `each`.
+    pub again: u64,
+}
+
 /// What is known of a program's run from elsewhere.
 #[derive(Default)]
 pub struct Expect {
-    /// The program ends without an error and no task of it fails
-    /// unjoined: a golden case's `exit: 0`.
+    /// The program is one that `silt run` runs, and it ends without an
+    /// error and with no task that fails unjoined: a golden case's
+    /// `cmd: run` and `exit: 0`. So it also checks clean and compiles:
+    /// an oracle that says otherwise disagrees with the command.
     pub succeeds: bool,
     /// The program's exact stdout: a golden case's `.stdout` file.
     pub stdout: Option<String>,
@@ -216,6 +238,8 @@ pub enum Kind {
     /// not judge time: an input that does it is known by its line in
     /// the skip file, and is not run (`sweep.rs`).
     Slow,
+    /// The program ends at one slice and is cut short at the other.
+    OneSlice,
     /// The two runs disagree.
     Differs,
     /// A run is not what the input's [`Expect`] says.
@@ -233,6 +257,7 @@ impl Kind {
             Kind::Hang => "hang",
             Kind::Abort => "abort",
             Kind::Slow => "slow",
+            Kind::OneSlice => "one-slice",
             Kind::Differs => "differs",
             Kind::Expectation => "expectation",
         }
@@ -314,6 +339,18 @@ enum End {
     },
     Panic(String),
     Hang,
+}
+
+impl End {
+    /// The end in a few words, for a report.
+    fn shown(&self) -> String {
+        match self {
+            End::Value { shown, .. } => format!("main returned {shown}"),
+            End::Error { message, .. } => format!("runtime error: {message}"),
+            End::Panic(text) => format!("panic: {text}"),
+            End::Hang => "no end".to_string(),
+        }
+    }
 }
 
 /// The error of a task that failed and that nobody joined.
@@ -573,12 +610,13 @@ impl Clock for Still {
     fn sleep(&self, _duration: Duration) {}
 }
 
-/// Put `input` through the oracle, each run with a budget of `steps`
-/// steps. The work is done on a thread with the native stack of the
-/// `silt` command's main thread.
-pub fn examine(input: &Input, steps: u64) -> Verdict {
+/// Put `input` through the oracle, its runs with the budgets `steps`.
+/// The work is done on a thread with the native stack of the `silt`
+/// command's main thread.
+pub fn examine(input: &Input, steps: Steps) -> Verdict {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
+            .name("oracle-examine".into())
             .stack_size(STACK_BYTES)
             .spawn_scoped(scope, || examine_here(input, steps))
             .expect("a thread for the oracle")
@@ -587,14 +625,23 @@ pub fn examine(input: &Input, steps: u64) -> Verdict {
     })
 }
 
-fn examine_here(input: &Input, steps: u64) -> Verdict {
+fn examine_here(input: &Input, steps: Steps) -> Verdict {
+    let finding = |kind, detail: String| Verdict::Finding(Finding::new(kind, detail));
     let prepared = catch_unwind(AssertUnwindSafe(|| prepare(&input.source)));
     let (program, builtins) = match prepared {
         Ok(Ok(prepared)) => prepared,
-        Ok(Err(verdict)) => return verdict,
+        // A program that the command runs is one the oracle's session
+        // checks and compiles too.
+        Ok(Err((Verdict::NotRun(why), said)))
+            if input.expect.succeeds && !matches!(why, NotRun::Outside(_)) =>
+        {
+            let detail = format!("the command runs the program, and the oracle has: {why}: {said}");
+            return finding(Kind::Expectation, detail);
+        }
+        Ok(Err((verdict, _))) => return verdict,
         Err(panic) => {
             let detail = format!("check or compile panicked: {}", panic_text(&panic));
-            return Verdict::Finding(Finding::new(Kind::Panic, detail));
+            return finding(Kind::Panic, detail);
         }
     };
     let names = |set: &[&str]| builtins.iter().any(|name| set.contains(&name.as_str()));
@@ -613,49 +660,105 @@ fn examine_here(input: &Input, steps: u64) -> Verdict {
     // A run that waits for the clock when the watchdog looks is the
     // program's doing, unless the program is known to end.
     let may_wait = names(TIMED) && !input.expect.succeeds;
+    // How `ran` was cut short, when it was; `Err` when it broke step 5.
+    let judge = |slice: usize, ran: &Run| -> Result<Option<Cut>, Verdict> {
+        let broke = |broken: Finding| {
+            let detail = format!("the run at slice {slice}: {}", broken.detail);
+            Err(finding(broken.kind, detail))
+        };
+        match broken(ran) {
+            Some(broken) => broke(broken),
+            None if ran.end == End::Hang && !may_wait => broke(Finding::new(
+                Kind::Hang,
+                "no end within the watchdog's time",
+            )),
+            None if ran.end == End::Hang => Ok(Some(Cut::Waiting)),
+            None if ran.out_of_steps() => Ok(Some(Cut::OutOfSteps)),
+            None => Ok(None),
+        }
+    };
 
     let program = Arc::new(program);
     let mut runs = Vec::new();
+    let mut cuts = Vec::new();
     for slice in SLICES {
-        let ran = run(&program, time, slice, steps);
-        match broken(&ran) {
-            Some(finding) if finding.kind == Kind::Hang && may_wait => {
-                return Verdict::Cut(Cut::Waiting);
+        let ran = run(&program, time, slice, steps.each);
+        match judge(slice, &ran) {
+            Ok(cut) => cuts.push(cut),
+            Err(verdict) => return verdict,
+        }
+        runs.push(ran);
+    }
+    // One run ended and the other did not: once more, with more steps.
+    if let Some(short) = cuts.iter().position(Option::is_some)
+        && cuts.iter().any(Option::is_none)
+    {
+        let mut tried = steps.each;
+        if cuts[short] == Some(Cut::OutOfSteps) && steps.again > steps.each {
+            tried = steps.again;
+            let again = run(&program, time, SLICES[short], steps.again);
+            match judge(SLICES[short], &again) {
+                Ok(cut) => cuts[short] = cut,
+                Err(verdict) => return verdict,
             }
-            Some(finding) => {
-                let detail = format!("the run at slice {slice}: {}", finding.detail);
-                return Verdict::Finding(Finding::new(finding.kind, detail));
-            }
-            None => runs.push(ran),
+            runs[short] = again;
+        }
+        if let Some(cut) = cuts[short] {
+            let detail = format!(
+                "the program ends at slice {} ({}) and not at slice {}: {cut} ({tried} steps)",
+                SLICES[1 - short],
+                runs[1 - short].end.shown(),
+                SLICES[short],
+            );
+            return finding(Kind::OneSlice, detail);
         }
     }
-    if runs.iter().any(Run::out_of_steps) {
-        return Verdict::Cut(Cut::OutOfSteps);
-    }
-    if let Some(finding) = unexpected(&input.expect, &runs) {
-        return Verdict::Finding(finding);
+    if let Some(cut) = cuts[0] {
+        // Cut short at both slices. A program that is known to end well
+        // and whose `main` ended in a fault of its own, while a task
+        // used the budget up, is judged by the fault.
+        let fault = runs.iter().find(|run| match &run.end {
+            End::Error { out_of_steps, .. } => !out_of_steps,
+            End::Value { failed, .. } => *failed,
+            End::Panic(_) | End::Hang => false,
+        });
+        return match fault {
+            Some(run) if input.expect.succeeds => finding(Kind::Expectation, run.end.shown()),
+            _ => Verdict::Cut(cut),
+        };
     }
     if compared == Compared::Everything
         && let Some(detail) = difference(&runs[0], &runs[1])
     {
         let detail = format!("slice {} against slice {}: {detail}", SLICES[0], SLICES[1]);
-        return Verdict::Finding(Finding::new(Kind::Differs, detail));
+        return finding(Kind::Differs, detail);
+    }
+    if let Some(finding) = unexpected(&input.expect, &runs) {
+        return Verdict::Finding(finding);
     }
     Verdict::Passed(compared)
 }
 
 /// Steps 1 to 3: the compiled program and the builtins its code names,
-/// or why there is nothing to run.
-fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), Verdict> {
-    let not_run = |why| Err(Verdict::NotRun(why));
-    let finding = |kind, detail: String| Err(Verdict::Finding(Finding::new(kind, detail)));
+/// or why there is nothing to run, with what the session said.
+fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), (Verdict, String)> {
+    let not_run = |why, said: String| Err((Verdict::NotRun(why), said));
+    let finding = |kind, detail: String| {
+        let verdict = Verdict::Finding(Finding::new(kind, detail));
+        Err((verdict, String::new()))
+    };
+    let first = |diagnostics: &[silt::diagnostic::Diagnostic]| {
+        let error = diagnostics.iter().find(|d| d.is_error());
+        error.map(|d| d.message.clone()).unwrap_or_default()
+    };
 
     let (mut session, entry) = match open(source) {
         Some(opened) => opened,
-        None => return not_run(NotRun::Unreadable),
+        None => return not_run(NotRun::Unreadable, String::new()),
     };
-    if session.analyze(entry).has_errors() {
-        return not_run(NotRun::CheckError);
+    let analysis = session.analyze(entry);
+    if analysis.has_errors() {
+        return not_run(NotRun::CheckError, first(&analysis.diagnostics));
     }
 
     let program = match session.compile(entry, Entry::Main) {
@@ -666,7 +769,7 @@ fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), Verdict> {
                 .find(|d| d.code == Code::CompilerBug || d.message.starts_with("internal"));
             return match bug {
                 Some(bug) => finding(Kind::CompilerBug, bug.message.clone()),
-                None => not_run(NotRun::NotCompiled),
+                None => not_run(NotRun::NotCompiled, first(&errors)),
             };
         }
     };
@@ -677,7 +780,7 @@ fn prepare(source: &Source) -> Result<(Program, BTreeSet<String>), Verdict> {
         }
     }
     if let Some(name) = builtins.iter().find(|name| !stays_inside(name)) {
-        return not_run(NotRun::Outside(module_of(name).to_string()));
+        return not_run(NotRun::Outside(module_of(name).to_string()), name.clone());
     }
     Ok((program, builtins))
 }
@@ -882,7 +985,8 @@ fn is_err(value: &Value) -> bool {
     matches!(value, Value::Variant(tag, _) if tag.is(silt::typeinfo::bv::ERR))
 }
 
-/// Step 5: what no run may end in.
+/// Step 5, but for a run that did not end, which the caller judges:
+/// what no run may end in.
 fn broken(run: &Run) -> Option<Finding> {
     let finding = |kind, detail: &str| Some(Finding::new(kind, detail));
     // A panic first: what else the run shows (that it did not end, as
@@ -892,7 +996,6 @@ fn broken(run: &Run) -> Option<Finding> {
     }
     match &run.end {
         End::Panic(text) => return finding(Kind::Panic, text),
-        End::Hang => return finding(Kind::Hang, "no end within the watchdog's time"),
         End::Error {
             message,
             type_confusion: true,
@@ -901,7 +1004,7 @@ fn broken(run: &Run) -> Option<Finding> {
         End::Error { message, .. } if message.starts_with("internal") => {
             return finding(Kind::InternalError, message);
         }
-        End::Error { .. } | End::Value { .. } => {}
+        End::Error { .. } | End::Value { .. } | End::Hang => {}
     }
     for failure in &run.failures {
         let detail = format!("in a task: {}", failure.message);
@@ -1118,8 +1221,10 @@ mod tests {
         let mut hung = ended.clone();
         hung.end = End::Hang;
         assert_eq!(broken(&hung).unwrap().kind, Kind::Panic);
+        // (Without a panic, a run that did not end is the caller's to
+        // judge: it may be the clock the program waits for.)
         hung.panics.clear();
-        assert_eq!(broken(&hung).unwrap().kind, Kind::Hang);
+        assert!(broken(&hung).is_none());
     }
 
     /// The hook records a panic of any thread of the process, with the

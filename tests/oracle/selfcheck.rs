@@ -1,21 +1,62 @@
 //! The oracle on programs whose verdict is known: what it runs, what it
 //! leaves alone, and that it sees what it is there to see.
 
-use crate::oracle::{Compared, Cut, Expect, Input, Kind, NotRun, Source, Verdict, examine};
+use crate::oracle::{Compared, Cut, Expect, Input, Kind, NotRun, Source, Steps, Verdict, examine};
 
-/// The step budget of these programs' runs.
-const STEPS: u64 = 100_000;
+/// The step budgets of these programs' runs.
+const STEPS: Steps = Steps {
+    each: 100_000,
+    again: 100_000,
+};
+
+fn verdict_of(source: Source, expect: Expect, steps: Steps) -> Verdict {
+    let input = Input {
+        name: "selfcheck".to_string(),
+        source,
+        real_time: true,
+        expect,
+    };
+    examine(&input, steps)
+}
 
 fn verdict_with(text: &str, expect: Expect) -> Verdict {
-    examine(
-        &Input {
-            name: "selfcheck".to_string(),
-            source: Source::Memory(vec![("main.silt".to_string(), text.to_string())]),
-            real_time: true,
-            expect,
-        },
-        STEPS,
-    )
+    let source = Source::Memory(vec![("main.silt".to_string(), text.to_string())]);
+    verdict_of(source, expect, STEPS)
+}
+
+/// What a golden case with `cmd: run` and `exit: 0` says of its
+/// program.
+fn succeeds() -> Expect {
+    Expect {
+        succeeds: true,
+        ..Expect::default()
+    }
+}
+
+/// A directory of its own with `files` (path from the directory, text)
+/// in it; removed when the value is dropped.
+struct Files(std::path::PathBuf);
+
+impl Files {
+    fn new(name: &str, files: &[(&str, &str)]) -> Files {
+        let dir = std::env::temp_dir().join(format!("silt-oracle-{}-{name}", std::process::id()));
+        for (path, text) in files {
+            let file = dir.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        Files(dir)
+    }
+
+    fn file(&self, path: &str) -> std::path::PathBuf {
+        self.0.join(path)
+    }
+}
+
+impl Drop for Files {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn verdict(text: &str) -> Verdict {
@@ -140,10 +181,6 @@ fn a_program_with_tasks_is_compared_when_its_output_is_given() {
 
 #[test]
 fn a_run_that_fails_where_success_is_expected_is_a_finding() {
-    let succeeds = || Expect {
-        succeeds: true,
-        ..Expect::default()
-    };
     assert_finding(
         verdict_with("fn main() {\n  1 / 0\n}\n", succeeds()),
         Kind::Expectation,
@@ -179,7 +216,11 @@ fn two_runs_that_write_different_output_are_a_finding() {
         stdout: Some("not a UUID\n".to_string()),
         end: None,
     };
-    assert_finding(verdict_with(text, own), Kind::Expectation, "stdout");
+    assert_finding(
+        verdict_with(text, own),
+        Kind::Differs,
+        "slice 2000 against slice 1: stdout differs",
+    );
 }
 
 /// A program that does not end is cut short by the step budget: no
@@ -213,4 +254,137 @@ fn what_a_program_wrote_before_it_was_cut_short_is_not_compared() {
     let counting = "fn main() {\n  loop i = 0 {\n    println(i)\n    loop(i + 1)\n  }\n}\n";
     let cut = verdict(counting);
     assert!(matches!(cut, Verdict::Cut(Cut::OutOfSteps)), "{cut:?}");
+}
+
+/// A program that ends at one slice and is cut short at the other is a
+/// finding: a fault that loses a program at a slice boundary shows so.
+/// Here the program is whole and the budget is what differs: with one
+/// step, slice 2000 runs the program to its end (the budget is looked
+/// at where a slice ends) and slice 1 does not.
+#[test]
+fn a_program_that_ends_at_one_slice_only_is_a_finding() {
+    let text = "fn main() {\n  println(\"ran\")\n  41 + 1\n}\n";
+    let source = || Source::Memory(vec![("main.silt".to_string(), text.to_string())]);
+    let one_step = Steps { each: 1, again: 1 };
+    assert_finding(
+        verdict_of(source(), Expect::default(), one_step),
+        Kind::OneSlice,
+        "ends at slice 2000 (main returned 42) and not at slice 1: out of steps (1 steps)",
+    );
+    // The run that was cut short is repeated with the larger budget
+    // first: a program that then ends is compared as usual.
+    let repeated = Steps {
+        each: 1,
+        again: 100_000,
+    };
+    let passed = verdict_of(source(), Expect::default(), repeated);
+    assert!(
+        matches!(passed, Verdict::Passed(Compared::Everything)),
+        "{passed:?}"
+    );
+    // And one that is still cut short then is the finding.
+    let longer = "fn main() {\n  loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  }\n}\n";
+    let source = Source::Memory(vec![("main.silt".to_string(), longer.to_string())]);
+    let short = Steps { each: 1, again: 50 };
+    assert_finding(
+        verdict_of(source, Expect::default(), short),
+        Kind::OneSlice,
+        "ends at slice 2000 (main returned 100) and not at slice 1: out of steps (50 steps)",
+    );
+}
+
+/// A program that the command runs and that does not check, or has no
+/// `main`, in the oracle's session is a finding of the oracle: counted
+/// as "not run" it would pass for ever.
+#[test]
+fn a_program_that_is_to_run_and_does_not_check_is_a_finding() {
+    assert_finding(
+        verdict_with("fn main() {\n  1 + \"one\"\n}\n", succeeds()),
+        Kind::Expectation,
+        "the oracle has: check error",
+    );
+    assert_finding(
+        verdict_with("fn helper() {\n  1\n}\n", succeeds()),
+        Kind::Expectation,
+        "the oracle has: not compiled for main",
+    );
+    // A builtin that reaches outside is the oracle's own reason.
+    let outside = verdict_with("import io\nfn main() {\n  io.args()\n}\n", succeeds());
+    assert!(
+        matches!(outside, Verdict::NotRun(NotRun::Outside(_))),
+        "{outside:?}"
+    );
+}
+
+/// The same for a program on disk, as the directory cases of the golden
+/// corpus are: a script with a module beside it, and a package with a
+/// manifest and a dependency. Both are run; with an error in a module
+/// they are findings, and "not run" only when nothing says that they
+/// run.
+#[test]
+fn programs_on_disk_are_run_and_one_that_does_not_check_is_a_finding() {
+    let main = "import util\nfn main() {\n  println(util.twice(21))\n}\n";
+    let util = "pub fn twice(n) {\n  n * 2\n}\n";
+    let broken = "pub fn twice(n) {\n  n * \"two\"\n}\n";
+    let expect = || Expect {
+        succeeds: true,
+        stdout: Some("42\n".to_string()),
+        end: None,
+    };
+
+    let script = Files::new("script", &[("main.silt", main), ("util.silt", util)]);
+    let ran = verdict_of(Source::Script(script.file("main.silt")), expect(), STEPS);
+    assert!(
+        matches!(ran, Verdict::Passed(Compared::Everything)),
+        "{ran:?}"
+    );
+    let script = Files::new(
+        "script-broken",
+        &[("main.silt", main), ("util.silt", broken)],
+    );
+    let source = || Source::Script(script.file("main.silt"));
+    assert_finding(
+        verdict_of(source(), expect(), STEPS),
+        Kind::Expectation,
+        "the oracle has: check error",
+    );
+    let not_run = verdict_of(source(), Expect::default(), STEPS);
+    assert!(
+        matches!(not_run, Verdict::NotRun(NotRun::CheckError)),
+        "{not_run:?}"
+    );
+
+    let manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nutil = { path = \"util\" }\n";
+    let dep_manifest = "[package]\nname = \"util\"\nversion = \"0.1.0\"\n";
+    let package = |name: &str, lib: &str| {
+        Files::new(
+            name,
+            &[
+                ("silt.toml", manifest),
+                ("src/main.silt", main),
+                ("util/silt.toml", dep_manifest),
+                ("util/src/lib.silt", lib),
+            ],
+        )
+    };
+    let files = package("package", util);
+    let ran = verdict_of(
+        Source::Package(files.file("src/main.silt")),
+        expect(),
+        STEPS,
+    );
+    assert!(
+        matches!(ran, Verdict::Passed(Compared::Everything)),
+        "{ran:?}"
+    );
+    let files = package("package-broken", broken);
+    assert_finding(
+        verdict_of(
+            Source::Package(files.file("src/main.silt")),
+            expect(),
+            STEPS,
+        ),
+        Kind::Expectation,
+        "the oracle has: check error",
+    );
 }

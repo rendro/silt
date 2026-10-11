@@ -26,10 +26,14 @@ use libfuzzer_sys::fuzz_target;
 #[path = "../../tests/oracle/oracle.rs"]
 mod oracle;
 
-use oracle::{Expect, Input, Source, Verdict, examine};
+use oracle::{Expect, Input, Source, Steps, Verdict, examine};
 
-/// The step budget of each run.
-const STEPS: u64 = 200_000;
+/// The step budget of each run, and of the one repeat of a run that
+/// was cut short where the other one ended.
+const STEPS: Steps = Steps {
+    each: 200_000,
+    again: 400_000,
+};
 
 fuzz_target!(|data: &[u8]| {
     // The lexer's and the parser's targets have the texts that are not
