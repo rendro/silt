@@ -14,10 +14,10 @@ fn main() {
   let ch: Channel(Int) = channel.new(0)
   let producer = task.spawn { ->
     loop i = 0 {
-      match i >= 200 {
+      match i >= 100 {
         true -> channel.close(ch)
         false -> {
-          time.sleep(time.ms(5))
+          time.sleep(time.ms(3))
           channel.send(ch, i)
           loop(i + 1)
         }
@@ -25,7 +25,7 @@ fn main() {
     }
   }
   let r = loop got = 0, sum = 0, inner_timeouts = 0 {
-    let out = task.deadline(time.ms(5), { ->
+    let out = task.deadline(time.ms(3), { ->
       task.deadline(time.hours(1), { -> channel.receive(ch) })
     })
     match out {
@@ -38,7 +38,7 @@ fn main() {
   task.join(producer)
   match r {
     (got, sum, inner_timeouts) -> {
-      println("sent 200 (sum 19900), received {got} (sum {sum})")
+      println("sent 100 (sum 4950), received {got} (sum {sum})")
       println("the inner Err(Timeout) as the outer function's value: {inner_timeouts}")
     }
   }

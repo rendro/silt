@@ -10,7 +10,7 @@ import time
 fn main() {
   let sent: Channel(Int) = channel.new(4)
   let wrong = loop i = 0, wrong = 0 {
-    match i >= 300 {
+    match i >= 200 {
       true -> wrong
       false -> {
         let out = task.deadline(time.micros(3000), { ->

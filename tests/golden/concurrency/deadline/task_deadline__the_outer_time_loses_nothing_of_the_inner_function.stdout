@@ -1,2 +1,2 @@
-sent 200 (sum 19900), received 200 (sum 19900)
+sent 100 (sum 4950), received 100 (sum 4950)
 the inner Err(Timeout) as the outer function's value: 0

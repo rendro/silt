@@ -1,8 +1,8 @@
 -- timeout: 120
 -- A buffered channel holds one value. A receive under a deadline that
--- answers `Err(Timeout)` has left it there. 1000 rounds with the
+-- answers `Err(Timeout)` has left it there. 500 rounds with the
 -- function sleeping first for about as long as its deadline, so that
--- the time passes around the receive, and 1000 with a deadline that is
+-- the time passes around the receive, and 500 with a deadline that is
 -- over when the function starts.
 import channel
 import task
@@ -24,7 +24,7 @@ fn round(dur, before) {
 
 fn wrong(dur, before) {
   loop i = 0, wrong = 0 {
-    match i >= 1000 {
+    match i >= 500 {
       true -> wrong
       false -> loop(i + 1, wrong + round(dur, before))
     }

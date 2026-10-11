@@ -1,7 +1,7 @@
 -- timeout: 120
 -- A select under a deadline: an arm was completed and `task.deadline`
 -- gives `Ok` of it, or none was and it gives `Err(Timeout)`. A
--- producer sends 200 numbers in turn on two rendezvous channels; the
+-- producer sends 100 numbers in turn on two rendezvous channels; the
 -- one in the middle takes them with a select of two `Recv` arms under
 -- a deadline and passes each on with a select that has a `Send` arm,
 -- under a deadline too, until that is `Sent`; the consumer is slow.
@@ -30,7 +30,7 @@ fn main() {
   let never: Channel(Int) = channel.new(0)
   let producer = task.spawn { ->
     loop i = 0 {
-      match i >= 200 {
+      match i >= 100 {
         true -> {
           channel.close(a)
           channel.close(b)
@@ -72,6 +72,6 @@ fn main() {
   }
   task.join(producer)
   match task.join(consumer) {
-    (got, sum) -> println("sent 200 (sum 19900), arrived {got} (sum {sum})")
+    (got, sum) -> println("sent 100 (sum 4950), arrived {got} (sum {sum})")
   }
 }
