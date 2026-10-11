@@ -326,6 +326,18 @@ fn too_many_globals(count: usize, span: Span) -> Diagnostic {
     limit_diagnostic(limit, span)
 }
 
+/// A program names more methods than the operand of a method call can
+/// tell apart: the call, or the impl that leaves a default method to
+/// its trait, at `span` names one more.
+fn too_many_method_names(span: Span) -> Diagnostic {
+    let limit = Limit {
+        what: "names of methods a program calls",
+        count: usize::from(u16::MAX) + 2,
+        max: usize::from(u16::MAX) + 1,
+    };
+    limit_diagnostic(limit, span)
+}
+
 impl Compiler {
     /// A compiler for the modules of a program, as the session analysed
     /// them. Every definition of the program that has a global slot gets
@@ -446,7 +458,9 @@ impl Compiler {
                 .iter()
                 .any(|written| resolve(written.name) == method)
             {
-                globals.default_for(t, ty, &method, slot);
+                globals
+                    .default_for(t, ty, &method, slot)
+                    .ok_or_else(|| too_many_method_names(ti.trait_name_span))?;
             }
         }
         Ok(())
@@ -2298,14 +2312,10 @@ impl Compiler {
         tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let method = self.globals.method_id(&resolve(method)).ok_or_else(|| {
-            let limit = Limit {
-                what: "names of methods a program calls",
-                count: usize::from(u16::MAX) + 2,
-                max: usize::from(u16::MAX) + 1,
-            };
-            limit_diagnostic(limit, span)
-        })?;
+        let method = self
+            .globals
+            .method_id(&resolve(method))
+            .ok_or_else(|| too_many_method_names(span))?;
         let name = self.units.defs.get(t.0).name;
         let of = self.globals.trait_index(t, resolve(name)).ok_or_else(|| {
             let limit = Limit {
@@ -2417,8 +2427,6 @@ impl Compiler {
             Type::Float => Ok(FieldType::Float),
             Type::String => Ok(FieldType::String),
             Type::Bool => Ok(FieldType::Bool),
-            // A range type is described like the list type it is the
-            // same type as.
             Type::List(elem) => Ok(FieldType::List(Box::new(
                 self.describe_field_type(elem, records)?,
             ))),

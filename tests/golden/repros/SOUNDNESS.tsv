@@ -321,7 +321,6 @@ repros/typechecker_arch/recheck_alias_impl.silt	holds	reject E0301	TCA-3: an err
 repros/typechecker_arch/recheck_alias_impl_nonarrow.silt	holds	reject E0301	TCA-3: control for recheck_alias_impl
 repros/typechecker_arch/recheck_fun_impl.silt	holds	reject E0201	TCA-3: an error in the body of an impl for `Fun`
 repros/typechecker_arch/recheck_list_impl.silt	holds	reject E0301	TCA-3: control, an impl for `List(a)`
-repros/typechecker_arch/recheck_range_impl.silt	-	obsolete	the type name `Range` (removed in stage 7 V3: `a..b` is a `List(Int)`); recheck_list_impl is the program for `List(a)`
 repros/typechecker_arch/recheck_unit_impl.silt	-	obsolete	an impl for `()` is not syntax
 repros/typechecker_arch/repl_rec.silt	holds	accept	control: a recursive enum (the REPL's case, as a file)
 repros/typechecker_arch/repl_refut.silt	holds	reject E0322	a refutable top-level `let`

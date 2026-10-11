@@ -467,7 +467,10 @@ impl Vm {
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.
         let slots = self.global_slots.clone();
-        // (The compiler checks each function against the globals.)
+        // (The compiler checks each function against the globals of
+        // the program it is compiled into. Code of a later REPL entry
+        // that a task of an earlier entry runs is the exception: the
+        // task has the globals of its own entry.)
         let Some(method_name) = slots.method_name(method) else {
             return Err(VmError::type_confusion(
                 "the call of a method names a method the program does not have",
@@ -708,7 +711,10 @@ impl Vm {
                     // (The checker orders the top-level `let`s so that
                     // each is set before anything can read it, and the
                     // definitions are set before any `let` runs: no
-                    // checked program comes here.)
+                    // checked program that is run as a whole comes
+                    // here. A task of an earlier REPL entry does, when
+                    // it runs a closure of a later entry that names
+                    // what that entry defined.)
                     _ => {
                         return Err(VmError::type_confusion(format!(
                             "the global '{}' is read before it is set",

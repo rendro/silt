@@ -278,14 +278,15 @@ impl Globals {
     }
 
     /// The impl of the trait `t` for the type `ty` leaves `method` out:
-    /// its method is the trait's default, in `slot`.
-    pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) {
-        if self.method(t, ty, method).is_some() {
-            return;
-        }
-        if let Some(method) = self.method_id(method) {
+    /// its method is the trait's default, in `slot`. `None` when the
+    /// name of the method would need an id and none is left
+    /// ([`Globals::method_id`]).
+    pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) -> Option<()> {
+        if self.method(t, ty, method).is_none() {
+            let method = self.method_id(method)?;
             self.methods.insert((t, ty, method), slot);
         }
+        Some(())
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for

@@ -35,7 +35,7 @@ fn hash_of(v: &Value) -> u64 {
     h.finish()
 }
 
-// ── List ↔ Range ───────────────────────────────────────────────────
+// ── A list that holds its elements, and the list a range makes ────
 
 #[test]
 fn list_range_equal_pairs_hash_equal() {
@@ -102,9 +102,9 @@ fn hashset_dedup_across_list_range() {
 
 // ── Round 75 lock tightenings: reflexivity arms for opaque values ──
 //
-// The original round-74 contract tests covered
-// List↔Range — the cross-discriminant equality cases that motivated
-// the round-74 audit fix. They did NOT cover Handle, VmClosure,
+// The original round-74 contract tests covered a list against the
+// list a range makes: one kind of value stored in two ways, the case
+// that motivated the round-74 audit fix. They did NOT cover Handle, VmClosure,
 // BuiltinFn, or VariantConstructor reflexivity. The PartialEq impl
 // in value/key.rs declares:
 //   - Handle(a) == Handle(b) iff a.id == b.id
