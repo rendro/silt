@@ -158,7 +158,7 @@ Returned by `task.deadline`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Timeout` | — | the function had not returned when its deadline passed (it is ended) |
+| `Timeout` | — | the function was ended because its time was over |
 | `Other(String)` | message | unclassified failure |
 
 ### `EncodingError` (requires `import encoding`)

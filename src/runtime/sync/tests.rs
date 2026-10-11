@@ -706,10 +706,7 @@ fn a_wait_that_begins_when_the_time_is_over_ends_the_task_unless_an_arm_is_ready
     // Nothing is there: the task is not queued, and takes nothing
     // later.
     let wait = recv(&ch).task_deadline(now);
-    assert!(matches!(
-        park(TaskId(1), wait, &d.timer, &d),
-        Park::Expired
-    ));
+    assert!(matches!(park(TaskId(1), wait, &d.timer, &d), Park::Expired));
     assert_eq!(ch.waiting(), (0, 0));
     // A value that is there wins over a time that has passed, as it
     // does for an operation that never waits.
@@ -719,18 +716,12 @@ fn a_wait_that_begins_when_the_time_is_over_ends_the_task_unless_an_arm_is_ready
     // The same for a wait with several arms, and for one with none.
     let other = Channel::new(1, 1);
     let wait = select_recv(&ch, &other).task_deadline(now);
-    assert!(matches!(
-        park(TaskId(1), wait, &d.timer, &d),
-        Park::Expired
-    ));
+    assert!(matches!(park(TaskId(1), wait, &d.timer, &d), Park::Expired));
     assert!(matches!(other.try_send(Value::Int(4), &d), TrySend::Sent));
     let wait = select_recv(&ch, &other).task_deadline(now);
     assert_eq!(received(d.block(1, wait).unwrap()), (1, 4));
     let wait = Wait::new(vec![]).task_deadline(now);
-    assert!(matches!(
-        park(TaskId(1), wait, &d.timer, &d),
-        Park::Expired
-    ));
+    assert!(matches!(park(TaskId(1), wait, &d.timer, &d), Park::Expired));
 }
 
 #[test]

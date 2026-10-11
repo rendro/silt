@@ -274,12 +274,11 @@ fn a_deadline_ends_its_function_at_every_slice() {
     for (what, door) in doors {
         at_each(&SLICES, what, &program(door, "time.ms(20)"), "timeout");
     }
-    // A function that never waits is ended where its time slice ends:
-    // with slices, that is. (A VM that runs its tasks without a time
-    // slice lets such a function run to its next wait; the caller has
-    // its `Err(Timeout)` on time all the same.)
+    // A function that never waits is ended when its time slice has
+    // run out: after 2,000 steps past its last wait, whatever the
+    // slice of the VM.
     at_each(
-        &[Some(2000), Some(1)],
+        &SLICES,
         "a function that only computes",
         &program("count(2000000000, 0)", "time.ms(20)"),
         "timeout",
@@ -290,6 +289,320 @@ fn a_deadline_ends_its_function_at_every_slice() {
         &program("count(1000, 0)", "time.hours(1)"),
         "returned",
     );
+}
+
+/// Under `task.deadline` nothing is lost at any time slice: a wait of
+/// the function ended by its arm, and the caller has `Ok` of what the
+/// function made of it, or the wait ended by the deadline and nothing
+/// was taken or sent. Each program counts what arrived against what
+/// was sent, with deadlines about as long as the waits they are
+/// around, so that many of them pass at the moment a value comes. No
+/// program says how many deadlines passed: that is the clock's.
+///
+/// At a slice of one step a function that has taken a value needs many
+/// slices to return it; it has the steps of one standard slice for
+/// that, whatever the slice of the VM.
+#[test]
+fn a_deadline_loses_nothing_at_every_slice() {
+    const HEAD: &str = "import channel\nimport task\nimport time\n\n";
+    // A receive: every number a rendezvous send handed over is
+    // received.
+    let receive = r#"
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let producer = task.spawn { ->
+    loop i = 0 {
+      match i >= 60 {
+        true -> channel.close(ch)
+        false -> {
+          time.sleep(time.ms(2))
+          channel.send(ch, i)
+          loop(i + 1)
+        }
+      }
+    }
+  }
+  let r = loop got = 0, sum = 0 {
+    match task.deadline(time.ms(2), { -> channel.receive(ch) }) {
+      Ok(channel.Message(v)) -> loop(got + 1, sum + v)
+      Ok(_) -> (got, sum)
+      Err(_) -> loop(got, sum)
+    }
+  }
+  task.join(producer)
+  match r {
+    (got, sum) -> "received {got}, sum {sum}"
+  }
+}
+"#;
+    // A send: a number arrives once for each send that was `Ok`.
+    let send = r#"
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let consumer = task.spawn { ->
+    loop n = 0, sum = 0 {
+      time.sleep(time.ms(2))
+      match channel.receive(ch) {
+        channel.Message(v) -> loop(n + 1, sum + v)
+        _ -> (n, sum)
+      }
+    }
+  }
+  loop i = 0 {
+    match i >= 60 {
+      true -> ()
+      false -> match task.deadline(time.ms(2), { -> channel.send(ch, i) }) {
+        Ok(_) -> loop(i + 1)
+        Err(_) -> loop(i)
+      }
+    }
+  }
+  channel.close(ch)
+  match task.join(consumer) {
+    (got, sum) -> "received {got}, sum {sum}"
+  }
+}
+"#;
+    // A value that is there: received with `Ok`, or left with `Err`.
+    let held = r#"
+fn round(dur, before) {
+  let ch: Channel(Int) = channel.new(1)
+  channel.send(ch, 7)
+  let out = task.deadline(dur, { ->
+    time.sleep(before)
+    channel.receive(ch)
+  })
+  match (out, channel.try_receive(ch)) {
+    (Ok(channel.Message(7)), channel.Empty) -> 0
+    (Err(_), channel.Message(7)) -> 0
+    _ -> 1
+  }
+}
+
+fn wrong(dur, before) {
+  loop i = 0, wrong = 0 {
+    match i >= 150 {
+      true -> wrong
+      false -> loop(i + 1, wrong + round(dur, before))
+    }
+  }
+}
+
+fn main() {
+  "wrong {wrong(time.micros(300), time.micros(300))} and {wrong(time.ms(0), time.ms(0))}"
+}
+"#;
+    // A function that sleeps to just before its time, sends and
+    // returns: `Ok` and sent, or `Err` and not sent.
+    let late = r#"
+fn main() {
+  let sent: Channel(Int) = channel.new(4)
+  let wrong = loop i = 0, wrong = 0 {
+    match i >= 100 {
+      true -> wrong
+      false -> {
+        let out = task.deadline(time.micros(2000), { ->
+          time.sleep(time.micros(1200 + i % 5 * 200))
+          channel.send(sent, i)
+          i
+        })
+        let was_sent = match channel.try_receive(sent) {
+          channel.Message(_) -> true
+          _ -> false
+        }
+        match (out, was_sent) {
+          (Ok(_), true) -> loop(i + 1, wrong)
+          (Err(_), false) -> loop(i + 1, wrong)
+          _ -> loop(i + 1, wrong + 1)
+        }
+      }
+    }
+  }
+  "wrong {wrong}"
+}
+"#;
+    // A select with a `Recv` arm and one with a `Send` arm.
+    let select = r#"
+fn pass(out, never, v) {
+  let sent = task.deadline(time.ms(2), { ->
+    match channel.select([channel.Send(out, v), channel.Recv(never)]) {
+      (_, channel.Sent) -> true
+      _ -> false
+    }
+  })
+  match sent {
+    Ok(true) -> ()
+    _ -> pass(out, never, v)
+  }
+}
+
+fn main() {
+  let a: Channel(Int) = channel.new(0)
+  let out: Channel(Int) = channel.new(0)
+  let never: Channel(Int) = channel.new(0)
+  let producer = task.spawn { ->
+    loop i = 0 {
+      match i >= 40 {
+        true -> channel.close(a)
+        false -> {
+          time.sleep(time.ms(2))
+          channel.send(a, i)
+          loop(i + 1)
+        }
+      }
+    }
+  }
+  let consumer = task.spawn { ->
+    loop n = 0, sum = 0 {
+      time.sleep(time.ms(2))
+      match channel.receive(out) {
+        channel.Message(v) -> loop(n + 1, sum + v)
+        _ -> (n, sum)
+      }
+    }
+  }
+  loop {
+    let got = task.deadline(time.ms(2), { ->
+      match channel.select([channel.Recv(a), channel.Recv(never)]) {
+        (_, r) -> r
+      }
+    })
+    match got {
+      Ok(channel.Message(v)) -> {
+        pass(out, never, v)
+        loop()
+      }
+      Ok(_) -> channel.close(out)
+      Err(_) -> loop()
+    }
+  }
+  task.join(producer)
+  match task.join(consumer) {
+    (got, sum) -> "arrived {got}, sum {sum}"
+  }
+}
+"#;
+    // A deadline inside a deadline whose outer time comes first.
+    let nested = r#"
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let producer = task.spawn { ->
+    loop i = 0 {
+      match i >= 60 {
+        true -> channel.close(ch)
+        false -> {
+          time.sleep(time.ms(2))
+          channel.send(ch, i)
+          loop(i + 1)
+        }
+      }
+    }
+  }
+  let r = loop got = 0, sum = 0, inner = 0 {
+    let out = task.deadline(time.ms(2), { ->
+      task.deadline(time.hours(1), { -> channel.receive(ch) })
+    })
+    match out {
+      Ok(Ok(channel.Message(v))) -> loop(got + 1, sum + v, inner)
+      Ok(Ok(_)) -> (got, sum, inner)
+      Ok(Err(_)) -> loop(got, sum, inner + 1)
+      Err(_) -> loop(got, sum, inner)
+    }
+  }
+  task.join(producer)
+  match r {
+    (got, sum, inner) -> "received {got}, sum {sum}, inner timeouts {inner}"
+  }
+}
+"#;
+    let cases = [
+        ("a receive", receive, "received 60, sum 1770"),
+        ("a send", send, "received 60, sum 1770"),
+        ("a value that is there", held, "wrong 0 and 0"),
+        ("a function that sends late", late, "wrong 0"),
+        ("a select", select, "arrived 40, sum 780"),
+        (
+            "a deadline in a deadline",
+            nested,
+            "received 60, sum 1770, inner timeouts 0",
+        ),
+    ];
+    for (what, body, expected) in cases {
+        let source = format!("{HEAD}{body}");
+        for slice in SLICES {
+            let (result, _) = run_with(&source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            assert_eq!(
+                result,
+                Ok(Value::String(expected.into())),
+                "{what} at slice {slice:?}"
+            );
+        }
+    }
+}
+
+/// An accept under a deadline loses no connection at any time slice:
+/// one that reaches an accept as it is given up stays with the
+/// listener, and the next accept is given it.
+#[cfg(feature = "tcp")]
+#[test]
+fn an_accept_under_a_deadline_loses_no_connection_at_every_slice() {
+    let source = r#"
+import channel
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let done: Channel(Int) = channel.new(1)
+  let client = task.spawn { ->
+    let made = loop i = 0, made = 0 {
+      match i >= 40 {
+        true -> made
+        false -> {
+          time.sleep(time.ms(3))
+          match tcp.connect("127.0.0.1:{port}") {
+            Ok(_) -> loop(i + 1, made + 1)
+            Err(_) -> loop(i + 1, made)
+          }
+        }
+      }
+    }
+    channel.close(done)
+    made
+  }
+  let given = loop given = 0, idle = 0 {
+    match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
+      Ok(Ok(c)) -> {
+        tcp.close(c)
+        loop(given + 1, 0)
+      }
+      Ok(Err(e)) -> panic("accept failed: {e}")
+      Err(_) -> match channel.try_receive(done) {
+        channel.Closed -> match idle >= 20 {
+          true -> given
+          false -> loop(given, idle + 1)
+        }
+        _ -> loop(given, idle)
+      }
+    }
+  }
+  task.join(client) - given
+}
+"#;
+    for slice in SLICES {
+        let (result, _) = run_with(source, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+        });
+        assert_eq!(result, Ok(Value::Int(0)), "at slice {slice:?}");
+    }
 }
 
 /// A send on a closed channel is one error at every time slice,
