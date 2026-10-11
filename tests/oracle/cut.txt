@@ -19,3 +19,4 @@ tests/golden/lang/compiler/selection__method_found_at_run_time_is_a_tail_call.si
 tests/golden/repros/compiler_vm/mx_loop_nobind_nomatch.silt | `loop { loop() }`: it does not end
 tests/golden/repros/lang_design/cross_x4_loop_nobind.silt | `loop { loop() }`: it does not end
 tests/golden/repros/stdlib/t_ho1.silt | a speed measurement: five passes of callbacks over a list of a million
+tests/golden/repros/stdlib/t_ho2.silt | a fold over a range of twenty million numbers
