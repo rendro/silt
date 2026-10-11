@@ -167,13 +167,9 @@ fn test_locals() {
 #[test]
 fn test_string_concat() {
     let script = make_function(|e| {
-        let a = e
-            .constant(Value::String("hello".to_string()), span())
-            .unwrap();
-        let b = e.constant(Value::String(" ".to_string()), span()).unwrap();
-        let c = e
-            .constant(Value::String("world".to_string()), span())
-            .unwrap();
+        let a = e.constant(Value::String("hello".into()), span()).unwrap();
+        let b = e.constant(Value::String(" ".into()), span()).unwrap();
+        let c = e.constant(Value::String("world".into()), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         e.emit(Asm::Constant { k: c }, span()).unwrap();
@@ -182,7 +178,7 @@ fn test_string_concat() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::String("hello world".to_string()));
+    assert_eq!(result, Value::String("hello world".into()));
 }
 
 #[test]
@@ -195,7 +191,7 @@ fn test_display_value() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::String("42".to_string()));
+    assert_eq!(result, Value::String("42".into()));
 }
 
 #[test]
@@ -246,7 +242,7 @@ fn test_make_tuple() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
+    assert_eq!(result, Value::tuple(vec![Value::Int(1), Value::Int(2)]));
 }
 
 #[test]
@@ -261,10 +257,7 @@ fn test_make_list() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(10), Value::Int(20)]))
-    );
+    assert_eq!(result, Value::list(vec![Value::Int(10), Value::Int(20)]));
 }
 
 #[test]
@@ -760,12 +753,12 @@ fn test_e2e_list_append() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
+        Value::list(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(3),
             Value::Int(4)
-        ]))
+        ])
     );
 }
 
@@ -801,11 +794,7 @@ fn test_closure_in_map() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(10),
-            Value::Int(20),
-            Value::Int(30)
-        ]))
+        Value::list(vec![Value::Int(10), Value::Int(20), Value::Int(30)])
     );
 }
 
@@ -842,11 +831,7 @@ fn test_closure_counter() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(10),
-            Value::Int(20),
-            Value::Int(30)
-        ]))
+        Value::list(vec![Value::Int(10), Value::Int(20), Value::Int(30)])
     );
 }
 
@@ -912,10 +897,7 @@ fn test_closure_with_filter() {
             }
         "#,
     );
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)]))
-    );
+    assert_eq!(result, Value::list(vec![Value::Int(4), Value::Int(5)]));
 }
 
 #[test]
@@ -992,11 +974,7 @@ fn test_trailing_closure_with_capture() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(10),
-            Value::Int(20),
-            Value::Int(30)
-        ]))
+        Value::list(vec![Value::Int(10), Value::Int(20), Value::Int(30)])
     );
 }
 
@@ -1012,10 +990,7 @@ fn test_trailing_closure_filter_with_capture() {
             }
         "#,
     );
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)]))
-    );
+    assert_eq!(result, Value::list(vec![Value::Int(4), Value::Int(5)]));
 }
 
 #[test]
@@ -1033,10 +1008,7 @@ fn test_chained_pipes_with_closures() {
             }
         "#,
     );
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(14), Value::Int(15)]))
-    );
+    assert_eq!(result, Value::list(vec![Value::Int(14), Value::Int(15)]));
 }
 
 // ── Phase 4: Full pattern matching ──────────────────────────────
@@ -1193,10 +1165,7 @@ fn test_match_list_rest_value() {
             }
         "#,
     );
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(20), Value::Int(30)]))
-    );
+    assert_eq!(result, Value::list(vec![Value::Int(20), Value::Int(30)]));
 }
 
 #[test]
@@ -1211,7 +1180,7 @@ fn test_match_list_empty_rest() {
             }
         "#,
     );
-    assert_eq!(result, Value::List(Arc::new(vec![])));
+    assert_eq!(result, Value::list(vec![]));
 }
 
 #[test]
@@ -2107,7 +2076,7 @@ fn test_custom_display_trait() {
             }
         "#,
     );
-    assert_eq!(result, Value::String("Circle".to_string()));
+    assert_eq!(result, Value::String("Circle".into()));
 }
 
 #[test]
@@ -2263,7 +2232,7 @@ fn test_scheduler_multiple_tasks() {
         let mut vals: Vec<i64> = items
             .iter()
             .map(|v| match v {
-                Value::Int(n) => *n,
+                Value::Int(n) => n,
                 other => panic!("expected Int, got {:?}", other),
             })
             .collect();
@@ -2398,7 +2367,7 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6),]))
+        Value::list(vec![Value::Int(2), Value::Int(4), Value::Int(6),])
     );
 }
 
@@ -2529,12 +2498,12 @@ fn test_regex_cache_eviction_correctness() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
+        Value::list(vec![
             Value::Bool(true),
             Value::Bool(true),
             Value::Bool(true),
             Value::Bool(false),
-        ]))
+        ])
     );
 }
 
@@ -2648,7 +2617,7 @@ mod type_confusion {
     }
 
     fn string(s: &str) -> Value {
-        Value::String(s.to_string())
+        Value::String(s.into())
     }
 
     fn name(e: &mut Emitter, s: &str) -> crate::bytecode::Const {
@@ -2656,11 +2625,7 @@ mod type_confusion {
     }
 
     fn record(fields: &[(&str, Value)]) -> Value {
-        let fields: BTreeMap<String, Value> = fields
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.clone()))
-            .collect();
-        Value::builtin_record(crate::typeinfo::ty::ANON_RECORD, fields)
+        Value::anon_record(fields.iter().cloned())
     }
 
     fn function(arity: u8) -> Value {
@@ -2741,8 +2706,8 @@ mod type_confusion {
     #[test]
     fn ordering_of_functions() {
         confused("type 'Fn' does not implement Compare", |e| {
-            push(e, Value::List(Arc::new(vec![function(0)])));
-            push(e, Value::List(Arc::new(vec![function(0)])));
+            push(e, Value::list(vec![function(0)]));
+            push(e, Value::list(vec![function(0)]));
             e.emit(Asm::Geq, span()).unwrap();
         });
     }
@@ -2859,13 +2824,13 @@ mod type_confusion {
 
     #[test]
     fn spread_of_a_value_that_is_no_list() {
-        confused("left operand is not a list or range", |e| {
+        confused("ListConcat: an operand is not a list", |e| {
             push(e, Value::Int(1));
-            push(e, Value::List(Arc::new(vec![])));
+            push(e, Value::list(vec![]));
             e.emit(Asm::ListConcat, span()).unwrap();
         });
-        confused("right operand is not a list or range", |e| {
-            push(e, Value::List(Arc::new(vec![])));
+        confused("ListConcat: an operand is not a list", |e| {
+            push(e, Value::list(vec![]));
             push(e, Value::Int(1));
             e.emit(Asm::ListConcat, span()).unwrap();
         });
@@ -2876,12 +2841,20 @@ mod type_confusion {
         confused("cannot access field 'x' on Int", |e| {
             push(e, Value::Int(1));
             let x = name(e, "x");
-            e.emit(Asm::GetField { name: x }, span()).unwrap();
+            e.emit(Asm::GetFieldNamed { name: x }, span()).unwrap();
         });
         confused("record has no field 'x'", |e| {
             push(e, record(&[("y", Value::Int(1))]));
             let x = name(e, "x");
-            e.emit(Asm::GetField { name: x }, span()).unwrap();
+            e.emit(Asm::GetFieldNamed { name: x }, span()).unwrap();
+        });
+        confused("cannot access field 0 of Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::GetField { index: 0 }, span()).unwrap();
+        });
+        confused("cannot access field 1 of an anonymous record", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            e.emit(Asm::GetField { index: 1 }, span()).unwrap();
         });
     }
 
@@ -2894,7 +2867,7 @@ mod type_confusion {
         confused(
             "tuple destructure: expected at least 3 elements, got 1",
             |e| {
-                push(e, Value::Tuple(vec![Value::Int(1)]));
+                push(e, Value::tuple(vec![Value::Int(1)]));
                 e.emit(Asm::DestructTuple { index: 2 }, span()).unwrap();
             },
         );
@@ -2921,20 +2894,23 @@ mod type_confusion {
         confused(
             "list destructure: expected at least 2 elements, got 1",
             |e| {
-                push(e, Value::List(Arc::new(vec![Value::Int(1)])));
+                push(e, Value::list(vec![Value::Int(1)]));
                 e.emit(Asm::DestructList { index: 1 }, span()).unwrap();
             },
         );
-        confused("range index out of bounds", |e| {
-            push(e, Value::Range(1, 2));
-            e.emit(Asm::DestructList { index: 5 }, span()).unwrap();
-        });
+        confused(
+            "list destructure: expected at least 6 elements, got 2",
+            |e| {
+                push(e, Value::List(crate::value::List::ints(1, 2).unwrap()));
+                e.emit(Asm::DestructList { index: 5 }, span()).unwrap();
+            },
+        );
         confused("list destructure: expected list, got Int", |e| {
             push(e, Value::Int(1));
             e.emit(Asm::DestructListRest { start: 0 }, span()).unwrap();
         });
         confused("rest pattern start 3 exceeds list length 1", |e| {
-            push(e, Value::List(Arc::new(vec![Value::Int(1)])));
+            push(e, Value::list(vec![Value::Int(1)]));
             e.emit(Asm::DestructListRest { start: 3 }, span()).unwrap();
         });
     }
@@ -2944,15 +2920,28 @@ mod type_confusion {
         confused("record destructure: expected record, got Int", |e| {
             push(e, Value::Int(1));
             let x = name(e, "x");
-            e.emit(Asm::DestructRecordField { name: x }, span())
+            e.emit(Asm::DestructRecordFieldNamed { name: x }, span())
                 .unwrap();
         });
         confused("record has no field 'x'", |e| {
             push(e, record(&[("y", Value::Int(1))]));
             let x = name(e, "x");
-            e.emit(Asm::DestructRecordField { name: x }, span())
+            e.emit(Asm::DestructRecordFieldNamed { name: x }, span())
                 .unwrap();
         });
+        confused("record destructure: no field 0 in Int", |e| {
+            push(e, Value::Int(1));
+            e.emit(Asm::DestructRecordField { index: 0 }, span())
+                .unwrap();
+        });
+        confused(
+            "record destructure: no field 1 in an anonymous record",
+            |e| {
+                push(e, record(&[("y", Value::Int(1))]));
+                e.emit(Asm::DestructRecordField { index: 1 }, span())
+                    .unwrap();
+            },
+        );
         confused("record rest destructure: expected record, got Int", |e| {
             push(e, Value::Int(1));
             let x = name(e, "x");

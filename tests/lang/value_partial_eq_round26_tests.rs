@@ -150,9 +150,9 @@ fn partial_eq_reflexivity_every_variant() {
         Value::Int(42),
         Value::Float(1.5),
         Value::String("hi".into()),
-        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)])),
-        Value::Range(1, 5),
-        Value::Tuple(vec![Value::Int(1), Value::String("x".into())]),
+        Value::list(vec![Value::Int(1), Value::Int(2)]),
+        Value::List(silt::value::List::ints(1, 5).expect("a list")),
+        Value::tuple(vec![Value::Int(1), Value::String("x".into())]),
         Value::variant(bv::OK, vec![Value::Int(1)]),
         Value::VariantConstructor(bv::SOME.tag()),
         builtin("println"),
@@ -163,7 +163,7 @@ fn partial_eq_reflexivity_every_variant() {
             "Point",
             Vec::new(),
         )),
-        Value::PrimitiveDescriptor("Int".into()),
+        Value::PrimitiveDescriptor("Int"),
     ];
     for v in &values {
         assert_eq!(

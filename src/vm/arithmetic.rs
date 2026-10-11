@@ -109,15 +109,9 @@ impl Vm {
                 a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
             }
             (Value::String(a), Value::String(b)) => a.cmp(b),
-            // List vs List and the mixed List/Range pairings share the same
-            // Silt type (`List(T)`), so must be ordered element-wise. The
-            // `Value::cmp` impl already handles every pairing, including
-            // Range vs List, so defer to it — after the function-leaf gate
-            // (see `ordering_with_fn_gate` below).
-            (Value::List(_), Value::List(_))
-            | (Value::List(_), Value::Range(..))
-            | (Value::Range(..), Value::List(_))
-            | (Value::Range(..), Value::Range(..)) => Self::ordering_with_fn_gate(&a, &b)?,
+            // Lists are ordered element by element (`Value::cmp`), after
+            // the function-leaf gate (see `ordering_with_fn_gate` below).
+            (Value::List(_), Value::List(_)) => Self::ordering_with_fn_gate(&a, &b)?,
             // Round 85: mirror the `<anon>`-wildcard logic from
             // `Value::PartialEq`/`Ord` (src/value/key.rs).
             // The typechecker normally rejects source-level ordering of
@@ -126,8 +120,8 @@ impl Vm {
             // ends up compared against an anon-typed value at runtime —
             // the same-type guard alone would skip the dispatch and
             // fall to the catch-all error.
-            (Value::Record(ta, _), Value::Record(tb, _))
-                if ta.id == tb.id || ta.is_anon() || tb.is_anon() =>
+            (Value::Record(ra), Value::Record(rb))
+                if ra.type_id() == rb.type_id() || ra.ty().is_anon() || rb.ty().is_anon() =>
             {
                 Self::ordering_with_fn_gate(&a, &b)?
             }
@@ -151,7 +145,7 @@ impl Vm {
 
     /// Order two container-shaped operands element-wise via `Value::cmp`,
     /// first rejecting any operand that transitively contains a
-    /// function-shaped leaf (`Vm::value_contains_fn`, src/vm/mod.rs).
+    /// function-shaped leaf (`Value::contains_fn`, src/value/mod.rs).
     ///
     /// The checker rejects ordering a value that holds a function
     /// (`Compare` is decided by structure): this is the backstop at the
@@ -161,7 +155,7 @@ impl Vm {
     /// reach this helper: they fall to `compare()`'s catch-all arm and
     /// keep its "cannot compare Fn and Fn" wording.
     fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<std::cmp::Ordering, VmError> {
-        if Self::value_contains_fn(a) || Self::value_contains_fn(b) {
+        if a.contains_fn() || b.contains_fn() {
             return Err(VmError::type_confusion(
                 "type 'Fn' does not implement Compare",
             ));
@@ -172,9 +166,7 @@ impl Vm {
     // ── Type compatibility ────────────────────────────────────────
 
     /// Returns a discriminant used by [`check_same_type`] to decide whether
-    /// two values may be compared for equality. Silt types that the
-    /// typechecker treats interchangeably share a discriminant:
-    /// `List`/`Range` (a range has type `List(Int)`).
+    /// two values may be compared for equality.
     pub(super) fn value_disc(val: &Value) -> u8 {
         // These values are compared only for equality in `check_same_type`
         // (never as `Ord`) and are not persisted anywhere — they are a
@@ -187,7 +179,7 @@ impl Vm {
             Value::Float(_) => 1,
             Value::Bool(_) => 2,
             Value::String(_) => 3,
-            Value::List(_) | Value::Range(..) => 4,
+            Value::List(_) => 4,
             Value::Map(_) => 5,
             Value::Set(_) => 6,
             Value::Tuple(_) => 7,

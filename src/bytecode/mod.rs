@@ -30,7 +30,7 @@ pub use verify::{VerifyError, verify};
 enum ConstantKey {
     Int(i64),
     Bool(bool),
-    String(String),
+    String(Arc<str>),
     Float(u64), // f64::to_bits()
     /// A variant constructor (a pattern's variant test): its type and
     /// ordinal.
@@ -39,11 +39,17 @@ enum ConstantKey {
     Nullary(TypeId, u16),
     /// A type descriptor (a record literal's or pattern's type).
     Type(TypeId),
+    /// The descriptor of an anonymous record type (an anonymous record
+    /// literal's): the types of all such share one id, and there is
+    /// one description for each set of field names
+    /// ([`crate::typeinfo::anon_record_type`]), which the constant
+    /// holds; this is where it is.
+    AnonType(usize),
     /// A builtin function used as a value (`println`), by its row's
     /// id.
     Builtin(BuiltinId),
     /// A primitive type's descriptor (`Int` as a value), by its name.
-    Primitive(String),
+    Primitive(&'static str),
 }
 
 // ── Global slots ───────────────────────────────────────────────────
@@ -240,20 +246,6 @@ impl Globals {
     }
 }
 
-// ── Record types ───────────────────────────────────────────────────
-
-/// Whether a record of the type `ty` satisfies a check for the nominal
-/// record type `expected`. A record built from an anonymous record
-/// literal (`{x: 1}`) or bound by a record rest pattern satisfies every
-/// check: the typechecker lets such a value flow wherever a nominal
-/// record of the same shape is expected, and has already proved the
-/// shapes agree. This is the one rule every run-time record-type check
-/// uses (pattern tests, builtins that accept a `Date`/`Response`/...
-/// record).
-pub fn record_type_matches(ty: &TypeInfo, expected: TypeId) -> bool {
-    ty.id == expected || ty.is_anon()
-}
-
 // ── Operands the compiler names ────────────────────────────────────
 
 /// A constant of a function, by its index in the function's pool. The
@@ -392,12 +384,15 @@ impl Chunk {
             Value::VariantConstructor(tag) => {
                 Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))
             }
-            Value::Variant(tag, fields) if fields.is_empty() => {
-                Some(ConstantKey::Nullary(tag.type_id(), tag.ordinal()))
+            Value::Variant(variant) if variant.fields().is_empty() => {
+                Some(ConstantKey::Nullary(variant.type_id(), variant.ordinal()))
+            }
+            Value::TypeDescriptor(ty) if ty.is_anon() => {
+                Some(ConstantKey::AnonType(Arc::as_ptr(ty) as usize))
             }
             Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
             Value::BuiltinFn(id) => Some(ConstantKey::Builtin(*id)),
-            Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name.clone())),
+            Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name)),
             _ => None,
         };
         if let Some(&index) = key.as_ref().and_then(|k| self.constant_dedup.get(k)) {

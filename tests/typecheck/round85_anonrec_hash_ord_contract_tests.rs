@@ -49,21 +49,12 @@
 #[test]
 fn hash_of_nominal_equals_hash_of_anon_when_eq() {
     use silt::Value;
-    use std::collections::BTreeMap;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    use std::sync::Arc;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record(record_type("P"), Arc::new(fa));
+    let p = nominal("P", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fb),
-    );
+    let r = Value::anon_record([("x", Value::Int(1))]);
 
     // Sanity: PartialEq agrees they're equal (round-84 lock).
     assert_eq!(p, r, "round-84 PartialEq: anon-wildcard collapses name");
@@ -84,19 +75,10 @@ fn hash_of_nominal_equals_hash_of_anon_when_eq() {
 fn cmp_of_nominal_and_anon_returns_equal_when_eq() {
     use silt::Value;
     use std::cmp::Ordering;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record(record_type("P"), Arc::new(fa));
+    let p = nominal("P", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fb),
-    );
+    let r = Value::anon_record([("x", Value::Int(1))]);
 
     assert_eq!(p, r, "round-84 PartialEq: anon-wildcard collapses name");
     assert_eq!(
@@ -117,19 +99,11 @@ fn cmp_of_nominal_and_anon_returns_equal_when_eq() {
 #[test]
 fn btreeset_dedups_anon_and_nominal() {
     use silt::Value;
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::Arc;
+    use std::collections::BTreeSet;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record(record_type("P"), Arc::new(fa));
+    let p = nominal("P", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fb),
-    );
+    let r = Value::anon_record([("x", Value::Int(1))]);
 
     let mut s: BTreeSet<Value> = BTreeSet::new();
     s.insert(p);
@@ -147,19 +121,11 @@ fn btreeset_dedups_anon_and_nominal() {
 #[test]
 fn hashset_dedups_anon_and_nominal() {
     use silt::Value;
-    use std::collections::{BTreeMap, HashSet};
-    use std::sync::Arc;
+    use std::collections::HashSet;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record(record_type("P"), Arc::new(fa));
+    let p = nominal("P", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fb),
-    );
+    let r = Value::anon_record([("x", Value::Int(1))]);
 
     let mut s: HashSet<Value> = HashSet::new();
     s.insert(p);
@@ -181,16 +147,11 @@ fn hashset_dedups_anon_and_nominal() {
 #[test]
 fn two_distinct_nominals_still_distinct_in_set() {
     use silt::Value;
-    use std::collections::{BTreeMap, BTreeSet, HashSet};
-    use std::sync::Arc;
+    use std::collections::{BTreeSet, HashSet};
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let person = Value::Record(record_type("Person"), Arc::new(fa));
+    let person = nominal("Person", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let car = Value::Record(record_type("Car"), Arc::new(fb));
+    let car = nominal("Car", &[("x", Value::Int(1))]);
 
     // PartialEq: still unequal (neither carries `<anon>`).
     assert_ne!(person, car, "distinct nominals must remain unequal");
@@ -222,33 +183,30 @@ fn two_distinct_nominals_still_distinct_in_set() {
 #[test]
 fn round84_anon_eq_nominal_still_holds() {
     use silt::Value;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let p = Value::Record(record_type("P"), Arc::new(fa));
+    let p = nominal("P", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let r = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fb),
-    );
+    let r = Value::anon_record([("x", Value::Int(1))]);
 
     assert_eq!(p, r, "round-84 `<anon>`-wildcard PartialEq must still hold");
 }
 
-/// A program's record type named `name`, with an id of its own.
-fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+/// A record of a program's record type named `name`, with an id of its
+/// own, which declares the fields `fields` in that order.
+fn nominal(name: &str, fields: &[(&str, silt::Value)]) -> silt::Value {
     let id = name
         .bytes()
         .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
         % 100_000
         + 10_000;
-    silt::typeinfo::TypeInfo::new_record(
+    let declared = fields
+        .iter()
+        .map(|(field, _)| (field.to_string(), silt::typeinfo::FieldType::Int))
+        .collect();
+    let ty = silt::typeinfo::TypeInfo::new_record(
         silt::defs::TypeId(silt::defs::DefId(id)),
         name,
-        Vec::new(),
-    )
+        declared,
+    );
+    silt::Value::record(ty, fields.iter().map(|(_, value)| value.clone()).collect())
 }

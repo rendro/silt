@@ -1,0 +1,10 @@
+-- The rest of a range that ends at the greatest Int, after its last
+-- element, is the empty list, as of any list. (It was a runtime error,
+-- "range index overflow", when a range was a value of its own kind.)
+import list
+fn main() {
+  match 9223372036854775806..9223372036854775807 {
+    [a, b, ..rest] -> println(list.length(rest))
+    _ -> println("no match")
+  }
+}

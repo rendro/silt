@@ -9,7 +9,7 @@ use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
-use crate::value::{Value, checked_range_len};
+use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
 // ── Field types for JSON / TOML parsing ──────────────────────────────
@@ -63,10 +63,13 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error) -> Value {
             let offset = err.column() as i64;
             Value::variant(
                 bv::JSON_SYNTAX,
-                vec![Value::String(err.to_string()), Value::Int(offset)],
+                vec![Value::String(err.to_string().into()), Value::Int(offset)],
             )
         }
-        _ => Value::variant(bv::JSON_UNKNOWN, vec![Value::String(err.to_string())]),
+        _ => Value::variant(
+            bv::JSON_UNKNOWN,
+            vec![Value::String(err.to_string().into())],
+        ),
     }
 }
 
@@ -95,7 +98,7 @@ pub(crate) fn json_missing_field_err(name: &str) -> Value {
 
 /// Build `Err(JsonUnknown(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
-pub(crate) fn json_unknown_err<S: Into<String>>(msg: S) -> Value {
+pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     json_err_wrap(Value::variant(
         bv::JSON_UNKNOWN,
         vec![Value::String(msg.into())],
@@ -115,7 +118,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("JsonMissingField", [Value::String(n)]) => {
             format!("json missing field: {n}")
         }
-        ("JsonUnknown", [Value::String(m)]) => m.clone(),
+        ("JsonUnknown", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -157,18 +160,11 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::String(s) => serde_json::Value::String(s.to_string()),
         Value::List(xs) => {
-            let items: Result<Vec<_>, _> = xs.iter().map(value_to_json).collect();
+            xs.writable()?;
+            let items: Result<Vec<_>, _> = xs.iter().map(|x| value_to_json(&x)).collect();
             serde_json::Value::Array(items?)
-        }
-        Value::Range(lo, hi) => {
-            checked_range_len(*lo, *hi).map_err(VmError::new)?;
-            serde_json::Value::Array(
-                (*lo..=*hi)
-                    .map(|i| serde_json::Value::Number(i.into()))
-                    .collect(),
-            )
         }
         Value::Map(m) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> = m
@@ -181,28 +177,28 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
             let items: Result<Vec<_>, _> = vs.iter().map(value_to_json).collect();
             serde_json::Value::Array(items?)
         }
-        Value::Record(_name, fields) => {
+        Value::Record(record) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> =
-                fields
-                    .iter()
-                    .map(|(k, v)| Ok((k.clone(), value_to_json(v)?)))
+                record
+                    .named()
+                    .map(|(k, v)| Ok((k.to_string(), value_to_json(v)?)))
                     .collect();
             serde_json::Value::Object(obj?)
         }
-        Value::Variant(name, fields) if name.is(bv::NONE) && fields.is_empty() => {
+        Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => {
             serde_json::Value::Null
         }
-        Value::Variant(name, fields) if name.is(bv::SOME) && fields.len() == 1 => {
-            value_to_json(&fields[0])?
+        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
+            value_to_json(&variant.fields()[0])?
         }
-        Value::Variant(name, fields) => {
+        Value::Variant(variant) => {
             let mut obj = serde_json::Map::new();
             obj.insert(
                 "variant".into(),
-                serde_json::Value::String(name.name().into()),
+                serde_json::Value::String(variant.name().into()),
             );
-            if !fields.is_empty() {
-                let items: Result<Vec<_>, _> = fields.iter().map(value_to_json).collect();
+            if !variant.fields().is_empty() {
+                let items: Result<Vec<_>, _> = variant.fields().iter().map(value_to_json).collect();
                 obj.insert("fields".into(), serde_json::Value::Array(items?));
             }
             serde_json::Value::Object(obj)
@@ -218,25 +214,18 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
 /// The record type `ty` a decoder builds, with its fields. `caller` is
 /// the builtin on whose behalf the type is looked up (`json.parse`,
 /// `toml.parse_list`, ...); it starts the error message. A builtin
-/// record type (`Date`) lists no fields and has no decoder.
+/// record type (`Date`) has no decoder.
 pub(crate) fn decodable_record(
     caller: &str,
     ty: &Arc<TypeInfo>,
 ) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
     match &ty.shape {
-        Shape::Record(fields) if !fields.is_empty() || !is_builtin_type(ty) => Ok(fields.clone()),
+        Shape::Record(fields) if !ty.is_builtin() => Ok(fields.clone()),
         _ => Err(VmError::new(format!(
             "{caller}: unknown record type '{}'",
             ty.name
         ))),
     }
-}
-
-/// Whether `ty` is a builtin type.
-fn is_builtin_type(ty: &TypeInfo) -> bool {
-    crate::defs::builtin_types()
-        .get(ty.id.0.0 as usize)
-        .is_some()
 }
 
 /// The record type `id` a record field names, from the program's types.
@@ -299,13 +288,12 @@ fn json_to_record(
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
-    let mut record_fields = BTreeMap::new();
+    // (In the order the type declares them: the record's own.)
+    let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
         match obj.get(field_name) {
             Some(json_val) => match json_to_typed_value(vm, json_val, field_type) {
-                Ok(val) => {
-                    record_fields.insert(field_name.clone(), val);
-                }
+                Ok(val) => record_fields.push(val),
                 Err(JsonDecodeErr::Unsupported(declared)) => {
                     return Ok(json_unknown_err(unsupported_field_type_message(
                         &ty.name, field_name, &declared,
@@ -314,9 +302,7 @@ fn json_to_record(
                 Err(e) => return Ok(decode_err_to_silt(e)),
             },
             None => match field_type {
-                FieldType::Option(_) => {
-                    record_fields.insert(field_name.clone(), Value::variant(bv::NONE, Vec::new()));
-                }
+                FieldType::Option(_) => record_fields.push(Value::variant(bv::NONE, Vec::new())),
                 _ => {
                     return Ok(json_missing_field_err(field_name));
                 }
@@ -325,7 +311,7 @@ fn json_to_record(
     }
     Ok(Value::variant(
         bv::OK,
-        vec![Value::Record(ty.clone(), Arc::new(record_fields))],
+        vec![Value::record(ty.clone(), record_fields)],
     ))
 }
 
@@ -342,10 +328,10 @@ fn json_to_record_list(
     for item in arr.iter() {
         let result = json_to_record(vm, ty, fields, item)?;
         match result {
-            Value::Variant(name, inner) if name.is(bv::OK) && inner.len() == 1 => {
-                records.push(inner.into_iter().next().expect("guard guarantees len==1"));
+            Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
+                records.push(variant.fields()[0].clone());
             }
-            ref err @ Value::Variant(ref name, _) if name.is(bv::ERR) => {
+            ref err @ Value::Variant(ref variant) if variant.is(bv::ERR) => {
                 // Already a typed `Err(JsonError)`; forward unchanged
                 // so the caller still gets a structured variant.
                 return Ok(err.clone());
@@ -358,7 +344,7 @@ fn json_to_record_list(
             }
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::List(Arc::new(records))]))
+    Ok(Value::variant(bv::OK, vec![Value::list(records)]))
 }
 
 fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
@@ -381,7 +367,7 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
     for (key, json_val) in obj {
         match json_to_typed_value(vm, json_val, &field_type) {
             Ok(val) => {
-                map.insert(Value::String(key.clone()), val);
+                map.insert(Value::String(key.clone().into()), val);
             }
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
@@ -407,11 +393,14 @@ fn json_to_typed_value(
         ))
     };
     let unknown = |msg: String| -> JsonDecodeErr {
-        JsonDecodeErr::Variant(Value::variant(bv::JSON_UNKNOWN, vec![Value::String(msg)]))
+        JsonDecodeErr::Variant(Value::variant(
+            bv::JSON_UNKNOWN,
+            vec![Value::String(msg.into())],
+        ))
     };
     match expected {
         FieldType::String => match json {
-            serde_json::Value::String(s) => Ok(Value::String(s.clone())),
+            serde_json::Value::String(s) => Ok(Value::String(s.clone().into())),
             _ => Err(mismatch("String", json_type_name(json))),
         },
         // A number is an `Int` when it is a whole number an `Int` can
@@ -445,7 +434,7 @@ fn json_to_typed_value(
                 for item in arr.iter() {
                     values.push(json_to_typed_value(vm, item, inner)?);
                 }
-                Ok(Value::List(Arc::new(values)))
+                Ok(Value::list(values))
             }
             _ => Err(mismatch("List", json_type_name(json))),
         },
@@ -461,7 +450,7 @@ fn json_to_typed_value(
                 let mut map = BTreeMap::new();
                 for (key, item) in obj {
                     let val = json_to_typed_value(vm, item, inner)?;
-                    map.insert(Value::String(key.clone()), val);
+                    map.insert(Value::String(key.clone().into()), val);
                 }
                 Ok(Value::Map(Arc::new(map)))
             }
@@ -473,7 +462,7 @@ fn json_to_typed_value(
                 for (item, elem) in arr.iter().zip(elems) {
                     values.push(json_to_typed_value(vm, item, elem)?);
                 }
-                Ok(Value::Tuple(values))
+                Ok(Value::tuple(values))
             }
             serde_json::Value::Array(arr) => Err(unknown(format!(
                 "expected an array of {} elements for a tuple, got {}",
@@ -521,16 +510,14 @@ fn json_to_typed_value(
             let fields = decodable_record("json.parse", &ty)?;
             let result = json_to_record(vm, &ty, &fields, json)?;
             match result {
-                Value::Variant(name, inner) if name.is(bv::OK) && inner.len() == 1 => {
-                    Ok(inner.into_iter().next().expect("len==1"))
+                Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
+                    Ok(variant.fields()[0].clone())
                 }
-                Value::Variant(name, inner) if name.is(bv::ERR) && inner.len() == 1 => {
+                Value::Variant(variant) if variant.is(bv::ERR) && variant.fields().len() == 1 => {
                     // Re-wrap as JsonDecodeErr::Variant so the outer
-                    // caller forwards it unchanged. `inner[0]` is
+                    // caller forwards it unchanged. Its field is
                     // already a JsonError variant value.
-                    Err(JsonDecodeErr::Variant(
-                        inner.into_iter().next().expect("len==1"),
-                    ))
+                    Err(JsonDecodeErr::Variant(variant.fields()[0].clone()))
                 }
                 _ => Err(unknown(format!("failed to parse {}", ty.name))),
             }

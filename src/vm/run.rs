@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
-use crate::bytecode::{Instr, Op, VmClosure, record_type_matches};
+use crate::bytecode::{Instr, Op, VmClosure};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
+use crate::value::{List, Record, Value};
 
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
@@ -23,7 +23,7 @@ use crate::runtime::sync::Wait;
 /// a bound alike): this is the backstop at the execution site, where
 /// `PartialEq for Value` would answer with `Arc::ptr_eq` on closures and
 /// name-equality on builtins (src/value/key.rs). The recursion is
-/// `Vm::value_contains_fn` (src/vm/mod.rs). Channel / Handle /
+/// `Value::contains_fn` (src/value/mod.rs). Channel / Handle /
 /// TcpListener / TcpStream are deliberately NOT rejected: they are
 /// equatable by identity at runtime and have `Equal` in the checker,
 /// keeping the runtime and compile-time
@@ -38,11 +38,7 @@ use crate::runtime::sync::Wait;
 /// tests/lang/round96_eq_fn_runtime_tests.rs and
 /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {
-    if Vm::value_contains_fn(val) {
-        Some("Fn")
-    } else {
-        None
-    }
+    if val.contains_fn() { Some("Fn") } else { None }
 }
 
 /// What running one instruction did.
@@ -68,15 +64,6 @@ pub(super) enum Slice {
 }
 
 impl Vm {
-    /// The strings a list operand of the instruction being run names.
-    fn names(&self, names: crate::bytecode::Operands<crate::bytecode::Const>) -> Vec<String> {
-        let chunk = self.chunk();
-        names
-            .iter(chunk.code())
-            .map(|k| chunk.string(k).to_owned())
-            .collect()
-    }
-
     // ── The loop ──────────────────────────────────────────────────
 
     /// Run the frames above the first `floor`, which are finished when
@@ -485,8 +472,8 @@ impl Vm {
         // `message` of a builtin error enum (`IoError`, ...): the row
         // of the enum, found by the type's id, called as any builtin.
         if method_name == "message"
-            && let Value::Variant(tag, _) = &receiver
-            && let Some(module) = registry().error_module(tag.ty().id)
+            && let Value::Variant(variant) = &receiver
+            && let Some(module) = registry().error_module(variant.ty().id)
             && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
         {
             let args = self.stack.split_off(receiver_slot);
@@ -687,7 +674,7 @@ impl Vm {
                     }
                 }
                 self.stack.truncate(start);
-                self.push(Value::String(result));
+                self.push(Value::String(result.into()));
             }
             Instr::GetLocal { slot } => {
                 let base = self.frame().base_slot;
@@ -780,15 +767,13 @@ impl Vm {
             }
             Instr::MakeTuple { count } => {
                 let start = self.stack.len() - count;
-                let elements: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
+                let elements = self.stack.drain(start..).collect();
                 self.push(Value::Tuple(elements));
             }
             Instr::MakeList { count } => {
                 let start = self.stack.len() - count;
-                let elements: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
-                self.push(Value::List(Arc::new(elements)));
+                let elements = self.stack.drain(start..).collect();
+                self.push(Value::List(elements));
             }
             Instr::MakeMap { pairs } => {
                 let total = pairs * 2;
@@ -810,51 +795,42 @@ impl Vm {
                 self.push(Value::Set(Arc::new(set)));
             }
             Instr::MakeRecord { ty, fields } => {
-                let field_names = self.names(fields);
-                let ty = self.chunk().type_info(ty).clone();
-                let start = self.stack.len() - field_names.len();
-                let mut fields = BTreeMap::new();
-                for (i, name) in field_names.into_iter().enumerate() {
-                    fields.insert(name, self.stack[start + i].clone());
-                }
-                self.stack.truncate(start);
-                self.push(Value::Record(ty, Arc::new(fields)));
+                let start = self.stack.len() - fields.len();
+                let values: Vec<Value> = self.stack.drain(start..).collect();
+                let chunk = self.chunk();
+                let ty = chunk.type_info(ty).clone();
+                let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
+                let record = Record::written(ty, names, values).ok_or_else(|| {
+                    VmError::type_confusion("a record literal's fields are not its type's")
+                })?;
+                self.push(Value::Record(record));
             }
             Instr::RecordUpdate { fields } => {
-                // Functional record update: preserves the base's
-                // `type_name`. Used for both nominal `.{...}` updates
-                // and `{...base, ...}` spreads. Round 83 had introduced
-                // a sibling `RecordUpdateAnon` that rebranded the
-                // result's `type_name` to `"<anon>"` for spread
-                // expressions whose typed result was `Type::AnonRecord`
-                // — round 85's follow-up removed it because round 84's
-                // `Value::PartialEq` + round 85's `Value::Ord` /
-                // `Value::Hash` `<anon>` wildcards close the soundness
-                // gap from the other side, leaving the rebrand strictly
-                // redundant.
-                let field_names = self.names(fields);
-                let start = self.stack.len() - field_names.len();
-                let new_values: Vec<Value> = self.stack[start..].to_vec();
-                self.stack.truncate(start);
+                // Functional record update, `r.{ x: 1 }`, and the
+                // fields written after a spread, `{...r, x: 1}`, whose
+                // base is the anonymous record `DestructRecordRest`
+                // made of `r`: see `Record::updated`.
+                let start = self.stack.len() - fields.len();
+                let values: Vec<Value> = self.stack.drain(start..).collect();
                 let base = self.pop();
-                if let Value::Record(type_name, mut existing) = base {
-                    let fields = Arc::make_mut(&mut existing);
-                    for (name, val) in field_names.into_iter().zip(new_values) {
-                        fields.insert(name, val);
-                    }
-                    self.push(Value::Record(type_name, existing));
-                } else {
+                let Value::Record(base) = base else {
                     return Err(VmError::type_confusion(format!(
                         "record update `.{{...}}` requires a record, got {}",
                         self.user_facing_type_name(&base)
                     )));
-                }
+                };
+                let chunk = self.chunk();
+                let names = fields.iter(chunk.code()).map(|k| chunk.string(k));
+                let updated = base.updated(names, values).ok_or_else(|| {
+                    VmError::type_confusion("record update `.{...}` of a field the record has not")
+                })?;
+                self.push(Value::Record(updated));
             }
             Instr::MakeRange => {
                 let end = self.pop();
                 let start = self.pop();
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
-                    self.push(Value::Range(*a, *b));
+                    self.push(Value::List(List::ints(*a, *b)?));
                 } else {
                     return Err(VmError::type_confusion(format!(
                         "range `a..b` requires two Int operands, got {} and {}",
@@ -866,69 +842,43 @@ impl Vm {
             Instr::ListConcat => {
                 let b = self.pop();
                 let a = self.pop();
-                let mut result = match a {
-                    Value::List(xs) => xs.as_ref().clone(),
-                    Value::Range(lo, hi) => {
-                        checked_range_len(lo, hi).map_err(VmError::new)?;
-                        (lo..=hi).map(Value::Int).collect()
-                    }
-                    _ => {
-                        return Err(VmError::type_confusion(
-                            "ListConcat: left operand is not a list or range",
-                        ));
-                    }
+                let (Value::List(a), Value::List(b)) = (a, b) else {
+                    return Err(VmError::type_confusion(
+                        "ListConcat: an operand is not a list",
+                    ));
                 };
-                // Pre-check combined size BEFORE materializing `b` to avoid
-                // allocating ~800MB when two near-limit operands are concatenated.
-                let b_len = match &b {
-                    Value::List(xs) => xs.len(),
-                    Value::Range(lo, hi) => checked_range_len(*lo, *hi).map_err(VmError::new)?,
-                    _ => {
-                        return Err(VmError::type_confusion(
-                            "ListConcat: right operand is not a list or range",
-                        ));
-                    }
-                };
-                if result.len() + b_len > MAX_RANGE_MATERIALIZE {
-                    return Err(VmError::new(format!(
-                        "concatenated list exceeds maximum size of {} elements",
-                        MAX_RANGE_MATERIALIZE
-                    )));
-                }
-                match b {
-                    Value::List(xs) => result.extend(xs.iter().cloned()),
-                    Value::Range(lo, hi) => {
-                        result.extend((lo..=hi).map(Value::Int));
-                    }
-                    _ => unreachable!(),
-                }
-                self.push(Value::List(Arc::new(result)));
+                self.push(crate::builtins::collections::concat(&a, &b)?);
             }
-            Instr::GetField { name } => {
-                let name = self.chunk().string(name).to_owned();
+            Instr::GetField { index } => {
                 let target = self.pop();
-                match target {
-                    Value::Record(_, ref fields) => {
-                        let val = fields.get(&name).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!("record has no field '{name}'"))
-                        })?;
-                        self.push(val);
-                    }
-                    Value::Map(ref map) => {
-                        let val = map
-                            .get(&Value::String(name.clone()))
-                            .cloned()
-                            .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
-                        self.push(val);
-                    }
+                let field = match &target {
+                    Value::Record(record) => record.fields().get(index).cloned(),
+                    _ => None,
+                };
+                let field = field.ok_or_else(|| {
+                    VmError::type_confusion(format!(
+                        "cannot access field {index} of {}",
+                        self.user_facing_type_name(&target)
+                    ))
+                })?;
+                self.push(field);
+            }
+            Instr::GetFieldNamed { name } => {
+                let target = self.pop();
+                let name = self.chunk().string(name);
+                let field = match &target {
+                    Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
+                        VmError::type_confusion(format!("record has no field '{name}'"))
+                    })?,
                     other => {
                         return Err(VmError::type_confusion(format!(
                             "cannot access field '{}' on {}",
                             name,
-                            self.user_facing_type_name(&other)
+                            self.user_facing_type_name(other)
                         )));
                     }
-                }
+                };
+                self.push(field);
             }
             Instr::Jump { to } => {
                 self.frame_mut().ip = to;
@@ -954,7 +904,8 @@ impl Vm {
             }
             Instr::TestTag { tag } => {
                 let expected = self.chunk().tag(tag);
-                let result = matches!(self.peek(), Value::Variant(tag, _) if tag == expected);
+                let result =
+                    matches!(self.peek(), Value::Variant(variant) if variant.has_tag(expected));
                 self.push(Value::Bool(result));
             }
             Instr::TestEqual { k } => {
@@ -968,12 +919,12 @@ impl Vm {
             }
             Instr::TestListMin { len: min_len } => {
                 let val = self.peek();
-                let result = val.collection_len().is_some_and(|len| len >= min_len);
+                let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
                 self.push(Value::Bool(result));
             }
             Instr::TestListExact { len } => {
                 let val = self.peek();
-                let result = val.collection_len() == Some(len);
+                let result = matches!(val, Value::List(xs) if xs.len() == len);
                 self.push(Value::Bool(result));
             }
             Instr::TestIntRange { lo, hi } => {
@@ -1011,156 +962,137 @@ impl Vm {
                 }
             }
             Instr::DestructVariant { index } => {
-                let val = self.peek().clone();
-                if let Value::Variant(_, fields) = val {
-                    let field = fields.get(index).ok_or_else(|| {
-                        VmError::type_confusion(format!(
-                            "variant destructure: field index {} out of bounds (variant has {} fields)",
-                            index,
-                            fields.len()
-                        ))
-                    })?;
-                    self.push(field.clone());
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "variant destructure: expected variant, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
+                let field = match self.peek() {
+                    Value::Variant(variant) => {
+                        let fields = variant.fields();
+                        fields.get(index).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!(
+                                "variant destructure: field index {} out of bounds (variant has {} fields)",
+                                index,
+                                fields.len()
+                            ))
+                        })?
+                    }
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "variant destructure: expected variant, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(field);
             }
             Instr::DestructList { index } => {
-                let val = self.peek().clone();
-                match val {
-                    Value::List(ref xs) => {
-                        let elem = xs.get(index).ok_or_else(|| {
-                            VmError::type_confusion(format!(
-                                "list destructure: expected at least {} elements, got {}",
-                                index + 1,
-                                xs.len()
-                            ))
-                        })?;
-                        self.push(elem.clone());
-                    }
-                    Value::Range(lo, hi) => {
-                        let i = lo
-                            .checked_add(index as i64)
-                            .ok_or_else(|| VmError::type_confusion("range index overflow"))?;
-                        if i > hi {
-                            return Err(VmError::type_confusion("range index out of bounds"));
-                        }
-                        self.push(Value::Int(i));
-                    }
-                    _ => {
+                let element = match self.peek() {
+                    Value::List(xs) => xs.get(index).ok_or_else(|| {
+                        VmError::type_confusion(format!(
+                            "list destructure: expected at least {} elements, got {}",
+                            index + 1,
+                            xs.len()
+                        ))
+                    })?,
+                    other => {
                         return Err(VmError::type_confusion(format!(
                             "list destructure: expected list, got {}",
-                            self.user_facing_type_name(&val)
+                            self.user_facing_type_name(other)
                         )));
                     }
-                }
+                };
+                self.push(element);
             }
             Instr::DestructListRest { start } => {
-                let val = self.peek().clone();
-                match val {
-                    Value::List(ref xs) => {
-                        if start > xs.len() {
-                            return Err(VmError::type_confusion(format!(
-                                "list destructure: rest pattern start {} exceeds list length {}",
-                                start,
-                                xs.len()
-                            )));
-                        }
-                        self.push(Value::List(Arc::new(xs[start..].to_vec())));
-                    }
-                    Value::Range(lo, hi) => {
-                        let new_lo = lo
-                            .checked_add(start as i64)
-                            .ok_or_else(|| VmError::type_confusion("range index overflow"))?;
-                        let exceeds = match hi.checked_add(1) {
-                            Some(hi_plus_1) => new_lo > hi_plus_1,
-                            None => false, // hi == i64::MAX; new_lo can never exceed hi+1
-                        };
-                        if exceeds {
-                            self.push(Value::List(Arc::new(Vec::new())));
-                        } else {
-                            self.push(Value::Range(new_lo, hi));
-                        }
-                    }
-                    _ => {
+                let rest = match self.peek() {
+                    Value::List(xs) if start <= xs.len() => xs.slice(start, xs.len()),
+                    Value::List(xs) => {
                         return Err(VmError::type_confusion(format!(
-                            "list destructure: expected list, got {}",
-                            self.user_facing_type_name(&val)
+                            "list destructure: rest pattern start {} exceeds list length {}",
+                            start,
+                            xs.len()
                         )));
                     }
-                }
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "list destructure: expected list, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(Value::List(rest));
             }
-            Instr::DestructRecordField { name } => {
-                let name = self.chunk().string(name).to_owned();
-                let val = self.peek().clone();
-                if let Value::Record(_, fields) = val {
-                    let field = fields.get(&name).cloned().ok_or_else(|| {
+            Instr::DestructRecordField { index } => {
+                let field = match self.peek() {
+                    Value::Record(record) => record.fields().get(index).cloned(),
+                    _ => None,
+                };
+                let field = field.ok_or_else(|| {
+                    VmError::type_confusion(format!(
+                        "record destructure: no field {index} in {}",
+                        self.user_facing_type_name(self.peek())
+                    ))
+                })?;
+                self.push(field);
+            }
+            Instr::DestructRecordFieldNamed { name } => {
+                let name = self.chunk().string(name);
+                let field = match self.peek() {
+                    Value::Record(record) => record.get(name).cloned().ok_or_else(|| {
                         VmError::type_confusion(format!("record has no field '{name}'"))
-                    })?;
-                    self.push(field);
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "record destructure: expected record, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
+                    })?,
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "record destructure: expected record, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(field);
             }
             Instr::DestructRecordRest { excluded } => {
-                let excluded = self.names(excluded);
                 let val = self.pop();
-                if let Value::Record(_, fields) = val {
-                    let mut rest_fields: std::collections::BTreeMap<String, Value> =
-                        std::collections::BTreeMap::new();
-                    for (k, v) in fields.iter() {
-                        if !excluded.iter().any(|e| e == k) {
-                            rest_fields.insert(k.clone(), v.clone());
-                        }
-                    }
-                    self.push(Value::builtin_record(
-                        crate::typeinfo::ty::ANON_RECORD,
-                        rest_fields,
-                    ));
-                } else {
+                let Value::Record(record) = &val else {
                     return Err(VmError::type_confusion(format!(
                         "record rest destructure: expected record, got {}",
                         self.user_facing_type_name(&val)
                     )));
-                }
+                };
+                let chunk = self.chunk();
+                let rest = record.rest(excluded.iter(chunk.code()).map(|k| chunk.string(k)));
+                self.push(Value::Record(rest));
             }
             Instr::TestRecordTag { ty } => {
                 let expected = self.chunk().type_info(ty).id;
-                let result = matches!(self.peek(), Value::Record(ty, _) if record_type_matches(ty, expected));
+                let result =
+                    matches!(self.peek(), Value::Record(record) if record.type_id() == expected);
                 self.push(Value::Bool(result));
             }
             Instr::TestMapHasKey { key } => {
-                let key_name = self.chunk().string(key).to_owned();
-                let val = self.peek();
-                let result = match val {
-                    Value::Map(map) => map.contains_key(&Value::String(key_name)),
+                // (The key is the constant itself, a String.)
+                let result = match self.peek() {
+                    Value::Map(map) => map.contains_key(self.chunk().constant(key)),
                     _ => false,
                 };
                 self.push(Value::Bool(result));
             }
             Instr::DestructMapValue { key } => {
-                let key_name = self.chunk().string(key).to_owned();
-                let val = self.peek().clone();
-                if let Value::Map(map) = val {
-                    let value = map
-                        .get(&Value::String(key_name.clone()))
-                        .cloned()
-                        .ok_or_else(|| {
-                            VmError::type_confusion(format!("map has no key '{key_name}'"))
-                        })?;
-                    self.push(value);
-                } else {
-                    return Err(VmError::type_confusion(format!(
-                        "map destructure: expected map, got {}",
-                        self.user_facing_type_name(&val)
-                    )));
-                }
+                // (The key is the constant itself, a String.)
+                let value = match self.peek() {
+                    Value::Map(map) => {
+                        let chunk = self.chunk();
+                        map.get(chunk.constant(key)).cloned().ok_or_else(|| {
+                            VmError::type_confusion(format!(
+                                "map has no key '{}'",
+                                chunk.string(key)
+                            ))
+                        })?
+                    }
+                    other => {
+                        return Err(VmError::type_confusion(format!(
+                            "map destructure: expected map, got {}",
+                            self.user_facing_type_name(other)
+                        )));
+                    }
+                };
+                self.push(value);
             }
             Instr::Recur {
                 argc: arg_count,
@@ -1177,22 +1109,22 @@ impl Vm {
             Instr::QuestionMark => {
                 let val = self.peek().clone();
                 match val {
-                    Value::Variant(ref tag, ref fields) => match tag {
-                        _ if tag.is(bv::OK) || tag.is(bv::SOME) => {
+                    Value::Variant(variant) => match variant {
+                        _ if variant.is(bv::OK) || variant.is(bv::SOME) => {
                             self.pop();
-                            self.push(if fields.len() == 1 {
-                                fields[0].clone()
-                            } else {
-                                Value::Unit
+                            self.push(match variant.fields() {
+                                [value] => value.clone(),
+                                _ => Value::Unit,
                             });
                         }
-                        _ if tag.is(bv::ERR) || tag.is(bv::NONE) => {
+                        _ if variant.is(bv::ERR) || variant.is(bv::NONE) => {
                             let value = self.pop();
                             return Ok(DispatchResult::Return(value));
                         }
                         _ => {
                             return Err(VmError::type_confusion(format!(
-                                "`?` applies only to Result or Option; got variant `{tag}`"
+                                "`?` applies only to Result or Option; got variant `{}`",
+                                variant.name()
                             )));
                         }
                     },

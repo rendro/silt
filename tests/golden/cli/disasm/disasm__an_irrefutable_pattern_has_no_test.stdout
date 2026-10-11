@@ -29,11 +29,11 @@
 0025  Dup
 0026  SetLocal             8
 0029  GetLocal             8
-0032  DestructRecordField  0     ; "x"
+0032  DestructRecordField  0
 0035  Dup
 0036  SetLocal             11
 0039  GetLocal             8
-0042  DestructRecordField  1     ; "y"
+0042  DestructRecordField  1
 0045  Dup
 0046  SetLocal             14
 0049  GetLocal             6
@@ -61,7 +61,7 @@
 0033  Dup
 0034  SetLocal             11
 0037  GetLocal             11
-0040  DestructRecordField  0     ; "x"
+0040  DestructRecordField  0
 0043  Dup
 0044  SetLocal             14
 0047  GetLocal             8

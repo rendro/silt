@@ -56,7 +56,7 @@ fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
     let msg = failure.text();
     Value::variant(
         bv::ERR,
-        vec![Value::Variant(
+        vec![Value::variant(
             silt::typeinfo::Tag::new(
                 silt::typeinfo::TypeInfo::new_enum(
                     silt::defs::TypeId(silt::defs::DefId(9000)),
@@ -65,7 +65,7 @@ fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
                 ),
                 0,
             ),
-            vec![Value::String(msg.to_string())],
+            vec![Value::String(msg.into())],
         )],
     )
 }
@@ -79,7 +79,9 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
     // Pre-fix shape: Err(String("<msg>")) — fails the outer-arm
     // pattern match below.
     let inner = match &result {
-        Value::Variant(tag, args) if tag.is(bv::ERR) && args.len() == 1 => &args[0],
+        Value::Variant(variant) if variant.is(bv::ERR) && variant.fields().len() == 1 => {
+            &variant.fields()[0]
+        }
         other => panic!(
             "expected Err(_) variant from IoPool worker-panic recovery, got {:?}",
             other
@@ -87,7 +89,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
     };
 
     let (typed_tag, typed_args) = match inner {
-        Value::Variant(tag, args) => (tag.name(), args),
+        Value::Variant(variant) => (variant.name(), variant.fields()),
         Value::String(_) => panic!(
             "REGRESSION: IoPool worker-panic recovery produced legacy untyped \
              Err(String) shape — typed callers' match arms will not fire. \
@@ -106,7 +108,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
 
     assert_eq!(typed_args.len(), 1, "expected exactly one payload arg");
     let msg = match &typed_args[0] {
-        Value::String(s) => s.as_str(),
+        Value::String(s) => &**s,
         other => panic!("expected String payload, got {:?}", other),
     };
     assert!(

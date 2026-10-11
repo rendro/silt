@@ -20,8 +20,6 @@
 //! percent-encoding and does not belong in this primitive. A future
 //! `form` module can build on top of `encoding.url_encode` if needed.
 
-use std::sync::Arc;
-
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
 use super::common::{err, nibble_to_hex, ok};
@@ -187,7 +185,7 @@ builtins! {
             return err(msg);
         }
         match String::from_utf8(percent_decode_str(s).collect()) {
-            Ok(out) => ok(Value::String(out)),
+            Ok(out) => ok(Value::String(out.into())),
             Err(_) => err("decoded bytes are not valid UTF-8"),
         }
     }
@@ -196,10 +194,11 @@ builtins! {
 
     // `key=value` segments joined with `&`.
     fn form_encode(pairs: List) -> Result<String, VmError> {
+        pairs.writable()?;
         let mut out = String::new();
-        for (at, pair) in pairs.to_vec()?.iter().enumerate() {
-            let pair = match pair {
-                Value::Tuple(pair) => pair.as_slice(),
+        for (at, pair) in pairs.iter().enumerate() {
+            let pair = match &pair {
+                Value::Tuple(pair) => &pair[..],
                 _ => &[],
             };
             let [Value::String(key), Value::String(value)] = pair else {
@@ -240,8 +239,8 @@ builtins! {
                 Ok(val) => val,
                 Err(msg) => return err(format!("pair {i}: value: {msg}")),
             };
-            out.push(Value::Tuple(vec![Value::String(key), Value::String(val)]));
+            out.push(Value::tuple(vec![Value::String(key.into()), Value::String(val.into())]));
         }
-        ok(Value::List(Arc::new(out)))
+        ok(Value::list(out))
     }
 }

@@ -48,23 +48,10 @@
 #[test]
 fn anon_neq_different_anon_shape_prints_false() {
     use silt::Value;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    fa.insert("y".to_string(), Value::Int(2));
-    let a = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fa),
-    );
+    let a = Value::anon_record([("x", Value::Int(1)), ("y", Value::Int(2))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let b = Value::Record(
-        silt::typeinfo::builtin_type(silt::typeinfo::ty::ANON_RECORD).clone(),
-        Arc::new(fb),
-    );
+    let b = Value::anon_record([("x", Value::Int(1))]);
 
     assert_ne!(
         a, b,
@@ -90,16 +77,10 @@ fn anon_neq_different_anon_shape_prints_false() {
 #[test]
 fn two_distinct_nominals_with_same_fields_still_neq() {
     use silt::Value;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
 
-    let mut fa = BTreeMap::new();
-    fa.insert("x".to_string(), Value::Int(1));
-    let person = Value::Record(record_type("Person"), Arc::new(fa));
+    let person = nominal("Person", &[("x", Value::Int(1))]);
 
-    let mut fb = BTreeMap::new();
-    fb.insert("x".to_string(), Value::Int(1));
-    let car = Value::Record(record_type("Car"), Arc::new(fb));
+    let car = nominal("Car", &[("x", Value::Int(1))]);
 
     assert_ne!(
         person, car,
@@ -107,22 +88,26 @@ fn two_distinct_nominals_with_same_fields_still_neq() {
     );
 
     // And sanity: same nominal, same fields ⇒ equal.
-    let mut fc = BTreeMap::new();
-    fc.insert("x".to_string(), Value::Int(1));
-    let person2 = Value::Record(record_type("Person"), Arc::new(fc));
+    let person2 = nominal("Person", &[("x", Value::Int(1))]);
     assert_eq!(person, person2, "Person == Person with same fields");
 }
 
-/// A program's record type named `name`, with an id of its own.
-fn record_type(name: &str) -> std::sync::Arc<silt::typeinfo::TypeInfo> {
+/// A record of a program's record type named `name`, with an id of its
+/// own, which declares the fields `fields` in that order.
+fn nominal(name: &str, fields: &[(&str, silt::Value)]) -> silt::Value {
     let id = name
         .bytes()
         .fold(9000u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
         % 100_000
         + 10_000;
-    silt::typeinfo::TypeInfo::new_record(
+    let declared = fields
+        .iter()
+        .map(|(field, _)| (field.to_string(), silt::typeinfo::FieldType::Int))
+        .collect();
+    let ty = silt::typeinfo::TypeInfo::new_record(
         silt::defs::TypeId(silt::defs::DefId(id)),
         name,
-        Vec::new(),
-    )
+        declared,
+    );
+    silt::Value::record(ty, fields.iter().map(|(_, value)| value.clone()).collect())
 }

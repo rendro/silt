@@ -21,14 +21,14 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 // ── The functions ───────────────────────────────────────────────────
 
 fn string(s: &str) -> Value {
-    Value::String(s.to_string())
+    Value::String(s.into())
 }
 
 /// The groups of a match as a list of strings, a group that took no
 /// part in the match as the empty one.
 fn groups(caps: &regex::Captures) -> Value {
     let groups = caps.iter().map(|m| string(m.map_or("", |m| m.as_str())));
-    Value::List(Arc::new(groups.collect()))
+    Value::list(groups.collect())
 }
 
 builtins! {
@@ -68,10 +68,10 @@ builtins! {
         // The matches are the items; each carries where it ends, and the
         // state is the text built so far and the rest of the text with
         // where it starts.
-        let matches = re
+        let matches: Vec<Value> = re
             .find_iter(text)
             .map(|m| {
-                Value::Tuple(vec![
+                Value::tuple(vec![
                     Value::Int(m.start() as i64),
                     Value::Int(m.end() as i64),
                 ])
@@ -84,7 +84,7 @@ builtins! {
         }
         fn span(item: &Value) -> (usize, usize) {
             match item {
-                Value::Tuple(ends) => match ends.as_slice() {
+                Value::Tuple(ends) => match &ends[..] {
                     [Value::Int(start), Value::Int(end)] => (*start as usize, *end as usize),
                     _ => (0, 0),
                 },
@@ -102,7 +102,7 @@ builtins! {
             },
             |state, item, stack| {
                 let (start, end) = span(item);
-                stack.push(Value::String(state.text[start..end].to_string()));
+                stack.push(Value::String(state.text[start..end].into()));
             },
             |state, item, replacement| {
                 let Value::String(replacement) = replacement else {
@@ -117,7 +117,7 @@ builtins! {
             |state| {
                 let mut out = std::mem::take(&mut state.out);
                 out.push_str(&state.text[state.last_end..]);
-                Ok(Value::String(out))
+                Ok(Value::String(out.into()))
             },
         ))
     }

@@ -20,5 +20,6 @@ mod quiet_tests;
 mod rename_sweep;
 mod rename_sweep_examples;
 mod repl_paste;
+mod runtime_scaling;
 #[path = "../lsp/support.rs"]
 mod support;

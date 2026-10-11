@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 #[cfg(feature = "http")]
 use std::collections::HashMap;
+#[cfg(feature = "http")]
 use std::sync::Arc;
 #[cfg(feature = "http")]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -13,8 +14,6 @@ use super::encoding::form_decode_component;
 use super::typed::builtins;
 #[cfg(feature = "http")]
 use super::typed::{Arg, Map, TcpListener, unsound};
-#[cfg(feature = "http")]
-use crate::bytecode::record_type_matches;
 #[cfg(feature = "http")]
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
@@ -47,7 +46,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
                 format!("http status {code}: {body}")
             }
         }
-        ("HttpUnknown", [Value::String(m)]) => m.clone(),
+        ("HttpUnknown", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -60,11 +59,14 @@ fn make_http_response(
     headers: BTreeMap<Value, Value>,
     body: std::string::String,
 ) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("status".into(), Value::Int(status as i64));
-    fields.insert("body".into(), Value::String(body));
-    fields.insert("headers".into(), Value::Map(Arc::new(headers)));
-    Value::builtin_record(ty::RESPONSE, fields)
+    Value::builtin_record(
+        ty::RESPONSE,
+        [
+            ("status", Value::Int(status as i64)),
+            ("body", Value::String(body.into())),
+            ("headers", Value::Map(Arc::new(headers))),
+        ],
+    )
 }
 
 #[cfg(feature = "http")]
@@ -75,29 +77,25 @@ fn make_http_request_value(
     headers: BTreeMap<Value, Value>,
     body: std::string::String,
 ) -> Value {
-    let mut fields = BTreeMap::new();
-    fields.insert("method".into(), Value::variant(method, vec![]));
-    fields.insert("path".into(), Value::String(path.into()));
-    fields.insert("query".into(), Value::String(query.into()));
-    fields.insert("headers".into(), Value::Map(Arc::new(headers)));
-    fields.insert("body".into(), Value::String(body));
-    Value::builtin_record(ty::REQUEST, fields)
+    Value::builtin_record(
+        ty::REQUEST,
+        [
+            ("method", Value::variant(method, vec![])),
+            ("path", Value::String(path.into())),
+            ("query", Value::String(query.into())),
+            ("headers", Value::Map(Arc::new(headers))),
+            ("body", Value::String(body.into())),
+        ],
+    )
 }
 
 #[cfg(feature = "http")]
 fn extract_http_response(
     val: &Value,
-) -> Result<
-    (
-        u16,
-        std::string::String,
-        &BTreeMap<std::string::String, Value>,
-    ),
-    VmError,
-> {
+) -> Result<(u16, std::string::String, &crate::value::Record), VmError> {
     // (What is no `Response` is no value the handler's type has.)
     let fields = match val {
-        Value::Record(name, fields) if record_type_matches(name, ty::RESPONSE) => fields,
+        Value::Record(record) if record.type_id() == ty::RESPONSE => record,
         _ => return Err(unsound("http.serve", "handler")),
     };
     let (Some(given), Some(body)) = (
@@ -129,10 +127,7 @@ fn ureq_response_to_value(
     let mut headers = BTreeMap::new();
     for (name, value) in response.headers().iter() {
         if let Ok(v) = value.to_str() {
-            headers.insert(
-                Value::String(name.as_str().to_string()),
-                Value::String(v.to_string()),
-            );
+            headers.insert(Value::String(name.as_str().into()), Value::String(v.into()));
         }
     }
     let body = response
@@ -222,7 +217,7 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(why.to_string())])
+            Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
@@ -236,15 +231,18 @@ fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
     if lower.contains("timed out") || lower.contains("timeout") {
         Value::variant(bv::HTTP_TIMEOUT, vec![])
     } else if lower.contains("invalid url") || lower.contains("not a valid url") {
-        Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url_redacted)])
+        Value::variant(
+            bv::HTTP_INVALID_URL,
+            vec![Value::String(url_redacted.into())],
+        )
     } else if lower.contains("tls") || lower.contains("certificate") || lower.contains("handshake")
     {
-        Value::variant(bv::HTTP_TLS, vec![Value::String(msg)])
+        Value::variant(bv::HTTP_TLS, vec![Value::String(msg.into())])
     } else if lower.contains("bad status")
         || lower.contains("invalid response")
         || lower.contains("bad header")
     {
-        Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(msg)])
+        Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(msg.into())])
     } else if lower.contains("connection closed")
         || lower.contains("unexpected eof")
         || lower.contains("closed before")
@@ -256,9 +254,9 @@ fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
         || lower.contains("network unreachable")
         || lower.contains("connect")
     {
-        Value::variant(bv::HTTP_CONNECT, vec![Value::String(msg)])
+        Value::variant(bv::HTTP_CONNECT, vec![Value::String(msg.into())])
     } else {
-        Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(msg)])
+        Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(msg.into())])
     }
 }
 
@@ -275,7 +273,7 @@ fn http_response_decode_err(msg: String) -> Value {
         bv::ERR,
         vec![Value::variant(
             bv::HTTP_INVALID_RESPONSE,
-            vec![Value::String(msg)],
+            vec![Value::String(msg.into())],
         )],
     )
 }
@@ -371,7 +369,7 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
                 bv::ERR,
                 vec![Value::variant(
                     bv::HTTP_INVALID_URL,
-                    vec![Value::String(format!("unknown method: {other}"))],
+                    vec![Value::String(format!("unknown method: {other}").into())],
                 )],
             );
         }
@@ -577,7 +575,7 @@ impl Got {
         };
         let mut headers = BTreeMap::new();
         for (name, value) in request.headers {
-            headers.insert(Value::String(name), Value::String(value));
+            headers.insert(Value::String(name.into()), Value::String(value.into()));
         }
         // The Request API hands the body over as a String: bytes that
         // are not UTF-8 are replaced, not dropped. (A body that is
@@ -661,7 +659,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
             if let Some(Value::Map(given)) = fields.get("headers") {
                 for (name, value) in given.iter() {
                     if let (Value::String(name), Value::String(value)) = (name, value) {
-                        headers.push((name.clone(), value.clone()));
+                        headers.push((name.to_string(), value.to_string()));
                     }
                 }
             }
@@ -1225,10 +1223,12 @@ impl crate::vm::Native for Serve {
                 let accepted = op.take();
                 drop(op);
                 let stream = match &accepted {
-                    Some(Value::Variant(tag, fields)) if tag.is(bv::OK) => match &fields[..] {
-                        [Value::TcpStream(stream)] => Some(stream.clone()),
-                        _ => None,
-                    },
+                    Some(Value::Variant(accepted)) if accepted.is(bv::OK) => {
+                        match accepted.fields() {
+                            [Value::TcpStream(stream)] => Some(stream.clone()),
+                            _ => None,
+                        }
+                    }
                     _ => None,
                 };
                 let Some(stream) = stream else {
@@ -1236,8 +1236,8 @@ impl crate::vm::Native for Serve {
                     // server stays, and tries again in a moment.
                     if !self.failing {
                         let why = match &accepted {
-                            Some(Value::Variant(_, fields)) if fields.len() == 1 => {
-                                vm.display_value(&fields[0])
+                            Some(Value::Variant(refused)) if refused.fields().len() == 1 => {
+                                vm.display_value(&refused.fields()[0])
                             }
                             _ => "no value".to_string(),
                         };
@@ -1293,8 +1293,8 @@ struct Method<'a>(&'a str);
 impl<'a> Arg<'a> for Method<'a> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::Variant(tag, fields) if fields.is_empty() && tag.of(ty::METHOD) => {
-                Some(Method(tag.name()))
+            Value::Variant(variant) if variant.fields().is_empty() && variant.of(ty::METHOD) => {
+                Some(Method(variant.name()))
             }
             _ => None,
         }
@@ -1352,7 +1352,7 @@ builtins! {
     fn segments(path: &str) -> Vec<Value> {
         path.split('/')
             .filter(|s| !s.is_empty())
-            .map(|s| Value::String(s.to_string()))
+            .map(|s| Value::String(s.into()))
             .collect()
     }
 
@@ -1382,11 +1382,11 @@ builtins! {
                 .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} key: {msg}")))?;
             let val = form_decode_component(raw_val)
                 .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} value: {msg}")))?;
-            out.entry(Value::String(key)).or_default().push(Value::String(val));
+            out.entry(Value::String(key.into())).or_default().push(Value::String(val.into()));
         }
         Ok(out
             .into_iter()
-            .map(|(key, values)| (key, Value::List(Arc::new(values))))
+            .map(|(key, values)| (key, Value::list(values)))
             .collect())
     }
 }
@@ -1396,11 +1396,46 @@ mod http_response_tests {
     use super::*;
 
     fn make_response(status: i64) -> Value {
-        let mut fields: BTreeMap<String, Value> = BTreeMap::new();
-        fields.insert("status".to_string(), Value::Int(status));
-        fields.insert("body".to_string(), Value::String(String::new()));
-        fields.insert("headers".to_string(), Value::Map(Arc::new(BTreeMap::new())));
-        Value::builtin_record(ty::RESPONSE, fields)
+        Value::builtin_record(
+            ty::RESPONSE,
+            [
+                ("status", Value::Int(status)),
+                ("body", Value::String(String::new().into())),
+                ("headers", Value::Map(Arc::new(BTreeMap::new()))),
+            ],
+        )
+    }
+
+    /// The records the module builds have the fields of their types,
+    /// in the types' order (`Value::builtin_record` says so in a debug
+    /// build); a builtin record is shown with its fields in name
+    /// order.
+    #[test]
+    fn the_records_of_the_module_have_their_types_fields() {
+        let headers = || {
+            let name = Value::String("accept".into());
+            BTreeMap::from([(name, Value::String("*/*".into()))])
+        };
+        let response = make_http_response(204, headers(), "done".to_string());
+        assert_eq!(
+            response.to_string(),
+            "Response {body: done, headers: #{\"accept\": */*}, status: 204}"
+        );
+        let (status, body, record) = extract_http_response(&response).expect("a Response");
+        assert_eq!((status, body.as_str()), (204, "done"));
+        assert_eq!(record.fields()[0], Value::Int(204));
+
+        let request =
+            make_http_request_value(bv::POST, "/jobs", "n=1", headers(), "go".to_string());
+        assert_eq!(
+            request.to_string(),
+            "Request {body: go, headers: #{\"accept\": */*}, method: POST, path: /jobs, query: n=1}"
+        );
+        let Value::Record(record) = &request else {
+            panic!("a record");
+        };
+        assert_eq!(record.get("path"), Some(&Value::String("/jobs".into())));
+        assert_eq!(record.fields()[1], Value::String("/jobs".into()));
     }
 
     #[test]
