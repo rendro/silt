@@ -341,10 +341,10 @@ fn a_fault_of_the_program_is_not_the_budgets() {
 fn a_slice_given_away_costs_one_step_at_any_slice() {
     let feed = "fn feed(ch) {\n  loop i = 0 {\n    match i >= 3000 {\n      true -> channel.close(ch)\n      false -> {\n        channel.send(ch, i)\n        loop(i + 1)\n      }\n    }\n  }\n}\n";
     let on_main = format!(
-        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  channel.each(ch) {{ n -> n + 1 }}\n  task.join(feeder)\n  println(\"done\")\n}}\n"
+        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  channel.each(ch) {{ n -> let _ = n + 1 }}\n  task.join(feeder)\n  println(\"done\")\n}}\n"
     );
     let in_a_task = format!(
-        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  task.join(task.spawn({{ -> channel.each(ch) {{ n -> n + 1 }} }}))\n  task.join(feeder)\n  println(\"done\")\n}}\n"
+        "import channel\nimport task\n\n{feed}\nfn main() {{\n  let ch = channel.new(8)\n  let feeder = task.spawn({{ -> feed(ch) }})\n  task.join(task.spawn({{ -> channel.each(ch) {{ n -> let _ = n + 1 }} }}))\n  task.join(feeder)\n  println(\"done\")\n}}\n"
     );
     let stages = "import stream\n\nfn main() {\n  let total = stream.from_range(1, 3000)\n    |> stream.map { n -> n + 1 }\n    |> stream.filter { n -> n % 2 == 0 }\n    |> stream.fold(0) { acc, n -> acc + n }\n  println(total)\n  println(\"done\")\n}\n";
     for (what, source) in [

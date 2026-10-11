@@ -14,7 +14,7 @@ communication between tasks spawned with `task.spawn`.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `close` | `(Channel(a)) -> ()` | Close the channel |
-| `each` | `(Channel(a), Fn(a) -> b) -> ()` | Iterate until channel closes |
+| `each` | `(Channel(a), Fn(a) -> ()) -> ()` | Call a function with each message until the channel closes |
 | `new` | `(Int) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel(a)) -> ChannelResult(a)` | Blocking receive |
 | `receive_timeout` | `(Channel(a), Duration) -> ChannelResult(a)` | Receive, waiting no longer than a duration |
@@ -48,11 +48,14 @@ fn main() {
 ## `channel.each`
 
 ```
-channel.each(ch: Channel(a), f: Fn(a) -> b) -> ()
+channel.each(ch: Channel(a), f: Fn(a) -> ()) -> ()
 ```
 
 Receives messages from the channel and calls `f` with each one, until the
-channel is closed. This is the idiomatic way to consume all messages.
+channel is closed. This is the idiomatic way to consume all messages. Like
+the `each` of a list, a map or a set, it takes a function that returns `()`:
+a value the function would compute is used inside it or discarded there
+(`let _ = ...`).
 
 ```silt
 import channel

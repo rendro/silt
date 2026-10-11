@@ -250,7 +250,7 @@ pub(super) fn modules() -> Vec<Module> {
             derives: [("ChannelOp", &[])],
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
-                f("fn each(ch: Channel(a), f: Fn(a) -> b) -> ()", "Iterate until channel closes", concurrency::channel::each),
+                f("fn each(ch: Channel(a), f: Fn(a) -> ()) -> ()", "Call a function with each message until the channel closes", concurrency::channel::each),
                 f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new),
                 f("fn receive(ch: Channel(a)) -> ChannelResult(a)", "Blocking receive", concurrency::channel::receive),
                 f("fn receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)", "Receive, waiting no longer than a duration", concurrency::channel::receive_timeout),

@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- `channel.each` takes a function that returns `()`, like the `each` of
+-- a list, a map and a set: a value the function computes, a `Result`
+-- among them, is not dropped unseen.
+import channel
+import int
+import stream
+
+fn main() {
+  let numbers = stream.from_list([1, 2, 3])
+  channel.each(numbers) { n -> n * 2 }
+  let texts = stream.from_list(["1", "x"])
+  channel.each(texts) { text -> int.parse(text) }
+  channel.each(stream.from_list([4, 5]), println)
+  channel.each(stream.from_list(["6"])) { text ->
+    let _ = int.parse(text)
+  }
+}
