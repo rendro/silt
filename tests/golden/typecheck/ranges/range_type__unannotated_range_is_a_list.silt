@@ -1,0 +1,6 @@
+fn takes_list(r: List(Int)) -> List(Int) { r }
+
+fn main() {
+    let r = 1..10
+    println(takes_list(r))
+}

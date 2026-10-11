@@ -15,7 +15,7 @@ syntax keyword siltBoolean true false
 " names the compiler prints in diagnostics and the names accepted in
 " type-annotation position. Keep in sync with the lock test at
 " tests/editor_grammar_primitives_tests.rs.
-syntax keyword siltType Int Float Bool String Unit List Range Map Set Channel Tuple Fn Fun Handle Bytes TcpListener TcpStream
+syntax keyword siltType Int Float Bool String Unit List Map Set Channel Tuple Fn Fun Handle Bytes TcpListener TcpStream
 " The record and enum types the builtin modules declare
 " (`silt::module::builtin_module_types`). Lock test at
 " tests/meta/editor_grammar_primitives_tests.rs.

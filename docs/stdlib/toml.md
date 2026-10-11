@@ -51,7 +51,7 @@ these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `Date`, `Time`, `DateTime`
-- `List(T)` and `Range(T)`, `Option(T)`, `Map(String, T)`
+- `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - non-generic record types
 - type aliases of any of these

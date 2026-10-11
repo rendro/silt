@@ -13,7 +13,7 @@
 //! highlighting silently; this test enforces the coupling.
 //!
 //! Round-61 extension: the set was widened to include the builtin
-//! container / callable / resource types (Range, Channel, Tuple, Fn,
+//! container / callable / resource types (Channel, Tuple, Fn,
 //! Fun, Handle). These are legal in type-annotation position (see
 //! docs/language/operators.md and the pages of docs/stdlib/) and must
 //! highlight as types. Authoritative source of the widened list: the

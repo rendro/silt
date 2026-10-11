@@ -1,7 +1,7 @@
 import list
 fn main() {
   match 9223372036854775805..9223372036854775807 {
-    -- rest is the tail Range(i64::MAX, i64::MAX)
+    -- rest is the one element 9223372036854775807
     [a, b, ..rest] -> println(list.length(rest))
     _ -> println("no match")
   }

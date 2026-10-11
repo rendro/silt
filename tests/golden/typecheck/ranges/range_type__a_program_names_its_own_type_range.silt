@@ -1,0 +1,12 @@
+-- A program may name a type of its own `Range`.
+type Range { lo: Int, hi: Int }
+trait Display for Range {
+  fn display(self) -> String { "{self.lo} to {self.hi}" }
+}
+fn width(r: Range) -> Int { r.hi - r.lo }
+fn main() {
+  let r = Range { lo: 2, hi: 9 }
+  println(r)
+  println(width(r))
+  println(1..3)
+}
