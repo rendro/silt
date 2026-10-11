@@ -7,7 +7,8 @@
 # each under tests/ (tests/<suite>/main.rs), plus a few standalone files
 # that set process-wide environment variables and so keep a process of
 # their own. The partitions:
-#   - heavy:        the `heavy` suite (the two large legacy files).
+#   - heavy:        the `heavy` suite (the two large legacy files) and
+#                   the `oracle` suite (the differential oracle).
 #   - concurrency:  the `concurrency` suite, kept apart because its tests
 #                   spawn scheduler threads and are sensitive to CPU
 #                   contention from other suites.
@@ -26,15 +27,15 @@ if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; the
   nextest=true
 fi
 
-rest_filter='not (binary(=heavy) | binary(=concurrency))'
+rest_filter='not (binary(=heavy) | binary(=oracle) | binary(=concurrency))'
 
 set -x
 case "$partition" in
   heavy)
     if $nextest; then
-      exec cargo nextest run --no-fail-fast --all-features --test heavy
+      exec cargo nextest run --no-fail-fast --all-features --test heavy --test oracle
     else
-      exec cargo test --all-features --test heavy
+      exec cargo test --all-features --test heavy --test oracle
     fi
     ;;
   concurrency)
@@ -52,12 +53,13 @@ case "$partition" in
       exec cargo nextest run --no-fail-fast --all-features -E "$rest_filter" --partition "hash:${shard}/3"
     else
       # Without nextest there is no hash partitioning: rest1 runs
-      # everything outside heavy and concurrency, rest2 and rest3 nothing.
+      # everything outside heavy, oracle and concurrency, rest2 and rest3
+      # nothing.
       if [[ "$partition" == "rest1" ]]; then
         suites=()
         for d in tests/*/; do
           name="$(basename "$d")"
-          [[ -f "$d/main.rs" && "$name" != heavy && "$name" != concurrency ]] && suites+=("--test" "$name")
+          [[ -f "$d/main.rs" && "$name" != heavy && "$name" != oracle && "$name" != concurrency ]] && suites+=("--test" "$name")
         done
         for f in tests/*.rs; do suites+=("--test" "$(basename "$f" .rs)"); done
         exec cargo test --all-features --lib --bins "${suites[@]}"

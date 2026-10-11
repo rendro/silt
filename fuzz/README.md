@@ -1,6 +1,6 @@
 # Fuzzing silt
 
-silt ships seven libfuzzer targets:
+silt ships eight libfuzzer targets:
 
 | Target             | Exercises                                          |
 |--------------------|----------------------------------------------------|
@@ -11,9 +11,21 @@ silt ships seven libfuzzer targets:
 | `fuzz_typechecker` | the session's analysis + diagnostic well-formedness |
 | `fuzz_compiler`    | `Compiler::compile_program` on clean programs + disassembly decode |
 | `fuzz_http_request` | the reader of `http.serve`'s requests (`src/http_wire.rs`): no panic, no request beyond a limit, the same requests however the bytes arrive |
+| `fuzz_run`         | the differential oracle (`tests/oracle/oracle.rs`): a program that checks clean and stays inside the VM is run in slices of 2000 steps and of one step under a step budget; the runs agree, and none ends in a type confusion, an internal error or a panic |
 
 Invariant helpers live in `src/fuzz_invariants.rs` and are exercised
 from both the fuzz targets and regression tests in `tests/`.
+
+`fuzz_run` is the one target that runs programs. It shares its code
+with the `oracle` test suite (see "The differential oracle" in
+`tests/README.md`), which runs the same checks over the golden cases,
+generated programs and the corpora on every push. A finding of
+`fuzz_run` is a defect of the checker or the runtime: minimise it,
+commit it as `fuzz/corpus/fuzz_run/<name>.silt`, and the suite's corpus
+class runs it too (list it in `tests/oracle/skip.txt` until it is
+fixed). Its seeds `run_*.silt` are small programs of one area each
+(closures, traits, lists, tasks and channels, streams, timers, a
+runtime error); the suite fails when one of them is not run.
 
 ## Three-lane workflow
 
@@ -51,7 +63,7 @@ While actively working on parser or formatter code, run
 ```sh
 fuzz/local.sh fuzz_formatter       # single target, 10 min
 fuzz/local.sh fuzz_formatter 60    # quick 1-minute sanity check
-fuzz/local.sh all 3600             # all seven targets in parallel, 1 hr
+fuzz/local.sh all 3600             # all eight targets in parallel, 1 hr
 ```
 
 This is the fastest way to find new bugs — seconds of local

@@ -19,7 +19,7 @@ Never run two test runs at once on one machine: the timing tests of the
 ## One suite, one area
 
 ```
-cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, concurrency
+cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, oracle, concurrency
 SILT_GOLDEN_FILTER=lang/traits/ cargo nextest run --all-features --test golden
 ```
 
@@ -71,6 +71,92 @@ SILT_FMT_FULL=1 SILT_FMT_CORPUS=<dir> SILT_FMT_REPORT=/tmp/fmt.txt \
   cargo test --release --all-features --test heavy every_input -- --nocapture
 SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy random_comments -- --nocapture
 ```
+
+## The differential oracle
+
+`tests/oracle` takes programs that check clean and whose code names no
+builtin that reaches outside the VM (files, the environment, the
+network, arguments, stdin), compiles each, verifies every compiled
+function again, and runs it twice, each run on a VM of its own with its
+output in a buffer: once in slices of 2000 steps, and once in slices of
+one step, where the program is stopped and resumed after every
+instruction (`Vm::set_time_slice`). The two runs must agree in output,
+in the failures of tasks that nobody joined and in `main`'s value or
+error, and no run, and no task of one, may end in a `type_confusion`
+error, an internal error or a panic, or not end
+(`tests/oracle/oracle.rs`). A program that uses tasks, channels,
+streams, the clock or the system's random source is compared only where
+a golden case's exact `.stdout` says what it writes. A program whose
+code names `time.now` or `time.since` is never compared by its output,
+`.stdout` or not: it reads the time, as a rule to print what something
+took, and what it writes is the clock's, on a busy machine as much as
+at another slice. It is held to the invariants and, as a golden case,
+to ending well at both slices; the report counts these programs apart
+("invariants only (reads the time)").
+
+Each run has a step budget (`Vm::set_step_budget`). A program that uses
+it up at both slices is cut short: it is counted, and nothing of it is
+compared. One that ends at one slice and is cut short at the other is a
+finding (`one-slice`), after the run that was cut has been repeated
+once with the full sweep's budget: a program that a fault keeps from
+going on after a slice boundary looks exactly so. A full sweep also
+holds the inputs it cuts short against `tests/oracle/cut.txt`, which
+lists each with the reason it needs so many steps: an input that is cut
+short and not listed fails the sweep, and so does a listed one that is
+no longer cut.
+
+A golden case that is run and must end well is a program the `silt`
+command checks, compiles and runs: when the oracle's own session does
+not get it to run (a check error, no `main`), that is a finding too,
+not a case that is "not run".
+
+A panic counts on whatever thread it happens. The suite records every
+panic of its process, and a run during which a thread of the runtime
+panicked is a `panic` finding, whether or not the run then ends.
+
+Its inputs, by class:
+
+- the golden cases that are run and must end with status 0; both runs
+  must also end well and write the case's exact `.stdout`;
+- generated programs (`tests/oracle/generated.rs`): `main` is one `Int`
+  expression of a small subset (arithmetic, `match`, `let`, closures,
+  a pipe, tuples), and must return what a reference evaluator in the
+  test computes, or stop at the integer overflow it predicts. A program
+  is named by its seed and number, `generated/1/532`, and a finding is
+  shown with the smallest program that still has it;
+- the corpora: the seeds of the fuzz targets that read silt source
+  (`fuzz/corpus/`), the examples, and the repro corpus
+  (`tests/golden/repros/`). Most of these do not check clean or have no
+  `main` and are not run; what runs must agree with itself.
+
+```
+cargo nextest run --all-features --test oracle                      # the suite: about a minute
+SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # the full sweep: a larger budget
+```
+
+CI runs the suite with the `heavy` suite on every push, and the full
+sweep once a day (the `oracle` job of `.github/workflows/fuzz-nightly.yml`).
+
+| Variable | Meaning |
+|---|---|
+| `SILT_ORACLE_FULL=1` | the full sweep: 20,000,000 steps a run instead of 1,000,000, 10,000 generated programs instead of 400, the `abort` lines run through the `silt` command, the cut inputs held against `cut.txt` |
+| `SILT_ORACLE_STEPS=<n>` | the step budget of each run |
+| `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
+| `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
+| `SILT_ORACLE_REPORT=<file>` | append the counts, every finding and the verdict of each input to the file |
+| `SILT_ORACLE_SEED=<n>` | the seed of the generated programs (default 1) |
+
+A finding is a defect of silt, not of the input. One that is known and
+reported has a line in `tests/oracle/skip.txt` that names it; the suite
+fails on a finding without a line and on a line whose input has no such
+finding any more, so the line goes with the fix.
+
+One kind of line is not looked at by running the program in the suite.
+A program that overflows the native stack ends the process it runs in,
+the suite's too: its line has the kind `abort`, and a full sweep runs it
+through the `silt` command to see that it still aborts. The name of
+each input is written to stderr before it is examined, so the last
+names of an aborted run say which program it was.
 
 ## A faster local build
 

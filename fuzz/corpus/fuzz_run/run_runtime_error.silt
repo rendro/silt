@@ -1,0 +1,7 @@
+import list
+
+fn main() {
+  println("before")
+  let xs = [3, 2, 1, 0]
+  list.map(xs) { x -> 12 / x }
+}
