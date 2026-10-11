@@ -734,7 +734,8 @@ fn the_key_of_a_value_does_not_depend_on_its_depth() {
             }
         }
     }
-    for depth in [0, 1, 2, 15, 16, 17, 18, 33, 100] {
+    let near = super::key::NEAR;
+    for depth in [0, 1, 2, near - 1, near, near + 1, near + 2, 2 * near + 1] {
         let value = nested(depth, 7);
         let mut state = DefaultHasher::new();
         by_hand(depth, 7, &mut state);
@@ -749,6 +750,199 @@ fn the_key_of_a_value_does_not_depend_on_its_depth() {
         );
         assert_eq!(nested(depth, 8).cmp(&value), Ordering::Greater);
     }
+}
+
+/// Where the walk stops calling itself and goes on with a stack of its
+/// own (`key::NEAR` levels down) is nothing a value's key shows. Two
+/// values that differ at one level only, a level around that one, in
+/// the first part of the level, in its last part, or in the leaf of a
+/// value that deep, are equal, ordered and hashed as a plain recursion
+/// over the two says, which this test has as its reference: for
+/// tuples, lists, maps (the next level a value, and a key), sets,
+/// variants and records, and for all of them in turn.
+#[test]
+fn the_key_is_the_same_where_the_walk_changes_its_stack() {
+    use crate::defs::{DefId, TypeId};
+    use std::hash::Hasher;
+    let near = super::key::NEAR;
+    let record = record_type(9301, "Level", &["a", "n", "z"]);
+    let wrapped = TypeInfo::new_enum(TypeId(DefId(9302)), "Wrapped", &[("Leaf", 0), ("W", 3)]);
+    let w = Tag::named(&wrapped, "W").expect("a variant");
+    // A level around `inner`, with `pre` before it and `post` after.
+    let shapes: [&dyn Fn(Value, i64, i64) -> Value; 7] = [
+        &|inner, pre, post| Value::tuple(vec![Value::Int(pre), inner, Value::Int(post)]),
+        // (Not three Ints each one more than the one before: such a
+        // list is hashed by its ends.)
+        &|inner, pre, post| Value::list(vec![Value::Int(10 + pre), inner, Value::Int(20 + post)]),
+        &|inner, pre, post| {
+            Value::map(BTreeMap::from([
+                (Value::Int(1), Value::Int(pre)),
+                (Value::Int(2), inner),
+                (Value::Int(3), Value::Int(post)),
+            ]))
+        },
+        &|inner, pre, post| {
+            Value::map(BTreeMap::from([
+                (Value::Int(pre), Value::Int(0)),
+                (inner, Value::Int(post)),
+            ]))
+        },
+        &|inner, pre, post| {
+            Value::set(BTreeSet::from([
+                Value::Int(pre),
+                inner,
+                Value::Int(50 + post),
+            ]))
+        },
+        &|inner, pre, post| {
+            Value::variant(w.clone(), vec![Value::Int(pre), inner, Value::Int(post)])
+        },
+        &|inner, pre, post| {
+            Value::record(
+                record.clone(),
+                vec![Value::Int(pre), inner, Value::Int(post)],
+            )
+        },
+    ];
+
+    // The reference: the rank of a kind, and the order, the equality
+    // and the hash of values by a function that calls itself.
+    fn rank(value: &Value) -> u8 {
+        match value {
+            Value::Int(_) => 2,
+            Value::List(_) => 5,
+            Value::Tuple(_) => 6,
+            Value::Map(_) => 7,
+            Value::Set(_) => 8,
+            Value::Record(_) => 9,
+            Value::Variant(_) => 10,
+            other => panic!("no value of this test: {other:?}"),
+        }
+    }
+    // The parts of a value, in the order of the walk.
+    fn parts(value: &Value) -> Vec<Value> {
+        match value {
+            Value::Int(_) => Vec::new(),
+            Value::List(list) => list.iter().collect(),
+            Value::Tuple(items) => items.to_vec(),
+            Value::Map(entries) => entries
+                .iter()
+                .flat_map(|(key, value)| [key.clone(), value.clone()])
+                .collect(),
+            Value::Set(members) => members.iter().cloned().collect(),
+            Value::Record(record) => record.fields().to_vec(),
+            Value::Variant(variant) => variant.fields().to_vec(),
+            other => panic!("no value of this test: {other:?}"),
+        }
+    }
+    fn order(a: &Value, b: &Value) -> Ordering {
+        let heads = match (a, b) {
+            (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::Variant(a), Value::Variant(b)) => a.ordinal().cmp(&b.ordinal()),
+            _ => rank(a).cmp(&rank(b)),
+        };
+        if heads.is_ne() {
+            return heads;
+        }
+        let (a, b) = (parts(a), parts(b));
+        for (a, b) in a.iter().zip(&b) {
+            let unequal = order(a, b);
+            if unequal.is_ne() {
+                return unequal;
+            }
+        }
+        a.len().cmp(&b.len())
+    }
+    fn hashed(value: &Value, state: &mut DefaultHasher) {
+        state.write_u8(rank(value));
+        let parts = parts(value);
+        match value {
+            Value::Int(n) => n.hash(state),
+            Value::List(_) => {
+                parts.len().hash(state);
+                state.write_u8(0);
+            }
+            Value::Tuple(_) | Value::Set(_) => parts.len().hash(state),
+            Value::Map(entries) => entries.len().hash(state),
+            Value::Variant(variant) => {
+                variant.ordinal().hash(state);
+                parts.len().hash(state);
+            }
+            _ => {}
+        }
+        let names: Vec<&str> = match value {
+            Value::Record(record) => record.named().map(|(name, _)| name).collect(),
+            _ => Vec::new(),
+        };
+        for (at, part) in parts.iter().enumerate() {
+            if let Some(name) = names.get(at) {
+                name.hash(state);
+            }
+            hashed(part, state);
+        }
+    }
+    let reference_hash = |value: &Value| {
+        let mut state = DefaultHasher::new();
+        hashed(value, &mut state);
+        state.finish()
+    };
+
+    // The value `depth` levels deep whose level `l` (the outermost is
+    // 1) is made by the shape `shape(l)`, with the leaf `leaf` and, at
+    // the level `differs`, `pre` and `post`.
+    let build = |shape: &dyn Fn(usize) -> usize, depth, leaf, differs, pre, post| {
+        (1..=depth).rev().fold(Value::Int(leaf), |inner, l| {
+            let (pre, post) = match l == differs {
+                true => (pre, post),
+                false => (0, 0),
+            };
+            shapes[shape(l)](inner, pre, post)
+        })
+    };
+    let deep = near + 4;
+    let mut compared = 0;
+    for kind in 0..=shapes.len() {
+        // Each shape at every level, and last the shapes in turn.
+        let shape = move |l: usize| match kind == shapes.len() {
+            true => l % shapes.len(),
+            false => kind,
+        };
+        for level in near - 2..=near + 3 {
+            let pairs = [
+                // The first part of the level, its last part, and the
+                // leaf of a value that deep.
+                (
+                    build(&shape, deep, 0, 0, 0, 0),
+                    build(&shape, deep, 0, level, 1, 0),
+                ),
+                (
+                    build(&shape, deep, 0, 0, 0, 0),
+                    build(&shape, deep, 0, level, 0, 1),
+                ),
+                (
+                    build(&shape, level, 0, 0, 0, 0),
+                    build(&shape, level, 1, 0, 0, 0),
+                ),
+            ];
+            for (which, (same, other)) in pairs.into_iter().enumerate() {
+                let what = format!("shape {kind}, level {level}, difference {which}");
+                let again = same.clone();
+                assert!(same == again && same.cmp(&again).is_eq(), "{what}");
+                assert_eq!(order(&same, &again), Ordering::Equal, "{what}");
+                let expected = order(&same, &other);
+                assert!(expected.is_ne(), "{what}: the reference tells them apart");
+                assert!(same != other, "{what}");
+                assert_eq!(same.cmp(&other), expected, "{what}");
+                assert_eq!(other.cmp(&same), expected.reverse(), "{what}");
+                assert_eq!(same < other, expected.is_lt(), "{what}");
+                assert_eq!(hash_of(&same), reference_hash(&same), "{what}");
+                assert_eq!(hash_of(&other), reference_hash(&other), "{what}");
+                assert_ne!(hash_of(&same), hash_of(&other), "{what}");
+                compared += 1;
+            }
+        }
+    }
+    assert_eq!(compared, (shapes.len() + 1) * 6 * 3);
 }
 
 /// A program's record type named like a builtin one prints as a

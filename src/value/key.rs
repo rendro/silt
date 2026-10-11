@@ -471,7 +471,7 @@ fn walk<const N: usize, V: Visit<N>>(values: [&Value; N], visit: &mut V) -> Cont
 /// nested deeper, and a level costs about half as much so as it does
 /// below, where the walk keeps what it comes back to in a stack of its
 /// own ([`through_far`]), however deep the value goes.
-const NEAR: usize = 64;
+pub(super) const NEAR: usize = 64;
 
 /// [`walk`] for values whose heads are visited and of one kind with
 /// parts, `depth` levels down from where the walk began: go through
