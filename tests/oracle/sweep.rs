@@ -3,7 +3,7 @@
 //!
 //! | Variable | Meaning |
 //! |---|---|
-//! | `SILT_ORACLE_FULL=1` | every input of a class instead of its sample, and the large step budget |
+//! | `SILT_ORACLE_FULL=1` | the full sweep: the large step budget, 10,000 generated programs, the `abort` lines run through the `silt` command, the cut inputs held against `cut.txt` |
 //! | `SILT_ORACLE_STEPS=<n>` | the step budget of each run |
 //! | `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
 //! | `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
@@ -33,7 +33,7 @@ pub fn name_of(path: &Path) -> String {
     rel.to_string_lossy().replace('\\', "/")
 }
 
-/// Whether `SILT_ORACLE_FULL` asks for every input.
+/// Whether `SILT_ORACLE_FULL` asks for the full sweep.
 pub fn full() -> bool {
     std::env::var_os("SILT_ORACLE_FULL").is_some_and(|v| v != "0")
 }
@@ -138,19 +138,11 @@ pub fn check_listed(all: &[Input], belongs: impl Fn(&str) -> bool) {
     }
 }
 
-/// The inputs of `all` a test runs: all of them when the sweep is full,
-/// else every `step`-th and each one the skip file names (a listed
-/// finding is looked at in every run, so its entry cannot outlive it).
-/// `SILT_ORACLE_ONLY` narrows either.
-pub fn sample(all: Vec<Input>, step: usize, skips: &[Skip]) -> Vec<Input> {
+/// The inputs of `all` a test runs: all of them, or those that
+/// `SILT_ORACLE_ONLY` names.
+pub fn chosen(all: Vec<Input>) -> Vec<Input> {
     let only = std::env::var("SILT_ORACLE_ONLY").ok();
-    let full = full();
     all.into_iter()
-        .enumerate()
-        .filter(|(index, input)| {
-            full || index % step == 0 || skips.iter().any(|skip| skip.input == input.name)
-        })
-        .map(|(_, input)| input)
         .filter(|input| only.as_ref().is_none_or(|only| input.name.contains(only)))
         .collect()
 }
@@ -162,7 +154,7 @@ const ABORT_WAIT: Duration = Duration::from_secs(120);
 /// The verdict of an input that the skip file lists as ending the
 /// process it runs in, which therefore is not run in this one. In a
 /// full sweep the `silt` command runs it, and the finding stands while
-/// that ends otherwise than with status 0 or 1; in a sample the line is
+/// that ends otherwise than with status 0 or 1; in the suite the line is
 /// taken at its word.
 fn examine_aborting(input: &Input) -> Verdict {
     let listed = |detail: &str| Verdict::Finding(Finding::new(Kind::Abort, detail));
@@ -218,8 +210,7 @@ fn examine_aborting(input: &Input) -> Verdict {
 /// The verdict of each of `inputs`, in their order, and how long it
 /// took to reach (which the report file shows, and nothing judges).
 /// An input that `skips` lists as aborting is not run in this process
-/// ([`examine_aborting`]), and one that it lists as slow is not run at
-/// all.
+/// ([`examine_aborting`]).
 pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
     let listed = |input: &Input, kind: Kind| {
         skips
@@ -246,13 +237,9 @@ pub fn run(inputs: &[Input], skips: &[Skip]) -> Vec<(Verdict, Duration)> {
                     // a thread wrote.
                     eprintln!("oracle: {}", input.name);
                     let start = Instant::now();
-                    let verdict = if listed(input, Kind::Abort) {
-                        examine_aborting(input)
-                    } else if listed(input, Kind::Slow) {
-                        let detail = "not run: the skip file says that it takes minutes";
-                        Verdict::Finding(Finding::new(Kind::Slow, detail))
-                    } else {
-                        examine(input, steps)
+                    let verdict = match listed(input, Kind::Abort) {
+                        true => examine_aborting(input),
+                        false => examine(input, steps),
                     };
                     verdicts.lock().unwrap()[index] = Some((verdict, start.elapsed()));
                 }

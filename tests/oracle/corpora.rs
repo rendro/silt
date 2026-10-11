@@ -13,12 +13,7 @@ use std::path::Path;
 
 use crate::goldens::{REPROS, collect_cases, plain_input};
 use crate::oracle::{Expect, Input, Source, Verdict};
-use crate::sweep::{check_listed, conclude, name_of, repo_root, run, sample, skips};
-
-/// Without `SILT_ORACLE_FULL`, every n-th repro is run: the corpus has
-/// programs that take a minute (lists and values built by copying),
-/// and the sample has none of them.
-const REPRO_STEP: usize = 7;
+use crate::sweep::{check_listed, chosen, conclude, name_of, repo_root, run, skips};
 
 /// The `.silt` files of the directory `dir`, sorted, each an input of
 /// its own.
@@ -88,7 +83,7 @@ fn fuzz_corpora_and_examples() {
         name.starts_with("fuzz/corpus/") || name.starts_with("examples/")
     });
     let skips = skips();
-    let inputs = sample(all, 1, &skips);
+    let inputs = chosen(all);
     let verdicts = run(&inputs, &skips);
     // The seeds written for `fuzz_run` are programs the oracle runs to
     // their end: one that it does not is no seed.
@@ -118,7 +113,7 @@ fn repro_corpus() {
     assert!(all.len() > 1000, "only {} repros", all.len());
     check_listed(&all, |name| name.starts_with(REPROS));
     let skips = skips();
-    let inputs = sample(all, REPRO_STEP, &skips);
+    let inputs = chosen(all);
     let verdicts = run(&inputs, &skips);
     conclude("repro corpus", &inputs, &verdicts, &skips);
 }

@@ -126,9 +126,7 @@ const STACK_BYTES: usize = 256 * 1024 * 1024;
 ///
 /// The time is two minutes and what the steps take on a machine that
 /// does 200,000 of them in a second, a tenth of what a debug build does
-/// at slice 1. (A step is not a unit of time: one that copies a long
-/// list takes as long as the list is. The slowest program the oracle
-/// runs takes under a minute a run; see `slow` in the skip file.)
+/// at slice 1.
 fn watchdog(steps: u64) -> Duration {
     Duration::from_secs(120 + steps / 200_000)
 }
@@ -234,10 +232,6 @@ pub enum Kind {
     /// does it is known by its line in the skip file, and is run
     /// through the `silt` command instead (`sweep.rs`).
     Abort,
-    /// A run takes minutes for the steps of its budget. The oracle does
-    /// not judge time: an input that does it is known by its line in
-    /// the skip file, and is not run (`sweep.rs`).
-    Slow,
     /// The program ends at one slice and is cut short at the other.
     OneSlice,
     /// The two runs disagree.
@@ -256,7 +250,6 @@ impl Kind {
             Kind::InternalError => "internal-error",
             Kind::Hang => "hang",
             Kind::Abort => "abort",
-            Kind::Slow => "slow",
             Kind::OneSlice => "one-slice",
             Kind::Differs => "differs",
             Kind::Expectation => "expectation",

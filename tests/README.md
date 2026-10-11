@@ -120,13 +120,12 @@ Its inputs, by class:
   shown with the smallest program that still has it;
 - the corpora: the seeds of the fuzz targets that read silt source
   (`fuzz/corpus/`), the examples, and the repro corpus
-  (`tests/golden/repros/`, every seventh program unless the sweep is
-  full). Most of these do not check clean or have no `main` and are not
-  run; what runs must agree with itself.
+  (`tests/golden/repros/`). Most of these do not check clean or have no
+  `main` and are not run; what runs must agree with itself.
 
 ```
 cargo nextest run --all-features --test oracle                      # the suite: about a minute
-SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # every input, a larger budget
+SILT_ORACLE_FULL=1 cargo nextest run --all-features --test oracle   # the full sweep: a larger budget
 ```
 
 CI runs the suite with the `heavy` suite on every push, and the full
@@ -134,7 +133,7 @@ sweep once a day (the `oracle` job of `.github/workflows/fuzz-nightly.yml`).
 
 | Variable | Meaning |
 |---|---|
-| `SILT_ORACLE_FULL=1` | every input of a class instead of its sample, 20,000,000 steps a run instead of 1,000,000, and 10,000 generated programs instead of 400 |
+| `SILT_ORACLE_FULL=1` | the full sweep: 20,000,000 steps a run instead of 1,000,000, 10,000 generated programs instead of 400, the `abort` lines run through the `silt` command, the cut inputs held against `cut.txt` |
 | `SILT_ORACLE_STEPS=<n>` | the step budget of each run |
 | `SILT_ORACLE_ONLY=<text>` | only the inputs whose name holds the text |
 | `SILT_ORACLE_WORKERS=<n>` | the number of threads (default: 2) |
@@ -144,17 +143,14 @@ sweep once a day (the `oracle` job of `.github/workflows/fuzz-nightly.yml`).
 A finding is a defect of silt, not of the input. One that is known and
 reported has a line in `tests/oracle/skip.txt` that names it; the suite
 fails on a finding without a line and on a line whose input has no such
-finding any more, so the line goes with the fix. The inputs the file
-names are part of every sample.
+finding any more, so the line goes with the fix.
 
-Two kinds of line are not looked at by running the program in the
-suite. A program that overflows the native stack ends the process it
-runs in, the suite's too: its line has the kind `abort`, and a full
-sweep runs it through the `silt` command to see that it still aborts.
-A program that takes minutes for the steps of its budget has the kind
-`slow` and is not run at all. The name of each input is written to
-stderr before it is examined, so the last names of an aborted run say
-which program it was.
+One kind of line is not looked at by running the program in the suite.
+A program that overflows the native stack ends the process it runs in,
+the suite's too: its line has the kind `abort`, and a full sweep runs it
+through the `silt` command to see that it still aborts. The name of
+each input is written to stderr before it is examined, so the last
+names of an aborted run say which program it was.
 
 ## A faster local build
 

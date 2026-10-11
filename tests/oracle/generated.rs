@@ -17,7 +17,7 @@
 use silt::Value;
 
 use crate::oracle::{Expect, Finding, Input, Source, Verdict, examine};
-use crate::sweep::{check_listed, conclude, full, run, sample, skips, steps};
+use crate::sweep::{check_listed, chosen, conclude, full, run, skips, steps};
 
 /// How many programs a run generates.
 const PROGRAMS: usize = 400;
@@ -508,7 +508,7 @@ fn generated_programs_end_as_the_reference_evaluator_says() {
         .collect();
     check_listed(&all, |name| name.starts_with("generated/"));
     let skips = skips();
-    let inputs = sample(all, 1, &skips);
+    let inputs = chosen(all);
     let mut verdicts = run(&inputs, &skips);
 
     let mut overflows = 0;

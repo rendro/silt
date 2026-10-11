@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::oracle::{Expect, Input, Source};
-use crate::sweep::{check_listed, conclude, name_of, repo_root, run, sample, skips};
+use crate::sweep::{check_listed, chosen, conclude, name_of, repo_root, run, skips};
 
 /// The directory of the imported repro corpus, whose cases say nothing
 /// of how they run: they are inputs of their own (`corpora.rs`).
@@ -172,7 +172,7 @@ fn golden_cases_that_run_and_succeed() {
     check_listed(&all, |name| {
         name.starts_with("tests/golden/") && !name.starts_with(REPROS)
     });
-    let inputs = sample(all, 1, &skips);
+    let inputs = chosen(all);
     let verdicts = run(&inputs, &skips);
     conclude("golden cases", &inputs, &verdicts, &skips);
 }
