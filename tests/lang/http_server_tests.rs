@@ -35,20 +35,41 @@ const ECHO: &str = r#"match req.path {
         _ -> http.Response { status: 200, body: "{req.method} {req.path} [{req.body}]", headers: #{} }
       }"#;
 
-/// A clock that stands still unless the test moves it.
+/// A clock that stands still unless the test moves it: its reading,
+/// and how often it was asked for the time of day (the server asks
+/// when it makes a response, for the response's `Date`).
 #[derive(Clone, Default)]
-struct TestClock(Arc<AtomicU64>);
+struct TestClock(Arc<AtomicU64>, Arc<AtomicU64>);
 
 impl TestClock {
+    /// 2026-10-05T12:00:00Z, the time of day at which the clock starts.
+    const START: Duration = Duration::from_millis(1_791_201_600_000);
+
     fn advance(&self, by: Duration) {
         self.0.fetch_add(by.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// How often the clock was asked for the time of day.
+    #[cfg(feature = "test-hooks")]
+    fn asked(&self) -> u64 {
+        self.1.load(Ordering::SeqCst)
+    }
+
+    /// The reading of the clock at which the server made `response`,
+    /// to the second, as its `Date` says: no later than it was sent.
+    fn made(&self, response: &Response) -> Duration {
+        let date = response.header("Date").expect("a date");
+        let date = chrono::DateTime::parse_from_rfc2822(date).expect("a date as HTTP writes it");
+        let date = Duration::from_secs(date.timestamp().try_into().expect("a time since 1970"));
+        date.checked_sub(TestClock::START)
+            .expect("a date of this clock")
     }
 }
 
 impl Clock for TestClock {
     fn now(&self) -> Duration {
-        // 2026-10-05T12:00:00Z.
-        Duration::from_millis(1_791_201_600_000) + self.monotonic()
+        self.1.fetch_add(1, Ordering::SeqCst);
+        TestClock::START + self.monotonic()
     }
 
     fn monotonic(&self) -> Duration {
@@ -1040,13 +1061,19 @@ fn after_a_refusal_the_client_is_heard_out_for_a_time() {
 ///
 /// Many connections at once whose bodies come in sixteen bytes at a
 /// time, so that their readers are in and out of the read all the
-/// while; the clock passes the time for a body once, and every
-/// connection that was answered must still take what its client
-/// sends. Then the server is cancelled under the same load.
+/// while. The clock comes to the time for a body and goes on from
+/// there in steps that are shorter than the time for which a refused
+/// client is heard out: every connection is answered, and each is
+/// looked at as soon as its answer is there, while the clock stands.
+/// One that is still within its time (its answer says when it was
+/// made) must still take what its client sends. Then the server is
+/// cancelled under the same load.
 #[test]
 fn a_last_word_beside_a_read_does_not_end_the_read() {
     use std::sync::atomic::AtomicBool;
     const CONNECTIONS: usize = 32;
+    /// The step of the clock while answers are waited for.
+    const STEP: Duration = Duration::from_secs(1);
     let clock = TestClock::default();
     let server = Server::on(ECHO, Some(clock.clone()));
     // (Bodies that all of the connections have room for at a time,
@@ -1055,10 +1082,13 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
         "POST /slow HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
         2 * 1024 * 1024
     );
-    // Connections whose heads are read, each with a thread that
-    // sends its body in small pieces until told to stop.
-    let trickling = |stop: &Arc<AtomicBool>| -> Vec<(Client, thread::JoinHandle<bool>)> {
-        (0..CONNECTIONS)
+    // Connections whose heads are read (the server has said that the
+    // bodies may come), each with a thread that sends its body in
+    // small pieces until told to stop, and says whether the server
+    // took them all. The threads start when all the heads are read.
+    type Trickling = (Client, Arc<AtomicBool>, thread::JoinHandle<bool>);
+    let trickling = || -> Vec<Trickling> {
+        let clients: Vec<Client> = (0..CONNECTIONS)
             .map(|_| {
                 let mut client = server.connect();
                 client.send(head.as_bytes());
@@ -1066,11 +1096,18 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
                 client.0.read_line(&mut line).expect("the interim response");
                 assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
                 client.0.read_line(&mut line).expect("its end");
+                client
+            })
+            .collect();
+        clients
+            .into_iter()
+            .map(|client| {
                 let mut conn = client.0.get_ref().try_clone().expect("clone");
-                let stop = stop.clone();
+                let stop = Arc::new(AtomicBool::new(false));
+                let stopped = stop.clone();
                 let writer = thread::spawn(move || {
                     let mut sent = 0;
-                    while !stop.load(Ordering::SeqCst) && sent < 256 * 1024 {
+                    while !stopped.load(Ordering::SeqCst) && sent < 256 * 1024 {
                         if conn.write_all(&[b'b'; 16]).is_err() {
                             return false;
                         }
@@ -1078,50 +1115,79 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
                     }
                     true
                 });
-                (client, writer)
+                (client, stop, writer)
             })
             .collect()
     };
 
-    let mut answered = 0;
+    let megabyte = vec![b'b'; 1024 * 1024];
+    let (mut answered, mut heard) = (0, 0);
     for _ in 0..6 {
-        let stop = Arc::new(AtomicBool::new(false));
-        let mut clients = trickling(&stop);
-        // The time for a body passes, once: the clock then stands, so
-        // a connection that was answered is heard out without end.
-        clock.advance(TRANSFER_TIME + Duration::from_secs(1));
-        let patience = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < patience && !clients.iter_mut().all(|(client, _)| client.has_word())
-        {
+        let mut waiting = trickling();
+        // The clock has stood since the first of these heads was
+        // read: no body's time is over before the clock has gone on
+        // by all of it.
+        clock.advance(TRANSFER_TIME - STEP);
+        let patience = Instant::now() + PATIENCE;
+        while !waiting.is_empty() {
+            assert!(
+                Instant::now() < patience,
+                "a body that trickles in is waited for without end"
+            );
+            let mut unanswered = Vec::new();
+            for (mut client, stop, writer) in waiting {
+                if !client.has_word() {
+                    unanswered.push((client, stop, writer));
+                    continue;
+                }
+                let ended = client.0.fill_buf().expect("the last word").is_empty();
+                assert!(
+                    !ended,
+                    "the server ended a connection whose body did not come, without a word"
+                );
+                let response = client.response();
+                assert_eq!(response.status, 408);
+                answered += 1;
+                // The server hears the client out from when it has
+                // answered, and it made the answer before that. While
+                // the clock, which stands now, has not come to the end
+                // of that time, the body is still taken: what its
+                // thread sends meanwhile, and a megabyte more.
+                let within_its_time = clock.monotonic() < clock.made(&response) + REFUSAL_TIME;
+                if within_its_time {
+                    for piece in megabyte.chunks(64 * 1024) {
+                        client.send(piece);
+                    }
+                }
+                stop.store(true, Ordering::SeqCst);
+                let wrote = writer.join().expect("the writer");
+                if within_its_time {
+                    assert!(
+                        wrote,
+                        "the server stopped reading a body it had answered 408"
+                    );
+                    heard += 1;
+                }
+                assert_eq!(client.rest(), b"");
+            }
+            waiting = unanswered;
+            clock.advance(STEP);
             thread::sleep(Duration::from_millis(2));
         }
-        stop.store(true, Ordering::SeqCst);
-        for (mut client, writer) in clients {
-            let wrote = writer.join().expect("the writer");
-            // (One whose wait began after the clock moved has all the
-            // time yet: it is left alone.)
-            if !client.has_word() {
-                continue;
-            }
-            assert!(
-                wrote,
-                "the server stopped reading a body it had answered 408"
-            );
-            client.send(&vec![b'b'; 1024 * 1024]);
-            assert_eq!(client.response().status, 408);
-            assert_eq!(client.rest(), b"");
-            answered += 1;
-        }
     }
-    eprintln!("{answered} connections were answered 408 beside their reads");
-    assert!(answered > 0, "no connection reached its time limit");
+    eprintln!(
+        "{answered} connections were answered 408 beside their reads, {heard} looked at in their time"
+    );
+    assert!(
+        heard > 0,
+        "no connection was looked at within the time it is heard out"
+    );
 
     // The server ends with bodies half read and still coming: every
     // client is answered 503, or finds its connection closed.
-    let stop = Arc::new(AtomicBool::new(false));
-    let clients = trickling(&stop);
+    let clients = trickling();
     drop(server);
-    for (mut client, writer) in clients {
+    for (mut client, _, writer) in clients {
         let _ = writer.join();
         let last = client.rest();
         assert!(
@@ -1130,4 +1196,357 @@ fn a_last_word_beside_a_read_does_not_end_the_read() {
             String::from_utf8_lossy(&last)
         );
     }
+}
+
+/// The time for a body is over while the thread that reads the
+/// request is still writing the interim response (`100 Continue`). The
+/// 408 has its turn after that write and comes: it is not dropped
+/// because the turn was taken.
+///
+/// By order, with the hook of the writes: the reader's thread is held
+/// in its turn when the system has taken the interim response; the
+/// clock goes on until the server makes a response (it asks the clock
+/// for the date), which can only be the 408; and the reader's thread
+/// is let go when the writer of the 408 has come to wait for the
+/// turn, or, with a server that does not wait there, when the
+/// connection has ended.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_last_word_waits_its_turn_behind_the_interim_response() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Mutex, mpsc};
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    let mut client = server.connect();
+    let this = client.0.get_ref().local_addr().expect("the client's end");
+    // The first write on the connection is the interim response: its
+    // writer stays in its turn until `go` is dropped. A writer that
+    // finds the turn taken after that is the 408's.
+    let (go, held) = mpsc::channel::<()>();
+    let held = Mutex::new(Some(held));
+    let waits = Arc::new(AtomicBool::new(false));
+    let waiting = waits.clone();
+    let _watching = watch_writes(move |conn, moment| {
+        if conn.peer_addr().ok() != Some(this) {
+            return;
+        }
+        match moment {
+            WriteMoment::Written => {
+                let held = held.lock().expect("the first write").take();
+                if let Some(held) = held {
+                    let _ = held.recv();
+                }
+            }
+            WriteMoment::Waits => waiting.store(true, Ordering::SeqCst),
+        }
+    });
+    client.send(
+        b"POST /slow HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+    );
+    let mut line = String::new();
+    client.0.read_line(&mut line).expect("the interim response");
+    assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
+    client.0.read_line(&mut line).expect("its end");
+    // Whenever the wait for the body began, the clock comes to its
+    // end, and the server makes the 408. (Nothing depends on where
+    // the clock stops after that: the server measures no time before
+    // it has written.)
+    let asked = clock.asked();
+    advance_until(
+        &clock,
+        TRANSFER_TIME,
+        "a body that does not come is waited for without end",
+        || clock.asked() != asked,
+    );
+    let patience = Instant::now() + PATIENCE;
+    // The 408 cannot be written yet: its writer waits for the turn.
+    // (One that does not wait has nothing to say but the end.)
+    while !waits.load(Ordering::SeqCst) && !client.has_word() {
+        assert!(
+            Instant::now() < patience,
+            "the last word is neither written nor waited with"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    drop(go);
+    let ended = client.0.fill_buf().expect("the last word").is_empty();
+    assert!(
+        !ended,
+        "the 408 was dropped: the writer of the interim response had the turn"
+    );
+    assert_eq!(client.response().status, 408);
+    assert_eq!(client.rest(), b"");
+}
+
+/// The head of a request is not there in time: the server answers 408,
+/// ends its writes, and hears the client out. The rest of the head
+/// comes then, and it asks for `100 Continue`. The system takes
+/// nothing of an interim response any more, and none is needed: it is
+/// skipped, the request is read on, and the client is still heard out.
+/// (A server for which an interim response that cannot be written is
+/// the end of the connection stops hearing here.)
+///
+/// The body is sent when the server has had its try at the interim
+/// response, which the hook of the writes tells: a body that is there
+/// with the end of the head is not waited with, and nothing is tried.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn an_interim_response_that_the_system_does_not_take_is_skipped() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicBool;
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    let head = format!(
+        "POST /late HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {}\r\n",
+        2 * 1024 * 1024
+    );
+    let patience = Instant::now() + PATIENCE;
+    let mut client = loop {
+        assert!(
+            Instant::now() < patience,
+            "a head that stops is never answered"
+        );
+        let mut client = server.connect();
+        client.send(head.as_bytes());
+        // The clock goes on until the server makes its answer (it
+        // asks for the date), and stands from then: at most one step
+        // later, well within the time for which the client is heard.
+        let asked = clock.asked();
+        while clock.asked() == asked && !client.has_word() {
+            assert!(
+                Instant::now() < patience,
+                "a head that stops is waited for without end"
+            );
+            clock.advance(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(2));
+        }
+        // (A connection whose time was over before the server had
+        // read a byte of the head is closed without a word: again.)
+        if clock.asked() != asked {
+            break client;
+        }
+    };
+    assert_eq!(client.response().status, 408);
+    // The server has ended its writes.
+    assert_eq!(client.rest(), b"");
+    // The head is complete now, and the client waits for an interim
+    // response that cannot come.
+    let this = client.0.get_ref().local_addr().expect("the client's end");
+    let tried = Arc::new(AtomicBool::new(false));
+    let trying = tried.clone();
+    let _watching = watch_writes(move |conn, moment| {
+        if conn.peer_addr().ok() == Some(this) && moment == WriteMoment::Written {
+            trying.store(true, Ordering::SeqCst);
+        }
+    });
+    client.send(b"\r\n");
+    while !tried.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < patience,
+            "the server did not go on with the request"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    // The body is taken all the same.
+    for _ in 0..4096 {
+        let taken = client.0.get_mut().write_all(&[b'b'; 256]);
+        assert!(
+            taken.is_ok(),
+            "the server stopped hearing a client out when it could not write the interim response"
+        );
+    }
+}
+
+/// A last word and the end of the writes are one turn of the
+/// connection's writes. An interim response whose writer waits for
+/// the turn while the 408 is written comes to a connection whose
+/// writes are ended, and is left out: the client reads the 408 and the
+/// end, with nothing between or behind them, and is heard out.
+///
+/// By order, with the hook of the writes: the writer of the 408 is
+/// held in its turn; the rest of the head is sent, and the reader's
+/// thread comes to wait for the turn with the interim response; then
+/// the 408's writer is let go.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn nothing_is_written_behind_a_last_word() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Mutex, mpsc};
+    let clock = TestClock::default();
+    let server = Server::on(ECHO, Some(clock.clone()));
+    let head = format!(
+        "POST /late HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {}\r\n",
+        2 * 1024 * 1024
+    );
+    let patience = Instant::now() + PATIENCE;
+    let (mut client, go, waits, _watching) = loop {
+        assert!(
+            Instant::now() < patience,
+            "a head that stops is never answered"
+        );
+        let mut client = server.connect();
+        let this = client.0.get_ref().local_addr().expect("the client's end");
+        // The first write on the connection is the 408: its writer
+        // stays in its turn until `go` is dropped. A writer that
+        // finds the turn taken is the interim response's.
+        let (go, held) = mpsc::channel::<()>();
+        let held = Mutex::new(Some(held));
+        let waits = Arc::new(AtomicBool::new(false));
+        let waiting = waits.clone();
+        let watching = watch_writes(move |conn, moment| {
+            if conn.peer_addr().ok() != Some(this) {
+                return;
+            }
+            match moment {
+                WriteMoment::Written => {
+                    let held = held.lock().expect("the first write").take();
+                    if let Some(held) = held {
+                        let _ = held.recv();
+                    }
+                }
+                WriteMoment::Waits => waiting.store(true, Ordering::SeqCst),
+            }
+        });
+        client.send(head.as_bytes());
+        // (As in `an_interim_response_that_the_system_does_not_take_
+        // is_skipped`: the clock stands from when the server makes its
+        // answer, and a connection that was closed without a word had
+        // nothing of its head read in time.)
+        let asked = clock.asked();
+        while clock.asked() == asked && !client.has_word() {
+            assert!(
+                Instant::now() < patience,
+                "a head that stops is waited for without end"
+            );
+            clock.advance(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(2));
+        }
+        if clock.asked() != asked {
+            break (client, go, waits, watching);
+        }
+    };
+    assert_eq!(client.response().status, 408);
+    client.send(b"\r\n");
+    while !waits.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < patience,
+            "the interim response did not wait for its turn"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    drop(go);
+    assert_eq!(
+        client.rest(),
+        b"",
+        "something was written behind the last word"
+    );
+    for _ in 0..4096 {
+        let taken = client.0.get_mut().write_all(&[b'b'; 256]);
+        assert!(taken.is_ok(), "the server stopped hearing the client out");
+    }
+}
+
+/// A client keeps its connection, asks for a response that is larger
+/// than what the system takes for a client that does not read, and has
+/// its next request there already, which asks for `100 Continue`. When
+/// the server comes to that request, the system may take nothing of
+/// the interim response (its buffer still holds the end of the first
+/// response): the request is served all the same, and the client gets
+/// both responses. Only a part of an interim response on the
+/// connection ends it.
+///
+/// The client does not wait for the interim response, but it sends
+/// the body only when the server has had its try at one (the hook of
+/// the writes tells): a body that is there with the head is not asked
+/// for, and nothing is tried. How much the system takes then is the
+/// system's to say; the test holds for each of the three.
+///
+/// What this decides: whichever of the three the system produces, the
+/// client is served as that case demands, and a server that ends the
+/// connection where nothing was taken fails here whenever that case
+/// comes. What it does not decide: that the case comes. No client can
+/// make the system refuse those 25 bytes, and on Linux it takes them
+/// every time (a writer that has just been let through has room, and
+/// a small write joins the last segment), so there this is a guard
+/// for the usual path only. The case of nothing taken is decided by
+/// `an_interim_response_that_the_system_does_not_take_is_skipped`,
+/// where the writes are ended and nothing can be taken.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_request_behind_a_response_that_is_not_read_is_served() {
+    use silt::vm::{WriteMoment, watch_writes};
+    use std::sync::atomic::AtomicUsize;
+    // More than the system takes in for a client that reads nothing.
+    const LENGTH: usize = 64_000_000;
+    let server = Server::new(
+        r#"match req.path {
+        "/big" -> {
+          let part = string.repeat("x", 8000000)
+          http.Response { status: 200, body: "{part}{part}{part}{part}{part}{part}{part}{part}", headers: #{} }
+        }
+        _ -> http.Response { status: 200, body: "{req.path} [{req.body}]", headers: #{} }
+      }"#,
+    );
+    let mut client = server.connect();
+    let this = client.0.get_ref().local_addr().expect("the client's end");
+    // The writes of the connection's own: the first response's
+    // beginning, then the try at the interim response.
+    let writes = Arc::new(AtomicUsize::new(0));
+    let written = writes.clone();
+    let _watching = watch_writes(move |conn, moment| {
+        if conn.peer_addr().ok() == Some(this) && moment == WriteMoment::Written {
+            written.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    client.send(b"GET /big HTTP/1.1\r\nHost: x\r\n\r\n");
+    client.send(
+        b"POST /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+    );
+    // The client takes of the first response what the server needs it
+    // to take, and no more: until the server has come to the second
+    // request and tried to write the interim response.
+    let (status, headers) = client.head();
+    assert_eq!(status, 200);
+    assert!(headers.contains(&format!("Content-Length: {LENGTH}")));
+    let patience = Instant::now() + PATIENCE;
+    let mut left = LENGTH;
+    let mut piece = vec![0u8; 4096];
+    while writes.load(Ordering::SeqCst) < 2 {
+        assert!(
+            Instant::now() < patience,
+            "the server did not come to the second request"
+        );
+        match left {
+            0 => thread::sleep(Duration::from_millis(1)),
+            _ => {
+                let n = piece.len().min(left);
+                client.0.read_exact(&mut piece[..n]).expect("the body");
+                left -= n;
+            }
+        }
+    }
+    // Not waiting for the interim response: the rest of the first
+    // response, the body, and everything that comes.
+    let mut rest = vec![0u8; left];
+    client
+        .0
+        .read_exact(&mut rest)
+        .expect("the rest of the body");
+    assert!(rest.iter().all(|byte| *byte == b'x'));
+    let _ = client.0.get_mut().write_all(b"body");
+    let all = client.rest();
+    let interim: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+    let a_part_of_it = !all.is_empty() && all.len() < interim.len() && interim.starts_with(&all);
+    if a_part_of_it {
+        // The connection ended behind the part, as it must.
+        return;
+    }
+    let second = all.strip_prefix(interim).unwrap_or(&all);
+    let second = String::from_utf8_lossy(second);
+    assert!(
+        second.starts_with("HTTP/1.1 200 ") && second.ends_with("/next [body]"),
+        "the second request was not served: {second:?}"
+    );
 }

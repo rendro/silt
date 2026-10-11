@@ -402,6 +402,7 @@ impl IoPool {
             pool: self.shared.clone(),
             state: state.clone(),
             stop: None,
+            unless_taken: false,
         };
         let queued = state;
         let (cell, in_flight) = (op.cell.clone(), op.in_flight.clone());
@@ -560,6 +561,9 @@ pub(crate) struct IoOp {
     state: Arc<OpState>,
     /// What makes the operation return when nobody waits for it.
     stop: Option<Box<dyn FnOnce() + Send>>,
+    /// `stop` is called whenever the waiter goes without the
+    /// operation's value ([`IoOp::stop_unless_taken`]).
+    unless_taken: bool,
 }
 
 impl IoOp {
@@ -568,6 +572,21 @@ impl IoOp {
     /// that its thread ends.
     pub(crate) fn stop_with(mut self, stop: impl FnOnce() + Send + 'static) -> IoOp {
         self.stop = Some(Box::new(stop));
+        self
+    }
+
+    /// [`IoOp::stop_with`] for an operation on something that is of
+    /// no use to a waiter who did not get the operation's value: a
+    /// connection, where a read that nobody heard has taken bytes
+    /// that are gone with it. `stop` is called when the waiter goes
+    /// without having taken the value ([`IoOp::take`]), whatever the
+    /// operation was doing then: it had not begun, it ran, or it had
+    /// ended. What the waiter is left with does not depend on the
+    /// moment at which it stopped waiting.
+    #[cfg(feature = "tcp")]
+    pub(crate) fn stop_unless_taken(mut self, stop: impl FnOnce() + Send + 'static) -> IoOp {
+        self.stop = Some(Box::new(stop));
+        self.unless_taken = true;
         self
     }
 
@@ -608,7 +627,9 @@ impl IoOp {
 /// program. If it still runs, it is told to stop where it can be, and
 /// its thread is the pool's no longer: whether or not it can be
 /// stopped (a read of the terminal cannot), it does not use up the
-/// pool. If it has not started, it never does.
+/// pool. If it has not started, it never does. An operation that is to
+/// be stopped whenever its value did not reach the waiter
+/// ([`IoOp::stop_unless_taken`]) is told in every one of these cases.
 impl Drop for IoOp {
     fn drop(&mut self) {
         let gone = self.in_flight.lock().take();
@@ -645,7 +666,12 @@ impl Drop for IoOp {
                 Phase::Left | Phase::Gone => (false, false),
             }
         };
-        if running && let Some(stop) = self.stop.take() {
+        // The waiter decides, not where the operation stood.
+        let unheard =
+            self.unless_taken && !self.state.taken.load(std::sync::atomic::Ordering::SeqCst);
+        if (running || unheard)
+            && let Some(stop) = self.stop.take()
+        {
             stop();
         }
         if finished {
@@ -1068,6 +1094,94 @@ mod tests {
         let third = pool.submit(failure, || Value::Unit);
         until("the third ran", || third.cell.get().is_some());
         assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    /// An operation on something that is of no use to a waiter who
+    /// did not get its value ([`IoOp::stop_unless_taken`]) is told to
+    /// stop whenever its waiter goes without the value: while it was
+    /// queued, while it ran, and when its value was there and nobody
+    /// had taken it. A waiter that took the value leaves it alone, and
+    /// so does one of an operation that is only stopped while it runs
+    /// ([`IoOp::stop_with`]).
+    #[test]
+    #[cfg(feature = "tcp")]
+    fn a_waiter_that_goes_without_the_value_stops_the_operation_wherever_it_stands() {
+        let pool = pool(1, NEVER_IDLE);
+        let told = Arc::new(AtomicUsize::new(0));
+        let tell = || {
+            let told = told.clone();
+            move || {
+                told.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+        let told = || told.load(Ordering::SeqCst);
+        // One runs, in the pool's one thread.
+        let (release, held) = mpsc::channel::<()>();
+        let running = pool
+            .submit(failure, move || {
+                let _ = held.recv();
+                Value::Unit
+            })
+            .stop_unless_taken(tell());
+        until("the first runs", || {
+            *running.state.phase.lock() == Phase::Running
+        });
+        // Two are in the queue, where no thread takes them. (`submit`
+        // starts a thread for what it queues, or refuses: an operation
+        // stays queued for a moment only, so these are put there by
+        // hand.)
+        let ran = Arc::new(AtomicBool::new(false));
+        let queued = |stop: bool| {
+            let state = OpState::new(Phase::Queued);
+            let flag = ran.clone();
+            let job: IoJob = Box::new(move || {
+                flag.store(true, Ordering::SeqCst);
+                Box::new(|| {})
+            });
+            let mut pool_state = pool.shared.state.lock();
+            pool_state.queue.push_back((job, state.clone()));
+            let op = IoOp {
+                cell: state.cell.clone(),
+                in_flight: Arc::default(),
+                pool: pool.shared.clone(),
+                state,
+                stop: None,
+                unless_taken: false,
+            };
+            match stop {
+                true => op.stop_unless_taken(tell()),
+                false => op.stop_with(tell()),
+            }
+        };
+        let (unheard, only_while_it_runs) = (queued(true), queued(false));
+        drop(only_while_it_runs);
+        assert_eq!(told(), 0);
+        drop(unheard);
+        assert_eq!(told(), 1);
+        assert!(pool.shared.state.lock().queue.is_empty());
+        drop(running);
+        assert_eq!(told(), 2);
+        release.send(()).unwrap();
+        assert!(!ran.load(Ordering::SeqCst));
+        // The value is there, and the waiter goes without it.
+        let unheard = pool
+            .submit(failure, || Value::Int(2))
+            .stop_unless_taken(tell());
+        until("its value is there", || {
+            *unheard.state.phase.lock() == Phase::Finished
+        });
+        drop(unheard);
+        assert_eq!(told(), 3);
+        // The value is there, and the waiter takes it.
+        let heard = pool
+            .submit(failure, || Value::Int(3))
+            .stop_unless_taken(tell());
+        until("its value is there", || {
+            *heard.state.phase.lock() == Phase::Finished
+        });
+        assert!(matches!(heard.take(), Some(Value::Int(3))));
+        drop(heard);
+        assert_eq!(told(), 3);
     }
 
     /// After the VM is gone an operation fails with the module's

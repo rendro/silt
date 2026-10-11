@@ -15,7 +15,7 @@ use super::typed::builtins;
 #[cfg(feature = "http")]
 use super::typed::{Arg, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
-use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
 use crate::runtime::sync::{Arm, Cell, Fired, Wait};
 #[cfg(feature = "http")]
@@ -688,7 +688,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
 ///
 /// What is there to be read, and what the system takes of a response
 /// at once, is read and written where the task runs, without waiting
-/// ([`TcpStreamHandle::read_now`], [`TcpStreamHandle::write_now`]): a
+/// ([`TcpStreamHandle::read_now`], [`TcpStreamHandle::write_in_turn`]): a
 /// request that has arrived is answered without a thread changing
 /// hands. Whatever has to be waited for (a request that has not come,
 /// a body, a client that takes its response slowly) is an operation of
@@ -736,7 +736,15 @@ enum ConnState {
     Calling { reply: Reply, called: Called },
     /// A response is to be sent.
     Answering { bytes: Vec<u8>, then: Then },
-    /// A response is being sent.
+    /// A response is being sent: its rest is written by an operation
+    /// of the pool that waits for the system, with the lock of the
+    /// connection's writes. Nothing else is written on the connection
+    /// in this state, by the task or when it is abandoned: a writer
+    /// that takes its turn ([`TcpStreamHandle::write_in_turn`]) would
+    /// wait behind that operation for as long as the client does not
+    /// read, on a thread of the scheduler. Every way out of the state
+    /// has the operation done, or ends the connection without another
+    /// word.
     Sending { op: crate::vm::IoOp, then: Then },
     /// The server has said its last word, a refusal: what the client
     /// still sends is read and dropped.
@@ -849,9 +857,30 @@ impl Conn {
             .submit(not_served, move || {
                 let mut before_body = |waits: bool| {
                     let _ = announced.complete((), scheduler.wake());
+                    // The interim response is written like everything
+                    // that the connection's task writes itself: what
+                    // the system takes at once. The task may have its
+                    // last word to say meanwhile, and waits for this
+                    // write to say it. A client that waits takes these
+                    // bytes at once. Where the system takes none of
+                    // them (its buffer is full of earlier responses
+                    // that the client has not read, or the task has
+                    // ended the writes), nothing stands on the
+                    // connection and nothing is owed: a server may
+                    // leave the interim response out, and the request
+                    // is read on. Where it takes a part of them, half
+                    // an interim response would stand before whatever
+                    // came next: the connection has been shut down
+                    // (`write_whole_in_turn`), and the request ends
+                    // here.
                     match waits {
-                        true => stream.write_all(wire::CONTINUE),
                         false => Ok(()),
+                        true => match stream.write_whole_in_turn(wire::CONTINUE) {
+                            Taken::All | Taken::Nothing => Ok(()),
+                            Taken::Part => Err(std::io::Error::other(
+                                "the client took a part of the interim response",
+                            )),
+                        },
                     }
                 };
                 let next = reader.lock().next(&mut before_body);
@@ -876,7 +905,7 @@ impl Conn {
     /// until the client has taken the rest, for at most
     /// [`wire::TRANSFER_TIME`].
     fn send(&mut self, vm: &mut Vm, bytes: Vec<u8>, then: Then) -> Go {
-        let written = self.stream.write_now(&bytes);
+        let written = self.stream.write_in_turn(&bytes);
         if written == bytes.len() {
             return self.sent(vm, then);
         }
@@ -1021,8 +1050,15 @@ impl Conn {
                     false => Conn::END,
                     true => {
                         let bytes = plain_response(vm, 408, wire::reason(408), Reply::LAST);
-                        let _ = self.stream.write_now(&bytes);
-                        self.stream.end_writes();
+                        // The last word and the end of the writes are
+                        // one turn: after the interim response, if the
+                        // reader's thread is writing it, and with
+                        // nothing between the two. An interim response
+                        // that the reader's thread comes to write
+                        // later finds the writes ended and is left
+                        // out: the reader reads on, and the client is
+                        // heard out.
+                        let _ = self.stream.write_last_in_turn(&bytes);
                         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
                             .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
                         self.state = ConnState::Draining(op);
@@ -1082,8 +1118,10 @@ impl crate::vm::Native for Conn {
     fn abandon(&mut self, vm: &mut Vm) {
         // The task ends in the middle: the handler failed, or the task
         // was stopped with the server, or dropped with the VM. A
-        // request that is in flight is answered; nothing here waits,
-        // so the answer is what the system takes at once. (A program
+        // request that is in flight is answered; nothing here waits
+        // for the system, so the answer is what the system takes at
+        // once, in its turn behind an interim response that the
+        // reader's thread is writing (`write_in_turn`). (A program
         // that fails under `silt run` ends as a process: nothing runs
         // here then, and its connections are just closed.)
         let unavailable = Reply::LAST;
@@ -1096,7 +1134,7 @@ impl crate::vm::Native for Conn {
                 };
                 let Some(e) = failure else {
                     let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
-                    let _ = self.stream.write_now(&bytes);
+                    let _ = self.stream.write_in_turn(&bytes);
                     return;
                 };
                 // The failure is handled here: it is logged, and not
@@ -1112,19 +1150,20 @@ impl crate::vm::Native for Conn {
                     .err(&format!("http.serve: handler error: {e}\n"));
                 if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
                     let bytes = plain_response(vm, 500, wire::reason(500), unavailable);
-                    let _ = self.stream.write_now(&bytes);
+                    let _ = self.stream.write_in_turn(&bytes);
                 }
             }
             // The answer that a task took over and could not send.
             ConnState::Answering { bytes, .. } => {
-                let _ = self.stream.write_now(&bytes);
+                let _ = self.stream.write_in_turn(&bytes);
             }
             ConnState::Reading { in_body: true, .. } => {
                 let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
-                let _ = self.stream.write_now(&bytes);
+                let _ = self.stream.write_in_turn(&bytes);
             }
             // Nothing is in flight: between requests, or the response
-            // is on its way.
+            // is on its way. (Nothing may be written in that case: see
+            // `ConnState::Sending`.)
             _ => {}
         }
     }

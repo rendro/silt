@@ -535,6 +535,42 @@ fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() + Send + 'static {
     move || stream.shut_down()
 }
 
+/// The step of a read or a write on `stream`: `op` runs on the I/O
+/// pool, and the task waits for its value.
+///
+/// A wait that ends without that value ends the connection: its
+/// deadline passed (`task.deadline`, `SILT_IO_TIMEOUT`), its task was
+/// cancelled, or dropped with the program. The connection is shut down
+/// then, wherever the operation stood: it had not begun (its time was
+/// over before it started, and nothing is run), it was queued, it ran
+/// (the shutdown makes it return, and its thread end), or its value
+/// had come and nobody took it (what a read took is gone with it).
+/// What a timeout leaves of a connection does not depend on the
+/// moment at which it came.
+fn on_connection(
+    vm: &mut Vm,
+    stream: &Arc<TcpStreamHandle>,
+    op: impl FnOnce() -> Value + Send + 'static,
+) -> Result<Step, VmError> {
+    let unheard = stopper(stream);
+    if let Some(timed_out) = vm.deadline_exceeded_with(tcp_timeout_err) {
+        unheard();
+        return Ok(Step::Done(timed_out));
+    }
+    // A close() that races with an operation in flight surfaces that
+    // operation's own result. Only a call on a connection that was
+    // closed before is rejected here.
+    if stream.is_closed() {
+        return Ok(Step::Done(err_closed()));
+    }
+    let op = vm
+        .runtime
+        .io_pool
+        .submit(tcp_timeout_err, op)
+        .stop_unless_taken(unheard);
+    vm.io_wait("tcp", tcp_timeout_err, op)
+}
+
 // ── The functions ──────────────────────────────────────────────────────
 
 builtins! {
@@ -616,17 +652,7 @@ builtins! {
             ))));
         };
         let stream = stream.clone();
-        // A close() that races with a read in flight surfaces the read's
-        // actual result (typically Ok(empty) = EOF after shutdown). Only a
-        // call on a stream that was closed before is rejected here.
-        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
-            return Ok(Step::Done(r));
-        }
-        if stream.is_closed() {
-            return Ok(Step::Done(err_closed()));
-        }
-        let stop = stopper(&stream);
-        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+        on_connection(vm, &stream.clone(), move || {
             // One read takes no more than this at once, whatever was
             // asked for: the buffer is for what can arrive, not for
             // the number.
@@ -656,14 +682,7 @@ builtins! {
             return Ok(Step::Done(err(format!("n must be non-negative, got {n}"))));
         };
         let stream = stream.clone();
-        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
-            return Ok(Step::Done(r));
-        }
-        if stream.is_closed() {
-            return Ok(Step::Done(err_closed()));
-        }
-        let stop = stopper(&stream);
-        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+        on_connection(vm, &stream.clone(), move || {
             match stream.read_exact(n) {
                 Ok(buf) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
                 Err(e) => tcp_io_err(&e),
@@ -673,14 +692,7 @@ builtins! {
 
     fn write(vm, stream: typed::TcpStream, data: Bytes) -> Result<Step, VmError> {
         let (stream, buf) = (stream.clone(), data.clone());
-        if let Some(r) = vm.deadline_exceeded_with(tcp_timeout_err) {
-            return Ok(Step::Done(r));
-        }
-        if stream.is_closed() {
-            return Ok(Step::Done(err_closed()));
-        }
-        let stop = stopper(&stream);
-        vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
+        on_connection(vm, &stream.clone(), move || {
             match stream.write_all(&buf) {
                 Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
                 Err(e) => tcp_io_err(&e),

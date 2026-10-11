@@ -389,6 +389,30 @@ impl TcpListenerHandle {
 /// On the loopback interface it is made at once.
 const WAKE_CONNECT_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// What the system took of bytes that are written whole or not at all
+/// ([`TcpStreamHandle::write_whole_in_turn`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Taken {
+    All,
+    /// None of them: nothing stands on the connection.
+    Nothing,
+    /// Some of them: the connection was shut down behind them.
+    Part,
+}
+
+/// What a write that takes its turn does with the connection before
+/// the turn passes on.
+#[derive(Clone, Copy)]
+enum Turn {
+    /// Nothing.
+    Passes,
+    /// It shuts the connection down if the system took a part of its
+    /// bytes.
+    WholeOrNothing,
+    /// It ends the writes.
+    EndsWrites,
+}
+
 /// A connection.
 ///
 /// A plain TCP connection is read and written at the same time: a
@@ -585,18 +609,57 @@ impl TcpStreamHandle {
         }
     }
 
-    /// Write what of `bytes` the system takes at once, without waiting
-    /// for anything, and say how much that was: for a writer that
-    /// must not wait where it is (a worker of the scheduler, a task
-    /// that is being dropped). Nothing if a write is in flight, or the
-    /// connection is closed or not a plain one.
+    /// Write what of `bytes` the system takes at once, and say how
+    /// much that was: for a writer that must not wait for the system
+    /// where it is (a worker of the scheduler, a task that is being
+    /// dropped). Nothing if the connection is closed or not a plain
+    /// one.
+    ///
+    /// The writer has its turn after a write that is in flight, and
+    /// waits for that turn. So this is for a connection on which no
+    /// write that waits for the system ([`TcpStreamHandle::write_all`])
+    /// is in flight when it is called: a connection of `http.serve`,
+    /// whose task writes nothing while the rest of a response is on
+    /// its way and ends the connection if it gives that up. (The rule
+    /// stands at `ConnState::Sending` in `builtins/http.rs`; a new
+    /// call there has to keep it.) Whoever has the turn then is in a
+    /// call of this kind itself: it asks the system for what it takes
+    /// at once, and does nothing else under the lock. The wait is as
+    /// long as that, and a thread of the scheduler that waits here is
+    /// not held: the other writer needs nothing of the scheduler to
+    /// finish.
     ///
     /// A read of the connection may be in flight on another thread
     /// meanwhile: it is not disturbed (see `send_now`).
-    pub fn write_now(&self, bytes: &[u8]) -> usize {
-        if self.is_closed() {
-            return 0;
+    pub fn write_in_turn(&self, bytes: &[u8]) -> usize {
+        self.write_at_once(bytes, Turn::Passes)
+    }
+
+    /// [`TcpStreamHandle::write_in_turn`] for the last bytes that are
+    /// written on the connection (a last word): the writes are ended
+    /// in the same turn ([`TcpStreamHandle::end_writes`]), so that no
+    /// other writer comes between the two. One whose turn comes later
+    /// writes nothing.
+    pub fn write_last_in_turn(&self, bytes: &[u8]) -> usize {
+        self.write_at_once(bytes, Turn::EndsWrites)
+    }
+
+    /// [`TcpStreamHandle::write_in_turn`] for bytes that mean nothing
+    /// in part and need not be written at all (an interim response):
+    /// what the system took of them. If it took a part, the
+    /// connection is shut down before the turn passes on: who writes
+    /// next writes nothing, and not something behind a part. If it
+    /// took nothing, nothing of them stands on the connection, which
+    /// is as it was.
+    pub fn write_whole_in_turn(&self, bytes: &[u8]) -> Taken {
+        match self.write_at_once(bytes, Turn::WholeOrNothing) {
+            0 => Taken::Nothing,
+            taken if taken == bytes.len() => Taken::All,
+            _ => Taken::Part,
         }
+    }
+
+    fn write_at_once(&self, bytes: &[u8], turn: Turn) -> usize {
         let TcpIo::Plain {
             socket,
             writing,
@@ -606,11 +669,18 @@ impl TcpStreamHandle {
         else {
             return 0;
         };
-        let Some(_turn) = writing.try_lock() else {
-            return 0;
+        let _turn = match writing.try_lock() {
+            Some(turn) => turn,
+            None => {
+                #[cfg(any(test, feature = "test-hooks"))]
+                tell_write_watches(self, WriteMoment::Waits);
+                writing.lock()
+            }
         };
         let mut written = 0;
-        while written < bytes.len() {
+        // Asked in its turn: a connection that the writer before shut
+        // down is closed for this one.
+        while written < bytes.len() && !self.is_closed() {
             match send_now(socket, switching, &bytes[written..]) {
                 Ok(0) => break,
                 Ok(n) => written += n,
@@ -618,6 +688,19 @@ impl TcpStreamHandle {
                 Err(_) => break,
             }
         }
+        match turn {
+            Turn::Passes => {}
+            Turn::WholeOrNothing => {
+                if (1..bytes.len()).contains(&written) {
+                    self.shut_down();
+                }
+            }
+            Turn::EndsWrites => {
+                let _ = socket.shutdown(std::net::Shutdown::Write);
+            }
+        }
+        #[cfg(any(test, feature = "test-hooks"))]
+        tell_write_watches(self, WriteMoment::Written);
         written
     }
 
@@ -710,6 +793,69 @@ impl TcpStreamHandle {
         }
         #[cfg(not(windows))]
         let _ = self.io_socket;
+    }
+}
+
+// ── What a test is told of the writes that take their turn ─────────
+
+/// Test-only: a moment in a write that takes its turn
+/// ([`TcpStreamHandle::write_in_turn`]).
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteMoment {
+    /// Another writer has the turn: this one is about to wait for it.
+    Waits,
+    /// The system has taken what it takes at once, and the writer
+    /// still has its turn.
+    Written,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+type WriteWatch = Arc<dyn Fn(&TcpStreamHandle, WriteMoment) + Send + Sync>;
+
+#[cfg(any(test, feature = "test-hooks"))]
+static WRITE_WATCHES: Mutex<Vec<(u64, WriteWatch)>> = Mutex::new(Vec::new());
+
+/// Test-only: a watch of the writes ([`watch_writes`]), until it is
+/// dropped.
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct WriteWatching(u64);
+
+/// Test-only: call `watch` at the moments of every write that takes
+/// its turn, on whichever connection of the process (the watch tells
+/// its own by the connection's addresses), on the thread that writes.
+/// A watch that does not return holds the writer where it is: at
+/// [`WriteMoment::Written`], in its turn. That is how a test brings
+/// two writes of a connection together, which nothing outside the
+/// process can do.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn watch_writes(
+    watch: impl Fn(&TcpStreamHandle, WriteMoment) + Send + Sync + 'static,
+) -> WriteWatching {
+    static WATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = WATCHES.fetch_add(1, AtomicOrdering::Relaxed);
+    WRITE_WATCHES.lock().push((id, Arc::new(watch)));
+    WriteWatching(id)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl Drop for WriteWatching {
+    fn drop(&mut self) {
+        WRITE_WATCHES.lock().retain(|(id, _)| *id != self.0);
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+fn tell_write_watches(conn: &TcpStreamHandle, moment: WriteMoment) {
+    // Called outside the lock of the list: a watch may hold its
+    // writer.
+    let watches: Vec<WriteWatch> = WRITE_WATCHES
+        .lock()
+        .iter()
+        .map(|(_, watch)| watch.clone())
+        .collect();
+    for watch in watches {
+        watch(conn, moment);
     }
 }
 
@@ -1009,7 +1155,7 @@ mod tests {
         let mut written = 0;
         let mut full = false;
         for _ in 0..10_000 {
-            let n = conn.write_now(&chunk);
+            let n = conn.write_in_turn(&chunk);
             written += n;
             if n < chunk.len() {
                 full = true;
@@ -1023,7 +1169,7 @@ mod tests {
         // The reader is still waiting, and gets what the peer sends.
         for _ in 0..200 {
             peer.write_all(b"0123456789").expect("write");
-            let _ = conn.write_now(b"x");
+            let _ = conn.write_in_turn(b"x");
         }
         peer.shutdown(std::net::Shutdown::Write).expect("shutdown");
         let read = reader
@@ -1033,6 +1179,159 @@ mod tests {
         assert_eq!(read.len(), 2000);
         assert!(written > 0);
         assert_eq!(conn.read_now(&mut buf), Some(0));
+    }
+
+    /// A write that takes its turn waits for the write that has it,
+    /// and goes on when that one is done: the peer gets both whole,
+    /// one after the other. The first writer is held in its turn by
+    /// the hook of the writes, when the system has taken its bytes;
+    /// the second reports that it waits, and has not written when it
+    /// does.
+    #[test]
+    fn a_write_in_turn_comes_after_the_write_that_has_the_turn() {
+        use std::io::Read;
+        use std::sync::mpsc;
+        let patience = std::time::Duration::from_secs(60);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        peer.set_read_timeout(Some(patience)).expect("read timeout");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        // The first write of this connection stays in its turn until
+        // `go` is dropped; a writer that finds the turn taken says so.
+        let (go, held) = mpsc::channel::<()>();
+        let held = Mutex::new(Some(held));
+        let waits = Arc::new(AtomicBool::new(false));
+        let (waiting, this) = (waits.clone(), Arc::as_ptr(&conn) as usize);
+        let _watching = watch_writes(move |conn, moment| {
+            if !std::ptr::eq(conn, this as *const TcpStreamHandle) {
+                return;
+            }
+            match moment {
+                WriteMoment::Written => {
+                    let held = held.lock().take();
+                    if let Some(held) = held {
+                        let _ = held.recv();
+                    }
+                }
+                WriteMoment::Waits => waiting.store(true, AtomicOrdering::SeqCst),
+            }
+        });
+        let first = {
+            let conn = conn.clone();
+            std::thread::spawn(move || conn.write_in_turn(b"first"))
+        };
+        // The first write has the turn when its bytes have arrived.
+        let mut both = [0u8; 11];
+        peer.read_exact(&mut both[..5]).expect("the first write");
+        let second = {
+            let conn = conn.clone();
+            std::thread::spawn(move || conn.write_in_turn(b"second"))
+        };
+        let limit = std::time::Instant::now() + patience;
+        while !waits.load(AtomicOrdering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < limit,
+                "the second write did not find the turn taken"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            !first.is_finished(),
+            "the first write did not keep its turn"
+        );
+        assert!(!second.is_finished(), "the second write did not wait");
+        drop(go);
+        peer.read_exact(&mut both[5..]).expect("the second write");
+        assert_eq!(first.join().expect("joined"), 5);
+        assert_eq!(second.join().expect("joined"), 6);
+        assert_eq!(&both, b"firstsecond");
+    }
+
+    /// A last word and the end of the writes are one turn: the peer
+    /// reads the word and then the end, a writer whose turn comes
+    /// later writes nothing, and the connection still reads.
+    #[test]
+    fn a_last_write_ends_the_writes_in_its_turn() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .expect("read timeout");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        assert_eq!(conn.write_last_in_turn(b"the last word"), 13);
+        assert_eq!(conn.write_in_turn(b"behind it"), 0);
+        assert_eq!(conn.write_whole_in_turn(b"behind it"), Taken::Nothing);
+        assert!(!conn.is_closed());
+        let mut all = Vec::new();
+        peer.read_to_end(&mut all).expect("the end");
+        assert_eq!(all, b"the last word");
+        peer.write_all(b"heard").expect("write");
+        let mut heard = [0u8; 5];
+        let mut read = 0;
+        while read < heard.len() {
+            read += conn.read(&mut heard[read..]).expect("a read");
+        }
+        assert_eq!(&heard, b"heard");
+    }
+
+    /// Bytes that mean nothing in part are written whole or not at
+    /// all, or the connection ends with them. Whole chunks go to a
+    /// peer that reads nothing until the system does not take one. If
+    /// it took a part of that one, the connection is closed for every
+    /// writer that comes after, and the peer reads the chunks, the
+    /// part, and the end. If it took nothing, the connection is as it
+    /// was: the peer reads the chunks, and what is written then.
+    /// (Which of the two it is, is the system's to say.)
+    #[test]
+    fn what_is_not_written_whole_is_not_written_or_ends_the_connection() {
+        use std::io::Read;
+        let patience = std::time::Duration::from_secs(60);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        peer.set_read_timeout(Some(patience)).expect("read timeout");
+        let conn = TcpStreamHandle::plain(0, listener.accept().expect("accept").0);
+        let chunk = vec![b'w'; 64 * 1024];
+        let mut whole = 0;
+        let last = loop {
+            match conn.write_whole_in_turn(&chunk) {
+                Taken::All => whole += 1,
+                last => break last,
+            }
+            assert!(
+                whole < 10_000,
+                "64 KiB x 10,000 were taken for a peer that reads nothing"
+            );
+        };
+        if last == Taken::Part {
+            assert!(conn.is_closed());
+            assert_eq!(conn.write_in_turn(b"behind the part"), 0);
+            assert_eq!(conn.write_whole_in_turn(b"behind the part"), Taken::Nothing);
+            let mut all = Vec::new();
+            peer.read_to_end(&mut all).expect("the end");
+            assert!(
+                (whole * chunk.len() + 1..(whole + 1) * chunk.len()).contains(&all.len()),
+                "{} bytes after {whole} whole chunks",
+                all.len()
+            );
+            assert!(all.iter().all(|byte| *byte == b'w'));
+            return;
+        }
+        assert!(!conn.is_closed());
+        let mut chunks = vec![0u8; whole * chunk.len()];
+        peer.read_exact(&mut chunks).expect("the whole chunks");
+        // The system has room again when the peer has read.
+        let limit = std::time::Instant::now() + patience;
+        while conn.write_whole_in_turn(b"then") != Taken::All {
+            assert!(!conn.is_closed(), "a part of four bytes was taken");
+            assert!(
+                std::time::Instant::now() < limit,
+                "nothing is taken for a peer that has read everything"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let mut then = [0u8; 4];
+        peer.read_exact(&mut then).expect("what was written then");
+        assert_eq!(&then, b"then");
     }
 
     /// The form for systems without a call that does not wait: the
