@@ -3,9 +3,9 @@
 use std::cmp::Ordering;
 
 use crate::bytecode::Op;
-use crate::value::Value;
+use crate::value::{Float, Value};
 
-use super::{VmError, finite_float};
+use super::VmError;
 
 // ── Arithmetic helpers ────────────────────────────────────────
 
@@ -51,28 +51,33 @@ fn int_overflow(op: Op, a: i64, b: i64) -> VmError {
     VmError::new(format!("integer overflow: {a} {} {b}", symbol(op)))
 }
 
+/// The error of `a op b` that is no Float: a NaN or an infinity.
+#[cold]
+fn float_overflow(op: Op, a: f64, b: f64) -> VmError {
+    VmError::new(format!("float overflow: {a} {} {b}", symbol(op)))
+}
+
 /// [`arithmetic`] of operands that are not two Ints.
 fn other_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Value, VmError> {
     match (a, b) {
         (Value::Float(a), Value::Float(b)) => {
             let (a, b) = (a.get(), b.get());
-            match op {
-                Op::Add => finite_float(a + b, &format!("{a} + {b}")),
-                Op::Sub => finite_float(a - b, &format!("{a} - {b}")),
-                Op::Mul => finite_float(a * b, &format!("{a} * {b}")),
-                Op::Div => {
-                    if b == 0.0 {
-                        return Err(VmError::new("float division by zero".to_string()));
-                    }
-                    finite_float(a / b, &format!("{a} / {b}"))
+            let result = match op {
+                Op::Add => a + b,
+                Op::Sub => a - b,
+                Op::Mul => a * b,
+                Op::Div if b == 0.0 => {
+                    return Err(VmError::new("float division by zero".to_string()));
                 }
-                Op::Mod => {
-                    if b == 0.0 {
-                        return Err(VmError::new("modulo by zero".to_string()));
-                    }
-                    finite_float(a % b, &format!("{a} % {b}"))
-                }
+                Op::Div => a / b,
+                Op::Mod if b == 0.0 => return Err(VmError::new("modulo by zero".to_string())),
+                Op::Mod => a % b,
                 _ => unreachable!(),
+            };
+            // (The text of the error is made where there is one.)
+            match Float::new(result) {
+                Some(float) => Ok(Value::Float(float)),
+                None => Err(float_overflow(op, a, b)),
             }
         }
         _ => {

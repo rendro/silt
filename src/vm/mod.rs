@@ -67,7 +67,7 @@ use crate::bytecode::{Function, Globals, VmClosure};
 use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::TypeTable;
-use crate::value::{Float, Value};
+use crate::value::Value;
 use runtime::{IoPool, RegexCache, TailCalls};
 
 // ── VM ────────────────────────────────────────────────────────────
@@ -149,14 +149,6 @@ impl Drop for Vm {
             self.runtime.shutdown();
         }
     }
-}
-
-/// The Float `f`, the result of the operation `op_desc`: an error if
-/// it is none (a NaN or an infinity).
-fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
-    Float::new(f)
-        .map(Value::Float)
-        .ok_or_else(|| VmError::new(format!("float overflow: {op_desc}")))
 }
 
 impl Vm {
