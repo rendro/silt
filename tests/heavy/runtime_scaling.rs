@@ -274,3 +274,71 @@ fn a_return_costs_the_same_however_many_tail_calls_were_made() {
 fn a_return_from_a_function_a_builtin_calls_costs_the_same_at_any_depth() {
     assert_deep_recursion_is_linear("folded");
 }
+
+/// Five times 2,000 parks of a task that has `depth` calls in
+/// progress, each made by a function that `list.fold` calls: the task
+/// asks another task for an answer, and waits for it.
+fn parks_program(depth: usize) -> String {
+    format!(
+        "import channel
+import list
+import task
+
+fn echo(asks, answers) {{
+  channel.each(asks) {{ n -> channel.send(answers, n) }}
+}}
+
+fn parks(count, asks, answers) {{
+  loop i = 0 {{
+    match i >= count {{
+      true -> i
+      false -> {{
+        channel.send(asks, i)
+        let _ = channel.receive(answers)
+        loop(i + 1)
+      }}
+    }}
+  }}
+}}
+
+fn at_depth(n, asks, answers) {{
+  match n {{
+    0 -> parks(2000, asks, answers)
+    _ -> list.fold([n], 0) {{ acc, x -> acc + at_depth(x - 1, asks, answers) }}
+  }}
+}}
+
+fn round(n) {{
+  let asks = channel.new(0)
+  let answers = channel.new(0)
+  let server = task.spawn({{ -> echo(asks, answers) }})
+  let parked = task.join(task.spawn({{ -> at_depth(n, asks, answers) }}))
+  channel.close(asks)
+  task.join(server)
+  parked
+}}
+
+fn main() {{
+  println(list.fold(1..5, 0) {{ parked, _ -> parked + round({depth}) }})
+}}
+"
+    )
+}
+
+/// A task that parks deep inside functions that builtins call goes on
+/// where it was: the cost of a park does not grow with the depth.
+/// 10,000 parks take about as long 900 calls deep as they do at the
+/// top: at most three times. They took several times as long when
+/// every park unwound and rebuilt the calls in progress.
+#[test]
+fn parking_deep_in_callbacks_costs_the_same_at_any_depth() {
+    let programs = Programs::new("parks");
+    let deep = programs.file("deep.silt", &parks_program(900));
+    let top = programs.file("top.silt", &parks_program(0));
+    assert_within(
+        3.0,
+        (&deep, "10000"),
+        (&top, "10000"),
+        "10,000 parks 900 calls deep, against 10,000 at the top",
+    );
+}
