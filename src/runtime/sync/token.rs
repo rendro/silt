@@ -53,6 +53,11 @@ pub enum Resumed {
     /// The task was cancelled while it waited. No arm was completed:
     /// it took no value and sent none.
     Cancelled,
+    /// The time of the task itself was over
+    /// ([`Wait::task_deadline`](super::Wait)), when a wait began that
+    /// could not end at once or while the task waited. No arm was completed: it took no
+    /// value and sent none. The task ends here.
+    Expired,
 }
 
 enum State {
@@ -63,6 +68,8 @@ enum State {
     Parked,
     Fired(Fired),
     Cancelled,
+    /// Ended by the deadline of the task.
+    Expired,
     /// Fired, and the task has taken the result.
     Taken,
 }
@@ -139,7 +146,9 @@ impl Token {
             let parked = match *state {
                 State::Armed => false,
                 State::Parked => true,
-                State::Fired(_) | State::Cancelled | State::Taken => return false,
+                State::Fired(_) | State::Cancelled | State::Expired | State::Taken => {
+                    return false;
+                }
             };
             *state = State::Cancelled;
             parked
@@ -167,7 +176,7 @@ impl Token {
                 true
             }
             State::Parked => true,
-            State::Fired(_) | State::Cancelled | State::Taken => false,
+            State::Fired(_) | State::Cancelled | State::Expired | State::Taken => false,
         }
     }
 
@@ -177,6 +186,7 @@ impl Token {
         match *state {
             State::Armed | State::Parked => None,
             State::Cancelled => Some(Resumed::Cancelled),
+            State::Expired => Some(Resumed::Expired),
             State::Fired(_) => match std::mem::replace(&mut *state, State::Taken) {
                 State::Fired(fired) => Some(Resumed::Fired(fired)),
                 _ => unreachable!(),
@@ -212,5 +222,15 @@ impl Claim<'_> {
             wakes.push(self.task);
         }
         *self.state = State::Fired(fired);
+    }
+
+    /// End the wait because the time of its task is over
+    /// ([`Resumed::Expired`]). If the task is parked, it is added to
+    /// `wakes`.
+    pub(super) fn expire(mut self, wakes: &mut Wakes) {
+        if matches!(*self.state, State::Parked) {
+            wakes.push(self.task);
+        }
+        *self.state = State::Expired;
     }
 }

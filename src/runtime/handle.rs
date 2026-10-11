@@ -991,6 +991,15 @@ pub struct TaskHandle {
     /// Who the task belongs to (`Vm::set_task_owner`): the
     /// program, or one test of a test run.
     owner: u64,
+    /// When the task is over, as a reading of the clock's monotonic
+    /// time: the task of a function that `task.deadline` runs has one.
+    /// The scheduler puts it on every wait of the task
+    /// (`runtime::sync::Wait::task_deadline`) and ends the task when
+    /// one of them ends by it, or when the task computes on past it.
+    deadline: Option<std::time::Duration>,
+    /// Set when the task was ended by its deadline: that is its
+    /// result then ([`TaskHandle::expire`]).
+    expired: AtomicBool,
 }
 
 impl TaskHandle {
@@ -1006,7 +1015,39 @@ impl TaskHandle {
             cancelled: Arc::new(AtomicBool::new(false)),
             unjoined_failure: AtomicBool::new(false),
             owner,
+            deadline: None,
+            expired: AtomicBool::new(false),
         }
+    }
+
+    /// The handle, for a task that is over at `deadline`.
+    pub fn with_deadline(self, deadline: std::time::Duration) -> Self {
+        Self {
+            deadline: Some(deadline),
+            ..self
+        }
+    }
+
+    /// When the task is over, if it has such a time.
+    pub fn deadline(&self) -> Option<std::time::Duration> {
+        self.deadline
+    }
+
+    /// The task is ended by its deadline: that is its result, unless
+    /// it had one (it was cancelled). Nobody but the scheduler, which
+    /// has the task in hand, ends a task so; it is no failure.
+    pub fn expire(&self, wake: &dyn Wake) {
+        // Before whoever waits for the task is woken.
+        self.expired.store(true, AtomicOrdering::SeqCst);
+        let _ = self.result.complete(
+            Ended(Err(VmError::new("ended by its deadline".to_string()))),
+            wake,
+        );
+    }
+
+    /// Whether the task was ended by its deadline.
+    pub fn is_expired(&self) -> bool {
+        self.expired.load(AtomicOrdering::SeqCst)
     }
 
     /// The owner tag of the task.

@@ -14,6 +14,9 @@
 //!   task is handed back with [`Resumed::Fired`];
 //! - it is cancelled ([`Parking::cancel`]): handed back with
 //!   [`Resumed::Cancelled`], having taken and sent nothing;
+//! - the time of the task itself is over
+//!   ([`Wait::task_deadline`]): handed back with
+//!   [`Resumed::Expired`], having taken and sent nothing;
 //! - the runtime shuts down ([`Parking::shutdown`]): the caller gets
 //!   every task to drop.
 //!
@@ -144,6 +147,7 @@ impl<T: Send> Parking<T> {
         let parked = match park(id, wait, &self.timer, self) {
             Park::Ready(fired) => return Some((task, Resumed::Fired(fired))),
             Park::Cancelled => return Some((task, Resumed::Cancelled)),
+            Park::Expired => return Some((task, Resumed::Expired)),
             Park::Parked(parked) => parked,
         };
         let token = parked.token().clone();

@@ -41,6 +41,18 @@ pub struct Wait {
     /// nothing and sends nothing, even while it is on its way into the
     /// wait.
     pub cancel: Option<Arc<AtomicBool>>,
+    /// The time at which the task that waits is over (a reading like
+    /// [`Wait::deadline`]): the task of a function that
+    /// `task.deadline` runs has one. It ends the wait like the wait's
+    /// own deadline, in the same claim of the same token, so the wait
+    /// ends by an arm or by it and never by both; but the task does
+    /// not go on then ([`Resumed::Expired`](super::Resumed)). The
+    /// scheduler puts it on the waits of the task, like the cancel
+    /// flag.
+    pub task_deadline: Option<Duration>,
+    /// `false` for the one wait that the deadline of its task does not
+    /// end ([`Wait::unbounded`]).
+    pub bounded: bool,
 }
 
 impl Wait {
@@ -50,6 +62,31 @@ impl Wait {
             deadline: None,
             first: 0,
             cancel: None,
+            task_deadline: None,
+            bounded: true,
+        }
+    }
+
+    /// A wait that the deadline of its task does not end: what it
+    /// waits for ends by that time itself. The wait of `task.deadline`
+    /// for the task of its function is one: that task's time is no
+    /// later than the caller's.
+    pub fn unbounded(self) -> Wait {
+        Wait {
+            bounded: false,
+            ..self
+        }
+    }
+
+    /// The wait of a task whose time is over at `task_deadline`,
+    /// unless the wait is [unbounded](Wait::unbounded).
+    pub fn task_deadline(self, task_deadline: Option<Duration>) -> Wait {
+        match self.bounded {
+            true => Wait {
+                task_deadline,
+                ..self
+            },
+            false => self,
         }
     }
 
@@ -97,6 +134,10 @@ pub enum Park {
     Parked(Parked),
     /// The task's cancel flag is set: nothing was completed.
     Cancelled,
+    /// The time of the task was over when the wait began
+    /// ([`Wait::task_deadline`]) and no arm could be completed at
+    /// once: nothing was taken or sent.
+    Expired,
 }
 
 /// Start the wait `wait` of `task`.
@@ -109,18 +150,34 @@ pub enum Park {
 /// [`Parked`].
 ///
 /// With the task's cancel flag set ([`Wait::cancel`]) nothing is
-/// tried: the result is [`Park::Cancelled`].
+/// tried: the result is [`Park::Cancelled`]. When the time of the
+/// task is over ([`Wait::task_deadline`]) and no arm can be completed
+/// now, the task is not queued: [`Park::Expired`]. (An arm that can
+/// be completed at once is, as by an operation that never waits: a
+/// value that is there wins over a time that has passed.)
 pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
     let Wait {
         mut arms,
         deadline,
         first,
         cancel,
+        task_deadline,
+        bounded: _,
     } = wait;
+    // The clock is an embedder's code: it is not called under a lock.
+    let now = (deadline.is_some() || task_deadline.is_some()).then(|| timer.now());
+    let over = |at: Option<Duration>| at.is_some_and(|at| now.is_some_and(|now| now >= at));
+    let (expired, task_expired) = (over(deadline), over(task_deadline));
+    let times = Times {
+        deadline,
+        expired,
+        task_deadline,
+        task_expired,
+    };
     // The usual wait: one send or one receive.
     if arms.len() == 1 && !matches!(arms[0], Arm::Cell(_)) {
         let arm = arms.pop().expect("one arm");
-        return park_one(task, arm, deadline, cancel, timer, wake);
+        return park_one(task, arm, times, cancel, timer, wake);
     }
     let mut payloads = Vec::with_capacity(arms.len());
     let mut sources = Vec::with_capacity(arms.len());
@@ -133,9 +190,6 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
         sources.push(source);
         payloads.push(payload);
     }
-    // The clock is an embedder's code: it is not called under a lock.
-    let expired = deadline.is_some_and(|deadline| timer.now() >= deadline);
-
     // All channels of the wait are locked together, in address order,
     // from the first look at an arm until the task is on every queue.
     // So while this task completes an arm no peer can find it on the
@@ -186,6 +240,9 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
             break;
         }
     }
+    if ready.is_none() && task_expired {
+        return Park::Expired;
+    }
     if ready.is_none() && expired {
         ready = Some(Fired::Deadline);
     }
@@ -222,7 +279,7 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
             cell.enqueue(waiter, &mut wakes);
         }
     }
-    let timer = deadline.map(|deadline| (timer.clone(), timer.fire_at(deadline, token.clone())));
+    let timer = times.arm(timer, &token);
     Park::Parked(Parked {
         token,
         sources,
@@ -230,17 +287,46 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     })
 }
 
+/// The two times that can end a wait, and whether each had come when
+/// the wait began.
+#[derive(Copy, Clone)]
+struct Times {
+    deadline: Option<Duration>,
+    expired: bool,
+    task_deadline: Option<Duration>,
+    task_expired: bool,
+}
+
+impl Times {
+    /// Put the wait of `token` in the timer: one entry, at the earlier
+    /// of the two times, which says whose time it is. When both are
+    /// the same reading it is the task's.
+    fn arm(self, timer: &Arc<Timer>, token: &Arc<Token>) -> Option<(Arc<Timer>, TimerId)> {
+        let id = match (self.deadline, self.task_deadline) {
+            (Some(own), Some(task)) if own < task => timer.fire_at(own, token.clone()),
+            (_, Some(task)) => timer.expire_at(task, token.clone()),
+            (Some(own), None) => timer.fire_at(own, token.clone()),
+            (None, None) => return None,
+        };
+        Some((timer.clone(), id))
+    }
+}
+
 /// [`park`] for a wait whose one arm is on a channel: the same steps,
 /// with one lock and nothing to sort.
 fn park_one(
     task: TaskId,
     arm: Arm,
-    deadline: Option<Duration>,
+    times: Times,
     cancel: Option<Arc<AtomicBool>>,
     timer: &Arc<Timer>,
     wake: &dyn Wake,
 ) -> Park {
-    let expired = deadline.is_some_and(|deadline| timer.now() >= deadline);
+    let Times {
+        expired,
+        task_expired,
+        ..
+    } = times;
     let mut wakes = Wakes::default();
     let (source, token) = match arm {
         Arm::Recv(channel) => {
@@ -255,6 +341,7 @@ fn park_one(
             };
             let ready = match outcome {
                 Some(outcome) => Some(Fired::Arm(0, outcome)),
+                None if task_expired => return Park::Expired,
                 None => expired.then_some(Fired::Deadline),
             };
             if let Some(fired) = ready {
@@ -283,6 +370,7 @@ fn park_one(
             };
             let ready = match outcome {
                 Some(outcome) => Some(Fired::Arm(0, outcome)),
+                None if task_expired => return Park::Expired,
                 None => expired.then_some(Fired::Deadline),
             };
             if let Some(fired) = ready {
@@ -301,7 +389,7 @@ fn park_one(
         }
         Arm::Cell(_) => unreachable!("the one arm is on a channel"),
     };
-    let timer = deadline.map(|deadline| (timer.clone(), timer.fire_at(deadline, token.clone())));
+    let timer = times.arm(timer, &token);
     Park::Parked(Parked {
         token,
         sources: vec![source],

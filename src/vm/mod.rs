@@ -114,6 +114,10 @@ pub struct Vm {
     /// VM that runs the program itself. Set when the task is started
     /// (`Scheduler::submit`).
     pub(crate) cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// When the task this is the VM of is over (`TaskHandle::deadline`):
+    /// the VM of a function that `task.deadline` runs has one. A
+    /// `task.deadline` inside it gives its function no later time.
+    pub(crate) deadline: Option<std::time::Duration>,
 
     /// The callers that tail calls replaced, for an error's call stack
     /// ([`TailCalls`]).
@@ -233,6 +237,7 @@ impl Vm {
             woken: None,
             spawned: false,
             cancelled: None,
+            deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -479,6 +484,7 @@ impl Vm {
             woken: None,
             spawned: false,
             cancelled: None,
+            deadline: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }

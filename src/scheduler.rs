@@ -137,6 +137,10 @@ struct Task {
     handle: Arc<TaskHandle>,
     /// The tasks it is counted with: those of its owner.
     group: Arc<Group>,
+    /// The steps of the slices it has run out since it was started or
+    /// its last wait ended. Read only for a task that has a deadline
+    /// ([`Inner::past_its_time`]).
+    ran: usize,
 }
 
 /// The tasks of one owner (`Vm::set_task_owner`): the program, or one
@@ -481,6 +485,7 @@ impl Scheduler {
         handle: Arc<TaskHandle>,
     ) -> Result<(), String> {
         vm.cancelled = Some(handle.cancel_flag());
+        vm.deadline = handle.deadline();
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -514,6 +519,7 @@ impl Scheduler {
             vm,
             handle,
             group,
+            ran: 0,
         });
         Ok(())
     }
@@ -526,6 +532,12 @@ impl Scheduler {
 
     /// `task.cancel` of the task `handle`: it runs no further, and if
     /// it waits, its wait ends without taking or sending anything.
+    ///
+    /// A wait that had ended when the cancel came stays ended: the
+    /// value a receive of the task was handed, or that the operation
+    /// it waited for gave, is the task's, and is dropped with the task,
+    /// which runs no slice in which it could use it. Whoever sent the
+    /// value was told that it was sent.
     pub(crate) fn cancel(&self, handle: &TaskHandle) {
         // The flag first: a task that is about to park reads it.
         handle.cancel(self.wake());
@@ -728,7 +740,9 @@ impl Scheduler {
         };
         match resumed {
             Resumed::Fired(fired) => Ok(fired),
-            Resumed::Cancelled => Err(match verdict {
+            // (No thread has a deadline of its task: only a spawned
+            // task's wait expires.)
+            Resumed::Cancelled | Resumed::Expired => Err(match verdict {
                 Some(verdict) => {
                     // A task that failed is the usual reason why the
                     // counterparty of the wait is missing: it is
@@ -905,7 +919,40 @@ impl Inner {
         }
     }
 
-    /// A task has ended: it completed, failed, or was cancelled.
+    /// The task is ended by its deadline (`TaskHandle::deadline`): a
+    /// wait of it ended by that time, having taken and sent nothing,
+    /// or it computed on past it. It unwinds as a cancelled task does:
+    /// no further instruction of it runs, and what its frames hold is
+    /// given up.
+    fn expire_task(&self, task: Task) {
+        task.handle.expire(&self.parking);
+        self.end_task(task);
+    }
+
+    /// Whether the time of the task is over (`TaskHandle::deadline`).
+    fn over(&self, task: &Task) -> bool {
+        task.handle
+            .deadline()
+            .is_some_and(|deadline| self.parking.timer().now() >= deadline)
+    }
+
+    /// Whether the task, whose slice has just run out, is ended here
+    /// by its deadline: its time is over, and since a wait last ended
+    /// for it in time it has run a slice of the standard length
+    /// ([`time_slice`]).
+    ///
+    /// The bound is in steps and not in slices of the task's own VM,
+    /// so that a wait which gave the task a value in time is followed
+    /// by the same amount of work whatever the slice: the task has the
+    /// steps to return what it took. A task is never ended so at the
+    /// start of a slice, nor in one that it ends by returning or
+    /// failing.
+    fn past_its_time(&self, task: &Task) -> bool {
+        task.ran >= time_slice() && self.over(task)
+    }
+
+    /// A task has ended: it completed, failed, was cancelled, or was
+    /// ended by its deadline.
     fn end_task(&self, task: Task) {
         // Its frames are abandoned before it stops counting.
         let Task {
@@ -926,9 +973,11 @@ impl Inner {
                 match resumed {
                     Resumed::Fired(fired) => {
                         task.vm.woken = Some(fired);
+                        task.ran = 0;
                         self.enqueue(task);
                     }
                     Resumed::Cancelled => self.end_task(task),
+                    Resumed::Expired => self.expire_task(task),
                 }
             }
             Sleeper::Thread(park) => {
@@ -1089,7 +1138,13 @@ impl Inner {
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
         match result {
-            SliceResult::Yielded => self.enqueue(task),
+            SliceResult::Yielded => {
+                task.ran = task.ran.saturating_add(slice);
+                match self.past_its_time(&task) {
+                    true => self.expire_task(task),
+                    false => self.enqueue(task),
+                }
+            }
             SliceResult::Completed(value) => {
                 task.handle.complete(Ok(value), &self.parking);
                 self.end_task(task);
@@ -1106,8 +1161,13 @@ impl Inner {
                 self.end_task(task);
             }
             SliceResult::Blocked(wait) => {
-                let wait = wait.cancel(Some(task.handle.cancel_flag()));
-                let timed = wait.deadline.is_some();
+                // The task's own: its cancel flag and its deadline.
+                // Every wait of a task comes through here, whichever
+                // frame of it waits.
+                let wait = wait
+                    .cancel(Some(task.handle.cancel_flag()))
+                    .task_deadline(task.handle.deadline());
+                let timed = wait.deadline.is_some() || wait.task_deadline.is_some();
                 let cancelled = task.handle.clone();
                 let group = task.group.clone();
                 let id = TaskId(task.id as u64);
@@ -1121,6 +1181,13 @@ impl Inner {
                     Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {
                         group.parking.fetch_sub(1, Ordering::SeqCst);
                         task.vm.woken = Some(fired);
+                        // A wait that was over at once when the time
+                        // of the task was over is as an operation that
+                        // never waits: a task that only does such is
+                        // still ended when its slice has run out.
+                        if !self.over(&task) {
+                            task.ran = 0;
+                        }
                         return Some(task);
                     }
                     Some((sleeper, resumed)) => self.ready(sleeper, resumed),
