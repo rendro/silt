@@ -1408,8 +1408,7 @@ mod http_response_tests {
 
     /// The records the module builds have the fields of their types,
     /// in the types' order (`Value::builtin_record` says so in a debug
-    /// build); a builtin record is shown with its fields in name
-    /// order.
+    /// build), and are shown in that order.
     #[test]
     fn the_records_of_the_module_have_their_types_fields() {
         let headers = || {
@@ -1419,7 +1418,7 @@ mod http_response_tests {
         let response = make_http_response(204, headers(), "done".to_string());
         assert_eq!(
             response.to_string(),
-            "Response {body: done, headers: #{\"accept\": */*}, status: 204}"
+            "Response {status: 204, body: done, headers: #{\"accept\": */*}}"
         );
         let (status, body, record) = extract_http_response(&response).expect("a Response");
         assert_eq!((status, body.as_str()), (204, "done"));
@@ -1429,7 +1428,7 @@ mod http_response_tests {
             make_http_request_value(bv::POST, "/jobs", "n=1", headers(), "go".to_string());
         assert_eq!(
             request.to_string(),
-            "Request {body: go, headers: #{\"accept\": */*}, method: POST, path: /jobs, query: n=1}"
+            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: go}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");

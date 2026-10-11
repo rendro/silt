@@ -446,4 +446,3 @@ fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
         write!(f, "{ns}ns")
     }
 }
-

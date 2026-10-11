@@ -11,7 +11,14 @@ use crate::value::Value;
 
 /// Format a constant value for a disassembly comment.
 fn constant_comment(chunk: &Chunk, k: Const) -> String {
-    format!("{:?}", chunk.constant(k))
+    match chunk.constant(k) {
+        // A function is shown by its name; any other constant as a
+        // program writes it.
+        function @ (Value::VmClosure(_) | Value::BuiltinFn(_) | Value::HostFn(_)) => {
+            format!("{function}")
+        }
+        constant => format!("{constant:?}"),
+    }
 }
 
 /// The lines of a list of names: one continuation line per entry, with

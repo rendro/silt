@@ -489,7 +489,7 @@ fn anonymous_records_of_one_set_of_names_share_a_type() {
 }
 
 /// A builtin record is built with its fields named, in the order its
-/// type declares them, and is shown and ordered in name order.
+/// type declares them, and is written and ordered in that order.
 #[test]
 fn a_builtin_record_has_the_fields_its_type_declares() {
     let date = make_date(2024, 3, 9);
@@ -501,7 +501,8 @@ fn a_builtin_record_has_the_fields_its_type_declares() {
         [Value::Int(2024), Value::Int(3), Value::Int(9)]
     );
     assert_eq!(record.get("month"), Some(&Value::Int(3)));
-    assert_eq!(date.format_silt(), "Date {day: 9, month: 3, year: 2024}");
+    assert_eq!(date.format_silt(), "Date {year: 2024, month: 3, day: 9}");
+    assert_eq!(date.to_string(), "2024-03-09");
     assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
 }
 
