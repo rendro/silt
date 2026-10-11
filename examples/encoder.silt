@@ -28,7 +28,8 @@ fn shift_char(c, shift) {
 
 fn encode_caesar(text, shift) {
   let normalized = (shift % 26 + 26) % 26
-  regex.replace_all_with("[a-zA-Z]", text) { m -> shift_char(m, normalized) }
+  regex.replace_all_with(text, "[a-zA-Z]") { m -> shift_char(m, normalized) }
+    |> result.unwrap_or(text)
 }
 
 fn decode_caesar(text, shift) {
@@ -40,7 +41,7 @@ fn decode_caesar(text, shift) {
 -- ============================================================
 
 fn rot13(text) {
-  regex.replace_all_with("[a-zA-Z]", text) { c ->
+  regex.replace_all_with(text, "[a-zA-Z]") { c ->
     match {
       string.is_upper(c) -> {
         let code = (string.char_code(c) |> option.unwrap_or(65)) - 65
@@ -52,7 +53,7 @@ fn rot13(text) {
       }
       _ -> c
     }
-  }
+  } |> result.unwrap_or(text)
 }
 
 -- ============================================================
@@ -83,7 +84,7 @@ fn rle_encode(text) {
 
 fn rle_decode(text) {
   -- Use regex to find all (count, char) pairs like "3a", "2b", "1c"
-  let pairs = regex.captures_all("(\\d+)([a-zA-Z ])", text)
+  let pairs = regex.captures_all(text, "(\\d+)([a-zA-Z ])") |> result.unwrap_or([])
   pairs
     |> list.map { capture ->
       let count_str = list.get(capture, 1) |> option.unwrap_or("1")

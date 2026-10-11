@@ -33,7 +33,7 @@ syntax keyword siltConstructor InvalidDigit Overflow Underflow
 syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly StatusCode
 syntax keyword siltConstructor InvalidPattern TooBig
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
-syntax keyword siltConstructor ParseFormat OutOfRange
+syntax keyword siltConstructor ParseFormat OutOfRange InvalidFormat
 syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRange
 syntax keyword siltConstructor InvalidPercent InvalidLength Invalid Bind
 

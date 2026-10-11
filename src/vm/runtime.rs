@@ -795,11 +795,11 @@ impl RegexCache {
     }
 
     /// Return a reference to the cached `Regex` for `pattern`, compiling and
-    /// caching it if necessary.
-    pub(super) fn get(&mut self, pattern: &str) -> Result<&Regex, VmError> {
+    /// caching it if necessary; the error of a pattern that does not
+    /// compile.
+    pub(super) fn get(&mut self, pattern: &str) -> Result<&Regex, regex::Error> {
         if !self.map.contains_key(pattern) {
-            let re =
-                Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Regex::new(pattern)?;
             if self.map.len() >= Self::MAX_ENTRIES {
                 // Evict the oldest 25% of entries.
                 for _ in 0..Self::EVICT_COUNT {

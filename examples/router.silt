@@ -1,6 +1,7 @@
 import list
 import map
 import regex
+import result
 import string
 
 -- URL router/dispatcher that matches HTTP requests against route patterns,
@@ -49,7 +50,7 @@ fn pattern_to_regex(pattern) {
 -- Returns Some(map) with extracted params or None if no match.
 fn extract_params(pattern, path) {
   let compiled = pattern_to_regex(pattern)
-  match regex.captures(compiled.regex_str, path) {
+  match (regex.captures(path, compiled.regex_str) |> result.unwrap_or(None)) {
     None -> None
     Some(captures) -> {
       -- captures[0] is the full match, captures[1..] are the groups
@@ -74,7 +75,7 @@ fn match_route(method, path, routes) {
         route.method != method -> false
         _ -> {
           let compiled = pattern_to_regex(route.pattern)
-          regex.is_match(compiled.regex_str, path)
+          regex.is_match(path, compiled.regex_str) |> result.unwrap_or(false)
         }
       }
     }

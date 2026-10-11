@@ -1,0 +1,35 @@
+-- `time.format` and `time.format_date` return a `Result`: a pattern is
+-- text like any other, and one that is no format is
+-- `Err(InvalidFormat(why))`. The same variant answers a bad pattern
+-- of `time.parse` and `time.parse_date`; a text that does not match a
+-- good pattern is `ParseFormat`.
+import time
+
+fn main() -> Result((), time.TimeError) {
+  let day = time.date(2024, 12, 25)?
+  let moment = time.datetime(day, time.time(18, 5, 0)?)
+  println(time.format(moment, "%Y-%m-%d %H:%M"))
+  println(time.format_date(day, "%d/%m/%Y"))
+  println(time.format(moment, "%A, %B %d")?)
+  println(time.format(moment, "%Q"))
+  println(time.format(moment, "%z"))
+  println(time.format_date(day, "%Q"))
+  println(time.format_date(day, "%H"))
+  match time.format_date(day, "100%") {
+    Err(time.InvalidFormat(why)) -> println("InvalidFormat: {why}")
+    other -> println(other)
+  }
+  match time.parse_date("2024-12-25", "%Q") {
+    Err(time.InvalidFormat(_)) -> println("parse_date: InvalidFormat")
+    other -> println(other)
+  }
+  match time.parse("2024-12-25 18:05:00", "%Y-%m-%d %H:%M:%S %") {
+    Err(time.InvalidFormat(_)) -> println("parse: InvalidFormat")
+    other -> println(other)
+  }
+  match time.parse_date("yesterday", "%Y-%m-%d") {
+    Err(time.ParseFormat(_)) -> println("parse_date: ParseFormat")
+    other -> println(other)
+  }
+  Ok(())
+}

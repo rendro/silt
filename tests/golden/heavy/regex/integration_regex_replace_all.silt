@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.replace_all("\\d+", "abc 123 def 456", "NUM")
+  regex.replace_all("abc 123 def 456", "\\d+", "NUM") |> result.unwrap_or("")
 }
 
 fn main() {

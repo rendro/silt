@@ -1,6 +1,7 @@
 import io
 import list
 import regex
+import result
 import string
 
 -- Unix-pipe-style text processing pipeline.
@@ -39,7 +40,7 @@ fn sort_by_length(lines) {
 fn word_count(lines) {
   lines
     |> list.map { line ->
-      let words = regex.split("\\s+", string.trim(line))
+      let words = regex.split(string.trim(line), "\\s+") |> result.unwrap_or([])
       let count = list.length(words)
       "{count} words: {line}"
     }
@@ -66,7 +67,8 @@ fn reject(lines, pattern) {
 
 -- redact: replace all matches of a regex pattern with "[REDACTED]" in each line
 fn redact(lines, pattern) {
-  lines |> list.map { line -> regex.replace_all(pattern, line, "[REDACTED]") }
+  lines
+    |> list.map { line -> regex.replace_all(line, pattern, "[REDACTED]") |> result.unwrap_or(line) }
 }
 
 -- ============================================================
@@ -109,7 +111,12 @@ fn make_truncate(max_len) {
 
 -- make_replace: returns a closure that applies regex.replace_all_with to each line
 fn make_replace(pattern, transform) {
-  { lines -> lines |> list.map { line -> regex.replace_all_with(pattern, line, transform) } }
+  { lines ->
+    lines
+      |> list.map { line ->
+        regex.replace_all_with(line, pattern, transform) |> result.unwrap_or(line)
+      }
+  }
 }
 
 -- ============================================================
@@ -183,7 +190,7 @@ fn main() {
   -- --------------------------------------------------------
   let result9 = lines
     |> list.map { line ->
-      let parts = regex.split("\\s+", line)
+      let parts = regex.split(line, "\\s+") |> result.unwrap_or([])
       match list.get(parts, 2) {
         Some(level) -> level
         None -> "UNKNOWN"
@@ -224,7 +231,8 @@ fn main() {
   let result13 = lines
     |> list.take(5)
     |> list.map { line ->
-      regex.replace_all_with("(INFO|DEBUG|WARN|ERROR)", line) { m -> "[{string.to_upper(m)}]" }
+      regex.replace_all_with(line, "(INFO|DEBUG|WARN|ERROR)") { m -> "[{string.to_upper(m)}]" }
+        |> result.unwrap_or(line)
     }
     |> numbered
   print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)

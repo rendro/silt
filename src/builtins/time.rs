@@ -41,18 +41,32 @@ fn days_in(year: i32, month: u32) -> u32 {
     }
 }
 
-/// Build `Err(ParseFormat(msg))` from a chrono `ParseError`. chrono's
-/// `Display` doesn't distinguish format-mismatch from field-out-of-range
-/// cleanly — both surface here; we fold "out of range" messages into
-/// `OutOfRange` and treat everything else as `ParseFormat`.
+/// `Err(TimeError)` of a chrono `ParseError`: `InvalidFormat` for a
+/// pattern that is no format, `OutOfRange` for a field that is out of
+/// its range, `ParseFormat` for text that does not match the pattern.
 fn time_parse_err(err: chrono::ParseError) -> Value {
+    use chrono::format::ParseErrorKind;
     let msg = err.to_string();
-    let inner = if msg.contains("out of range") {
-        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg.into())])
-    } else {
-        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg.into())])
+    let variant = match err.kind() {
+        ParseErrorKind::BadFormat => bv::TIME_INVALID_FORMAT,
+        ParseErrorKind::OutOfRange => bv::TIME_OUT_OF_RANGE,
+        _ => bv::TIME_PARSE_FORMAT,
     };
-    Value::variant(bv::ERR, vec![inner])
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(variant, vec![Value::String(msg.into())])],
+    )
+}
+
+/// `Err(InvalidFormat(why))`: the pattern of a format is none.
+fn invalid_format_err(why: String) -> Value {
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::TIME_INVALID_FORMAT,
+            vec![Value::String(why.into())],
+        )],
+    )
 }
 
 /// Build `Err(OutOfRange(msg))` for explicit range rejections from
@@ -73,6 +87,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
         ("ParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
         ("OutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+        ("InvalidFormat", [Value::String(m)]) => format!("time format error: {m}"),
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
@@ -326,19 +341,13 @@ enum StrftimeReceiver {
 /// notice to stderr before the recovery. We classify each parsed
 /// `Item` against the receiver type and surface a clean error up
 /// front so no panic is ever raised.
-fn validate_strftime_pattern(
-    fn_name: &str,
-    pattern: &str,
-    receiver: StrftimeReceiver,
-) -> Result<(), VmError> {
+fn validate_strftime_pattern(pattern: &str, receiver: StrftimeReceiver) -> Result<(), String> {
     use chrono::format::{Fixed, Item, Numeric, StrftimeItems};
 
     for item in StrftimeItems::new(pattern) {
         match item {
             Item::Error => {
-                return Err(VmError::new(format!(
-                    "{fn_name}: invalid format specifier in '{pattern}'"
-                )));
+                return Err(format!("invalid format specifier in '{pattern}'"));
             }
             Item::Numeric(ref n, _) => {
                 // Time-component numeric specifiers cannot render
@@ -354,10 +363,10 @@ fn validate_strftime_pattern(
                         | Numeric::Timestamp
                 );
                 if is_time_only && matches!(receiver, StrftimeReceiver::Date) {
-                    return Err(VmError::new(format!(
-                        "{fn_name}: time specifier in '{pattern}' is not \
-                         valid for a Date; use time.format with a DateTime instead"
-                    )));
+                    return Err(format!(
+                        "time specifier in '{pattern}' is not valid for a Date; \
+                         use time.format with a DateTime instead"
+                    ));
                 }
             }
             Item::Fixed(ref fx) => {
@@ -372,10 +381,10 @@ fn validate_strftime_pattern(
                         | Fixed::Nanosecond9
                 );
                 if is_time_only && matches!(receiver, StrftimeReceiver::Date) {
-                    return Err(VmError::new(format!(
-                        "{fn_name}: time specifier in '{pattern}' is not \
-                         valid for a Date; use time.format with a DateTime instead"
-                    )));
+                    return Err(format!(
+                        "time specifier in '{pattern}' is not valid for a Date; \
+                         use time.format with a DateTime instead"
+                    ));
                 }
                 // Timezone specifiers: NaiveDate has no time AND no
                 // TZ; NaiveDateTime has no TZ. Reject for both.
@@ -396,10 +405,10 @@ fn validate_strftime_pattern(
                         StrftimeReceiver::Date => "Date",
                         StrftimeReceiver::DateTime => "naive DateTime",
                     };
-                    return Err(VmError::new(format!(
-                        "{fn_name}: timezone specifier in '{pattern}' is not \
-                         valid for a {what}; silt DateTimes are naive (no TZ)"
-                    )));
+                    return Err(format!(
+                        "timezone specifier in '{pattern}' is not valid for a {what}; \
+                         silt DateTimes are naive (no TZ)"
+                    ));
                 }
             }
             _ => {}
@@ -543,16 +552,23 @@ builtins! {
         Instant::of_utc(utc)
     }
 
-    fn format(datetime: DateTime, pattern: &str) -> Result<String, VmError> {
+    // A pattern that is no format (an unknown specifier, one of a time
+    // for a date, one of a time zone) is `Err(InvalidFormat(why))`: a
+    // pattern is text like any other.
+    fn format(datetime: DateTime, pattern: &str) -> Result<Value, VmError> {
         let datetime = datetime.naive()?;
-        validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;
-        Ok(datetime.format(pattern).to_string())
+        Ok(match validate_strftime_pattern(pattern, StrftimeReceiver::DateTime) {
+            Ok(()) => ok(Value::String(datetime.format(pattern).to_string().into())),
+            Err(why) => invalid_format_err(why),
+        })
     }
 
-    fn format_date(date: Date, pattern: &str) -> Result<String, VmError> {
+    fn format_date(date: Date, pattern: &str) -> Result<Value, VmError> {
         let date = date.naive()?;
-        validate_strftime_pattern("time.format_date", pattern, StrftimeReceiver::Date)?;
-        Ok(date.format(pattern).to_string())
+        Ok(match validate_strftime_pattern(pattern, StrftimeReceiver::Date) {
+            Ok(()) => ok(Value::String(date.format(pattern).to_string().into())),
+            Err(why) => invalid_format_err(why),
+        })
     }
 
     fn parse(s: &str, pattern: &str) -> Value {

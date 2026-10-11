@@ -27,10 +27,9 @@ it would go unseen; handle it, return it with `?`, or write `let _ = ...` ``.
 
 Every fallible stdlib module returns a typed error enum — `IoError`,
 `JsonError`, `TomlError`, `IntError`, `FloatError`, `HttpError`, `TcpError`,
-`PostgresError`, `TimeError`, `BytesError`, `EncodingError`, `CryptoError`
-and `UuidError`; no function returns a `Result(_, String)`. (`regex.*`
-raises on an invalid pattern.) Each is named after its module and is a
-member of it (`io.IoError`), and so are its variants: `io.NotFound`,
+`PostgresError`, `TimeError`, `BytesError`, `EncodingError`, `CryptoError`,
+`UuidError` and `RegexError`; no function returns a `Result(_, String)`.
+Each is named after its module and is a member of it (`io.IoError`), and so are its variants: `io.NotFound`,
 `json.Syntax`, `http.Timeout`, and so on; the last variant of each is
 `Other(String)`. The full
 catalog is in [`docs/stdlib/errors.md`](../stdlib/errors.md); hovering

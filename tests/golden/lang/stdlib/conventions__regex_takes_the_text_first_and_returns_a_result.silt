@@ -1,0 +1,45 @@
+-- Every `regex` function takes the text, then the pattern, and returns a
+-- `Result`. Each call below answers differently (or not at all) with
+-- its first two arguments the other way round.
+import regex
+import string
+
+fn main() {
+  println(regex.is_match("abc123", "^[a-z]+\\d+$"))
+  println(regex.find("a1 b22", "\\d\\d"))
+  println(regex.find_all("a1 b22 c333", "\\d+"))
+  println(regex.split("a, b,c", ",\\s*"))
+  println(regex.replace("a1 b22", "\\d+", "#"))
+  println(regex.replace_all("a1 b22", "\\d+", "#"))
+  println(regex.replace_all_with("a1 b22", "\\d+") { m -> "<{m}>" })
+  println(regex.captures("user@host", "(\\w+)@(\\w+)"))
+  println(regex.captures_all("1-2 3-4", "(\\d)-(\\d)"))
+  println(regex.captures_named("k=v", "(?P<key>\\w)=(?P<value>\\w)"))
+  -- The text is what pipes in.
+  println("x  y" |> regex.split("\\s+"))
+  println("a1" |> regex.replace_all("\\d", "#") |> string.from)
+
+  -- A pattern that is no pattern is an error value of every function:
+  -- what is wrong, and the byte of the pattern where.
+  println(regex.is_match("x", "a(b"))
+  println(regex.find("x", "a(b"))
+  println(regex.find_all("x", "a(b"))
+  println(regex.split("x", "a(b"))
+  println(regex.replace("x", "a(b", "#"))
+  println(regex.replace_all("x", "a(b", "#"))
+  println(regex.replace_all_with("x", "a(b") { m -> m })
+  println(regex.captures("x", "a(b"))
+  println(regex.captures_all("x", "a(b"))
+  println(regex.captures_named("x", "a(b"))
+  match regex.find("x", "ab[c") {
+    Err(regex.InvalidPattern(why, at)) -> println("InvalidPattern: {why}, at {at}")
+    other -> println(other)
+  }
+  -- A valid pattern that is given as the text is just a text.
+  println(regex.is_match("a(b", "\\("))
+  -- A pattern too large to compile.
+  match regex.is_match("x", string.repeat("\\pL", 100000)) {
+    Err(regex.TooBig) -> println("TooBig")
+    other -> println(other)
+  }
+}

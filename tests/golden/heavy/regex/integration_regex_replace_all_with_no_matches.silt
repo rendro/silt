@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.replace_all_with("\\d+", "no numbers here", { m -> "X" })
+  regex.replace_all_with("no numbers here", "\\d+", { m -> "X" }) |> result.unwrap_or("")
 }
 
 fn main() {

@@ -2524,10 +2524,10 @@ fn test_regex_cache_eviction_correctness() {
                 --   pat130: middle, possibly cached
                 --   pat259: newest, definitely cached
                 --   "pat1" vs "pat2": must NOT match
-                let early_ok = regex.is_match("pat1", "pat1")
-                let mid_ok = regex.is_match("pat130", "pat130")
-                let late_ok = regex.is_match("pat259", "pat259")
-                let no_match = regex.is_match("pat1", "pat2")
+                let early_ok = regex.is_match("pat1", "pat1") == Ok(true)
+                let mid_ok = regex.is_match("pat130", "pat130") == Ok(true)
+                let late_ok = regex.is_match("pat259", "pat259") == Ok(true)
+                let no_match = regex.is_match("pat2", "pat1") == Ok(true)
                 [early_ok, mid_ok, late_ok, no_match]
             }
             "#,

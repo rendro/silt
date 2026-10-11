@@ -1,6 +1,7 @@
 import io
 import list
 import regex
+import result
 import string
 
 -- Markdown link checker that extracts [text](url) links from a file,
@@ -31,7 +32,7 @@ fn main() {
   println("")
   -- Extract all [text](url) links using regex capture groups
   let pattern = """\[([^\]]*)\]\(([^)]*)\)"""
-  let matches = regex.captures_all(pattern, content)
+  let matches = regex.captures_all(content, pattern) |> result.unwrap_or([])
   let total = list.length(matches)
   println("Found {total} links")
   println("")

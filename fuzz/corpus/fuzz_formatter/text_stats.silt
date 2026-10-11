@@ -6,6 +6,7 @@ import map
 import option
 import regex
 import string
+import result
 
 -- Text file statistics: line count, word count, character count, unique words,
 -- average word length, longest/shortest words, and top-N frequency table.
@@ -26,7 +27,7 @@ fn get_filename() {
 fn get_words(text) {
   text
   |> string.split("\n")
-  |> list.flat_map { line -> regex.split("""\s+""", line)
+  |> list.flat_map { line -> regex.split(line, """\s+""") |> result.unwrap_or([])
   |> list.filter { w -> !string.is_empty(w) } }
 }
 

@@ -433,10 +433,11 @@ fn keep_advancing(clock: &FakeClock) -> impl Drop {
 fn time_now_reads_the_clock() {
     let out = Buffer::new();
     let source = r#"
+import result
 import time
 fn main() {
   let dt = time.now() |> time.to_datetime(0)
-  println(time.format(dt, "%Y-%m-%d %H:%M:%S"))
+  println(time.format(dt, "%Y-%m-%d %H:%M:%S") |> result.unwrap_or(""))
 }
 "#;
     let io = HostIo::buffer(&out).clock(FakeClock::default());
@@ -850,11 +851,12 @@ fn docs_ffi_output_and_clock() {
         host: vec![],
     });
     let source = r#"
+import result
 import time
 fn main() {
   println("started")
   time.sleep(time.minutes(90))
-  println(time.now() |> time.to_datetime(0) |> time.format("%H:%M"))
+  println(time.now() |> time.to_datetime(0) |> time.format("%H:%M") |> result.unwrap_or(""))
 }
 "#;
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());

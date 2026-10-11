@@ -5,6 +5,7 @@ import list
 import map
 import option
 import regex
+import result
 import string
 
 -- Text file statistics: line count, word count, character count, unique words,
@@ -29,7 +30,9 @@ fn get_words(text) {
   text
     |> string.split("\n")
     |> list.flat_map { line ->
-      regex.split("""\s+""", line) |> list.filter { w -> !string.is_empty(w) }
+      regex.split(line, """\s+""")
+        |> result.unwrap_or([])
+        |> list.filter { w -> !string.is_empty(w) }
     }
 }
 

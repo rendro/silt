@@ -777,7 +777,7 @@ impl Vm {
     pub(crate) fn get_regex<'a>(
         cache: &'a mut RegexCache,
         pattern: &str,
-    ) -> Result<&'a Regex, VmError> {
+    ) -> Result<&'a Regex, regex::Error> {
         cache.get(pattern)
     }
 

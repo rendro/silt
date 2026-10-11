@@ -463,7 +463,8 @@ pub mod bv {
     pub const TCP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TCP_ERROR, 5);
     pub const TIME_PARSE_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 0);
     pub const TIME_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 1);
-    pub const TIME_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
+    pub const TIME_INVALID_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
+    pub const TIME_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 3);
     pub const BYTES_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 0);
     pub const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
     pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
@@ -871,6 +872,7 @@ mod tests {
             (bv::TCP_OTHER, "Other"),
             (bv::TIME_PARSE_FORMAT, "ParseFormat"),
             (bv::TIME_OUT_OF_RANGE, "OutOfRange"),
+            (bv::TIME_INVALID_FORMAT, "InvalidFormat"),
             (bv::TIME_OTHER, "Other"),
             (bv::BYTES_INVALID_UTF8, "InvalidUtf8"),
             (bv::BYTES_INVALID_HEX, "InvalidHex"),

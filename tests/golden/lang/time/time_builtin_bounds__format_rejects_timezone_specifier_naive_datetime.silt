@@ -1,16 +1,14 @@
--- exit: 1
--- stderr-contains: time.format
--- stderr-contains: timezone
--- stderr-contains: naive
 -- stderr-not-contains: panicked
 -- stderr-not-contains: a Display implementation returned an error
+-- A DateTime is naive: `%z` is no format for it.
 import time
+fn day() -> time.Date {
+  time.Date { year: 2024, month: 6, day: 15 }
+}
 fn main() {
-  println(match time.date(2024, 6, 15) {
-    Ok(d) -> match time.time(10, 30, 0) {
-      Ok(t) -> time.format(time.datetime(d, t), "%z")
-      Err(_) -> "time err"
-    }
-    Err(_) -> "date err"
-  })
+  let t = time.Time { hour: 10, minute: 30, second: 0, ns: 0 }
+  match time.format(time.datetime(day(), t), "%z") {
+    Err(e) -> println(e.message())
+    Ok(text) -> println("formatted: {text}")
+  }
 }

@@ -1,5 +1,6 @@
 -- verdict: same
 import time
+import result
 
 fn main() {
   -- ── Validated construction ──────────────────────────────────────────
@@ -50,9 +51,9 @@ fn main() {
   }
   let dt2 = time.datetime(dt2_date, dt2_time)
   println("formatted: {dt2
-  |> time.format("%A, %B %d, %Y at %H:%M")}")
+  |> time.format("%A, %B %d, %Y at %H:%M") |> result.unwrap_or("")}")
   println("date formatted: {d
-  |> time.format_date("%d/%m/%Y")}")
+  |> time.format_date("%d/%m/%Y") |> result.unwrap_or("")}")
   -- ── Parsing ─────────────────────────────────────────────────────────
   let parsed = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
   match parsed {

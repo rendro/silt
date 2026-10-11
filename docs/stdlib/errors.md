@@ -139,6 +139,7 @@ its own (`float.Empty` is not `int.Empty`).
 |---------|--------|---------|
 | `ParseFormat(String)` | message | pattern did not match input |
 | `OutOfRange(String)` | message | field out of valid range (e.g. month=13) |
+| `InvalidFormat(String)` | what is wrong | the pattern of `time.format`, `time.format_date`, `time.parse` or `time.parse_date` is no format |
 | `Other(String)` | message | unclassified failure |
 
 ### `BytesError` (requires `import bytes`)
@@ -181,14 +182,11 @@ Returned by `uuid.parse`.
 
 ### `RegexError` (requires `import regex`)
 
-Constructible by user code. Stdlib `regex.*` functions do not return
-`Result(_, RegexError)` — their signatures return `Bool` / `Option` /
-`List` / `String`, and an invalid pattern surfaces as a runtime error
-at the call site rather than through `Err`.
+Returned by every `regex.*` function for a pattern that does not compile.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `InvalidPattern(String, Int)` | message, byte offset | pattern did not parse |
+| `InvalidPattern(String, Int)` | what is wrong, the byte of the pattern where | pattern did not parse |
 | `TooBig` | — | compiled pattern exceeded size budget |
 | `Other(String)` | message | unclassified failure |
 

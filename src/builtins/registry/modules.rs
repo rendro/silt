@@ -284,16 +284,16 @@ pub(super) fn modules() -> Vec<Module> {
             ",
             error: "RegexError" => regex::error_text,
             rows: [
-                f("fn captures(pattern: String, text: String) -> Option(List(String))", "Capture groups from first match", regex::captures),
-                f("fn captures_all(pattern: String, text: String) -> List(List(String))", "Capture groups from all matches", regex::captures_all),
-                f("fn captures_named(pattern: String, text: String) -> Option(Map(String, String))", "Named capture groups from first match", regex::captures_named),
-                f("fn find(pattern: String, text: String) -> Option(String)", "First match", regex::find),
-                f("fn find_all(pattern: String, text: String) -> List(String)", "All matches", regex::find_all),
-                f("fn is_match(pattern: String, text: String) -> Bool", "Test if pattern matches", regex::is_match),
-                f("fn replace(pattern: String, text: String, replacement: String) -> String", "Replace first match", regex::replace),
-                f("fn replace_all(pattern: String, text: String, replacement: String) -> String", "Replace all matches", regex::replace_all),
-                f("fn replace_all_with(pattern: String, text: String, f: Fn(String) -> String) -> String", "Replace all with callback", regex::replace_all_with),
-                f("fn split(pattern: String, text: String) -> List(String)", "Split on pattern", regex::split),
+                f("fn captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)", "Capture groups from first match", regex::captures),
+                f("fn captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)", "Capture groups from all matches", regex::captures_all),
+                f("fn captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)", "Named capture groups from first match", regex::captures_named),
+                f("fn find(text: String, pattern: String) -> Result(Option(String), RegexError)", "First match", regex::find),
+                f("fn find_all(text: String, pattern: String) -> Result(List(String), RegexError)", "All matches", regex::find_all),
+                f("fn is_match(text: String, pattern: String) -> Result(Bool, RegexError)", "Test if pattern matches", regex::is_match),
+                f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace),
+                f("fn replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace_all),
+                f("fn replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_all_with),
+                f("fn split(text: String, pattern: String) -> Result(List(String), RegexError)", "Split on pattern", regex::split),
             ],
         },
         module! {
@@ -379,7 +379,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type DateTime { date: Date, time: Time }\n\
                 pub type Duration { ns: Int }\n\
                 pub type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\n\
-                pub type TimeError { ParseFormat(String), OutOfRange(String), Other(String) }\n\
+                pub type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String), Other(String) }\n\
             ",
             error: "TimeError" => time::error_text,
             rows: [
@@ -390,8 +390,8 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn datetime(date: Date, time: Time) -> DateTime", "Combine date and time (infallible)", time::datetime),
                 f("fn to_datetime(instant: Instant, offset_minutes: Int) -> DateTime", "Convert instant to local datetime with UTC offset in minutes", time::to_datetime),
                 f("fn to_instant(datetime: DateTime, offset_minutes: Int) -> Instant", "Convert local datetime to instant with UTC offset in minutes", time::to_instant),
-                f("fn format(datetime: DateTime, pattern: String) -> String", "Format datetime with strftime pattern", time::format),
-                f("fn format_date(date: Date, pattern: String) -> String", "Format date with strftime pattern", time::format_date),
+                f("fn format(datetime: DateTime, pattern: String) -> Result(String, TimeError)", "Format datetime with strftime pattern", time::format),
+                f("fn format_date(date: Date, pattern: String) -> Result(String, TimeError)", "Format date with strftime pattern", time::format_date),
                 f("fn parse(s: String, pattern: String) -> Result(DateTime, TimeError)", "Parse string into datetime with strftime pattern", time::parse),
                 f("fn parse_date(s: String, pattern: String) -> Result(Date, TimeError)", "Parse string into date with strftime pattern", time::parse_date),
                 f("fn add_days(date: Date, days: Int) -> Date", "Add/subtract days from a date", time::add_days),

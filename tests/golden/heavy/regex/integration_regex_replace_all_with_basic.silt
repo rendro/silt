@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.replace_all_with("\\d+", "abc 12 def 34", { m -> "X" })
+  regex.replace_all_with("abc 12 def 34", "\\d+", { m -> "X" }) |> result.unwrap_or("")
 }
 
 fn main() {
