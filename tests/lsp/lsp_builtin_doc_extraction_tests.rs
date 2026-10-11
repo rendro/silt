@@ -172,6 +172,41 @@ fn hover_on_channel_message_returns_its_own_section() {
     client.shutdown();
 }
 
+/// Hover on a variant whose name another module has too shows its own
+/// enum's text: `tcp.Closed` is `TcpError`'s, and what the globals page
+/// says of `channel.Closed` is shown for `channel.Closed` only.
+#[test]
+fn hover_on_a_variant_of_a_shared_name_shows_its_own_enum() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    let source = "import channel\nimport int\nimport tcp\n\nfn main() {\n    let a = tcp.Closed\n    let b: channel.ChannelResult(Int) = channel.Closed\n    let c = int.Empty\n    (a, b, c)\n}\n";
+    client.did_open_and_wait(&uri, source);
+
+    // `Closed` of `tcp.Closed`, line 5 col 16.
+    let md = hover_markdown(&client.hover(&uri, 5, 16)).expect("hover on tcp.Closed");
+    assert!(
+        md.contains("A variant of `tcp.TcpError`") && md.contains("connection closed"),
+        "hover on tcp.Closed should show TcpError; got:\n{md}"
+    );
+    assert!(
+        !md.contains("A variant of `channel`"),
+        "hover on tcp.Closed shows channel's text; got:\n{md}"
+    );
+    // `Closed` of `channel.Closed`, line 6 col 48.
+    let md = hover_markdown(&client.hover(&uri, 6, 48)).expect("hover on channel.Closed");
+    assert!(
+        md.contains("A variant of `channel`: write `channel.Closed`"),
+        "hover on channel.Closed should show its section; got:\n{md}"
+    );
+    // `Empty` of `int.Empty`, line 7 col 16.
+    let md = hover_markdown(&client.hover(&uri, 7, 16)).expect("hover on int.Empty");
+    assert!(
+        md.contains("A variant of `int.IntError`") && !md.contains("A variant of `channel`"),
+        "hover on int.Empty should show IntError; got:\n{md}"
+    );
+    client.shutdown();
+}
+
 /// Coverage smoke test (round 62 phase-2 lock). Every authoritative
 /// qualified builtin name must have a non-empty doc string. Adding
 /// a new builtin without a `## \`<name>\`` section in the matching

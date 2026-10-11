@@ -44,16 +44,15 @@ pub fn pages() -> Vec<(String, &'static str)> {
 
 /// The markdown an editor shows for each builtin name as it is reached
 /// qualified: `list.map`, a module's variant (`io.NotFound`,
-/// `channel.Message`), a prelude name bare.
+/// `channel.Message`), a prelude name bare. A variant's text is its
+/// own module's: two modules that have a variant of one name
+/// (`channel.Closed`, `tcp.Closed`) show two texts.
 pub fn builtin_docs() -> &'static HashMap<String, String> {
     static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
     DOCS.get_or_init(|| {
         let registry = registry();
         let mut docs: HashMap<String, String> = HashMap::new();
         let mut names: HashSet<String> = HashSet::new();
-        // The modules that have a variant of a name (`Timeout` is
-        // `tcp`'s, `http`'s and `postgres`'s).
-        let mut module_variants: HashMap<&str, Vec<&str>> = HashMap::new();
         // A function with no section of its own shows its module's page.
         for module in registry.enabled_modules() {
             for row in module.enabled_rows() {
@@ -61,53 +60,48 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                 docs.insert(name.clone(), strip_frontmatter(module.page).to_string());
                 names.insert(name);
             }
+            // A variant is named with its module, like a function: the
+            // bare name is not one variant's (`Closed` is `channel`'s,
+            // `tcp`'s and `postgres`'s).
             for ty in &module.type_decls {
                 for (variant, _) in ty.variants() {
-                    module_variants
-                        .entry(variant)
-                        .or_default()
-                        .push(module.name);
+                    names.insert(format!("{}.{variant}", module.name));
                 }
             }
         }
         // A name's own section, in whichever page has it.
-        for (file, page) in pages() {
+        for (_, page) in pages() {
             for (keys, body) in iter_sections(page) {
                 for key in keys {
-                    // The globals page documents the prelude as a
-                    // whole (below); its sections are for the variants
-                    // of the builtin modules.
-                    if file == "globals.md" {
-                        for module in module_variants.get(key.as_str()).into_iter().flatten() {
-                            docs.insert(format!("{module}.{key}"), body.clone());
-                        }
-                    } else if names.contains(&key) {
+                    if names.contains(&key) {
                         docs.insert(key, body.clone());
                     }
                 }
             }
         }
-        // A variant of a module's error enum shows the enum's section of
-        // the errors page, unless the globals page has one for it.
+        // A variant without a section of its own shows what documents
+        // its enum, under a line that says whose it is: the enum's
+        // section of the errors page for a variant of the module's
+        // error enum, the module's page for any other.
         let error_sections = iter_sections(ERRORS_PAGE);
         for module in registry.enabled_modules() {
-            let Some(error) = module.error else {
-                continue;
-            };
-            let Some((_, body)) = error_sections
-                .iter()
-                .find(|(keys, _)| keys.iter().any(|k| k == error))
-            else {
-                continue;
-            };
-            let variants = module
-                .type_decls
-                .iter()
-                .filter(|ty| ty.name == error)
-                .flat_map(|ty| ty.variants());
-            for (variant, _) in variants {
-                docs.entry(format!("{}.{variant}", module.name))
-                    .or_insert_with(|| body.clone());
+            for ty in &module.type_decls {
+                let section = error_sections
+                    .iter()
+                    .find(|(keys, _)| {
+                        module.error == Some(ty.name) && keys.iter().any(|k| k == ty.name)
+                    })
+                    .map(|(_, body)| body.as_str());
+                let below = section.unwrap_or_else(|| strip_frontmatter(module.page));
+                for (variant, _) in ty.variants() {
+                    let name = format!("{}.{variant}", module.name);
+                    docs.entry(name).or_insert_with(|| {
+                        format!(
+                            "A variant of `{0}.{1}`, reached as `{0}.{variant}`.\n\n{below}",
+                            module.name, ty.name
+                        )
+                    });
+                }
             }
         }
         let globals = strip_frontmatter(GLOBALS_PAGE);
@@ -501,6 +495,58 @@ mod tests {
         assert_eq!(summary_signature(row), "() -> List(String)");
         let row = registry().row("math", "pi").expect("math.pi");
         assert_eq!(summary_signature(row), "Float");
+    }
+
+    /// Every variant of every builtin module, as the registry has them,
+    /// shows a text of its own module and enum: it names the variant as
+    /// it is reached and its enum, and it is not the text of another
+    /// module's variant of the same name (`tcp.Closed` does not show
+    /// what is written for `channel.Closed`: "A variant of `channel`").
+    #[test]
+    fn every_builtin_variant_shows_the_docs_of_its_own_enum() {
+        let docs = builtin_docs();
+        let registry = registry();
+        let mut homes: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut variants = Vec::new();
+        for module in registry.enabled_modules() {
+            for ty in &module.type_decls {
+                for (variant, _) in ty.variants() {
+                    homes.entry(variant).or_default().push(module.name);
+                    variants.push((module.name, ty.name, variant));
+                }
+            }
+        }
+        assert!(variants.len() > 80, "{} variants", variants.len());
+        let mut shared = 0;
+        for (module, ty, variant) in variants {
+            let name = format!("{module}.{variant}");
+            let text = docs
+                .get(&name)
+                .unwrap_or_else(|| panic!("`{name}` has no text"));
+            assert!(text.contains(&name), "`{name}` is not named in:\n{text}");
+            assert!(
+                text.contains(ty),
+                "`{ty}` of `{name}` is not named in:\n{text}"
+            );
+            for other in homes[variant].iter().filter(|other| **other != module) {
+                shared += 1;
+                let theirs = format!("{other}.{variant}");
+                // (Its own text may speak of the other: "`float.Empty`
+                // is not `int.Empty`". What says whose variant a text
+                // is for is its line "A variant of ...".)
+                assert!(
+                    !text.contains(&format!("A variant of `{other}`"))
+                        && !text.contains(&format!("A variant of `{other}.")),
+                    "`{name}` shows the text of `{theirs}`:\n{text}"
+                );
+                assert_ne!(
+                    text, &docs[&theirs],
+                    "`{name}` and `{theirs}` show one text"
+                );
+            }
+        }
+        // `Closed`, `Timeout`, `Other`, ...: the case is not empty.
+        assert!(shared > 20, "{shared} pairs of one name");
     }
 
     #[test]
