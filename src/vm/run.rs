@@ -456,9 +456,10 @@ impl Vm {
                 }
                 Instr::Return => returned!(pop(&mut self.stack)),
                 Instr::CallBuiltin { builtin, argc } => {
-                    let args = self.stack.split_off(self.stack.len() - argc);
                     save!();
-                    let entered = ok!(self.enter_builtin(builtin, &args));
+                    let args_at = self.stack.len() - argc;
+                    let entered =
+                        ok!(self.with_args(args_at, |vm, args| vm.enter_builtin(builtin, args)));
                     go_on!(self.entered(entered));
                 }
                 Instr::MakeClosure { f, captures } => {
@@ -1198,8 +1199,7 @@ impl Vm {
             && let Some(module) = registry().error_module(variant.ty().id)
             && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
         {
-            let args = self.stack.split_off(receiver_slot);
-            let entered = self.enter_row(row, &args)?;
+            let entered = self.with_args(receiver_slot, |vm, args| vm.enter_row(row, args))?;
             return Ok(self.entered(entered));
         }
         // A builtin trait's method the type has natively (display,

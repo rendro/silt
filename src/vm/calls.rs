@@ -90,12 +90,67 @@ impl Vm {
                 self.push_code_frame(closure, func_slot + 1)?;
                 Ok(Entered::Code)
             }
-            other => {
+            other => self.call_other(other, func_slot),
+        }
+    }
+
+    /// [`Vm::call_value`] of a value that is no closure: its arguments,
+    /// and its slot, leave the stack.
+    fn call_other(&mut self, callee: Value, func_slot: usize) -> Result<Entered, VmError> {
+        match callee {
+            Value::BuiltinFn(id) => self.with_args(func_slot + 1, |vm, args| {
+                vm.stack.truncate(func_slot);
+                vm.enter_builtin(id, args)
+            }),
+            Value::HostFn(host) => self.with_args(func_slot + 1, |vm, args| {
+                vm.stack.truncate(func_slot);
+                invoke_host_fn(&host, args).map(Entered::Value)
+            }),
+            Value::VariantConstructor(tag) => {
+                // (The variant takes the list of its fields.)
                 let args = self.stack.split_off(func_slot + 1);
                 self.stack.truncate(func_slot);
-                self.call_with(other, args)
+                let arity = tag.arity();
+                if args.len() != arity {
+                    return Err(VmError::type_confusion(format!(
+                        "variant constructor '{tag}' expects {arity} arguments, got {}",
+                        args.len()
+                    )));
+                }
+                Ok(Entered::Value(Value::variant(tag, args)))
+            }
+            other => {
+                self.stack.truncate(func_slot);
+                Err(VmError::type_confusion(format!(
+                    "cannot call value of type {}",
+                    self.user_facing_type_name(&other)
+                )))
             }
         }
+    }
+
+    /// Run `call` with the values of the stack from `at` on, which
+    /// leave the stack, as the arguments of a builtin.
+    ///
+    /// A builtin's body has the VM and its arguments at once, and may
+    /// push on the stack: the arguments are off the stack before it
+    /// runs. They are moved to the VM's one list for them
+    /// (`builtin_args`), which is out of the VM for the time of the
+    /// call and back, emptied, after it: a call allocates no list of
+    /// its own. (A call from inside a call would find the VM's list
+    /// empty and fill a new one. No builtin makes one: one that calls
+    /// a function returns first, and the call is a frame.)
+    pub(super) fn with_args<T>(
+        &mut self,
+        at: usize,
+        call: impl FnOnce(&mut Vm, &[Value]) -> T,
+    ) -> T {
+        let mut args = std::mem::take(&mut self.builtin_args);
+        args.extend(self.stack.drain(at..));
+        let result = call(self, &args);
+        args.clear();
+        self.builtin_args = args;
+        result
     }
 
     /// The step of a builtin's frame that calls `callee` with `args`
@@ -117,40 +172,6 @@ impl Vm {
         Step::Call {
             callee,
             argc: self.stack.len() - func_slot - 1,
-        }
-    }
-
-    /// Call `callee` with `args`, which are not on the stack.
-    pub(super) fn call_with(
-        &mut self,
-        callee: Value,
-        args: Vec<Value>,
-    ) -> Result<Entered, VmError> {
-        match callee {
-            Value::VmClosure(_) => {
-                // The slot a `Call` instruction has the function in.
-                let func_slot = self.stack.len();
-                let argc = args.len();
-                self.stack.push(Value::Unit);
-                self.stack.extend(args);
-                self.call_value(callee, argc, func_slot)
-            }
-            Value::BuiltinFn(id) => self.enter_builtin(id, &args),
-            Value::HostFn(host) => invoke_host_fn(&host, &args).map(Entered::Value),
-            Value::VariantConstructor(tag) => {
-                let arity = tag.arity();
-                if args.len() != arity {
-                    return Err(VmError::type_confusion(format!(
-                        "variant constructor '{tag}' expects {arity} arguments, got {}",
-                        args.len()
-                    )));
-                }
-                Ok(Entered::Value(Value::variant(tag, args)))
-            }
-            other => Err(VmError::type_confusion(format!(
-                "cannot call value of type {}",
-                self.user_facing_type_name(&other)
-            ))),
         }
     }
 

@@ -86,6 +86,9 @@ pub struct Vm {
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
     pub(crate) stack: Vec<Value>,
+    /// The arguments of the builtin being called, off the stack for the
+    /// time of the call; empty between calls ([`Vm::with_args`]).
+    builtin_args: Vec<Value>,
     /// The values of the program's global slots, each unset until its
     /// definition's code has run. The VMs of the program's tasks have
     /// the same slots, not a copy of them: a task starts with nothing
@@ -277,6 +280,7 @@ impl Vm {
             pending_input: None,
             native_frames: 0,
             stack: Vec::new(),
+            builtin_args: Vec::new(),
             globals: Arc::from([]),
             global_slots: Arc::new(Globals::default()),
             types: Arc::new(TypeTable::default()),
@@ -523,6 +527,7 @@ impl Vm {
             pending_input: None,
             native_frames: 0,
             stack: Vec::new(),
+            builtin_args: Vec::new(),
             globals: self.globals.clone(),
             global_slots: self.global_slots.clone(),
             types: self.types.clone(),
