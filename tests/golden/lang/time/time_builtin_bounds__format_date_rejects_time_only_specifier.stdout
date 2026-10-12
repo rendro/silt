@@ -1,1 +1,1 @@
-time format error: time specifier in '%H' is not valid for a Date; use time.format with a DateTime instead
+time format error: a specifier of a time of day in '%H' is not valid for a Date

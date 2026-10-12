@@ -195,7 +195,7 @@ Returned by every `regex.*` function for a pattern that does not compile.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `InvalidPattern(String, Int)` | what is wrong, the byte of the pattern where | pattern did not parse |
+| `InvalidPattern(String, Int)` | what is wrong, and the character of the pattern where: counted from 0, as `string.slice` counts | pattern did not parse |
 | `TooBig` | — | compiled pattern exceeded size budget |
 | `Other(String)` | message | unclassified failure |
 

@@ -39,8 +39,10 @@ fn option(found: Option<Value>) -> Value {
     }
 }
 
-/// What is wrong with a pattern, and the byte of the pattern where it
-/// is wrong, from the report of the `regex` crate. The report shows
+/// What is wrong with a pattern, and the character of the pattern
+/// where it is wrong, counted from 0 as `string.slice` counts (the
+/// pattern's length for a fault at its end), from the report of the
+/// `regex` crate. The report shows
 /// the pattern, marks the place with `^` under it, and says what is
 /// wrong after `error: `:
 ///
@@ -62,12 +64,24 @@ fn syntax_error(pattern: &str, report: &str) -> (String, usize) {
             .position(|line| line.strip_prefix(INDENT) == Some(pattern))?;
         let marks = lines.get(shown + 1)?.strip_prefix(INDENT)?;
         if marks.trim_matches(|c| c == ' ' || c == '^').is_empty() && marks.contains('^') {
-            let column = marks.chars().take_while(|c| *c == ' ').count();
-            let at = pattern
-                .char_indices()
-                .nth(column)
-                .map_or(pattern.len(), |(at, _)| at);
+            // A mark stands under the character it is about, one
+            // column a character. Where the crate marks two places (a
+            // second group of a name, a flag given twice), the first
+            // is the earlier one the fault repeats and the last is the
+            // fault: the place is where the last mark begins. A flag
+            // is one character, and two of them may stand side by
+            // side under one run of marks: the last mark is the fault.
             let what = lines.last()?.strip_prefix("error: ")?;
+            let marks: Vec<char> = marks.chars().collect();
+            let end = marks.iter().rposition(|c| *c == '^')?;
+            let of_a_flag = matches!(what, "duplicate flag" | "flag negation operator repeated");
+            let at = match of_a_flag {
+                true => end,
+                false => marks[..end]
+                    .iter()
+                    .rposition(|c| *c != '^')
+                    .map_or(0, |space| space + 1),
+            };
             return Some((what.to_string(), at));
         }
         None

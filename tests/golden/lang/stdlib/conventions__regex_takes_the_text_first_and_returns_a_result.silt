@@ -20,7 +20,7 @@ fn main() {
   println("a1" |> regex.replace_all("\\d", "#") |> string.from)
 
   -- A pattern that is no pattern is an error value of every function:
-  -- what is wrong, and the byte of the pattern where.
+  -- what is wrong, and the character of the pattern where.
   println(regex.is_match("x", "a(b"))
   println(regex.find("x", "a(b"))
   println(regex.find_all("x", "a(b"))

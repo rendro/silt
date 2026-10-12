@@ -7,3 +7,4 @@ error[runtime]: joined task failed: division by zero
 call stack:
   -> helper  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:10:13
   -> wrapper  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:14:17
+  -> closure in main  at nested_invoke_yield__tco_elided_pruned_on_err_under_task_spawn.silt:17:5

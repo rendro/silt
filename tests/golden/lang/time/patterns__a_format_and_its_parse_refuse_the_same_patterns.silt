@@ -1,0 +1,38 @@
+import list
+import time
+
+fn said(result) {
+  match result {
+    Ok(_) -> "taken"
+    Err(time.InvalidFormat(_)) -> "InvalidFormat"
+    Err(time.ParseFormat(_)) -> "taken (the text does not match)"
+    Err(e) -> "{e}"
+  }
+}
+
+-- For each pattern, what the format says and what its parse says: a
+-- pattern is refused by both or by neither. The last two are the one
+-- difference: fields too few to read a value are written, not read.
+fn main() -> Result((), time.TimeError) {
+  let day = time.date(2001, 2, 3)?
+  let moment = time.datetime(day, time.time(16, 5, 6)?)
+  println("a Date:")
+  list.each(["%Y-%m-%d", "%d %B %Y, a %A", "%Y-%m-%d %H", "%Y-%m-%d %p", "%Y-%m-%d %z", "%Y-%m-%d %Q", "%Y", ""]) { pattern ->
+    let written = time.format_date(day, pattern)
+    let text = match written {
+      Ok(text) -> text
+      Err(_) -> "2001-02-03"
+    }
+    println("  '{pattern}': format {said(written)}, parse {said(time.parse_date(text, pattern))}")
+  }
+  println("a DateTime:")
+  list.each(["%Y-%m-%d %H:%M:%S", "%c", "%s", "%Y-%m-%d %H:%M:%S%.3f", "%Y-%m-%d %H:%M:%S %z", "%+", "%Y-%m-%d %H:%M:%S %Q", "%Y-%m-%d", ""]) { pattern ->
+    let written = time.format(moment, pattern)
+    let text = match written {
+      Ok(text) -> text
+      Err(_) -> "2001-02-03 16:05:06"
+    }
+    println("  '{pattern}': format {said(written)}, parse {said(time.parse(text, pattern))}")
+  }
+  Ok(())
+}
