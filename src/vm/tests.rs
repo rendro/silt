@@ -4602,3 +4602,370 @@ mod pushes_that_make_room {
         }
     }
 }
+
+/// Values whose end is seen, for the tests of what an instruction lets
+/// go of and in which order.
+mod seen_drops {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::runtime::sync::Channel;
+    use crate::value::{HostFn, HostShape};
+
+    /// The numbers of the probes that ended, in the order they ended.
+    pub(super) type Log = Arc<Mutex<Vec<usize>>>;
+
+    struct Probe(usize, Log);
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.1.lock().unwrap().push(self.0);
+        }
+    }
+
+    /// A function that gives a new value at each call: the first is
+    /// probe 1, the next probe 2. A probe is a value nothing else
+    /// holds: when the VM lets go of it, its number is written to the
+    /// log. (A constant would not do: the function's constants hold it
+    /// too.)
+    pub(super) fn maker() -> (Value, Log) {
+        let log = Log::default();
+        let (made, seen) = (AtomicUsize::new(0), log.clone());
+        let make = move |_: &[Value]| {
+            let probe = Probe(made.fetch_add(1, Ordering::SeqCst) + 1, seen.clone());
+            Ok(Value::HostFn(Arc::new(HostFn {
+                name: "probe".to_string(),
+                call: Arc::new(move |_| {
+                    let _ = &probe;
+                    Ok(Value::Unit)
+                }),
+                returns: HostShape::Any,
+            })))
+        };
+        let maker = Value::HostFn(Arc::new(HostFn {
+            name: "maker".to_string(),
+            call: Arc::new(make),
+            returns: HostShape::Any,
+        }));
+        (maker, log)
+    }
+
+    /// A function that gives a new channel at each call, and the
+    /// channels it gave, each as long as something holds it. (A channel
+    /// can be compared, which a function cannot; it does not say when
+    /// it ended, only that it has.)
+    pub(super) fn channels() -> (Value, Arc<Mutex<Vec<std::sync::Weak<Channel>>>>) {
+        let given = Arc::new(Mutex::new(Vec::new()));
+        let (made, seen) = (AtomicUsize::new(0), given.clone());
+        let make = move |_: &[Value]| {
+            let channel = Channel::new(made.fetch_add(1, Ordering::SeqCst), 0);
+            seen.lock().unwrap().push(Arc::downgrade(&channel));
+            Ok(Value::Channel(channel))
+        };
+        let maker = Value::HostFn(Arc::new(HostFn {
+            name: "channels".to_string(),
+            call: Arc::new(make),
+            returns: HostShape::Any,
+        }));
+        (maker, given)
+    }
+
+    /// Emit the push of a new probe, made by the maker constant `k`.
+    pub(super) fn probe(e: &mut Emitter, k: crate::bytecode::Const) {
+        e.emit(Asm::Constant { k }, span()).unwrap();
+        e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+    }
+
+    /// What the log holds now.
+    pub(super) fn ended(log: &Log) -> Vec<usize> {
+        log.lock().unwrap().clone()
+    }
+
+    /// [`left_with`] the maker of probes: the VM, what the loop gave,
+    /// and the log.
+    pub(super) fn left_by(
+        build: impl FnOnce(&mut Emitter, crate::bytecode::Const),
+    ) -> (Vm, Result<Value, VmError>, Log) {
+        let (maker, log) = maker();
+        let (vm, run) = left_with(maker, build);
+        (vm, run, log)
+    }
+
+    /// Run the script `build` emits, given the constant of `maker`,
+    /// until it ends or fails, and give the VM as the instruction loop
+    /// left it (nothing is cut back or unwound yet) and what the loop
+    /// gave.
+    pub(super) fn left_with(
+        maker: Value,
+        build: impl FnOnce(&mut Emitter, crate::bytecode::Const),
+    ) -> (Vm, Result<Value, VmError>) {
+        let script = make_function(|e| {
+            let k = e.constant(maker, span()).unwrap();
+            build(e, k);
+        });
+        let mut vm = Vm::new(crate::HostIo::process());
+        let floor = vm.frames.len();
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(crate::bytecode::VmClosure {
+                function: script,
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        let run = vm.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+        let run = run.map(|slice| match slice {
+            crate::vm::run::Slice::Done(value) => value,
+            _ => panic!("the script runs to its end or to an error"),
+        });
+        (vm, run)
+    }
+}
+
+/// An instruction of two operands (arithmetic, a comparison, `==`,
+/// `!=`) reads them where they lie on the stack and writes its result
+/// over the first.
+mod two_operands {
+    use super::seen_drops::{channels, ended, left_by, left_with, probe};
+    use super::*;
+
+    fn string(s: &str) -> Value {
+        Value::String(s.into())
+    }
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// `a op b`, computed above a value that must stay what it is.
+    fn result(a: Value, op: Asm<'static>, b: Value) -> Value {
+        let below = string("below");
+        let script = make_function(|e| {
+            push(e, below.clone());
+            push(e, a);
+            push(e, b);
+            e.emit(op, span()).unwrap();
+            e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let Value::Tuple(pair) = Vm::new(crate::HostIo::process()).run(script).unwrap() else {
+            panic!("a tuple")
+        };
+        let [kept, result] = &pair[..] else {
+            panic!("a pair")
+        };
+        assert_eq!(kept, &below);
+        result.clone()
+    }
+
+    #[test]
+    fn two_ints() {
+        let int = Value::Int;
+        for (a, op, b, expected) in [
+            (7, Asm::Add, 5, int(12)),
+            (7, Asm::Sub, 5, int(2)),
+            (7, Asm::Mul, -5, int(-35)),
+            (-7, Asm::Div, 2, int(-3)),
+            (-7, Asm::Mod, 2, int(-1)),
+            (i64::MAX - 1, Asm::Add, 1, int(i64::MAX)),
+            (i64::MIN + 1, Asm::Sub, 1, int(i64::MIN)),
+            (7, Asm::Lt, 5, Value::Bool(false)),
+            (7, Asm::Gt, 5, Value::Bool(true)),
+            (5, Asm::Leq, 5, Value::Bool(true)),
+            (5, Asm::Geq, 6, Value::Bool(false)),
+            (5, Asm::Eq, 5, Value::Bool(true)),
+            (5, Asm::Neq, 5, Value::Bool(false)),
+        ] {
+            assert_eq!(
+                result(int(a), op.clone(), int(b)),
+                expected,
+                "{a} {op:?} {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_floats() {
+        for (a, op, b, expected) in [
+            (7.5, Asm::Add, 0.25, float(7.75)),
+            (7.5, Asm::Sub, 0.25, float(7.25)),
+            (7.5, Asm::Mul, -2.0, float(-15.0)),
+            (7.5, Asm::Div, 2.0, float(3.75)),
+            (7.5, Asm::Mod, 2.0, float(1.5)),
+            (7.5, Asm::Lt, 0.25, Value::Bool(false)),
+            (7.5, Asm::Gt, 0.25, Value::Bool(true)),
+            (0.25, Asm::Leq, 0.25, Value::Bool(true)),
+            (0.25, Asm::Geq, 7.5, Value::Bool(false)),
+            (0.25, Asm::Eq, 0.25, Value::Bool(true)),
+            (0.25, Asm::Neq, 0.25, Value::Bool(false)),
+        ] {
+            assert_eq!(
+                result(float(a), op.clone(), float(b)),
+                expected,
+                "{a} {op:?} {b}"
+            );
+        }
+    }
+
+    /// A Float result that is zero is the one zero a Float has.
+    #[test]
+    fn a_float_result_of_zero_has_no_sign() {
+        for (a, op, b) in [
+            (0.0, Asm::Mul, -1.0),
+            (-1.0, Asm::Mul, 0.0),
+            (0.0, Asm::Div, -4.0),
+            (-0.5, Asm::Add, 0.5),
+            (-3.0, Asm::Mod, 3.0),
+        ] {
+            let Value::Float(zero) = result(float(a), op.clone(), float(b)) else {
+                panic!("a Float")
+            };
+            assert_eq!(zero.get().to_bits(), 0.0_f64.to_bits(), "{a} {op:?} {b}");
+        }
+    }
+
+    #[test]
+    fn two_values_of_another_kind_are_compared() {
+        let list = |items: &[i64]| Value::list(items.iter().copied().map(Value::Int).collect());
+        for (a, op, b, expected) in [
+            (string("a"), Asm::Lt, string("b"), true),
+            (string("b"), Asm::Leq, string("a"), false),
+            (string("a"), Asm::Eq, string("a"), true),
+            (string("a"), Asm::Neq, string("a"), false),
+            (list(&[1, 2]), Asm::Gt, list(&[1]), true),
+            (list(&[1, 2]), Asm::Eq, list(&[1, 2]), true),
+            (list(&[1, 2]), Asm::Neq, list(&[2, 1]), true),
+            (Value::Bool(false), Asm::Lt, Value::Bool(true), true),
+            (Value::Bool(true), Asm::Eq, Value::Bool(false), false),
+            (Value::Unit, Asm::Eq, Value::Unit, true),
+            (Value::Unit, Asm::Geq, Value::Unit, true),
+        ] {
+            let shown = format!("{a:?} {op:?} {b:?}");
+            assert_eq!(result(a, op.clone(), b), Value::Bool(expected), "{shown}");
+        }
+    }
+
+    /// The pairs of operands each instruction refuses, in every order.
+    fn refused() -> Vec<(Value, Asm<'static>, Value)> {
+        let int = Value::Int;
+        let mut pairs = vec![];
+        for op in [Asm::Add, Asm::Sub, Asm::Mul, Asm::Div, Asm::Mod] {
+            for (a, b) in [
+                (int(1), float(2.5)),
+                (float(2.5), int(1)),
+                (string("a"), string("b")),
+                (string("a"), int(1)),
+                (int(1), string("a")),
+                (Value::Bool(true), Value::Bool(false)),
+                (Value::Unit, int(1)),
+                (float(1.5), Value::Unit),
+            ] {
+                pairs.push((a, op.clone(), b));
+            }
+        }
+        pairs.extend([
+            (int(i64::MAX), Asm::Add, int(1)),
+            (int(i64::MIN), Asm::Sub, int(1)),
+            (int(i64::MAX), Asm::Mul, int(2)),
+            (int(i64::MIN), Asm::Div, int(-1)),
+            (int(i64::MIN), Asm::Mod, int(-1)),
+            (int(7), Asm::Div, int(0)),
+            (int(7), Asm::Mod, int(0)),
+            (float(7.0), Asm::Div, float(0.0)),
+            (float(7.0), Asm::Mod, float(0.0)),
+            (float(f64::MAX), Asm::Add, float(f64::MAX)),
+            (float(f64::MAX), Asm::Mul, float(2.0)),
+            (float(f64::MIN), Asm::Sub, float(f64::MAX)),
+        ]);
+        for op in [Asm::Lt, Asm::Gt, Asm::Leq, Asm::Geq, Asm::Eq, Asm::Neq] {
+            for (a, b) in [
+                (int(1), string("a")),
+                (string("a"), int(1)),
+                (int(1), float(1.0)),
+                (Value::Bool(true), Value::Unit),
+            ] {
+                pairs.push((a, op.clone(), b));
+            }
+        }
+        pairs
+    }
+
+    /// An instruction that refuses its operands has taken both off the
+    /// stack when it fails, and nothing else: what is read of the
+    /// stack after an error (the REPL goes on, an embedder runs the
+    /// next program) finds it as it was below them.
+    #[test]
+    fn refused_operands_are_off_the_stack_at_the_error() {
+        for (a, op, b) in refused() {
+            let shown = format!("{a:?} {op:?} {b:?}");
+            let (vm, run, _) = left_by(|e, _| {
+                push(e, string("below"));
+                e.emit(Asm::Unit, span()).unwrap();
+                push(e, a);
+                push(e, b);
+                e.emit(op, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.is_err(), "{shown} is refused");
+            assert_eq!(vm.stack, [string("below"), Value::Unit], "{shown}");
+        }
+    }
+
+    /// Operands that are refused are let go of the first before the
+    /// second.
+    #[test]
+    fn refused_operands_end_the_first_before_the_second() {
+        for op in [
+            Asm::Add,
+            Asm::Sub,
+            Asm::Mul,
+            Asm::Div,
+            Asm::Mod,
+            Asm::Lt,
+            Asm::Gt,
+            Asm::Leq,
+            Asm::Geq,
+            Asm::Eq,
+            Asm::Neq,
+        ] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                e.emit(op.clone(), span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.is_err(), "{op:?} of two functions is refused");
+            assert_eq!(ended(&log), [1, 2], "{op:?}");
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// Operands that `==` and `!=` accept are let go of by the
+    /// instruction: nothing holds them when it is done. (No value that
+    /// can be compared says in which order it ended: a probe is a
+    /// function, and a function is refused, alone or in a list. And no
+    /// value that `<` accepts has an end that is seen at all: it
+    /// refuses a channel too.)
+    #[test]
+    fn compared_operands_are_let_go_of() {
+        for op in [Asm::Eq, Asm::Neq] {
+            let (maker, given) = channels();
+            let (vm, run) = left_with(maker, |e, k| {
+                probe(e, k);
+                probe(e, k);
+                e.emit(op.clone(), span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(matches!(run, Ok(Value::Bool(_))), "{op:?} of two channels");
+            let given = given.lock().unwrap();
+            assert_eq!(given.len(), 2);
+            for channel in given.iter() {
+                assert_eq!(channel.strong_count(), 0, "{op:?}");
+            }
+            drop(vm);
+        }
+    }
+}

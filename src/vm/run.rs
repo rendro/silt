@@ -10,7 +10,7 @@ use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
 use crate::value::{Float, List, Record, Value};
 
-use super::arithmetic::{arithmetic, check_same_type, ordering};
+use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
 use super::{Vm, VmError};
@@ -316,6 +316,18 @@ macro_rules! push_copy {
     };
 }
 
+/// Take the value on top off the stack and let go of it ([`done`]),
+/// where it lies: a number, a Bool or unit is not moved out first.
+#[inline(always)]
+fn pop_done(stack: &mut Vec<Value>) {
+    match sort(peek(stack)) {
+        Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit => {
+            std::mem::forget(stack.pop());
+        }
+        Sort::Closure(_) | Sort::Other(_) => drop(stack.pop()),
+    }
+}
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -461,24 +473,53 @@ impl Vm {
                 }
             };
         }
+        // An instruction of two operands reads them where they lie, on
+        // top of the stack, and writes its result over the first; the
+        // second is let go of. Nothing is taken off the stack and
+        // pushed again.
+        macro_rules! operands {
+            () => {{
+                let [.., a, b] = self.stack.as_mut_slice() else {
+                    unreachable!("verified code has both operands on the stack")
+                };
+                (a, b)
+            }};
+        }
+        // The instruction refuses its operands: they leave the stack,
+        // the first before the second, and the instruction fails.
+        macro_rules! refuse {
+            ($error:expr) => {{
+                let error = $error;
+                let below = self.stack.len() - 2;
+                self.stack.truncate(below);
+                fail!(error)
+            }};
+        }
         macro_rules! arithmetic {
             ($op:expr) => {{
-                let b = pop(&mut self.stack);
-                let a = pop(&mut self.stack);
-                let value = ok!(arithmetic($op, &a, &b));
-                self.stack.push(value);
-                done(a);
-                done(b);
+                let (a, b) = operands!();
+                if let (Value::Int(x), Value::Int(y)) = (&*a, &*b) {
+                    match int_arithmetic($op, *x, *y) {
+                        Ok(n) => put(a, Value::Int(n)),
+                        Err(error) => refuse!(error),
+                    }
+                } else {
+                    match float_arithmetic($op, a, b) {
+                        Ok(f) => put(a, Value::Float(f)),
+                        Err(error) => refuse!(error),
+                    }
+                }
+                pop_done(&mut self.stack);
             }};
         }
         macro_rules! compare {
             ($holds:expr) => {{
-                let b = pop(&mut self.stack);
-                let a = pop(&mut self.stack);
-                let ordering = ok!(ordering(&a, &b));
-                self.stack.push(Value::Bool($holds(ordering)));
-                done(a);
-                done(b);
+                let (a, b) = operands!();
+                match ordering(a, b) {
+                    Ok(ordering) => put(a, Value::Bool($holds(ordering))),
+                    Err(error) => refuse!(error),
+                }
+                pop_done(&mut self.stack);
             }};
         }
 
@@ -501,20 +542,22 @@ impl Vm {
                 Instr::Div => arithmetic!(Op::Div),
                 Instr::Mod => arithmetic!(Op::Mod),
                 Instr::Eq => {
-                    let b = pop(&mut self.stack);
-                    let a = pop(&mut self.stack);
-                    ok!(equality_operands(&a, &b));
-                    self.stack.push(Value::Bool(a == b));
-                    done(a);
-                    done(b);
+                    let (a, b) = operands!();
+                    if let Err(error) = equality_operands(a, b) {
+                        refuse!(error);
+                    }
+                    let holds = *a == *b;
+                    put(a, Value::Bool(holds));
+                    pop_done(&mut self.stack);
                 }
                 Instr::Neq => {
-                    let b = pop(&mut self.stack);
-                    let a = pop(&mut self.stack);
-                    ok!(equality_operands(&a, &b));
-                    self.stack.push(Value::Bool(a != b));
-                    done(a);
-                    done(b);
+                    let (a, b) = operands!();
+                    if let Err(error) = equality_operands(a, b) {
+                        refuse!(error);
+                    }
+                    let holds = *a != *b;
+                    put(a, Value::Bool(holds));
+                    pop_done(&mut self.stack);
                 }
                 Instr::Lt => compare!(Ordering::is_lt),
                 Instr::Gt => compare!(Ordering::is_gt),

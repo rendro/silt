@@ -9,15 +9,11 @@ use super::VmError;
 
 // ── Arithmetic helpers ────────────────────────────────────────
 
-/// The value of `a op b`, for the arithmetic instruction `op`. Two
-/// Ints are computed in the caller, the instruction loop; anything
-/// else is a call.
+/// `a op b` of two Ints, for the arithmetic instruction `op`: computed
+/// in the caller, the instruction loop. (Operands that are not two
+/// Ints are [`float_arithmetic`]'s, a call.)
 #[inline(always)]
-pub(super) fn arithmetic(op: Op, a: &Value, b: &Value) -> Result<Value, VmError> {
-    let (Value::Int(a), Value::Int(b)) = (a, b) else {
-        return other_arithmetic(op, a, b);
-    };
-    let (a, b) = (*a, *b);
+pub(super) fn int_arithmetic(op: Op, a: i64, b: i64) -> Result<i64, VmError> {
     let result = match op {
         Op::Add => a.checked_add(b),
         Op::Sub => a.checked_sub(b),
@@ -29,7 +25,7 @@ pub(super) fn arithmetic(op: Op, a: &Value, b: &Value) -> Result<Value, VmError>
         _ => unreachable!(),
     };
     match result {
-        Some(v) => Ok(Value::Int(v)),
+        Some(v) => Ok(v),
         None => Err(int_overflow(op, a, b)),
     }
 }
@@ -57,8 +53,9 @@ fn float_overflow(op: Op, a: Float, b: Float) -> VmError {
     VmError::new(format!("float overflow: {a} {} {b}", symbol(op)))
 }
 
-/// [`arithmetic`] of operands that are not two Ints.
-fn other_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Value, VmError> {
+/// `a op b` of operands that are not two Ints: two Floats give a
+/// Float, anything else is refused.
+pub(super) fn float_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Float, VmError> {
     match (a, b) {
         (Value::Float(a), Value::Float(b)) => {
             let (x, y) = (a.get(), b.get());
@@ -76,7 +73,7 @@ fn other_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Value, VmError> {
             };
             // (The text of the error is made where there is one.)
             match Float::new(result) {
-                Some(float) => Ok(Value::Float(float)),
+                Some(float) => Ok(float),
                 None => Err(float_overflow(op, *a, *b)),
             }
         }
