@@ -4498,8 +4498,7 @@ mod pushes_that_make_room {
             (Asm::False, Value::Bool(false)),
             (Asm::Unit, Value::Unit),
         ] {
-            let script =
-                make_function(|e| listing(e, |_| {}, |e| e.emit(asm.clone(), span()).unwrap()));
+            let script = make_function(|e| listing(e, |_| {}, |e| e.emit(asm, span()).unwrap()));
             all_are(
                 Vm::new(crate::HostIo::process()).run(script).unwrap(),
                 &value,
@@ -4823,11 +4822,7 @@ mod two_operands {
             (5, Asm::Eq, 5, Value::Bool(true)),
             (5, Asm::Neq, 5, Value::Bool(false)),
         ] {
-            assert_eq!(
-                result(int(a), op.clone(), int(b)),
-                expected,
-                "{a} {op:?} {b}"
-            );
+            assert_eq!(result(int(a), op, int(b)), expected, "{a} {op:?} {b}");
         }
     }
 
@@ -4846,11 +4841,7 @@ mod two_operands {
             (0.25, Asm::Eq, 0.25, Value::Bool(true)),
             (0.25, Asm::Neq, 0.25, Value::Bool(false)),
         ] {
-            assert_eq!(
-                result(float(a), op.clone(), float(b)),
-                expected,
-                "{a} {op:?} {b}"
-            );
+            assert_eq!(result(float(a), op, float(b)), expected, "{a} {op:?} {b}");
         }
     }
 
@@ -4864,7 +4855,7 @@ mod two_operands {
             (-0.5, Asm::Add, 0.5),
             (-3.0, Asm::Mod, 3.0),
         ] {
-            let Value::Float(zero) = result(float(a), op.clone(), float(b)) else {
+            let Value::Float(zero) = result(float(a), op, float(b)) else {
                 panic!("a Float")
             };
             assert_eq!(zero.get().to_bits(), 0.0_f64.to_bits(), "{a} {op:?} {b}");
@@ -4888,7 +4879,7 @@ mod two_operands {
             (Value::Unit, Asm::Geq, Value::Unit, true),
         ] {
             let shown = format!("{a:?} {op:?} {b:?}");
-            assert_eq!(result(a, op.clone(), b), Value::Bool(expected), "{shown}");
+            assert_eq!(result(a, op, b), Value::Bool(expected), "{shown}");
         }
     }
 
@@ -4907,7 +4898,7 @@ mod two_operands {
                 (Value::Unit, int(1)),
                 (float(1.5), Value::Unit),
             ] {
-                pairs.push((a, op.clone(), b));
+                pairs.push((a, op, b));
             }
         }
         pairs.extend([
@@ -4931,7 +4922,7 @@ mod two_operands {
                 (int(1), float(1.0)),
                 (Value::Bool(true), Value::Unit),
             ] {
-                pairs.push((a, op.clone(), b));
+                pairs.push((a, op, b));
             }
         }
         pairs
@@ -4978,7 +4969,7 @@ mod two_operands {
             let (vm, run, log) = left_by(|e, k| {
                 probe(e, k);
                 probe(e, k);
-                e.emit(op.clone(), span()).unwrap();
+                e.emit(op, span()).unwrap();
                 e.emit(Asm::Return, span()).unwrap();
             });
             assert!(run.is_err(), "{op:?} of two functions is refused");
@@ -5000,7 +4991,7 @@ mod two_operands {
             let (vm, run) = left_with(maker, |e, k| {
                 probe(e, k);
                 probe(e, k);
-                e.emit(op.clone(), span()).unwrap();
+                e.emit(op, span()).unwrap();
                 e.emit(Asm::Return, span()).unwrap();
             });
             assert!(matches!(run, Ok(Value::Bool(_))), "{op:?} of two channels");
