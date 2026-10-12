@@ -162,6 +162,37 @@ fn done(value: Value) {
     }
 }
 
+/// Write `value` over `*slot`, for the instructions that set a slot of
+/// the frame: [`done`] for the value that was there, where it is: a
+/// number, a Bool or unit is written over without a call of drop, a
+/// value of any other kind is dropped as an assignment drops it.
+#[inline(always)]
+fn put(slot: &mut Value, value: Value) {
+    match slot {
+        Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
+            std::mem::forget(std::mem::replace(slot, value));
+        }
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => *slot = value,
+    }
+}
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -479,7 +510,7 @@ impl Vm {
                 }
                 Instr::SetLocal { slot } => {
                     let value = copy(peek(&self.stack));
-                    done(std::mem::replace(&mut self.stack[base + slot], value));
+                    put(&mut self.stack[base + slot], value);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
                     Some(value) => {
@@ -872,10 +903,7 @@ impl Vm {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
                         let value = copy(&self.stack[start + i]);
-                        done(std::mem::replace(
-                            &mut self.stack[base + first_slot + i],
-                            value,
-                        ));
+                        put(&mut self.stack[base + first_slot + i], value);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
