@@ -1,0 +1,9 @@
+import int
+import list
+
+-- A whole Float inside a list.
+fn main() {
+  println([1.0, 2.0])
+  println([[0.0], [1.5, 3.0]])
+  println(list.map([1, 2], int.to_float))
+}

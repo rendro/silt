@@ -38,6 +38,7 @@ let hundred = 1e2 -- Float(100.0), not Int
 ```
 
 Scientific notation always produces a `Float`, even when the value is a whole number.
+A `Float` is always printed with a decimal point and without an exponent, so a whole one ends in `.0`: `println(1e2)` prints `100.0`.
 Non-finite results like `1e999` are rejected at compile time.
 
 ## Numeric Safety
@@ -67,7 +68,7 @@ A `Float` is always finite: never `NaN`, never infinite. An operation whose resu
 println(1.0 / 2.0) -- 0.5
 println(1.0 / 0.0) -- runtime error: float division by zero
 println(float.max_value * 2.0) -- runtime error: float overflow
-println(math.sqrt(-4.0)) -- runtime error: math.sqrt of a negative number: -4
+println(math.sqrt(-4.0)) -- runtime error: math.sqrt of a negative number: -4.0
 ```
 
 The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
@@ -81,7 +82,7 @@ let ratio = match total {
 }
 ```
 
-Because every `Float` is finite, floats compare, sort and hash as ordinary numbers and work as map keys and set elements. `-0.0` is the same value as `0.0`: `0.0 * -1.0` prints `0`.
+Because every `Float` is finite, floats compare, sort and hash as ordinary numbers and work as map keys and set elements. `-0.0` is the same value as `0.0`: `0.0 * -1.0` prints `0.0`.
 
 ### No implicit coercion
 

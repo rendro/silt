@@ -1,0 +1,5 @@
+error[runtime]: panic: over the limit of 2.0: [3.0, 2.0]
+ --> panic_shows_a_whole_float.silt:5:3
+   |
+ 5 |   panic("over the limit of {limit}: {[3.0, limit]}")
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: over the limit of 2.0: [3.0, 2.0]

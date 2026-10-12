@@ -62,7 +62,7 @@ fn a_float_is_finite_and_has_one_zero() {
     assert!(zero.get().is_sign_positive());
     assert!(negative.expect("a Float").get().is_sign_positive());
     assert_eq!(hash_of(&float(0.0)), hash_of(&float(-0.0)));
-    assert_eq!(format!("{}", float(-0.0)), "0");
+    assert_eq!(format!("{}", float(-0.0)), "0.0");
     for none in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert_eq!(Float::new(none), None);
     }
@@ -81,6 +81,65 @@ fn a_float_is_finite_and_has_one_zero() {
         assert!(float(pair[0]) < float(pair[1]), "{} < {}", pair[0], pair[1]);
         assert_ne!(hash_of(&float(pair[0])), hash_of(&float(pair[1])));
     }
+}
+
+/// A Float's text has a point and no exponent, and a whole Float ends
+/// in `.0`.
+#[test]
+fn a_float_is_written_with_a_point() {
+    for (number, text) in [
+        (1.0, "1.0"),
+        (-3.0, "-3.0"),
+        (0.0, "0.0"),
+        (2.5, "2.5"),
+        (0.1 + 0.2, "0.30000000000000004"),
+        (1e21, "1000000000000000000000.0"),
+        (-1e21, "-1000000000000000000000.0"),
+        (1e-7, "0.0000001"),
+        (9007199254740993.0, "9007199254740992.0"),
+    ] {
+        assert_eq!(format!("{}", float(number)), text);
+        assert_eq!(format!("{:?}", float(number)), text);
+    }
+    let largest = format!("{}", float(f64::MAX));
+    assert_eq!(largest.len(), 311);
+    assert!(largest.starts_with("17976931348623157") && largest.ends_with("0.0"));
+}
+
+/// A width, an alignment, a `+` and a `0` place a Float's text as they
+/// place a number's; a precision asks for its own decimals, as of an
+/// `f64`.
+#[test]
+fn a_float_s_text_takes_a_width_and_a_precision() {
+    let (whole, part) = (float(3.0), float(-2.5));
+    let (Value::Float(whole), Value::Float(part)) = (whole, part) else {
+        panic!("two Floats");
+    };
+    assert_eq!(format!("{whole:.2}"), "3.00");
+    assert_eq!(format!("{part:.2}"), "-2.50");
+    assert_eq!(format!("{whole:.0}"), "3");
+    assert_eq!(format!("{whole:>8}"), "     3.0");
+    assert_eq!(format!("{part:>8}"), "    -2.5");
+    assert_eq!(format!("{whole:<8}|"), "3.0     |");
+    assert_eq!(format!("{part:<8}|"), "-2.5    |");
+    assert_eq!(format!("{whole:^7}|"), "  3.0  |");
+    assert_eq!(format!("{whole:*>6}"), "***3.0");
+    assert_eq!(format!("{whole:08.3}"), "0003.000");
+    assert_eq!(format!("{part:08.3}"), "-002.500");
+    // Without an alignment a number stands to the right; a `0` pads
+    // with zeros behind the sign; a `+` shows the sign of what is not
+    // negative.
+    assert_eq!(format!("{whole:8}"), "     3.0");
+    assert_eq!(format!("{part:8}"), "    -2.5");
+    assert_eq!(format!("{part:^8}|"), "  -2.5  |");
+    assert_eq!(format!("{whole:08}"), "000003.0");
+    assert_eq!(format!("{part:08}"), "-00002.5");
+    assert_eq!(format!("{whole:+}"), "+3.0");
+    assert_eq!(format!("{part:+}"), "-2.5");
+    assert_eq!(format!("{whole:+08}"), "+00003.0");
+    // A width the text already fills changes nothing.
+    assert_eq!(format!("{whole:2}"), "3.0");
+    assert_eq!(format!("{whole:?}"), "3.0");
 }
 
 #[test]

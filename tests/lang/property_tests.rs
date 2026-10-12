@@ -332,3 +332,83 @@ proptest! {
         }
     }
 }
+
+// ── The text of a Float ───────────────────────────────────────────────
+
+/// Any finite number: every exponent is as likely as another, so whole
+/// numbers, fractions, and numbers of hundreds of digits all come up.
+fn arb_finite() -> impl Strategy<Value = f64> {
+    prop::num::f64::NORMAL | prop::num::f64::SUBNORMAL | prop::num::f64::ZERO
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    /// A Float's text is digits with one point among them, behind an
+    /// optional `-`: no exponent, and never the text of an Int. It
+    /// reads back as the same Float.
+    #[test]
+    fn a_float_s_text_has_one_point_and_reads_back(number in arb_finite()) {
+        let float = silt::value::Float::new(number).expect("a finite number");
+        let text = float.to_string();
+        let digits = text.strip_prefix('-').unwrap_or(&text);
+        prop_assert_eq!(digits.matches('.').count(), 1, "{}", &text);
+        prop_assert!(digits.chars().all(|c| c.is_ascii_digit() || c == '.'), "{}", &text);
+        prop_assert!(!digits.starts_with('.') && !digits.ends_with('.'), "{}", &text);
+        prop_assert_eq!(text.parse::<f64>().ok(), Some(float.get()), "{}", &text);
+        if float.get().fract() == 0.0 {
+            prop_assert!(text.ends_with(".0"), "{}", &text);
+        }
+    }
+}
+
+/// A number for `float.format`: any finite one, or one of at most
+/// eight decimal places around zero, where a rounding to a few decimals
+/// gives zero or the digit beside it.
+fn arb_to_format() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        arb_finite(),
+        (-1_000_000i64..1_000_000, 0u32..9)
+            .prop_map(|(n, places)| n as f64 / 10f64.powi(places as i32)),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(300))]
+
+    /// `float.format` never writes a negative zero: at 0 to 6 decimals
+    /// its text is Rust's, and where that is `-0`, `-0.0`, `-0.00`, ...
+    /// (a negative number that rounds to zero), it is the text without
+    /// the sign.
+    #[test]
+    fn float_format_writes_no_negative_zero(number in arb_to_format()) {
+        let calls: Vec<String> = (0..=6)
+            .map(|decimals| format!("float.format({number:e}, {decimals})"))
+            .collect();
+        let source = format!(
+            "import float\nimport string\nfn main() {{ string.join([{}], \"|\") }}",
+            calls.join(", ")
+        );
+        let program = silt::session::testing::compile_str(&source)
+            .map_err(|errors| TestCaseError::fail(format!("{source}: {errors:?}")))?;
+        let joined = match silt::vm::Vm::new(silt::HostIo::process()).run_program(&program) {
+            Ok(silt::value::Value::String(joined)) => joined.to_string(),
+            other => return Err(TestCaseError::fail(format!("{source}: {other:?}"))),
+        };
+        let texts: Vec<&str> = joined.split('|').collect();
+        prop_assert_eq!(texts.len(), 7);
+        for (decimals, text) in texts.into_iter().enumerate() {
+            let is_zero = |digits: &str| digits.chars().all(|c| c == '0' || c == '.');
+            prop_assert!(
+                !text.strip_prefix('-').is_some_and(is_zero),
+                "float.format({number:e}, {decimals}) is {text}"
+            );
+            let rust = format!("{number:.decimals$}");
+            let expected = match rust.strip_prefix('-') {
+                Some(digits) if is_zero(digits) => digits,
+                _ => &rust,
+            };
+            prop_assert_eq!(text, expected, "float.format({:e}, {})", number, decimals);
+        }
+    }
+}

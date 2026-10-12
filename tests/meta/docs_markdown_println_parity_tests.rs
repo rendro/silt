@@ -535,7 +535,7 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
         failures.is_empty(),
         "{} println annotation(s) in markdown docs do not match `silt run` \
          stdout. Either the doc comment drifted from reality (common \
-         causes: `.0` on integer-valued floats, double-quoted strings \
+         causes: a whole Float written without its `.0`, double-quoted strings \
          inside `println` comments, `Some(\"foo\")` instead of \
          `Some(foo)`) or silt's Display convention changed. Fix the doc \
          annotation in the corresponding `.md` file to match observed \

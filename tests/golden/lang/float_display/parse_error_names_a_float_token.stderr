@@ -1,0 +1,9 @@
+error[parse]: expected ']' or ',' to continue list literal, found 2.0
+ --> parse_error_names_a_float_token.silt:4:17
+   |
+ 4 |   let xs = [1.0 2.0]
+   |                 ^^^ expected ']' or ',' to continue list literal, found 2.0
+ ::: parse_error_names_a_float_token.silt:4:12
+   |
+ 4 |   let xs = [1.0 2.0]
+   |            - the list literal starts here

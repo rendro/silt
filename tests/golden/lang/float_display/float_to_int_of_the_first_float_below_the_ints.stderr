@@ -1,0 +1,5 @@
+error[runtime]: float.to_int: -9.223372036854778e18 is outside the Int range
+ --> float_to_int_of_the_first_float_below_the_ints.silt:8:11
+   |
+ 8 |   println(float.to_int(-9223372036854777856.0))
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ float.to_int: -9.223372036854778e18 is outside the Int range

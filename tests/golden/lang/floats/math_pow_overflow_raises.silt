@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: math.pow overflow: 10 ^ 400
+-- stderr-contains: math.pow overflow: 10.0 ^ 400.0
 import math
 fn main() {
   println(math.pow(10.0, 400.0))

@@ -1,0 +1,4 @@
+-- A whole Float as a member of a set.
+fn main() {
+  println(#[1.0, 2.5, 1.0])
+}

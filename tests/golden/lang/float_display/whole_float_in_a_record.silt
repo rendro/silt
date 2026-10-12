@@ -1,0 +1,10 @@
+type P {
+  x: Float,
+  n: Int,
+}
+
+-- A whole Float as a field of a record, named or anonymous.
+fn main() {
+  println(P { x: 1.0, n: 1 })
+  println({ x: 2.0, n: 2 })
+}

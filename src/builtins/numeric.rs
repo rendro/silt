@@ -197,21 +197,18 @@ pub(crate) mod float {
         }
 
         fn to_int(f: f64) -> Result<i64, VmError> {
-            // B7 fix: `as i64` saturates for out-of-range finite floats,
-            // silently clamping e.g. 1e20 to i64::MAX. Reject such values
-            // explicitly so callers see a clear runtime error.
-            //
-            // The f64 representation of `i64::MIN` (-9223372036854775808) is
-            // exact, so `f >= i64::MIN as f64` correctly accepts values
-            // down to and including `i64::MIN`. `i64::MAX` is NOT exactly
-            // representable (rounds up to 9223372036854775808.0), so we
-            // compare strictly less than `(i64::MAX as f64) + 1.0` to
-            // reject everything that would round to or past i64::MAX+1.
-            const I64_MIN_AS_F64: f64 = i64::MIN as f64;
-            const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
-            if !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
+            // The Ints are the Floats from `i64::MIN`, which is a Float,
+            // to below 2^63: `i64::MAX` is no Float, and the Float
+            // nearest to it is 2^63, the first that is too large. (`as`
+            // would give the nearest Int for a number outside.)
+            const LEAST: f64 = i64::MIN as f64;
+            const TOO_LARGE: f64 = 9223372036854775808.0;
+            if !(LEAST..TOO_LARGE).contains(&f) {
+                // Such a number has nineteen digits or more, up to 309:
+                // it is named with an exponent, as a program may write
+                // it (`1e300`).
                 return Err(VmError::new(format!(
-                    "float.to_int: value out of i64 range: {f}"
+                    "float.to_int: {f:e} is outside the Int range"
                 )));
             }
             Ok(f as i64)
@@ -225,13 +222,13 @@ pub(crate) mod float {
             a.max(b)
         }
 
-        fn clamp(x: f64, lo: f64, hi: f64) -> Result<f64, VmError> {
+        fn clamp(x: f64, lo: Float, hi: Float) -> Result<f64, VmError> {
             if lo > hi {
                 return Err(VmError::new(format!(
                     "float.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
                 )));
             }
-            Ok(x.clamp(lo, hi))
+            Ok(x.clamp(lo.get(), hi.get()))
         }
 
         // Rust's `{:.prec$}` formatter backs precision with a u16 and
@@ -248,7 +245,13 @@ pub(crate) mod float {
                     "float.format: decimals {decimals} exceeds maximum precision of 65535"
                 )));
             };
-            Ok(format!("{:.prec$}", f, prec = prec as usize))
+            let text = format!("{:.prec$}", f, prec = prec as usize);
+            // A number that rounds to zero from below is written as
+            // zero is: no Float is `-0.0`, and no text of one is.
+            Ok(match text.strip_prefix('-') {
+                Some(zero) if zero.bytes().all(|b| b == b'0' || b == b'.') => zero.to_string(),
+                _ => text,
+            })
         }
     }
 }
@@ -258,21 +261,21 @@ pub(crate) mod math {
     use super::*;
 
     builtins! {
-        fn sqrt(f: f64) -> Result<f64, VmError> {
-            if f < 0.0 {
+        fn sqrt(f: Float) -> Result<f64, VmError> {
+            if f.get() < 0.0 {
                 return Err(VmError::new(format!("math.sqrt of a negative number: {f}")));
             }
-            Ok(f.sqrt())
+            Ok(f.get().sqrt())
         }
 
-        fn pow(base: f64, exp: f64) -> Result<Value, VmError> {
-            let result = base.powf(exp);
+        fn pow(base: Float, exp: Float) -> Result<Value, VmError> {
+            let result = base.get().powf(exp.get());
             if result.is_nan() {
                 return Err(VmError::new(format!(
                     "math.pow of a negative number to a fractional power: {base} ^ {exp}"
                 )));
             }
-            if base == 0.0 && exp < 0.0 {
+            if base.get() == 0.0 && exp.get() < 0.0 {
                 return Err(VmError::new(format!(
                     "math.pow of zero to a negative power: {base} ^ {exp}"
                 )));
@@ -280,22 +283,22 @@ pub(crate) mod math {
             checked_float(result, || format!("math.pow overflow: {base} ^ {exp}"))
         }
 
-        fn log(f: f64) -> Result<f64, VmError> {
-            if f <= 0.0 {
+        fn log(f: Float) -> Result<f64, VmError> {
+            if f.get() <= 0.0 {
                 return Err(VmError::new(format!(
                     "math.log of a number that is not positive: {f}"
                 )));
             }
-            Ok(f.ln())
+            Ok(f.get().ln())
         }
 
-        fn log10(f: f64) -> Result<f64, VmError> {
-            if f <= 0.0 {
+        fn log10(f: Float) -> Result<f64, VmError> {
+            if f.get() <= 0.0 {
                 return Err(VmError::new(format!(
                     "math.log10 of a number that is not positive: {f}"
                 )));
             }
-            Ok(f.log10())
+            Ok(f.get().log10())
         }
 
         fn sin(f: f64) -> f64 {
@@ -306,26 +309,26 @@ pub(crate) mod math {
             f.cos()
         }
 
-        fn tan(f: f64) -> Result<Value, VmError> {
-            checked_float(f.tan(), || format!("math.tan overflow: {f}"))
+        fn tan(f: Float) -> Result<Value, VmError> {
+            checked_float(f.get().tan(), || format!("math.tan overflow: {f}"))
         }
 
-        fn asin(f: f64) -> Result<f64, VmError> {
-            if !(-1.0..=1.0).contains(&f) {
+        fn asin(f: Float) -> Result<f64, VmError> {
+            if !(-1.0..=1.0).contains(&f.get()) {
                 return Err(VmError::new(format!(
                     "math.asin of a number outside -1..1: {f}"
                 )));
             }
-            Ok(f.asin())
+            Ok(f.get().asin())
         }
 
-        fn acos(f: f64) -> Result<f64, VmError> {
-            if !(-1.0..=1.0).contains(&f) {
+        fn acos(f: Float) -> Result<f64, VmError> {
+            if !(-1.0..=1.0).contains(&f.get()) {
                 return Err(VmError::new(format!(
                     "math.acos of a number outside -1..1: {f}"
                 )));
             }
-            Ok(f.acos())
+            Ok(f.get().acos())
         }
 
         fn atan(f: f64) -> f64 {
@@ -336,8 +339,8 @@ pub(crate) mod math {
             y.atan2(x)
         }
 
-        fn exp(f: f64) -> Result<Value, VmError> {
-            checked_float(f.exp(), || format!("math.exp overflow: {f}"))
+        fn exp(f: Float) -> Result<Value, VmError> {
+            checked_float(f.get().exp(), || format!("math.exp overflow: {f}"))
         }
 
         fn random(vm) -> f64 {
@@ -360,26 +363,18 @@ mod tests {
         }
     }
 
-    // ── float.to_int: B7 out-of-range regression ──────────────────
+    // ── float.to_int: a Float outside the Int range ───────────────
 
     #[test]
     fn float_to_int_rejects_positive_out_of_range() {
         let err = to_int(1.0e20).expect_err("expected out-of-range error");
-        assert!(
-            err.message.contains("out of i64 range"),
-            "error should mention out-of-range, got: {}",
-            err.message
-        );
+        assert_eq!(err.message, "float.to_int: 1e20 is outside the Int range");
     }
 
     #[test]
     fn float_to_int_rejects_negative_out_of_range() {
         let err = to_int(-1.0e20).expect_err("expected out-of-range error");
-        assert!(
-            err.message.contains("out of i64 range"),
-            "error should mention out-of-range, got: {}",
-            err.message
-        );
+        assert_eq!(err.message, "float.to_int: -1e20 is outside the Int range");
     }
 
     #[test]
@@ -389,10 +384,9 @@ mod tests {
         // range. It must be rejected.
         let err = to_int(9_223_372_036_854_775_808.0)
             .expect_err("expected out-of-range for i64::MAX + 1");
-        assert!(
-            err.message.contains("out of i64 range"),
-            "error should mention out-of-range, got: {}",
-            err.message
+        assert_eq!(
+            err.message,
+            "float.to_int: 9.223372036854776e18 is outside the Int range"
         );
     }
 

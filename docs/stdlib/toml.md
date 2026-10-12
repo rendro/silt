@@ -228,7 +228,9 @@ toml.stringify(value: a) -> Result(String, TomlError)
 ```
 
 Serialises a silt record or map to a TOML document. Like `toml.pretty`, the
-top-level value must be table-shaped.
+top-level value must be table-shaped. A map is written as a table; a key of
+it that is no `String` is written as its shown text (so the `Float` key `1.0`
+reads `"1.0"`).
 
 ```silt
 import toml

@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: math.log of a number that is not positive: 0
+-- stderr-contains: math.log of a number that is not positive: 0.0
 import math
 fn main() {
   println(math.log(0.0))

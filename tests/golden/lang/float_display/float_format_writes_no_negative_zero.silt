@@ -1,0 +1,15 @@
+import float
+
+-- A negative number that rounds to zero is written as zero is, without
+-- a sign: at no decimals and at one. What does not round to zero keeps
+-- its sign.
+fn main() {
+  println(float.format(-0.4, 0))
+  println(float.format(-0.1, 0))
+  println(float.format(-0.5, 0))
+  println(float.format(-0.04, 1))
+  println(float.format(-0.6, 0))
+  println(float.format(-0.06, 1))
+  println(float.format(0.4, 0))
+  println(float.format(0.0, 1))
+}

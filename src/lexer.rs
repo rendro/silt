@@ -114,7 +114,8 @@ impl fmt::Display for Token {
             Token::Where => write!(f, "where"),
             Token::Loop => write!(f, "loop"),
             Token::Int(n) => write!(f, "{}", n.unsigned_abs()),
-            Token::Float(n) => write!(f, "{n}"),
+            // (As a Float is shown.)
+            Token::Float(n) => crate::value::Float::write_text(*n, f),
             Token::Bool(b) => write!(f, "{b}"),
             Token::StringLit(s) => write!(f, "\"{}\"", escape_control_chars(s)),
             Token::StringStart(s) => write!(f, "\"{}{{", escape_control_chars(s)),
