@@ -799,6 +799,67 @@ fn main() {
     }
 }
 
+/// An accept under a deadline loses no connection at any time slice:
+/// one that reaches an accept as it is given up stays with the
+/// listener, and the next accept is given it.
+#[cfg(feature = "tcp")]
+#[test]
+fn an_accept_under_a_deadline_loses_no_connection_at_every_slice() {
+    let source = r#"
+import channel
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let done: Channel(Int) = channel.new(1)
+  let client = task.spawn { ->
+    let made = loop i = 0, made = 0 {
+      match i >= 40 {
+        true -> made
+        false -> {
+          time.sleep(time.ms(3))
+          match tcp.connect("127.0.0.1:{port}") {
+            Ok(_) -> loop(i + 1, made + 1)
+            Err(_) -> loop(i + 1, made)
+          }
+        }
+      }
+    }
+    channel.close(done)
+    made
+  }
+  let given = loop given = 0, idle = 0 {
+    match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
+      Ok(Ok(c)) -> {
+        tcp.close(c)
+        loop(given + 1, 0)
+      }
+      Ok(Err(e)) -> panic("accept failed: {e}")
+      Err(_) -> match channel.try_receive(done) {
+        channel.Closed -> match idle >= 20 {
+          true -> given
+          false -> loop(given, idle + 1)
+        }
+        _ -> loop(given, idle)
+      }
+    }
+  }
+  task.join(client) - given
+}
+"#;
+    for slice in SLICES {
+        let (result, _) = run_with(source, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+        });
+        assert_eq!(result, Ok(Value::Int(0)), "at slice {slice:?}");
+    }
+}
+
 /// A cancel loses nothing that was handed over, at any time slice: a
 /// task whose wait had ended when `task.cancel` came (a sender handed
 /// it a value, a receiver took the value it waited to send) goes on
