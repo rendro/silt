@@ -38,6 +38,7 @@ let hundred = 1e2 -- Float(100.0), not Int
 ```
 
 Scientific notation always produces a `Float`, even when the value is a whole number.
+A `Float` is always printed with a decimal point and without an exponent, so a whole one ends in `.0`: `println(1e2)` prints `100.0`.
 Non-finite results like `1e999` are rejected at compile time.
 
 ## Numeric Safety
@@ -81,7 +82,7 @@ let ratio = match total {
 }
 ```
 
-Because every `Float` is finite, floats compare, sort and hash as ordinary numbers and work as map keys and set elements. `-0.0` is the same value as `0.0`: `0.0 * -1.0` prints `0`.
+Because every `Float` is finite, floats compare, sort and hash as ordinary numbers and work as map keys and set elements. `-0.0` is the same value as `0.0`: `0.0 * -1.0` prints `0.0`.
 
 ### No implicit coercion
 

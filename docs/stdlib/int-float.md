@@ -164,6 +164,11 @@ Functions for parsing, rounding, converting, and comparing floats.
 > **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
 > `float.to_int` to convert the result to an integer.
 
+> **How a float is shown:** `println`, `"{f}"` and `string.from(f)` write a
+> `Float` as its digits with a decimal point and no exponent, so a whole one
+> ends in `.0` (`3.0`, never `3`); `float.format(f, decimals)` writes exactly
+> the decimal places asked for, which may be none.
+
 ## Summary
 
 | Function | Signature | Description |
@@ -266,8 +271,9 @@ float.format(f: Float, decimals: Int) -> String
 ```
 
 The decimal text of a float with exactly `decimals` decimal places, rounded
-to the nearest. `decimals` must not be negative. For the text a float is
-shown as (in `println`, in `"{f}"`), use `string.from(f)`.
+to the nearest. A number that rounds to zero is written without a sign.
+`decimals` must not be negative. For the text a float is shown as (in
+`println`, in `"{f}"`), use `string.from(f)`.
 
 ```silt
 import float
@@ -276,6 +282,7 @@ fn main() {
   println(float.format(3.14159, 2)) -- 3.14
   println(float.format(42.0, 1)) -- 42.0
   println(float.format(2.5, 0)) -- 2
+  println(float.format(-0.04, 1)) -- 0.0
 }
 ```
 

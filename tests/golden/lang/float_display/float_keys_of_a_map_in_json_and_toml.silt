@@ -1,0 +1,20 @@
+import json
+import toml
+
+-- A map's key that is a Float is written into JSON and TOML as the
+-- Float is shown: the whole one as "1.0", apart from the Int key 1.
+fn main() {
+  let by_float = #{1.0: "a", 2.5: "b"}
+  println(json.stringify(by_float))
+  println(json.stringify(#{1: "a"}))
+  match toml.stringify(by_float) {
+    Ok(text) -> print(text)
+    Err(e) -> println("error: {e}")
+  }
+  -- A Float that is a value is written as each format writes a float.
+  println(json.stringify([1.0, 2.5, 1.0e21]))
+  match toml.stringify(#{"whole": 1.0, "large": 1.0e21}) {
+    Ok(text) -> print(text)
+    Err(e) -> println("error: {e}")
+  }
+}

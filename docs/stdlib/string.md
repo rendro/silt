@@ -132,6 +132,7 @@ import string
 
 fn main() {
   println(string.from(42)) -- 42
+  println(string.from(2.0)) -- 2.0
   println(string.from(true)) -- true
   println(string.from([1, 2, 3])) -- [1, 2, 3]
 }
