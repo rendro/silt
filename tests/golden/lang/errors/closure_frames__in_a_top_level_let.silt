@@ -1,0 +1,11 @@
+-- exit: 1
+-- A closure in a top-level `let` is named after the binding.
+fn fail(x) {
+  x / 0
+}
+
+let top = { y -> fail(y) + 1 }
+
+fn main() {
+  println(top(1))
+}

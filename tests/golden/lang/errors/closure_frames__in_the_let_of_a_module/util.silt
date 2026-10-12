@@ -1,0 +1,7 @@
+import list
+
+pub fn helper(x) {
+  x / 0
+}
+
+pub let table = list.map([1]) { y -> helper(y) + 1 }

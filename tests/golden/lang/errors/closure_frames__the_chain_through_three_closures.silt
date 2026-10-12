@@ -1,0 +1,18 @@
+-- exit: 1
+-- A call stack lists a closure like a function, named after the
+-- function it is written in: six frames, the innermost first.
+import list
+
+fn inner(x) {
+  let f = { y -> y / 0 }
+  f(x)
+}
+
+fn outer(x) {
+  let g = { y -> inner(y) }
+  g(x)
+}
+
+fn main() {
+  println(list.map([1], { v -> outer(v) }))
+}

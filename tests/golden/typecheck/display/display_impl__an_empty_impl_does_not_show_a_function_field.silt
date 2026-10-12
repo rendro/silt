@@ -3,7 +3,7 @@
 -- stderr-contains: trait impl 'Display' for 'F' is missing method 'display'
 -- An empty impl of `Display` does not make a type with a function or a
 -- channel in it one that can be shown. (It once switched the check
--- off: `println(f)` printed `F {f: <fn:<lambda>>, ch: <channel:0>}`.)
+-- off: `println(f)` printed `F {f: <fn:closure in main>, ch: <channel:0>}`.)
 import channel
 
 type F {

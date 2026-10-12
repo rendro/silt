@@ -521,7 +521,9 @@ impl<'a> Cursor<'a> {
     /// Move past the next source token, which is of the kind of `kind`
     /// and is not written, and leave the comments around it where they
     /// are: they stand in front of the next token then. For a place
-    /// where they may stand as they are.
+    /// where they may stand as they are (an opening parenthesis; the
+    /// braces of a block that is a closure's body, and the parentheses
+    /// around it).
     pub fn pass(&mut self, kind: &Token) {
         if !self.at(kind) {
             return;
@@ -530,6 +532,31 @@ impl<'a> Cursor<'a> {
         let newlines = self.newlines_before_token();
         self.skipped_open.push((tok.comments.end, newlines));
         self.step();
+    }
+
+    /// Whether, with the next `count` tokens passed ([`Cursor::pass`]),
+    /// a comment would stand on a line of its own above the token
+    /// behind them, where none stands so in the source. Above a `let`
+    /// such a comment reads as the binding's documentation.
+    pub fn pass_sets_a_comment_above(&self, count: usize) -> bool {
+        let Some(behind) = self.tokens.get(self.pos + count) else {
+            return false;
+        };
+        let after_break = |index: u32| self.comments[index as usize].newlines_before > 0;
+        if behind.newlines_before > 0
+            && (behind.comments.start..behind.comments.end).any(after_break)
+        {
+            return false;
+        }
+        // A line break in front of a passed token stands in front of
+        // the first comment behind it then.
+        let passed = &self.tokens[self.pos..self.pos + count];
+        (self.next_comment..behind.comments.end.max(self.next_comment)).any(|index| {
+            self.newlines_before_comment(index) > 0
+                || passed
+                    .iter()
+                    .any(|tok| tok.comments.end == index && tok.newlines_before > 0)
+        })
     }
 
     /// Carry the comments behind a skipped token, on its line.

@@ -1,0 +1,14 @@
+-- exit: 1
+-- A closure in a top-level `let` that binds no name is a closure at
+-- the top level.
+import list
+
+fn fail(x) {
+  x / 0
+}
+
+let _ = list.each([1]) { y -> println(fail(y)) }
+
+fn main() {
+  println("not reached")
+}

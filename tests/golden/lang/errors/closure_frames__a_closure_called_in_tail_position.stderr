@@ -1,0 +1,11 @@
+error[runtime]: division by zero
+ --> closure_frames__a_closure_called_in_tail_position.silt:6:3
+   |
+ 6 |   x / 0
+   |   ^^^^^ division by zero
+
+call stack:
+  -> fail  at closure_frames__a_closure_called_in_tail_position.silt:6:3
+  -> closure in run  at closure_frames__a_closure_called_in_tail_position.silt:10:18
+  -> run  at closure_frames__a_closure_called_in_tail_position.silt:11:3
+  -> main  at closure_frames__a_closure_called_in_tail_position.silt:15:11

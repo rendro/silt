@@ -1,0 +1,14 @@
+-- exit: 1
+-- A long stack is cut to its first ten and its last five frames; a
+-- recursion through a closure has two frames a round.
+fn count(n) {
+  let step = { m -> count(m - 1) + 1 }
+  match n {
+    0 -> 1 / n
+    _ -> step(n) + 1
+  }
+}
+
+fn main() {
+  println(count(20))
+}

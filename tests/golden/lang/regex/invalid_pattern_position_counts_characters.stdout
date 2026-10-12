@@ -1,0 +1,9 @@
+4 characters, at 3 `(`: unclosed group
+4 characters, at 2 `[`: unclosed character class
+4 characters, at 3 `(`: unclosed group
+6 characters, at 2 `z`: invalid character class range, the start must be <= the end
+6 characters, at 3 `z`: unrecognized flag
+4 characters, at 3 `(`: unclosed group
+7 characters, at 5 `z`: unrecognized flag
+2 characters, at 0 `(`: unclosed group
+2 characters, at 1 `\`: incomplete escape sequence, reached end of pattern prematurely

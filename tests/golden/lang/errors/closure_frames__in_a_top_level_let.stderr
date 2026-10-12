@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> closure_frames__in_a_top_level_let.silt:4:3
+   |
+ 4 |   x / 0
+   |   ^^^^^ division by zero
+
+call stack:
+  -> fail  at closure_frames__in_a_top_level_let.silt:4:3
+  -> closure in top  at closure_frames__in_a_top_level_let.silt:7:18
+  -> main  at closure_frames__in_a_top_level_let.silt:10:11

@@ -1,0 +1,19 @@
+a Date:
+  '%Y-%m-%d': format taken, parse taken
+  '%d %B %Y, a %A': format taken, parse taken
+  '%Y-%m-%d %H': format InvalidFormat, parse InvalidFormat
+  '%Y-%m-%d %p': format InvalidFormat, parse InvalidFormat
+  '%Y-%m-%d %z': format InvalidFormat, parse InvalidFormat
+  '%Y-%m-%d %Q': format InvalidFormat, parse InvalidFormat
+  '%Y': format taken, parse InvalidFormat
+  '': format taken, parse InvalidFormat
+a DateTime:
+  '%Y-%m-%d %H:%M:%S': format taken, parse taken
+  '%c': format taken, parse taken
+  '%s': format taken, parse taken
+  '%Y-%m-%d %H:%M:%S%.3f': format taken, parse taken
+  '%Y-%m-%d %H:%M:%S %z': format InvalidFormat, parse InvalidFormat
+  '%+': format InvalidFormat, parse InvalidFormat
+  '%Y-%m-%d %H:%M:%S %Q': format InvalidFormat, parse InvalidFormat
+  '%Y-%m-%d': format taken, parse InvalidFormat
+  '': format taken, parse InvalidFormat

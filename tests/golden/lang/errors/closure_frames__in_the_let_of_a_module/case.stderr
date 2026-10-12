@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> util.silt:4:3
+   |
+ 4 |   x / 0
+   |   ^^^^^ division by zero
+
+call stack:
+  -> helper  at util.silt:4:3
+  -> closure in table  at util.silt:7:38
+  -> <module:util>  at util.silt:7:17

@@ -1,0 +1,29 @@
+import regex
+import string
+
+-- Where a fault repeats something earlier in the pattern (a second
+-- group of a name, a flag given twice), the position is the fault's,
+-- not that of what it repeats.
+fn show(pattern) {
+  match regex.is_match("x", pattern) {
+    Err(regex.InvalidPattern(why, at)) -> {
+      let found = string.slice(pattern, at, at + 1)
+      println("{pattern}: {string.length(pattern)} characters, at {at} `{found}`: {why}")
+    }
+    other -> println(other)
+  }
+}
+
+fn main() {
+  show("(?P<n>a)(?P<n>b)")
+  show("(?P<é>a)ü(?P<é>b)")
+  show("(?ii)a")
+  show("(?i-i)a")
+  show("(?i--i)a")
+  -- A fault of several characters is at its first.
+  show("a[z-a]b")
+  -- A fault that is the end of the pattern is at its length: no
+  -- character is there.
+  show("(?P<n")
+  show("é\\x")
+}

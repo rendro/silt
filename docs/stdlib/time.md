@@ -63,7 +63,7 @@ pattern that is no format are the structural failure modes:
 |---------|--------|---------|
 | `ParseFormat(msg)` | `String` | the text did not match a pattern that could have given the value |
 | `OutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
-| `InvalidFormat(msg)` | `String` | the pattern is at fault, whatever the value or the text: an unknown specifier; for a format, a specifier the value cannot fill (a time for a `Date`, a time zone); for a parse, fields that are not enough for the value (no time of day for a `DateTime`, no date, an empty pattern) |
+| `InvalidFormat(msg)` | `String` | the pattern is at fault, whatever the value or the text: an unknown specifier, or one the type has nothing for (a time of day for a `Date`, a time zone), in a format and in its parse alike; for a parse also fields that are not enough for the value (no time of day for a `DateTime`, no date, an empty pattern) |
 | `Other(msg)` | `String` | unclassified failure |
 
 `TimeError` implements the built-in `Error` trait, so `e.message()`
@@ -240,10 +240,13 @@ fn main() -> Result(Unit, time.TimeError) {
 time.format(datetime: DateTime, pattern: String) -> Result(String, TimeError)
 ```
 
-Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %A %a %B %b %%`.
-A pattern is text like any other: one that is no format (an unknown
-specifier such as `%Q`, or a time zone specifier, which a naive `DateTime`
-cannot fill) is `Err(InvalidFormat(why))`, not a failure of the program.
+Formats a `DateTime` using a strftime pattern. The pattern may hold every
+specifier of a date or of a time of day (`%Y %m %d %H %M %S %f %A %a %B %b`
+and `%%` among them): whatever a `DateTime` has a value for.
+A pattern is text like any other: one that is no pattern of a `DateTime`
+(an unknown specifier such as `%Q`, or a time zone specifier such as `%z`: a
+`DateTime` has no time zone) is `Err(InvalidFormat(why))`, not a failure of
+the program. `time.parse` refuses the same patterns.
 
 ```silt
 import time
@@ -265,9 +268,10 @@ fn main() -> Result(Unit, time.TimeError) {
 time.format_date(date: Date, pattern: String) -> Result(String, TimeError)
 ```
 
-Formats a `Date` using strftime patterns. A pattern that is no format for a
-date is `Err(InvalidFormat(why))`: an unknown specifier, or one of a time
-(`%H`) or a time zone, which a date has not.
+Formats a `Date` using strftime patterns. A pattern that is no pattern of a
+date is `Err(InvalidFormat(why))`: an unknown specifier, or one of a time of
+day (`%H`) or a time zone, which a date has not. `time.parse_date` refuses the
+same patterns.
 
 ```silt
 import time
@@ -288,8 +292,10 @@ time.parse(s: String, pattern: String) -> Result(DateTime, TimeError)
 
 Parses a string into a `DateTime` using a strftime pattern.
 
-The pattern has to give a date and a time of day. One that cannot,
-whatever the text, is `Err(InvalidFormat(why))`: an unknown specifier, a
+A pattern that `time.format` refuses, `time.parse` refuses too: an unknown
+specifier, or one of a time zone (`%z`), is `Err(InvalidFormat(why))`; no
+offset is read and dropped. The pattern also has to give a date and a time
+of day. One that cannot, whatever the text, is `Err(InvalidFormat(why))`: a
 pattern without a time of day (`"%Y-%m-%d"`: use `time.parse_date`),
 without a date, with a 12-hour clock and no `%p`, or an empty one. That
 is decided from the pattern alone. A text that does not match a pattern
@@ -312,9 +318,12 @@ fn main() {
 time.parse_date(s: String, pattern: String) -> Result(Date, TimeError)
 ```
 
-Parses a string into a `Date` using a strftime pattern. A pattern whose
-fields do not make a date (`"%m.%Y"`, `"%H:%M"`, an empty one) is
-`Err(InvalidFormat(why))` whatever the text, as in `time.parse`.
+Parses a string into a `Date` using a strftime pattern. A pattern that
+`time.format_date` refuses, `time.parse_date` refuses too: one with a
+specifier of a time of day (`"%Y-%m-%d %H:%M"`: use `time.parse`, no time is
+read and dropped) or of a time zone is `Err(InvalidFormat(why))`. So is a
+pattern whose fields do not make a date (`"%m.%Y"`, an empty one), whatever
+the text, as in `time.parse`.
 
 ```silt
 import time

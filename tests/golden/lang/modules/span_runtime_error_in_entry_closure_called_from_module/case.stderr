@@ -5,5 +5,6 @@ error[runtime]: division by zero
    |                             ^^^^^ division by zero
 
 call stack:
+  -> closure in main  at main.silt:8:29
   -> apply  at util.silt:8:3
   -> main  at main.silt:8:11

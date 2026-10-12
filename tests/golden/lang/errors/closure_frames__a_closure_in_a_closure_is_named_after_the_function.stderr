@@ -1,0 +1,12 @@
+error[runtime]: division by zero
+ --> closure_frames__a_closure_in_a_closure_is_named_after_the_function.silt:7:26
+   |
+ 7 |       let third = { c -> c / 0 }
+   |                          ^^^^^ division by zero
+
+call stack:
+  -> closure in build  at closure_frames__a_closure_in_a_closure_is_named_after_the_function.silt:7:26
+  -> closure in build  at closure_frames__a_closure_in_a_closure_is_named_after_the_function.silt:8:7
+  -> closure in build  at closure_frames__a_closure_in_a_closure_is_named_after_the_function.silt:10:5
+  -> build  at closure_frames__a_closure_in_a_closure_is_named_after_the_function.silt:12:3
+  -> main  at closure_frames__a_closure_in_a_closure_is_named_after_the_function.silt:16:11
