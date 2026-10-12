@@ -1,0 +1,30 @@
+-- repeat: 3
+-- stderr-not-contains: deadlock
+-- stderr-not-contains: panicked
+-- Eight senders try a channel with room for two: two values go in, six
+-- sends find it full. The channel is closed only after every sender has
+-- ended (a send on a closed channel is a runtime error, so a close that
+-- races its senders is a fault of the program, not something to test by
+-- a sleep). The closed channel still gives up what it holds.
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(2)
+  let senders = 1..8 |> list.map { i -> task.spawn { -> channel.try_send(ch, i) } }
+  let sent = senders |> list.map { h -> task.join(h) } |> list.filter { ok -> ok } |> list.length
+  channel.close(ch)
+  let drained = loop c = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_v) -> loop(c + 1)
+      channel.Empty -> c
+      channel.Closed -> c
+      channel.Sent -> c
+    }
+  }
+  match sent == drained {
+    true -> println("drained={drained}")
+    false -> println("sent {sent}, drained {drained}")
+  }
+}
