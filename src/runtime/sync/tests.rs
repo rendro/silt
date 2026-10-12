@@ -947,9 +947,9 @@ fn a_wait_whose_flag_is_set_completes_a_ready_arm_and_never_waits() {
         ]
     };
     assert!(refused(begin(1, Wait::new(arms()))));
-    let over = Wait::new(arms()).deadline(d.timer.deadline_after(0 * MS));
+    let over = Wait::new(arms()).deadline(d.timer.deadline_after(Duration::ZERO));
     assert!(refused(begin(1, over)));
-    let sleep = Wait::new(vec![]).deadline(d.timer.deadline_after(0 * MS));
+    let sleep = Wait::new(vec![]).deadline(d.timer.deadline_after(Duration::ZERO));
     assert!(refused(begin(1, sleep)));
     assert_eq!(
         (a.queued(), b.queued(), cell.waiting()),
