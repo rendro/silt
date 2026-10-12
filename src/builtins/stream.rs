@@ -179,13 +179,6 @@ impl Pipe {
         }
     }
 
-    /// Whether this is a stage whose task was cancelled: whoever read
-    /// its output reads no more.
-    fn stopped(&self) -> bool {
-        let cancelled = |handle: &Arc<TaskHandle>| handle.is_cancelled();
-        self.handle.as_ref().is_some_and(cancelled)
-    }
-
     /// Nobody reads the output any more, and the pipe has a value for
     /// it: the pipe is over before its end. One on a connection shuts
     /// the connection down, as one that is stopped in a wait does
@@ -230,12 +223,17 @@ impl Native for Pipe {
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
-                // A stage that was stopped (nobody reads its output any
-                // more) takes nothing more from its input, though its
-                // task still runs for some steps.
-                Next::Take(_) | Next::TakeAny if self.stopped() => {
+                // A task that was cancelled takes nothing new, though
+                // it still runs for some steps: a stage that was
+                // stopped (nobody reads its output any more: its task
+                // is cancelled) is over, and a sink ends the task that
+                // called it.
+                Next::Take(_) | Next::TakeAny if vm.takes_nothing_new() => {
                     self.cut_short(vm);
-                    return Ok(Step::Done(Value::Unit));
+                    return Ok(match self.handle {
+                        Some(_) => Step::Done(Value::Unit),
+                        None => Step::Park(Vm::no_wait()),
+                    });
                 }
                 Next::Take(index) => {
                     let input = &self.inputs[index];
@@ -285,7 +283,7 @@ impl Native for Pipe {
                     return Ok(vm.call(callee, args));
                 }
                 Next::Io(operation, stop) => {
-                    let mut op = vm.runtime.io_pool.submit(io_failure, operation);
+                    let mut op = vm.start_io(io_failure, operation);
                     if let Some(stop) = stop {
                         self.stop = Some(stop.clone());
                         op = op.stop_with(move || stop());
@@ -1308,7 +1306,9 @@ mod tests {
     /// A stage that was stopped takes nothing more from its input: a
     /// cancelled task still runs for some steps, and the stage of one
     /// that came to take its next element there, which lies ready,
-    /// leaves it where it is and ends, with its output closed.
+    /// leaves it where it is and ends, with its output closed. A sink
+    /// in a task that was cancelled takes nothing either, and ends the
+    /// task: it begins the wait that such a task is refused.
     #[test]
     fn a_stage_that_was_stopped_takes_nothing_more() {
         let mut vm = Vm::new(crate::HostIo::process());
@@ -1334,6 +1334,8 @@ mod tests {
                 })
             });
             pipe.out = Some(out.clone());
+            // The VM of a stage's task has the task's flag.
+            vm.cancelled = Some(handle.cancel_flag());
             pipe.handle = Some(handle);
             (pipe.resume(vm, Value::Unit), out)
         };
@@ -1341,7 +1343,18 @@ mod tests {
         assert!(matches!(step, Ok(Step::Done(Value::Unit))));
         assert_eq!(input.len(), 3, "a stopped stage took an element");
         assert!(out.is_closed());
-        // (One that was not stopped takes the first and calls with it.)
+        // A sink has no output and no task of its own.
+        let mut sink = Pipe::new("test.sink", vec![input.clone()], |got| {
+            Ok(match got {
+                Got::Start | Got::Value(..) => Next::Take(0),
+                _ => Next::Done(Value::Unit),
+            })
+        });
+        let step = sink.resume(&mut vm, Value::Unit);
+        assert!(matches!(step, Ok(Step::Park(wait)) if wait.arms.is_empty()));
+        assert_eq!(input.len(), 3, "a sink in a cancelled task took an element");
+        // (A stage that was not stopped takes the first and calls with
+        // it.)
         let (step, out) = stage(&mut vm, false);
         assert!(matches!(step, Ok(Step::Call { .. })));
         assert_eq!(input.len(), 2);

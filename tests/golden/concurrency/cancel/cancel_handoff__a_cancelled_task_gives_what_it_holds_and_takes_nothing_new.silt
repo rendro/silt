@@ -1,0 +1,57 @@
+-- After a cancel a task takes nothing new; it may still give what it
+-- holds. In the steps it has left, a send that can be done at once is
+-- done (`channel.send`, `channel.try_send`, a `Send` arm of a
+-- `channel.select`), and a task that has ended is joined. The first
+-- operation that would take something ends the task, whether or not
+-- the thing is there: the value on the `Recv` arm of its last select
+-- is still in its channel afterwards, and the `Send` arm beside it,
+-- which had no room, sent nothing.
+--
+-- The task cancels itself, so the cancel comes at a known place,
+-- whatever the machine does. It gives a last value before the select
+-- that ends it; `main` waits for that one and looks then.
+import channel
+import task
+import time
+
+fn main() {
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let given: Channel(Int) = channel.new(8)
+  let full: Channel(Int) = channel.new(1)
+  channel.send(full, 1)
+  let t = task.spawn { ->
+    let helper = task.spawn { -> 7 }
+    let _ = task.join(helper)
+    match channel.receive(own) {
+      channel.Message(me) -> task.cancel(me)
+      _ -> ()
+    }
+    println("cancelled, and still running")
+    channel.send(given, 1)
+    println("a send into room: done")
+    println("a try_send into room: {channel.try_send(given, 2)}")
+    let how = match channel.select([channel.Recv(full), channel.Send(given, 3)]) {
+      (_, channel.Sent) -> "sent"
+      _ -> "something else"
+    }
+    println("a select with a value to receive and room to send: {how}")
+    println("the join of a task that has ended: {task.join(helper)}")
+    println("the next select has a value to receive and no room to send")
+    channel.send(given, 4)
+    let _ = channel.select([channel.Recv(full), channel.Send(full, 9)])
+    println("not reached")
+  }
+  channel.send(own, t)
+  let got = loop got = [] {
+    match channel.receive(given) {
+      channel.Message(4) -> got
+      channel.Message(v) -> loop([..got, v])
+      _ -> got
+    }
+  }
+  -- A task that took the value after all would have done so by now.
+  time.sleep(time.ms(5))
+  println("what the task gave before its last select: {got}")
+  println("the value to receive is still there: {channel.receive(full)}")
+  println("and nothing was sent after it: {channel.try_receive(full)}")
+}

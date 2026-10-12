@@ -928,19 +928,21 @@ fn main() {
     }
 }
 
-/// A task that is cancelled and still runs completes a `select` of
-/// which an arm is ready and is ended in one that would have to wait,
-/// at every time slice: the golden case of that name, whose task
-/// cancels itself, prints the same lines at each.
+/// After a cancel a task takes nothing new and may still give what it
+/// holds, at every time slice: the golden case of that name, whose
+/// task cancels itself, prints the same lines at each. (Its sends, a
+/// `try_send`, a `Send` arm and the join of a task that has ended are
+/// done; the select that would take ends it, with the value still in
+/// its channel.)
 #[test]
-fn a_cancelled_task_completes_a_select_that_is_ready_at_every_slice() {
+fn a_cancelled_task_gives_what_it_holds_and_takes_nothing_new_at_every_slice() {
     let source = include_str!(
-        "../golden/concurrency/cancel/cancel_handoff__a_cancelled_task_completes_a_select_that_is_ready.silt"
+        "../golden/concurrency/cancel/cancel_handoff__a_cancelled_task_gives_what_it_holds_and_takes_nothing_new.silt"
     );
     let expected = include_str!(
-        "../golden/concurrency/cancel/cancel_handoff__a_cancelled_task_completes_a_select_that_is_ready.stdout"
+        "../golden/concurrency/cancel/cancel_handoff__a_cancelled_task_gives_what_it_holds_and_takes_nothing_new.stdout"
     );
-    for slice in [None, Some(2000), Some(7), Some(1)] {
+    for slice in FOUR_SLICES {
         let (result, output) = run_with(source, |vm| {
             if let Some(slice) = slice {
                 vm.set_time_slice(slice);
@@ -948,6 +950,466 @@ fn a_cancelled_task_completes_a_select_that_is_ready_at_every_slice() {
         });
         assert_eq!(result, Ok(Value::Unit), "at slice {slice:?}");
         assert_eq!(output, expected, "at slice {slice:?}");
+    }
+}
+
+/// The slices of the tests of a cancel: none set, the scheduler's
+/// own, a few steps, one step.
+const FOUR_SLICES: [Option<usize>; 4] = [None, Some(2000), Some(7), Some(1)];
+
+/// Every operation that takes ends a cancelled task, whether or not
+/// the thing to take is there, at every time slice. A task cancels
+/// itself, says so by a send, and comes to the operation with a value
+/// ready for it; the line after the operation is never printed, and
+/// the value is still in its channel when `main` asks for it, which it
+/// does without a time limit. (The short sleep only gives a task that
+/// would take the value the time to do so.)
+#[test]
+fn every_take_ends_a_cancelled_task_at_every_slice() {
+    let takes = [
+        ("receive", "channel.receive(src)"),
+        ("try_receive", "channel.try_receive(src)"),
+        (
+            "receive_timeout",
+            "channel.receive_timeout(src, time.ms(50))",
+        ),
+        ("a select's Recv arm", "channel.select([channel.Recv(src)])"),
+        (
+            "a select's Recv arms, one of them a timeout that has closed",
+            "channel.select([channel.Recv(timed_out), channel.Recv(src)])",
+        ),
+        (
+            "each",
+            "channel.each(src) { v -> println(\"the task took {v}\") }",
+        ),
+        ("a sink of a stream", "stream.first(src)"),
+        (
+            "a sink that reads to the end",
+            "stream.fold(src, 0) { acc, v -> acc + v }",
+        ),
+    ];
+    for (what, take) in takes {
+        let source = format!(
+            r#"
+import channel
+import stream
+import task
+import time
+
+fn main() {{
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let src: Channel(Int) = channel.new(1)
+  channel.send(src, 5)
+  let timed_out: Channel(Int) = channel.timeout(time.ms(0))
+  let said = channel.new(1)
+  let t = task.spawn {{ ->
+    let _ = channel.receive(timed_out)
+    match channel.receive(own) {{
+      channel.Message(me) -> task.cancel(me)
+      _ -> ()
+    }}
+    channel.send(said, 0)
+    let _ = {take}
+    println("the task went on")
+  }}
+  channel.send(own, t)
+  let _ = channel.receive(said)
+  time.sleep(time.ms(2))
+  channel.receive(src)
+}}
+"#
+        );
+        for slice in FOUR_SLICES {
+            let (result, output) = run_with(&source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            let shown = result.map(|value| value.to_string());
+            assert_eq!(
+                (shown, output.as_str()),
+                (Ok("Message(5)".to_string()), ""),
+                "{what} at slice {slice:?}"
+            );
+        }
+    }
+}
+
+/// A worker that is cancelled loses no item, at every time slice,
+/// whatever its input holds: it passes on the item it has and takes no
+/// further one. (When a cancelled task still took what was ready, a
+/// worker whose input was ready again went on taking items until its
+/// steps were used up, and was ended with one of them in hand.)
+///
+/// Each program runs rounds of a worker that takes an item and puts it
+/// into a channel with room, and is cancelled: from outside at some
+/// moment, or by itself at a place that moves from round to round.
+/// Then every item is in the input or in the output. `main` counts
+/// both and waits WITHOUT a time limit for what is missing, so an item
+/// that was lost is a deadlock, and a slow machine fails nothing. (The
+/// sleeps let a worker that would go on taking do so before the
+/// count.)
+#[test]
+fn a_cancelled_worker_loses_no_item_at_every_slice() {
+    const HEAD: &str = r#"
+import channel
+import task
+import time
+
+fn fill(ch, n) {
+  loop i = 0 {
+    match i >= n {
+      true -> ()
+      false -> {
+        channel.send(ch, i)
+        loop(i + 1)
+      }
+    }
+  }
+}
+
+-- How many values `ch` holds, taken out of it.
+fn count(ch) {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+-- How many of `n` items were taken out of `input` and not put into
+-- `out`: 0, or `main` waits for ever for the rest.
+fn missing(input, out, n) {
+  time.sleep(time.ms(3))
+  loop found = count(input) + count(out) {
+    match found >= n {
+      true -> found - n
+      false -> match channel.select([channel.Recv(input), channel.Recv(out)]) {
+        (_, channel.Message(_)) -> loop(found + 1)
+        _ -> n - found
+      }
+    }
+  }
+}
+
+fn work(v, n) {
+  match n <= 0 {
+    true -> v
+    false -> work(v, n - 1)
+  }
+}
+
+fn each_worker(input, out, steps) {
+  channel.each(input) { v -> channel.send(out, work(v, steps)) }
+}
+
+fn receive_worker(input, out, steps) {
+  loop {
+    match channel.receive(input) {
+      channel.Message(v) -> {
+        channel.send(out, work(v, steps))
+        loop()
+      }
+      _ -> ()
+    }
+  }
+}
+
+-- A worker that is cancelled from outside, a moment after it began,
+-- with `items` in its input.
+fn from_outside(worker, items, rounds) {
+  loop k = 0, lost = 0 {
+    match k >= rounds {
+      true -> lost
+      false -> {
+        let input: Channel(Int) = channel.new(items)
+        let out: Channel(Int) = channel.new(items)
+        fill(input, items)
+        let t = task.spawn { -> worker(input, out, 0) }
+        time.sleep(time.ms(1))
+        task.cancel(t)
+        loop(k + 1, lost + missing(input, out, items))
+      }
+    }
+  }
+}
+
+-- A worker that cancels itself and goes on: 40 rounds, the cancel
+-- `k` sends before the work begins, so at another step of a slice
+-- each time.
+fn by_itself(worker, items, steps) {
+  loop k = 0, lost = 0 {
+    match k >= 40 {
+      true -> lost
+      false -> {
+        let own: Channel(task.Handle(())) = channel.new(1)
+        let input: Channel(Int) = channel.new(700)
+        let out: Channel(Int) = channel.new(700)
+        let sink: Channel(Int) = channel.new(100)
+        fill(input, items)
+        let t = task.spawn { ->
+          match channel.receive(own) {
+            channel.Message(me) -> task.cancel(me)
+            _ -> ()
+          }
+          fill(sink, k)
+          worker(input, out, steps)
+        }
+        channel.send(own, t)
+        loop(k + 1, lost + missing(input, out, items))
+      }
+    }
+  }
+}
+"#;
+    let programs = [
+        (
+            "each, cancelled from outside",
+            "fn main() {\n  from_outside(each_worker, 20000, 8)\n}\n",
+        ),
+        (
+            "receive in a loop, cancelled from outside",
+            "fn main() {\n  from_outside(receive_worker, 20000, 8)\n}\n",
+        ),
+        (
+            "each, cancelled by itself",
+            "fn main() {\n  by_itself(each_worker, 700, 0)\n}\n",
+        ),
+        (
+            "receive in a loop, cancelled by itself",
+            "fn main() {\n  by_itself(receive_worker, 700, 0)\n}\n",
+        ),
+        (
+            "each, five items of 500 steps, cancelled by itself",
+            "fn main() {\n  by_itself(each_worker, 5, 60)\n}\n",
+        ),
+    ];
+    for (what, main) in programs {
+        let source = format!("{HEAD}\n{main}");
+        for slice in FOUR_SLICES {
+            let (result, _) = run_with(&source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            assert_eq!(result, Ok(Value::Int(0)), "{what} at slice {slice:?}");
+        }
+    }
+}
+
+/// A worker that is cancelled while it holds an item passes that item
+/// on and takes no further one, at every time slice: it cancels itself
+/// in its callback with item 3 of 700, after which the output holds
+/// the items 0 to 3 and the input the other 696. And a pipeline over a
+/// rendezvous channel loses nothing when its worker is cancelled:
+/// every number whose send returned (the producer notes each) is put
+/// out by the worker, which `main` waits for without a time limit.
+#[test]
+fn a_cancelled_worker_passes_on_the_item_it_holds_at_every_slice() {
+    let holds = r#"
+import channel
+import task
+
+fn count(ch) {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn main() {
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let input: Channel(Int) = channel.new(700)
+  let out: Channel(Int) = channel.new(700)
+  loop i = 0 {
+    match i >= 700 {
+      true -> ()
+      false -> {
+        channel.send(input, i)
+        loop(i + 1)
+      }
+    }
+  }
+  let t = task.spawn { ->
+    when let channel.Message(me) = channel.receive(own) else { panic("no handle") }
+    channel.each(input) { v ->
+      match v == 3 {
+        true -> task.cancel(me)
+        false -> ()
+      }
+      channel.send(out, v)
+    }
+  }
+  channel.send(own, t)
+  -- The four items come, however long that takes.
+  let put_out = loop got = [] {
+    match channel.receive(out) {
+      channel.Message(3) -> [..got, 3]
+      channel.Message(v) -> loop([..got, v])
+      _ -> got
+    }
+  }
+  -- The worker took no fifth: the next item is still the input's.
+  when let channel.Message(next) = channel.receive(input) else { panic("no item") }
+  "put out {put_out}, the input's next {next}, {count(input)} more"
+}
+"#;
+    let rendezvous = r#"
+import channel
+import task
+import time
+
+fn main() {
+  loop k = 0, all = true {
+    match k >= 30 {
+      true -> all
+      false -> {
+        let jobs: Channel(Int) = channel.new(0)
+        let sent: Channel(Int) = channel.new(100000)
+        let out: Channel(Int) = channel.new(100000)
+        let producer = task.spawn { ->
+          loop i = 0 {
+            channel.send(jobs, i)
+            channel.send(sent, i)
+            loop(i + 1)
+          }
+        }
+        let worker = task.spawn { -> channel.each(jobs) { v -> channel.send(out, v) } }
+        time.sleep(time.ms(2))
+        task.cancel(worker)
+        time.sleep(time.ms(2))
+        task.cancel(producer)
+        -- For every send that was noted, the worker's output: in the
+        -- order of the sends.
+        let ok = loop ok = true {
+          match channel.try_receive(sent) {
+            channel.Message(i) -> match channel.receive(out) {
+              channel.Message(^i) -> loop(ok)
+              _ -> loop(false)
+            }
+            _ -> ok
+          }
+        }
+        loop(k + 1, all && ok)
+      }
+    }
+  }
+}
+"#;
+    for slice in FOUR_SLICES {
+        let run = |source: &str| {
+            run_with(source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            })
+            .0
+        };
+        assert_eq!(
+            run(holds).map(|value| value.to_string()),
+            Ok("put out [0, 1, 2, 3], the input's next 4, 695 more".to_string()),
+            "at slice {slice:?}"
+        );
+        assert_eq!(run(rendezvous), Ok(Value::Bool(true)), "at slice {slice:?}");
+    }
+}
+
+/// A cancelled task starts no I/O, at every time slice: an operation
+/// it comes to after the cancel is not handed to the I/O threads, and
+/// ends the task. A task cancels itself and writes a file: the file is
+/// not there when the program has ended, and the line after the write
+/// is not printed. And a cancelled task that comes to `tcp.accept`
+/// with a connection waiting takes none: `main` accepts it.
+#[test]
+fn a_cancelled_task_starts_no_io_at_every_slice() {
+    let dir = std::env::temp_dir().join(format!("silt-oracle-cancel-io-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("written.txt");
+    let path = file.to_string_lossy().replace('\\', "/");
+    let write = format!(
+        r#"
+import channel
+import io
+import task
+
+fn main() {{
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let t = task.spawn {{ ->
+    match channel.receive(own) {{
+      channel.Message(me) -> task.cancel(me)
+      _ -> ()
+    }}
+    println("cancelled")
+    let _ = io.write_file("{path}", "written by a cancelled task")
+    println("the task went on")
+  }}
+  channel.send(own, t)
+}}
+"#
+    );
+    for slice in SLICES {
+        let (result, output) = run_with(&write, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+        });
+        assert_eq!(result, Ok(Value::Unit), "at slice {slice:?}");
+        assert_eq!(output, "cancelled\n", "at slice {slice:?}");
+        assert!(!file.exists(), "at slice {slice:?}: the file was written");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    #[cfg(feature = "tcp")]
+    {
+        // The client's connection is made before the task runs; `main`
+        // makes a second one, so that its accept returns in any case.
+        let accept = r#"
+import channel
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  when let Ok(_first) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let said = channel.new(1)
+  let t = task.spawn { ->
+    match channel.receive(own) {
+      channel.Message(me) -> task.cancel(me)
+      _ -> ()
+    }
+    channel.send(said, 0)
+    let _ = tcp.accept(listener)
+    println("the task went on")
+  }
+  channel.send(own, t)
+  let _ = channel.receive(said)
+  when let Ok(_second) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  match tcp.accept(listener) {
+    Ok(c) -> {
+      tcp.close(c)
+      "accepted"
+    }
+    Err(e) -> panic("accept failed: {e}")
+  }
+}
+"#;
+        for slice in SLICES {
+            let (result, output) = run_with(accept, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            assert_eq!(
+                (result, output.as_str()),
+                (Ok(Value::String("accepted".into())), ""),
+                "at slice {slice:?}"
+            );
+        }
     }
 }
 

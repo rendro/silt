@@ -895,12 +895,14 @@ fn leaving_a_long_queue_costs_no_search_and_leaves_no_more_than_it_holds() {
 // ── The cancel flag ─────────────────────────────────────────────────
 
 /// A wait that begins with its task's flag set is the wait of a task
-/// whose time is over: an arm that can be completed at once is, the
-/// first of them in the wait's order, and a wait that would have to
-/// wait is refused with nothing taken, nothing sent and nothing left
-/// on a queue or in the timer.
+/// that takes nothing new and waits for nothing: a send that can be
+/// done at once is done (the task gives what it holds), a cell that is
+/// complete is found so, and no receive is tried, whether or not a
+/// value is there. A wait of which no such arm is ready is refused
+/// with nothing taken, nothing sent and nothing left on a queue or in
+/// the timer.
 #[test]
-fn a_wait_whose_flag_is_set_completes_a_ready_arm_and_never_waits() {
+fn a_wait_whose_flag_is_set_gives_and_takes_nothing() {
     use std::sync::atomic::AtomicBool;
 
     let d = Double::new();
@@ -909,35 +911,47 @@ fn a_wait_whose_flag_is_set_completes_a_ready_arm_and_never_waits() {
     let begin = |task: u64, wait: Wait| park(TaskId(task), cancelled(wait), &d.timer, &d);
     let refused = |park: Park| matches!(park, Park::Cancelled);
 
-    // One arm: a value that is there is received, a send into room is
-    // done; an empty channel and a full one are not waited for.
+    // One arm. A receive: of an empty channel, of a value that is
+    // there, of a closed channel, all refused; the value stays.
     let ch = Channel::new(0, 1);
     assert!(refused(begin(1, recv(&ch))));
     assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
-    assert!(refused(begin(1, send(&ch, 2))));
+    assert!(refused(begin(1, recv(&ch))));
     assert_eq!((ch.len(), ch.queued()), (1, (0, 0)));
-    let Park::Ready(fired) = begin(1, recv(&ch)) else {
-        panic!("the value that was there was not received");
-    };
-    assert_eq!(received(fired), (0, 1));
+    let closed = Channel::new(4, 1);
+    assert!(closed.close(Close::default(), &d));
+    assert!(refused(begin(1, recv(&closed))));
+    // A send: into a full channel refused, into room done.
+    assert!(refused(begin(1, send(&ch, 2))));
+    assert_eq!(try_value(&ch, &d), Some(1));
     let sent = begin(1, send(&ch, 3));
     assert!(matches!(sent, Park::Ready(Fired::Arm(0, Outcome::Sent))));
     assert_eq!(try_value(&ch, &d), Some(3));
 
-    // A peer that waits is served: its send is completed.
+    // A sender that waits is not served: its value is not taken. A
+    // receiver that waits is: it is given the value.
     let meet = Channel::new(1, 0);
     assert!(d.block(2, send(&meet, 7)).is_none());
-    let Park::Ready(fired) = begin(1, recv(&meet)) else {
-        panic!("the value of the sender that waited was not received");
-    };
-    assert_eq!(received(fired), (0, 7));
+    assert!(refused(begin(1, recv(&meet))));
+    assert!(d.woken().is_empty());
+    assert_eq!(meet.waiting(), (0, 1));
+    assert_eq!(try_value(&meet, &d), Some(7));
     assert_eq!(d.woken(), [2]);
     assert!(matches!(resumed(&d, 2), Fired::Arm(0, Outcome::Sent)));
+    assert!(d.block(3, recv(&meet)).is_none());
+    let sent = begin(1, send(&meet, 8));
+    assert!(matches!(sent, Park::Ready(Fired::Arm(0, Outcome::Sent))));
+    assert_eq!(d.woken(), [3]);
+    assert_eq!(received(resumed(&d, 3)), (0, 8));
 
-    // Several arms: the one that is ready, a cell that is complete;
-    // none ready, and nothing is queued. A deadline of the wait that
-    // has passed does not make it a timeout: the task ends there.
-    let (a, b) = (Channel::new(2, 1), Channel::new(3, 0));
+    // Several arms: a receive arm with a value there is passed over,
+    // whichever arm is tried first; the send arm that is ready, or the
+    // cell that is complete, is the one. None of them ready: refused,
+    // and nothing is queued. A deadline of the wait that has passed
+    // does not make it a timeout: the task ends there.
+    let (a, b) = (Channel::new(2, 1), Channel::new(3, 1));
+    assert!(matches!(a.try_send(Value::Int(4), &d), TrySend::Sent));
+    assert!(matches!(b.try_send(Value::Int(5), &d), TrySend::Sent));
     let cell = Cell::<i64>::new();
     let arms = || {
         vec![
@@ -946,24 +960,26 @@ fn a_wait_whose_flag_is_set_completes_a_ready_arm_and_never_waits() {
             Arm::Cell(cell.clone()),
         ]
     };
-    assert!(refused(begin(1, Wait::new(arms()))));
+    for first in 0..3 {
+        assert!(refused(begin(1, Wait::new(arms()).first(first))));
+    }
     let over = Wait::new(arms()).deadline(d.timer.deadline_after(Duration::ZERO));
     assert!(refused(begin(1, over)));
     let sleep = Wait::new(vec![]).deadline(d.timer.deadline_after(Duration::ZERO));
     assert!(refused(begin(1, sleep)));
+    assert!(refused(begin(1, Wait::new(vec![]))));
     assert_eq!(
         (a.queued(), b.queued(), cell.waiting()),
         ((0, 0), (0, 0), 0)
     );
-    assert_eq!(d.timer.pending(), 0);
+    assert_eq!((a.len(), b.len(), d.timer.pending()), (1, 1, 0));
     assert!(cell.complete(1, &d).is_ok());
     let done = begin(1, Wait::new(arms()));
     assert!(matches!(done, Park::Ready(Fired::Arm(2, Outcome::Done))));
-    assert!(matches!(a.try_send(Value::Int(4), &d), TrySend::Sent));
-    let Park::Ready(fired) = begin(1, Wait::new(arms())) else {
-        panic!("the arm that was ready was not completed");
-    };
-    assert_eq!(received(fired), (0, 4));
+    assert_eq!(try_value(&b, &d), Some(5));
+    let sent = begin(1, Wait::new(arms()).first(0));
+    assert!(matches!(sent, Park::Ready(Fired::Arm(1, Outcome::Sent))));
+    assert_eq!((try_value(&a, &d), try_value(&b, &d)), (Some(4), Some(9)));
     assert!(d.woken().is_empty());
 }
 
@@ -1089,10 +1105,11 @@ fn a_task_that_is_refused_completes_no_arm() {
 }
 
 /// The cancel flag of the task is the wait's own: a task whose flag is
-/// set when it gets to its wait completes an arm that is ready and
-/// keeps the task, and is handed back cancelled when none is.
+/// set when it gets to its wait keeps the task and goes on when a send
+/// of the wait can be done, and is handed back cancelled otherwise: a
+/// receive is not tried, and the value that is there stays.
 #[test]
-fn a_task_that_is_cancelled_completes_a_ready_arm_and_is_refused_a_wait() {
+fn a_task_that_is_cancelled_gives_what_it_holds_and_is_refused_a_wait() {
     use std::sync::atomic::AtomicBool;
 
     let d = Double::new();
@@ -1100,15 +1117,16 @@ fn a_task_that_is_cancelled_completes_a_ready_arm_and_is_refused_a_wait() {
     let ch = Channel::new(0, 2);
     assert!(matches!(ch.try_send(Value::Int(1), &*p), TrySend::Sent));
     let flag = Arc::new(AtomicBool::new(true));
-    let wait = || recv(&ch).cancel(Some(flag.clone()));
+    let cancelled = |wait: Wait| wait.cancel(Some(flag.clone()));
 
-    let Some((1, Resumed::Fired(fired))) = p.park(TaskId(1), 1, wait(), || false) else {
-        panic!("the value that was there was not received");
-    };
-    assert_eq!(received(fired), (0, 1));
-    let back = p.park(TaskId(1), 1, wait(), || false);
+    let back = p.park(TaskId(1), 1, cancelled(recv(&ch)), || false);
     assert!(matches!(back, Some((1, Resumed::Cancelled))));
-    assert_eq!((ch.len(), ch.queued(), p.waiting()), (0, (0, 0), 0));
+    let back = p.park(TaskId(1), 1, cancelled(send(&ch, 2)), || false);
+    let sent = Resumed::Fired(Fired::Arm(0, Outcome::Sent));
+    assert!(matches!(back, Some((1, done)) if format!("{done:?}") == format!("{sent:?}")));
+    let back = p.park(TaskId(1), 1, cancelled(send(&ch, 3)), || false);
+    assert!(matches!(back, Some((1, Resumed::Cancelled))));
+    assert_eq!((ch.len(), ch.queued(), p.waiting()), (2, (0, 0), 0));
     assert!(ready.lock().is_empty());
 }
 

@@ -228,6 +228,63 @@ impl Vm {
             VmError::new("internal VM error: a frame was resumed with its wait open".into())
         })
     }
+
+    /// Whether the task this is the VM of takes nothing new: it was
+    /// cancelled. The steps such a task still has are for what it
+    /// holds, which it may give (a send that is ready), not for new
+    /// work. So every operation that would take something from outside
+    /// the task asks this before it looks, and ends the task where it
+    /// holds ([`Vm::end_here`], [`Vm::no_wait`]): a receive in each of
+    /// its forms, the take of `channel.each` and of a stream's stage or
+    /// sink, and the start of an I/O operation ([`Vm::start_io`]). The
+    /// arms of a wait ask the same of the wait's flag
+    /// (`runtime::sync::park`).
+    ///
+    /// It is the one condition of that rule. (A task that is past its
+    /// deadline is not under it: it takes what is there for as long as
+    /// its steps last.)
+    pub(crate) fn takes_nothing_new(&self) -> bool {
+        let set = |flag: &Arc<std::sync::atomic::AtomicBool>| {
+            flag.load(std::sync::atomic::Ordering::SeqCst)
+        };
+        self.cancelled.as_ref().is_some_and(set)
+    }
+
+    /// The wait that ends a task which takes nothing new
+    /// ([`Vm::takes_nothing_new`]) where it is: a wait with no arm,
+    /// which such a task is refused, as it is refused every wait that
+    /// cannot end at once.
+    pub(crate) fn no_wait() -> Wait {
+        Wait::new(Vec::new())
+    }
+
+    /// The step of a builtin `name` that ends the task here
+    /// ([`Vm::no_wait`]), for a builtin that has no frame of its own.
+    pub(crate) fn end_here(&mut self, name: &'static str) -> Step {
+        self.park(name, Vm::no_wait(), |_, _| {
+            Err(VmError::new(
+                "internal VM error: a task went on that was to take nothing new".into(),
+            ))
+        })
+    }
+
+    /// Hand the blocking operation `f` to the I/O pool
+    /// ([`IoPool::submit`]): the one place where a task starts I/O.
+    ///
+    /// A task that takes nothing new ([`Vm::takes_nothing_new`]) starts
+    /// none: nothing is handed to the pool, and the operation that
+    /// comes back never runs ([`IoPool::withheld`]). The wait for it,
+    /// which the caller begins, ends the task.
+    pub(crate) fn start_io(
+        &self,
+        failure: ErrFactory,
+        f: impl FnOnce() -> Value + Send + 'static,
+    ) -> IoOp {
+        match self.takes_nothing_new() {
+            true => self.runtime.io_pool.withheld(),
+            false => self.runtime.io_pool.submit(failure, f),
+        }
+    }
 }
 
 // ── I/O thread pool ─────────────────────────────────────────────
@@ -487,6 +544,23 @@ impl IoPool {
         self.shared.live.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// An operation that is not handed to the pool: it never runs,
+    /// its cell is never completed, and nothing is done when its
+    /// waiter goes (it is not told to stop: there is nothing to stop).
+    /// See [`Vm::start_io`].
+    pub(crate) fn withheld(&self) -> IoOp {
+        let state = OpState::new(Phase::Left);
+        IoOp {
+            cell: state.cell.clone(),
+            in_flight: Arc::default(),
+            pool: self.shared.clone(),
+            state,
+            stop: None,
+            unless_taken: false,
+            withheld: true,
+        }
+    }
+
     /// Run the blocking operation `f` on a thread of the pool. Its
     /// value completes the cell that is returned. Where no thread can
     /// be started, `f` runs on the calling thread before this returns.
@@ -506,6 +580,7 @@ impl IoPool {
             state: state.clone(),
             stop: None,
             unless_taken: false,
+            withheld: false,
         };
         let queued = state;
         let (cell, in_flight) = (op.cell.clone(), op.in_flight.clone());
@@ -667,6 +742,8 @@ pub(crate) struct IoOp {
     /// `stop` is called whenever the waiter goes without the
     /// operation's value ([`IoOp::stop_unless_taken`]).
     unless_taken: bool,
+    /// It was never handed to the pool ([`IoPool::withheld`]).
+    withheld: bool,
 }
 
 impl IoOp {
@@ -735,6 +812,10 @@ impl IoOp {
 /// ([`IoOp::stop_unless_taken`]) is told in every one of these cases.
 impl Drop for IoOp {
     fn drop(&mut self) {
+        // Nothing was started, so nothing is left to stop or to count.
+        if self.withheld {
+            return;
+        }
         let gone = self.in_flight.lock().take();
         drop(gone);
         let (running, finished) = {
@@ -1386,6 +1467,7 @@ mod tests {
                 state,
                 stop: None,
                 unless_taken: false,
+                withheld: false,
             };
             match stop {
                 true => op.stop_unless_taken(tell()),

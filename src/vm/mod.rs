@@ -185,7 +185,7 @@ impl Vm {
         timeout_err: ErrFactory,
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let op = self.runtime.io_pool.submit(timeout_err, op);
+        let op = self.start_io(timeout_err, op);
         self.io_wait(name, timeout_err, op)
     }
 
@@ -202,7 +202,7 @@ impl Vm {
         stop: impl FnOnce() + Send + 'static,
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let op = self.runtime.io_pool.submit(timeout_err, op).stop_with(stop);
+        let op = self.start_io(timeout_err, op).stop_with(stop);
         self.io_wait(name, timeout_err, op)
     }
 

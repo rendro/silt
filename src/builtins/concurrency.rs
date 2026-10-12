@@ -111,6 +111,11 @@ pub(crate) mod channel {
         }
 
         fn receive(vm, ch: Chan) -> Step {
+            // A cancelled task takes nothing new: not what is there
+            // either.
+            if vm.takes_nothing_new() {
+                return vm.end_here("channel.receive");
+            }
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => return Step::Done(message(value)),
                 TryReceive::Closed(_) => return Step::Done(closed()),
@@ -139,12 +144,15 @@ pub(crate) mod channel {
             }
         }
 
-        fn try_receive(vm, ch: Chan) -> Value {
-            match ch.try_receive(vm.scheduler().wake()) {
+        fn try_receive(vm, ch: Chan) -> Step {
+            if vm.takes_nothing_new() {
+                return vm.end_here("channel.try_receive");
+            }
+            Step::Done(match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => message(value),
                 TryReceive::Empty => empty(),
                 TryReceive::Closed(_) => closed(),
-            }
+            })
         }
 
         fn select(vm, ops: List) -> Result<Step, VmError> {
@@ -207,6 +215,9 @@ pub(crate) mod channel {
             // A negative duration is an error even when a value is
             // there.
             let dur = span("channel.receive_timeout", dur)?;
+            if vm.takes_nothing_new() {
+                return Ok(vm.end_here("channel.receive_timeout"));
+            }
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => return Ok(Step::Done(message(value))),
                 TryReceive::Closed(_) => return Ok(Step::Done(closed())),
@@ -307,6 +318,13 @@ impl Native for Each {
                 };
             }
             EachState::Take => {}
+        }
+        // The first take and every later one. A cancelled task takes
+        // nothing new: the message it was called with last is the
+        // last.
+        if vm.takes_nothing_new() {
+            self.state = EachState::Waited;
+            return Ok(Step::Park(Vm::no_wait()));
         }
         match self.ch.try_receive(vm.scheduler().wake()) {
             TryReceive::Value(message) => Ok(self.call(vm, message)),

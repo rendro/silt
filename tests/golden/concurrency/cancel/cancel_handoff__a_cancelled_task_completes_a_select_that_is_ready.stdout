@@ -1,6 +1,0 @@
-cancelled, and still running
-a value on the Recv arm: received 1
-room on the Send arm: sent
-a timeout arm that has closed: closed
-three arms, the last one ready: received 2
-no arm is ready now: the task ends in this select

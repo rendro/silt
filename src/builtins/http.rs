@@ -910,9 +910,7 @@ impl Conn {
         let (server, pending) = (self.server.clone(), self.pending.clone());
         let scheduler = vm.scheduler().clone();
         let op = vm
-            .runtime
-            .io_pool
-            .submit(not_served, move || {
+            .start_io(not_served, move || {
                 let mut before_body = |waits: bool| {
                     let _ = announced.complete((), scheduler.wake());
                     // The interim response is written like everything
@@ -974,9 +972,7 @@ impl Conn {
         }
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
         let op = vm
-            .runtime
-            .io_pool
-            .submit(not_served, move || {
+            .start_io(not_served, move || {
                 Value::Bool(stream.write_all(&bytes[written..]).is_ok())
             })
             .stop_with(move || stopped.shut_down());
@@ -1005,9 +1001,7 @@ impl Conn {
     fn drain(&mut self, vm: &mut Vm) -> Step {
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
         let op = vm
-            .runtime
-            .io_pool
-            .submit(not_served, move || {
+            .start_io(not_served, move || {
                 stream.end_writes();
                 let mut dropped = [0u8; 8 * 1024];
                 while matches!(stream.read(&mut dropped), Ok(n) if n > 0) {}
@@ -1323,10 +1317,9 @@ impl crate::vm::Native for Serve {
                 // which hands it back to the listener for the next
                 // accept or the next server. The task ends in the wait
                 // it begins here.
-                let cancelled = |flag: &Arc<AtomicBool>| flag.load(Ordering::SeqCst);
-                if vm.cancelled.as_ref().is_some_and(cancelled) {
+                if vm.takes_nothing_new() {
                     drop(op);
-                    return Ok(Step::Park(Wait::new(vec![])));
+                    return Ok(Step::Park(Vm::no_wait()));
                 }
                 let accepted = op.take();
                 drop(op);
