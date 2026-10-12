@@ -1099,16 +1099,16 @@ impl Resolver<'_> {
 
     /// The help for `name`, which resolves to nothing here but which the
     /// modules `elsewhere` offer. Several modules may offer a name
-    /// (`tcp.Timeout`, `http.Timeout`): the ones this module binds are
-    /// named if there are any, the others otherwise, and a module that
-    /// is not built only if no other offers the name.
+    /// (`tcp.Timeout`, `http.Timeout`): every one of them is named, the
+    /// ones this module binds first, as they are reached here. A module
+    /// that is not built is named only if no other offers the name.
     fn elsewhere_help(&self, name: Symbol, elsewhere: &[(Symbol, Option<Symbol>)]) -> String {
         let built: Vec<(Symbol, Option<Symbol>)> = elsewhere
             .iter()
             .copied()
             .filter(|(module, _)| crate::module::missing_feature(&resolve(*module)).is_none())
             .collect();
-        let Some(&(module, bound_as)) = built.first() else {
+        let Some(&(first, _)) = built.first() else {
             let (module, _) = elsewhere[0];
             let feature = crate::module::missing_feature(&resolve(module)).unwrap_or_default();
             return format!(
@@ -1123,28 +1123,47 @@ impl Resolver<'_> {
             }
             _ => items.concat(),
         };
-        let bound: Vec<Symbol> = built.iter().filter_map(|(_, bound_as)| *bound_as).collect();
-        match bound_as {
-            Some(bound_as) if bound.len() == 1 => format!(
-                "did you mean `{bound_as}.{name}`? or import the name: `import {module}.{{ {name} }}`"
+        let modules = |modules: Vec<Symbol>| match modules.len() {
+            1 => format!("module `{}`", modules[0]),
+            _ => format!(
+                "modules {}",
+                listed(modules.iter().map(|m| format!("`{m}`")).collect(), "and")
             ),
-            Some(_) => format!(
-                "did you mean {}? or import one of them by name: `import {module}.{{ {name} }}`",
-                listed(
-                    bound.iter().map(|m| format!("`{m}.{name}`")).collect(),
-                    "or"
-                )
-            ),
-            None if built.len() == 1 => format!(
-                "`{name}` is in module `{module}`: write `{module}.{name}` after `import {module}`, \
-                 or add `import {module}.{{ {name} }}`"
-            ),
-            None => format!(
-                "`{name}` is in modules {}: write `{module}.{name}` after `import {module}`, \
-                 or add `import {module}.{{ {name} }}`",
-                listed(built.iter().map(|(m, _)| format!("`{m}`")).collect(), "and")
-            ),
-        }
+        };
+        // The modules this module binds, each with the name it has
+        // here, and the others.
+        let bound: Vec<(Symbol, Symbol)> = built
+            .iter()
+            .filter_map(|(module, bound_as)| Some((*module, (*bound_as)?)))
+            .collect();
+        let others: Vec<Symbol> = built
+            .iter()
+            .filter(|(_, bound_as)| bound_as.is_none())
+            .map(|(module, _)| *module)
+            .collect();
+        let Some(&(module, _)) = bound.first() else {
+            return format!(
+                "`{name}` is in {}: write `{first}.{name}` after `import {first}`, \
+                 or add `import {first}.{{ {name} }}`",
+                modules(others)
+            );
+        };
+        let meant = listed(
+            bound
+                .iter()
+                .map(|(_, bound_as)| format!("`{bound_as}.{name}`"))
+                .collect(),
+            "or",
+        );
+        let import = match bound.len() {
+            1 => "import the name",
+            _ => "import one of them by name",
+        };
+        let also = match others.is_empty() {
+            true => String::new(),
+            false => format!(" (`{name}` is also in {})", modules(others)),
+        };
+        format!("did you mean {meant}? or {import}: `import {module}.{{ {name} }}`{also}")
     }
 
     /// Report `AmbiguousVariant` for the bare use of `name` at `span`.
