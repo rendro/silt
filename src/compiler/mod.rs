@@ -146,7 +146,8 @@ struct CompileContext {
     /// `main` and in every closure in it, however deep; `closure in
     /// P.show` in a method; `closure in table` in the top-level
     /// `let table = ...`, and `closure at the top level` in one that
-    /// binds no name. No function has `<...>` for a closure's name.
+    /// binds several names or none. No function has `<...>` for a
+    /// closure's name.
     closures: String,
     locals: Vec<Local>,
     scope_depth: usize,
@@ -724,11 +725,12 @@ impl<'a> Compiler<'a> {
                 ..
             } => {
                 let span = *span;
-                // The closures of the initialiser are written in the
-                // binding: they are named after the first name it binds.
-                let closures = match crate::parser::top_level_binders(decl).first() {
-                    Some((name, _, _)) => format!("closure in {name}"),
-                    None => "closure at the top level".to_string(),
+                // The closures of the initialiser are named after the
+                // binding if the `let` binds one name. If it binds
+                // several, or none, no name is theirs alone.
+                let closures = match crate::parser::top_level_binders(decl).as_slice() {
+                    [(name, _, _)] => format!("closure in {name}"),
+                    _ => "closure at the top level".to_string(),
                 };
                 let around = self
                     .contexts
@@ -1293,9 +1295,16 @@ impl<'a> Compiler<'a> {
             // `Int.display`, `Pt.compare` as a value, a method the VM has
             // natively for the type: the function `{ a -> a.display() }`
             // (`{ a, b -> a.compare(b) }` for the two-argument methods).
-            ExprKind::FieldAccess(_, method, _)
+            // The program wrote no closure there: the function has the
+            // method's name, `Int.display`, as a written method has.
+            ExprKind::FieldAccess(of, method, _)
                 if let Some(TypeMember::Native(tr)) = self.type_member(expr)? =>
             {
+                let ty = match &of.kind {
+                    ExprKind::Ident(ty) | ExprKind::FieldAccess(_, ty, _) => *ty,
+                    _ => return Err(checker_missed(span, "a method of no named type")),
+                };
+                let method_name = format!("{ty}.{method}");
                 let names: &[&str] = match resolve(*method).as_str() {
                     "compare" | "equal" => &["__self__", "__other__"],
                     _ => &["__self__"],
@@ -1330,7 +1339,15 @@ impl<'a> Compiler<'a> {
                     },
                     span,
                 );
-                self.compile_expr(&lambda)?;
+                let around = self
+                    .contexts
+                    .last_mut()
+                    .map(|context| std::mem::replace(&mut context.closures, method_name));
+                let compiled = self.compile_expr(&lambda);
+                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                    context.closures = around;
+                }
+                compiled?;
             }
 
             ExprKind::FieldAccess(..)

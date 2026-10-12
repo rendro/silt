@@ -6,5 +6,5 @@ error[runtime]: division by zero
 
 call stack:
   -> fail  at closure_frames__in_a_top_level_let_of_several_names.silt:5:3
-  -> closure in first  at closure_frames__in_a_top_level_let_of_several_names.silt:8:47
-  -> main  at closure_frames__in_a_top_level_let_of_several_names.silt:12:11
+  -> closure at the top level  at closure_frames__in_a_top_level_let_of_several_names.silt:14:58
+  -> main  at closure_frames__in_a_top_level_let_of_several_names.silt:18:11

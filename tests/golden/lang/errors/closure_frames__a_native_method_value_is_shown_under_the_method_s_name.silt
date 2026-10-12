@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: Int.display\nlet f = Int.compare\nf\ntype Pt { x: Int }\nPt.display\n[Pt.equal]\n:quit\n
+-- A method the language has for a type, taken as a value, is shown
+-- under the method's name, as a written method is.

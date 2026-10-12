@@ -1,13 +1,19 @@
 -- exit: 1
--- A closure in a top-level `let` that binds several names is named
--- after the first of them.
+-- A closure in a top-level `let` that binds several names is a closure
+-- at the top level: no one name is its own. The place says which it is.
 fn fail(x) {
   x / 0
 }
 
-let (first, second) = ({ y -> y + 1 }, { y -> fail(y) + 1 })
+type Pair {
+  count: Int,
+  step: Fn(Int) -> Int,
+}
+
+let (first, second) = ({ y -> y + 1 }, { y -> y * 2 })
+let Pair { count, step } = Pair { count: 1, step: { n -> fail(n) + 1 } }
 
 fn main() {
-  println(first(1))
-  println(second(1))
+  println(first(count) + second(count))
+  println(step(count))
 }
