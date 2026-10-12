@@ -301,6 +301,37 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     }
 }
 
+/// `Err(InvalidUrl(url))` for a URL whose port is no port: not a
+/// number, empty, or not in 1..=65535.
+///
+/// The transport library does not refuse such a URL. Its URL type
+/// keeps the port as text and gives no port when the text is not one,
+/// and the request then goes to the default port of the scheme:
+/// `http://host:99999/` was asked of port 80. So it is refused here,
+/// before any connection is made. (A URL that cannot be read at all
+/// is the library's to refuse: [`http_error`].)
+#[cfg(feature = "http")]
+fn refuse_port(url: &str) -> Option<Value> {
+    let uri = url.parse::<ureq::http::Uri>().ok()?;
+    let authority = uri.authority()?.as_str();
+    // Behind the user's name and password, and behind the brackets of
+    // an IPv6 address, whose colons are no port's.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let port = match host.rfind(']') {
+        Some(bracket) => host[bracket + 1..].strip_prefix(':'),
+        None => host.rsplit_once(':').map(|(_, port)| port),
+    }?;
+    let digits = !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit());
+    if digits && matches!(port.parse::<u16>(), Ok(1..)) {
+        return None;
+    }
+    let url = redact_http_url_userinfo(url);
+    let invalid = Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url.into())]);
+    Some(Value::variant(bv::ERR, vec![invalid]))
+}
+
 /// What a request of the transport library came to, as the value of
 /// `http.get` and `http.request`: `Ok(Response)`, or `Err(HttpError)`
 /// for a failure of the request or of the read of the body
@@ -319,6 +350,9 @@ fn finish_http_response(
 /// Perform a synchronous HTTP GET and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
+    if let Some(refused) = refuse_port(url) {
+        return refused;
+    }
     // Security: conservative default timeouts so a slow/unreachable peer
     // cannot hang the underlying OS socket indefinitely (HIGH-3). These
     // apply even if the silt task's SILT_IO_TIMEOUT unblocks the VM task,
@@ -335,6 +369,9 @@ fn do_http_get(url: &str) -> Value {
 /// Perform a synchronous HTTP request and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, String)]) -> Value {
+    if let Some(refused) = refuse_port(url) {
+        return refused;
+    }
     // Security: conservative default timeouts (HIGH-3). See do_http_get.
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -1637,6 +1674,46 @@ mod http_error_tests {
             failure(&do_http_get("http://user:secret@127.0.0.1/a b")),
             "InvalidUrl(http://***@127.0.0.1/a b)"
         );
+    }
+
+    #[test]
+    fn a_port_that_is_no_port_is_invalid_url_and_nothing_is_asked() {
+        for url in [
+            "http://127.0.0.1:99999/",
+            "http://127.0.0.1:65536/",
+            "http://127.0.0.1:0/",
+            "http://127.0.0.1:abc/",
+            "http://127.0.0.1:/",
+            "http://127.0.0.1:80x/page?q=1",
+            "http://127.0.0.1:-1/",
+            "http://127.0.0.1:+80/",
+            "http://[::1]:99999/",
+            "https://example.com:123456",
+        ] {
+            let expected = format!("InvalidUrl({url})");
+            assert_eq!(failure(&do_http_get(url)), expected);
+            assert_eq!(
+                failure(&do_http_request("POST", url, "body", &[])),
+                expected
+            );
+        }
+        assert_eq!(
+            failure(&do_http_get("http://user:secret@127.0.0.1:99999/")),
+            "InvalidUrl(http://***@127.0.0.1:99999/)"
+        );
+        // A port that is one is not refused here: the colons of an IPv6
+        // address and of a password are no port's.
+        for url in [
+            "http://127.0.0.1:1/",
+            "http://127.0.0.1:65535/",
+            "http://127.0.0.1/",
+            "http://[::1]:1/",
+            "http://[::1]/",
+            "http://user:secret@127.0.0.1:1/",
+            "http://user:99999@127.0.0.1/",
+        ] {
+            assert!(refuse_port(url).is_none(), "{url}");
+        }
     }
 
     #[test]

@@ -63,7 +63,7 @@ not do that conversion for you. `HttpError` implements the built-in
 | `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
-| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, or has a scheme other than `http` and `https` |
+| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large) |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body |
 | `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |

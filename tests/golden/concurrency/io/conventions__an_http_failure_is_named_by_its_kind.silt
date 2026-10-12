@@ -2,8 +2,8 @@
 -- timeout: 60
 -- What a request that fails gives is decided by the kind of the
 -- failure, as the transport says it: a URL that cannot be read as one
--- or whose scheme is not http is `InvalidUrl` with the URL as it was
--- written; a port nobody listens on is `Connect`; a server that goes
+-- or whose scheme is not http or whose port is no port is `InvalidUrl`
+-- with the URL as it was written; a port nobody listens on is `Connect`; a server that goes
 -- away before its response is complete is `ClosedEarly`; one that
 -- sends what is no HTTP is `InvalidResponse`.
 import bytes
@@ -50,6 +50,7 @@ fn main() {
   println("no scheme: {kind(http.get("example.com/page"))}")
   println("empty: {kind(http.get(""))}")
   println("another scheme: {kind(http.get("ftp://127.0.0.1/file"))}")
+  println("a port that is none: {kind(http.get("http://127.0.0.1:99999/"))}")
   println("a posted one: {kind(http.request(http.POST, "not a url", "body", #{}))}")
   println("nobody listens: {kind(http.get("http://127.0.0.1:1/"))}")
   println("the server goes away: {kind(against(""))}")
