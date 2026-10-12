@@ -1,13 +1,13 @@
 -- repeat: 100
 -- timeout: 30
--- A task that is cancelled while it runs goes no further than the end
--- of its slice: it never reaches its receives, and the two values in
--- the buffer stay.
+-- A task that is cancelled while it runs goes on for a bounded number
+-- of steps only (the rest of its slice and 2,000 steps): it never
+-- reaches its receives, and the two values in the buffer stay.
 --
 -- The cancel comes before the work, whatever the machine does: the
 -- task looks for `go` without waiting, `main` cancels it and only
 -- then sends `go`, and between `go` and the first receive lie many
--- slices of work.
+-- times those steps of work.
 import channel
 import task
 import time

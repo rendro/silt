@@ -980,8 +980,9 @@ pub struct TaskHandle {
     /// failed with, or that it was cancelled. A join waits for it.
     result: Arc<Cell<Ended>>,
     /// Set by `task.cancel`. The scheduler reads it before each slice
-    /// of the task and before each park, so a cancelled task runs no
-    /// further and takes nothing.
+    /// of the task and before each park: a cancelled task begins no
+    /// wait and has none completed for it, and runs on only for the
+    /// steps that [`TaskHandle::count_late`] counts.
     cancelled: Arc<AtomicBool>,
     /// True while the task has failed and nobody has handled the
     /// failure: no join has received it and no cancel has dismissed
@@ -1001,10 +1002,10 @@ pub struct TaskHandle {
     /// Set when the task was ended by its deadline: that is its
     /// result then ([`TaskHandle::expire`]).
     expired: AtomicBool,
-    /// The steps run past the deadline, counted by the scheduler: by
-    /// this task, and by every task of a deadline inside it that has
-    /// the same time (they share the count: of them only one runs at a
-    /// time, the innermost).
+    /// The steps run past the deadline, or after a cancel, counted by
+    /// the scheduler: by this task, and by every task of a deadline
+    /// inside it that has the same time (they share the count: of them
+    /// only one runs at a time, the innermost).
     late: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -1049,8 +1050,8 @@ impl TaskHandle {
         self.late.clone()
     }
 
-    /// The task has run `steps` steps past its deadline: how many that
-    /// makes.
+    /// The task has run `steps` steps past its deadline, or after it
+    /// was cancelled: how many that makes. It is one count for both.
     pub fn count_late(&self, steps: usize) -> usize {
         self.late.fetch_add(steps, AtomicOrdering::SeqCst) + steps
     }
@@ -1105,9 +1106,10 @@ impl TaskHandle {
         self.result.complete(Ended(Err(error)), wake).is_ok()
     }
 
-    /// `task.cancel`: the task runs no further, and its result is the
-    /// cancellation unless it had one. A failure it had is dismissed.
-    /// The caller ends the task's wait, if it waits
+    /// `task.cancel`: the task's result is the cancellation unless it
+    /// had one, at once, whatever the task still does (what it returns
+    /// or fails with later changes nothing). A failure it had is
+    /// dismissed. The caller ends the task's wait, if it waits
     /// (`Scheduler::cancel`).
     pub fn cancel(&self, wake: &dyn Wake) {
         self.cancelled.store(true, AtomicOrdering::SeqCst);

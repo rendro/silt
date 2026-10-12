@@ -552,8 +552,10 @@ pub(crate) mod task {
             }))
         }
 
-        // The task runs no further slice, and a wait of it ends
-        // without taking or sending anything. Cancelling a task
+        // A wait of the task ends without taking or sending
+        // anything, and the task with it; a task that is not waiting
+        // goes on for a bounded number of steps, to its next wait at
+        // the latest (`Scheduler::cancel`). Cancelling a task
         // handles it: if it had failed before, its failure is
         // dismissed and not reported as an unjoined failure. A join
         // still raises that failure, because the handle keeps the
