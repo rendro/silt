@@ -258,7 +258,7 @@ pub trait Clock: Send + Sync {
 | `time.now`, `time.today`, the timestamp in `uuid.v7`, the seed of `math.random` (at its first call) | `now` |
 | `time.sleep` outside a task | `sleep` |
 | `time.sleep` in a task, `channel.timeout`, `channel.receive_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
-| `task.deadline` | `monotonic`: the time of the function is over when the reading reaches the deadline; a wait of it is ended then, and a function that computes on is ended when a time slice of it has run out and the reading is past the deadline. The function runs as a task, so a `time.sleep` in it waits for `monotonic` too, also when `task.deadline` is called outside a task |
+| `task.deadline` | `monotonic`: the time of the function is over when the reading reaches the deadline; a wait of it is ended then, and a function that goes on without waiting is ended 2,000 steps after the first time slice of it that begins with the reading past the deadline. The function runs as a task, so a `time.sleep` in it waits for `monotonic` too, also when `task.deadline` is called outside a task |
 | `SILT_IO_TIMEOUT` | `monotonic`: a wait for I/O ends when the reading reaches the deadline |
 
 The runtime's own threads wait in real time between two readings of an

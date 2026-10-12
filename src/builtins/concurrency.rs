@@ -397,18 +397,24 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 ///   an operation in flight is given up), never by both. A wait that
 ///   the time ends, or that begins when the time is over, ends the
 ///   task there.
-/// - A task that computes on past its time is ended when its slice
-///   has run out.
+/// - The work of a task past its time is bounded: every step it runs
+///   in a slice that began when the time was over is counted, and
+///   when a standard slice of them is used up the task is ended, after
+///   that step or at the entry of the wait it began (no arm is tried).
 ///
 /// So this frame only waits for the task to end, however long after
-/// the time that is (a slice at most), and reports how it did: it
-/// returned, it was ended by its deadline, or it failed. A function
-/// that took a value in time has the steps to return it, and its `Ok`
-/// is never thrown away for the clock's sake.
+/// the time that is (a slice and those steps at most), and reports how
+/// it did: it returned, it was ended by its deadline, or it failed. A
+/// function that took a value in time has the steps to return it, and
+/// its `Ok` is never thrown away for the clock's sake.
 ///
 /// The task's time is no later than the caller's own, if the caller
 /// has one (a deadline inside a deadline): the outer time ends the
-/// inner function by the same rule, with no cancel.
+/// inner function by the same rule, with no cancel. A task that has
+/// its caller's time goes on with its caller's count of steps
+/// (`TaskHandle::late`), so that the work past a deadline is bounded
+/// in total: a function that calls `task.deadline` again and again
+/// when its time is over gets no new steps with each call.
 ///
 /// The frame owns the task: if the frame is dropped while it waits
 /// (the caller was cancelled by `task.cancel`, or the program ended),
@@ -515,8 +521,8 @@ pub(crate) mod task {
     builtins! {
         fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
             // A duration of zero or less is a time that is over now:
-            // the function runs to its first wait, or to the end of
-            // its first slice.
+            // the function runs to its first wait that has to wait,
+            // or until the steps of a late task are used up.
             let after = Duration::from_nanos(u64::try_from(dur.0).unwrap_or(0));
             let until = vm.runtime.io.deadline_after(after).ok_or_else(no_timer)?;
             if let Some(failure) = vm.runtime.io.clock_failure() {

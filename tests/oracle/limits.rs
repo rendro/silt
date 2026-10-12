@@ -274,9 +274,9 @@ fn a_deadline_ends_its_function_at_every_slice() {
     for (what, door) in doors {
         at_each(&SLICES, what, &program(door, "time.ms(20)"), "timeout");
     }
-    // A function that never waits is ended when its time slice has
-    // run out: after 2,000 steps past its last wait, whatever the
-    // slice of the VM.
+    // A function that never waits is ended 2,000 steps after the first
+    // slice that begins when its time is over, whatever the slice of
+    // the VM.
     at_each(
         &SLICES,
         "a function that only computes",
@@ -540,6 +540,193 @@ fn main() {
                 Ok(Value::String(expected.into())),
                 "{what} at slice {slice:?}"
             );
+        }
+    }
+}
+
+/// The work a function does past its deadline is bounded in all,
+/// whatever the function does and whatever ends its slices: about
+/// 2,000 steps, counted one by one, in one count for the function and
+/// the functions of the deadlines inside it.
+///
+/// Each case is a loop of 300,000 rounds under a deadline whose time is
+/// over from the start (so nothing here depends on a clock), with a
+/// mark for every round that was done. The loop must not reach its last
+/// round, and the rounds it did reach are few: operations that are
+/// ready at once (a `select` whose arm can be completed, a `receive`
+/// of what is there, `try_send`, `try_receive`), such operations mixed
+/// with computing, a `task.deadline` in every round (one of an hour,
+/// one of no time, three in each other, one around ready selects). The
+/// count of the rounds is the same at every time slice: a slice that
+/// ends in a wait which is over at once counts like one that ran out.
+///
+/// And what a late function was ended in front of is still there: a
+/// `select` that was not to complete its arm any more took nothing
+/// and sent nothing.
+#[test]
+fn the_work_past_a_deadline_is_bounded_whatever_the_function_does() {
+    let source = r#"
+import channel
+import list
+import string
+import task
+import time
+
+-- How many values `ch` holds, taken out of it.
+fn drained(ch) {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn filled(n) {
+  let ch: Channel(Int) = channel.new(n)
+  loop i = 0 {
+    match i >= n {
+      true -> ch
+      false -> {
+        channel.send(ch, i)
+        loop(i + 1)
+      }
+    }
+  }
+}
+
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+-- `round(i)` 300,000 times, with a mark for each round that was done.
+fn rounds(marks, round) {
+  loop i = 0 {
+    match i >= 300000 {
+      true -> i
+      false -> {
+        round(i)
+        let _ = channel.try_send(marks, i)
+        loop(i + 1)
+      }
+    }
+  }
+}
+
+-- The rounds a function that is `rounds` of `round` did under a
+-- deadline that is over from the start; -1 if it was not ended.
+fn late(round) {
+  let marks: Channel(Int) = channel.new(20000)
+  match task.deadline(time.ms(0), { -> rounds(marks, round) }) {
+    Err(task.Timeout) -> drained(marks)
+    _ -> -1
+  }
+}
+
+fn main() {
+  let closed: Channel(Int) = channel.new(1)
+  channel.close(closed)
+  let sink: Channel(Int) = channel.new(20000)
+  let full = filled(12000)
+  let timed_out = channel.timeout(time.ms(0))
+  let _ = channel.receive(timed_out)
+  let recv_closed = late({ _ ->
+    let _ = channel.select([channel.Recv(closed)])
+  })
+  let send_room = late({ i ->
+    let _ = channel.select([channel.Send(sink, i)])
+  })
+  let sent = drained(sink)
+  let recv_full = late({ _ ->
+    let _ = channel.select([channel.Recv(full)])
+  })
+  let taken = 12000 - drained(full)
+  let recv_timed_out = late({ _ ->
+    let _ = channel.select([channel.Recv(timed_out)])
+  })
+  let receive = late({ _ ->
+    let _ = channel.receive(closed)
+  })
+  let try_receive = late({ _ ->
+    let _ = channel.try_receive(closed)
+  })
+  let try_send = late({ i ->
+    let _ = channel.try_send(sink, i)
+  })
+  let mixed = late({ _ ->
+    let _ = channel.select([channel.Recv(closed)])
+    let _ = count(40, 0)
+  })
+  let inner_hour = late({ i ->
+    let _ = task.deadline(time.hours(1), { -> i })
+  })
+  let inner_none = late({ i ->
+    let _ = task.deadline(time.ms(0), { -> i })
+  })
+  let three = late({ i ->
+    let _ = task.deadline(time.hours(1), { ->
+      task.deadline(time.hours(2), { -> task.deadline(time.hours(3), { -> i }) })
+    })
+  })
+  let inner_selects = late({ _ ->
+    let _ = task.deadline(time.hours(1), { ->
+      loop j = 0 {
+        match j >= 50 {
+          true -> j
+          false -> {
+            let _ = channel.select([channel.Recv(closed)])
+            loop(j + 1)
+          }
+        }
+      }
+    })
+  })
+  let counts = [
+    recv_closed, send_room, recv_full, recv_timed_out, receive, try_receive, try_send, mixed,
+    inner_hour, inner_none, three, inner_selects, sent - send_room, taken - recv_full,
+  ]
+  counts |> list.map { n -> string.from(n) } |> string.join(" ")
+}
+"#;
+    let mut first: Option<String> = None;
+    for slice in [None, Some(2000), Some(7), Some(1)] {
+        let (result, _) = run_with(source, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+        });
+        let Ok(Value::String(text)) = result else {
+            panic!("at slice {slice:?}: {result:?}");
+        };
+        let counts: Vec<i64> = text
+            .split(' ')
+            .map(|n| n.parse().expect("a count"))
+            .collect();
+        let (rounds, kept) = counts.split_at(12);
+        // Ended, after some rounds and not many. (Three deadlines in
+        // each other and a deadline around fifty selects are large
+        // rounds: one or two of them are within the bound.)
+        for (case, rounds) in rounds.iter().enumerate() {
+            assert!(
+                (1..10_000).contains(rounds),
+                "case {case} at slice {slice:?}: {rounds} rounds ({text})"
+            );
+        }
+        // What the last `select` of the function completed, it marked,
+        // or it was ended between the two: one value at most is sent,
+        // or taken, without its mark. Nothing was sent or taken by a
+        // `select` the function was ended in front of.
+        assert!(
+            kept.iter().all(|more| (0..=1).contains(more)),
+            "at slice {slice:?}: {text}"
+        );
+        // The count does not depend on the slice.
+        match &first {
+            None => first = Some(text.to_string()),
+            Some(first) => assert_eq!(&text.to_string(), first, "at slice {slice:?}"),
         }
     }
 }

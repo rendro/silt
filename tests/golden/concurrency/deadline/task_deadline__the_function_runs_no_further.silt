@@ -3,7 +3,7 @@
 -- A function that the deadline ended is ended: it does not go on behind
 -- the caller's back. What it would have sent after its sleep is never
 -- sent, and a function that only computes (it never waits) is ended
--- too, at the end of the time slice it is in.
+-- too, some 2,000 steps past its time.
 import channel
 import task
 import time

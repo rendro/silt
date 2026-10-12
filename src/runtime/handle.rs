@@ -995,7 +995,8 @@ pub struct TaskHandle {
     /// time: the task of a function that `task.deadline` runs has one.
     /// The scheduler puts it on every wait of the task
     /// (`runtime::sync::Wait::task_deadline`) and ends the task when
-    /// one of them ends by it, or when the task computes on past it.
+    /// one of them ends by it, or when the task has run on past it for
+    /// the steps a late task has ([`TaskHandle::count_late`]).
     deadline: Option<std::time::Duration>,
     /// Set when the task was ended by its deadline: that is its
     /// result then ([`TaskHandle::expire`]).

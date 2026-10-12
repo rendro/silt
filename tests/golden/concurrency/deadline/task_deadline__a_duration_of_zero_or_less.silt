@@ -1,11 +1,11 @@
 -- timeout: 60
 -- A duration of zero or less is a time that is over when the function
 -- starts, and the rule is the same: the function runs until it would
--- have to wait, or until its time slice has run out. So a function
+-- have to wait, or until the steps of a late function are used up. So a function
 -- that returns without waiting is `Ok`, also when what it asked for
 -- was there (a value in a channel wins over a time that has passed);
 -- one that would wait is ended there, and one that computes on is
--- ended when its slice has run out.
+-- ended when those steps are used up.
 import channel
 import task
 import time

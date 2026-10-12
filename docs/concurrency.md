@@ -560,9 +560,9 @@ let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log")
 
 The function runs as a task of its own, and the deadline is that task's:
 when `dur` has passed, its time is over. From then on the function is
-ended **where it would have to wait**, and a function that never waits is
-ended when its time slice has run out. That is one rule for every wait of
-`f`, whatever it waits for: I/O (see
+ended **where it would have to wait**, and a function that does not wait
+is ended after a small, fixed amount of further work. That is one rule
+for every wait of `f`, whatever it waits for: I/O (see
 [Blocking operations](#blocking-operations)), a `time.sleep`, a
 `channel.receive` or `channel.send`, a `channel.select`, a `task.join`, a
 wait deep inside the callback of a `list.fold`, or the read of a stream.
@@ -581,24 +581,34 @@ deadline: it ends when the deadline has passed.
   it returned (`Ok`), it was ended by its deadline (`Err(Timeout)`), or
   it failed. A function that got its value just in time and returns it is
   `Ok`, even though the clock has moved past the deadline meanwhile: the
-  answer never contradicts what the function did. It comes at most one
-  time slice of the function after the deadline.
+  answer never contradicts what the function did. It comes at most two
+  time slices of the function after the deadline.
 - **What is there is not waited for.** An operation that can be done at
   once is done, also when the time is over: a value that lies in a
   channel is received, as by `channel.receive_timeout` with a duration
   that has passed. A duration of zero or less is a time that is over from
   the start, and the rule is the same: `task.deadline(time.ms(0), { -> 1 })`
   is `Ok(1)`, and a function that receives from an empty channel is ended
-  there.
-- **A function that computes on is ended when its time slice has run
-  out**: after 2,000 steps past the last wait that ended for it in time,
-  which with the usual time slice is the end of the slice in which its
-  time passed. Only one call of a builtin that is under way (the sort of
-  a large list) runs to its end first. A function that received a value
-  and, instead of returning, goes on computing past its time is ended
-  with the value in hand; so is one that has computed for a whole slice
-  without waiting and then takes a value that is there. Return what you
-  took, or hand it on, before more work.
+  there. This holds for the work past the time that the next item bounds,
+  and not beyond it.
+- **The work past the time is bounded in all.** A function whose time is
+  over runs on for at most 2,000 steps: about 2,000 instructions, a few
+  hundred rounds of a small loop. That is what a function which got its
+  value just in time has to return it. Every step counts, whatever the
+  function does with it: computing, operations that are done at once (a
+  `receive` of what is there, a `select` whose arm is ready, `try_send`),
+  calls of `task.deadline` (the function of a deadline inside a function
+  that is past its time goes on with what is left; it gets no steps of
+  its own). When the steps are used up the function is ended: after the
+  step that used them up, or at the next wait it begins, of which no arm
+  is completed then, ready or not. (The steps are counted from the first
+  time slice that begins when the time is over, so a function that
+  computes is ended at most 2,000 steps and one time slice past its
+  time. One call of a builtin that is under way, the sort of a large
+  list, runs to its end first.) So a function that received a value and,
+  instead of returning it, goes on working past its time is ended with
+  the value in hand, and a value that it takes when its time is over is
+  its own risk. Return what you took, or hand it on, before more work.
 - **A failure of the function is the caller's**: a runtime error inside
   `f` is raised by `task.deadline` as it is, at the place in `f` where it
   happened, whatever the clock says. A function that fails is never

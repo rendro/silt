@@ -463,8 +463,8 @@ The function runs as a task of its own whose time is over when `dur` has
 passed. From then on it is ended where it would have to wait, whatever it
 waits for (I/O, a `time.sleep`, a `channel.receive` or `channel.send`, a
 `channel.select`, a `task.join`, a wait deep inside the callback of a
-builtin, the read of a stream), and a function that never waits is ended
-when its time slice has run out.
+builtin, the read of a stream), and a function that does not wait is
+ended after a fixed amount of further work.
 
 - A wait of `f` ends one way or the other: it got what it waited for and
   `f` goes on, or the deadline ended it, nothing was received or sent, and
@@ -479,10 +479,12 @@ when its time slice has run out.
   that lies in a channel is received. A `dur` of zero or less is a time
   that is over from the start: `task.deadline(time.ms(0), { -> 1 })` is
   `Ok(1)`.
-- A function that computes on past its time is ended when its time slice
-  has run out (2,000 steps after the last wait that ended for it in time),
-  with what it holds; one call of a builtin that is under way runs to its
-  end first.
+- The work past the time is bounded in all: a function whose time is over
+  runs on for at most 2,000 steps (about 2,000 instructions, a few hundred
+  rounds of a small loop), whatever it does with them, the functions of
+  the deadlines it calls included. Then it is ended, with what it holds:
+  after the step that used them up, or at the next wait it begins, ready
+  or not. One call of a builtin that is under way runs to its end first.
 - An I/O operation in flight is given up (a connection it was reading or
   writing is shut down); what had started may have happened all the same.
   A connection that reaches a `tcp.accept` as it is given up stays with
