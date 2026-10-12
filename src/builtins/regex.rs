@@ -39,8 +39,9 @@ fn option(found: Option<Value>) -> Value {
     }
 }
 
-/// What is wrong with a pattern, and the byte of the pattern where it
-/// is wrong, from the report of the `regex` crate. The report shows
+/// What is wrong with a pattern, and the character of the pattern
+/// where it is wrong, counted from 0 as `string.slice` counts, from the
+/// report of the `regex` crate. The report shows
 /// the pattern, marks the place with `^` under it, and says what is
 /// wrong after `error: `:
 ///
@@ -62,11 +63,9 @@ fn syntax_error(pattern: &str, report: &str) -> (String, usize) {
             .position(|line| line.strip_prefix(INDENT) == Some(pattern))?;
         let marks = lines.get(shown + 1)?.strip_prefix(INDENT)?;
         if marks.trim_matches(|c| c == ' ' || c == '^').is_empty() && marks.contains('^') {
-            let column = marks.chars().take_while(|c| *c == ' ').count();
-            let at = pattern
-                .char_indices()
-                .nth(column)
-                .map_or(pattern.len(), |(at, _)| at);
+            // A mark stands under the character it is about, one
+            // column a character.
+            let at = marks.chars().take_while(|c| *c == ' ').count();
             let what = lines.last()?.strip_prefix("error: ")?;
             return Some((what.to_string(), at));
         }

@@ -27,7 +27,7 @@ fn main() {
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `InvalidPattern(String, Int)` | what is wrong, the byte of the pattern where | the pattern does not parse |
+| `InvalidPattern(String, Int)` | what is wrong, and the character of the pattern where: counted from 0, as `string.slice` counts | the pattern does not parse |
 | `TooBig` | — | the compiled pattern exceeds the size budget |
 | `Other(String)` | message | unclassified failure |
 
