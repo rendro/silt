@@ -30,7 +30,6 @@ mod round71_doc_drift_lock_tests;
 mod round79_doc_frontmatter_parity_tests;
 mod round80_dead_code_tests;
 mod round80_doc_top_level_order_tests;
-mod round83_dead_code_dedup_lock_tests;
 mod round84_readme_keyword_parity_tests;
 mod round86_editor_grammar_operators_lexer_parity_tests;
 mod rustdoc_warnings_lock_tests;

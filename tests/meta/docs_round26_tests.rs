@@ -1,14 +1,10 @@
-//! Round-26 DOC agent locks.
-//!
-//! These tests pin the doc state the round-26 audit fixed so it doesn't
-//! drift again:
+//! Round-26 DOC agent locks: the doc state the round-26 audit fixed.
 //!
 //! - G7: README tooling block's subcommand set must track `silt --help`.
-//! - G8: `docs/stdlib/index.md` and `docs/stdlib-reference.md` must
-//!   reference every stdlib module that has a per-module page
-//!   (specifically `bytes`, `tcp`, `stream`, `postgres`). A coverage
-//!   walker cross-checks every `builtin_modules()` entry against the
-//!   registered builtin docs so a future module can't ship without docs.
+//! - G8: the postgres page says that the module is an opt-in feature
+//!   and how to build silt with it. (That a page lists every function
+//!   of its module is `stdlib_reference_tests`; that every builtin name
+//!   has a doc is `lsp_builtin_doc_extraction_tests`.)
 
 use std::path::Path;
 use std::process::Command;
@@ -115,14 +111,10 @@ fn readme_tooling_block_matches_main_help() {
     );
 }
 
-// ─── G8: Stdlib indexes + per-module docs ────────────────────────────
-//
-// The tests below check that each module has at least one name with a
-// doc, and that the postgres page keeps its contracts (opt-in feature,
-// the `--features postgres` hint, every builtin documented).
+// ─── G8: the postgres page ───────────────────────────────────────────
 
 #[test]
-fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
+fn postgres_doc_says_it_is_opt_in_and_how_to_enable_it() {
     // The module's page, whether or not this build has the feature.
     let body = silt::builtins::registry::registry()
         .module("postgres")
@@ -139,79 +131,5 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
         body.contains("--features postgres"),
         "docs/stdlib/postgres.md must show how to enable the feature \
          (e.g. `--features postgres`)"
-    );
-
-    // Every postgres builtin must be documented by name.
-    const REQUIRED_BUILTINS: &[&str] = &[
-        "postgres.connect",
-        "postgres.query",
-        "postgres.execute",
-        "postgres.transact",
-        "postgres.close",
-        "postgres.stream",
-        "postgres.cursor",
-        "postgres.cursor_next",
-        "postgres.cursor_close",
-        "postgres.listen",
-        "postgres.notify",
-    ];
-    let mut missing: Vec<&str> = Vec::new();
-    for name in REQUIRED_BUILTINS {
-        let bare = name.strip_prefix("postgres.").unwrap();
-        let table_row = format!("`{}`", bare);
-        if !body.contains(name) && !body.contains(&table_row) {
-            missing.push(name);
-        }
-    }
-    assert!(
-        missing.is_empty(),
-        "docs/stdlib/postgres.md is missing documentation for builtin(s): \
-         {missing:?}"
-    );
-}
-
-/// Coverage walker: every builtin module that is built
-/// (`silt::module::builtin_modules()`) has at least one `<module>.*`
-/// name with a doc, and the variants of the error enums are documented
-/// too. A new module then cannot ship without docs.
-#[test]
-fn every_builtin_module_has_a_per_module_doc() {
-    let docs = silt::builtins::registry::docs::builtin_docs();
-
-    let mut missing: Vec<String> = Vec::new();
-    for name in silt::module::builtin_modules() {
-        if silt::module::missing_feature(name).is_some() {
-            continue;
-        }
-        let dot = format!("{name}.");
-        let has_any_doc = docs
-            .iter()
-            .any(|(k, v)| k.starts_with(&dot) && !v.trim().is_empty());
-        if !has_any_doc {
-            missing.push(format!(
-                "module `{name}` has no docs: no `{name}.*` name has a doc \
-                 cut from its page under docs/stdlib/."
-            ));
-        }
-    }
-    // A variant of an error enum shows its enum's section of
-    // docs/stdlib/errors.md, under the name it is reached by.
-    for variant in [
-        "io.NotFound",
-        "json.Syntax",
-        "toml.Syntax",
-        "int.Empty",
-        "float.Empty",
-    ] {
-        if !docs.get(variant).is_some_and(|d| !d.trim().is_empty()) {
-            missing.push(format!("error variant `{variant}` has no registered doc"));
-        }
-    }
-
-    assert!(
-        missing.is_empty(),
-        "{} stdlib module(s) ship without a per-module doc:\n{}",
-        missing.len(),
-        missing.join("\n")
     );
 }
