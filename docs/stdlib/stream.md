@@ -127,7 +127,12 @@ fn main() {
   that feeds it is stopped, and so on up to the source. So
   `stream.repeat(x) |> stream.take(3)` leaves nothing running. The output
   of a stage is closed by this: read it with one consumer. A channel that
-  no stage feeds (one you made with `channel.new`) is left open.
+  no stage feeds (one you made with `channel.new`) is left open. What is
+  left *in* it is another matter: a stage reads ahead of what its reader
+  asks for (a `map` stage until its output is full, a `filter` stage as
+  far as it finds nothing to pass on), and what a stage took is gone
+  when the pipeline is cut short. `stream.take` directly on a channel
+  takes exactly what it gives.
 - **A TCP source or sink that is stopped closes its connection.** When
   `stream.tcp_lines` or `stream.tcp_chunks` is stopped before the peer has
   closed (`stream.tcp_lines(conn) |> stream.first`), or the task in
