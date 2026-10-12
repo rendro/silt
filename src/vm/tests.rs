@@ -4651,6 +4651,50 @@ mod seen_drops {
         (maker, log)
     }
 
+    /// Two functions that number their probes together: the first as
+    /// [`maker`]'s, the second gives a new closure of `function` at
+    /// each call, which captures a new probe and is held by nothing
+    /// else (the function's one upvalue).
+    pub(super) fn makers(function: Arc<Function>) -> (Value, Value, Log) {
+        let log = Log::default();
+        let made = Arc::new(AtomicUsize::new(0));
+        let new_probe = {
+            let (made, log) = (made.clone(), log.clone());
+            move || {
+                let probe = Probe(made.fetch_add(1, Ordering::SeqCst) + 1, log.clone());
+                Value::HostFn(Arc::new(HostFn {
+                    name: "probe".to_string(),
+                    call: Arc::new(move |_| {
+                        let _ = &probe;
+                        Ok(Value::Unit)
+                    }),
+                    returns: HostShape::Any,
+                }))
+            }
+        };
+        let host = |name: &str, call: crate::value::HostImpl| {
+            Value::HostFn(Arc::new(HostFn {
+                name: name.to_string(),
+                call,
+                returns: HostShape::Any,
+            }))
+        };
+        let probes = {
+            let new_probe = new_probe.clone();
+            host("maker", Arc::new(move |_| Ok(new_probe())))
+        };
+        let closures = host(
+            "closures",
+            Arc::new(move |_| {
+                Ok(Value::VmClosure(Arc::new(crate::bytecode::VmClosure {
+                    function: function.clone(),
+                    upvalues: vec![new_probe()],
+                })))
+            }),
+        );
+        (probes, closures, log)
+    }
+
     /// A function that gives a new channel at each call, and the
     /// channels it gave, each as long as something holds it. (A channel
     /// can be compared, which a function cannot; it does not say when
@@ -5166,5 +5210,168 @@ mod slots_in_place {
         assert_eq!(run.unwrap(), Value::Unit);
         assert_eq!(ended(&log), [1, 2, 3, 4, 5, 6]);
         assert!(vm.stack.is_empty());
+    }
+}
+
+/// A call of a closure enters it by its pointer, and a number, a Bool
+/// or unit that a function returns to its caller is written from the
+/// top slot over the callee's own slot. What a return lets go of, and
+/// in which order, is one thing for every kind of result: the callee,
+/// then its arguments and locals from the lowest slot up.
+mod calls_and_returns {
+    use super::seen_drops::{ended, makers};
+    use super::*;
+    use crate::bytecode::VmClosure;
+    use crate::value::{HostFn, HostShape};
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// The results a function returns in the tests: a value of every
+    /// sort the instruction loop knows (`Sort` in run.rs).
+    fn results() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Unit,
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::tuple(vec![float(0.5), Value::Bool(false)]),
+        ]
+    }
+
+    /// A function of two parameters that makes a probe its local and
+    /// returns its result, called with two probes, a closure that owns
+    /// a probe: when the function returns, the callee ends (probe 1,
+    /// its upvalue), then the arguments (2, 3), then the local (4).
+    /// The caller, a function's frame, gets the result and returns it
+    /// with a probe of its own beside it (5), which ends last.
+    #[test]
+    fn a_return_ends_the_callee_then_its_slots_from_the_lowest_up() {
+        for result in results() {
+            returned(result);
+        }
+    }
+
+    fn returned(result: Value) {
+        // The callee: `fn inner(a, b) { let local = probe(); result }`,
+        // where `probe` is global 0.
+        let mut inner = Emitter::new("inner".to_string(), 2, span()).unwrap();
+        inner.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap();
+        inner.emit(Asm::Call { argc: 0 }, span()).unwrap();
+        push(&mut inner, result.clone());
+        inner.emit(Asm::Return, span()).unwrap();
+        let inner = Arc::new(inner.finish(1).unwrap_or_else(|e| panic!("{e:?}")));
+        let (probes, closures, log) = makers(inner);
+        // The caller: `closures()(probe(), probe())`, then a probe of
+        // its own, and both in a tuple.
+        let script = make_function(|e| {
+            let probe = e.constant(probes.clone(), span()).unwrap();
+            let closure = e.constant(closures, span()).unwrap();
+            e.emit(Asm::Constant { k: probe }, span()).unwrap();
+            e.emit(Asm::SetGlobal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Constant { k: closure }, span()).unwrap();
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            for _ in 0..2 {
+                e.emit(Asm::Constant { k: probe }, span()).unwrap();
+                e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            }
+            e.emit(Asm::Call { argc: 2 }, span()).unwrap();
+            e.emit(Asm::Constant { k: probe }, span()).unwrap();
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        // (The script is called by an outer script, so that the inner
+        // function returns to a function's frame that is not the
+        // run's first.)
+        let outer = make_function(|e| {
+            push(
+                e,
+                Value::VmClosure(Arc::new(VmClosure {
+                    function: script,
+                    upvalues: vec![],
+                })),
+            );
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
+        let Value::Tuple(pair) = vm.run(outer).unwrap() else {
+            panic!("a tuple")
+        };
+        assert_eq!(pair[0], result, "the result");
+        // The callee's probe, its two arguments, its local: all ended
+        // at the return, in that order, before the caller made its own.
+        assert_eq!(ended(&log), [1, 2, 3, 4], "returning {result:?}");
+        drop(pair);
+        assert_eq!(ended(&log), [1, 2, 3, 4, 5], "returning {result:?}");
+    }
+
+    /// A value of every kind that can be called is called by `Call`.
+    #[test]
+    fn a_call_of_every_kind_of_function() {
+        let closure = Value::VmClosure(Arc::new(VmClosure {
+            function: make_function_of(1, |e| {
+                e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            }),
+            upvalues: vec![],
+        }));
+        let host = Value::HostFn(Arc::new(HostFn {
+            name: "same".to_string(),
+            call: Arc::new(|args| Ok(args[0].clone())),
+            returns: HostShape::Any,
+        }));
+        for callee in [closure, host] {
+            for argument in results() {
+                let script = make_function(|e| {
+                    push(e, callee.clone());
+                    push(e, argument.clone());
+                    e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+                    e.emit(Asm::Return, span()).unwrap();
+                });
+                assert_eq!(
+                    Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                    argument,
+                    "{callee:?} of {argument:?}"
+                );
+            }
+        }
+    }
+
+    /// The frames of a recursion 3,000 calls deep, which is past
+    /// eleven doublings of the room for frames, each made at the push
+    /// of a frame; and the values of the callers, which wait on the
+    /// stack meanwhile, are what they were when the calls return.
+    #[test]
+    fn a_recursion_makes_room_for_its_frames() {
+        for (base, step, expected) in [
+            ("0", "1", "3000"),
+            ("0.0", "0.5", "1500.0"),
+            ("\"\"", "\".\"", "3000"),
+        ] {
+            let sum = if base.starts_with('"') {
+                "\"{depth(n - 1)}{step()}\""
+            } else {
+                "step() + depth(n - 1)"
+            };
+            let shown = if base.starts_with('"') {
+                "string.length(depth(3000))"
+            } else {
+                "depth(3000)"
+            };
+            let source = format!(
+                "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ \"{{{shown}}}\" }}"
+            );
+            assert_eq!(run_vm(&source), Value::String(expected.into()), "{source}");
+        }
     }
 }

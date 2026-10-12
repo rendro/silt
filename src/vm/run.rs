@@ -163,8 +163,8 @@ fn put(slot: &mut Value, value: Value) {
 // A Value is 40 bytes. One that was just written in two smaller stores
 // (its tag, its number) and is then read back in 16-byte pieces, as a
 // move of the whole value reads it, makes the processor wait for the
-// stores: 12 to 14 cycles each time. (Measured in the pull request
-// that brought this in, 2026-10-12.)
+// stores: 12 to 14 cycles each time. (Measured in pull request #54,
+// 2026-10-12.)
 
 /// A value as the instructions that copy one sort it: a number, a Bool
 /// or unit, which owns nothing and is built where it goes; a closure,
@@ -683,9 +683,23 @@ impl Vm {
                 Instr::GetUpvalue { index } => push_copy!(self.stack, closure.upvalues[index]),
                 Instr::Call { argc } => {
                     let func_slot = self.stack.len() - 1 - argc;
-                    let callee = self.stack[func_slot].clone();
                     save!();
-                    let entered = ok!(self.call_value(callee, argc, func_slot));
+                    // (A closure is called by its pointer: the value in
+                    // the slot is not cloned and moved.)
+                    let entered = match sort(&self.stack[func_slot]) {
+                        Sort::Closure(closure) => {
+                            let closure = closure.clone();
+                            ok!(self.call_closure(closure, argc, func_slot))
+                        }
+                        Sort::Int(_)
+                        | Sort::Float(_)
+                        | Sort::Bool(_)
+                        | Sort::Unit
+                        | Sort::Other(_) => {
+                            let callee = self.stack[func_slot].clone();
+                            ok!(self.call_value(callee, argc, func_slot))
+                        }
+                    };
                     go_on!(self.entered(entered));
                 }
                 Instr::TailCall { argc } => {
@@ -708,7 +722,40 @@ impl Vm {
                         go_on!(self.entered(entered));
                     }
                 }
-                Instr::Return => returned!(pop(&mut self.stack)),
+                Instr::Return => {
+                    let frames = self.frames.len();
+                    let top = self.stack.len() - 1;
+                    // Whether the value goes to a function's frame, the
+                    // caller's: `returned!` then pushes it where the
+                    // callee's own slot was.
+                    let to_caller = base >= 1
+                        && frames >= 2
+                        && frames - 1 != floor
+                        && matches!(self.frames[frames - 2], Frame::Code(_));
+                    match sort(&self.stack[top]) {
+                        // A number, a Bool or unit for the caller is
+                        // written from the top slot over the callee's
+                        // own: it is not taken off the stack and pushed
+                        // again. What is let go of, and in which order,
+                        // is `returned!`'s: the frame, the callee's
+                        // slot, the slots above it.
+                        Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit if to_caller => {
+                            self.frames.pop();
+                            if !self.tco_elided.is_empty() {
+                                self.tco_elided.prune(self.frames.len());
+                            }
+                            set_copy!(self.stack, base - 1, top);
+                            self.stack.truncate(base);
+                            load!();
+                        }
+                        Sort::Int(_)
+                        | Sort::Float(_)
+                        | Sort::Bool(_)
+                        | Sort::Unit
+                        | Sort::Closure(_)
+                        | Sort::Other(_) => returned!(pop(&mut self.stack)),
+                    }
+                }
                 Instr::CallBuiltin { builtin, argc } => {
                     save!();
                     let args_at = self.stack.len() - argc;

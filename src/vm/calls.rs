@@ -7,6 +7,7 @@ use crate::builtins::registry::{BuiltinId, Row, registry};
 use crate::value::Value;
 
 use super::dispatch::{catch_builtin_panic, invoke_host_fn};
+use super::run::push_with;
 use super::runtime::{CallFrame, Frame, Native, Step};
 use super::{Vm, VmError};
 
@@ -52,11 +53,14 @@ impl Vm {
         if self.frames.len() - self.native_frames >= MAX_FRAMES {
             return Err(stack_overflow_error());
         }
-        self.frames.push(Frame::Code(CallFrame {
-            closure,
-            ip: 0,
-            base_slot,
-        }));
+        // (Built where it goes, as the values the loop pushes.)
+        push_with(&mut self.frames, || {
+            Frame::Code(CallFrame {
+                closure,
+                ip: 0,
+                base_slot,
+            })
+        });
         Ok(())
     }
 
@@ -77,21 +81,30 @@ impl Vm {
         func_slot: usize,
     ) -> Result<Entered, VmError> {
         match func_val {
-            Value::VmClosure(closure) => {
-                if argc != closure.function.arity() {
-                    return Err(VmError::type_confusion(format!(
-                        "function '{}' expects {} arguments, got {}",
-                        closure.function.name(),
-                        closure.function.arity(),
-                        argc
-                    )));
-                }
-                // The arguments are the frame's first values.
-                self.push_code_frame(closure, func_slot + 1)?;
-                Ok(Entered::Code)
-            }
+            Value::VmClosure(closure) => self.call_closure(closure, argc, func_slot),
             other => self.call_other(other, func_slot),
         }
+    }
+
+    /// [`Vm::call_value`] of a closure.
+    #[inline(always)]
+    pub(super) fn call_closure(
+        &mut self,
+        closure: std::sync::Arc<crate::bytecode::VmClosure>,
+        argc: usize,
+        func_slot: usize,
+    ) -> Result<Entered, VmError> {
+        if argc != closure.function.arity() {
+            return Err(VmError::type_confusion(format!(
+                "function '{}' expects {} arguments, got {}",
+                closure.function.name(),
+                closure.function.arity(),
+                argc
+            )));
+        }
+        // The arguments are the frame's first values.
+        self.push_code_frame(closure, func_slot + 1)?;
+        Ok(Entered::Code)
     }
 
     /// [`Vm::call_value`] of a value that is no closure: its arguments,
