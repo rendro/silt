@@ -1,0 +1,35 @@
+-- cmd: fmt
+-- A comment that is not the documentation of the `let` a block begins
+-- with would be read as that without the braces, on a line of its own
+-- above the `let`: such a block stays as it is written. A comment that
+-- stands above the `let` already lets the braces go.
+fn main() {
+  let a = { x ->
+    -- about the whole body
+    {
+      let y = x
+      y
+    }
+  }
+  let b = { x -> -- behind the arrow
+    -- and one above the brace
+    {
+      let y = x
+      y
+    }
+  }
+  let c = { x -> -- behind the arrow
+    { -- and one behind the brace, which has no line to end
+      let y = x
+      y
+    }
+  }
+  let d = { x ->
+    {
+      -- the documentation of y stays that
+      let y = x
+      y
+    }
+  }
+  println((a(1), b(1), c(1), d(1)))
+}

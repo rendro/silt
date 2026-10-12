@@ -362,6 +362,24 @@ A closure has no return-type annotation; its type is the type of its body:
 let swap = { (a, b): (Int, String) -> (b, a) }
 ```
 
+The body is one expression, or statements on lines of their own; the closure
+returns the value of the last one. With nothing behind the arrow, `{ x -> }`,
+it returns `()`.
+
+```silt
+let describe = { n ->
+  let sign = match {
+    n < 0 -> "negative"
+    _ -> "not negative"
+  }
+  "{n} is {sign}"
+}
+```
+
+A body needs no braces of its own, and `silt fmt` takes them away:
+`{ x -> { x * 2 } }` becomes `{ x -> x * 2 }`. (It leaves them where taking
+them away would move a comment, and inside a string it keeps as written.)
+
 **No nested named functions.** Use `let f = { x -> ... }` for local helpers.
 Named functions are always top-level, keeping scoping rules simple.
 

@@ -1,0 +1,16 @@
+-- cmd: fmt
+-- A comment behind the inner closing brace, or between the two closing
+-- braces, is the last thing in the body.
+fn main() {
+  let a = { x -> { x + 1 } -- behind the inner closer
+  }
+  let b = { x -> { x + 1 }
+    -- between the closers
+  }
+  let c = { x -> {
+    let y = x
+    y
+  } -- behind the statements' closer
+  }
+  println((a(1), b(1), c(1)))
+}

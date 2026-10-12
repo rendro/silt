@@ -1911,8 +1911,10 @@ impl Printer<'_> {
         Doc::concat(vec![list, space(), closure, behind])
     }
 
-    /// `{ a, b -> body }`. Statements written directly behind the arrow
-    /// stand on lines of their own.
+    /// `{ a, b -> body }`. The body is one expression behind the arrow,
+    /// or statements on lines of their own, or nothing. A block written
+    /// there, `{ a -> { ... } }`, is the body in braces of its own:
+    /// they are not written, so a body has one spelling.
     fn lambda(&mut self, expr: &Expr, params: &[Param], body: &Expr) -> Doc {
         // The parameters may break behind their commas; they stand
         // under the first one then.
@@ -1930,15 +1932,64 @@ impl Printer<'_> {
         }
         head.push(Doc::group(Doc::nest(Doc::concat(list))));
         head.push(self.tok(Token::Arrow));
-        // The parser gives the statements behind the arrow the span of
-        // the closure; a block written there has its own.
-        let statements = match &body.kind {
-            ExprKind::Block(stmts) if body.span.start == expr.span.start => Some(stmts),
-            _ => None,
+        // The blocks around the body that are not written, from the
+        // outside in: for each, the parentheses around it, which go
+        // with it.
+        let mut unwritten: Vec<usize> = Vec::new();
+        let mut body = body;
+        let statements = loop {
+            let ExprKind::Block(stmts) = &body.kind else {
+                break None;
+            };
+            // The parser gives the statements behind the arrow the span
+            // of the closure; a block written there has its own.
+            if unwritten.is_empty() && body.span.start == expr.span.start {
+                break Some(stmts);
+            }
+            // Parentheses with a comment directly inside them stay, and
+            // what they hold stays as it is written.
+            let wrappers = self.cur.wrappers(body.span.end);
+            if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
+                break None;
+            }
+            // A comment that would come to stand above the `let` the
+            // block begins with would read as that binding's
+            // documentation: such a block stays.
+            if matches!(stmts.first(), Some(Stmt::Let { .. }))
+                && self.cur.pass_sets_a_comment_above(wrappers + 1)
+            {
+                break None;
+            }
+            for _ in 0..wrappers {
+                self.cur.pass(&Token::LParen);
+            }
+            self.cur.pass(&Token::LBrace);
+            // A comment behind the brace on its line ends the line of
+            // the arrow now.
+            head.push(self.cur.trailing());
+            unwritten.push(wrappers);
+            match stmts.as_slice() {
+                // One expression: the body, which may be a block again.
+                [Stmt::Expr(inner)] => body = inner,
+                _ => break Some(stmts),
+            }
         };
         match statements {
             Some(stmts) => {
-                let body = self.stmts(stmts);
+                // An empty block is an empty body, `{ a -> }`.
+                if stmts.is_empty() {
+                    head.push(self.pass_closers(&unwritten));
+                }
+                let last = stmts.len().saturating_sub(1);
+                let mut stmts = stmts.iter().enumerate();
+                let body = self.lines(|p| {
+                    let (i, stmt) = stmts.next()?;
+                    let stmt = p.stmt(stmt, i == 0);
+                    Some(match i == last {
+                        true => Doc::concat(vec![stmt, p.pass_closers(&unwritten)]),
+                        false => stmt,
+                    })
+                });
                 if body.is_nil() {
                     head.push(space());
                 }
@@ -1948,15 +1999,34 @@ impl Printer<'_> {
             }
             None => {
                 let body = self.expr(body, Ctx::top());
+                let behind = self.pass_closers(&unwritten);
                 let tail = self.dangling();
                 let close = self.tok(Token::RBrace);
                 Doc::group(Doc::concat(vec![
                     Doc::concat(head),
-                    Doc::nest(Doc::concat(vec![Doc::Line, body, tail])),
+                    Doc::nest(Doc::concat(vec![Doc::Line, body, behind, tail])),
                     Doc::Line,
                     close,
                 ]))
             }
+        }
+    }
+
+    /// Move past the closing braces of the blocks `unwritten`, which
+    /// are listed from the outside in, each with the count of the
+    /// parentheses around it. The comments in front of them stay where
+    /// they are, in front of the closure's own closing brace; given are
+    /// those that end the line of the body's last token now.
+    fn pass_closers(&mut self, unwritten: &[usize]) -> Doc {
+        for wrappers in unwritten.iter().rev() {
+            self.cur.pass(&Token::RBrace);
+            for _ in 0..*wrappers {
+                self.cur.pass(&Token::RParen);
+            }
+        }
+        match unwritten.is_empty() {
+            true => Doc::Nil,
+            false => self.cur.trailing(),
         }
     }
 
