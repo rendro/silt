@@ -129,18 +129,36 @@ fn copy(value: &Value) -> Value {
     }
 }
 
-/// Let go of `value`, for the instructions that have taken an operand
-/// off the stack and are done with it: a number, a Bool or unit is
-/// nothing to drop, and is not handed to the drop of a value of any
-/// kind, a call; a value of any other kind is. (As [`copy`], which is
-/// the same for a read.)
+/// Let go of `value`, for the instructions that are done with a value
+/// they took off the stack or wrote over: a number, a Bool or unit owns
+/// nothing, and is not handed to the drop of a value of any kind, a
+/// call; a value of any other kind is dropped. (As [`copy`], which is
+/// the same for a read. The kinds are named: one that is added later
+/// does not compile until it is placed here.)
 #[inline(always)]
 fn done(value: Value) {
     match value {
         Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
             std::mem::forget(value);
         }
-        other => drop(other),
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => drop(value),
     }
 }
 
@@ -333,35 +351,47 @@ impl Vm {
                     let a = pop(&mut self.stack);
                     ok!(equality_operands(&a, &b));
                     self.stack.push(Value::Bool(a == b));
+                    done(a);
+                    done(b);
                 }
                 Instr::Neq => {
                     let b = pop(&mut self.stack);
                     let a = pop(&mut self.stack);
                     ok!(equality_operands(&a, &b));
                     self.stack.push(Value::Bool(a != b));
+                    done(a);
+                    done(b);
                 }
                 Instr::Lt => compare!(Ordering::is_lt),
                 Instr::Gt => compare!(Ordering::is_gt),
                 Instr::Leq => compare!(Ordering::is_le),
                 Instr::Geq => compare!(Ordering::is_ge),
-                Instr::Negate => match pop(&mut self.stack) {
-                    Value::Int(n) => match n.checked_neg() {
-                        Some(v) => self.stack.push(Value::Int(v)),
-                        None => fail!(VmError::new(format!("integer overflow: negate {n}"))),
-                    },
-                    Value::Float(n) => self.stack.push(Value::Float(-n)),
-                    other => fail!(VmError::type_confusion(format!(
-                        "cannot negate {}",
-                        self.user_facing_type_name(&other)
-                    ))),
-                },
-                Instr::Not => match pop(&mut self.stack) {
-                    Value::Bool(b) => self.stack.push(Value::Bool(!b)),
-                    other => fail!(VmError::type_confusion(format!(
-                        "cannot apply 'not' to {}",
-                        self.user_facing_type_name(&other)
-                    ))),
-                },
+                Instr::Negate => {
+                    let value = pop(&mut self.stack);
+                    match &value {
+                        Value::Int(n) => match n.checked_neg() {
+                            Some(v) => self.stack.push(Value::Int(v)),
+                            None => fail!(VmError::new(format!("integer overflow: negate {n}"))),
+                        },
+                        Value::Float(n) => self.stack.push(Value::Float(-*n)),
+                        other => fail!(VmError::type_confusion(format!(
+                            "cannot negate {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    }
+                    done(value);
+                }
+                Instr::Not => {
+                    let value = pop(&mut self.stack);
+                    match &value {
+                        Value::Bool(b) => self.stack.push(Value::Bool(!*b)),
+                        other => fail!(VmError::type_confusion(format!(
+                            "cannot apply 'not' to {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    }
+                    done(value);
+                }
                 Instr::DisplayValue => {
                     let val = pop(&mut self.stack);
                     match &val {
@@ -449,7 +479,7 @@ impl Vm {
                 }
                 Instr::SetLocal { slot } => {
                     let value = copy(peek(&self.stack));
-                    self.stack[base + slot] = value;
+                    done(std::mem::replace(&mut self.stack[base + slot], value));
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
                     Some(value) => {
@@ -647,16 +677,16 @@ impl Vm {
                     if self.is_falsy(&val) {
                         ip = to;
                     }
+                    done(val);
                 }
                 Instr::JumpIfTrue { to } => {
                     let val = pop(&mut self.stack);
                     if self.is_truthy(&val) {
                         ip = to;
                     }
+                    done(val);
                 }
-                Instr::Pop => {
-                    pop(&mut self.stack);
-                }
+                Instr::Pop => done(pop(&mut self.stack)),
                 Instr::Dup => {
                     let val = peek(&self.stack).clone();
                     self.stack.push(val);
@@ -841,7 +871,11 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        self.stack[base + first_slot + i] = copy(&self.stack[start + i]);
+                        let value = copy(&self.stack[start + i]);
+                        done(std::mem::replace(
+                            &mut self.stack[base + first_slot + i],
+                            value,
+                        ));
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
