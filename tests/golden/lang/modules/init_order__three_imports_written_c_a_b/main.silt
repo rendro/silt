@@ -1,0 +1,10 @@
+-- Three modules print while they are initialised. They are initialised in
+-- the order `silt fmt` writes their imports, a, b, c, in whatever order
+-- the import lines are written.
+import c
+import a
+import b
+
+fn main() {
+  println(a.va + b.vb + c.vc)
+}

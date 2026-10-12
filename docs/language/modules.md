@@ -305,6 +305,17 @@ shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
 is `Maybe.None`, and the prelude's is still `Option.None`.
 
 
+## When modules are initialised
+
+A module's top-level `let`s are evaluated once, before the first module that
+imports it uses them. The modules a file imports are initialised in the order
+`silt fmt` writes the file's imports: by the name of the module (digits, then
+capital letters, then `_`, then small letters), each after the modules it
+imports itself. A file's own top-level `let`s run after its imports. The order
+in which the import lines are written carries no meaning, so formatting a
+file never changes what a program does.
+
+
 ## Circular imports
 
 silt **rejects circular imports** at compile time. If `a.silt` imports `b`

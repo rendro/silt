@@ -612,17 +612,30 @@ impl<'a> Compiler<'a> {
         self.own_slots.get(&(module, name)).copied()
     }
 
-    /// The order in which a module's declarations are installed: first
-    /// everything that only defines something (imports, types, traits,
-    /// trait impls, functions), in source order; then the top-level
-    /// `let`s, in the order the checker decided (`let_order`, by the
-    /// span of each: every `let` after the ones its initialiser can
-    /// reach). A top-level initialiser can therefore use every
-    /// declaration of the program, wherever it is written.
+    /// The order in which a module's declarations are installed. First
+    /// its imports, in the one order of imports
+    /// (`crate::ast::import_order`, the order `silt fmt` writes them
+    /// in): an import compiles the module it names where it stands, so
+    /// that is the order the modules are initialised in, whatever
+    /// order the import lines are written in. Then everything else
+    /// that only defines something (types, traits, trait impls,
+    /// functions), in source order; then the top-level `let`s, in the
+    /// order the checker decided (`let_order`, by the span of each:
+    /// every `let` after the ones its initialiser can reach). A
+    /// top-level initialiser can therefore use every declaration of
+    /// the program, wherever it is written.
     fn decls_in_init_order<'d>(decls: &'d [Decl], let_order: &[Span]) -> Vec<&'d Decl> {
         let (mut lets, definitions): (Vec<&Decl>, Vec<&Decl>) = decls
             .iter()
             .partition(|decl| matches!(**decl, Decl::Let { .. }));
+        let (imports, definitions): (Vec<&Decl>, Vec<&Decl>) = definitions
+            .into_iter()
+            .partition(|decl| matches!(**decl, Decl::Import(..)));
+        let order = crate::ast::import_order(imports.iter().filter_map(|decl| match decl {
+            Decl::Import(target, _) => Some(target),
+            _ => None,
+        }));
+        let imports = order.into_iter().map(|at| imports[at]);
         // (A `let` the order does not name, which no checked module
         // has, keeps its place after the ones it names.)
         let mut place: HashMap<Span, usize> = HashMap::with_capacity(let_order.len());
@@ -633,7 +646,7 @@ impl<'a> Compiler<'a> {
             Decl::Let { span, .. } => place.get(span).copied().unwrap_or(usize::MAX),
             _ => usize::MAX,
         });
-        definitions.into_iter().chain(lets).collect()
+        imports.chain(definitions).chain(lets).collect()
     }
 
     /// Compile the method `method` (an impl's, or a trait's default) as
@@ -857,11 +870,7 @@ impl<'a> Compiler<'a> {
     /// An import of a module of the program compiles the module, once,
     /// before the importer's code. A builtin module has no code.
     fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), Diagnostic> {
-        let module = match target {
-            ImportTarget::Module(m) | ImportTarget::Items(m, _) | ImportTarget::Alias(m, _, _) => {
-                *m
-            }
-        };
+        let module = target.module();
         let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         let Some(&target) = self.units.modules[importer].imports.get(&module) else {
             return Ok(());
