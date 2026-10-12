@@ -129,6 +129,21 @@ fn copy(value: &Value) -> Value {
     }
 }
 
+/// Let go of `value`, for the instructions that have taken an operand
+/// off the stack and are done with it: a number, a Bool or unit is
+/// nothing to drop, and is not handed to the drop of a value of any
+/// kind, a call; a value of any other kind is. (As [`copy`], which is
+/// the same for a read.)
+#[inline(always)]
+fn done(value: Value) {
+    match value {
+        Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
+            std::mem::forget(value);
+        }
+        other => drop(other),
+    }
+}
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -280,6 +295,8 @@ impl Vm {
                 let a = pop(&mut self.stack);
                 let value = ok!(arithmetic($op, &a, &b));
                 self.stack.push(value);
+                done(a);
+                done(b);
             }};
         }
         macro_rules! compare {
@@ -288,6 +305,8 @@ impl Vm {
                 let a = pop(&mut self.stack);
                 let ordering = ok!(ordering(&a, &b));
                 self.stack.push(Value::Bool($holds(ordering)));
+                done(a);
+                done(b);
             }};
         }
 
