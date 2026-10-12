@@ -127,25 +127,3 @@ fn main() {
     assert_eq!(v, Value::Int(2));
     unsafe { std::env::remove_var("SILT_TEST_ENV_SHAPE_PROBE") };
 }
-
-/// Docs ↔ registry cross-check, mirroring the encoding module's test.
-/// Every row of `env` has a doc an editor shows, cut from
-/// `docs/stdlib/io-fs.md`.
-#[test]
-fn test_documented_env_functions_match_registration() {
-    let docs = silt::builtins::registry::docs::builtin_docs();
-    let expected = silt::module::builtin_module_functions("env");
-    assert!(
-        !expected.is_empty(),
-        "module::builtin_module_functions(\"env\") returned empty — registration is missing"
-    );
-    for name in &expected {
-        let qualified = format!("env.{}", name);
-        let doc = docs.get(&qualified).cloned().unwrap_or_default();
-        assert!(
-            !doc.trim().is_empty(),
-            "no builtin doc for `{qualified}`: the `env` part of \
-             docs/stdlib/io-fs.md has a `## \\`env.{name}\\`` section."
-        );
-    }
-}

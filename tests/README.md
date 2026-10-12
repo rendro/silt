@@ -16,6 +16,11 @@ oversubscribed. With plain `cargo test`, run that suite on its own:
 Never run two test runs at once on one machine: the timing tests of the
 `concurrency` suite fail under load.
 
+The suites are built with every feature, as above, or with the default
+features; they do not build with `--no-default-features`, which CI
+checks for the library and the binary only
+(`cargo check --no-default-features --lib --bins`).
+
 ## One suite, one area
 
 ```

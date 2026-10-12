@@ -1,7 +1,7 @@
 //! Every builtin module that is built runs its functions: a call
-//! `module.func(...)` finds its row in the builtin registry and never
-//! fails with `unknown builtin namespace: <module>`. This test calls one
-//! cheap, side-effect-free function of every module through `silt run`.
+//! `module.func(...)` finds its row in the builtin registry and runs it.
+//! This test calls one cheap, side-effect-free function of every module
+//! through `silt run`.
 //!
 //! It also locks the feature gating of `tcp`, a default feature: with it
 //! off, `silt check` rejects the module's import with one error that
@@ -73,7 +73,7 @@ fn silt(sub: &str, label: &str, src: &str) -> Output {
 }
 
 #[test]
-fn every_builtin_module_reaches_its_dispatch_arm() {
+fn a_function_of_every_builtin_module_runs() {
     let mut missing = Vec::new();
     for &module in silt::module::builtin_modules() {
         let Some(call) = module_call(module) else {
@@ -87,10 +87,6 @@ fn every_builtin_module_reaches_its_dispatch_arm() {
         let out = silt("run", module, &src);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            !stderr.contains("unknown builtin namespace"),
-            "`{call}` did not reach the `{module}` dispatch arm:\n{stderr}"
-        );
         assert!(
             out.status.success() && stdout.contains(&format!("OK:{module}")),
             "`{call}` failed:\nstdout={stdout}\nstderr={stderr}"

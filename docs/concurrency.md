@@ -1225,9 +1225,13 @@ A task holds its worker thread until one of two things happens:
    the worker picks up whoever is next. This keeps CPU-heavy tasks from
    starving each other.
 
-The slice budget is tunable via the `SILT_TIME_SLICE` environment variable
-(for example, `SILT_TIME_SLICE=500 silt run main.silt` for more frequent
-rotation, or a larger value to reduce scheduling overhead).
+The slice budget can be set with the `SILT_TIME_SLICE` environment variable,
+which is read once, when the program starts; its least value is 1. A
+smaller value makes tasks take turns more often (for example,
+`SILT_TIME_SLICE=500 silt run main.silt`). Its main use is testing and
+debugging: with `SILT_TIME_SLICE=1` a task gives way after every
+instruction, which brings out the faults that depend on where a task is
+interrupted.
 
 One consequence: a task running a tight CPU loop with no blocking calls will
 still yield every ~2000 opcodes, but between those yield points it owns its
