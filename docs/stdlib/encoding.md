@@ -143,7 +143,7 @@ import encoding
 fn main() {
   match encoding.form_decode("a=1&b=hello+world&c=%26") {
     Ok(pairs) -> println(pairs)
-    -- [("a", "1"), ("b", "hello world"), ("c", "&")]
+    -- [(a, 1), (b, hello world), (c, &)]
     Err(e) -> println(e)
   }
 }

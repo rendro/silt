@@ -275,7 +275,9 @@ An `Expect` header that asks for anything but `100-continue` is answered
   it: a header's name is not case-sensitive, and a lookup asks for one
   spelling, `map.get(req.headers, "content-type")`. Of a header sent
   twice the last one stays. (The headers of a `Response` that `http.get`
-  or `http.request` returns have their names in lower case too.)
+  or `http.request` returns have their names in lower case too.) A
+  header's value is text: bytes in it that are no UTF-8 reach the handler
+  as U+FFFD, unlike the body, which is exact.
 - `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.
   A handler that wants text says so: `bytes.to_string(req.body)` is
   `Err(InvalidUtf8(offset))` for a body that is no UTF-8.

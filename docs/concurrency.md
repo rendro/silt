@@ -453,6 +453,13 @@ keeps going:
   A `channel.timeout` channel counts only while a task waits on it: one
   that lost its race in a `select`, or that nobody looks at any more,
   holds nothing up, however long it still has to run.
+- A wait under a `task.deadline` is such a wait: it ends when the
+  deadline has passed at the latest, so it is waited for. A task that
+  nobody joined and that sits in
+  `task.deadline(time.hours(1), { -> channel.receive(ch) })`, on a
+  channel nobody will send on, keeps the program going for that hour
+  after `main` has returned; without the deadline it would be dropped at
+  once, as a wait that can never end.
 - A task that waits for something only another task could give (a receive
   on a channel nobody will send on) is dropped when nothing else can run:
   such a wait could never end.
