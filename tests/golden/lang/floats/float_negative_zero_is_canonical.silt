@@ -1,7 +1,7 @@
 import float
 import list
 import set
--- -0.0 and 0.0 are one value: every producer prints 0, and a set holds it once.
+-- -0.0 and 0.0 are one value: every producer prints 0.0, and a set holds it once.
 fn main() {
   println(0.0 * -1.0)
   println(-0.0)

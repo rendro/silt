@@ -227,7 +227,9 @@ fn main() {
 json.stringify(value: a) -> String
 ```
 
-Serializes any value to a compact JSON string.
+Serializes any value to a compact JSON string. A map is written as an
+object; a key of it that is no `String` is written as its shown text (so the
+`Float` key `1.0` reads `"1.0"`).
 
 ```silt
 import json
@@ -236,5 +238,6 @@ fn main() {
   let data = #{ "key": [1, 2, 3] }
   println(json.stringify(data))
   -- {"key":[1,2,3]}
+  println(json.stringify(#{ 1.0: "one" })) -- {"1.0":"one"}
 }
 ```

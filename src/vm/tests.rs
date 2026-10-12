@@ -2822,13 +2822,13 @@ mod error_places {
             float(f64::MAX),
             Asm::Add,
             float(f64::MAX),
-            &format!("float overflow: {0} + {0}", f64::MAX),
+            &format!("float overflow: {0}.0 + {0}.0", f64::MAX),
         );
         binary(
             float(f64::MAX),
             Asm::Mul,
             float(2.0),
-            &format!("float overflow: {} * 2", f64::MAX),
+            &format!("float overflow: {}.0 * 2.0", f64::MAX),
         );
     }
 

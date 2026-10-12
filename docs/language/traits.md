@@ -32,7 +32,7 @@ trait Greet for Shape {
 }
 
 fn main() {
-  println(Circle(5.0).greet()) -- hi from a circle of radius 5
+  println(Circle(5.0).greet()) -- hi from a circle of radius 5.0
 }
 ```
 
@@ -599,7 +599,7 @@ apply to needs a type the definition decides, or an annotation. `?`
 takes it from the return type of the function it is in, when that is
 known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
-The structural `Display` formats in constructor syntax: `Circle(5)`
+The structural `Display` formats in constructor syntax: `Circle(5.0)`
 for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
 order the type declares them (`{x: 1, y: 2}` for an anonymous record,
 its fields in the order of their names). Write your own

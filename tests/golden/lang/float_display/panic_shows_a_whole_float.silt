@@ -1,0 +1,6 @@
+-- exit: 1
+-- A panic's message shows the Float it was given.
+fn main() {
+  let limit = 2.0
+  panic("over the limit of {limit}: {[3.0, limit]}")
+}

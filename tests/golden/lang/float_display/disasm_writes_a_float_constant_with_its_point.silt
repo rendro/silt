@@ -1,0 +1,12 @@
+-- cmd: disasm
+-- A Float constant is written as a program writes it, so it is told
+-- from an Int: `3.0` and `1`, and the bounds of a Float range.
+-- stdout-contains: ; 3.0
+-- stdout-contains: ; 1.0..2.0
+-- stdout-contains: ; 7
+fn main() {
+  match 3.0 {
+    1.0..2.0 -> 7
+    _ -> 8
+  }
+}

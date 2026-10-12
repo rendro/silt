@@ -1,0 +1,4 @@
+Circle(1.0)
+Rect(2.0, 3)
+Some(4.0)
+Err(5.0)

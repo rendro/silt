@@ -1,0 +1,19 @@
+type Celsius {
+  degrees: Float,
+}
+
+trait Display for Celsius {
+  fn display(self) -> String {
+    "{self.degrees} C"
+  }
+}
+
+-- An interpolated Float is written as `println` writes it, in a string
+-- and in what a `Display` impl of the program gives.
+fn main() {
+  let half = 0.5
+  println("{1.0}")
+  println("{half + half} and {half}")
+  println(Celsius { degrees: 21.0 })
+  println("{[Celsius { degrees: -4.0 }]}")
+}

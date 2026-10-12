@@ -1,0 +1,9 @@
+import string
+
+-- `string.from` gives the text `println` writes.
+fn main() {
+  println(string.length(string.from(1.0)))
+  println(string.from(1.0) == "1.0")
+  println(string.from(-12.0))
+  println(4.0.display())
+}

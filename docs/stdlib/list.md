@@ -601,8 +601,8 @@ Raises a runtime error when the product is too large for a `Float`.
 import list
 
 fn main() {
-  println(list.product_float([1.5, 2.0, 4.0])) -- 12
-  println(list.product_float([])) -- 1
+  println(list.product_float([1.5, 2.0, 4.0])) -- 12.0
+  println(list.product_float([])) -- 1.0
 }
 ```
 
@@ -758,8 +758,8 @@ Raises a runtime error when the sum is too large for a `Float`.
 import list
 
 fn main() {
-  println(list.sum_float([0.5, 1.5, 2.0])) -- 4
-  println(list.sum_float([])) -- 0
+  println(list.sum_float([0.5, 1.5, 2.0])) -- 4.0
+  println(list.sum_float([])) -- 0.0
 }
 ```
 

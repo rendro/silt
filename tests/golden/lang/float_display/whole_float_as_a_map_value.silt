@@ -1,0 +1,5 @@
+-- A whole Float as the value of a map's key.
+fn main() {
+  println(#{"a": 2.0, "b": 0.5})
+  println(#{1: 1.0})
+}

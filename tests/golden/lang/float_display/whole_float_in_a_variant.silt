@@ -1,0 +1,13 @@
+type Shape {
+  Circle(Float),
+  Rect(Float, Int),
+}
+
+-- A whole Float as a field of a variant.
+fn main() {
+  println(Circle(1.0))
+  println(Rect(2.0, 3))
+  println(Some(4.0))
+  let failed: Result(Int, Float) = Err(5.0)
+  println(failed)
+}

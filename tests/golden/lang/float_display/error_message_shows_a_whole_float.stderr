@@ -1,0 +1,5 @@
+error[runtime]: math.sqrt of a negative number: -4.0
+ --> error_message_shows_a_whole_float.silt:6:11
+   |
+ 6 |   println(math.sqrt(-4.0))
+   |           ^^^^^^^^^^^^^^^ math.sqrt of a negative number: -4.0

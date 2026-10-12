@@ -1,0 +1,6 @@
+-- A whole Float as a key of a map: `1.0` and the Int `1` are not
+-- written alike.
+fn main() {
+  println(#{1.0: "one", 2.5: "more"})
+  println(#{1: "one"})
+}

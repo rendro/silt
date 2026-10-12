@@ -1,0 +1,9 @@
+-- exit: 1
+import float
+
+-- The least Int is a Float; the next Float below it is outside the Int
+-- range.
+fn main() {
+  println(float.to_int(-9223372036854775808.0))
+  println(float.to_int(-9223372036854777856.0))
+}
