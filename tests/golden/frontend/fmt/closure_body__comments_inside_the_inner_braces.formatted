@@ -1,0 +1,24 @@
+-- cmd: fmt
+-- The comments inside the inner braces stay with what they stand at:
+-- above the expression, behind it, under it.
+fn main() {
+  let a = { x ->
+    -- above the expression
+    x + 1
+  }
+  let b = { x ->
+    x + 1 -- behind the expression
+  }
+  let c = { x ->
+    x + 1
+    -- under the expression
+  }
+  let d = { x ->
+    -- first
+    let y = x
+    y -- behind y
+
+    -- after an empty line
+  }
+  println((a(1), b(1), c(1), d(1)))
+}

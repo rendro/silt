@@ -1,0 +1,13 @@
+-- cmd: fmt
+-- A closure in the header of a `match` loses the braces around its
+-- body like any other; the braces of the match stay its body.
+import list
+
+fn main() {
+  let xs = [1, 2]
+  let size = match xs |> list.map { x -> { x + 1 } } |> list.length {
+    0 -> "none"
+    _ -> "some"
+  }
+  println(size)
+}

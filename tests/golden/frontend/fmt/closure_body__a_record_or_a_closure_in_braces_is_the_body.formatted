@@ -1,0 +1,10 @@
+-- cmd: fmt
+-- Braces behind the arrow that are no block are the body itself: an
+-- anonymous record, a closure. Nothing changes; a block around a
+-- record goes and the record stays.
+fn main() {
+  let record = { x -> { a: x } }
+  let closure = { x -> { y -> x + y } }
+  let wrapped = { x -> { a: x } }
+  println((record(1), closure(1)(2), wrapped(1)))
+}

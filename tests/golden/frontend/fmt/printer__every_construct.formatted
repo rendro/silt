@@ -39,18 +39,12 @@ fn g(
 ) -> Self::Item where t: D {}
 
 fn h() {
-  let f = { x ->
-    {
-      x
-    }
-  }
+  let f = { x -> x }
   let g = { x -> {} }
   let h = { x -> }
   let i = { x ->
-    {
-      let y = x
-      y
-    }
+    let y = x
+    y
   }
   let j = match {
     _ -> 1
