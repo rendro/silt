@@ -902,7 +902,20 @@ fn main() {
   }
 }
 "#;
-    for (what, program) in [("a receive", receive), ("a send", send)] {
+    // The same receiver with a `select` of one arm for its receive: a
+    // cancelled task that comes to the select with the number there
+    // takes it, as its `receive` does, and passes it on.
+    let select = receive.replace(
+        "match channel.receive(ch) {\n      channel.Message(v) -> channel.send(seen, v)",
+        "match channel.select([channel.Recv(ch)]) {\n      (_, channel.Message(v)) -> channel.send(seen, v)",
+    );
+    assert_ne!(select, receive);
+    let programs = [
+        ("a receive", receive),
+        ("a receive by a select", &select),
+        ("a send", send),
+    ];
+    for (what, program) in programs {
         let source = format!("{HEAD}{program}");
         for slice in SLICES {
             let (result, _) = run_with(&source, |vm| {
@@ -912,6 +925,29 @@ fn main() {
             });
             assert_eq!(result, Ok(Value::Bool(true)), "{what} at slice {slice:?}");
         }
+    }
+}
+
+/// A task that is cancelled and still runs completes a `select` of
+/// which an arm is ready and is ended in one that would have to wait,
+/// at every time slice: the golden case of that name, whose task
+/// cancels itself, prints the same lines at each.
+#[test]
+fn a_cancelled_task_completes_a_select_that_is_ready_at_every_slice() {
+    let source = include_str!(
+        "../golden/concurrency/cancel/cancel_handoff__a_cancelled_task_completes_a_select_that_is_ready.silt"
+    );
+    let expected = include_str!(
+        "../golden/concurrency/cancel/cancel_handoff__a_cancelled_task_completes_a_select_that_is_ready.stdout"
+    );
+    for slice in [None, Some(2000), Some(7), Some(1)] {
+        let (result, output) = run_with(source, |vm| {
+            if let Some(slice) = slice {
+                vm.set_time_slice(slice);
+            }
+        });
+        assert_eq!(result, Ok(Value::Unit), "at slice {slice:?}");
+        assert_eq!(output, expected, "at slice {slice:?}");
     }
 }
 

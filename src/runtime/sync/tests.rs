@@ -894,20 +894,77 @@ fn leaving_a_long_queue_costs_no_search_and_leaves_no_more_than_it_holds() {
 
 // ── The cancel flag ─────────────────────────────────────────────────
 
+/// A wait that begins with its task's flag set is the wait of a task
+/// whose time is over: an arm that can be completed at once is, the
+/// first of them in the wait's order, and a wait that would have to
+/// wait is refused with nothing taken, nothing sent and nothing left
+/// on a queue or in the timer.
 #[test]
-fn a_wait_whose_flag_is_set_completes_no_arm() {
+fn a_wait_whose_flag_is_set_completes_a_ready_arm_and_never_waits() {
     use std::sync::atomic::AtomicBool;
 
     let d = Double::new();
-    let ch = Channel::new(0, 1);
-    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
     let flag = Arc::new(AtomicBool::new(true));
-    let wait = recv(&ch).cancel(Some(flag));
-    assert!(matches!(
-        park(TaskId(1), wait, &d.timer, &d),
-        Park::Cancelled
-    ));
+    let cancelled = |wait: Wait| wait.cancel(Some(flag.clone()));
+    let begin = |task: u64, wait: Wait| park(TaskId(task), cancelled(wait), &d.timer, &d);
+    let refused = |park: Park| matches!(park, Park::Cancelled);
+
+    // One arm: a value that is there is received, a send into room is
+    // done; an empty channel and a full one are not waited for.
+    let ch = Channel::new(0, 1);
+    assert!(refused(begin(1, recv(&ch))));
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert!(refused(begin(1, send(&ch, 2))));
     assert_eq!((ch.len(), ch.queued()), (1, (0, 0)));
+    let Park::Ready(fired) = begin(1, recv(&ch)) else {
+        panic!("the value that was there was not received");
+    };
+    assert_eq!(received(fired), (0, 1));
+    let sent = begin(1, send(&ch, 3));
+    assert!(matches!(sent, Park::Ready(Fired::Arm(0, Outcome::Sent))));
+    assert_eq!(try_value(&ch, &d), Some(3));
+
+    // A peer that waits is served: its send is completed.
+    let meet = Channel::new(1, 0);
+    assert!(d.block(2, send(&meet, 7)).is_none());
+    let Park::Ready(fired) = begin(1, recv(&meet)) else {
+        panic!("the value of the sender that waited was not received");
+    };
+    assert_eq!(received(fired), (0, 7));
+    assert_eq!(d.woken(), [2]);
+    assert!(matches!(resumed(&d, 2), Fired::Arm(0, Outcome::Sent)));
+
+    // Several arms: the one that is ready, a cell that is complete;
+    // none ready, and nothing is queued. A deadline of the wait that
+    // has passed does not make it a timeout: the task ends there.
+    let (a, b) = (Channel::new(2, 1), Channel::new(3, 0));
+    let cell = Cell::<i64>::new();
+    let arms = || {
+        vec![
+            Arm::Recv(a.clone()),
+            Arm::Send(b.clone(), Value::Int(9)),
+            Arm::Cell(cell.clone()),
+        ]
+    };
+    assert!(refused(begin(1, Wait::new(arms()))));
+    let over = Wait::new(arms()).deadline(d.timer.deadline_after(0 * MS));
+    assert!(refused(begin(1, over)));
+    let sleep = Wait::new(vec![]).deadline(d.timer.deadline_after(0 * MS));
+    assert!(refused(begin(1, sleep)));
+    assert_eq!(
+        (a.queued(), b.queued(), cell.waiting()),
+        ((0, 0), (0, 0), 0)
+    );
+    assert_eq!(d.timer.pending(), 0);
+    assert!(cell.complete(1, &d).is_ok());
+    let done = begin(1, Wait::new(arms()));
+    assert!(matches!(done, Park::Ready(Fired::Arm(2, Outcome::Done))));
+    assert!(matches!(a.try_send(Value::Int(4), &d), TrySend::Sent));
+    let Park::Ready(fired) = begin(1, Wait::new(arms())) else {
+        panic!("the arm that was ready was not completed");
+    };
+    assert_eq!(received(fired), (0, 4));
+    assert!(d.woken().is_empty());
 }
 
 #[test]
@@ -1016,8 +1073,10 @@ fn a_cancelled_parked_task_is_handed_back_and_takes_nothing() {
     assert!(ready.lock().is_empty());
 }
 
+/// A task that is to begin no wait at all (its owner's tasks are
+/// stopped) completes no arm, ready or not.
 #[test]
-fn a_task_whose_flag_is_set_completes_no_arm() {
+fn a_task_that_is_refused_completes_no_arm() {
     let d = Double::new();
     let (p, ready) = parking(&d);
     let ch = Channel::new(0, 2);
@@ -1026,6 +1085,64 @@ fn a_task_whose_flag_is_set_completes_no_arm() {
     let back = p.park(TaskId(1), 1, recv(&ch), || true);
     assert!(matches!(back, Some((1, Resumed::Cancelled))));
     assert_eq!((ch.len(), ch.queued(), p.waiting()), (1, (0, 0), 0));
+    assert!(ready.lock().is_empty());
+}
+
+/// The cancel flag of the task is the wait's own: a task whose flag is
+/// set when it gets to its wait completes an arm that is ready and
+/// keeps the task, and is handed back cancelled when none is.
+#[test]
+fn a_task_that_is_cancelled_completes_a_ready_arm_and_is_refused_a_wait() {
+    use std::sync::atomic::AtomicBool;
+
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 2);
+    assert!(matches!(ch.try_send(Value::Int(1), &*p), TrySend::Sent));
+    let flag = Arc::new(AtomicBool::new(true));
+    let wait = || recv(&ch).cancel(Some(flag.clone()));
+
+    let Some((1, Resumed::Fired(fired))) = p.park(TaskId(1), 1, wait(), || false) else {
+        panic!("the value that was there was not received");
+    };
+    assert_eq!(received(fired), (0, 1));
+    let back = p.park(TaskId(1), 1, wait(), || false);
+    assert!(matches!(back, Some((1, Resumed::Cancelled))));
+    assert_eq!((ch.len(), ch.queued(), p.waiting()), (0, (0, 0), 0));
+    assert!(ready.lock().is_empty());
+}
+
+/// The flag is set after the wait has looked at it and before the task
+/// is in the registry: the canceller found no entry, and the task
+/// finds the flag. It is not left parked, and a value sent then finds
+/// no receiver.
+#[test]
+fn a_cancel_that_misses_the_registry_is_found_by_the_flag_of_the_wait() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let d = Double::new();
+    let (p, ready) = parking(&d);
+    let ch = Channel::new(0, 0);
+    let flag = Arc::new(AtomicBool::new(false));
+    // The canceller looks for the entry before the task has begun its
+    // wait, and finds none; it has set the flag when the registry
+    // looks again, with the task on the queue of its arm.
+    let looks = AtomicUsize::new(0);
+    let cancel_between = || {
+        match looks.fetch_add(1, Ordering::SeqCst) {
+            0 => assert!(!p.cancel(TaskId(1)), "no entry yet"),
+            _ => {
+                assert_eq!(ch.queued(), (1, 0), "the task is on the queue");
+                flag.store(true, Ordering::SeqCst);
+            }
+        }
+        false
+    };
+    let wait = recv(&ch).cancel(Some(flag.clone()));
+    let back = p.park(TaskId(1), 1, wait, cancel_between);
+    assert!(matches!(back, Some((1, Resumed::Cancelled))));
+    assert_eq!((ch.queued(), p.waiting()), ((0, 0), 0));
+    assert!(matches!(ch.try_send(Value::Int(1), &*p), TrySend::Full(_)));
     assert!(ready.lock().is_empty());
 }
 

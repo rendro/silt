@@ -1180,7 +1180,8 @@ impl Inner {
         // use), its last slice ran out, or the cancel came while it
         // ran. It is ended as a cancelled task; and before the steps
         // are used up at its first wait that cannot end at once, which
-        // is refused it below.
+        // is refused it below, as it is refused a task whose time is
+        // over.
         let (result, spent) = match cancelled || self.over(&task) {
             true => Self::late_slice(&mut task, slice),
             false => (task.vm.execute_slice(slice), false),
@@ -1222,14 +1223,17 @@ impl Inner {
                     .cancel(Some(task.handle.cancel_flag()))
                     .task_deadline(task.handle.deadline());
                 let timed = wait.deadline.is_some() || wait.task_deadline.is_some();
-                let cancelled = task.handle.clone();
                 let group = task.group.clone();
                 let id = TaskId(task.id as u64);
                 // Counted as on its way into the wait until the wait
                 // has ended (`ready`), or was over at once.
                 group.parking.fetch_add(1, Ordering::SeqCst);
+                // A task that is stopped with its owner's begins no
+                // wait. One that is cancelled, or whose time is over,
+                // completes an arm that is ready and is refused the
+                // wait otherwise: that is the wait's own to say.
                 let back = self.parking.park(id, Sleeper::Task(task), wait, || {
-                    cancelled.is_cancelled() || group.stopped.load(Ordering::SeqCst)
+                    group.stopped.load(Ordering::SeqCst)
                 });
                 match back {
                     Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {

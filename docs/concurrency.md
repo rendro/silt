@@ -414,16 +414,15 @@ depends on where that task is at the moment of cancellation:
 
   An operation that can be done at once is done in those steps: a
   `channel.send` into a channel with room or to a receiver that waits,
-  a `channel.receive` of a value that is there, `channel.try_send`,
-  `channel.try_receive`, the `task.join` of a task that has ended. A
-  `channel.select` is not: it ends the task, whether or not one of its
-  arms is ready. An I/O operation is a wait: it is given up as soon as
-  it is started, and may or may not have happened. The side effects of
-  those steps happen. What the task returns or fails with in them
-  changes nothing: the handle keeps the cancellation, and a failure is
-  not reported.
+  a `channel.receive` of a value that is there, a `channel.select` of
+  which an arm is ready, `channel.try_send`, `channel.try_receive`, the
+  `task.join` of a task that has ended. An I/O operation is a wait: it
+  is given up as soon as it is started, and may or may not have
+  happened. The side effects of those steps happen. What the task
+  returns or fails with in them changes nothing: the handle keeps the
+  cancellation, and a failure is not reported.
 
-  This is the bound of a function that is past its `task.deadline`,
+  This is the rule of a function that is past its `task.deadline`,
   and the same count: a task that is past its deadline and cancelled has
   2,000 steps in all, not twice that.
 
