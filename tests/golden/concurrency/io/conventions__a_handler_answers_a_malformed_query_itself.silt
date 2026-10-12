@@ -1,0 +1,34 @@
+-- timeout: 30
+-- requires-feature: http
+-- A query string comes from whoever sent the request. One that does not
+-- decode is an error value in the handler, which answers 400 itself and
+-- goes on serving: the next request is answered as the first was.
+import http
+import list
+import map
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  match http.parse_query(req.query) {
+    Ok(query) -> match map.get(query, "name") {
+      Some([name, ..rest]) -> http.Response { status: 200, body: "hello, {name}", headers: #{} }
+      _ -> http.Response { status: 200, body: "hello", headers: #{} }
+    }
+    Err(e) -> http.Response { status: 400, body: "bad query: {e}", headers: #{} }
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let base = "http://127.0.0.1:{tcp.local_port(listener)}"
+  list.each(["/?name=a%20b", "/?name=%ZZ", "/?name=%FF", "/?other=1", "/?name=c"]) { path ->
+    match http.get("{base}{path}") {
+      Ok(r) -> println("{r.status} {r.body}")
+      Err(http.StatusCode(status, body)) -> println("{status} {body}")
+      Err(e) -> println("error: {e.message()}")
+    }
+  }
+  task.cancel(server)
+}

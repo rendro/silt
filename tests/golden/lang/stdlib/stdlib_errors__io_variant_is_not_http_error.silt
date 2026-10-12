@@ -4,6 +4,6 @@
 import io
 import http
 fn main() {
-  let e: http.HttpError = io.IoNotFound("x")
+  let e: http.HttpError = io.NotFound("x")
   println("unreachable")
 }

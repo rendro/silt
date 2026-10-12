@@ -2,10 +2,11 @@
 -- Create a timeout channel but never select on it — should not panic or leak.
 import io
 import channel
+import time
 fn program() {
-  let _ = channel.timeout(10)
-  let _ = channel.timeout(50)
-  let _ = channel.timeout(100)
+  let _ = channel.timeout(time.ms(10))
+  let _ = channel.timeout(time.ms(50))
+  let _ = channel.timeout(time.ms(100))
   -- Just let them go out of scope without selecting
   42
 }

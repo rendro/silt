@@ -54,14 +54,17 @@ Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 
 ## Errors
 
-`time.date`, `time.time`, `time.parse`, and `time.parse_date` return
-`Result(T, TimeError)`. The enum is intentionally small — calendar
-validation and format parsing are the only structural failure modes:
+`time.date`, `time.time`, `time.parse`, `time.parse_date`, `time.format` and
+`time.format_date` return `Result(T, TimeError)`. The enum is intentionally
+small — calendar validation, a text that does not match its pattern and a
+pattern that is no format are the structural failure modes:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TimeParseFormat(msg)` | `String` | pattern did not match input |
-| `TimeOutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
+| `ParseFormat(msg)` | `String` | the text did not match a pattern that could have given the value |
+| `OutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
+| `InvalidFormat(msg)` | `String` | the pattern is at fault, whatever the value or the text: an unknown specifier; for a format, a specifier the value cannot fill (a time for a `Date`, a time zone); for a parse, fields that are not enough for the value (no time of day for a `DateTime`, no date, an empty pattern) |
+| `Other(msg)` | `String` | unclassified failure |
 
 `TimeError` implements the built-in `Error` trait, so `e.message()`
 yields a rendered string when variant branching isn't needed.
@@ -77,10 +80,8 @@ yields a rendered string when variant branching isn't needed.
 | `datetime` | `(Date, Time) -> DateTime` | Combine date and time (infallible) |
 | `to_datetime` | `(Instant, Int) -> DateTime` | Convert instant to local datetime with UTC offset in minutes |
 | `to_instant` | `(DateTime, Int) -> Instant` | Convert local datetime to instant with UTC offset in minutes |
-| `to_utc` | `(Instant) -> DateTime` | Convert instant to UTC datetime (shorthand for offset=0) |
-| `from_utc` | `(DateTime) -> Instant` | Convert UTC datetime to instant (shorthand for offset=0) |
-| `format` | `(DateTime, String) -> String` | Format datetime with strftime pattern |
-| `format_date` | `(Date, String) -> String` | Format date with strftime pattern |
+| `format` | `(DateTime, String) -> Result(String, TimeError)` | Format datetime with strftime pattern |
+| `format_date` | `(Date, String) -> Result(String, TimeError)` | Format date with strftime pattern |
 | `parse` | `(String, String) -> Result(DateTime, TimeError)` | Parse string into datetime with strftime pattern |
 | `parse_date` | `(String, String) -> Result(Date, TimeError)` | Parse string into date with strftime pattern |
 | `add_days` | `(Date, Int) -> Date` | Add/subtract days from a date |
@@ -233,57 +234,26 @@ fn main() -> Result(Unit, time.TimeError) {
 ```
 
 
-## `time.to_utc`
-
-```
-time.to_utc(instant: Instant) -> DateTime
-```
-
-Shorthand for `time.to_datetime(instant, 0)`.
-
-```silt
-import time
-
-fn main() {
-  println(time.now() |> time.to_utc) -- 2026-04-06T18:46:09.005723612
-}
-```
-
-
-## `time.from_utc`
-
-```
-time.from_utc(datetime: DateTime) -> Instant
-```
-
-Shorthand for `time.to_instant(datetime, 0)`.
-
-```silt
-import time
-
-fn main() {
-  let dt = time.now() |> time.to_utc
-  let back = dt |> time.from_utc
-  println(back.epoch_ns)
-}
-```
-
-
 ## `time.format`
 
 ```
-time.format(datetime: DateTime, pattern: String) -> String
+time.format(datetime: DateTime, pattern: String) -> Result(String, TimeError)
 ```
 
 Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %A %a %B %b %%`.
+A pattern is text like any other: one that is no format (an unknown
+specifier such as `%Q`, or a time zone specifier, which a naive `DateTime`
+cannot fill) is `Err(InvalidFormat(why))`, not a failure of the program.
 
 ```silt
 import time
 
 fn main() -> Result(Unit, time.TimeError) {
   let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
-  println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
+  println(time.format(dt, "%A, %B %d, %Y at %H:%M")?)
   -- Wednesday, December 25, 2024 at 18:00
+  println(time.format(dt, "%Q"))
+  -- Err(time format error: invalid format specifier in '%Q')
   Ok(())
 }
 ```
@@ -292,17 +262,19 @@ fn main() -> Result(Unit, time.TimeError) {
 ## `time.format_date`
 
 ```
-time.format_date(date: Date, pattern: String) -> String
+time.format_date(date: Date, pattern: String) -> Result(String, TimeError)
 ```
 
-Formats a `Date` using strftime patterns.
+Formats a `Date` using strftime patterns. A pattern that is no format for a
+date is `Err(InvalidFormat(why))`: an unknown specifier, or one of a time
+(`%H`) or a time zone, which a date has not.
 
 ```silt
 import time
 
 fn main() -> Result(Unit, time.TimeError) {
   let d = time.date(2024, 6, 15)?
-  println(d |> time.format_date("%d/%m/%Y")) -- 15/06/2024
+  println(time.format_date(d, "%d/%m/%Y")?) -- 15/06/2024
   Ok(())
 }
 ```
@@ -315,6 +287,14 @@ time.parse(s: String, pattern: String) -> Result(DateTime, TimeError)
 ```
 
 Parses a string into a `DateTime` using a strftime pattern.
+
+The pattern has to give a date and a time of day. One that cannot,
+whatever the text, is `Err(InvalidFormat(why))`: an unknown specifier, a
+pattern without a time of day (`"%Y-%m-%d"`: use `time.parse_date`),
+without a date, with a 12-hour clock and no `%p`, or an empty one. That
+is decided from the pattern alone. A text that does not match a pattern
+that could give a `DateTime` is `Err(ParseFormat(msg))`, and one that
+matches with a field that is no such day or time `Err(OutOfRange(msg))`.
 
 ```silt
 import time
@@ -332,7 +312,9 @@ fn main() {
 time.parse_date(s: String, pattern: String) -> Result(Date, TimeError)
 ```
 
-Parses a string into a `Date` using a strftime pattern.
+Parses a string into a `Date` using a strftime pattern. A pattern whose
+fields do not make a date (`"%m.%Y"`, `"%H:%M"`, an empty one) is
+`Err(InvalidFormat(why))` whatever the text, as in `time.parse`.
 
 ```silt
 import time

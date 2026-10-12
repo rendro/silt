@@ -53,7 +53,7 @@ fn test_string_length() {
 }
 
 fn skip_test_not_ready_yet() {
-  test.assert(false, "this would fail")
+  test.assert(false)
 }
 
 fn helper(x) {
@@ -107,8 +107,6 @@ entry point.
 | `test.assert(condition)` | Fails if `condition` is `false` |
 | `test.assert_eq(left, right)` | Fails if `left != right` |
 | `test.assert_ne(left, right)` | Fails if `left == right` |
-
-All assertions accept an optional trailing `String` message argument.
 
 ## Spawned Tasks
 

@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- Each of these was a second way to do something and is no function:
+-- `==` compares Bytes, `time.to_datetime(i, 0)` and
+-- `time.to_instant(dt, 0)` are the UTC conversions, `bytes.to_hex` of
+-- a digest is its hex form, and `channel.each` reads a stream.
+import bytes
+import crypto
+import stream
+import time
+
+fn main() {
+  let b = bytes.from_string("abc")
+  println(bytes.eq(b, b))
+  println(time.to_utc(time.now()))
+  println(time.from_utc(time.to_datetime(time.now(), 0)))
+  println(crypto.md5_hex(b))
+  println(crypto.blake2b_hex(b))
+  stream.each(stream.from_list([1]), println)
+}

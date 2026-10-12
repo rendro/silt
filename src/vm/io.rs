@@ -9,8 +9,8 @@
 //!   that failed and was never joined, the log of an `http.serve`
 //!   handler that failed) goes to its stderr;
 //! - `time.now`, `time.today`, `time.sleep`, the timeouts of
-//!   `channel.timeout` and `channel.recv_timeout`, and the deadlines of
-//!   `task.deadline` and `task.spawn_until` read its clock.
+//!   `channel.timeout` and `channel.receive_timeout`, and the deadline of
+//!   `task.deadline` read its clock.
 //!
 //! ```rust
 //! use silt::{Buffer, HostIo, Vm};
@@ -181,9 +181,9 @@ impl HostIo {
     /// The same output, with `clock` instead of the system clock.
     ///
     /// The runtime's own threads still wait in real time: a task's
-    /// `time.sleep`, a `channel.timeout`, a `channel.recv_timeout` and
-    /// a wait for I/O under a `task.deadline` end within a millisecond
-    /// of the moment `clock` reaches their deadline.
+    /// `time.sleep`, a `channel.timeout`, a `channel.receive_timeout` and
+    /// the wait of a `task.deadline` end within a millisecond of the
+    /// moment `clock` reaches their deadline.
     pub fn clock(self, clock: impl Clock + 'static) -> HostIo {
         HostIo {
             clock: Arc::new(clock),

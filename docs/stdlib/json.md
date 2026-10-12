@@ -27,10 +27,10 @@ JsonError` is wired in):
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `JsonSyntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes |
-| `JsonTypeMismatch(expected, actual)` | `String`, `String` | A field's JSON type did not match the target field type |
-| `JsonMissingField(name)` | `String` | A required (non-`Option`) field was absent |
-| `JsonUnknown(msg)` | `String` | Anything else (out-of-range numbers, internal failures) |
+| `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes |
+| `TypeMismatch(expected, actual)` | `String`, `String` | A field's JSON type did not match the target field type |
+| `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `Other(msg)` | `String` | Anything else (out-of-range numbers, internal failures) |
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
@@ -62,7 +62,7 @@ parameter) has no decoder.
 
 A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
-that range, is `Err(JsonTypeMismatch("Int", ...))`: nothing is cut off or rounded.
+that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 
 When the type is written at the call, `json.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile
@@ -71,7 +71,7 @@ does not take (such as `json.parse_list(text, Int)`). The check applies
 equally to a decoder imported by name (`import json.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
-decoder gives an `Err(JsonUnknown(msg))` whose message names the field and its
+decoder gives an `Err(Other(msg))` whose message names the field and its
 record, and a type the function does not take is a run-time error.
 
 
@@ -90,7 +90,7 @@ json.stringify: the value is nested more than 1000 levels deep
 
 The parsers stop sooner: `json.parse`, `json.parse_list` and
 `json.parse_map` read a document whose arrays and objects are nested up to
-127 levels deep, and give a `JsonSyntax` error (`recursion limit exceeded`) for
+127 levels deep, and give a `Syntax` error (`recursion limit exceeded`) for
 one nested deeper. A value written at more levels than that is valid JSON
 that silt itself does not read back.
 

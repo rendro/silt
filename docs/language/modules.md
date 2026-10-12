@@ -269,7 +269,7 @@ your editor. The built-in modules:
 | `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
 | `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
 | `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.cancel`, `task.deadline`, `task.spawn_until` |
+| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
 | `regex` | Compiled regular expressions and replacement helpers |
 | `json` | Type-directed JSON parsing and emission |
 | `toml` | TOML parsing and emission |
@@ -290,11 +290,10 @@ your editor. The built-in modules:
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
 `channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
-`io.IoNotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
+`io.NotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
 `task.Handle(a)`, `postgres.PgPool` (and `PgTx`, `PgCursor`,
-`QueryResult`, `ExecResult`, `Value`). `ParseError`, the error of both
-`int.parse` and `float.parse`, is declared in `int` and reached through
-either module: `int.ParseError` and `float.ParseError` are one type. A
+`QueryResult`, `ExecResult`, `Value`). Two modules may have a variant of
+one name (`tcp.Timeout`, `http.Timeout`): the module says which. A
 selective import works for them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,

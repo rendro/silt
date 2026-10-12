@@ -1,0 +1,16 @@
+-- `channel.timeout` takes a `Duration`, like every function that waits:
+-- its channel closes when the duration has passed, and a duration below
+-- a millisecond is a millisecond.
+import channel
+import time
+
+fn main() {
+  let soon = channel.timeout(time.ms(20))
+  let far = channel.timeout(time.hours(1))
+  match channel.select([channel.Recv(far), channel.Recv(soon)]) {
+    (^soon, channel.Closed) -> println("the short one closed")
+    _ -> println("something else")
+  }
+  println(channel.receive(channel.timeout(time.nanos(1))))
+  println(channel.receive(channel.timeout(time.ms(0))))
+}

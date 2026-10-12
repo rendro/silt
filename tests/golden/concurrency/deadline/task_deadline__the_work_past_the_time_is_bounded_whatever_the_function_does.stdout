@@ -1,0 +1,36 @@
+the time is over from the start:
+a select with a Recv arm on a closed channel: ended, after fewer than 10,000 rounds
+a select with a Send arm into a buffer with room: ended, after fewer than 10,000 rounds
+  sent and not marked, at most one: true
+a select with a Recv arm on a channel that is full: ended, after fewer than 10,000 rounds
+  taken and not marked, at most one: true
+a select on a timeout channel that has closed: ended, after fewer than 10,000 rounds
+a receive of a closed channel: ended, after fewer than 10,000 rounds
+try_receive: ended, after fewer than 10,000 rounds
+try_send: ended, after fewer than 10,000 rounds
+ready selects and computing: ended, after fewer than 10,000 rounds
+an inner deadline of an hour: ended, after fewer than 10,000 rounds
+an inner deadline of no time: ended, after fewer than 10,000 rounds
+three deadlines in each other: ended, after fewer than 10,000 rounds
+an inner deadline around ready selects: ended, after fewer than 10,000 rounds
+a sink of a stream the function reads: ended, after fewer than 10,000 rounds
+a read of a file: ended, after fewer than 10,000 rounds
+channel.each over a channel that is full: ended, after fewer than 10,000 rounds
+the time passes while the function runs:
+a select with a Recv arm on a closed channel: ended
+a select with a Send arm into a buffer with room: ended
+  sent and not marked, at most one: true
+a select with a Recv arm on a channel that is full: ended
+  taken and not marked, at most one: true
+a select on a timeout channel that has closed: ended
+a receive of a closed channel: ended
+try_receive: ended
+try_send: ended
+ready selects and computing: ended
+an inner deadline of an hour: ended
+an inner deadline of no time: ended
+three deadlines in each other: ended
+an inner deadline around ready selects: ended
+a sink of a stream the function reads: ended
+a read of a file: ended
+channel.each over a channel that is full: ended

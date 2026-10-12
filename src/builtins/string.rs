@@ -182,22 +182,13 @@ builtins! {
         char_index(s, s.rfind(needle))
     }
 
-    fn split_at(s: &str, idx: i64) -> Result<Value, VmError> {
-        if idx < 0 {
-            return Err(VmError::new(format!(
-                "string.split_at: negative index {idx}"
-            )));
-        }
-        // Character indexing (consistent with string.index_of /
-        // string.slice): every index up to the length is a boundary.
-        let Some(boundary) = usize::try_from(idx).ok().and_then(|idx| byte_offset(s, idx)) else {
-            return Err(VmError::new(format!(
-                "string.split_at: index {idx} out of bounds (length {})",
-                s.chars().count()
-            )));
-        };
+    // Character indexing (consistent with string.index_of /
+    // string.slice): every index up to the length is a boundary, and
+    // any other index, a negative one too, is `None`.
+    fn split_at(s: &str, idx: i64) -> Option<Value> {
+        let boundary = byte_offset(s, usize::try_from(idx).ok()?)?;
         let (left, right) = s.split_at(boundary);
-        Ok(Value::tuple(vec![
+        Some(Value::tuple(vec![
             Value::String(left.into()),
             Value::String(right.into()),
         ]))
@@ -259,21 +250,17 @@ builtins! {
         Ok(s.to_string() + &padding("pad_right", s, width, pad)?)
     }
 
-    fn char_code(s: &str) -> Result<i64, VmError> {
-        match s.chars().next() {
-            Some(c) => Ok(c as i64),
-            None => Err(VmError::new("string.char_code: empty string".into())),
-        }
+    fn char_code(s: &str) -> Option<Value> {
+        s.chars().next().map(|c| Value::Int(c as i64))
     }
 
-    fn from_char_code(code: i64) -> Result<String, VmError> {
-        // Reject negatives and values outside u32 range before casting,
-        // then let char::from_u32 catch surrogates and >0x10FFFF values.
-        // Unchecked `as u32` would silently wrap (e.g. 4294967337 -> 41 = ')').
-        match u32::try_from(code).ok().and_then(char::from_u32) {
-            Some(c) => Ok(c.to_string()),
-            None => Err(VmError::new(format!("invalid code point {code}"))),
-        }
+    // Negatives and values outside the u32 range are no code points
+    // (an unchecked `as u32` would wrap: 4294967337 -> 41 = ')'), and
+    // `char::from_u32` says so of surrogates and of values above
+    // 0x10FFFF.
+    fn from_char_code(code: i64) -> Option<Value> {
+        let c = u32::try_from(code).ok().and_then(char::from_u32)?;
+        Some(Value::String(c.to_string().into()))
     }
 
     fn is_empty(s: &str) -> bool {

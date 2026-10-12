@@ -1,6 +1,0 @@
--- exit: 1
--- stderr-contains: should be true
-import test
-fn main() {
-  test.assert(false, "should be true")
-}

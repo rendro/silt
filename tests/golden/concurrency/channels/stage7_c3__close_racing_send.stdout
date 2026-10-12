@@ -1,2 +1,1 @@
 before=100 after<=4: true closed: Closed
-send after close: false

@@ -1,13 +1,14 @@
--- A closed, empty channel gives Err(ChannelClosed).
+-- A closed, empty channel gives Closed.
 import channel
 import time
 fn main() {
   let ch = channel.new(0)
   channel.close(ch)
-  let r = match channel.recv_timeout(ch, time.ms(500)) {
-    Ok(_) -> "ok"
-    Err(channel.ChannelTimeout) -> "timeout"
-    Err(channel.ChannelClosed) -> "closed"
+  let r = match channel.receive_timeout(ch, time.ms(500)) {
+    channel.Message(_) -> "ok"
+    channel.Empty -> "timeout"
+    channel.Closed -> "closed"
+    channel.Sent -> "sent"
   }
   println(r)
 }

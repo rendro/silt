@@ -75,7 +75,7 @@ fn main() {
   println(written(toml.pretty(Doc { top: tree(100000), links: End })))
   println(written(toml.stringify(Doc { top: Leaf, links: chain(200000) })))
   match toml.stringify(rows(200000)) {
-    Err(toml.TomlUnknown(_)) -> println("the error is a TomlUnknown")
+    Err(toml.Other(_)) -> println("the error is a Other")
     _ -> println("another result")
   }
 }

@@ -1,0 +1,12 @@
+not a url: InvalidUrl("not a url")
+no scheme: InvalidUrl("example.com/page")
+empty: InvalidUrl("")
+another scheme: InvalidUrl("ftp://127.0.0.1/file")
+a port that is none: InvalidUrl("http://127.0.0.1:99999/")
+a posted one: InvalidUrl("not a url")
+nobody listens: Connect
+the server goes away: ClosedEarly
+in the head: ClosedEarly
+in the body: ClosedEarly
+no HTTP: InvalidResponse
+a response: Ok

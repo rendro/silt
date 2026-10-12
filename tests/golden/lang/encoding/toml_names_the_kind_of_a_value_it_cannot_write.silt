@@ -11,7 +11,7 @@ import toml
 fn said(result: Result(String, toml.TomlError)) -> String {
   match result {
     Ok(text) -> "written: {text}"
-    Err(toml.TomlUnknown(message)) -> message
+    Err(toml.Other(message)) -> message
     Err(other) -> "another error: {other}"
   }
 }

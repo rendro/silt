@@ -45,10 +45,10 @@ channel-backed lazy pipelines over the same combinator names.
 | `prepend` | `(List(a), a) -> List(a)` | Add an element to the front |
 | `product` | `(List(Int)) -> Int` | Product of a list of ints (1 on empty) |
 | `product_float` | `(List(Float)) -> Float` | Product of a list of floats (1.0 on empty) |
-| `remove_at` | `(List(a), Int) -> List(a)` | Remove element at index (panics if out of range) |
+| `remove_at` | `(List(a), Int) -> Option(List(a))` | The list without the element at index, or None if there is none |
 | `reverse` | `(List(a)) -> List(a)` | Reverse element order |
 | `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
-| `set` | `(List(a), Int, a) -> List(a)` | Return new list with element at index replaced |
+| `set` | `(List(a), Int, a) -> Option(List(a))` | The list with the element at index replaced, or None if there is none |
 | `sort` | `(List(a)) -> List(a) where a: Compare` | Sort in natural order |
 | `sort_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Compare` | Sort by key function |
 | `sum` | `(List(Int)) -> Int` | Sum a list of ints (0 on empty) |
@@ -357,8 +357,9 @@ fn main() {
 list.get(xs: List(a), i: Int) -> Option(a)
 ```
 
-Returns `Some(element)` at the given index, or `None` if out of bounds.
-Negative indices are a runtime error -- use `list.last` for end access.
+Returns `Some(element)` at the given index, or `None` if there is no such
+position: an index past the end, or a negative one (use `list.last` for end
+access).
 
 ```silt
 import list
@@ -367,7 +368,7 @@ fn main() {
   let xs = [10, 20, 30]
   println(list.get(xs, 1)) -- Some(20)
   println(list.get(xs, 10)) -- None
-  -- list.get(xs, -1)        -- runtime error: negative index
+  println(list.get(xs, -1)) -- None
 }
 ```
 
@@ -609,18 +610,19 @@ fn main() {
 ## `list.remove_at`
 
 ```
-list.remove_at(xs: List(a), index: Int) -> List(a)
+list.remove_at(xs: List(a), index: Int) -> Option(List(a))
 ```
 
-Returns a new list with the element at `index` removed. Panics if the index is
-out of bounds (matching `list.set`). Negative indices are a runtime error.
+Returns `Some` of a new list with the element at `index` removed, or `None` if
+the list has no such position (an index past the end, or a negative one), as
+`list.get` and `list.set` do.
 
 ```silt
 import list
 
 fn main() {
-  println(list.remove_at([10, 20, 30, 40], 1)) -- [10, 30, 40]
-  -- list.remove_at([1, 2], 5)                   -- runtime error: out of bounds
+  println(list.remove_at([10, 20, 30, 40], 1)) -- Some([10, 30, 40])
+  println(list.remove_at([1, 2], 5)) -- None
 }
 ```
 
@@ -645,18 +647,19 @@ fn main() {
 ## `list.set`
 
 ```
-list.set(xs: List(a), index: Int, value: a) -> List(a)
+list.set(xs: List(a), index: Int, value: a) -> Option(List(a))
 ```
 
-Returns a new list with the element at `index` replaced by `value`. Panics if
-the index is out of bounds. Negative indices are a runtime error.
+Returns `Some` of a new list with the element at `index` replaced by `value`,
+or `None` if the list has no such position (an index past the end, or a
+negative one).
 
 ```silt
 import list
 
 fn main() {
-  let xs = list.set([10, 20, 30], 1, 99)
-  println(xs) -- [10, 99, 30]
+  println(list.set([10, 20, 30], 1, 99)) -- Some([10, 99, 30])
+  println(list.set([10, 20, 30], 3, 99)) -- None
 }
 ```
 

@@ -1,7 +1,8 @@
 import encoding
+import option
 import string
 fn main() {
-  let nul = string.from_char_code(0)
+  let nul = string.from_char_code(0) |> option.unwrap_or("")
   let s = "a{nul}b"
   let encoded = encoding.url_encode(s)
   match encoding.url_decode(encoded) {

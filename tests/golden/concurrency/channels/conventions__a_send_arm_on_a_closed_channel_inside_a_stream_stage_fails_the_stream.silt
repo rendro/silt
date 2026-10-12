@@ -1,0 +1,22 @@
+-- exit: 1
+-- repeat: 20
+-- stderr-contains: error[runtime]: send on closed channel 0
+-- A stage of a stream whose function sends on a closed channel fails as
+-- any stage whose function fails: the sink at the end raises the error.
+-- (A stage whose own output is no longer read ends quietly, as before:
+-- that is no send of the program's.)
+import channel
+import stream
+
+fn main() {
+  let closed = channel.new(4)
+  channel.close(closed)
+  println("collecting")
+  let seen = stream.from_list([1, 2, 3])
+    |> stream.map { x ->
+      let _ = channel.select([channel.Send(closed, x)])
+      x
+    }
+    |> stream.collect
+  println(seen)
+}

@@ -1,0 +1,11 @@
+Ok(2024-12-25 18:05)
+Ok(25/12/2024)
+Wednesday, December 25
+Err(time format error: invalid format specifier in '%Q')
+Err(time format error: timezone specifier in '%z' is not valid for a naive DateTime; silt DateTimes are naive (no TZ))
+Err(time format error: invalid format specifier in '%Q')
+Err(time format error: time specifier in '%H' is not valid for a Date; use time.format with a DateTime instead)
+InvalidFormat: invalid format specifier in '100%'
+parse_date: InvalidFormat
+parse: InvalidFormat
+parse_date: ParseFormat

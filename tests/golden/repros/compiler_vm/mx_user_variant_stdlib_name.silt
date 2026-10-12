@@ -1,7 +1,7 @@
 -- verdict: same
-type Lookup { IoNotFound(String), Found(Int) }
+type Lookup { NotFound(String), Found(Int) }
 fn main() {
-  let a = IoNotFound("key-7")
+  let a = NotFound("key-7")
   println(a)
   println("{a}")
   println(Found(3))

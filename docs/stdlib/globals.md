@@ -65,7 +65,7 @@ fn main() {
 | `http.GET`, `http.POST`, ... | `http.Method` | HTTP method constructors |
 
 The error enums of the builtin modules (`io.IoError`, `json.JsonError`,
-...) and their variants (`io.IoNotFound(path)`, ...) are reached the
+...) and their variants (`io.NotFound(path)`, ...) are reached the
 same way.
 
 
@@ -192,7 +192,7 @@ fn main() {
 ```
 
 
-## `Stop`
+## `list.Stop`
 
 ```
 list.Stop(value: a) -> list.Step(a)
@@ -217,7 +217,7 @@ fn main() {
 ```
 
 
-## `Continue`
+## `list.Continue`
 
 ```
 list.Continue(value: a) -> list.Step(a)
@@ -228,7 +228,7 @@ Signals continuation in `list.fold_until`. The value becomes the next
 accumulator.
 
 
-## `Message`
+## `channel.Message`
 
 ```
 channel.Message(value: a) -> channel.ChannelResult(a)
@@ -252,7 +252,7 @@ fn main() {
 ```
 
 
-## `Closed`
+## `channel.Closed`
 
 ```
 channel.Closed : channel.ChannelResult(a)
@@ -264,7 +264,7 @@ Indicates the channel has been closed. Returned by `channel.receive` and
 `channel.try_receive` when no more messages will arrive.
 
 
-## `Empty`
+## `channel.Empty`
 
 ```
 channel.Empty : channel.ChannelResult(a)
@@ -276,7 +276,7 @@ Indicates the channel buffer is currently empty but not closed. Only returned by
 `channel.try_receive` (the non-blocking variant).
 
 
-## `Sent`
+## `channel.Sent`
 
 ```
 channel.Sent : channel.ChannelResult(a)
@@ -292,7 +292,7 @@ tuple result is `(ch, channel.Sent)` once that send completes.
 send/receive form.
 
 
-## `Recv`
+## `channel.Recv`
 
 ```
 channel.Recv(ch: Channel(a)) -> channel.ChannelOp(a)
@@ -302,7 +302,7 @@ A variant of `channel`: write `channel.Recv(ch)`. Builds a receive arm for
 `channel.select`.
 
 
-## `Send`
+## `channel.Send`
 
 ```
 channel.Send(ch: Channel(a), value: a) -> channel.ChannelOp(a)

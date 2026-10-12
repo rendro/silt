@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.captures_named("(?P<user>\\w+)@(?P<host>\\w+)", "alice@example")
+  regex.captures_named("alice@example", "(?P<user>\\w+)@(?P<host>\\w+)") |> result.unwrap_or(None)
 }
 
 fn main() {

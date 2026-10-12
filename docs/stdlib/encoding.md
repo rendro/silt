@@ -34,9 +34,9 @@ not RFC 3986, and is out of scope here. Build form-encoding on top of
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `url_encode` | `(String) -> String` | Percent-encode per RFC 3986 (unreserved = `ALPHA` / `DIGIT` / `-._~`) |
-| `url_decode` | `(String) -> Result(String, String)` | Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding |
+| `url_decode` | `(String) -> Result(String, EncodingError)` | Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding |
 | `form_encode` | `(List((String, String))) -> String` | Build an `application/x-www-form-urlencoded` body |
-| `form_decode` | `(String) -> Result(List((String, String)), String)` | Parse an `application/x-www-form-urlencoded` body into pairs |
+| `form_decode` | `(String) -> Result(List((String, String)), EncodingError)` | Parse an `application/x-www-form-urlencoded` body into pairs |
 
 ## Examples
 
@@ -69,14 +69,14 @@ fn main() {
 
 ## Errors
 
-Only `url_decode` is fallible — `url_encode` is a total function over
-any `String`.
+The two decoders return `Result(_, EncodingError)`; the encoders are total
+functions. `e.message()` (and `"{e}"`) is the text of the variant.
 
-| Operation | Error condition |
-|-----------|-----------------|
-| `url_decode` | Truncated `%` at end of string (e.g. `"bad%"`) |
-| `url_decode` | Non-hex digits after `%` (e.g. `"bad%ZZ"`) |
-| `url_decode` | Decoded byte sequence is not valid UTF-8 (e.g. `"%C3%28"`) |
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `InvalidPercent(String)` | what and where | a `%` at the end of the text (`"bad%"`) or one that two hex digits do not follow (`"bad%ZZ"`) |
+| `InvalidUtf8(String)` | where | the decoded bytes are not valid UTF-8 (`"%C3%28"`) |
+| `Other(String)` | message | unclassified failure |
 
 ## Notes
 
@@ -127,7 +127,7 @@ keys, which are legal in form bodies.
 ## `form_decode`
 
 ```
-encoding.form_decode(body: String) -> Result(List((String, String)), String)
+encoding.form_decode(body: String) -> Result(List((String, String)), EncodingError)
 ```
 
 Inverse of `form_encode`. Splits the body on `&`, splits each segment
@@ -143,11 +143,12 @@ import encoding
 fn main() {
   match encoding.form_decode("a=1&b=hello+world&c=%26") {
     Ok(pairs) -> println(pairs)
-    -- [("a", "1"), ("b", "hello world"), ("c", "&")]
+    -- [(a, 1), (b, hello world), (c, &)]
     Err(e) -> println(e)
   }
 }
 ```
 
-Malformed percent escapes or invalid UTF-8 surface as `Err(msg)` with
-a message identifying which pair and half (key / value) was bad.
+Malformed percent escapes or invalid UTF-8 surface as
+`Err(InvalidPercent(text))` or `Err(InvalidUtf8(text))`, with a text that
+says which pair and which half (key / value) was bad.

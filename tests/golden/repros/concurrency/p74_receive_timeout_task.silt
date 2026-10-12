@@ -1,0 +1,17 @@
+-- verdict: same
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(1)
+  let h = task.spawn(fn() {
+    match channel.receive_timeout(ch, time.ms(80)) {
+      channel.Message(_) -> "value"
+      channel.Empty -> "timed out"
+      channel.Closed -> "closed"
+      channel.Sent -> "sent"
+    }
+  })
+  println(task.join(h))
+}

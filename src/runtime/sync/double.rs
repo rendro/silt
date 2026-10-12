@@ -86,6 +86,7 @@ impl Double {
         match park(task, wait, &self.timer, self) {
             Park::Ready(fired) => Some(fired),
             Park::Cancelled => panic!("task {} is cancelled", task.0),
+            Park::Expired => panic!("the time of task {} is over", task.0),
             Park::Parked(parked) => {
                 let token = parked.token().clone();
                 let woken = false;

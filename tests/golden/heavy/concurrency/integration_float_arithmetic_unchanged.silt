@@ -1,10 +1,10 @@
 -- Non-division Float arithmetic still returns Float
 import float
 
--- Non-division Float arithmetic returns Float; float.to_string rejects
+-- Non-division Float arithmetic returns Float; float.format rejects
 -- any other type and prints the decimal.
 fn main() {
-  println(float.to_string(1.5 + 2.5, 1))
-  println(float.to_string(5.0 - 3.0, 1))
-  println(float.to_string(2.0 * 3.0, 1))
+  println(float.format(1.5 + 2.5, 1))
+  println(float.format(5.0 - 3.0, 1))
+  println(float.format(2.0 * 3.0, 1))
 }

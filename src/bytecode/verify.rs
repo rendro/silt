@@ -346,16 +346,11 @@ fn check(
         Instr::CallBuiltin { builtin: id, argc } => {
             // (The operand was checked above: it is a row.)
             if let Ok(row) = builtin(op, id) {
-                let most = row.params.len();
-                let least = most - usize::from(row.optional_last && most > 0);
-                if !(least..=most).contains(&argc) {
+                let takes = row.params.len();
+                if argc != takes {
                     return fail(format!(
-                        "`{op}` calls {} with {argc} arguments, and it takes {}",
+                        "`{op}` calls {} with {argc} arguments, and it takes {takes}",
                         row.qualified(),
-                        match least == most {
-                            true => most.to_string(),
-                            false => format!("{least} or {most}"),
-                        }
                     ));
                 }
             }
@@ -794,14 +789,16 @@ mod tests {
             "at offset 0: `CallBuiltin` calls println with 0 arguments, and it takes 1"
         );
         verify(&call("int.abs", 1)).unwrap();
-        // A row whose last parameter may be left out.
-        verify(&call("channel.new", 0)).unwrap();
+        // No row has a parameter that may be left out.
         verify(&call("channel.new", 1)).unwrap();
-        verify(&call("test.assert_eq", 2)).unwrap();
-        verify(&call("test.assert_eq", 3)).unwrap();
         assert_eq!(
-            rejected_fn(call("test.assert_eq", 1)),
-            "at offset 1: `CallBuiltin` calls test.assert_eq with 1 arguments, and it takes 2 or 3"
+            rejected_fn(call("channel.new", 0)),
+            "at offset 0: `CallBuiltin` calls channel.new with 0 arguments, and it takes 1"
+        );
+        verify(&call("test.assert_eq", 2)).unwrap();
+        assert_eq!(
+            rejected_fn(call("test.assert_eq", 3)),
+            "at offset 3: `CallBuiltin` calls test.assert_eq with 3 arguments, and it takes 2"
         );
     }
 

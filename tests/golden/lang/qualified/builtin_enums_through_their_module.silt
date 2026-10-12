@@ -26,7 +26,7 @@ fn verb(m: http.Method) -> String {
 
 fn io_message(e: io.IoError) -> String {
   match e {
-    io.IoNotFound(path) -> "not found: {path}"
+    io.NotFound(path) -> "not found: {path}"
     _ -> "other"
   }
 }
@@ -50,7 +50,7 @@ fn main() {
   println(day_name(t.Friday))
   println(verb(http.GET))
   println(verb(http.Method.POST))
-  println(io_message(io.IoNotFound("x.txt")))
+  println(io_message(io.NotFound("x.txt")))
   let total = list.fold_until([1, 2, 3, 4], 0, { acc, n ->
     match acc + n > 4 {
       true -> list.Stop(acc)

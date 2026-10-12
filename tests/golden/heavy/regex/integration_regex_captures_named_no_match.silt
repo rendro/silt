@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.captures_named("(?P<n>\\d+)", "no numbers")
+  regex.captures_named("no numbers", "(?P<n>\\d+)") |> result.unwrap_or(None)
 }
 
 fn main() {

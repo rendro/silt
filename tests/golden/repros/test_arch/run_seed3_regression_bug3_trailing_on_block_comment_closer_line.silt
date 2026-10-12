@@ -5,6 +5,7 @@ import list
 import regex
 import string
 import task
+import result
 
 -- Parallel file processor using channels and tasks.
 -- Spawns worker tasks that read files, extract stats, and send results
@@ -35,7 +36,7 @@ ocs, filtedroprpcs, filterpimpowhenath
 
 -esaLary  and Pedng.split("\n")
   |> list.filter { l -> !string.is_empty(l) }
-  |> list.map { line -> regex.split("\\s+", line)
+  |> list.map { line -> regex.split(line, "\\s+") |> result.unwrap_or([])
   |> list.filter { w -> !string.is_empty(w) }
   |> list.length }
   |> list.fold(0) { acc, n -> acc + n }

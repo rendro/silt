@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- The variants of the error enums carry no module prefix, the variant
+-- for what fits no other is `Other`, and `int` and `float` each have an
+-- error enum of their own.
+import float
+import int
+import io
+import json
+
+fn main() {
+  let a = io.IoNotFound("x")
+  let b = io.IoUnknown("x")
+  let c = json.JsonSyntax("x", 0)
+  let d: int.ParseError = int.ParseEmpty
+  let e: float.FloatError = int.Empty
+  println((a, b, c, d, e))
+}

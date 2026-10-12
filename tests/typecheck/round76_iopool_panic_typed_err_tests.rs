@@ -7,7 +7,7 @@
 //! `IoPool::submit_with` panicked, the recovery branch unconditionally
 //! built `Value::variant(bv::ERR, vec![Value::String(msg)])` —
 //! the legacy untyped shape. Module-specific completions (postgres,
-//! tcp, http) typecheck their callers as `Result(T, PgError)` /
+//! tcp, http) typecheck their callers as `Result(T, PostgresError)` /
 //! `Result(T, TcpError)` / `Result(T, IoError)` etc, so user `match`
 //! arms over those typed enums never observed the stringly-shaped
 //! panic Err — the program would hit the catch-all `_` arm or, worse,

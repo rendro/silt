@@ -24,7 +24,7 @@
 //!
 //! A direct functional test (force-poison the inner mutex inside a tx
 //! cell, drive the finalizer through the `transact` path, assert no
-//! panic + correct typed `Err(PgError)` returned) is **not feasible
+//! panic + correct typed `Err(PostgresError)` returned) is **not feasible
 //! from outside the crate**: the tx registry, `PinnedConn` mutex, and
 //! `transact`'s `finalise` closure are all private module-level state
 //! with no public test hook. Adding a test-only hook would widen the

@@ -33,6 +33,7 @@ fn resumed(double: &Double, task: u64) -> Fired {
     match double.resume(task) {
         Resumed::Fired(fired) => fired,
         Resumed::Cancelled => panic!("task {task} was cancelled"),
+        Resumed::Expired => panic!("the time of task {task} was over"),
     }
 }
 
@@ -482,6 +483,7 @@ fn park_only(d: &Double, task: u64, wait: Wait) -> Parked {
         Park::Parked(parked) => parked,
         Park::Ready(fired) => panic!("expected a park, got {fired:?}"),
         Park::Cancelled => panic!("expected a park, got a cancel"),
+        Park::Expired => panic!("expected a park, got the end of the task"),
     }
 }
 
@@ -635,6 +637,146 @@ fn a_deadline_that_has_passed_ends_the_wait_unless_an_arm_is_ready() {
         received(d.block(1, recv(&ch).deadline(now)).unwrap()),
         (0, 1)
     );
+}
+
+// ── The deadline of the task ────────────────────────────────────────
+
+/// A wait of a task whose time is over at `ms` from now.
+fn until(d: &Double, wait: Wait, ms: u32) -> Wait {
+    wait.task_deadline(d.timer.deadline_after(ms * MS))
+}
+
+#[test]
+fn the_time_of_the_task_ends_its_wait_and_nothing_is_taken() {
+    let d = Double::new();
+    let ch = Channel::new(0, 1);
+    assert!(d.block(1, until(&d, recv(&ch), 10)).is_none());
+    assert_eq!(d.advance(9 * MS), 0);
+    assert!(d.is_parked(1));
+    assert_eq!(d.advance(MS), 1);
+    assert_eq!(d.woken(), [1]);
+    assert!(matches!(d.resume(1), Resumed::Expired));
+    // The task is on no queue: a value sent now stays in the channel.
+    assert_eq!(ch.waiting(), (0, 0));
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert_eq!(try_value(&ch, &d), Some(1));
+}
+
+#[test]
+fn an_arm_that_wins_is_the_task_s_and_its_time_passes_over_the_wait() {
+    let d = Double::new();
+    // A receive that a send completes.
+    let ch = Channel::new(0, 0);
+    assert!(d.block(1, until(&d, recv(&ch), 10)).is_none());
+    assert!(d.block(2, send(&ch, 7)).is_some());
+    assert_eq!(d.woken(), [1]);
+    // The time comes before the task has run again: its entry in the
+    // timer finds the wait ended, and the value is the task's.
+    assert_eq!(d.advance(20 * MS), 1);
+    assert!(d.woken().is_empty());
+    assert_eq!(received(resumed(&d, 1)), (0, 7));
+
+    // A send that a receive completes.
+    let ch = Channel::new(1, 0);
+    assert!(d.block(3, until(&d, send(&ch, 8), 10)).is_none());
+    assert_eq!(received(d.block(4, recv(&ch)).unwrap()), (0, 8));
+    assert_eq!(d.advance(20 * MS), 1);
+    assert!(matches!(resumed(&d, 3), Fired::Arm(0, Outcome::Sent)));
+    // A task that has run again is out of the timer.
+    assert_eq!(d.timer.pending(), 0);
+}
+
+#[test]
+fn a_send_that_the_time_of_the_task_ends_is_not_sent() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    assert!(d.block(1, until(&d, send(&ch, 7), 10)).is_none());
+    assert_eq!(d.advance(10 * MS), 1);
+    assert!(matches!(d.resume(1), Resumed::Expired));
+    // No receiver finds the value.
+    assert_eq!(try_value(&ch, &d), None);
+    assert_eq!(ch.waiting(), (0, 0));
+}
+
+#[test]
+fn a_wait_that_begins_when_the_time_is_over_ends_the_task_unless_an_arm_is_ready() {
+    let d = Double::new();
+    let ch = Channel::new(0, 1);
+    let now = Some(d.timer.now());
+    // Nothing is there: the task is not queued, and takes nothing
+    // later.
+    let wait = recv(&ch).task_deadline(now);
+    assert!(matches!(park(TaskId(1), wait, &d.timer, &d), Park::Expired));
+    assert_eq!(ch.waiting(), (0, 0));
+    // A value that is there wins over a time that has passed, as it
+    // does for an operation that never waits.
+    assert!(matches!(ch.try_send(Value::Int(3), &d), TrySend::Sent));
+    let wait = recv(&ch).task_deadline(now);
+    assert_eq!(received(d.block(1, wait).unwrap()), (0, 3));
+    // The same for a wait with several arms, and for one with none.
+    let other = Channel::new(1, 1);
+    let wait = select_recv(&ch, &other).task_deadline(now);
+    assert!(matches!(park(TaskId(1), wait, &d.timer, &d), Park::Expired));
+    assert!(matches!(other.try_send(Value::Int(4), &d), TrySend::Sent));
+    let wait = select_recv(&ch, &other).task_deadline(now);
+    assert_eq!(received(d.block(1, wait).unwrap()), (1, 4));
+    let wait = Wait::new(vec![]).task_deadline(now);
+    assert!(matches!(park(TaskId(1), wait, &d.timer, &d), Park::Expired));
+}
+
+#[test]
+fn of_the_wait_s_own_time_and_the_task_s_the_earlier_one_ends_the_wait() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    let own = |d: &Double, ms: u32| recv(&ch).deadline(d.timer.deadline_after(ms * MS));
+    // The wait's own time first: the task goes on, as without a time
+    // of its own.
+    assert!(d.block(1, until(&d, own(&d, 5), 10)).is_none());
+    assert_eq!(d.timer.pending(), 1);
+    assert_eq!(d.advance(5 * MS), 1);
+    assert!(matches!(resumed(&d, 1), Fired::Deadline));
+    // The task's time first: the task ends.
+    assert!(d.block(2, until(&d, own(&d, 10), 5)).is_none());
+    assert_eq!(d.advance(5 * MS), 1);
+    assert!(matches!(d.resume(2), Resumed::Expired));
+    assert_eq!(d.advance(20 * MS), 0);
+    // The same reading: it is the task's.
+    assert!(d.block(3, until(&d, own(&d, 5), 5)).is_none());
+    assert_eq!(d.advance(5 * MS), 1);
+    assert!(matches!(d.resume(3), Resumed::Expired));
+    assert_eq!(ch.waiting(), (0, 0));
+}
+
+#[test]
+fn a_wait_that_is_not_bounded_outlasts_the_time_of_its_task() {
+    let d = Double::new();
+    let cell: Arc<Cell<i64>> = Cell::new();
+    let wait = join(&cell).unbounded();
+    let wait = wait.task_deadline(d.timer.deadline_after(5 * MS));
+    assert!(wait.task_deadline.is_none());
+    assert!(d.block(1, wait).is_none());
+    assert_eq!(d.advance(20 * MS), 0);
+    assert!(d.is_parked(1));
+    assert!(cell.complete(1, &d).is_ok());
+    assert!(matches!(resumed(&d, 1), Fired::Arm(0, Outcome::Done)));
+}
+
+#[test]
+fn a_cancel_and_the_time_of_the_task_end_a_wait_once() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    // Cancelled first: the timer passes over the wait.
+    assert!(d.block(1, until(&d, recv(&ch), 10)).is_none());
+    assert!(d.cancel(1));
+    assert_eq!(d.advance(10 * MS), 1);
+    assert_eq!(d.woken(), [1]);
+    assert!(matches!(d.resume(1), Resumed::Cancelled));
+    // Over first: the cancel finds no wait to end.
+    assert!(d.block(2, until(&d, recv(&ch), 10)).is_none());
+    assert_eq!(d.advance(10 * MS), 1);
+    assert!(!d.cancel(2));
+    assert_eq!(d.woken(), [2]);
+    assert!(matches!(d.resume(2), Resumed::Expired));
 }
 
 #[test]
@@ -1114,6 +1256,7 @@ fn selects_on_threads_deliver_every_value_once() {
                 Park::Ready(fired) => return fired,
                 Park::Parked(parked) => parked,
                 Park::Cancelled => panic!("nobody cancels"),
+                Park::Expired => panic!("no task has a deadline"),
             };
             if parked.commit() {
                 while !self.woken[task].swap(false, Ordering::SeqCst) {

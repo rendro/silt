@@ -1,7 +1,9 @@
 [0, 5]
 world
 0
-index out of bounds: 4
-index out of bounds: 99
-101
-index out of bounds: 5
+0
+Ok(hello)
+0
+Some(101)
+None
+None

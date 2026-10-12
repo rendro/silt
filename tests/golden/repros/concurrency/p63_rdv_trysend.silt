@@ -3,7 +3,7 @@ import channel
 import task
 import time
 fn main() {
-  let ch = channel.new()
+  let ch = channel.new(0)
   println("try_send, no receiver: {channel.try_send(ch, 1)}")
   let r = task.spawn(fn() {
     match channel.receive(ch) { channel.Message(v) -> v  _ -> 0 - 1 }

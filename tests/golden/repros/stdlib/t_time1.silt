@@ -11,7 +11,6 @@ fn main() {
   println(time.days_between(d1, d2))
   println(time.ms(1500))
   println(time.hours(2))
-  println(time.to_utc(a) == time.to_datetime(a, 0))
   println(time.weekday(d1))
   println(d1)
   println(time.datetime(d1, time.time(1, 2, 3) |> fn(r) { match r { Ok(t) -> t

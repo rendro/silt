@@ -154,7 +154,6 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
         "postgres.cursor_close",
         "postgres.listen",
         "postgres.notify",
-        "postgres.uuidv7",
     ];
     let mut missing: Vec<&str> = Vec::new();
     for name in REQUIRED_BUILTINS {
@@ -196,8 +195,14 @@ fn every_builtin_module_has_a_per_module_doc() {
         }
     }
     // A variant of an error enum shows its enum's section of
-    // docs/stdlib/errors.md.
-    for variant in ["IoNotFound", "JsonSyntax", "TomlSyntax", "ParseEmpty"] {
+    // docs/stdlib/errors.md, under the name it is reached by.
+    for variant in [
+        "io.NotFound",
+        "json.Syntax",
+        "toml.Syntax",
+        "int.Empty",
+        "float.Empty",
+    ] {
         if !docs.get(variant).is_some_and(|d| !d.trim().is_empty()) {
             missing.push(format!("error variant `{variant}` has no registered doc"));
         }

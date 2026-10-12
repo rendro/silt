@@ -65,32 +65,6 @@ pub(super) fn on_type_call(on: &str, method: Symbol, method_ty: &Type) -> String
     format!("`{on}.{method}({args})`")
 }
 
-/// The arity rule of every call form — `f(a, b)`, `a |> f(b)` and
-/// `a |> f`: a call supplies exactly as many arguments as the callee has
-/// parameters, or one fewer when the callee's signature declares its last
-/// parameter optional (`Scheme::optional_last_param`).
-///
-/// `supplied` counts every argument the callee receives, including a
-/// piped value and the implicit `self` of a method call.
-pub(super) fn call_arity_matches(
-    params: usize,
-    optional_last_param: bool,
-    supplied: usize,
-) -> bool {
-    supplied == params || (optional_last_param && supplied + 1 == params)
-}
-
-/// The argument counts a callee accepts, worded for a diagnostic:
-/// "1 argument", "2 arguments", or "2 or 3 arguments" for a callee whose
-/// last parameter is optional.
-pub(super) fn accepted_arity_text(params: usize, optional_last_param: bool) -> String {
-    if optional_last_param && params > 0 {
-        format!("{} or {} arguments", params - 1, params)
-    } else {
-        format!("{} {}", params, plural(params, "argument", "arguments"))
-    }
-}
-
 /// BROKEN (round 26 B2): render a set of symbols for a user-facing
 /// diagnostic. `BTreeSet<Symbol>` formatted with `{:?}` leaks the
 /// interner's Debug form (`Symbol(6: "x")`) — awful to read and exposes
@@ -470,7 +444,6 @@ impl TypeChecker {
                     vars: free_vars_in(&ty),
                     preds,
                     ty,
-                    optional_last_param: false,
                 },
             ));
         }
@@ -1149,19 +1122,6 @@ impl TypeChecker {
         }
     }
 
-    /// Whether `callee` is a member of a module, `m.f`, as the resolver
-    /// resolved it: the Call arm then uses the qualified `m.f` scheme
-    /// directly, so that its where-clause constraints flow through
-    /// (`instantiate_with_constraints` carries them; the FieldAccess arm's
-    /// `instantiate` would drop them).
-    fn callee_module_is_in_scope(&self, callee: &Expr, _env: &TypeEnv) -> bool {
-        let ExprKind::FieldAccess(obj, _, _) = &callee.kind else {
-            return false;
-        };
-        matches!(obj.res, Some(crate::defs::Res::Module(_)))
-            && !matches!(callee.res, Some(crate::defs::Res::Error))
-    }
-
     /// The name a callee is written with, for a message about a call of
     /// it: `f`, or `m.f` for a member of a module.
     fn callee_label(callee: &Expr) -> Option<Symbol> {
@@ -1174,39 +1134,6 @@ impl TypeChecker {
                     ExprKind::Ident(module) => Some(intern(&format!("{module}.{field}"))),
                     _ => Some(*field),
                 }
-            }
-            _ => None,
-        }
-    }
-
-    /// Whether the function that `callee` names declares its last
-    /// parameter optional (see `Scheme::optional_last_param`).
-    ///
-    /// Only a bare function name or a `module.function` path names a
-    /// signature. Any other callee expression is a function value, and a
-    /// function value is called with its full arity. A `module.function`
-    /// path counts only when it really is a module-qualified name, by
-    /// the same test the Call arm uses to pick the qualified scheme.
-    fn callee_declares_optional_last_param(&self, callee: &Expr, env: &TypeEnv) -> bool {
-        self.callee_scheme(callee, env)
-            .is_some_and(|scheme| scheme.optional_last_param)
-    }
-
-    /// The scheme of the function a callee names: a bare name (a local,
-    /// a function of the module or one it imports, a builtin) or a
-    /// `module.function` path. `None` for any other callee, a function
-    /// value.
-    fn callee_scheme(&self, callee: &Expr, env: &TypeEnv) -> Option<Scheme> {
-        match &callee.kind {
-            ExprKind::Ident(name) => {
-                if callee.res == Some(crate::defs::Res::Error) {
-                    return None;
-                }
-                self.def_scheme(callee.res, env)
-                    .or_else(|| env.lookup(*name).cloned())
-            }
-            ExprKind::FieldAccess(..) if self.callee_module_is_in_scope(callee, env) => {
-                self.def_scheme(callee.res, env)
             }
             _ => None,
         }
@@ -1285,10 +1212,6 @@ impl TypeChecker {
             }
             return self.fresh_var();
         }
-        // Whether the named callee's signature lets the call leave out
-        // the last argument.
-        let optional_last_param = self.callee_declares_optional_last_param(callee, env);
-
         let owed_before = self.wanted.len();
         // Reset the method-dispatch flag so a stale value from an
         // earlier field access does not leak into this call, and read it
@@ -1394,13 +1317,10 @@ impl TypeChecker {
                         wanted.solved = true;
                     }
                 }
-                // A method has no optional parameter.
-                let optional_last_param = optional_last_param && !is_method_call;
-                if !call_arity_matches(
-                    params.len(),
-                    optional_last_param,
-                    args.len() + implicit_self,
-                ) {
+                // A call supplies exactly as many arguments as the callee
+                // has parameters, the piped value and the receiver of a
+                // method call among them.
+                if params.len() != args.len() + implicit_self {
                     let message = match form {
                         CallForm::Call => {
                             // A method's receiver is not one of the
@@ -1413,8 +1333,9 @@ impl TypeChecker {
                                 _ => "function".to_string(),
                             };
                             format!(
-                                "{what} expects {}, got {}",
-                                accepted_arity_text(written_params, optional_last_param),
+                                "{what} expects {} {}, got {}",
+                                written_params,
+                                plural(written_params, "argument", "arguments"),
                                 args.len()
                             )
                         }

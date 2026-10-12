@@ -1,16 +1,16 @@
-//! Round 73 B3: postgres builtins must surface a typed `PgError` variant
-//! on deadline-driven timeouts, not the generic `IoError::IoUnknown(_)`
+//! Round 73 B3: postgres builtins must surface a typed `PostgresError` variant
+//! on deadline-driven timeouts, not the generic `IoError::Other(_)`
 //! shape.
 //!
 //! Background: every fallible `postgres.*` call is typechecked as
-//! `Result(_, PgError)` (see the module's rows in the builtin registry).
+//! `Result(_, PostgresError)` (see the module's rows in the builtin registry).
 //! Pre-fix, the runtime used the default `Vm::io_entry_guard(args)` and
 //! `IoPool::submit(...)` paths, both of which fall through to the
 //! generic `io_unknown_timeout_err` factory. The fix supplies a
-//! dedicated `pg_timeout_err` factory (surfacing `PgTimeout` as a
+//! dedicated `pg_timeout_err` factory (surfacing `Timeout` as a
 //! nullary variant) plus a `pg_completion()` helper.
 //!
-//! This file locks the factory's exact `Err(PgTimeout)` shape (the same
+//! This file locks the factory's exact `Err(Timeout)` shape (the same
 //! shape the watchdog produces), cfg-gated on `postgres`.
 
 // ── Runtime shape test (postgres feature only) ──────────────────────
@@ -21,9 +21,9 @@ mod with_feature {
     use silt::value::Value;
 
     /// The typed-timeout factory must produce exactly the shape the
-    /// silt-side `Result(_, PgError)` signature expects: an outer `Err`
-    /// variant wrapping a nullary `PgTimeout` constructor. The message
-    /// argument is intentionally dropped because `PgTimeout` carries no
+    /// silt-side `Result(_, PostgresError)` signature expects: an outer `Err`
+    /// variant wrapping a nullary `Timeout` constructor. The message
+    /// argument is intentionally dropped because `Timeout` carries no
     /// payload (the trait `e.message()` impl in
     /// `src/builtins/postgres.rs` synthesises the user-visible string).
     #[test]
@@ -47,22 +47,22 @@ mod with_feature {
         };
         assert_eq!(
             inner_tag.name(),
-            "PgTimeout",
-            "inner tag must be `PgTimeout` (typed PgError variant), \
-             not `IoUnknown` (the IoError default)",
+            "Timeout",
+            "inner tag must be `Timeout` (typed PostgresError variant), \
+             not `Other` (the IoError default)",
         );
         assert!(
             inner_tag.fields().is_empty(),
-            "PgTimeout is nullary in the typechecker registry, but \
+            "Timeout is nullary in the typechecker registry, but \
              pg_timeout_err produced fields: {:?}",
             inner_tag.fields(),
         );
     }
 
-    /// Cross-check: the variant must NOT be the `IoError::IoUnknown`
+    /// Cross-check: the variant must NOT be the `IoError::Other`
     /// shape that the pre-fix runtime emitted. This is what the audit
-    /// caught — silt code typed the call as returning `PgError` but got
-    /// `IoUnknown(msg)` at runtime instead.
+    /// caught — silt code typed the call as returning `PostgresError` but got
+    /// `Other(msg)` at runtime instead.
     #[test]
     fn pg_timeout_err_is_not_io_unknown() {
         let v = pg_timeout_err_for_tests("any message");
@@ -77,9 +77,9 @@ mod with_feature {
         };
         assert_ne!(
             inner_tag.name(),
-            "IoUnknown",
+            "Other",
             "pg_timeout_err must not produce the IoError-flavoured \
-             `IoUnknown` shape — that's the bug round-73 B3 fixed",
+             `Other` shape — that's the bug round-73 B3 fixed",
         );
     }
 }

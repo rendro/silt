@@ -2,6 +2,6 @@
 import io
 import time
 fn main() {
-  let a = io.IoNotFound("x")
+  let a = io.NotFound("x")
   println(a)
 }

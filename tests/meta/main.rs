@@ -27,7 +27,6 @@ mod round62_cleanup_lock_tests;
 mod round69_followup_lock_tests;
 mod round69_misc_lock_tests;
 mod round71_doc_drift_lock_tests;
-mod round75_dead_code_locks_tests;
 mod round79_doc_frontmatter_parity_tests;
 mod round80_dead_code_tests;
 mod round80_doc_top_level_order_tests;

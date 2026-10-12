@@ -1,3 +1,5 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: send on closed channel 0
 import channel
 fn main() {
   let ch = channel.new(10)

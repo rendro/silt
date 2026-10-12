@@ -3,7 +3,7 @@ fn main() {
   let original = bytes.from_string("hello world")
   let encoded = bytes.to_base64(original)
   match bytes.from_base64(encoded) {
-    Ok(decoded) -> println(bytes.eq(original, decoded))
+    Ok(decoded) -> println(original == decoded)
     Err(_) -> println(false)
   }
   println(bytes.to_base64(bytes.from_string("hello")))

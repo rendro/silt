@@ -113,26 +113,10 @@ fn parse_duration(s: &str) -> Option<Duration> {
     }
 }
 
-/// Which deadline ended a wait for I/O: it is named in the error.
-/// `Global` comes from `SILT_IO_TIMEOUT`; `Task` comes from a scoped
-/// `task.deadline(dur, fn)` block.
-#[derive(Clone, Copy)]
-pub(crate) enum DeadlineSource {
-    Global,
-    Task,
-}
-
-impl DeadlineSource {
-    /// User-visible message surfaced as the inner String of the `Err`
-    /// variant when an I/O times out. Silt-side match arms pattern on
-    /// this exact text, so it is part of the public contract.
-    pub(crate) fn message(self) -> &'static str {
-        match self {
-            DeadlineSource::Global => "I/O timeout (SILT_IO_TIMEOUT exceeded)",
-            DeadlineSource::Task => "I/O timeout (task.deadline exceeded)",
-        }
-    }
-}
+/// What the error of an I/O operation says when the wait for it ended
+/// at `SILT_IO_TIMEOUT`. (A `task.deadline` ends the function it runs,
+/// not a wait of it: see `builtins::concurrency`.)
+pub(crate) const IO_TIMEOUT: &str = "I/O timeout (SILT_IO_TIMEOUT exceeded)";
 
 /// Result of running a task's VM for one time slice.
 pub(crate) enum SliceResult {
@@ -259,8 +243,7 @@ struct Inner {
     timer_lock: Mutex<TimerThread>,
     timer_wake: Condvar,
     /// Global I/O timeout from `SILT_IO_TIMEOUT`. When set, every wait
-    /// for I/O ends after it, unless a tighter task.deadline is in
-    /// effect.
+    /// for I/O ends after it.
     global_io_timeout: Option<Duration>,
     /// Tasks that ended with an error, kept for the report of failures
     /// that nobody joined. See `report_unjoined_failures`.
@@ -498,6 +481,8 @@ impl Scheduler {
         handle: Arc<TaskHandle>,
     ) -> Result<(), String> {
         vm.cancelled = Some(handle.cancel_flag());
+        vm.deadline = handle.deadline();
+        vm.late = handle.deadline().map(|_| handle.late());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -543,6 +528,12 @@ impl Scheduler {
 
     /// `task.cancel` of the task `handle`: it runs no further, and if
     /// it waits, its wait ends without taking or sending anything.
+    ///
+    /// A wait that had ended when the cancel came stays ended: the
+    /// value a receive of the task was handed, or that the operation
+    /// it waited for gave, is the task's, and is dropped with the task,
+    /// which runs no slice in which it could use it. Whoever sent the
+    /// value was told that it was sent.
     pub(crate) fn cancel(&self, handle: &TaskHandle) {
         // The flag first: a task that is about to park reads it.
         handle.cancel(self.wake());
@@ -557,23 +548,12 @@ impl Scheduler {
         self.inner.timer_armed();
     }
 
-    /// When a wait for I/O that starts now ends without a result: the
-    /// earlier of `SILT_IO_TIMEOUT` from now and the task deadline.
-    pub(crate) fn io_deadline(
-        &self,
-        task_deadline: Option<Duration>,
-    ) -> Option<(Duration, DeadlineSource)> {
-        let global = self
-            .inner
+    /// When a wait for I/O that starts now ends without a result:
+    /// `SILT_IO_TIMEOUT` from now, if it is set.
+    pub(crate) fn io_deadline(&self) -> Option<Duration> {
+        self.inner
             .global_io_timeout
             .and_then(|timeout| self.inner.io.deadline_after(timeout))
-            .map(|deadline| (deadline, DeadlineSource::Global));
-        let task = task_deadline.map(|deadline| (deadline, DeadlineSource::Task));
-        match (global, task) {
-            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
-            (Some(x), None) | (None, Some(x)) => Some(x),
-            (None, None) => None,
-        }
     }
 
     /// The calling thread starts to run silt code of its own: it counts
@@ -712,7 +692,7 @@ impl Scheduler {
     /// the error when the program is deadlocked. The other error is
     /// that the program has ended.
     pub(crate) fn block_thread(&self, wait: Wait, who: Blocks) -> Result<Fired, VmError> {
-        let main = matches!(who, Blocks::Program { .. });
+        let main = matches!(who, Blocks::Program);
         let inner = &self.inner;
         let _counted = self.enter();
         let group = inner.group(inner.current_owner());
@@ -756,20 +736,15 @@ impl Scheduler {
         };
         match resumed {
             Resumed::Fired(fired) => Ok(fired),
-            Resumed::Cancelled => Err(match verdict {
+            // (No thread has a deadline of its task: only a spawned
+            // task's wait expires.)
+            Resumed::Cancelled | Resumed::Expired => Err(match verdict {
                 Some(verdict) => {
                     // A task that failed is the usual reason why the
                     // counterparty of the wait is missing: it is
                     // reported before the verdict.
                     let _ = report_unjoined_failures(inner);
-                    // A deadline that is in effect did not end the
-                    // wait: the report says what it bounds.
-                    match who {
-                        Blocks::Program { in_deadline: true } => {
-                            verdict.with_help(DEADLINE_DOES_NOT_BOUND)
-                        }
-                        _ => verdict,
-                    }
+                    verdict
                 }
                 None => VmError::new("the VM that ran the program has been dropped".into()),
             }),
@@ -940,7 +915,62 @@ impl Inner {
         }
     }
 
-    /// A task has ended: it completed, failed, or was cancelled.
+    /// The task is ended by its deadline (`TaskHandle::deadline`): a
+    /// wait of it ended by that time, having taken and sent nothing,
+    /// or it computed on past it. It unwinds as a cancelled task does:
+    /// no further instruction of it runs, and what its frames hold is
+    /// given up.
+    ///
+    /// That comes first, and then the task's end is told: whoever
+    /// waits for it (`task.deadline`) finds the function's I/O given
+    /// up, a connection it was reading shut down.
+    fn expire_task(&self, task: Task) {
+        let Task {
+            vm, handle, group, ..
+        } = task;
+        drop(vm);
+        handle.expire(&self.parking);
+        drop(handle);
+        self.ended(&group);
+    }
+
+    /// Whether the time of the task is over (`TaskHandle::deadline`).
+    fn over(&self, task: &Task) -> bool {
+        task.handle
+            .deadline()
+            .is_some_and(|deadline| self.parking.timer().now() >= deadline)
+    }
+
+    /// One slice of a task whose time was over when the slice began:
+    /// its result, and whether the work the task may do past its time
+    /// is used up with it ([`LATE_STEPS`]).
+    ///
+    /// The task runs a step at a time, so that every step past the time
+    /// is counted, whatever ends the slices the steps run in: a task
+    /// that only does waits that are over at once never runs a slice
+    /// out. The count is the handle's, and one for a task and the tasks
+    /// of the deadlines inside it that have its time
+    /// (`TaskHandle::late`): the work past a deadline is bounded in
+    /// total. Nothing resets it. (A slice that began in time is not
+    /// counted, also when the time passed in it: a task that was given
+    /// a value in time has the whole count to return it.)
+    fn late_slice(task: &mut Task, slice: usize) -> (SliceResult, bool) {
+        let mut ran = 0;
+        loop {
+            let result = task.vm.execute_slice(1);
+            ran += 1;
+            let spent = task.handle.count_late(1) >= LATE_STEPS;
+            match result {
+                // (A slice the task gave away is one that ran out
+                // here: it has little left to give way for.)
+                SliceResult::Yielded if !spent && ran < slice => {}
+                result => return (result, spent),
+            }
+        }
+    }
+
+    /// A task has ended: it completed, failed, was cancelled, or was
+    /// ended by its deadline.
     fn end_task(&self, task: Task) {
         // Its frames are abandoned before it stops counting.
         let Task {
@@ -948,9 +978,14 @@ impl Inner {
         } = task;
         drop(vm);
         drop(handle);
+        self.ended(&group);
+    }
+
+    /// A task of `group` is gone: it counts no longer.
+    fn ended(&self, group: &Group) {
         self.spawned.fetch_sub(1, Ordering::SeqCst);
         group.live.fetch_sub(1, Ordering::SeqCst);
-        self.check(&group);
+        self.check(group);
     }
 
     /// The wait of `sleeper` has ended.
@@ -964,6 +999,7 @@ impl Inner {
                         self.enqueue(task);
                     }
                     Resumed::Cancelled => self.end_task(task),
+                    Resumed::Expired => self.expire_task(task),
                 }
             }
             Sleeper::Thread(park) => {
@@ -1118,12 +1154,22 @@ impl Inner {
         let counted = COUNTED.with(|counted| counted.replace(true));
         let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
         let slice = task.vm.time_slice().unwrap_or_else(time_slice);
-        let result = task.vm.execute_slice(slice);
+        // A task whose time is over runs on for a counted number of
+        // steps and is ended, by its deadline, where they are used up:
+        // after the step that used them up, or at the entry of the
+        // wait that step began, of which no arm is tried then. It is
+        // never ended at the start of a slice, nor in a slice that it
+        // ends by returning or failing.
+        let (result, spent) = match self.over(&task) {
+            true => Self::late_slice(&mut task, slice),
+            false => (task.vm.execute_slice(slice), false),
+        };
         RUNNING_TASK.with(|was| was.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
         match result {
+            SliceResult::Yielded | SliceResult::Blocked(_) if spent => self.expire_task(task),
             SliceResult::Yielded => self.enqueue(task),
             SliceResult::Completed(value) => {
                 task.handle.complete(Ok(value), &self.parking);
@@ -1141,8 +1187,13 @@ impl Inner {
                 self.end_task(task);
             }
             SliceResult::Blocked(wait) => {
-                let wait = wait.cancel(Some(task.handle.cancel_flag()));
-                let timed = wait.deadline.is_some();
+                // The task's own: its cancel flag and its deadline.
+                // Every wait of a task comes through here, whichever
+                // frame of it waits.
+                let wait = wait
+                    .cancel(Some(task.handle.cancel_flag()))
+                    .task_deadline(task.handle.deadline());
+                let timed = wait.deadline.is_some() || wait.task_deadline.is_some();
                 let cancelled = task.handle.clone();
                 let group = task.group.clone();
                 let id = TaskId(task.id as u64);
@@ -1313,15 +1364,7 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                 Some(id) => format!("task <handle:{id}>"),
                 None => "a thread of the runtime".to_string(),
             };
-            // A deadline that is in effect for the task does not end
-            // this wait: said, since it is what one may expect of it.
-            let in_deadline = match waiting.sleeper {
-                Sleeper::Task(task) if task.vm.current_deadline.is_some() => {
-                    " (inside a task.deadline, which does not bound this wait)"
-                }
-                _ => "",
-            };
-            format!("{who} waits {}{in_deadline}", on.join(", or "))
+            format!("{who} waits {}", on.join(", or "))
         })
         .collect();
     if others.len() > LISTED {
@@ -1338,6 +1381,16 @@ fn more_than_one_core() -> bool {
     *MORE.get_or_init(|| thread::available_parallelism().is_ok_and(|n| n.get() > 1))
 }
 
+/// How many steps a task runs before it gives way, unless
+/// `SILT_TIME_SLICE` says otherwise.
+const STANDARD_SLICE: usize = 2000;
+
+/// How many steps the function of a `task.deadline` may run in all
+/// after its time is over, the functions of the deadlines inside it
+/// included: one standard slice, whatever the slice of the VM. It is
+/// what a function that was given a value in time has to return it.
+const LATE_STEPS: usize = STANDARD_SLICE;
+
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
 pub(crate) fn time_slice() -> usize {
     static SLICE: OnceLock<usize> = OnceLock::new();
@@ -1345,7 +1398,7 @@ pub(crate) fn time_slice() -> usize {
         std::env::var("SILT_TIME_SLICE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(2000)
+            .unwrap_or(STANDARD_SLICE)
             .max(1)
     })
 }
@@ -1607,15 +1660,9 @@ thread_local! {
 pub(crate) enum Blocks {
     /// A thread of the runtime.
     Thread,
-    /// The program's own, which is told of a deadlock; `in_deadline`
-    /// if a `task.deadline` is in effect for its code.
-    Program { in_deadline: bool },
+    /// The program's own, which is told of a deadlock.
+    Program,
 }
-
-/// What a deadlock report says when a `task.deadline` is in effect for
-/// the code that waits: the deadline is for I/O and sleeps.
-const DEADLINE_DOES_NOT_BOUND: &str =
-    "task.deadline does not bound channel waits; use channel.recv_timeout or a channel.timeout arm";
 
 /// What the report of a failure that nobody joined advises.
 const UNJOINED_FAILURE_HELP: &str =
@@ -1864,12 +1911,12 @@ fn main() {
     time.sleep(time.ms(5))
     channel.send(ch, 1)
   }
-  match channel.recv_timeout(ch, time.ms(20000)) {
-    Ok(v) -> println("got {v}")
-    Err(_) -> println("timed out")
+  match channel.receive_timeout(ch, time.ms(20000)) {
+    channel.Message(v) -> println("got {v}")
+    _ -> println("timed out")
   }
   task.join(sender)
-  match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(5))]) {
+  match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(5)))]) {
     (_, channel.Closed) -> println("the timeout channel closed")
     _ -> println("something else")
   }
@@ -1946,9 +1993,10 @@ fn main() {
         let (result, _, end) = run(r#"
 import channel
 import task
+import time
 fn main() {
   let ch = channel.new(0)
-  let timer = channel.timeout(150)
+  let timer = channel.timeout(time.ms(150))
   let _waits = task.spawn({ -> channel.receive(timer) })
   let other = task.spawn({ -> channel.receive(ch) })
   task.join(other)

@@ -1,0 +1,20 @@
+error[type]: undefined variable 'Timeout'
+ --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:14:11
+    |
+ 14 |   println(Timeout)
+    |           ^^^^^^^ undefined variable 'Timeout'
+  = help: did you mean `http.Timeout` or `tcp.Timeout`? or import one of them by name: `import http.{ Timeout }` (`Timeout` is also in modules `task` and `postgres`)
+
+error[type]: undefined variable 'Closed'
+ --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:15:11
+    |
+ 15 |   println(Closed)
+    |           ^^^^^^ undefined variable 'Closed'
+  = help: did you mean `tcp.Closed`? or import the name: `import tcp.{ Closed }` (`Closed` is also in modules `channel` and `postgres`)
+
+error[type]: undefined variable 'NotFound'
+ --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:16:11
+    |
+ 16 |   println(NotFound("p"))
+    |           ^^^^^^^^ undefined variable 'NotFound'
+  = help: did you mean `io.NotFound`? or import the name: `import io.{ NotFound }`

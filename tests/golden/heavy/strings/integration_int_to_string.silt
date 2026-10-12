@@ -1,7 +1,8 @@
 import io
 import int
+import string
 fn program() {
-  int.to_string(42)
+  string.from(42)
 }
 
 fn main() {

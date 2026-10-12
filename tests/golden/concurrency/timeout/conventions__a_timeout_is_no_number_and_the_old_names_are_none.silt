@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A number is no duration; `channel.recv_timeout` and the `ChannelError`
+-- it returned are no names of the module.
+import channel
+import time
+
+fn main() {
+  let _ = channel.timeout(50)
+  let ch: Channel(Int) = channel.new(1)
+  let _ = channel.recv_timeout(ch, time.ms(5))
+  let e: channel.ChannelError = channel.ChannelTimeout
+  println(e)
+}

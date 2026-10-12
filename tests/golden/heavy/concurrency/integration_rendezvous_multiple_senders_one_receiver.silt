@@ -5,7 +5,7 @@ import channel
 import task
 import list
 fn program() {
-  let ch = channel.new()
+  let ch = channel.new(0)
 
   let s1 = task.spawn({ -> channel.send(ch, 10) })
   let s2 = task.spawn({ -> channel.send(ch, 20) })

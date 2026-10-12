@@ -1,0 +1,30 @@
+-- repeat: 3
+-- timeout: 20
+-- requires-feature: tcp
+-- The function's I/O is given up with it: a read that is in flight when
+-- the deadline passes shuts its connection down, as the read of a
+-- cancelled task does. The peer sends a byte afterwards, which a
+-- connection that was still open would read; the next read says that
+-- the connection is closed.
+import bytes
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  when let Ok(peer) = tcp.accept(listener) else { panic("cannot accept") }
+  match task.deadline(time.ms(300), { -> tcp.read(conn, 16) }) {
+    Err(task.Timeout) -> println("the deadline passed")
+    other -> println("something else")
+  }
+  when let Ok(_) = tcp.write(peer, bytes.from_string("x")) else { panic("the peer cannot write") }
+  match tcp.read(conn, 16) {
+    Err(tcp.Closed) -> println("then the connection is closed")
+    Ok(read) -> println("then still open (read {bytes.length(read)})")
+    Err(e) -> println("then {e.message()}")
+  }
+}

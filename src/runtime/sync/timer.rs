@@ -30,6 +30,8 @@ impl TimerId {
 enum Action {
     /// The deadline of a wait.
     Fire(Arc<Token>),
+    /// The deadline of the task that waits.
+    Expire(Arc<Token>),
     /// A channel that closes at a set time (`channel.timeout`).
     Close(Arc<Channel>),
 }
@@ -80,6 +82,13 @@ impl Timer {
     /// End the wait of `token` with [`Fired::Deadline`] at `deadline`.
     pub(super) fn fire_at(&self, deadline: Duration, token: Arc<Token>) -> TimerId {
         self.arm(deadline, Action::Fire(token))
+    }
+
+    /// End the wait of `token` with
+    /// [`Resumed::Expired`](super::Resumed) at `deadline`: the time of
+    /// its task is over then.
+    pub(super) fn expire_at(&self, deadline: Duration, token: Arc<Token>) -> TimerId {
+        self.arm(deadline, Action::Expire(token))
     }
 
     /// Close `channel` at `deadline`. From now on the channel says
@@ -146,6 +155,11 @@ impl Timer {
                 Action::Fire(token) => {
                     if let Some(claim) = token.claim() {
                         claim.fire(Fired::Deadline, &mut wakes);
+                    }
+                }
+                Action::Expire(token) => {
+                    if let Some(claim) = token.claim() {
+                        claim.expire(&mut wakes);
                     }
                 }
                 Action::Close(channel) => {

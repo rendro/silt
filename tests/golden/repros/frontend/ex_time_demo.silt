@@ -1,5 +1,6 @@
 -- verdict: same
 import time
+import result
 
 fn main() {
   -- ── Validated construction ──────────────────────────────────────────
@@ -50,9 +51,9 @@ fn main() {
   }
   let dt2 = time.datetime(dt2_date, dt2_time)
   println("formatted: {dt2
-  |> time.format("%A, %B %d, %Y at %H:%M")}")
+  |> time.format("%A, %B %d, %Y at %H:%M") |> result.unwrap_or("")}")
   println("date formatted: {d
-  |> time.format_date("%d/%m/%Y")}")
+  |> time.format_date("%d/%m/%Y") |> result.unwrap_or("")}")
   -- ── Parsing ─────────────────────────────────────────────────────────
   let parsed = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
   match parsed {
@@ -64,7 +65,7 @@ fn main() {
     Ok(d) -> println("parsed date: {d}")
     Err(e) -> println("parse date error: {e.message()}")
   }
-  let bad_parse = time.parse("not-a-date", "%Y-%m-%d")
+  let bad_parse = time.parse("not-a-date", "%Y-%m-%d %H:%M:%S")
   match bad_parse {
     Ok(dt) -> println("bad parse: {dt}")
     Err(e) -> println("bad parse: {e.message()}")
@@ -108,10 +109,10 @@ fn main() {
   println("added 60s: {elapsed}")
   -- ── Conversion (instant <-> datetime) ───────────────────────────────
   let utc_dt = now
-  |> time.to_utc
+  |> time.to_datetime(0)
   println("UTC: {utc_dt}")
   let roundtrip = utc_dt
-  |> time.from_utc
+  |> time.to_instant(0)
   println("roundtrip epoch_ns matches: {roundtrip.epoch_ns == now.epoch_ns}")
   -- With offset (UTC+9 for Tokyo)
   let tokyo_dt = now

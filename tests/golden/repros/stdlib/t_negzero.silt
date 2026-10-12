@@ -7,6 +7,7 @@ import json
 import toml
 import int
 import math
+import string
 type P { x: Float }
 fn main() {
   when let Ok(z) = float.parse("-0.0") else { return }
@@ -16,7 +17,7 @@ fn main() {
   println(list.unique([0.0, z]))
   println(map.length(#{0.0: "a", z: "b"}))
   println(list.contains([0.0], z))
-  println(float.to_string(z))
+  println(string.from(z))
   when let Ok(p) = json.parse("\{\"x\": -0.0\}", P) else { return }
   println(p.x)
   println(set.length(set.from_list([0.0, p.x])))

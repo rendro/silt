@@ -1,4 +1,0 @@
-import float
-fn main() {
-  println(float.to_string(3.14159, 2))
-}

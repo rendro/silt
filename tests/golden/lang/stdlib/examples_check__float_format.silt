@@ -1,0 +1,8 @@
+-- float.format gives a Float with a fixed number of decimal places;
+-- string.from gives the text a Float is shown as.
+import float
+import string
+fn main() {
+  println(string.from(1.5))
+  println(float.format(3.14159, 2))
+}

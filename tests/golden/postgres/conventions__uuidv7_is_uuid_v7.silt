@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- stderr-contains: module 'postgres' has no member 'uuidv7'
+-- `uuid.v7()` is the one time-ordered UUID.
+import postgres
+
+fn main() {
+  println(postgres.uuidv7())
+}

@@ -1,0 +1,24 @@
+error[type]: module 'channel' has no member 'recv_timeout'
+ --> conventions__a_timeout_is_no_number_and_the_old_names_are_none.silt:11:11
+    |
+ 11 |   let _ = channel.recv_timeout(ch, time.ms(5))
+    |           ^^^^^^^^^^^^^^^^^^^^ module 'channel' has no member 'recv_timeout'
+  = help: did you mean `receive_timeout`?
+
+error[type]: module 'channel' has no type 'ChannelError'
+ --> conventions__a_timeout_is_no_number_and_the_old_names_are_none.silt:12:18
+    |
+ 12 |   let e: channel.ChannelError = channel.ChannelTimeout
+    |                  ^^^^^^^^^^^^ module 'channel' has no type 'ChannelError'
+
+error[type]: module 'channel' has no member 'ChannelTimeout'
+ --> conventions__a_timeout_is_no_number_and_the_old_names_are_none.silt:12:33
+    |
+ 12 |   let e: channel.ChannelError = channel.ChannelTimeout
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^ module 'channel' has no member 'ChannelTimeout'
+
+error[type]: type mismatch: expected Duration, got Int
+ --> conventions__a_timeout_is_no_number_and_the_old_names_are_none.silt:9:27
+   |
+ 9 |   let _ = channel.timeout(50)
+   |                           ^^ type mismatch: expected Duration, got Int

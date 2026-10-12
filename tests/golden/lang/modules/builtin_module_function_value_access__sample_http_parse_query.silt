@@ -2,5 +2,8 @@ import http
 import map
 fn main() {
   let f = http.parse_query
-  println(map.length(f("a=1&b=2")))
+  match f("a=1&b=2") {
+    Ok(pairs) -> println(map.length(pairs))
+    Err(e) -> println(e)
+  }
 }

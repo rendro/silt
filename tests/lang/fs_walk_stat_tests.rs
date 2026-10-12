@@ -88,16 +88,16 @@ fn err_msg(v: Value) -> String {
                     }
                 };
                 match error.name() {
-                    "IoNotFound" => format!("file not found: {}", first_str(error.fields())),
-                    "IoPermissionDenied" => {
+                    "NotFound" => format!("file not found: {}", first_str(error.fields())),
+                    "PermissionDenied" => {
                         format!("permission denied: {}", first_str(error.fields()))
                     }
-                    "IoAlreadyExists" => format!("already exists: {}", first_str(error.fields())),
-                    "IoInvalidInput" => format!("invalid input: {}", first_str(error.fields())),
-                    "IoInterrupted" => "operation interrupted".into(),
-                    "IoUnexpectedEof" => "unexpected end of file".into(),
-                    "IoWriteZero" => "zero-byte write".into(),
-                    "IoUnknown" => first_str(error.fields()),
+                    "AlreadyExists" => format!("already exists: {}", first_str(error.fields())),
+                    "InvalidInput" => format!("invalid input: {}", first_str(error.fields())),
+                    "Interrupted" => "operation interrupted".into(),
+                    "UnexpectedEof" => "unexpected end of file".into(),
+                    "WriteZero" => "zero-byte write".into(),
+                    "Other" => first_str(error.fields()),
                     other => format!("unknown IoError variant: {other}"),
                 }
             }

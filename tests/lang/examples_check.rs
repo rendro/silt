@@ -898,7 +898,6 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         // send/receive, and task scheduling is non-deterministic
         // under subprocess timing. Blocks using these are doc-only.
         "task.spawn",
-        "task.spawn_until",
         "task.deadline",
         "task.sleep",
         "channel.new",

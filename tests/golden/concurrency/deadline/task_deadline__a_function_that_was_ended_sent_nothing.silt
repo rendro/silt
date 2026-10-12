@@ -1,0 +1,34 @@
+-- timeout: 120
+-- The function sleeps until just before its deadline, then sends and
+-- returns. Either it returned (`Ok`, and the value is sent), or it was
+-- ended (`Err(Timeout)`, and nothing was sent): the caller never has
+-- `Err` for a function that ran on.
+import channel
+import task
+import time
+
+fn main() {
+  let sent: Channel(Int) = channel.new(4)
+  let wrong = loop i = 0, wrong = 0 {
+    match i >= 200 {
+      true -> wrong
+      false -> {
+        let out = task.deadline(time.micros(3000), { ->
+          time.sleep(time.micros(2000 + i % 5 * 250))
+          channel.send(sent, i)
+          i
+        })
+        let was_sent = match channel.try_receive(sent) {
+          channel.Message(_) -> true
+          _ -> false
+        }
+        match (out, was_sent) {
+          (Ok(_), true) -> loop(i + 1, wrong)
+          (Err(_), false) -> loop(i + 1, wrong)
+          _ -> loop(i + 1, wrong + 1)
+        }
+      }
+    }
+  }
+  println("Ok without the value, or Err with it: {wrong}")
+}

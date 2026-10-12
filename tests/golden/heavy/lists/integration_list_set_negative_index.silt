@@ -1,4 +1,2 @@
--- exit: 1
--- stderr-contains: negative index
 import list
-fn main() { list.set([1, 2, 3], -1, 99) }
+fn main() { println(list.set([1, 2, 3], -1, 99)) }

@@ -1,3 +1,4 @@
+import bytes
 import http
 import int
 import json
@@ -39,8 +40,11 @@ fn main() {
         ]
         json_response(200, todos)
       }
-      (http.POST, ["todos"]) -> match json.parse(req.body, Todo) {
-        Ok(todo) -> json_response(201, todo)
+      (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
+        Ok(text) -> match json.parse(text, Todo) {
+          Ok(todo) -> json_response(201, todo)
+          Err(e) -> json_response(400, #{ "error": e.message() })
+        }
         Err(e) -> json_response(400, #{ "error": e.message() })
       }
       (http.GET, ["todos", id_str]) -> match int.parse(id_str) {

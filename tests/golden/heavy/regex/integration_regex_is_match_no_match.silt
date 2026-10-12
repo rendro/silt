@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.is_match("\\d+", "no numbers here")
+  regex.is_match("no numbers here", "\\d+") |> result.unwrap_or(false)
 }
 
 fn main() {

@@ -1,10 +1,10 @@
 import float
 import list
--- Finite results are Floats; float.to_string accepts only
+-- Finite results are Floats; float.format accepts only
 -- a Float and prints the decimal.
 fn main() {
   let s: Float = list.sum_float([1.0, 2.0, 3.0])
   let p: Float = list.product_float([2.0, 3.0, 4.0])
-  println(float.to_string(s, 1))
-  println(float.to_string(p, 1))
+  println(float.format(s, 1))
+  println(float.format(p, 1))
 }

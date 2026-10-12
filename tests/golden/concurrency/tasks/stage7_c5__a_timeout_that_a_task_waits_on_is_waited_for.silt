@@ -4,13 +4,14 @@
 -- what the task does then is the program's.
 import channel
 import task
+import time
 
 fn main() {
   let never = channel.new(0)
   -- Printed before the task exists: the order is not a matter of timing.
   println("main returns")
   let _waits = task.spawn { ->
-    match channel.select([channel.Recv(never), channel.Recv(channel.timeout(30))]) {
+    match channel.select([channel.Recv(never), channel.Recv(channel.timeout(time.ms(30)))]) {
       (_, channel.Closed) -> println("timed out")
       _ -> println("something else")
     }

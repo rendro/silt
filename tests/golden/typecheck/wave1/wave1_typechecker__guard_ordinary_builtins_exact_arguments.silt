@@ -10,7 +10,7 @@ fn main() {
   println(list.map([1, 2]) { x -> x + 1 })
   println(string.trim("  a  "))
   println(map.get(#{ "a": 1 }, "a"))
-  println(int.to_string(7))
+  println(string.from(7))
   println(math.pow(2.0, 3.0))
   println(list.fold([1, 2], 0) { acc, x -> acc + x })
   println(string.replace("aXb", "X", "-"))

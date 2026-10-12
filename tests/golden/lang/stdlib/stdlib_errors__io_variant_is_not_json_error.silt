@@ -4,6 +4,6 @@
 import io
 import json
 fn main() {
-  let e: json.JsonError = io.IoNotFound("x")
+  let e: json.JsonError = io.NotFound("x")
   println("unreachable")
 }

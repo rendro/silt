@@ -1,9 +1,8 @@
--- exit: 1
--- stderr-contains: invalid format specifier
+-- An unknown specifier is no format.
 import time
+fn day() -> time.Date {
+  time.Date { year: 2024, month: 6, day: 15 }
+}
 fn main() {
-  println(match time.date(2024, 6, 15) {
-    Ok(d) -> time.format_date(d, "%Q")
-    Err(_) -> "err"
-  })
+  println(time.format_date(day(), "%Q"))
 }

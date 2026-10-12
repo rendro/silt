@@ -1,4 +1,2 @@
--- exit: 1
--- stderr-contains: out of bounds
 import list
-fn main() { list.set([], 0, 99) }
+fn main() { println(list.set([], 0, 99)) }

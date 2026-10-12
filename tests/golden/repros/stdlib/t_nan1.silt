@@ -4,6 +4,7 @@ import map
 import set
 import float
 import math
+import string
 fn main() {
   let nan = float.nan
   let nz = -0.0
@@ -25,10 +26,10 @@ fn main() {
   let z = 0.0 * -1.0
   println(z)
   println(map.get(#{z: 1}, 0.0))
-  println(float.to_string(nz))
+  println(string.from(nz))
   println(float.min(0.0, -0.0))
   println(float.abs(-0.0))
   println(float.round(-0.4))
   println(float.ceil(-0.5))
-  println(float.to_string(float.ceil(-0.5)))
+  println(string.from(float.ceil(-0.5)))
 }

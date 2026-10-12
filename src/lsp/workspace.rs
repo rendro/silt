@@ -229,6 +229,25 @@ impl Server {
         }
     }
 
+    /// The builtin definition the name at byte `cursor` of the open
+    /// document `uri` means, as it is reached qualified: `io.NotFound`,
+    /// `list.map`; a name of the prelude bare.
+    pub(super) fn builtin_at(&self, uri: &Uri, cursor: usize) -> Option<String> {
+        let (_, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
+            return None;
+        };
+        keys.iter().find_map(|key| {
+            let DefKey::Builtin(id) = key else {
+                return None;
+            };
+            let def = crate::typechecker::names::builtin_def(*id)?;
+            Some(match def.module.builtin_name() {
+                Some(module) => format!("{module}.{}", def.name),
+                None => resolve_sym(def.name),
+            })
+        })
+    }
+
     /// Why `target`, found in the document `uri`, cannot be renamed, if
     /// it cannot: it is one of silt's own names, or `self`.
     pub(super) fn not_renameable(&self, uri: &Uri, target: &Target) -> Option<String> {

@@ -762,13 +762,13 @@ fn test_e2e_variant_constructor() {
 }
 
 #[test]
-fn test_e2e_int_to_string() {
+fn test_e2e_string_from_int() {
     let result = run_vm(
         r#"
-            import int
+            import string
 
             fn main() {
-                int.to_string(42)
+                string.from(42)
             }
         "#,
     );
@@ -2287,7 +2287,7 @@ fn test_scheduler_channel_communication() {
             import task
             import channel
             fn main() {
-                let ch = channel.new()
+                let ch = channel.new(0)
                 let _ = task.spawn({ -> channel.send(ch, 99) })
                 channel.receive(ch)
             }
@@ -2304,7 +2304,7 @@ fn test_scheduler_deadlock_detection() {
             import task
             import channel
             fn main() {
-                let ch = channel.new()
+                let ch = channel.new(0)
                 let t = task.spawn({ -> channel.receive(ch) })
                 task.join(t)
             }
@@ -2524,10 +2524,10 @@ fn test_regex_cache_eviction_correctness() {
                 --   pat130: middle, possibly cached
                 --   pat259: newest, definitely cached
                 --   "pat1" vs "pat2": must NOT match
-                let early_ok = regex.is_match("pat1", "pat1")
-                let mid_ok = regex.is_match("pat130", "pat130")
-                let late_ok = regex.is_match("pat259", "pat259")
-                let no_match = regex.is_match("pat1", "pat2")
+                let early_ok = regex.is_match("pat1", "pat1") == Ok(true)
+                let mid_ok = regex.is_match("pat130", "pat130") == Ok(true)
+                let late_ok = regex.is_match("pat259", "pat259") == Ok(true)
+                let no_match = regex.is_match("pat2", "pat1") == Ok(true)
                 [early_ok, mid_ok, late_ok, no_match]
             }
             "#,
@@ -2567,7 +2567,6 @@ fn test_builtin_panic_converted_to_vm_error() {
         name: "boom",
         module: "test",
         params: Vec::new(),
-        optional_last: false,
         feature: None,
         enabled: true,
         id: println.id,
@@ -3378,27 +3377,23 @@ fn main() {
             stops(source),
             "division by zero at 5:3; slow 5:3; <lambda> 8:46; main 8:11; <script> 7:1"
         );
-        // A wait that the deadline does not end, and nothing else does.
+        // The same from a task: the join's error has the stack of
+        // the function and of the task that set the deadline.
         let source = "\
-import channel
 import task
 import time
-fn wait(ch: Channel(Int), d: Int) -> Int {
-  let got = channel.receive(ch)
-  match got {
-    channel.Message(n) -> n
-    _ -> 10 / d
-  }
+fn slow(n: Int) -> Int {
+  time.sleep(time.ms(1))
+  10 / n
 }
 fn main() {
-  let ch = channel.new(0)
-  let r = task.deadline(time.ms(20), { -> wait(ch, 0) })
-  println(r)
+  let h = task.spawn({ -> task.deadline(time.ms(60000), { -> slow(0) }) })
+  println(task.join(h))
 }
 ";
         assert_eq!(
             stops(source),
-            "deadlock on main thread: channel receive with no counterparty at 5:13; wait 5:13; <lambda> 13:43; main 13:11; <script> 11:1"
+            "joined task failed: division by zero at 5:3; slow 5:3; <lambda> 8:62; <lambda> 8:27"
         );
     }
 
@@ -3552,7 +3547,6 @@ mod builtin_args {
             name: "probe",
             module: "test",
             params: Vec::new(),
-            optional_last: false,
             feature: None,
             enabled: true,
             id: registry().named("println").expect("println").id,

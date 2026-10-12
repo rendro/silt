@@ -636,18 +636,19 @@ pub(crate) mod list {
             super::concat(xs, ys)
         }
 
-        fn get(xs: List, i: i64) -> Result<Option<Value>, VmError> {
-            Ok(xs.get(natural("list.get", "index", i)?))
+        // An index is a place in the list or it is none: a negative
+        // one, or one past the end, is `None` in all three.
+        fn get(xs: List, i: i64) -> Option<Value> {
+            xs.get(usize::try_from(i).ok()?)
         }
 
-        fn set(xs: List, index: i64, value: &Value) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            let index = natural("list.set", "index", index)?;
-            let Some(slot) = items.get_mut(index) else {
-                return Err(VmError::new("list.set index out of bounds".into()));
+        fn set(xs: List, index: i64, value: &Value) -> Result<Option<Value>, VmError> {
+            let Some(index) = usize::try_from(index).ok().filter(|at| *at < xs.len()) else {
+                return Ok(None);
             };
-            *slot = value.clone();
-            Ok(items)
+            let mut items = xs.to_vec()?;
+            items[index] = value.clone();
+            Ok(Some(Value::list(items)))
         }
 
         fn take(xs: List, n: i64) -> Result<Value, VmError> {
@@ -682,14 +683,13 @@ pub(crate) mod list {
             Ok(Some(Value::Int(at)))
         }
 
-        fn remove_at(xs: List, index: i64) -> Result<Vec<Value>, VmError> {
-            let index = natural("list.remove_at", "index", index)?;
+        fn remove_at(xs: List, index: i64) -> Result<Option<Value>, VmError> {
+            let Some(index) = usize::try_from(index).ok().filter(|at| *at < xs.len()) else {
+                return Ok(None);
+            };
             let mut items = xs.to_vec()?;
-            if index >= items.len() {
-                return Err(VmError::new("list.remove_at index out of bounds".into()));
-            }
             items.remove(index);
-            Ok(items)
+            Ok(Some(Value::list(items)))
         }
 
         fn sum(xs: List) -> Result<i64, VmError> {

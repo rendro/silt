@@ -4,9 +4,10 @@
 -- stderr-not-contains: panicked
 -- A name with a NUL character is no variable's.
 import env
+import option
 import string
 
 fn main() {
-  env.set("A{string.from_char_code(0)}B", "1")
+  env.set("A{(string.from_char_code(0) |> option.unwrap_or(""))}B", "1")
   println(string.length("not reached"))
 }

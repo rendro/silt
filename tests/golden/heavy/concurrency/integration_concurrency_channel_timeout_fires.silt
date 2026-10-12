@@ -2,8 +2,9 @@
 -- channel.timeout should close after the specified duration
 import io
 import channel
+import time
 fn program() {
-  let timer = channel.timeout(50)
+  let timer = channel.timeout(time.ms(50))
   let result = channel.receive(timer)
   match result {
     channel.Closed -> "timed_out"

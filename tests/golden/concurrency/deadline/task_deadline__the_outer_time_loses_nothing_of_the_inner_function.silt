@@ -1,0 +1,45 @@
+-- timeout: 120
+-- A deadline inside a deadline, and the outer time comes first: the
+-- inner function has the outer time too, and is ended by the same
+-- rule. It took a value, and the outer `task.deadline` gives `Ok` of
+-- the inner `Ok`; or it took none, and the outer one gives
+-- `Err(Timeout)`. The inner `Err(Timeout)` is never the outer
+-- function's value: when the inner function was ended at the outer
+-- time, the outer function is over too.
+import channel
+import task
+import time
+
+fn main() {
+  let ch: Channel(Int) = channel.new(0)
+  let producer = task.spawn { ->
+    loop i = 0 {
+      match i >= 100 {
+        true -> channel.close(ch)
+        false -> {
+          time.sleep(time.ms(3))
+          channel.send(ch, i)
+          loop(i + 1)
+        }
+      }
+    }
+  }
+  let r = loop got = 0, sum = 0, inner_timeouts = 0 {
+    let out = task.deadline(time.ms(3), { ->
+      task.deadline(time.hours(1), { -> channel.receive(ch) })
+    })
+    match out {
+      Ok(Ok(channel.Message(v))) -> loop(got + 1, sum + v, inner_timeouts)
+      Ok(Ok(_)) -> (got, sum, inner_timeouts)
+      Ok(Err(_)) -> loop(got, sum, inner_timeouts + 1)
+      Err(_) -> loop(got, sum, inner_timeouts)
+    }
+  }
+  task.join(producer)
+  match r {
+    (got, sum, inner_timeouts) -> {
+      println("sent 100 (sum 4950), received {got} (sum {sum})")
+      println("the inner Err(Timeout) as the outer function's value: {inner_timeouts}")
+    }
+  }
+}

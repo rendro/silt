@@ -1175,7 +1175,7 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         (
             Value::variant(bv::IO_NOT_FOUND, vec![text("f.txt")]),
             "file not found: f.txt",
-            "IoNotFound(\"f.txt\")",
+            "NotFound(\"f.txt\")",
         ),
         (println, "<builtin:println>", "<fn>"),
         (

@@ -22,10 +22,50 @@
 
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
-use super::common::{err, nibble_to_hex, ok};
+use super::common::{nibble_to_hex, ok};
 use super::typed::{List, builtins, unsound};
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
+
+/// What `EncodingError`'s `message` says of the variant `tag` with
+/// `fields`: `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    match (tag, fields) {
+        ("InvalidPercent" | "InvalidUtf8" | "Other", [Value::String(m)]) => Some(m.to_string()),
+        _ => None,
+    }
+}
+
+/// Why text does not decode.
+pub(crate) enum DecodeError {
+    /// A `%` that two hex digits do not follow: what and where.
+    Percent(String),
+    /// The decoded bytes are no UTF-8.
+    Utf8,
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::Percent(what) => f.write_str(what),
+            DecodeError::Utf8 => f.write_str("decoded bytes are not valid UTF-8"),
+        }
+    }
+}
+
+impl DecodeError {
+    /// `Err(EncodingError)` of it, its text after `at` (which part of
+    /// the input it is in, if it is one of several).
+    pub(crate) fn err(&self, at: &str) -> Value {
+        let variant = match self {
+            DecodeError::Percent(_) => bv::ENCODING_INVALID_PERCENT,
+            DecodeError::Utf8 => bv::ENCODING_INVALID_UTF8,
+        };
+        let text = Value::String(format!("{at}{self}").into());
+        Value::variant(bv::ERR, vec![Value::variant(variant, vec![text])])
+    }
+}
 
 /// The RFC 3986 unreserved set is `ALPHA / DIGIT / "-" / "." / "_" / "~"`.
 /// `percent_encoding::NON_ALPHANUMERIC` already excludes alphanumerics,
@@ -72,22 +112,24 @@ const RFC3986_RESERVED: &AsciiSet = &CONTROLS
 /// Walk the input and require that every `%` is followed by two ASCII
 /// hex digits. Returns `Ok(())` on well-formed input, `Err(msg)` on the
 /// first malformed sequence.
-fn validate_percent_sequences(s: &str) -> Result<(), String> {
+fn validate_percent_sequences(s: &str) -> Result<(), DecodeError> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
             // Need two more bytes, both ASCII hex digits.
             if i + 2 >= bytes.len() {
-                return Err(format!("truncated percent-escape at offset {i}"));
+                return Err(DecodeError::Percent(format!(
+                    "truncated percent-escape at offset {i}"
+                )));
             }
             let h1 = bytes[i + 1];
             let h2 = bytes[i + 2];
             if !is_ascii_hex_digit(h1) || !is_ascii_hex_digit(h2) {
-                return Err(format!(
+                return Err(DecodeError::Percent(format!(
                     "invalid percent-escape `%{}{}` at offset {i}",
                     h1 as char, h2 as char
-                ));
+                )));
             }
             i += 3;
         } else {
@@ -143,8 +185,8 @@ fn form_escape_component(s: &str) -> String {
 }
 
 /// Decode a single form component: `+` → space, `%HH` → byte HH.
-/// Returns `Err(msg)` on malformed percent escapes or non-UTF-8 output.
-pub(crate) fn form_decode_component(s: &str) -> Result<String, String> {
+/// An error on malformed percent escapes or non-UTF-8 output.
+pub(crate) fn form_decode_component(s: &str) -> Result<String, DecodeError> {
     // Translate `+` to space before feeding the buffer to the
     // percent-decoder. Doing it in one pass keeps the validation /
     // decoding responsibilities separate from the +/space convention.
@@ -160,7 +202,7 @@ pub(crate) fn form_decode_component(s: &str) -> Result<String, String> {
     // callers don't get lenient passthrough of malformed input.
     validate_percent_sequences(translated)?;
     let decoded = percent_decode_str(translated).collect::<Vec<u8>>();
-    String::from_utf8(decoded).map_err(|_| "decoded bytes are not valid UTF-8".to_string())
+    String::from_utf8(decoded).map_err(|_| DecodeError::Utf8)
 }
 
 builtins! {
@@ -181,12 +223,12 @@ builtins! {
         // callers need to know whether the input was well-formed. We do our
         // own strict scan first, then delegate the byte-level decoding to
         // the crate.
-        if let Err(msg) = validate_percent_sequences(s) {
-            return err(msg);
+        if let Err(error) = validate_percent_sequences(s) {
+            return error.err("");
         }
         match String::from_utf8(percent_decode_str(s).collect()) {
             Ok(out) => ok(Value::String(out.into())),
-            Err(_) => err("decoded bytes are not valid UTF-8"),
+            Err(_) => DecodeError::Utf8.err(""),
         }
     }
 
@@ -233,11 +275,11 @@ builtins! {
             let (raw_key, raw_val) = segment.split_once('=').unwrap_or((segment, ""));
             let key = match form_decode_component(raw_key) {
                 Ok(key) => key,
-                Err(msg) => return err(format!("pair {i}: key: {msg}")),
+                Err(error) => return error.err(&format!("pair {i}: key: ")),
             };
             let val = match form_decode_component(raw_val) {
                 Ok(val) => val,
-                Err(msg) => return err(format!("pair {i}: value: {msg}")),
+                Err(error) => return error.err(&format!("pair {i}: value: ")),
             };
             out.push(Value::tuple(vec![Value::String(key.into()), Value::String(val.into())]));
         }

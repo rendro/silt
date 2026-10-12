@@ -1,6 +1,10 @@
--- exit: 1
--- stderr-contains: http.parse_query
+-- A percent escape that is none is an error value: a query string comes
+-- from whoever sent the request.
+import encoding
 import http
 fn main() {
-  http.parse_query("a=%ZZ")
+  match http.parse_query("a=1&b=%ZZ") {
+    Err(encoding.InvalidPercent(text)) -> println("InvalidPercent: {text}")
+    other -> println(other)
+  }
 }

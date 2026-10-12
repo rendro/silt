@@ -1,9 +1,8 @@
 import float
-import int
 fn main() {
   match float.parse("not_a_float") {
     Ok(n) -> println("Ok({n})")
-    Err(int.ParseInvalidDigit(_)) -> println("Err(ParseInvalidDigit)")
+    Err(float.InvalidDigit(_)) -> println("Err(InvalidDigit)")
     Err(_) -> println("Err(other)")
   }
 }

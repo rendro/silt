@@ -1,6 +1,7 @@
 -- exit: 1
-import regex
+-- A runtime error whose text has several lines: the first is the
+-- headline and the label, the others follow as a note.
 fn main() {
-  let r = regex.is_match("[unclosed", "hello")
-  r
+  let wrong = "the pattern"
+  panic("no such thing: {wrong}\n    {wrong}\n    ^\nerror: unclosed")
 }

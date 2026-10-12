@@ -1,0 +1,30 @@
+-- requires-feature: tcp
+-- A `TcpError` says what failed: `Bind` for a listener that could not be
+-- bound, `Connect` for a connection that was not made. (A connection
+-- that the other end reset or dropped is `Closed`, like one it closed.)
+import tcp
+
+fn main() {
+  when let Ok(first) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(first)
+  match tcp.listen("127.0.0.1:{port}") {
+    Err(tcp.Bind(_)) -> println("a second listener on the port: Bind")
+    Err(e) -> println("a second listener on the port: {e}")
+    Ok(_) -> println("a second listener on the port was bound")
+  }
+  match tcp.listen("not an address") {
+    Err(tcp.Bind(_)) -> println("no address: Bind")
+    Err(e) -> println("no address: {e}")
+    Ok(_) -> println("no address was bound")
+  }
+  -- Port 1 on loopback refuses at once.
+  match tcp.connect("127.0.0.1:1") {
+    Err(tcp.Connect(_)) -> println("nobody listens: Connect")
+    Err(e) -> println("nobody listens: {e}")
+    Ok(_) -> println("nobody listens, and yet connected")
+  }
+  match tcp.listen("127.0.0.1:{port}") {
+    Err(e) -> println(e.message() != "")
+    Ok(_) -> println("bound")
+  }
+}

@@ -24,7 +24,6 @@ repros/type_soundness/al8.silt	holds	accept	control: `a / b` at Float and at Int
 repros/type_soundness/an1.silt	holds	reject E0317	wrong type-argument counts in annotations
 repros/type_soundness/an2.silt	holds	reject E0301	a bare `Box` annotation narrows soundly
 repros/type_soundness/an3.silt	holds	reject E0301	as an2, in an impl
-repros/type_soundness/ar1.silt	holds	accept	control: the optional last argument of channel.new and float.to_string
 repros/type_soundness/b1.silt	-	obsolete	fn lambda; ported: lang/soundness/b1.silt
 repros/type_soundness/b2.silt	holds	reject E0314	TS-2.4: `add("a", "b")`, `add(true, false)` through `fn add(a, b) { a + b }` (decision D2)
 repros/type_soundness/b3.silt	holds	reject E0314	TS-2.4: `+` on lists through a polymorphic function
@@ -350,7 +349,6 @@ repros/typechecker_arch/t_key1.silt	holds	reject E0301	TCA-2: `fn bump(x: a) -> 
 repros/typechecker_arch/t_key2.silt	holds	reject E0301	TCA-1: as t_key1, beside an impl method of the same name
 repros/typechecker_arch/t_nonlocal1.silt	holds	reject E0301	control for t_nonlocal2
 repros/typechecker_arch/t_nonlocal2.silt	holds	reject E0301	TCA-4: an unrelated trait method `label` turns `p.label` into an unchecked call
-repros/typechecker_arch/t_pipe_arity.silt	holds	accept	TCA-11: the optional last argument through a pipe
 repros/typechecker_arch/t_poly_field.silt	holds	reject E0326	control: a row access has the field's type
 repros/typechecker_arch/t_poly_method.silt	-	obsolete	fn lambda; ported: lang/soundness/t_poly_method.silt
 repros/typechecker_arch/t_poly_num.silt	holds	reject E0314	TCA-4: `add(true, false)` (decision D2)

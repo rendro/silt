@@ -41,21 +41,38 @@ fn days_in(year: i32, month: u32) -> u32 {
     }
 }
 
-/// Build `Err(TimeParseFormat(msg))` from a chrono `ParseError`. chrono's
-/// `Display` doesn't distinguish format-mismatch from field-out-of-range
-/// cleanly — both surface here; we fold "out of range" messages into
-/// `TimeOutOfRange` and treat everything else as `TimeParseFormat`.
+/// `Err(TimeError)` of a chrono `ParseError`: `InvalidFormat` for a
+/// pattern that is no format or whose fields are not enough for the
+/// value (what [`validate_parse_pattern`] has said before the text was
+/// read, in nearly every case), `OutOfRange` for a field that is out
+/// of its range, `ParseFormat` for text that does not match the
+/// pattern.
 fn time_parse_err(err: chrono::ParseError) -> Value {
+    use chrono::format::ParseErrorKind;
     let msg = err.to_string();
-    let inner = if msg.contains("out of range") {
-        Value::variant(bv::TIME_OUT_OF_RANGE, vec![Value::String(msg.into())])
-    } else {
-        Value::variant(bv::TIME_PARSE_FORMAT, vec![Value::String(msg.into())])
+    let variant = match err.kind() {
+        ParseErrorKind::BadFormat | ParseErrorKind::NotEnough => bv::TIME_INVALID_FORMAT,
+        ParseErrorKind::OutOfRange => bv::TIME_OUT_OF_RANGE,
+        _ => bv::TIME_PARSE_FORMAT,
     };
-    Value::variant(bv::ERR, vec![inner])
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(variant, vec![Value::String(msg.into())])],
+    )
 }
 
-/// Build `Err(TimeOutOfRange(msg))` for explicit range rejections from
+/// `Err(InvalidFormat(why))`: the pattern of a format is none.
+fn invalid_format_err(why: String) -> Value {
+    Value::variant(
+        bv::ERR,
+        vec![Value::variant(
+            bv::TIME_INVALID_FORMAT,
+            vec![Value::String(why.into())],
+        )],
+    )
+}
+
+/// Build `Err(OutOfRange(msg))` for explicit range rejections from
 /// `time.date` / `time.time`.
 fn time_out_of_range_err(msg: String) -> Value {
     Value::variant(
@@ -71,8 +88,10 @@ fn time_out_of_range_err(msg: String) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
-        ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+        ("ParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
+        ("OutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+        ("InvalidFormat", [Value::String(m)]) => format!("time format error: {m}"),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -325,19 +344,13 @@ enum StrftimeReceiver {
 /// notice to stderr before the recovery. We classify each parsed
 /// `Item` against the receiver type and surface a clean error up
 /// front so no panic is ever raised.
-fn validate_strftime_pattern(
-    fn_name: &str,
-    pattern: &str,
-    receiver: StrftimeReceiver,
-) -> Result<(), VmError> {
+fn validate_strftime_pattern(pattern: &str, receiver: StrftimeReceiver) -> Result<(), String> {
     use chrono::format::{Fixed, Item, Numeric, StrftimeItems};
 
     for item in StrftimeItems::new(pattern) {
         match item {
             Item::Error => {
-                return Err(VmError::new(format!(
-                    "{fn_name}: invalid format specifier in '{pattern}'"
-                )));
+                return Err(format!("invalid format specifier in '{pattern}'"));
             }
             Item::Numeric(ref n, _) => {
                 // Time-component numeric specifiers cannot render
@@ -353,10 +366,10 @@ fn validate_strftime_pattern(
                         | Numeric::Timestamp
                 );
                 if is_time_only && matches!(receiver, StrftimeReceiver::Date) {
-                    return Err(VmError::new(format!(
-                        "{fn_name}: time specifier in '{pattern}' is not \
-                         valid for a Date; use time.format with a DateTime instead"
-                    )));
+                    return Err(format!(
+                        "time specifier in '{pattern}' is not valid for a Date; \
+                         use time.format with a DateTime instead"
+                    ));
                 }
             }
             Item::Fixed(ref fx) => {
@@ -371,10 +384,10 @@ fn validate_strftime_pattern(
                         | Fixed::Nanosecond9
                 );
                 if is_time_only && matches!(receiver, StrftimeReceiver::Date) {
-                    return Err(VmError::new(format!(
-                        "{fn_name}: time specifier in '{pattern}' is not \
-                         valid for a Date; use time.format with a DateTime instead"
-                    )));
+                    return Err(format!(
+                        "time specifier in '{pattern}' is not valid for a Date; \
+                         use time.format with a DateTime instead"
+                    ));
                 }
                 // Timezone specifiers: NaiveDate has no time AND no
                 // TZ; NaiveDateTime has no TZ. Reject for both.
@@ -395,16 +408,88 @@ fn validate_strftime_pattern(
                         StrftimeReceiver::Date => "Date",
                         StrftimeReceiver::DateTime => "naive DateTime",
                     };
-                    return Err(VmError::new(format!(
-                        "{fn_name}: timezone specifier in '{pattern}' is not \
-                         valid for a {what}; silt DateTimes are naive (no TZ)"
-                    )));
+                    return Err(format!(
+                        "timezone specifier in '{pattern}' is not valid for a {what}; \
+                         silt DateTimes are naive (no TZ)"
+                    ));
                 }
             }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// What a text is read as by a pattern.
+#[derive(Clone, Copy)]
+enum Reads {
+    DateTime,
+    Date,
+}
+
+/// Whether a text can be read by `pattern` as what `reads` says: `Err`
+/// with the reason for a pattern that is no format (an unknown
+/// specifier) and for one whose fields can give no such value whatever
+/// the text (no time of day for a `DateTime`, no date, nothing at
+/// all). That is the pattern's fault and is said of the pattern alone,
+/// before any text is looked at.
+///
+/// Which fields are enough is chrono's to say (a year with a month
+/// and a day, or with a day of the year, or a week and a weekday; a
+/// 12-hour clock only with its half of the day; a timestamp alone),
+/// so it is asked: the pattern writes a moment that has every field,
+/// and reads its own text back. Only "not enough" counts; a pattern
+/// that cannot read what it wrote for another reason is left to the
+/// text.
+fn validate_parse_pattern(pattern: &str, reads: Reads) -> Result<(), String> {
+    use chrono::format::{Item, ParseErrorKind, StrftimeItems};
+    use std::fmt::Write;
+
+    let invalid = || format!("invalid format specifier in '{pattern}'");
+    if StrftimeItems::new(pattern).any(|item| matches!(item, Item::Error)) {
+        return Err(invalid());
+    }
+    if pattern.is_empty() {
+        let what = match reads {
+            Reads::DateTime => "DateTime",
+            Reads::Date => "Date",
+        };
+        return Err(format!(
+            "the pattern is empty: no text read by it is a {what}"
+        ));
+    }
+    let Some(moment) =
+        NaiveDate::from_ymd_opt(2001, 2, 3).and_then(|date| date.and_hms_milli_opt(16, 5, 6, 789))
+    else {
+        return Ok(());
+    };
+    // With a time zone, so that a specifier of one can be written.
+    let mut text = String::new();
+    if write!(text, "{}", moment.and_utc().format(pattern)).is_err() {
+        return Err(invalid());
+    }
+    let lacks = |result: Option<chrono::ParseError>| {
+        result.is_some_and(|error| error.kind() == ParseErrorKind::NotEnough)
+    };
+    let no_date = lacks(NaiveDate::parse_from_str(&text, pattern).err());
+    match reads {
+        Reads::Date if no_date => Err(format!(
+            "the fields of '{pattern}' do not make a date: no text read by it is a Date"
+        )),
+        Reads::Date => Ok(()),
+        Reads::DateTime => {
+            if !lacks(NaiveDateTime::parse_from_str(&text, pattern).err()) {
+                return Ok(());
+            }
+            let what = match no_date {
+                true => "a date",
+                false => "a time of day",
+            };
+            Err(format!(
+                "the fields of '{pattern}' do not make {what}: no text read by it is a DateTime"
+            ))
+        }
+    }
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -415,19 +500,12 @@ builtins! {
             return Ok(Step::Done(Value::Unit));
         };
         let duration = std::time::Duration::from_nanos(nanos);
-        // The program's own thread asks the clock to sleep (`Clock::sleep`),
-        // for no longer than up to the task deadline in effect.
+        // The program's own thread asks the clock to sleep (`Clock::sleep`).
         if !vm.spawned {
-            let left = match vm.current_deadline {
-                Some(deadline) => duration.min(deadline.saturating_sub(vm.runtime.io.monotonic())),
-                None => duration,
-            };
-            vm.runtime.io.sleep(left);
+            vm.runtime.io.sleep(duration);
             return Ok(Step::Done(Value::Unit));
         }
-        // A task waits for the clock to reach the end of the sleep, or the
-        // task deadline if that comes first: time.sleep returns Unit, not a
-        // Result, so a deadline only ends the sleep.
+        // A task waits for the clock to reach the end of the sleep.
         let end =
             vm.runtime.io.deadline_after(duration).ok_or_else(|| {
                 VmError::new("cannot start a timer: the duration is out of range".into())
@@ -435,9 +513,6 @@ builtins! {
         if let Some(failure) = vm.runtime.io.clock_failure() {
             return Err(VmError::new(failure));
         }
-        let end = vm
-            .current_deadline
-            .map_or(end, |deadline| end.min(deadline));
         let wait = Wait::new(Vec::new()).deadline(Some(end));
         Ok(vm.park("time.sleep", wait, |_, _| Ok(Step::Done(Value::Unit))))
     }
@@ -542,27 +617,33 @@ builtins! {
         Instant::of_utc(utc)
     }
 
-    fn to_utc(instant: Instant) -> Result<Value, VmError> {
-        Ok(make_datetime(instant.utc()?))
-    }
-
-    fn from_utc(datetime: DateTime) -> Result<Value, VmError> {
-        Instant::of_utc(datetime.naive()?)
-    }
-
-    fn format(datetime: DateTime, pattern: &str) -> Result<String, VmError> {
+    // A pattern that is no format (an unknown specifier, one of a time
+    // for a date, one of a time zone) is `Err(InvalidFormat(why))`: a
+    // pattern is text like any other.
+    fn format(datetime: DateTime, pattern: &str) -> Result<Value, VmError> {
         let datetime = datetime.naive()?;
-        validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;
-        Ok(datetime.format(pattern).to_string())
+        Ok(match validate_strftime_pattern(pattern, StrftimeReceiver::DateTime) {
+            Ok(()) => ok(Value::String(datetime.format(pattern).to_string().into())),
+            Err(why) => invalid_format_err(why),
+        })
     }
 
-    fn format_date(date: Date, pattern: &str) -> Result<String, VmError> {
+    fn format_date(date: Date, pattern: &str) -> Result<Value, VmError> {
         let date = date.naive()?;
-        validate_strftime_pattern("time.format_date", pattern, StrftimeReceiver::Date)?;
-        Ok(date.format(pattern).to_string())
+        Ok(match validate_strftime_pattern(pattern, StrftimeReceiver::Date) {
+            Ok(()) => ok(Value::String(date.format(pattern).to_string().into())),
+            Err(why) => invalid_format_err(why),
+        })
     }
 
+    // A pattern by which no text is a date and time (an unknown
+    // specifier, no time of day, no date, nothing) is
+    // `Err(InvalidFormat(why))` whatever the text; `ParseFormat` is a
+    // text that does not match a pattern that could.
     fn parse(s: &str, pattern: &str) -> Value {
+        if let Err(why) = validate_parse_pattern(pattern, Reads::DateTime) {
+            return invalid_format_err(why);
+        }
         match NaiveDateTime::parse_from_str(s, pattern) {
             Ok(datetime) => ok(make_datetime(datetime)),
             Err(e) => time_parse_err(e),
@@ -570,6 +651,9 @@ builtins! {
     }
 
     fn parse_date(s: &str, pattern: &str) -> Value {
+        if let Err(why) = validate_parse_pattern(pattern, Reads::Date) {
+            return invalid_format_err(why);
+        }
         // Parse as NaiveDateTime with a dummy time appended, then extract the date.
         let padded = format!("{s}T00:00:00");
         let padded_fmt = format!("{pattern}T%H:%M:%S");
@@ -715,6 +799,96 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pattern is refused before any text is read exactly when no
+    /// text read by it can be the value: for each pattern here that is
+    /// let through, a text is given that it reads; for each that is
+    /// refused, chrono reads no text of it, whatever it holds.
+    #[test]
+    fn a_pattern_is_refused_when_no_text_read_by_it_is_the_value() {
+        let datetimes = [
+            ("%Y-%m-%d %H:%M:%S", "2024-02-29 13:05:09"),
+            ("%Y-%m-%dT%H:%M:%S%.f", "2024-02-29T13:05:09.25"),
+            ("%Y%m%d%H%M%S", "20240229130509"),
+            ("%F %T", "2024-02-29 13:05:09"),
+            ("%D %R", "02/29/24 13:05"),
+            ("%d/%m/%y %I:%M %p", "29/02/24 01:05 PM"),
+            ("%Y-%j %H:%M", "2024-060 13:05"),
+            ("%G-W%V-%u %H:%M:%S", "2024-W09-4 13:05:09"),
+            ("%s", "1709211909"),
+            ("%c", "Thu Feb 29 13:05:09 2024"),
+            ("%Y-%m-%d %H:%M:%S %z", "2024-02-29 13:05:09 +0100"),
+            (
+                "on %A, %d %B %Y at %H:%M",
+                "on Thursday, 29 February 2024 at 13:05",
+            ),
+        ];
+        for (pattern, text) in datetimes {
+            assert_eq!(
+                validate_parse_pattern(pattern, Reads::DateTime),
+                Ok(()),
+                "{pattern}"
+            );
+            assert!(
+                NaiveDateTime::parse_from_str(text, pattern).is_ok(),
+                "{pattern} reads {text}"
+            );
+        }
+        let dates = [
+            ("%d.%m.%Y", "29.02.2024"),
+            ("%F", "2024-02-29"),
+            ("%Y-%j", "2024-060"),
+            ("%b %e %Y", "Feb 29 2024"),
+            ("%x", "02/29/24"),
+            ("%G-W%V-%a", "2024-W09-Thu"),
+        ];
+        for (pattern, text) in dates {
+            assert_eq!(
+                validate_parse_pattern(pattern, Reads::Date),
+                Ok(()),
+                "{pattern}"
+            );
+            assert!(
+                NaiveDate::parse_from_str(text, pattern).is_ok(),
+                "{pattern} reads {text}"
+            );
+        }
+        // No time of day, no date, half a date, a 12-hour clock without
+        // its half of the day, a year of two digits' century alone,
+        // nothing but text, nothing.
+        let not_enough = chrono::format::ParseErrorKind::NotEnough;
+        let no_datetime = [
+            ("%Y-%m-%d", "2024-02-29", "a time of day"),
+            ("%H:%M:%S", "13:05:09", "a date"),
+            ("%Y-%m %H:%M", "2024-02 13:05", "a date"),
+            ("%Y-%m-%d %I:%M", "2024-02-29 01:05", "a time of day"),
+            ("%Y-%m-%d %H", "2024-02-29 13", "a time of day"),
+            ("at noon", "at noon", "a date"),
+        ];
+        for (pattern, text, missing) in no_datetime {
+            let why = validate_parse_pattern(pattern, Reads::DateTime).expect_err(pattern);
+            assert!(why.contains(missing) && why.contains(pattern), "{why}");
+            let read = NaiveDateTime::parse_from_str(text, pattern);
+            assert_eq!(read.map_err(|e| e.kind()), Err(not_enough), "{pattern}");
+        }
+        for (pattern, text) in [
+            ("%H:%M", "13:05"),
+            ("%Y-%m", "2024-02"),
+            ("%Y", "2024"),
+            ("%C", "20"),
+        ] {
+            let why = validate_parse_pattern(pattern, Reads::Date).expect_err(pattern);
+            assert!(why.contains("a date") && why.contains(pattern), "{why}");
+            let read = NaiveDate::parse_from_str(text, pattern);
+            assert_eq!(read.map_err(|e| e.kind()), Err(not_enough), "{pattern}");
+        }
+        for reads in [Reads::DateTime, Reads::Date] {
+            let why = validate_parse_pattern("", reads).expect_err("the empty pattern");
+            assert!(why.starts_with("the pattern is empty"), "{why}");
+            let why = validate_parse_pattern("%Y-%Q", reads).expect_err("an unknown specifier");
+            assert_eq!(why, "invalid format specifier in '%Y-%Q'");
+        }
+    }
 
     /// The records the module builds have the fields of their types,
     /// in the types' order (`Value::builtin_record` says so in a debug

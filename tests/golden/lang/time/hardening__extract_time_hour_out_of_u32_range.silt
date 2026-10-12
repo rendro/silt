@@ -2,9 +2,10 @@
 -- stderr-contains: time: hour
 -- stderr-contains: out of range for u32
 import time
+import result
 fn main() {
   let t = time.Time { hour: 4294967305, minute: 0, second: 0, ns: 0 }
   let d = time.Date { year: 2024, month: 1, day: 1 }
   let dt = time.datetime(d, t)
-  println(time.format(dt, "%H:%M:%S"))
+  println((time.format(dt, "%H:%M:%S") |> result.unwrap_or("")))
 }

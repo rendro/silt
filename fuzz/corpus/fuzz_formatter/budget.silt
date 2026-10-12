@@ -52,8 +52,8 @@ fn validate_transaction(t) {
 
 fn fmt_currency(amount) {
   match {
-    amount >= 0.0 -> " ${float.to_string(amount, 2)}"
-    _ -> "-${float.to_string(float.abs(amount), 2)}"
+    amount >= 0.0 -> " ${float.format(amount, 2)}"
+    _ -> "-${float.format(float.abs(amount), 2)}"
   }
 }
 
@@ -101,7 +101,7 @@ fn print_category_totals(transactions) {
     |> option.unwrap_or(0)
     let col1 = string.pad_right("  {cat}", 20, " ")
     let col2 = string.pad_left(fmt_currency(total), 15, " ")
-    let col3 = string.pad_left(int.to_string(count), 12, " ")
+    let col3 = string.pad_left(string.from(count), 12, " ")
     println("{col1}{col2}{col3}")
   }
   let grand_total = expenses
@@ -109,7 +109,7 @@ fn print_category_totals(transactions) {
   print_thin_separator()
   let gt_col1 = string.pad_right("  TOTAL", 20, " ")
   let gt_col2 = string.pad_left(fmt_currency(grand_total), 15, " ")
-  let gt_col3 = string.pad_left(int.to_string(list.length(expenses)), 12, " ")
+  let gt_col3 = string.pad_left(string.from(list.length(expenses)), 12, " ")
   println("{gt_col1}{gt_col2}{gt_col3}")
 }
 
@@ -144,7 +144,7 @@ fn print_monthly_summary(transactions) {
     _ -> 0.0
   }
   let l4 = string.pad_right("  Savings Rate:", 25, " ")
-  let v4 = string.pad_left("{float.to_string(savings_rate, 1)}%", 15, " ")
+  let v4 = string.pad_left("{float.format(savings_rate, 1)}%", 15, " ")
   println("{l4}{v4}")
 }
 

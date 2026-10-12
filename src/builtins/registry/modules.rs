@@ -4,9 +4,8 @@
 //! A function row is `f(signature, summary, body)`: the body is the
 //! function of that name among the module's typed bodies
 //! (`crate::builtins::typed`); with `.feature("name")` it needs a
-//! cargo feature beyond its module's, with `.optional_last()` its last
-//! parameter may be left out. A constant is `k("name: Type", summary,
-//! value)`.
+//! cargo feature beyond its module's. A constant is `k("name: Type",
+//! summary, value)`.
 
 use super::{Module, RowSpec, build_module, f, k, module};
 use crate::builtins::collections::{list, map, set};
@@ -50,7 +49,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "io",
             page: "io-fs.md",
             types: "\
-                pub type IoError { IoNotFound(String), IoPermissionDenied(String), IoAlreadyExists(String), IoInvalidInput(String), IoInterrupted, IoUnexpectedEof, IoWriteZero, IoUnknown(String) }\n\
+                pub type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }\n\
             ",
             error: "IoError" => io::error_text,
             rows: [
@@ -65,12 +64,12 @@ pub(super) fn modules() -> Vec<Module> {
             name: "string",
             page: "string.md",
             rows: [
-                f("fn char_code(s: String) -> Int", "Unicode code point of first character", string::char_code),
+                f("fn char_code(s: String) -> Option(Int)", "Unicode code point of the first character, or None for an empty string", string::char_code),
                 f("fn chars(s: String) -> List(String)", "Split string into single-character strings", string::chars),
                 f("fn contains(s: String, sub: String) -> Bool", "Check if substring exists", string::contains),
                 f("fn ends_with(s: String, suffix: String) -> Bool", "Check suffix", string::ends_with),
                 f("fn from(x: a) -> String where a: Display", "Convert any value to its display string", string::from),
-                f("fn from_char_code(code: Int) -> String", "Character from Unicode code point", string::from_char_code),
+                f("fn from_char_code(code: Int) -> Option(String)", "Character of a Unicode code point, or None if it is none", string::from_char_code),
                 f("fn index_of(s: String, needle: String) -> Option(Int)", "Character index of first occurrence", string::index_of),
                 f("fn byte_length(s: String) -> Int", "Length in bytes", string::byte_length),
                 f("fn is_alnum(s: String) -> Bool", "All chars are alphanumeric", string::is_alnum),
@@ -90,7 +89,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn replace(s: String, from: String, to: String) -> String", "Replace all occurrences", string::replace),
                 f("fn slice(s: String, start: Int, end: Int) -> String", "Substring by character indices", string::slice),
                 f("fn split(s: String, separator: String) -> List(String)", "Split on separator", string::split),
-                f("fn split_at(s: String, idx: Int) -> (String, String)", "Split into two strings at character index", string::split_at),
+                f("fn split_at(s: String, idx: Int) -> Option((String, String))", "Split into two strings at a character index, or None past the end", string::split_at),
                 f("fn starts_with(s: String, prefix: String) -> Bool", "Check prefix", string::starts_with),
                 f("fn starts_with_at(s: String, offset: Int, prefix: String) -> Bool", "Check prefix at a given character offset", string::starts_with_at),
                 f("fn to_lower(s: String) -> String", "Convert to lowercase", string::to_lower),
@@ -104,34 +103,36 @@ pub(super) fn modules() -> Vec<Module> {
             name: "int",
             page: "int-float.md",
             types: "\
-                pub type ParseError { ParseEmpty, ParseInvalidDigit(Int), ParseOverflow, ParseUnderflow }\n\
+                pub type IntError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
             ",
-            error: "ParseError" => numeric::error_text,
+            error: "IntError" => numeric::int_error_text,
             rows: [
                 f("fn abs(n: Int) -> Int", "Absolute value", int::abs),
                 f("fn clamp(x: Int, lo: Int, hi: Int) -> Int", "Clamp value to `[lo, hi]`", int::clamp),
                 f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),
                 f("fn min(a: Int, b: Int) -> Int", "Smaller of two values", int::min),
-                f("fn parse(s: String) -> Result(Int, ParseError)", "Parse string to integer", int::parse),
+                f("fn parse(s: String) -> Result(Int, IntError)", "Parse string to integer", int::parse),
                 f("fn to_float(n: Int) -> Float", "Convert to float", int::to_float),
-                f("fn to_string(n: Int) -> String", "Convert to string", int::to_string),
             ],
         },
         module! {
             name: "float",
             page: "int-float.md",
-            shares: [("int", "ParseError")],
+            types: "\
+                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
+            ",
+            error: "FloatError" => numeric::float_error_text,
             rows: [
                 f("fn abs(f: Float) -> Float", "Absolute value", float::abs),
                 f("fn ceil(f: Float) -> Float", "Round up to nearest integer (as Float)", float::ceil),
                 f("fn clamp(x: Float, lo: Float, hi: Float) -> Float", "Clamp value to `[lo, hi]`", float::clamp),
                 f("fn floor(f: Float) -> Float", "Round down to nearest integer (as Float)", float::floor),
+                f("fn format(f: Float, decimals: Int) -> String", "Decimal text with that many decimal places", float::format),
                 f("fn max(a: Float, b: Float) -> Float", "Larger of two values", float::max),
                 f("fn min(a: Float, b: Float) -> Float", "Smaller of two values", float::min),
-                f("fn parse(s: String) -> Result(Float, ParseError)", "Parse string to float", float::parse),
+                f("fn parse(s: String) -> Result(Float, FloatError)", "Parse string to float", float::parse),
                 f("fn round(f: Float) -> Float", "Round to nearest integer (as Float)", float::round),
                 f("fn to_int(f: Float) -> Int", "Truncate to integer", float::to_int),
-                f("fn to_string(f: Float, decimals: Int) -> String", "Shortest round-trippable representation; with `decimals`, that many decimal places", float::to_string).optional_last(),
                 k("max_value: Float", "Maximum finite value (`1.7976931348623157e+308`)", f64::MAX),
                 k("min_value: Float", "Minimum finite value (`-1.7976931348623157e+308`)", f64::MIN),
                 k("epsilon: Float", "Machine epsilon (`2.220446049250313e-16`)", f64::EPSILON),
@@ -173,10 +174,10 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn prepend(xs: List(a), elem: a) -> List(a)", "Add an element to the front", list::prepend),
                 f("fn product(xs: List(Int)) -> Int", "Product of a list of ints (1 on empty)", list::product),
                 f("fn product_float(xs: List(Float)) -> Float", "Product of a list of floats (1.0 on empty)", list::product_float),
-                f("fn remove_at(xs: List(a), index: Int) -> List(a)", "Remove element at index (panics if out of range)", list::remove_at),
+                f("fn remove_at(xs: List(a), index: Int) -> Option(List(a))", "The list without the element at index, or None if there is none", list::remove_at),
                 f("fn reverse(xs: List(a)) -> List(a)", "Reverse element order", list::reverse),
                 f("fn scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)", "Prefix fold; returns all intermediate accumulators", list::scan),
-                f("fn set(xs: List(a), index: Int, value: a) -> List(a)", "Return new list with element at index replaced", list::set),
+                f("fn set(xs: List(a), index: Int, value: a) -> Option(List(a))", "The list with the element at index replaced, or None if there is none", list::set),
                 f("fn sort(xs: List(a)) -> List(a) where a: Compare", "Sort in natural order", list::sort),
                 f("fn sort_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Compare", "Sort by key function", list::sort_by),
                 f("fn sum(xs: List(Int)) -> Int", "Sum a list of ints (0 on empty)", list::sum),
@@ -237,9 +238,9 @@ pub(super) fn modules() -> Vec<Module> {
             name: "test",
             page: "test.md",
             rows: [
-                f("fn assert(condition: Bool, message: String) -> ()", "Assert value is truthy", core::test::assert).optional_last(),
-                f("fn assert_eq(left: a, right: a, message: String) -> () where a: Equal + Display", "Assert two values are equal", core::test::assert_eq).optional_last(),
-                f("fn assert_ne(left: a, right: a, message: String) -> () where a: Equal + Display", "Assert two values are not equal", core::test::assert_ne).optional_last(),
+                f("fn assert(condition: Bool) -> ()", "Assert a condition is true", core::test::assert),
+                f("fn assert_eq(left: a, right: a) -> () where a: Equal + Display", "Assert two values are equal", core::test::assert_eq),
+                f("fn assert_ne(left: a, right: a) -> () where a: Equal + Display", "Assert two values are not equal", core::test::assert_ne),
             ],
         },
         module! {
@@ -248,19 +249,17 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type ChannelResult(a) { Message(a), Closed, Sent, Empty }\n\
                 pub type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }\n\
-                pub type ChannelError { ChannelTimeout, ChannelClosed }\n\
             ",
             derives: [("ChannelOp", &[])],
-            error: "ChannelError" => concurrency::error_text,
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
-                f("fn each(ch: Channel(a), f: Fn(a) -> b) -> ()", "Iterate until channel closes", concurrency::channel::each),
-                f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new).optional_last(),
+                f("fn each(ch: Channel(a), f: Fn(a) -> ()) -> ()", "Call a function with each message until the channel closes", concurrency::channel::each),
+                f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new),
                 f("fn receive(ch: Channel(a)) -> ChannelResult(a)", "Blocking receive", concurrency::channel::receive),
-                f("fn recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)", "Blocking receive with a timeout", concurrency::channel::recv_timeout),
+                f("fn receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)", "Receive, waiting no longer than a duration", concurrency::channel::receive_timeout),
                 f("fn select(ops: List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))", "Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`)", concurrency::channel::select),
                 f("fn send(ch: Channel(a), value: a) -> ()", "Blocking send", concurrency::channel::send),
-                f("fn timeout(ms: Int) -> Channel(a)", "Create a channel that closes after N ms", concurrency::channel::timeout),
+                f("fn timeout(dur: Duration) -> Channel(a)", "Create a channel that closes after a duration", concurrency::channel::timeout),
                 f("fn try_receive(ch: Channel(a)) -> ChannelResult(a)", "Non-blocking receive", concurrency::channel::try_receive),
                 f("fn try_send(ch: Channel(a), value: a) -> Bool", "Non-blocking send", concurrency::channel::try_send),
             ],
@@ -268,40 +267,43 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "task",
             page: "channel-task.md",
+            types: "\
+                pub type TaskError { Timeout, Other(String) }\n\
+            ",
             opaque: [("Handle", 1)],
+            error: "TaskError" => concurrency::task_error_text,
             rows: [
                 f("fn cancel(handle: Handle(a)) -> ()", "Request cancellation of a task (cooperative; see details below)", concurrency::task::cancel),
-                f("fn deadline(dur: Duration, f: Fn() -> a) -> a", "Run a callback with a scoped I/O deadline", concurrency::task::deadline),
+                f("fn deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)", "Run a function, and end it where it waits when the duration has passed", concurrency::task::deadline),
                 f("fn join(handle: Handle(a)) -> a", "Wait for a task to complete", concurrency::task::join),
                 f("fn spawn(f: Fn() -> a) -> Handle(a)", "Spawn a new lightweight task", concurrency::task::spawn),
-                f("fn spawn_until(dur: Duration, f: Fn() -> a) -> Handle(a)", "Spawn a task scoped by a deadline", concurrency::task::spawn_until),
             ],
         },
         module! {
             name: "regex",
             page: "regex.md",
             types: "\
-                pub type RegexError { RegexInvalidPattern(String, Int), RegexTooBig }\n\
+                pub type RegexError { InvalidPattern(String, Int), TooBig, Other(String) }\n\
             ",
             error: "RegexError" => regex::error_text,
             rows: [
-                f("fn captures(pattern: String, text: String) -> Option(List(String))", "Capture groups from first match", regex::captures),
-                f("fn captures_all(pattern: String, text: String) -> List(List(String))", "Capture groups from all matches", regex::captures_all),
-                f("fn captures_named(pattern: String, text: String) -> Option(Map(String, String))", "Named capture groups from first match", regex::captures_named),
-                f("fn find(pattern: String, text: String) -> Option(String)", "First match", regex::find),
-                f("fn find_all(pattern: String, text: String) -> List(String)", "All matches", regex::find_all),
-                f("fn is_match(pattern: String, text: String) -> Bool", "Test if pattern matches", regex::is_match),
-                f("fn replace(pattern: String, text: String, replacement: String) -> String", "Replace first match", regex::replace),
-                f("fn replace_all(pattern: String, text: String, replacement: String) -> String", "Replace all matches", regex::replace_all),
-                f("fn replace_all_with(pattern: String, text: String, f: Fn(String) -> String) -> String", "Replace all with callback", regex::replace_all_with),
-                f("fn split(pattern: String, text: String) -> List(String)", "Split on pattern", regex::split),
+                f("fn captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)", "Capture groups from first match", regex::captures),
+                f("fn captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)", "Capture groups from all matches", regex::captures_all),
+                f("fn captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)", "Named capture groups from first match", regex::captures_named),
+                f("fn find(text: String, pattern: String) -> Result(Option(String), RegexError)", "First match", regex::find),
+                f("fn find_all(text: String, pattern: String) -> Result(List(String), RegexError)", "All matches", regex::find_all),
+                f("fn is_match(text: String, pattern: String) -> Result(Bool, RegexError)", "Test if pattern matches", regex::is_match),
+                f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace),
+                f("fn replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace_all),
+                f("fn replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_all_with),
+                f("fn split(text: String, pattern: String) -> Result(List(String), RegexError)", "Split on pattern", regex::split),
             ],
         },
         module! {
             name: "json",
             page: "json.md",
             types: "\
-                pub type JsonError { JsonSyntax(String, Int), JsonTypeMismatch(String, String), JsonMissingField(String), JsonUnknown(String) }\n\
+                pub type JsonError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
             ",
             error: "JsonError" => json::error_text,
             rows: [
@@ -316,7 +318,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "toml",
             page: "toml.md",
             types: "\
-                pub type TomlError { TomlSyntax(String, Int), TomlTypeMismatch(String, String), TomlMissingField(String), TomlUnknown(String) }\n\
+                pub type TomlError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
             ",
             error: "TomlError" => toml::error_text,
             rows: [
@@ -380,7 +382,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type DateTime { date: Date, time: Time }\n\
                 pub type Duration { ns: Int }\n\
                 pub type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\n\
-                pub type TimeError { TimeParseFormat(String), TimeOutOfRange(String) }\n\
+                pub type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String), Other(String) }\n\
             ",
             error: "TimeError" => time::error_text,
             rows: [
@@ -391,10 +393,8 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn datetime(date: Date, time: Time) -> DateTime", "Combine date and time (infallible)", time::datetime),
                 f("fn to_datetime(instant: Instant, offset_minutes: Int) -> DateTime", "Convert instant to local datetime with UTC offset in minutes", time::to_datetime),
                 f("fn to_instant(datetime: DateTime, offset_minutes: Int) -> Instant", "Convert local datetime to instant with UTC offset in minutes", time::to_instant),
-                f("fn to_utc(instant: Instant) -> DateTime", "Convert instant to UTC datetime (shorthand for offset=0)", time::to_utc),
-                f("fn from_utc(datetime: DateTime) -> Instant", "Convert UTC datetime to instant (shorthand for offset=0)", time::from_utc),
-                f("fn format(datetime: DateTime, pattern: String) -> String", "Format datetime with strftime pattern", time::format),
-                f("fn format_date(date: Date, pattern: String) -> String", "Format date with strftime pattern", time::format_date),
+                f("fn format(datetime: DateTime, pattern: String) -> Result(String, TimeError)", "Format datetime with strftime pattern", time::format),
+                f("fn format_date(date: Date, pattern: String) -> Result(String, TimeError)", "Format date with strftime pattern", time::format_date),
                 f("fn parse(s: String, pattern: String) -> Result(DateTime, TimeError)", "Parse string into datetime with strftime pattern", time::parse),
                 f("fn parse_date(s: String, pattern: String) -> Result(Date, TimeError)", "Parse string into date with strftime pattern", time::parse_date),
                 f("fn add_days(date: Date, days: Int) -> Date", "Add/subtract days from a date", time::add_days),
@@ -420,8 +420,8 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }\n\
                 pub type Response { status: Int, body: String, headers: Map(String, String) }\n\
-                pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: String }\n\
-                pub type HttpError { HttpConnect(String), HttpTls(String), HttpTimeout, HttpInvalidUrl(String), HttpInvalidResponse(String), HttpClosedEarly, HttpStatusCode(Int, String), HttpUnknown(String) }\n\
+                pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes }\n\
+                pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, StatusCode(Int, String), Other(String) }\n\
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError" => http::error_text,
@@ -430,7 +430,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
                 f("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection", http::serve).feature("http"),
                 f("fn segments(path: String) -> List(String)", "Split URL path into segments", http::segments),
-                f("fn parse_query(query: String) -> Map(String, List(String))", "Parse a URL query string into a multi-value map", http::parse_query),
+                f("fn parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)", "Parse a URL query string into a multi-value map", http::parse_query),
             ],
         },
         module! {
@@ -470,32 +470,31 @@ pub(super) fn modules() -> Vec<Module> {
             feature: "postgres",
             page: "postgres.md",
             types: "\
-                pub type PgError { PgConnect(String), PgTls(String), PgAuthFailed(String), PgQuery(String, String), PgTypeMismatch(String, String, String), PgNoSuchColumn(String), PgClosed, PgTimeout, PgTxnAborted, PgUnknown(String) }\n\
+                pub type PostgresError { Connect(String), Tls(String), AuthFailed(String), Query(String, String), TypeMismatch(String, String, String), NoSuchColumn(String), Closed, Timeout, TxnAborted, Other(String) }\n\
                 pub type Notification { channel: String, payload: String, pid: Int }\n\
             ",
             opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("Value", 0)],
-            error: "PgError" => postgres::error_text,
+            error: "PostgresError" => postgres::error_text,
             rows: [
-                f("fn connect(url: String) -> Result(PgPool, PgError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
-                f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PgError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
-                f("fn query(conn: a, sql: String, params: List(Value)) -> Result(QueryResult, PgError)", "Run a SELECT-style statement and materialize rows", postgres::query),
-                f("fn execute(conn: a, sql: String, params: List(Value)) -> Result(ExecResult, PgError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
-                f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
+                f("fn connect(url: String) -> Result(PgPool, PostgresError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
+                f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PostgresError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
+                f("fn query(conn: a, sql: String, params: List(Value)) -> Result(QueryResult, PostgresError)", "Run a SELECT-style statement and materialize rows", postgres::query),
+                f("fn execute(conn: a, sql: String, params: List(Value)) -> Result(ExecResult, PostgresError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
+                f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
                 f("fn close(pool: PgPool) -> ()", "Drop the pool; future ops on it error", postgres::close),
-                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(Result(Map(String, Value), PgError)), PgError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
-                f("fn cursor(tx: PgTx, sql: String, params: List(Value), batch_size: Int) -> Result(PgCursor, PgError)", "Declare a server-side cursor with batch size", postgres::cursor),
-                f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, Value)), PgError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
-                f("fn cursor_close(cursor: PgCursor) -> Result((), PgError)", "Release a cursor and its underlying connection", postgres::cursor_close),
-                f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PgError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
-                f("fn notify(conn: a, channel: String, payload: String) -> Result((), PgError)", "NOTIFY a channel with a payload", postgres::notify),
-                f("fn uuidv7() -> String", "Generate a time-ordered UUIDv7 (RFC 9562)", postgres::uuidv7),
+                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(Result(Map(String, Value), PostgresError)), PostgresError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
+                f("fn cursor(tx: PgTx, sql: String, params: List(Value), batch_size: Int) -> Result(PgCursor, PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor),
+                f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, Value)), PostgresError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
+                f("fn cursor_close(cursor: PgCursor) -> Result((), PostgresError)", "Release a cursor and its underlying connection", postgres::cursor_close),
+                f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
+                f("fn notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)", "NOTIFY a channel with a payload", postgres::notify),
             ],
         },
         module! {
             name: "bytes",
             page: "bytes.md",
             types: "\
-                pub type BytesError { BytesInvalidUtf8(Int), BytesInvalidHex(String), BytesInvalidBase64(String), BytesByteOutOfRange(Int), BytesOutOfBounds(Int) }\n\
+                pub type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int), Other(String) }\n\
             ",
             error: "BytesError" => bytes::error_text,
             rows: [
@@ -503,15 +502,14 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn concat_all(parts: List(Bytes)) -> Bytes", "Concatenate every element of a list", bytes::concat_all),
                 f("fn empty() -> Bytes", "Zero-length byte sequence", bytes::empty),
                 f("fn ends_with(b: Bytes, suffix: Bytes) -> Bool", "True if `b` ends with `suffix`", bytes::ends_with),
-                f("fn eq(a: Bytes, b: Bytes) -> Bool", "Structural byte-by-byte comparison", bytes::eq),
                 f("fn from_base64(s: String) -> Result(Bytes, BytesError)", "Decode base64 string", bytes::from_base64),
                 f("fn from_hex(s: String) -> Result(Bytes, BytesError)", "Decode hex string (case-insensitive)", bytes::from_hex),
                 f("fn from_list(xs: List(Int)) -> Result(Bytes, BytesError)", "Build from a list of byte values (0..=255)", bytes::from_list),
                 f("fn from_string(s: String) -> Bytes", "UTF-8 encode a string", bytes::from_string),
-                f("fn get(b: Bytes, i: Int) -> Result(Int, BytesError)", "Read a single byte at index", bytes::get),
+                f("fn get(b: Bytes, i: Int) -> Option(Int)", "The byte at index, or None", bytes::get),
                 f("fn index_of(b: Bytes, needle: Bytes) -> Option(Int)", "First offset at which `needle` appears", bytes::index_of),
                 f("fn length(b: Bytes) -> Int", "Number of bytes", bytes::length),
-                f("fn slice(b: Bytes, start: Int, end: Int) -> Result(Bytes, BytesError)", "Half-open `[start, end)` slice", bytes::slice),
+                f("fn slice(b: Bytes, start: Int, end: Int) -> Bytes", "The bytes from `start` up to `end`, both clamped to the length", bytes::slice),
                 f("fn split(b: Bytes, sep: Bytes) -> List(Bytes)", "Split on every occurrence of `sep` (panics if `sep` is empty)", bytes::split),
                 f("fn starts_with(b: Bytes, prefix: Bytes) -> Bool", "True if `b` begins with `prefix`", bytes::starts_with),
                 f("fn to_base64(b: Bytes) -> String", "Encode as base64", bytes::to_base64),
@@ -523,27 +521,33 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "crypto",
             page: "crypto.md",
+            types: "\
+                pub type CryptoError { InvalidLength(Int), Other(String) }\n\
+            ",
+            error: "CryptoError" => crypto::error_text,
             rows: [
                 f("fn sha256(data: Bytes) -> Bytes", "SHA-256 digest (32 bytes)", crypto::sha256),
                 f("fn sha512(data: Bytes) -> Bytes", "SHA-512 digest (64 bytes)", crypto::sha512),
                 f("fn md5(data: Bytes) -> Bytes", "MD5 digest (16 bytes) — **legacy / non-security use only**", crypto::md5),
-                f("fn md5_hex(data: Bytes) -> String", "MD5 digest as lower-case hex (32 chars)", crypto::md5_hex),
                 f("fn blake2b(data: Bytes) -> Bytes", "BLAKE2b-512 digest (64 bytes), RFC 7693", crypto::blake2b),
-                f("fn blake2b_hex(data: Bytes) -> String", "BLAKE2b-512 digest as lower-case hex (128 chars)", crypto::blake2b_hex),
                 f("fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes", "HMAC-SHA256 over `(key, msg)` (32 bytes)", crypto::hmac_sha256),
                 f("fn hmac_sha512(key: Bytes, msg: Bytes) -> Bytes", "HMAC-SHA512 over `(key, msg)` (64 bytes)", crypto::hmac_sha512),
-                f("fn random_bytes(n: Int) -> Result(Bytes, String)", "OS CSPRNG, `0..=1_048_576` bytes", crypto::random_bytes),
+                f("fn random_bytes(n: Int) -> Result(Bytes, CryptoError)", "OS CSPRNG, `0..=1_048_576` bytes", crypto::random_bytes),
                 f("fn constant_time_eq(a: Bytes, b: Bytes) -> Bool", "Timing-safe comparison (lengths leak)", crypto::constant_time_eq),
             ],
         },
         module! {
             name: "encoding",
             page: "encoding.md",
+            types: "\
+                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String), Other(String) }\n\
+            ",
+            error: "EncodingError" => encoding::error_text,
             rows: [
                 f("fn url_encode(s: String) -> String", "Percent-encode per RFC 3986 (unreserved = `ALPHA` / `DIGIT` / `-._~`)", encoding::url_encode),
-                f("fn url_decode(s: String) -> Result(String, String)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding", encoding::url_decode),
+                f("fn url_decode(s: String) -> Result(String, EncodingError)", "Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding", encoding::url_decode),
                 f("fn form_encode(pairs: List((String, String))) -> String", "Build an `application/x-www-form-urlencoded` body", encoding::form_encode),
-                f("fn form_decode(body: String) -> Result(List((String, String)), String)", "Parse an `application/x-www-form-urlencoded` body into pairs", encoding::form_decode),
+                f("fn form_decode(body: String) -> Result(List((String, String)), EncodingError)", "Parse an `application/x-www-form-urlencoded` body into pairs", encoding::form_decode),
             ],
         },
         module! {
@@ -551,13 +555,13 @@ pub(super) fn modules() -> Vec<Module> {
             feature: "tcp",
             page: "tcp.md",
             types: "\
-                pub type TcpError { TcpConnect(String), TcpTls(String), TcpClosed, TcpTimeout, TcpUnknown(String) }\n\
+                pub type TcpError { Connect(String), Bind(String), Tls(String), Closed, Timeout, Other(String) }\n\
             ",
             opaque: [("TcpListener", 0), ("TcpStream", 0)],
             error: "TcpError" => tcp::error_text,
             rows: [
                 f("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)", tcp::accept),
-                f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(TcpClosed)`", tcp::close),
+                f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(Closed)`", tcp::close),
                 f("fn connect(addr: String) -> Result(TcpStream, TcpError)", "Open a TCP connection to `host:port` (cooperative I/O)", tcp::connect),
                 f("fn listen(addr: String) -> Result(TcpListener, TcpError)", "Bind a TCP listener to `host:port`", tcp::listen),
                 f("fn local_port(listener: TcpListener) -> Int", "The port the listener is bound to: the one the system chose for port `0`", tcp::local_port),
@@ -601,7 +605,6 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn zip(a: Channel(a), b: Channel(b)) -> Channel((a, b))", "Pair elements of two streams", stream::zip),
                 f("fn collect(ch: Channel(a)) -> List(a)", "Drain into a list", stream::collect),
                 f("fn fold(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> b", "Reduce to a single value", stream::fold),
-                f("fn each(ch: Channel(a), f: Fn(a) -> ()) -> ()", "Call `f` for each element", stream::each),
                 f("fn count(ch: Channel(a)) -> Int", "Count the elements", stream::count),
                 f("fn first(ch: Channel(a)) -> Option(a)", "The first element, or `None`", stream::first),
                 f("fn last(ch: Channel(a)) -> Option(a)", "The last element, or `None`", stream::last),
@@ -612,10 +615,14 @@ pub(super) fn modules() -> Vec<Module> {
         module! {
             name: "uuid",
             page: "uuid.md",
+            types: "\
+                pub type UuidError { Invalid(String), Other(String) }\n\
+            ",
+            error: "UuidError" => uuid::error_text,
             rows: [
                 f("fn v4() -> String", "Random UUID (version 4, CSPRNG-backed)", uuid::v4),
                 f("fn v7() -> String", "Time-ordered UUID (version 7, RFC 9562)", uuid::v7),
-                f("fn parse(s: String) -> Result(String, String)", "Validate + canonicalize any-version UUID", uuid::parse),
+                f("fn parse(s: String) -> Result(String, UuidError)", "Validate + canonicalize any-version UUID", uuid::parse),
                 f("fn nil() -> String", "The all-zero UUID sentinel", uuid::nil),
                 f("fn is_valid(s: String) -> Bool", "Predicate form of `parse`", uuid::is_valid),
             ],

@@ -1,18 +1,25 @@
 -- verdict: same
 -- Every builtin type can be named, through the module that offers it:
--- `task.Handle(a)`, `int.ParseError` and `float.ParseError` (one type,
--- reached through either module, with its variants), and the prelude's
--- `TypeOf(a)`, the type of a type used as a value.
+-- `task.Handle(a)`, `int.IntError` and `float.FloatError` (two types
+-- with variants of the same names, each reached through its module),
+-- and the prelude's `TypeOf(a)`, the type of a type used as a value.
 import task
 import float
 import int
 fn wait(h: task.Handle(Int)) -> Int { task.join(h) }
-fn pf(s: String) -> Result(Float, float.ParseError) { float.parse(s) }
-fn pi(s: String) -> Result(Int, int.ParseError) { int.parse(s) }
-fn kind(e: float.ParseError) -> String {
+fn pf(s: String) -> Result(Float, float.FloatError) { float.parse(s) }
+fn pi(s: String) -> Result(Int, int.IntError) { int.parse(s) }
+fn kind(e: float.FloatError) -> String {
   match e {
-    float.ParseEmpty -> "empty"
-    int.ParseInvalidDigit(_) -> "digit"
+    float.Empty -> "empty"
+    float.InvalidDigit(_) -> "digit"
+    _ -> "other"
+  }
+}
+fn int_kind(e: int.IntError) -> String {
+  match e {
+    int.Empty -> "empty"
+    int.InvalidDigit(_) -> "digit"
     _ -> "other"
   }
 }
@@ -25,7 +32,7 @@ fn main() {
   }
   match pi("x") {
     Ok(_) -> println("ok")
-    Err(e) -> println(kind(e))
+    Err(e) -> println(int_kind(e))
   }
   println(desc(Int))
 }

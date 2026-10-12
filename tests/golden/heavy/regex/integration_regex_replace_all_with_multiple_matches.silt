@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.replace_all_with("\\d+", "a1b2c3d4", { m -> "({m})" })
+  regex.replace_all_with("a1b2c3d4", "\\d+", { m -> "({m})" }) |> result.unwrap_or("")
 }
 
 fn main() {

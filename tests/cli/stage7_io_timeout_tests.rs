@@ -48,7 +48,7 @@ fn run_with_io_timeout(
 
 /// Nobody connects to the listener. Without the timeout the accept
 /// would keep the program alive for ever; with it the task gets
-/// `TcpTimeout`, goes on, and the program ends when it has.
+/// `Timeout`, goes on, and the program ends when it has.
 #[test]
 #[cfg(feature = "tcp")]
 fn the_global_io_timeout_ends_a_wait_that_keeps_the_program_alive() {
@@ -60,7 +60,7 @@ fn main() {
   println("main returns")
   let _waits = task.spawn { ->
     match tcp.accept(listener) {
-      Err(tcp.TcpTimeout) -> println("timed out")
+      Err(tcp.Timeout) -> println("timed out")
       Ok(_) -> println("a connection")
       Err(e) -> println("another error: {e.message()}")
     }
