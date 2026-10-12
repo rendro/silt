@@ -106,8 +106,9 @@ fn a_float_is_written_with_a_point() {
     assert!(largest.starts_with("17976931348623157") && largest.ends_with("0.0"));
 }
 
-/// A width and an alignment place a Float's text; a precision asks for
-/// its own decimals, as of an `f64`.
+/// A width, an alignment, a `+` and a `0` place a Float's text as they
+/// place a number's; a precision asks for its own decimals, as of an
+/// `f64`.
 #[test]
 fn a_float_s_text_takes_a_width_and_a_precision() {
     let (whole, part) = (float(3.0), float(-2.5));
@@ -125,6 +126,17 @@ fn a_float_s_text_takes_a_width_and_a_precision() {
     assert_eq!(format!("{whole:*>6}"), "***3.0");
     assert_eq!(format!("{whole:08.3}"), "0003.000");
     assert_eq!(format!("{part:08.3}"), "-002.500");
+    // Without an alignment a number stands to the right; a `0` pads
+    // with zeros behind the sign; a `+` shows the sign of what is not
+    // negative.
+    assert_eq!(format!("{whole:8}"), "     3.0");
+    assert_eq!(format!("{part:8}"), "    -2.5");
+    assert_eq!(format!("{part:^8}|"), "  -2.5  |");
+    assert_eq!(format!("{whole:08}"), "000003.0");
+    assert_eq!(format!("{part:08}"), "-00002.5");
+    assert_eq!(format!("{whole:+}"), "+3.0");
+    assert_eq!(format!("{part:+}"), "-2.5");
+    assert_eq!(format!("{whole:+08}"), "+00003.0");
     // A width the text already fills changes nothing.
     assert_eq!(format!("{whole:2}"), "3.0");
     assert_eq!(format!("{whole:?}"), "3.0");

@@ -89,20 +89,22 @@ impl Float {
 }
 
 /// The text of a Float, wherever one is shown (`Float::write_text`).
-/// A width and an alignment place that text (`{:>8}`); a precision asks
-/// for its own decimals, and the number is written with exactly those
-/// (`{:.2}`), as an `f64` is.
+/// A width, an alignment, a `+` and a `0` place that text as they place
+/// a number's (`{:8}` to the right, `{:08}` with zeros behind the sign);
+/// a precision asks for its own decimals, and the number is written
+/// with exactly those (`{:.2}`), as an `f64` is.
 impl fmt::Display for Float {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.precision().is_some() {
             return fmt::Display::fmt(&self.0, f);
         }
-        if f.width().is_none() {
+        if f.width().is_none() && !f.sign_plus() {
             return Float::write_text(self.0, f);
         }
-        let mut text = String::new();
-        Float::write_text(self.0, &mut text)?;
-        f.pad(&text)
+        // (No Float is `-0.0`: the sign is the number's.)
+        let mut digits = String::new();
+        Float::write_text(self.0.abs(), &mut digits)?;
+        f.pad_integral(self.0 >= 0.0, "", &digits)
     }
 }
 
