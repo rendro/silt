@@ -118,6 +118,10 @@ pub struct Vm {
     /// the VM of a function that `task.deadline` runs has one. A
     /// `task.deadline` inside it gives its function no later time.
     pub(crate) deadline: Option<std::time::Duration>,
+    /// The count of the steps the task has run past that time
+    /// (`TaskHandle::late`): the function of a `task.deadline` inside
+    /// it that has the same time goes on with it.
+    pub(crate) late: Option<Arc<std::sync::atomic::AtomicUsize>>,
 
     /// The callers that tail calls replaced, for an error's call stack
     /// ([`TailCalls`]).
@@ -238,6 +242,7 @@ impl Vm {
             spawned: false,
             cancelled: None,
             deadline: None,
+            late: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -485,6 +490,7 @@ impl Vm {
             spawned: false,
             cancelled: None,
             deadline: None,
+            late: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }

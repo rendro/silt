@@ -328,7 +328,14 @@ fn start(vm: &mut Vm, f: &Value, deadline: Option<Duration>) -> Result<Arc<TaskH
     let task_id = vm.next_task_id();
     let handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner());
     let handle = Arc::new(match deadline {
-        Some(deadline) => handle.with_deadline(deadline),
+        // A task whose time is its caller's goes on with the caller's
+        // count of the steps run past that time: the work past a
+        // deadline is bounded in total, however many deadlines the
+        // function calls when its time is over.
+        Some(deadline) => {
+            let callers = vm.deadline.filter(|own| deadline >= *own);
+            handle.with_deadline(deadline, callers.and(vm.late.clone()))
+        }
         None => handle,
     });
 

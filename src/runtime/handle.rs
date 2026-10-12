@@ -1000,6 +1000,11 @@ pub struct TaskHandle {
     /// Set when the task was ended by its deadline: that is its
     /// result then ([`TaskHandle::expire`]).
     expired: AtomicBool,
+    /// The steps run past the deadline, counted by the scheduler: by
+    /// this task, and by every task of a deadline inside it that has
+    /// the same time (they share the count: of them only one runs at a
+    /// time, the innermost).
+    late: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl TaskHandle {
@@ -1017,15 +1022,36 @@ impl TaskHandle {
             owner,
             deadline: None,
             expired: AtomicBool::new(false),
+            late: Arc::default(),
         }
     }
 
-    /// The handle, for a task that is over at `deadline`.
-    pub fn with_deadline(self, deadline: std::time::Duration) -> Self {
+    /// The handle, for a task that is over at `deadline`. `late` is the
+    /// count of the steps run past that time, if the task is to go on
+    /// with the count of another task that has the same time (the one
+    /// whose `task.deadline` it is the function of).
+    pub fn with_deadline(
+        self,
+        deadline: std::time::Duration,
+        late: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    ) -> Self {
         Self {
             deadline: Some(deadline),
+            late: late.unwrap_or_default(),
             ..self
         }
+    }
+
+    /// The count of the steps run past the deadline
+    /// ([`TaskHandle::count_late`]), to be shared.
+    pub fn late(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.late.clone()
+    }
+
+    /// The task has run `steps` steps past its deadline: how many that
+    /// makes.
+    pub fn count_late(&self, steps: usize) -> usize {
+        self.late.fetch_add(steps, AtomicOrdering::SeqCst) + steps
     }
 
     /// When the task is over, if it has such a time.

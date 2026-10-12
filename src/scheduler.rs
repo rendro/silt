@@ -137,10 +137,6 @@ struct Task {
     handle: Arc<TaskHandle>,
     /// The tasks it is counted with: those of its owner.
     group: Arc<Group>,
-    /// The steps of the slices it has run out since it was started or
-    /// its last wait ended. Read only for a task that has a deadline
-    /// ([`Inner::past_its_time`]).
-    ran: usize,
 }
 
 /// The tasks of one owner (`Vm::set_task_owner`): the program, or one
@@ -486,6 +482,7 @@ impl Scheduler {
     ) -> Result<(), String> {
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
+        vm.late = handle.deadline().map(|_| handle.late());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -519,7 +516,6 @@ impl Scheduler {
             vm,
             handle,
             group,
-            ran: 0,
         });
         Ok(())
     }
@@ -945,20 +941,32 @@ impl Inner {
             .is_some_and(|deadline| self.parking.timer().now() >= deadline)
     }
 
-    /// Whether the task, whose slice has just run out, is ended here
-    /// by its deadline: its time is over, and since a wait last ended
-    /// for it in time it has run a slice of the standard length
-    /// ([`STANDARD_SLICE`]). With that slice this is the end of the
-    /// first slice that ends after the time.
+    /// One slice of a task whose time was over when the slice began:
+    /// its result, and whether the work the task may do past its time
+    /// is used up with it ([`LATE_STEPS`]).
     ///
-    /// The bound is in steps and not in slices as the task's VM or
-    /// `SILT_TIME_SLICE` have them, so that a wait which gave the task
-    /// a value in time is followed by the same amount of work whatever
-    /// the slice: the task has the steps to return what it took. A
-    /// task is never ended so at the start of a slice, nor in one that
-    /// it ends by returning or failing.
-    fn past_its_time(&self, task: &Task) -> bool {
-        task.ran >= STANDARD_SLICE && self.over(task)
+    /// The task runs a step at a time, so that every step past the time
+    /// is counted, whatever ends the slices the steps run in: a task
+    /// that only does waits that are over at once never runs a slice
+    /// out. The count is the handle's, and one for a task and the tasks
+    /// of the deadlines inside it that have its time
+    /// (`TaskHandle::late`): the work past a deadline is bounded in
+    /// total. Nothing resets it. (A slice that began in time is not
+    /// counted, also when the time passed in it: a task that was given
+    /// a value in time has the whole count to return it.)
+    fn late_slice(task: &mut Task, slice: usize) -> (SliceResult, bool) {
+        let mut ran = 0;
+        loop {
+            let result = task.vm.execute_slice(1);
+            ran += 1;
+            let spent = task.handle.count_late(1) >= LATE_STEPS;
+            match result {
+                // (A slice the task gave away is one that ran out
+                // here: it has little left to give way for.)
+                SliceResult::Yielded if !spent && ran < slice => {}
+                result => return (result, spent),
+            }
+        }
     }
 
     /// A task has ended: it completed, failed, was cancelled, or was
@@ -988,7 +996,6 @@ impl Inner {
                 match resumed {
                     Resumed::Fired(fired) => {
                         task.vm.woken = Some(fired);
-                        task.ran = 0;
                         self.enqueue(task);
                     }
                     Resumed::Cancelled => self.end_task(task),
@@ -1147,19 +1154,23 @@ impl Inner {
         let counted = COUNTED.with(|counted| counted.replace(true));
         let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
         let slice = task.vm.time_slice().unwrap_or_else(time_slice);
-        let result = task.vm.execute_slice(slice);
+        // A task whose time is over runs on for a counted number of
+        // steps and is ended, by its deadline, where they are used up:
+        // after the step that used them up, or at the entry of the
+        // wait that step began, of which no arm is tried then. It is
+        // never ended at the start of a slice, nor in a slice that it
+        // ends by returning or failing.
+        let (result, spent) = match self.over(&task) {
+            true => Self::late_slice(&mut task, slice),
+            false => (task.vm.execute_slice(slice), false),
+        };
         RUNNING_TASK.with(|was| was.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
         match result {
-            SliceResult::Yielded => {
-                task.ran = task.ran.saturating_add(slice);
-                match self.past_its_time(&task) {
-                    true => self.expire_task(task),
-                    false => self.enqueue(task),
-                }
-            }
+            SliceResult::Yielded | SliceResult::Blocked(_) if spent => self.expire_task(task),
+            SliceResult::Yielded => self.enqueue(task),
             SliceResult::Completed(value) => {
                 task.handle.complete(Ok(value), &self.parking);
                 self.end_task(task);
@@ -1196,13 +1207,6 @@ impl Inner {
                     Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {
                         group.parking.fetch_sub(1, Ordering::SeqCst);
                         task.vm.woken = Some(fired);
-                        // A wait that was over at once when the time
-                        // of the task was over is as an operation that
-                        // never waits: a task that only does such is
-                        // still ended when its slice has run out.
-                        if !self.over(&task) {
-                            task.ran = 0;
-                        }
                         return Some(task);
                     }
                     Some((sleeper, resumed)) => self.ready(sleeper, resumed),
@@ -1380,6 +1384,12 @@ fn more_than_one_core() -> bool {
 /// How many steps a task runs before it gives way, unless
 /// `SILT_TIME_SLICE` says otherwise.
 const STANDARD_SLICE: usize = 2000;
+
+/// How many steps the function of a `task.deadline` may run in all
+/// after its time is over, the functions of the deadlines inside it
+/// included: one standard slice, whatever the slice of the VM. It is
+/// what a function that was given a value in time has to return it.
+const LATE_STEPS: usize = STANDARD_SLICE;
 
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).
 pub(crate) fn time_slice() -> usize {
