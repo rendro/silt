@@ -231,7 +231,8 @@ impl Vm {
 
     /// Whether the task this is the VM of takes nothing new: it was
     /// cancelled, or its time is over (it is the function of a
-    /// `task.deadline` that has passed). The steps such a task still
+    /// `task.deadline` that has passed, and a slice of it has begun
+    /// since: `TaskHandle::set_over`). The steps such a task still
     /// has are for what it
     /// holds, which it may give (a send that is ready), not for new
     /// work. So every operation that would take something from outside
@@ -247,16 +248,21 @@ impl Vm {
     /// It is the one condition of that rule, for a cancel and for a
     /// deadline alike. Neither is ever taken back, so an operation
     /// that found it true is refused the wait it then begins: as
-    /// cancelled, or as ended by the task's deadline. (Only a task
-    /// that has a deadline reads the clock here.)
+    /// cancelled, or as ended by the task's deadline.
+    ///
+    /// It reads two flags and no clock: a loop of takes under a
+    /// deadline was 15% slower with a reading of the clock at each. So
+    /// the time is over, for this, from the first slice that begins
+    /// past it, which is the moment the count of a late task's steps
+    /// begins too. In the slice in which the time passes a take of what
+    /// is there may still complete, and is the task's like what a wait
+    /// that ended just before had given it; a take that has to wait is
+    /// refused by the wait, which reads the clock.
     pub(crate) fn takes_nothing_new(&self) -> bool {
         let set = |flag: &Arc<std::sync::atomic::AtomicBool>| {
             flag.load(std::sync::atomic::Ordering::SeqCst)
         };
-        self.cancelled.as_ref().is_some_and(set)
-            || self
-                .deadline
-                .is_some_and(|over| self.runtime.io.monotonic() >= over)
+        self.cancelled.as_ref().is_some_and(set) || self.over.as_ref().is_some_and(set)
     }
 
     /// The wait that ends a task which takes nothing new

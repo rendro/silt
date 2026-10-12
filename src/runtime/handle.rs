@@ -1004,6 +1004,11 @@ pub struct TaskHandle {
     /// Set when the task was ended by its deadline: that is its
     /// result then ([`TaskHandle::expire`]).
     expired: AtomicBool,
+    /// Set when the time of the task is over, as the scheduler finds
+    /// it at the start of a slice ([`TaskHandle::set_over`]): from
+    /// then on the task takes nothing new. The task's VM reads it at
+    /// every operation that takes, in place of the clock.
+    over: Arc<AtomicBool>,
     /// The steps run past the deadline, or after a cancel, counted by
     /// the scheduler: by this task, and by every task of a deadline
     /// inside it that has the same time (they share the count: of them
@@ -1026,6 +1031,7 @@ impl TaskHandle {
             owner,
             deadline: None,
             expired: AtomicBool::new(false),
+            over: Arc::default(),
             late: Arc::default(),
         }
     }
@@ -1061,6 +1067,23 @@ impl TaskHandle {
     /// When the task is over, if it has such a time.
     pub fn deadline(&self) -> Option<std::time::Duration> {
         self.deadline
+    }
+
+    /// The time of the task is over: a slice of it begins past its
+    /// deadline. It is never taken back.
+    pub fn set_over(&self) {
+        self.over.store(true, AtomicOrdering::SeqCst);
+    }
+
+    /// Whether [`TaskHandle::set_over`] was called.
+    pub fn is_over(&self) -> bool {
+        self.over.load(AtomicOrdering::SeqCst)
+    }
+
+    /// The flag that says so, for the task's VM
+    /// (`Vm::takes_nothing_new`).
+    pub fn over_flag(&self) -> Arc<AtomicBool> {
+        self.over.clone()
     }
 
     /// The task is ended by its deadline: that is its result, unless

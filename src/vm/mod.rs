@@ -135,6 +135,11 @@ pub struct Vm {
     /// (`TaskHandle::late`): the function of a `task.deadline` inside
     /// it that has the same time goes on with it.
     pub(crate) late: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    /// Set by the scheduler when a slice of the task begins past that
+    /// time (`TaskHandle::set_over`): the task takes nothing new from
+    /// then on ([`Vm::takes_nothing_new`]). `None` for a VM whose task
+    /// has no deadline.
+    pub(crate) over: Option<Arc<std::sync::atomic::AtomicBool>>,
 
     /// The callers that tail calls replaced, for an error's call stack
     /// ([`TailCalls`]).
@@ -269,6 +274,7 @@ impl Vm {
             cancelled: None,
             deadline: None,
             late: None,
+            over: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -610,6 +616,7 @@ impl Vm {
             cancelled: None,
             deadline: None,
             late: None,
+            over: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }

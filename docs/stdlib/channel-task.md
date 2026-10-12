@@ -535,7 +535,10 @@ neither is ended after a fixed amount of further work.
 - When the time is over the function takes nothing new: a receive begun
   then is `Err(Timeout)` whether or not a value is there, and the value
   stays in its channel; no I/O, no stream stage and no inner
-  `task.deadline` is started. It may still give what it holds: a send
+  `task.deadline` is started. (The function's time is over from the
+  first time slice that begins after it; in the slice in which it
+  passes, a receive of a value that is there may still complete.) It may
+  still give what it holds: a send
   that can be done at once is done. A `dur` of zero or less is a time
   that is over from the start: `task.deadline(time.ms(0), { -> 1 })` is
   `Ok(1)`, and a function that receives is `Err(Timeout)`.

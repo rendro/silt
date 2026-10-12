@@ -488,6 +488,7 @@ impl Scheduler {
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
         vm.late = handle.deadline().map(|_| handle.late());
+        vm.over = handle.deadline().map(|_| handle.over_flag());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -947,11 +948,24 @@ impl Inner {
         self.ended(&group);
     }
 
-    /// Whether the time of the task is over (`TaskHandle::deadline`).
+    /// Whether the time of the task is over (`TaskHandle::deadline`),
+    /// asked at the start of a slice. This is where the task learns
+    /// it: the handle is told (`TaskHandle::set_over`) before the
+    /// slice's first instruction, and from then on the task takes
+    /// nothing new (`Vm::takes_nothing_new` reads the handle's flag,
+    /// not the clock). Once the time is over the clock is not asked
+    /// again.
     fn over(&self, task: &Task) -> bool {
-        task.handle
-            .deadline()
-            .is_some_and(|deadline| self.parking.timer().now() >= deadline)
+        let handle = &task.handle;
+        if handle.is_over() {
+            return true;
+        }
+        let passed = |deadline| self.parking.timer().now() >= deadline;
+        let over = handle.deadline().is_some_and(passed);
+        if over {
+            handle.set_over();
+        }
+        over
     }
 
     /// One slice of a task whose time was over when the slice began,

@@ -642,7 +642,10 @@ what gives.
   a `channel.each`, the next element of a stream, `tcp.accept`, a
   `channel.select` of which no `Send` arm can be done at once (its `Recv`
   arms are not tried). So a receive begun when the time is over is a
-  timeout, every time, and the value stays in its channel. Nor does the
+  timeout, every time, and the value stays in its channel. (The
+  function's time is over from the first time slice that begins after
+  it; in the slice in which it passes, a receive of a value that is
+  there may still complete.) Nor does the
   function start anything that would take or wait in its place: an
   operation that waits for the outside (a file's contents, the network,
   a database, standard input) is not started, a stream function that
