@@ -559,6 +559,9 @@ fn main() {
 /// one of no time, three in each other, one around ready selects). The
 /// count of the rounds is the same at every time slice: a slice that
 /// ends in a wait which is over at once counts like one that ran out.
+/// (But for the loop of I/O operations: whether an operation has its
+/// result when the function comes to wait for it is the I/O thread's
+/// to say, so that loop is only bounded, by the same count.)
 ///
 /// And what a late function was ended in front of is still there: a
 /// `select` that was not to complete its arm any more took nothing
@@ -567,6 +570,7 @@ fn main() {
 fn the_work_past_a_deadline_is_bounded_whatever_the_function_does() {
     let source = r#"
 import channel
+import io
 import list
 import string
 import task
@@ -684,9 +688,12 @@ fn main() {
       }
     })
   })
+  let reads = late({ _ ->
+    let _ = io.read_file("/no/such/file")
+  })
   let counts = [
     recv_closed, send_room, recv_full, recv_timed_out, receive, try_receive, try_send, mixed,
-    inner_hour, inner_none, three, inner_selects, sent - send_room, taken - recv_full,
+    inner_hour, inner_none, three, inner_selects, sent - send_room, taken - recv_full, reads,
   ]
   counts |> list.map { n -> string.from(n) } |> string.join(" ")
 }
@@ -705,6 +712,8 @@ fn main() {
             .split(' ')
             .map(|n| n.parse().expect("a count"))
             .collect();
+        let (reads, counts) = counts.split_last().expect("the count of the reads");
+        assert!((0..10_000).contains(reads), "at slice {slice:?}: {text}");
         let (rounds, kept) = counts.split_at(12);
         // Ended, after some rounds and not many. (Three deadlines in
         // each other and a deadline around fifty selects are large
@@ -724,9 +733,10 @@ fn main() {
             "at slice {slice:?}: {text}"
         );
         // The count does not depend on the slice.
+        let counts = format!("{counts:?}");
         match &first {
-            None => first = Some(text.to_string()),
-            Some(first) => assert_eq!(&text.to_string(), first, "at slice {slice:?}"),
+            None => first = Some(counts),
+            Some(first) => assert_eq!(&counts, first, "at slice {slice:?}"),
         }
     }
 }

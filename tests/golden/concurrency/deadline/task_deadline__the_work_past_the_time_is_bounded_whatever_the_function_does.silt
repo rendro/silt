@@ -5,11 +5,12 @@
 -- only does operations that are ready at once (a `select` whose arm
 -- can be completed, a `receive` of what is there, `try_send`,
 -- `try_receive`), or calls `task.deadline` again and again, or reads
--- a stream that has its elements, is ended like one that only
--- computes: none of the loops of 300,000 rounds reaches its last
+-- a stream that has its elements or a file, is ended like one that
+-- only computes: none of the loops of 300,000 rounds reaches its last
 -- round. And a `select` the function is ended in front of takes and
 -- sends nothing: what was ready for it is still there.
 import channel
+import io
 import stream
 import task
 import time
@@ -146,6 +147,9 @@ fn cases(dur, few) {
   })
   let _ = fate("a sink of a stream the function reads", dur, few, { _ ->
     let _ = stream.from_list([1, 2, 3]) |> stream.count
+  })
+  let _ = fate("a read of a file", dur, few, { _ ->
+    let _ = io.read_file("/no/such/file")
   })
   let more = filled(12000)
   let _ = fate("channel.each over a channel that is full", dur, few, { _ ->

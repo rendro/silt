@@ -589,8 +589,11 @@ deadline: it ends when the deadline has passed.
   that has passed. A duration of zero or less is a time that is over from
   the start, and the rule is the same: `task.deadline(time.ms(0), { -> 1 })`
   is `Ok(1)`, and a function that receives from an empty channel is ended
-  there. This holds for the work past the time that the next item bounds,
-  and not beyond it.
+  there. At a time that is over an operation is done only if it is ready
+  at that instant; whether something the function itself has just started
+  is ready then (the join of a task it spawned, a timeout of no time) is
+  not determined. This holds for the work past the time that the next
+  item bounds, and not beyond it.
 - **The work past the time is bounded in all.** A function whose time is
   over runs on for at most 2,000 steps: about 2,000 instructions, a few
   hundred rounds of a small loop. That is what a function which got its
