@@ -289,6 +289,15 @@ fn section_signature(module: &Module, row: &Row) -> String {
     }
 }
 
+/// The line that the signature block of `module.name` holds
+/// (`list.map(xs: List(a), f: Fn(a) -> b) -> List(b)`), if the module
+/// has such a row.
+pub fn signature_block(module: &str, name: &str) -> Option<String> {
+    let module = registry().module(module)?;
+    let row = module.rows.iter().find(|row| row.name == name)?;
+    Some(section_signature(module, row))
+}
+
 /// The module whose part of a page a `# ` heading opens (`# postgres
 /// (opt-in feature)`), if it opens one.
 fn heading_module(line: &str) -> Option<&'static Module> {
@@ -380,8 +389,12 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                 let [key] = keys.as_slice() else {
                     return None;
                 };
-                let (m, f) = key.split_once('.')?;
-                let m = registry().module(m)?;
+                // `## \`list.map\``, or the bare `## \`map\`` in the
+                // part of the page that is the module's.
+                let (m, f) = match key.split_once('.') {
+                    Some((m, f)) => (registry().module(m)?, f),
+                    None => (module?, key.as_str()),
+                };
                 let row = m.rows.iter().find(|row| row.name == f)?;
                 Some((m, row))
             });

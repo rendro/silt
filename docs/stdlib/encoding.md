@@ -127,7 +127,7 @@ keys, which are legal in form bodies.
 ## `form_decode`
 
 ```
-encoding.form_decode(body: String) -> Result(List((String, String)), String)
+encoding.form_decode(body: String) -> Result(List((String, String)), EncodingError)
 ```
 
 Inverse of `form_encode`. Splits the body on `&`, splits each segment
