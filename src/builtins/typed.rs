@@ -64,6 +64,18 @@ impl<'a> Arg<'a> for f64 {
     }
 }
 
+/// A Float as it is, for a body that names the number in an error:
+/// the text of a [`Float`](crate::value::Float) is the one a program
+/// is shown.
+impl<'a> Arg<'a> for crate::value::Float {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
 impl<'a> Arg<'a> for bool {
     fn take(value: &'a Value) -> Option<Self> {
         match value {

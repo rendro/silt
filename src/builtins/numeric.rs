@@ -225,13 +225,13 @@ pub(crate) mod float {
             a.max(b)
         }
 
-        fn clamp(x: f64, lo: f64, hi: f64) -> Result<f64, VmError> {
+        fn clamp(x: f64, lo: Float, hi: Float) -> Result<f64, VmError> {
             if lo > hi {
                 return Err(VmError::new(format!(
                     "float.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
                 )));
             }
-            Ok(x.clamp(lo, hi))
+            Ok(x.clamp(lo.get(), hi.get()))
         }
 
         // Rust's `{:.prec$}` formatter backs precision with a u16 and
@@ -264,21 +264,21 @@ pub(crate) mod math {
     use super::*;
 
     builtins! {
-        fn sqrt(f: f64) -> Result<f64, VmError> {
-            if f < 0.0 {
+        fn sqrt(f: Float) -> Result<f64, VmError> {
+            if f.get() < 0.0 {
                 return Err(VmError::new(format!("math.sqrt of a negative number: {f}")));
             }
-            Ok(f.sqrt())
+            Ok(f.get().sqrt())
         }
 
-        fn pow(base: f64, exp: f64) -> Result<Value, VmError> {
-            let result = base.powf(exp);
+        fn pow(base: Float, exp: Float) -> Result<Value, VmError> {
+            let result = base.get().powf(exp.get());
             if result.is_nan() {
                 return Err(VmError::new(format!(
                     "math.pow of a negative number to a fractional power: {base} ^ {exp}"
                 )));
             }
-            if base == 0.0 && exp < 0.0 {
+            if base.get() == 0.0 && exp.get() < 0.0 {
                 return Err(VmError::new(format!(
                     "math.pow of zero to a negative power: {base} ^ {exp}"
                 )));
@@ -286,22 +286,22 @@ pub(crate) mod math {
             checked_float(result, || format!("math.pow overflow: {base} ^ {exp}"))
         }
 
-        fn log(f: f64) -> Result<f64, VmError> {
-            if f <= 0.0 {
+        fn log(f: Float) -> Result<f64, VmError> {
+            if f.get() <= 0.0 {
                 return Err(VmError::new(format!(
                     "math.log of a number that is not positive: {f}"
                 )));
             }
-            Ok(f.ln())
+            Ok(f.get().ln())
         }
 
-        fn log10(f: f64) -> Result<f64, VmError> {
-            if f <= 0.0 {
+        fn log10(f: Float) -> Result<f64, VmError> {
+            if f.get() <= 0.0 {
                 return Err(VmError::new(format!(
                     "math.log10 of a number that is not positive: {f}"
                 )));
             }
-            Ok(f.log10())
+            Ok(f.get().log10())
         }
 
         fn sin(f: f64) -> f64 {
@@ -312,26 +312,26 @@ pub(crate) mod math {
             f.cos()
         }
 
-        fn tan(f: f64) -> Result<Value, VmError> {
-            checked_float(f.tan(), || format!("math.tan overflow: {f}"))
+        fn tan(f: Float) -> Result<Value, VmError> {
+            checked_float(f.get().tan(), || format!("math.tan overflow: {f}"))
         }
 
-        fn asin(f: f64) -> Result<f64, VmError> {
-            if !(-1.0..=1.0).contains(&f) {
+        fn asin(f: Float) -> Result<f64, VmError> {
+            if !(-1.0..=1.0).contains(&f.get()) {
                 return Err(VmError::new(format!(
                     "math.asin of a number outside -1..1: {f}"
                 )));
             }
-            Ok(f.asin())
+            Ok(f.get().asin())
         }
 
-        fn acos(f: f64) -> Result<f64, VmError> {
-            if !(-1.0..=1.0).contains(&f) {
+        fn acos(f: Float) -> Result<f64, VmError> {
+            if !(-1.0..=1.0).contains(&f.get()) {
                 return Err(VmError::new(format!(
                     "math.acos of a number outside -1..1: {f}"
                 )));
             }
-            Ok(f.acos())
+            Ok(f.get().acos())
         }
 
         fn atan(f: f64) -> f64 {
@@ -342,8 +342,8 @@ pub(crate) mod math {
             y.atan2(x)
         }
 
-        fn exp(f: f64) -> Result<Value, VmError> {
-            checked_float(f.exp(), || format!("math.exp overflow: {f}"))
+        fn exp(f: Float) -> Result<Value, VmError> {
+            checked_float(f.get().exp(), || format!("math.exp overflow: {f}"))
         }
 
         fn random(vm) -> f64 {

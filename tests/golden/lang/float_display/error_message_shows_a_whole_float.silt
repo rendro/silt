@@ -1,0 +1,7 @@
+-- exit: 1
+import math
+
+-- A runtime error that names a Float shows it as `println` does.
+fn main() {
+  println(math.sqrt(-4.0))
+}

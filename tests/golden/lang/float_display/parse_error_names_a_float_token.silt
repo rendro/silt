@@ -1,0 +1,6 @@
+-- exit: 1
+-- A parse error names a Float token as a Float is shown.
+fn main() {
+  let xs = [1.0 2.0]
+  xs
+}

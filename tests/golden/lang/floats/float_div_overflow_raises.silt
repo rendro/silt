@@ -1,5 +1,6 @@
 -- exit: 1
--- stderr-contains: float overflow
+-- stderr-contains: float overflow: 17976931348623157
+-- stderr-contains: 000.0 / 0.5
 import float
 fn main() {
   println(float.max_value / 0.5)

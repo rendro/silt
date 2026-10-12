@@ -53,7 +53,7 @@ fn int_overflow(op: Op, a: i64, b: i64) -> VmError {
 
 /// The error of `a op b` that is no Float: a NaN or an infinity.
 #[cold]
-fn float_overflow(op: Op, a: f64, b: f64) -> VmError {
+fn float_overflow(op: Op, a: Float, b: Float) -> VmError {
     VmError::new(format!("float overflow: {a} {} {b}", symbol(op)))
 }
 
@@ -61,23 +61,23 @@ fn float_overflow(op: Op, a: f64, b: f64) -> VmError {
 fn other_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Value, VmError> {
     match (a, b) {
         (Value::Float(a), Value::Float(b)) => {
-            let (a, b) = (a.get(), b.get());
+            let (x, y) = (a.get(), b.get());
             let result = match op {
-                Op::Add => a + b,
-                Op::Sub => a - b,
-                Op::Mul => a * b,
-                Op::Div if b == 0.0 => {
+                Op::Add => x + y,
+                Op::Sub => x - y,
+                Op::Mul => x * y,
+                Op::Div if y == 0.0 => {
                     return Err(VmError::new("float division by zero".to_string()));
                 }
-                Op::Div => a / b,
-                Op::Mod if b == 0.0 => return Err(VmError::new("modulo by zero".to_string())),
-                Op::Mod => a % b,
+                Op::Div => x / y,
+                Op::Mod if y == 0.0 => return Err(VmError::new("modulo by zero".to_string())),
+                Op::Mod => x % y,
                 _ => unreachable!(),
             };
             // (The text of the error is made where there is one.)
             match Float::new(result) {
                 Some(float) => Ok(Value::Float(float)),
-                None => Err(float_overflow(op, a, b)),
+                None => Err(float_overflow(op, *a, *b)),
             }
         }
         _ => {
