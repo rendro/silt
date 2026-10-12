@@ -612,8 +612,14 @@ deadline: it ends when the deadline has passed.
   the inner time passes first, the outer function goes on with the inner
   `Err(Timeout)` as a value; when the outer time does, both functions are
   over and the outer `task.deadline` gives `Err(Timeout)`.
-- Tasks that the function spawned are not the function: they go on. So
-  do the stages of a stream it built, until nobody reads them.
+- **A deadline ends its function and nothing else.** A task that the
+  function started with `task.spawn` goes on when the function is ended,
+  and so does a task the function was joining: the join is ended, the
+  task is not. Who wants them ended keeps their handles and cancels them
+  with `task.cancel`. A task that goes on and fails later, with nobody
+  left to join it, is a failure that nobody joined (see
+  [Failures that nobody joins](#failures-that-nobody-joins)). The stages
+  of a stream the function built go on until nobody reads them.
 - The value of `f` is inside the `Ok`, so a function that returns a
   `Result` gives two layers: `Ok(Err(io.NotFound(path)))` is a read that
   failed in time, `Err(task.Timeout)` one that did not finish.

@@ -490,7 +490,9 @@ when its time slice has run out.
 - Deadlines nest: an inner function has the outer time too, if that is
   earlier. When the outer time passes first, the outer `task.deadline`
   gives `Err(Timeout)`.
-- Tasks that `f` spawned go on.
+- A deadline ends its function and nothing else: a task that `f` spawned,
+  and a task that `f` was joining, go on. Cancel them with `task.cancel`
+  if they are to end too.
 
 See [Deadlines](../concurrency.md#deadlines-taskdeadlinedur-fn) for the
 whole rule.
