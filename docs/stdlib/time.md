@@ -240,7 +240,9 @@ fn main() -> Result(Unit, time.TimeError) {
 time.format(datetime: DateTime, pattern: String) -> Result(String, TimeError)
 ```
 
-Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %A %a %B %b %%`.
+Formats a `DateTime` using a strftime pattern. The pattern may hold every
+specifier of a date or of a time of day (`%Y %m %d %H %M %S %f %A %a %B %b`
+and `%%` among them): whatever a `DateTime` has a value for.
 A pattern is text like any other: one that is no pattern of a `DateTime`
 (an unknown specifier such as `%Q`, or a time zone specifier such as `%z`: a
 `DateTime` has no time zone) is `Err(InvalidFormat(why))`, not a failure of

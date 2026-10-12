@@ -344,7 +344,9 @@ fn moment() -> Option<NaiveDateTime> {
 /// Whether `pattern` is a pattern of the type `of`: every specifier in
 /// it is one chrono knows, and one a value of the type has. `Err` with
 /// the reason: an unknown specifier, one of a time of day for a `Date`,
-/// one of a time zone (no value of silt has one).
+/// one of a time zone (no value of silt has one). An unknown specifier
+/// is said first, wherever in the pattern it stands: such a pattern is
+/// one of no type.
 ///
 /// This is the one answer for both directions: a format and its parse
 /// take the same specifiers. It is a list of what a type TAKES, and the
@@ -364,10 +366,10 @@ fn fits(pattern: &str, of: Of) -> Result<(), String> {
     fn writes(shown: impl std::fmt::Display) -> bool {
         write!(String::new(), "{shown}").is_ok()
     }
+    if StrftimeItems::new(pattern).any(|item| matches!(item, Item::Error)) {
+        return Err(invalid());
+    }
     for item in StrftimeItems::new(pattern) {
-        if matches!(item, Item::Error) {
-            return Err(invalid());
-        }
         let one = || std::iter::once(&item);
         // What a date writes, every value has.
         if writes(moment.date().format_with_items(one())) {
