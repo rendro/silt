@@ -588,7 +588,6 @@ impl Vm {
     }
 
     /// The value of the global slot `slot`, if it is set.
-    #[inline(always)]
     pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
         self.view.global(slot)
     }

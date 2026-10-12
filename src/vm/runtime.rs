@@ -831,7 +831,6 @@ impl Default for View {
 
 impl View {
     /// The value of the global slot `slot`, if it is set.
-    #[inline(always)]
     pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
         self.slots.get(usize::from(slot))?.get()
     }
