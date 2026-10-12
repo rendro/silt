@@ -1912,9 +1912,9 @@ impl Printer<'_> {
     }
 
     /// `{ a, b -> body }`. The body is one expression behind the arrow,
-    /// or statements on lines of their own. A block written there,
-    /// `{ a -> { ... } }`, is the body in braces of its own: they are
-    /// not written, so a body has one spelling.
+    /// or statements on lines of their own, or nothing. A block written
+    /// there, `{ a -> { ... } }`, is the body in braces of its own:
+    /// they are not written, so a body has one spelling.
     fn lambda(&mut self, expr: &Expr, params: &[Param], body: &Expr) -> Doc {
         // The parameters may break behind their commas; they stand
         // under the first one then.
@@ -1946,10 +1946,6 @@ impl Printer<'_> {
             if unwritten.is_empty() && body.span.start == expr.span.start {
                 break Some(stmts);
             }
-            // An empty block is the body `{}`.
-            if stmts.is_empty() {
-                break None;
-            }
             // Parentheses with a comment directly inside them stay, and
             // what they hold stays as it is written.
             let wrappers = self.cur.wrappers(body.span.end);
@@ -1980,6 +1976,10 @@ impl Printer<'_> {
         };
         match statements {
             Some(stmts) => {
+                // An empty block is an empty body, `{ a -> }`.
+                if stmts.is_empty() {
+                    head.push(self.pass_closers(&unwritten));
+                }
                 let last = stmts.len().saturating_sub(1);
                 let mut stmts = stmts.iter().enumerate();
                 let body = self.lines(|p| {

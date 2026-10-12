@@ -40,7 +40,7 @@ fn g(
 
 fn h() {
   let f = { x -> x }
-  let g = { x -> {} }
+  let g = { x -> }
   let h = { x -> }
   let i = { x ->
     let y = x
