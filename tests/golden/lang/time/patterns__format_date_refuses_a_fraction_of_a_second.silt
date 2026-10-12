@@ -1,0 +1,17 @@
+import time
+
+-- A fraction of a second is of a time of day, however it is spelled:
+-- no pattern with one is a pattern of a date. For a `DateTime` each
+-- of them is written.
+fn main() -> Result((), time.TimeError) {
+  let day = time.date(2001, 2, 3)?
+  println(time.format_date(day, "%Y-%m-%d %3f"))
+  println(time.format_date(day, "%6f"))
+  println(time.format_date(day, "%9f"))
+  println(time.format_date(day, "%.3f"))
+  println(time.format_date(day, "%f"))
+  println(time.parse_date("2001-02-03 000", "%Y-%m-%d %3f"))
+  let moment = time.datetime(day, time.time(16, 5, 6)?)
+  println(time.format(moment, "%H:%M:%S %3f|%6f|%9f|%.3f"))
+  Ok(())
+}

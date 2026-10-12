@@ -1,1 +1,1 @@
-time format error: timezone specifier in '%z' is not valid for a naive DateTime; silt DateTimes are naive (no TZ)
+time format error: a specifier of a time zone in '%z' is not valid for a DateTime: a DateTime has no time zone
