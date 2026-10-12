@@ -29,6 +29,12 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 /// greeting, and its errors. The session must end by itself, with
 /// success.
 fn repl(input: &str) -> (String, String) {
+    repl_beside(&[], input)
+}
+
+/// [`repl`] in a directory that has the module files `modules`, each a
+/// name and its text.
+fn repl_beside(modules: &[(&str, &str)], input: &str) -> (String, String) {
     static RUNS: AtomicUsize = AtomicUsize::new(0);
     let dir: PathBuf = std::env::temp_dir().join(format!(
         "silt_repl_tasks_{}_{}",
@@ -40,6 +46,9 @@ fn repl(input: &str) -> (String, String) {
     // waiting to read.)
     let file = |name: &str| dir.join(name);
     std::fs::write(file("stdin"), input).expect("the session is written");
+    for (name, text) in modules {
+        std::fs::write(file(name), text).expect("a module is written");
+    }
     let open = |name: &str| std::fs::File::create(file(name)).expect("a file of the session");
     let mut silt = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("repl")
@@ -392,4 +401,219 @@ channel.send(jobs, { -> later() + 1 })
 ",
     );
     assert_eq!((output.as_str(), errors.as_str()), ("2\n", ""));
+}
+
+/// A module whose import fails when it runs, after it has set a `let`
+/// and its functions, until `X2_READY` is set. What it defines reads
+/// `X2_STAMP` when the module runs.
+const LATE: &str = "import env
+pub let stamp = match env.get(\"X2_STAMP\") {
+  Some(s) -> s
+  None -> \"none\"
+}
+pub type Tag { t: Int }
+trait Display for Tag { fn display(self) -> String { \"tag-{stamp}\" } }
+pub fn tag() -> Tag { Tag { t: 1 } }
+pub fn stamp_now() -> String { stamp }
+pub let ready = match env.get(\"X2_READY\") {
+  Some(s) -> s
+  None -> panic(\"not ready\")
+}
+";
+
+/// A session that imports [`LATE`] twice: the first import fails when
+/// it runs, the second runs to its end and reads another stamp. A task
+/// that was started before, with `work` (which takes `left` jobs), is
+/// asked what the module defines, as the session's own code is.
+fn import_twice(work: &str) -> String {
+    format!(
+        "import task
+import channel
+import env
+let jobs = channel.new(8)
+let outs = channel.new(8)
+{work}
+let worker = task.spawn {{ -> work(2) }}
+env.set(\"X2_STAMP\", \"one\")
+import late
+fn poke() -> String {{ \"poke\" }}
+channel.send(jobs, {{ -> poke() }})
+channel.receive(outs)
+env.set(\"X2_STAMP\", \"two\")
+env.set(\"X2_READY\", \"yes\")
+import late
+\"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\"
+channel.send(jobs, {{ -> \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\" }})
+channel.receive(outs)
+task.join(worker)
+task.join(task.spawn {{ -> \"{{late.stamp}} {{late.tag()}}\" }})
+"
+    )
+}
+
+const IMPORTED_TWICE: &str = "Message(poke)
+two two tag-two [tag-two]
+Message(two two tag-two [tag-two])
+two tag-two
+";
+
+/// An entry that fails when it runs has defined things: the `let`s and
+/// functions of a module it imported, up to where the module failed.
+/// When the module is imported again, what it defines is defined anew,
+/// in global slots of its own, and that is what a task reads: the
+/// second import's values, as the session's own code does, by a global
+/// (`late.stamp`), through a function of the module, and by the
+/// module's `Display` impl. It read the FIRST import's `stamp`, with no
+/// error: the second import set the slots of the first again, the
+/// session's VM went on with slots of its own, and the task kept the
+/// old ones. (Before a task saw later entries at all, it failed.)
+///
+/// The task has taken the session's newest definitions in between (it
+/// is sent a later function after the failed import), and a task that
+/// is started after both imports reads the same.
+#[test]
+fn a_task_reads_what_an_import_that_failed_once_defines() {
+    let work = "fn work(left) {
+  match left {
+    0 -> ()
+    _ -> match channel.receive(jobs) {
+      channel.Message(job) -> {
+        channel.send(outs, job())
+        work(left - 1)
+      }
+      _ -> ()
+    }
+  }
+}";
+    let (output, errors) = repl_beside(&[("late.silt", LATE)], &import_twice(work));
+    assert_eq!(output, IMPORTED_TWICE, "{errors}");
+    let errors: Vec<&str> = (errors.lines())
+        .filter(|line| line.starts_with("error"))
+        .collect();
+    assert_eq!(errors, ["error[runtime]: panic: not ready"]);
+}
+
+/// The same with a task that never waits: it asks for its job again
+/// and again while the two imports are taken in and run. A hundred
+/// sessions: what the task reads does not depend on when it looks.
+#[test]
+fn a_task_that_never_waits_reads_what_an_import_that_failed_once_defines() {
+    let work = "fn work(left) {
+  match left {
+    0 -> ()
+    _ -> match channel.try_receive(jobs) {
+      channel.Message(job) -> {
+        channel.send(outs, job())
+        work(left - 1)
+      }
+      _ -> work(left)
+    }
+  }
+}";
+    let session = import_twice(work);
+    for round in 0..100 {
+        let (output, errors) = repl_beside(&[("late.silt", LATE)], &session);
+        assert_eq!(output, IMPORTED_TWICE, "round {round}\n{errors}");
+    }
+}
+
+/// What an entry that failed when it ran has handed out keeps what it
+/// was made with, and what is defined again is new, for a task as for
+/// the session: a closure the failed entry sent to a task reads the
+/// entry's own `let` and calls the entry's own impl (old code, old
+/// bindings, as for a definition that is made again); the impl that a
+/// later entry writes in its place is the one every later call finds,
+/// also a call in a function older than both, made by the task. And no
+/// global slot is ever set a second time in a session, whatever its
+/// entries do: that is what lets a task keep what it has found.
+///
+/// (An entry of several declarations, which `Repl::eval` takes and a
+/// terminal does not: there an impl is an entry of its own, and cannot
+/// fail when it runs.)
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_session_sets_no_slot_twice() {
+    use silt::repl::Repl;
+    use silt::session::ProjectSetup;
+
+    let dir = std::env::temp_dir().join(format!("silt_repl_slots_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory for the session");
+    let late = LATE.replace("X2_", "X2_SLOTS_");
+    std::fs::write(dir.join("late.silt"), late).expect("a module is written");
+    let mut repl = Repl::new(ProjectSetup::Discover(dir.clone()));
+    let before = silt::vm::slots_set_again();
+    let mut run = |entry: &str| -> Result<String, String> {
+        let evaluation = repl.eval(entry);
+        let errors: Vec<String> = (evaluation.diagnostics.iter())
+            .filter(|d| d.is_error())
+            .map(|d| d.message.clone())
+            .collect();
+        match (evaluation.committed, evaluation.value) {
+            (true, Some(value)) => Ok(repl.show(&value)),
+            _ => Err(errors.join("; ")),
+        }
+    };
+    let ok = |shown: &str| Ok(shown.to_string());
+    let failed = |error: &str| Err(error.to_string());
+    for entry in [
+        "import task\nimport channel\nimport env",
+        "let jobs = channel.new(8)\nlet outs = channel.new(8)",
+        "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { v.n() }",
+        "fn work() {\n  match channel.receive(jobs) {\n    channel.Message(job) -> {\n      \
+         channel.send(outs, job())\n      work()\n    }\n    _ -> ()\n  }\n}",
+        "let worker = task.spawn { -> work() }",
+    ] {
+        assert_eq!(run(entry), ok("()"), "{entry}");
+    }
+    // An entry that writes an impl, hands a closure to the task and
+    // then fails.
+    assert_eq!(
+        run("let stamp = \"one\"\n\
+             trait N for Int { fn n(self) -> String { \"first {stamp}\" } }\n\
+             let sent = channel.send(jobs, { -> \"{stamp} {5.n()} {call(5)}\" })\n\
+             let got = channel.receive(outs)\n\
+             let boom = 1 / 0"),
+        failed("division by zero")
+    );
+    // The impl is gone with the entry, for the session and for the task.
+    assert!(run("5.n()").is_err());
+    // It is written again, and differently.
+    assert_eq!(
+        run("trait N for Int { fn n(self) -> String { \"second\" } }"),
+        ok("()")
+    );
+    assert_eq!(run("\"{5.n()} {call(5)}\""), ok("second second"));
+    assert_eq!(
+        run("channel.send(jobs, { -> \"{5.n()} {call(5)}\" })"),
+        ok("()")
+    );
+    assert_eq!(run("channel.receive(outs)"), ok("Message(second second)"));
+    // A module whose import fails once, and a redefinition of each kind.
+    assert_eq!(run("env.set(\"X2_SLOTS_STAMP\", \"one\")"), ok("()"));
+    assert_eq!(run("import late"), failed("panic: not ready"));
+    assert_eq!(
+        run("env.set(\"X2_SLOTS_STAMP\", \"two\")\nenv.set(\"X2_SLOTS_READY\", \"y\")"),
+        ok("()")
+    );
+    assert_eq!(run("import late"), ok("()"));
+    assert_eq!(
+        run("channel.send(jobs, { -> \"{late.stamp} {late.tag()}\" })"),
+        ok("()")
+    );
+    assert_eq!(run("channel.receive(outs)"), ok("Message(two tag-two)"));
+    for entry in [
+        "let stamp = \"again\"",
+        "fn call(v: a) -> String where a: N { \"again {v.n()}\" }",
+        "type Q { q: Int }",
+        "trait N for Q { fn n(self) -> String { \"q\" } }",
+        "type Q { r: Int }",
+        "trait N for Q { fn n(self) -> String { \"r\" } }",
+        "import late",
+    ] {
+        assert_eq!(run(entry), ok("()"), "{entry}");
+    }
+    assert_eq!(run("call(Q { r: 1 })"), ok("again r"));
+    assert_eq!(silt::vm::slots_set_again(), before);
+    drop(repl);
+    let _ = std::fs::remove_dir_all(&dir);
 }

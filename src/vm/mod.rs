@@ -24,6 +24,25 @@ pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use crate::runtime::handle::{WriteMoment, WriteWatching, watch_writes};
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static SET_AGAIN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only: how often a VM of this thread has set a global slot that
+/// had a value (`Vm::set_global`): a program run again on one VM does
+/// it, a REPL session never.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn slots_set_again() -> u64 {
+    SET_AGAIN.with(std::cell::Cell::get)
+}
+
+/// Note that a slot that had a value was set ([`slots_set_again`]).
+fn count_set_again() {
+    #[cfg(any(test, feature = "test-hooks"))]
+    SET_AGAIN.with(|count| count.set(count.get() + 1));
+}
+
 /// Test-only: how many threads the I/O pool of this VM has: those
 /// that run an operation somebody waits for, and those that wait for
 /// work.
@@ -89,16 +108,18 @@ pub struct Vm {
     /// time of the call ([`Vm::with_args`]). Between calls it is empty
     /// and kept for the next one; a VM that waits gives it up.
     builtin_args: Vec<Value>,
-    /// The values of the program's global slots, each unset until its
-    /// definition's code has run. The VMs of the program's tasks have
-    /// the same slots, not a copy of them: a task starts with nothing
+    /// The values of the program's global slots and what each slot is,
+    /// as this VM has them. The VMs of the program's tasks have the same
+    /// slots and tables, not a copy of them: a task starts with nothing
     /// to copy, however many definitions the program has.
-    pub(crate) globals: Arc<[OnceLock<Value>]>,
-    /// What each global slot is, and the slot of each impl method.
-    pub(crate) global_slots: Arc<Globals>,
-    /// Which of the views the program's VM has published this VM's
-    /// slots and tables are ([`runtime::Newest::count`]).
-    view: u64,
+    pub(crate) view: runtime::View,
+    /// Which of the views the program's VM has published `view` is
+    /// ([`runtime::Newest::count`]).
+    view_count: u64,
+    /// The table the VMs of this VM's tasks look their methods up in:
+    /// for the VM of a task its own; for the VM that runs a REPL entry
+    /// what stands of the program whatever becomes of the entry.
+    settled: Arc<Globals>,
 
     // ── Concurrency state ────────────────────────────────────────
     next_channel_id: Arc<AtomicU64>,
@@ -275,9 +296,9 @@ impl Vm {
             native_frames: 0,
             stack: Vec::new(),
             builtin_args: Vec::new(),
-            globals: Arc::from([]),
-            global_slots: Arc::new(Globals::default()),
-            view: 0,
+            view: Default::default(),
+            view_count: 0,
+            settled: Default::default(),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
             woken: None,
@@ -466,17 +487,19 @@ impl Vm {
     /// the entries before it too, whose values stay.
     pub(crate) fn load(&mut self, program: &crate::session::Program) {
         self.runtime.types.lock().extend(&program.types);
-        self.global_slots = program.globals.clone();
+        self.view.table = program.globals.clone();
+        self.view.entry = program.globals.clone();
+        self.settled = program.settled.clone();
         // More slots than the VM has room for: twice the room, with
         // the values it has, so that a session's entries copy each
         // value a bounded number of times however many they are. (A
         // program that is run once gets the slots it has.)
-        let slots = self.global_slots.len();
-        if slots > self.globals.len() {
-            let room = slots.max(2 * self.globals.len());
-            crate::layers::count_copied(self.globals.len());
+        let slots = program.globals.len();
+        if slots > self.view.slots.len() {
+            let room = slots.max(2 * self.view.slots.len());
+            crate::layers::count_copied(self.view.slots.len());
             let unset = std::iter::repeat_with(OnceLock::new);
-            self.globals = (self.globals.iter().cloned())
+            self.view.slots = (self.view.slots.iter().cloned())
                 .chain(unset)
                 .take(room)
                 .collect();
@@ -488,50 +511,64 @@ impl Vm {
     /// Make this VM's slots and tables the newest of the program, for
     /// the VMs of its tasks: `newest` is the runtime's view.
     fn publish(&mut self, newest: &mut runtime::View) {
-        *newest = runtime::View {
-            slots: self.globals.clone(),
-            globals: self.global_slots.clone(),
-        };
-        self.view = self.runtime.newest.count.fetch_add(1, Ordering::Relaxed) + 1;
+        *newest = self.view_of_a_task();
+        self.view_count = self.runtime.newest.count.fetch_add(1, Ordering::Relaxed) + 1;
+    }
+
+    /// What the VM of a task of this VM has of the program.
+    fn view_of_a_task(&self) -> runtime::View {
+        runtime::View {
+            slots: self.view.slots.clone(),
+            table: self.settled.clone(),
+            entry: self.view.entry.clone(),
+        }
     }
 
     /// Whether the program has slots or tables that this VM does not
     /// have yet: if so the VM has them now, and the lookup that failed
     /// is to be made again. Called where a lookup has failed, and
-    /// nowhere else: a global slot that is not there or not set, a
-    /// method that no impl of the VM's table has for the receiver's
-    /// type, a record or variant that no `Display` impl of the table
-    /// is for.
+    /// nowhere else: a global slot that is not there or not set
+    /// ([`runtime::View::global_of_newest`]), a method that no impl of
+    /// the VM's table has for the receiver's type, a record or variant
+    /// that no `Display` impl of the table is for.
     ///
     /// The VM of a task started in an earlier REPL entry comes here
     /// when it runs code or meets a value of a later entry (a closure
     /// it was sent through a channel): it then sees what the session's
-    /// own code sees. Looking only after a failure misses nothing,
-    /// because a session only ever ADDS to its slots and tables: an
-    /// entry's definitions get new slots, a slot is set once, and a
-    /// second impl of a trait for a type is refused when it is checked
-    /// (`duplicate implementation of trait`, see the REPL test
-    /// `a_second_impl_in_a_later_entry_is_refused`). So whatever a VM
-    /// finds in its own slots and tables is what the newest have
-    /// there too, and what it does not find it looks for here.
+    /// own code sees.
+    ///
+    /// Looking only after a failure misses nothing, because what a VM
+    /// has found once never changes: a session only ever ADDS to the
+    /// slots and to the table the VMs of its tasks keep.
+    /// - A slot is set once. A definition that is made again gets a
+    ///   slot of its own: an entry's definitions are new ones; and what
+    ///   an entry that FAILED when it ran had defined (the entry's own
+    ///   impls, a module it imported) is defined in new slots when it
+    ///   is entered again, because the session takes the failed entry's
+    ///   definitions back (`Globals::without_definitions_since`). The
+    ///   failed entry's slots keep their values for the code of that
+    ///   entry that is still about (a closure it sent away), and no
+    ///   later code names them.
+    /// - The table a task's VM keeps ([`runtime::View::table`]) holds
+    ///   what entries that ran to their end defined, never what the
+    ///   entry being run defines: that it finds in
+    ///   [`runtime::View::entry`], which it asks only after this
+    ///   function, each time. So an entry that fails leaves nothing in
+    ///   a table that a VM keeps.
+    /// - A second impl of a trait for a type is refused when it is
+    ///   checked (`duplicate implementation of trait`), in a later
+    ///   entry as in one file.
+    ///
+    /// The REPL tests `a_second_impl_in_a_later_entry_is_refused` and
+    /// `a_task_reads_what_an_import_that_failed_once_defines` hold the
+    /// last two, `a_session_sets_no_slot_twice` the first.
     ///
     /// What a task learns of a later entry it learns from a value the
     /// session's code handed it after the entry's program was taken in
     /// (`load`), and the hand-over (a channel's lock, a join) orders
     /// the two: the count read here is then the new one.
     pub(crate) fn look_again(&mut self) -> bool {
-        self.runtime.newest.count.load(Ordering::Relaxed) != self.view && self.take_newest()
-    }
-
-    /// Make the program's newest slots and tables this VM's.
-    #[cold]
-    fn take_newest(&mut self) -> bool {
-        let newest = &self.runtime.newest;
-        let view = newest.view.lock();
-        self.globals = view.slots.clone();
-        self.global_slots = view.globals.clone();
-        self.view = newest.count.load(Ordering::Relaxed);
-        true
+        (self.view).renew(&mut self.view_count, &self.runtime.newest)
     }
 
     /// The description of the program's type `id`, or of the builtin
@@ -547,43 +584,40 @@ impl Vm {
     }
 
     /// The value of the global slot `slot`, if it is set.
+    #[inline(always)]
     pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
-        self.globals.get(usize::from(slot))?.get()
-    }
-
-    /// [`Vm::global`] for a VM that may not have the program's newest
-    /// slots: if the slot is not there or not set, in those.
-    pub(crate) fn global_now(&mut self, slot: u16) -> Option<&Value> {
-        if self.global(slot).is_none() {
-            self.look_again();
-        }
-        self.global(slot)
+        self.view.global(slot)
     }
 
     /// Set the global slot `slot`. `false` if the VM has no such slot.
     pub(crate) fn set_global(&mut self, slot: u16, value: Value) -> bool {
         let slot = usize::from(slot);
-        let Some(unset) = self.globals.get(slot) else {
+        let Some(unset) = self.view.slots.get(slot) else {
             return false;
         };
         // A slot is set once in the life of a program, and every VM of
         // the program sees it. One that has a value has it from a
-        // program this VM ran before (another program, or this one
-        // again): this VM then goes on with slots of its own, and a
-        // task of the earlier run keeps the ones it has.
+        // program this VM ran before, whose slots the program run now
+        // was compiled without knowing of: an embedder runs a program
+        // again on one VM, or another program after it. This VM then
+        // goes on with slots of its own, and a task of the earlier run
+        // keeps the ones it has. (A REPL session never comes here: each
+        // of its entries is compiled onto the slots of all before it,
+        // and none is given out twice; `slots_set_again` counts.)
         if let Err(value) = unset.set(value) {
+            count_set_again();
             let again = OnceLock::from(value);
             let runtime = self.runtime.clone();
             let mut newest = runtime.newest.view.lock();
             // (The slots the runtime has for the tasks are these: with
             // no task holding them, they are set again where they are.)
             newest.slots = Arc::from([]);
-            match Arc::get_mut(&mut self.globals) {
+            match Arc::get_mut(&mut self.view.slots) {
                 Some(slots) => slots[slot] = again,
                 None => {
-                    let mut slots: Vec<OnceLock<Value>> = self.globals.iter().cloned().collect();
+                    let mut slots: Vec<OnceLock<Value>> = self.view.slots.iter().cloned().collect();
                     slots[slot] = again;
-                    self.globals = slots.into();
+                    self.view.slots = slots.into();
                 }
             }
             self.publish(&mut newest);
@@ -603,9 +637,9 @@ impl Vm {
             native_frames: 0,
             stack: Vec::new(),
             builtin_args: Vec::new(),
-            globals: self.globals.clone(),
-            global_slots: self.global_slots.clone(),
-            view: self.view,
+            view: self.view_of_a_task(),
+            view_count: self.view_count,
+            settled: self.settled.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
             woken: None,

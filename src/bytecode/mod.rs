@@ -133,6 +133,32 @@ pub struct Globals {
 }
 
 impl Globals {
+    /// The globals a REPL session goes on with after an entry that was
+    /// compiled into `self` did not run to its end; `before` are the
+    /// globals the entry was compiled onto. The slots the entry took
+    /// stay taken, and what its code names by a number stays named
+    /// (the names of methods, the traits): code of the entry may still
+    /// be about, a closure it sent to a task. Its definitions are taken
+    /// back: which slot a definition, an impl's method, a trait's
+    /// default method and a type's `display` has is as in `before`. So
+    /// what the entry had defined (its own impls, a module it imported)
+    /// gets slots of its own when it is defined again, and no slot is
+    /// ever set twice.
+    pub fn without_definitions_since(&self, before: &Globals) -> Globals {
+        Globals {
+            names: self.names.clone(),
+            method_names: self.method_names.clone(),
+            method_ids: self.method_ids.clone(),
+            traits: self.traits.clone(),
+            trait_indexes: self.trait_indexes.clone(),
+            defs: before.defs.clone(),
+            methods: before.methods.clone(),
+            defaults: before.defaults.clone(),
+            shown: before.shown.clone(),
+            shown_bits: before.shown_bits,
+        }
+    }
+
     /// The number of slots.
     pub fn len(&self) -> usize {
         self.names.len()
@@ -303,9 +329,11 @@ impl Globals {
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for
-    /// the type `ty`, named `name`: a new one the first time. A later
-    /// impl of the trait for the type (a REPL entry's) takes the slot
-    /// over.
+    /// the type `ty`, named `name`: a new one the first time. (No
+    /// program asks a second time: a trait has one impl for a type, in
+    /// a REPL session as in a file, and what an entry that failed when
+    /// it ran had defined is taken back before it is defined again,
+    /// see [`Globals::without_definitions_since`].)
     pub fn add_method(
         &mut self,
         t: TraitId,

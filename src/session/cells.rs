@@ -5,11 +5,17 @@
 //! write), which offers all it saw as well as all it declared (a REPL
 //! cell is resolved as `names::ModuleKind::Cell`), and carries the
 //! earlier cells' own imports over. A cell therefore imports one cell however long the session is.
-//! Of two impls of one trait for one type the newer one is seen, as a
-//! written impl replaces the derived one in a file.
+//! A trait has one impl for a type in a session as in a file: a second
+//! one is an error of the cell that writes it. (A written `Display`
+//! impl of a later cell is used from then on where the value was shown
+//! by its structure before.)
 //!
 //! A cell that is not committed (it had an error, or failed when it ran)
-//! is never imported, so it leaves the session as it was.
+//! is never imported, so it leaves the session as it was. What a cell
+//! that failed when it ran had installed in the VM (its own impls, the
+//! modules it imported) is installed anew, in global slots of its own,
+//! when a later cell declares or imports it again: the session takes
+//! the failed cell's definitions out of its globals (`Cells::compiled`).
 //!
 //! Redefinition is early-bound: a cell's definitions are new ones. A name
 //! a later cell binds again shadows the earlier binding for the cells
@@ -108,16 +114,31 @@ pub(super) struct Cells {
     scope: HashMap<Symbol, Binder>,
     /// The modules (not cells) whose code the committed cells installed.
     installed: HashSet<ModuleId>,
-    /// The global slots of the cells compiled so far: a slot is never
-    /// given to another definition, even when its cell failed.
+    /// The global slots of the cells that ran to their end, and the
+    /// slots that cells that failed when they ran took: a slot is never
+    /// given to another definition.
     pub globals: Globals,
+    /// The globals the cell compiled last was compiled into, until it
+    /// is committed: they are the session's then. If it is not (it
+    /// failed when it ran), its definitions are taken back.
+    compiled: Option<Globals>,
 }
 
 impl Cells {
     /// The cells added that were not committed, each given once: what
-    /// one declared is forgotten when the next cell is added.
+    /// one declared is forgotten when the next cell is added. One that
+    /// was compiled and failed when it ran keeps its global slots and
+    /// loses its definitions (`Globals::without_definitions_since`).
     pub fn take_dropped(&mut self) -> Vec<ModuleId> {
+        if let Some(failed) = self.compiled.take() {
+            self.globals = failed.without_definitions_since(&self.globals);
+        }
         std::mem::take(&mut self.dropped)
+    }
+
+    /// The cell being evaluated was compiled into `globals`.
+    pub fn compiled(&mut self, globals: Globals) {
+        self.compiled = Some(globals);
     }
 
     /// The cells added.
@@ -305,6 +326,9 @@ impl Cells {
             }
         }
         self.dropped.retain(|cell| *cell != id);
+        if let Some(globals) = self.compiled.take() {
+            self.globals = globals;
+        }
         self.installed.extend(
             modules
                 .iter()

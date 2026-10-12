@@ -13,6 +13,7 @@
 use std::cell::{Cell, RefCell};
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
@@ -97,8 +98,8 @@ impl Vm {
     /// runs, so a value of the type is never there before the impl is:
     /// an impl that is not set yet is a bug of silt, and said so, not
     /// taken for a type without one.
-    fn written_display(&self, value: &Value) -> Result<Option<Value>, VmError> {
-        let Some(slot) = written_slot(&self.global_slots, value) else {
+    fn written_display(&self, table: &Globals, value: &Value) -> Result<Option<Value>, VmError> {
+        let Some(slot) = written_slot(table, value) else {
             return Ok(None);
         };
         match self.global(slot).cloned() {
@@ -111,16 +112,20 @@ impl Vm {
     }
 
     /// What the formatter writes for `value`, with nothing for the
-    /// parts a written impl of this VM's table shows; those parts, each
-    /// with its type's `display`, in the order the formatter comes to
-    /// them; and whether a record or variant in the value has no
+    /// parts a written impl of the table `table` shows; those parts,
+    /// each with its type's `display`, in the order the formatter comes
+    /// to them; and whether a record or variant in the value has no
     /// written impl in the table.
-    fn parts_shown(&self, value: &Value) -> Result<(String, Parts, bool), VmError> {
+    fn parts_shown(
+        &self,
+        table: &Globals,
+        value: &Value,
+    ) -> Result<(String, Parts, bool), VmError> {
         let parts: RefCell<Parts> = RefCell::new(Vec::new());
         let unset: RefCell<Option<VmError>> = RefCell::new(None);
         let unwritten = Cell::new(false);
         let text = Shown(value, &|part, _| {
-            let display = match self.written_display(part) {
+            let display = match self.written_display(table, part) {
                 Ok(Some(display)) => display,
                 Ok(None) => {
                     unwritten.set(true);
@@ -141,6 +146,30 @@ impl Vm {
         }
     }
 
+    /// A record or variant has no written `Display` impl in this VM's
+    /// table: the table that may have one, if there is one. That is
+    /// the program's newest, with what the REPL entry being run adds
+    /// (see [`Vm::look_again`]): a later entry may have written the
+    /// impl, for the VM of a task of an earlier one.
+    fn wider_table(&mut self) -> Option<Arc<Globals>> {
+        let newest = &self.runtime.newest;
+        let own = newest.count.load(Ordering::Relaxed) == self.view_count
+            && Arc::ptr_eq(&self.view.table, &self.view.entry);
+        match own {
+            true => None,
+            false => self.entry_table_shown(),
+        }
+    }
+
+    /// [`Vm::wider_table`], for a VM that may not have all of the
+    /// program in its table.
+    #[cold]
+    #[inline(never)]
+    fn entry_table_shown(&mut self) -> Option<Arc<Globals>> {
+        self.look_again();
+        (self.view.entry.any_shown()).then(|| self.view.entry.clone())
+    }
+
     /// Show `value` and go on with `then`, which gets its text: at once
     /// when no written `Display` impl has a part in it, else as a frame
     /// that calls the impls first.
@@ -150,10 +179,11 @@ impl Vm {
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
         value.writable()?;
-        if !self.global_slots.any_shown() {
-            // No impl in this VM's table. A value that can hold a
-            // record or a variant may be of a later REPL entry, which
-            // may have written one (see `Vm::look_again`).
+        // The table the value is shown by, where it is not this VM's.
+        let mut wider = None;
+        if !self.view.table.any_shown() {
+            // No impl in this VM's table. Only a value that can hold a
+            // record or a variant is asked about in a wider one.
             let holds_parts = matches!(
                 value,
                 Value::Record(_)
@@ -163,24 +193,29 @@ impl Vm {
                     | Value::Map(_)
                     | Value::Set(_)
             );
-            if !(holds_parts && self.look_again() && self.global_slots.any_shown()) {
+            wider = holds_parts.then(|| self.wider_table()).flatten();
+            if wider.is_none() {
                 let text = self.display_value(value);
                 return then(self, text);
             }
         }
         // What the formatter writes, with nothing for the parts a
         // written impl shows: complete if there is no such part.
-        let (mut text, mut parts, unwritten) = self.parts_shown(value)?;
-        // (A part with no impl in this VM's table: as above.)
-        if unwritten && self.look_again() {
-            (text, parts, _) = self.parts_shown(value)?;
+        let table = wider.as_deref().unwrap_or(&self.view.table);
+        let (mut text, mut parts, unwritten) = self.parts_shown(table, value)?;
+        if unwritten
+            && wider.is_none()
+            && let Some(table) = self.wider_table()
+        {
+            (text, parts, _) = self.parts_shown(&table, value)?;
+            wider = Some(table);
         }
         if parts.is_empty() {
             return then(self, text);
         }
         Ok(Step::Run(Box::new(Showing {
             value: value.clone(),
-            table: self.global_slots.clone(),
+            table: wider.unwrap_or_else(|| self.view.table.clone()),
             parts,
             texts: Vec::new(),
             calling: false,

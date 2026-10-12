@@ -437,30 +437,12 @@ impl Vm {
                         let value = value.clone();
                         self.stack.push(value);
                     }
-                    // The VM of a task comes here for a slot of a REPL
-                    // entry later than the one it was started in (it
-                    // runs a closure of that entry), and finds it in
-                    // the program's newest slots.
-                    //
-                    // Nothing else comes here: the checker orders the
-                    // top-level `let`s so that each is set before
-                    // anything can read it, and the definitions are
-                    // set before any `let` runs. That holds for a task
-                    // as for the program's own code, since a task has
-                    // the code of a later entry only from that entry's
-                    // code, which ran after what it reads was set. A
-                    // slot that is not set in the newest slots either
-                    // is a bug of silt, and said so.
+                    // (Not set in this VM's slots: see the function.)
                     None => {
-                        save!();
-                        let value = self.global_now(slot).cloned();
-                        load!();
-                        match value {
-                            Some(value) => self.stack.push(value),
-                            None => fail!(VmError::type_confusion(format!(
-                                "the global '{}' is read before it is set",
-                                self.global_slots.name(slot)
-                            ))),
+                        let newest = &self.runtime.newest;
+                        match (self.view).global_of_newest(&mut self.view_count, newest, slot) {
+                            Ok(value) => self.stack.push(value),
+                            Err(error) => fail!(error),
                         }
                     }
                 },
@@ -1163,8 +1145,33 @@ impl Vm {
 
     /// The method of the impl of the trait `trait_index` names for the
     /// type `ty`, whose name has the id `method`, in this VM's table.
+    #[inline(always)]
     fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<Value> {
-        let slot = (self.global_slots).call_method(trait_index, ty, method)?;
+        let slot = (self.view.table).call_method(trait_index, ty, method)?;
+        self.global(slot).cloned()
+    }
+
+    /// [`Vm::method_of`] found none: the method in the program's newest
+    /// table, and in the table of the REPL entry that is being run,
+    /// which have a later entry's impls for the VM of a task of an
+    /// earlier one (see [`Vm::look_again`]).
+    #[cold]
+    #[inline(never)]
+    fn method_of_newest(
+        &mut self,
+        trait_index: u16,
+        ty: crate::defs::TypeId,
+        method: u16,
+    ) -> Option<Value> {
+        if self.look_again()
+            && let Some(found) = self.method_of(trait_index, ty, method)
+        {
+            return Some(found);
+        }
+        if Arc::ptr_eq(&self.view.table, &self.view.entry) {
+            return None;
+        }
+        let slot = (self.view.entry).call_method(trait_index, ty, method)?;
         self.global(slot).cloned()
     }
 
@@ -1195,12 +1202,10 @@ impl Vm {
         );
         // The method of an impl is found by three numbers: the trait,
         // the receiver's type, and the name's id. No text is compared.
-        let mut found = self.method_of(trait_index, receiver_type, method);
-        // (No impl in this VM's table has the method: a later REPL
-        // entry's may, for the VM of a task of an earlier one.)
-        if found.is_none() && self.look_again() {
-            found = self.method_of(trait_index, receiver_type, method);
-        }
+        let found = match self.method_of(trait_index, receiver_type, method) {
+            None => self.method_of_newest(trait_index, receiver_type, method),
+            found => found,
+        };
         if let Some(func) = found {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
@@ -1231,7 +1236,7 @@ impl Vm {
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.
         let receiver = self.stack[receiver_slot].clone();
-        let slots = self.global_slots.clone();
+        let slots = self.view.entry.clone();
         // (The compiler checks each function against the globals of
         // the program it is compiled into, and the VM of a task that
         // runs code of a later REPL entry has that entry's by now: the
@@ -1249,7 +1254,7 @@ impl Vm {
         // `display` of a value whose parts a written impl may show.
         if method_name == "display"
             && argc == 1
-            && self.global_slots.any_shown()
+            && slots.any_shown()
             && Self::value_implements_display(&receiver)
         {
             self.stack.truncate(receiver_slot);
@@ -1277,8 +1282,7 @@ impl Vm {
             // value's `display`.
             None if method_name == "message"
                 && argc == 1
-                && self.global_slots.trait_at(trait_index)
-                    == crate::defs::builtin_trait_id("Error") =>
+                && slots.trait_at(trait_index) == crate::defs::builtin_trait_id("Error") =>
             {
                 self.stack.truncate(receiver_slot);
                 let step = self.shown(&receiver)?;

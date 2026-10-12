@@ -148,7 +148,7 @@ fn test_globals() {
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
-    vm.globals = Arc::from([std::sync::OnceLock::new()]);
+    vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
     let result = vm.run(script).unwrap();
     assert_eq!(result, Value::Int(42));
 }
@@ -160,28 +160,30 @@ fn test_globals() {
 #[test]
 fn the_vm_of_a_task_shares_the_global_slots() {
     let mut vm = Vm::new(crate::HostIo::process());
-    vm.globals = (0..3).map(|_| std::sync::OnceLock::new()).collect();
+    vm.view.slots = (0..3).map(|_| std::sync::OnceLock::new()).collect();
     assert!(vm.set_global(0, Value::Int(1)));
     let task = vm.spawn_child();
-    assert!(Arc::ptr_eq(&vm.globals, &task.globals));
+    assert!(Arc::ptr_eq(&vm.view.slots, &task.view.slots));
     // What is set later is the task's too.
     assert!(vm.set_global(1, Value::Int(2)));
     assert_eq!(task.global(1), Some(&Value::Int(2)));
     assert_eq!(task.global(2), None);
     assert!(!vm.set_global(3, Value::Int(0)));
 
+    let again = super::slots_set_again();
     assert!(vm.set_global(0, Value::Int(10)));
+    assert_eq!(super::slots_set_again(), again + 1);
     assert_eq!(vm.global(0), Some(&Value::Int(10)));
     assert_eq!(vm.global(1), Some(&Value::Int(2)));
     assert_eq!(task.global(0), Some(&Value::Int(1)));
-    assert!(!Arc::ptr_eq(&vm.globals, &task.globals));
+    assert!(!Arc::ptr_eq(&vm.view.slots, &task.view.slots));
     // With no task holding them, the slots are set again where they
     // are.
     drop(task);
-    let slots = Arc::as_ptr(&vm.globals);
+    let slots = Arc::as_ptr(&vm.view.slots);
     assert!(vm.set_global(1, Value::Int(20)));
     assert_eq!(vm.global(1), Some(&Value::Int(20)));
-    assert!(std::ptr::eq(slots, Arc::as_ptr(&vm.globals)));
+    assert!(std::ptr::eq(slots, Arc::as_ptr(&vm.view.slots)));
 }
 
 /// The VM of a task finds the slots of a program its VM took in after
@@ -194,28 +196,36 @@ fn the_vm_of_a_task_finds_the_slots_of_a_later_program() {
         let runtime = vm.runtime.clone();
         vm.publish(&mut runtime.newest.view.lock());
     }
+    /// What a read of `slot` gives that found no value in the VM's
+    /// own slots.
+    fn again(vm: &mut Vm, slot: u16) -> Result<Value, String> {
+        (vm.view)
+            .global_of_newest(&mut vm.view_count, &vm.runtime.newest, slot)
+            .map_err(|error| error.message)
+    }
     let mut vm = Vm::new(crate::HostIo::process());
-    vm.globals = (0..2).map(|_| std::sync::OnceLock::new()).collect();
+    vm.view.slots = (0..2).map(|_| std::sync::OnceLock::new()).collect();
     assert!(vm.set_global(0, Value::Int(1)));
     publish(&mut vm);
     let mut task = vm.spawn_child();
     // The task has the newest: a slot that is not set is not looked
     // for anywhere else.
-    assert_eq!(task.global_now(1), None);
+    let unset = Err("the global '?' is read before it is set".to_string());
+    assert_eq!(again(&mut task, 1), unset);
     assert!(!task.look_again());
 
     // A later program: the slots there were, and two more.
-    vm.globals = (vm.globals.iter().cloned())
+    vm.view.slots = (vm.view.slots.iter().cloned())
         .chain((0..2).map(|_| std::sync::OnceLock::new()))
         .collect();
     assert!(vm.set_global(2, Value::Int(3)));
     publish(&mut vm);
     assert_eq!(task.global(2), None);
-    assert_eq!(task.global_now(2), Some(&Value::Int(3)));
-    assert!(Arc::ptr_eq(&vm.globals, &task.globals));
+    assert_eq!(again(&mut task, 2), Ok(Value::Int(3)));
+    assert!(Arc::ptr_eq(&vm.view.slots, &task.view.slots));
     assert_eq!(task.global(0), Some(&Value::Int(1)));
     // Declared, not set: for the task as for its VM.
-    assert_eq!((vm.global(3), task.global_now(3)), (None, None));
+    assert_eq!((vm.global(3), again(&mut task, 3)), (None, unset));
     // Set from here on, the task has it without looking again.
     assert!(vm.set_global(3, Value::Int(4)));
     assert_eq!(task.global(3), Some(&Value::Int(4)));

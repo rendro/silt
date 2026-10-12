@@ -115,6 +115,13 @@ pub struct Program {
     pub types: crate::typeinfo::TypeTable,
     /// Its global slots, which the VM is given too.
     pub globals: Arc<Globals>,
+    /// The part of `globals` that stands whatever becomes of the
+    /// program's run. For a REPL entry: the slots, impl methods and
+    /// `Display` impls of the entries before it that ran to their end,
+    /// without the entry's own, which the session takes back if the
+    /// entry fails. For any other program: all of `globals`. (The VM
+    /// of a task keeps this table, see `Vm::look_again`.)
+    pub settled: Arc<Globals>,
     pub entry: EntryPoint,
 }
 
@@ -746,11 +753,20 @@ impl Session {
         match compiled {
             Ok(_) if !entry_errors.is_empty() => Err(entry_errors),
             Ok(functions) => {
-                let globals = compiler.globals().clone();
+                let globals = Arc::new(compiler.globals().clone());
                 let types = compiler.types();
-                if matches!(target, Entry::Cell) && self.cells.info.contains_key(&id) {
-                    self.cells.globals = globals.clone();
-                }
+                // A cell's definitions are the session's when the cell
+                // has run to its end; until then the session's globals
+                // are what stands of the program.
+                let settled =
+                    match matches!(target, Entry::Cell) && self.cells.info.contains_key(&id) {
+                        true => {
+                            let settled = Arc::new(self.cells.globals.clone());
+                            self.cells.compiled((*globals).clone());
+                            settled
+                        }
+                        false => globals.clone(),
+                    };
                 let entry = match entry_point {
                     EntryPoint::Tests(mut tests) => {
                         for test in &mut tests {
@@ -763,7 +779,8 @@ impl Session {
                 Ok(Program {
                     functions,
                     types,
-                    globals: Arc::new(globals),
+                    globals,
+                    settled,
                     entry,
                 })
             }
