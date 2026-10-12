@@ -354,19 +354,56 @@ the result is kept: a later `task.join` still returns it, or raises it if the
 task failed. Cancelling a
 task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
-the test that spawned it. The cancel does not wait for the task to stop:
+the test that spawned it. The cancel does not wait for the task to stop.
+Its effect on the task depends on where the task is at that moment:
 
-- If the task is **currently parked** (blocked on a channel, a select,
-  `task.join`, `time.sleep`, or I/O), its wait ends without taking or
-  sending anything, and the task is dropped.
-- If the task is **currently running**, it runs no further than the end of
-  its current slice (a few thousand steps); side effects of that slice still
-  happen. If the slice reaches a blocking operation, the task ends there
-  instead of waiting.
-- If the task is **queued but not yet running**, it is dropped without
-  running again. That includes a task whose wait has just ended: a value
-  that a sender handed it and that it has not yet run to use is dropped
-  with it, although the sender was told that it was sent.
+- **The task is waiting** (parked in a channel receive or send, a
+  `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
+  wait ends without taking or sending anything, and the task is ended
+  there. A value sent afterwards goes to the next receiver, not to it.
+- **The task has never run** (spawned, and not yet picked up by a
+  worker): it is dropped without running.
+- **The task is not waiting**: it is running, or its time slice ran out
+  and it is to run again, or **its wait has just ended** (a sender
+  handed it a value, a receiver took the value it waited to send, the
+  operation it waited for gave its result) and it has not run again. The
+  task goes on, with what it was given, for a bounded amount of further
+  work, and is ended where that ends:
+  - at its next operation that would have to wait, where nothing is
+    taken and nothing is sent; or
+  - when it has run 2,000 steps (about 2,000 instructions, a few
+    hundred rounds of a small loop), if it reaches no such operation
+    before. The steps are counted from the first time slice that begins
+    after the cancel, so a task that was computing when the cancel came
+    is ended at most one time slice and 2,000 steps later.
+
+  An operation that can be done at once is done in those steps: a
+  `channel.send` into a channel with room or to a receiver that waits,
+  a `channel.receive` of a value that is there, `channel.try_send`,
+  `channel.try_receive`, the `task.join` of a task that has ended. A
+  `channel.select` is not: it ends the task, whether or not one of its
+  arms is ready. An I/O operation is a wait: it is given up as soon as
+  it is started, and may or may not have happened. The side effects of
+  those steps happen. What the task returns or fails with in them
+  changes nothing: the handle keeps the cancellation, and a failure is
+  not reported.
+
+  This is the bound of a function that is past its `task.deadline`,
+  and the same count: a task that is past its deadline and cancelled has
+  2,000 steps in all, not twice that.
+
+**What the further work is for, and what it does not give.** A task that
+was just given something has the steps to pass it on by an operation
+that does not wait: a worker that receives an item and puts it, or its
+result, into a channel with room does not lose the item to a cancel. A
+cancel is still no orderly shutdown. The task ends at its next wait: a
+worker that receives an item, computes, and then has to *wait* to send
+its result (its output channel is full, or is a rendezvous channel
+whose receiver is not there yet) is ended in that send, and the item is
+gone; so is the item of a worker that computes on it for more than
+2,000 steps. Where nothing may be lost when the work stops, tell the
+task to stop over a channel (a stop message, or the close of its input),
+let it finish what it has, and join it.
 
 `task.join` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form
