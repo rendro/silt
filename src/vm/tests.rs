@@ -4969,3 +4969,202 @@ mod two_operands {
         }
     }
 }
+
+/// The instructions that test the value on top (`JumpIfFalse`,
+/// `JumpIfTrue`), let go of it (`Pop`) or set a slot from another
+/// (`SetLocal`, `Recur`) read and write the values where they lie.
+mod slots_in_place {
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+    use crate::bytecode::VmClosure;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn closure() -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+            upvalues: vec![],
+        }))
+    }
+
+    /// A value of every sort the instruction loop knows (`Sort` in
+    /// run.rs) that can be compared with `==`.
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Unit,
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+        ]
+    }
+
+    /// `1` if the jump `jump` is taken on `value`, `2` if it is not.
+    fn taken(value: Value, jump: fn(crate::bytecode::Label) -> Asm<'static>) -> Value {
+        let script = make_function(|e| {
+            push(e, value);
+            let (there, end) = (e.label(), e.label());
+            e.emit(jump(there), span()).unwrap();
+            push(e, Value::Int(2));
+            e.emit(Asm::Jump { to: end }, span()).unwrap();
+            e.bind(there, span()).unwrap();
+            push(e, Value::Int(1));
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        Vm::new(crate::HostIo::process()).run(script).unwrap()
+    }
+
+    /// `false` and unit are false to a jump; a value of any other kind
+    /// is true.
+    #[test]
+    fn a_jump_tests_the_value_on_top() {
+        let (if_false, if_true): (fn(_) -> _, fn(_) -> _) =
+            (|to| Asm::JumpIfFalse { to }, |to| Asm::JumpIfTrue { to });
+        for value in samples().into_iter().chain([closure()]) {
+            let falsy = matches!(value, Value::Bool(false) | Value::Unit);
+            let (yes, no) = (Value::Int(1), Value::Int(2));
+            let shown = format!("{value:?}");
+            assert_eq!(
+                taken(value.clone(), if_false),
+                if falsy { yes.clone() } else { no.clone() },
+                "JumpIfFalse on {shown}"
+            );
+            assert_eq!(
+                taken(value, if_true),
+                if falsy { no } else { yes },
+                "JumpIfTrue on {shown}"
+            );
+        }
+    }
+
+    /// A jump and `Pop` let go of the value they take off the stack,
+    /// then and once.
+    #[test]
+    fn a_jump_and_pop_let_go_of_the_value_on_top() {
+        for take in [
+            |e: &mut Emitter| e.emit(Asm::Pop, span()).unwrap(),
+            |e: &mut Emitter| {
+                let next = e.label();
+                e.emit(Asm::JumpIfFalse { to: next }, span()).unwrap();
+                e.bind(next, span()).unwrap();
+            },
+            |e: &mut Emitter| {
+                let next = e.label();
+                e.emit(Asm::JumpIfTrue { to: next }, span()).unwrap();
+                e.bind(next, span()).unwrap();
+            },
+        ] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                take(e);
+                e.emit(Asm::Unit, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert_eq!(run.unwrap(), Value::Unit);
+            // The second probe was on top; the first was held until
+            // the script's return cut the stack back.
+            assert_eq!(ended(&log), [2, 1]);
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// `SetLocal` writes a copy of the value on top over a slot: the
+    /// slot's old value ends, the value on top stays.
+    #[test]
+    fn set_local_of_every_kind_over_every_kind() {
+        for new in samples() {
+            for old in samples() {
+                let script = make_function(|e| {
+                    push(e, old.clone());
+                    push(e, new.clone());
+                    e.emit(Asm::SetLocal { slot: 0 }, span()).unwrap();
+                    e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+                    e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+                    e.emit(Asm::Return, span()).unwrap();
+                });
+                assert_eq!(
+                    Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                    Value::tuple(vec![new.clone(), new.clone()]),
+                    "{new:?} over {old:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_local_ends_the_value_that_was_in_the_slot() {
+        let (vm, run, log) = left_by(|e, k| {
+            probe(e, k);
+            probe(e, k);
+            e.emit(Asm::SetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        // The first probe was in the slot; the second was there from
+        // then on, until the script's return cut the stack back.
+        assert_eq!(ended(&log), [1, 2]);
+        assert!(vm.stack.is_empty());
+    }
+
+    /// `Recur` writes the values on top over the loop's bindings and
+    /// cuts the stack back to them.
+    #[test]
+    fn recur_of_every_kind_over_every_kind() {
+        let samples = samples();
+        let count = samples.len();
+        let script = make_function(|e| {
+            // The bindings, then their next values: the same, turned
+            // by one.
+            for sample in &samples {
+                push(e, sample.clone());
+            }
+            for i in 0..count {
+                push(e, samples[(i + 1) % count].clone());
+            }
+            e.emit(
+                Asm::Recur {
+                    argc: count,
+                    first: 0,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::MakeTuple { count }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let mut turned = samples.clone();
+        turned.rotate_left(1);
+        assert_eq!(
+            Vm::new(crate::HostIo::process()).run(script).unwrap(),
+            Value::tuple(turned)
+        );
+    }
+
+    /// The bindings' old values end in the bindings' order, at the
+    /// `Recur`; the new ones are held by the bindings from then on,
+    /// until the script's return cuts the stack back.
+    #[test]
+    fn recur_ends_the_old_values_of_the_bindings_in_order() {
+        let (vm, run, log) = left_by(|e, k| {
+            for _ in 0..6 {
+                probe(e, k);
+            }
+            e.emit(Asm::Recur { argc: 3, first: 0 }, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert_eq!(ended(&log), [1, 2, 3, 4, 5, 6]);
+        assert!(vm.stack.is_empty());
+    }
+}

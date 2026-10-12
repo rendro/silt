@@ -96,45 +96,11 @@ fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
 // the pool, of the kinds it needs. The accessors below do not look
 // for anything else.
 
-/// A copy of `value`, for the instructions that read a slot or a
-/// constant: a number, a Bool or unit is copied here, in the loop; a
-/// value of any other kind is cloned, a call. (The kinds that are
-/// copied are named: one that is added later is cloned until it is
-/// named here.)
-#[inline(always)]
-fn copy(value: &Value) -> Value {
-    match value {
-        Value::Int(n) => Value::Int(*n),
-        Value::Float(f) => Value::Float(*f),
-        Value::Bool(b) => Value::Bool(*b),
-        Value::Unit => Value::Unit,
-        Value::String(_)
-        | Value::List(_)
-        | Value::Map(_)
-        | Value::Set(_)
-        | Value::Tuple(_)
-        | Value::Record(_)
-        | Value::Variant(_)
-        | Value::VmClosure(_)
-        | Value::BuiltinFn(_)
-        | Value::HostFn(_)
-        | Value::VariantConstructor(_)
-        | Value::TypeDescriptor(_)
-        | Value::PrimitiveDescriptor(_)
-        | Value::Channel(_)
-        | Value::Handle(_)
-        | Value::Bytes(_)
-        | Value::TcpListener(_)
-        | Value::TcpStream(_) => value.clone(),
-    }
-}
-
 /// Let go of `value`, for the instructions that are done with a value
 /// they took off the stack or wrote over: a number, a Bool or unit owns
 /// nothing, and is not handed to the drop of a value of any kind, a
-/// call; a value of any other kind is dropped. (As [`copy`], which is
-/// the same for a read. The kinds are named: one that is added later
-/// does not compile until it is placed here.)
+/// call; a value of any other kind is dropped. (The kinds are named:
+/// one that is added later does not compile until it is placed here.)
 #[inline(always)]
 fn done(value: Value) {
     match value {
@@ -314,6 +280,24 @@ macro_rules! push_copy {
             }
         }
     };
+}
+
+/// Write a copy of the value in slot `$from` of the stack over slot
+/// `$to` ([`put`]), for the instructions that set a slot from another.
+macro_rules! set_copy {
+    ($stack:expr, $to:expr, $from:expr) => {{
+        let (to, from) = ($to, $from);
+        match sort(&$stack[from]) {
+            Sort::Int(n) => put(&mut $stack[to], Value::Int(n)),
+            Sort::Float(f) => put(&mut $stack[to], Value::Float(f)),
+            Sort::Bool(b) => put(&mut $stack[to], Value::Bool(b)),
+            Sort::Unit => put(&mut $stack[to], Value::Unit),
+            Sort::Closure(_) | Sort::Other(_) => {
+                let value = $stack[from].clone();
+                put(&mut $stack[to], value);
+            }
+        }
+    }};
 }
 
 /// Take the value on top off the stack and let go of it ([`done`]),
@@ -672,8 +656,8 @@ impl Vm {
                 }
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {
-                    let value = copy(peek(&self.stack));
-                    put(&mut self.stack[base + slot], value);
+                    let top = self.stack.len() - 1;
+                    set_copy!(self.stack, base + slot, top);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
                     Some(value) => push_copy!(self.stack, *value),
@@ -864,20 +848,18 @@ impl Vm {
                 }
                 Instr::Jump { to } => ip = to,
                 Instr::JumpIfFalse { to } => {
-                    let val = pop(&mut self.stack);
-                    if self.is_falsy(&val) {
+                    if self.is_falsy(peek(&self.stack)) {
                         ip = to;
                     }
-                    done(val);
+                    pop_done(&mut self.stack);
                 }
                 Instr::JumpIfTrue { to } => {
-                    let val = pop(&mut self.stack);
-                    if self.is_truthy(&val) {
+                    if self.is_truthy(peek(&self.stack)) {
                         ip = to;
                     }
-                    done(val);
+                    pop_done(&mut self.stack);
                 }
-                Instr::Pop => done(pop(&mut self.stack)),
+                Instr::Pop => pop_done(&mut self.stack),
                 Instr::Dup => {
                     let val = peek(&self.stack).clone();
                     self.stack.push(val);
@@ -1062,8 +1044,7 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        let value = copy(&self.stack[start + i]);
-                        put(&mut self.stack[base + first_slot + i], value);
+                        set_copy!(self.stack, base + first_slot + i, start + i);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
