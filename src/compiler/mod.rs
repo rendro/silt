@@ -141,6 +141,13 @@ enum BindDestructKind {
 ///   value is returned at once and the frame is discarded with it.
 struct CompileContext {
     emitter: Emitter,
+    /// The name of the closures written in this code, which is how an
+    /// error's call stack lists them: `closure in main` in the function
+    /// `main` and in every closure in it, however deep; `closure in
+    /// P.show` in a method; `closure in table` in the top-level
+    /// `let table = ...`, and `closure at the top level` in one that
+    /// binds no name. No function has `<...>` for a closure's name.
+    closures: String,
     locals: Vec<Local>,
     scope_depth: usize,
     /// Frame height at the start of every open scope, innermost last.
@@ -717,7 +724,21 @@ impl<'a> Compiler<'a> {
                 ..
             } => {
                 let span = *span;
-                self.compile_expr(value)?;
+                // The closures of the initialiser are written in the
+                // binding: they are named after the first name it binds.
+                let closures = match crate::parser::top_level_binders(decl).first() {
+                    Some((name, _, _)) => format!("closure in {name}"),
+                    None => "closure at the top level".to_string(),
+                };
+                let around = self
+                    .contexts
+                    .last_mut()
+                    .map(|context| std::mem::replace(&mut context.closures, closures));
+                let compiled = self.compile_expr(value);
+                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                    context.closures = around;
+                }
+                compiled?;
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         let slot = self.own_slot(*name, span)?;
@@ -1363,8 +1384,16 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::Lambda { params, body, .. } => {
-                // Push a new context for the lambda body.
-                self.begin_function("<lambda>".into(), params.len(), span)?;
+                // A closure is named after what it is written in, and
+                // so are the closures in it.
+                let name = match self.contexts.last() {
+                    Some(around) => around.closures.clone(),
+                    None => return Err(checker_missed(span, "a closure outside any code")),
+                };
+                self.begin_function(name.clone(), params.len(), span)?;
+                if let Some(closure) = self.contexts.last_mut() {
+                    closure.closures = name;
+                }
 
                 self.compile_params(params, span)?;
 
@@ -2671,7 +2700,15 @@ impl<'a> Compiler<'a> {
         params: usize,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        // (The code of a file's top level, `<script>` or
+        // `<module:...>`, is its `let`s, each of which says how its
+        // closures are named.)
+        let closures = match name.starts_with("<script>") || name.starts_with("<module:") {
+            true => "closure at the top level".to_string(),
+            false => format!("closure in {name}"),
+        };
         self.contexts.push(CompileContext {
+            closures,
             emitter: Emitter::new(name, params, span)?,
             locals: Vec::new(),
             scope_depth: 0,
@@ -3907,7 +3944,7 @@ fn main() {
         // Lambda with destructured param is a VmClosure constant
         let lambda = main.chunk().constants().iter().find_map(|c| {
             if let Value::VmClosure(cl) = c
-                && cl.function.name() == "<lambda>"
+                && cl.function.name() == "closure in main"
             {
                 return Some(&cl.function);
             }

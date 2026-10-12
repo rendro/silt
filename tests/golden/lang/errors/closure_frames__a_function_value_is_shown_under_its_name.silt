@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: type F { f: Fn(Int) -> Int, n: Int }\nfn twice(x) { x * 2 }\nfn make() { F { f: { x -> x + 1 }, n: 1 } }\nmake()\n{ g: { x -> x }, h: twice }\nlet pick = { x -> x }\npick\n{ x -> x }\ntwice\n:quit\n
+-- The REPL echoes a function value under the name a call stack gives
+-- it: a function by its own, a closure as `closure in ...`, alone and
+-- inside a record.

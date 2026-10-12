@@ -1,0 +1,13 @@
+-- exit: 1
+-- A closure in a top-level `let` that binds several names is named
+-- after the first of them.
+fn fail(x) {
+  x / 0
+}
+
+let (first, second) = ({ y -> y + 1 }, { y -> fail(y) + 1 })
+
+fn main() {
+  println(first(1))
+  println(second(1))
+}
