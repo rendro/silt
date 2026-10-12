@@ -131,8 +131,8 @@ impl<T: Send> Parking<T> {
     /// The cancel flag of the task is on the wait ([`Wait::cancel`]).
     /// Whoever cancels a task sets the flag first and then calls
     /// [`Parking::cancel`]; with that order a cancel is never lost
-    /// between the two: a wait that begins with the flag set completes
-    /// an arm that is ready or is refused, one that is on the queues
+    /// between the two: a wait that begins with the flag set does a
+    /// send that is ready or is refused, one that is on the queues
     /// when the flag is set has no arm completed for it, and a cancel
     /// that came before the entry was there is found by the flag.
     ///

@@ -162,7 +162,7 @@ pub enum Park {
 /// an operation that never waits: a value that is there wins over a
 /// time that has passed.) The two differ in one thing: a task that
 /// was cancelled takes nothing new, so its receive arms are not
-/// tried ([`takes_nothing_new`]).
+/// tried (`takes_nothing_new`, below).
 pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
     let Wait {
         mut arms,

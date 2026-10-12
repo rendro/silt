@@ -367,42 +367,54 @@ Its effect on the task depends on where the task is at that moment:
   and it is to run again, or **its wait has just ended** (a sender
   handed it a value, a receiver took the value it waited to send, the
   operation it waited for gave its result) and it has not run again. The
-  task goes on, with what it was given, for a bounded amount of further
-  work, and is ended where that ends:
-  - at its next operation that would have to wait, where nothing is
-    taken and nothing is sent; or
+  task goes on with what it holds, for a bounded amount of further
+  work. **After a cancel a task takes nothing new; it may still give
+  what it holds.** It is ended:
+  - at its next operation that would take something, whether or not
+    the thing is there: a `channel.receive`, `channel.try_receive` or
+    `channel.receive_timeout`, the next message of a `channel.each`,
+    the next element of a stream, `tcp.accept` (the connection stays
+    with the listener), and a `channel.select` of which no `Send` arm
+    can be done at once (its `Recv` arms, timeouts among them, are not
+    tried);
+  - at its next operation that would have to wait, with nothing sent;
+    and at one that would start something which waits for the outside:
+    reading or writing a file's contents, the network, a database,
+    standard input. Nothing is started: a file it was about to write is
+    not written;
   - when it has run 2,000 steps (about 2,000 instructions, a few
-    hundred rounds of a small loop), if it reaches no such operation
+    hundred rounds of a small loop), if it reaches none of these
     before. The steps are counted from the first time slice that begins
     after the cancel, so a task that was computing when the cancel came
     is ended at most one time slice and 2,000 steps later.
 
-  An operation that can be done at once is done in those steps: a
-  `channel.send` into a channel with room or to a receiver that waits,
-  a `channel.receive` of a value that is there, a `channel.select` of
-  which an arm is ready, `channel.try_send`, `channel.try_receive`, the
-  `task.join` of a task that has ended. An I/O operation is a wait: it
-  is given up as soon as it is started, and may or may not have
-  happened. The side effects of those steps happen. What the task
+  What is done in those steps is what gives: a `channel.send` into a
+  channel with room or to a receiver that waits, `channel.try_send`, a
+  `Send` arm of a `channel.select` that can be done at once; and the
+  `task.join` of a task that has ended. (The `fs` functions, which
+  never wait, are done too: `fs.exists`, `fs.remove`, `fs.rename` and
+  the others.) The side effects of those steps happen. What the task
   returns or fails with in them changes nothing: the handle keeps the
   cancellation, and a failure is not reported.
 
-  This is the rule of a function that is past its `task.deadline`,
-  and the same count: a task that is past its deadline and cancelled has
-  2,000 steps in all, not twice that.
+  The steps are those of a function that is past its `task.deadline`,
+  in one count: a task that is past its deadline and cancelled has
+  2,000 steps in all, not twice that. (A function that is only past its
+  deadline still receives what is there; a cancelled task does not.)
 
 **What the further work is for, and what it does not give.** A task that
 was just given something has the steps to pass it on by an operation
 that does not wait: a worker that receives an item and puts it, or its
-result, into a channel with room does not lose the item to a cancel. A
-cancel is still no orderly shutdown. The task ends at its next wait: a
+result, into a channel with room does not lose the item to a cancel,
+and takes no further one. A cancel is still no orderly shutdown. A
 worker that receives an item, computes, and then has to *wait* to send
 its result (its output channel is full, or is a rendezvous channel
 whose receiver is not there yet) is ended in that send, and the item is
 gone; so is the item of a worker that computes on it for more than
-2,000 steps. Where nothing may be lost when the work stops, tell the
-task to stop over a channel (a stop message, or the close of its input),
-let it finish what it has, and join it.
+2,000 steps, or that has to read or write a file for it. Where nothing
+may be lost when the work stops, tell the task to stop over a channel
+(a stop message, or the close of its input), let it finish what it has,
+and join it.
 
 `task.join` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form

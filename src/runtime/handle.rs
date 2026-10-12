@@ -980,9 +980,11 @@ pub struct TaskHandle {
     /// failed with, or that it was cancelled. A join waits for it.
     result: Arc<Cell<Ended>>,
     /// Set by `task.cancel`. The scheduler reads it before each slice
-    /// of the task and before each park: a cancelled task begins no
-    /// wait and has none completed for it, and runs on only for the
-    /// steps that [`TaskHandle::count_late`] counts.
+    /// of the task and before each park, and the task's VM before each
+    /// operation that takes (`Vm::takes_nothing_new`): a cancelled
+    /// task begins no wait, has none completed for it and takes
+    /// nothing new, and runs on only for the steps that
+    /// [`TaskHandle::count_late`] counts.
     cancelled: Arc<AtomicBool>,
     /// True while the task has failed and nobody has handled the
     /// failure: no join has received it and no cancel has dismissed

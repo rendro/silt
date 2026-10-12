@@ -544,7 +544,9 @@ impl Scheduler {
     ///   task's to use. The task goes on for a counted number of steps
     ///   ([`LATE_STEPS`], as a task past its deadline does) and is
     ///   ended where they are used up, or before that at the first
-    ///   wait that cannot end at once (`Inner::run_once`).
+    ///   wait that cannot end at once (`Inner::run_once`). It takes
+    ///   nothing new in them: an operation that would ends it too
+    ///   (`Vm::takes_nothing_new`).
     pub(crate) fn cancel(&self, handle: &TaskHandle) {
         // The flag first: a task that is about to park reads it.
         handle.cancel(self.wake());
@@ -1181,7 +1183,9 @@ impl Inner {
         // ran. It is ended as a cancelled task; and before the steps
         // are used up at its first wait that cannot end at once, which
         // is refused it below, as it is refused a task whose time is
-        // over.
+        // over, or at the first operation that would take something
+        // new, which begins a wait that nothing can end
+        // (`Vm::takes_nothing_new`).
         let (result, spent) = match cancelled || self.over(&task) {
             true => Self::late_slice(&mut task, slice),
             false => (task.vm.execute_slice(slice), false),
@@ -1229,9 +1233,10 @@ impl Inner {
                 // has ended (`ready`), or was over at once.
                 group.parking.fetch_add(1, Ordering::SeqCst);
                 // A task that is stopped with its owner's begins no
-                // wait. One that is cancelled, or whose time is over,
-                // completes an arm that is ready and is refused the
-                // wait otherwise: that is the wait's own to say.
+                // wait. One whose time is over completes an arm that
+                // is ready, one that is cancelled a send that is
+                // ready, and each is refused the wait otherwise: that
+                // is the wait's own to say.
                 let back = self.parking.park(id, Sleeper::Task(task), wait, || {
                     group.stopped.load(Ordering::SeqCst)
                 });
