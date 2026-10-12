@@ -35,7 +35,7 @@ allocation.
 |----------|-----------|-------------|
 | `v4` | `() -> String` | Random UUID (version 4, CSPRNG-backed) |
 | `v7` | `() -> String` | Time-ordered UUID (version 7, RFC 9562) |
-| `parse` | `(String) -> Result(String, String)` | Validate + canonicalize any-version UUID |
+| `parse` | `(String) -> Result(String, UuidError)` | Validate + canonicalize any-version UUID |
 | `nil` | `() -> String` | The all-zero UUID sentinel |
 | `is_valid` | `(String) -> Bool` | Predicate form of `parse` |
 
@@ -81,11 +81,12 @@ fn main() {
 ## Errors
 
 Only `parse` is fallible at the type level; the generators and `nil`
-are total.
+are total. It returns `Result(String, UuidError)`:
 
-| Operation | Error condition |
-|-----------|-----------------|
-| `parse` | Input is not a syntactically valid UUID (`"invalid uuid: ..."`) |
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Invalid(String)` | why | the input is not a syntactically valid UUID; `e.message()` is `"invalid uuid: ..."` |
+| `Other(String)` | message | unclassified failure |
 
 ## Notes
 

@@ -27,10 +27,10 @@ TomlError` is wired in):
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `TomlSyntax(msg, offset)` | `String`, `Int` | Malformed TOML at `offset` bytes |
-| `TomlTypeMismatch(expected, actual)` | `String`, `String` | A field's TOML type did not match the target field type |
-| `TomlMissingField(name)` | `String` | A required (non-`Option`) field was absent |
-| `TomlUnknown(msg)` | `String` | Anything else (serialization failures, document-shape violations) |
+| `Syntax(msg, offset)` | `String`, `Int` | Malformed TOML at `offset` bytes |
+| `TypeMismatch(expected, actual)` | `String`, `String` | A field's TOML type did not match the target field type |
+| `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `Other(msg)` | `String` | Anything else (serialization failures, document-shape violations) |
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
@@ -62,7 +62,7 @@ parameter) has no decoder.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
-field is `Err(TomlTypeMismatch("Int", "float"))`, because TOML says
+field is `Err(TypeMismatch("Int", "float"))`, because TOML says
 which kind a number is.
 
 When the type is written at the call, `toml.parse(text, Config)`, the
@@ -72,7 +72,7 @@ does not take (such as `toml.parse_list(text, Int)`). The check applies
 equally to a decoder imported by name (`import toml.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
-decoder gives an `Err(TomlUnknown(msg))` whose message names the field and its
+decoder gives an `Err(Other(msg))` whose message names the field and its
 record, and a type the function does not take is a run-time error.
 
 
@@ -83,7 +83,7 @@ deep (the same bound as `json.stringify`). The element of a list or of a
 tuple, the field of a record or of an enum variant and the value of a map are
 each one level further in than what holds them; the content of a `Some` is
 not (it is written in the `Some`'s place). A value nested deeper is an
-`Err(TomlUnknown(msg))`:
+`Err(Other(msg))`:
 
 ```text
 toml.stringify: the value is nested more than 1000 levels deep
@@ -91,7 +91,7 @@ toml.stringify: the value is nested more than 1000 levels deep
 
 The parsers stop sooner: `toml.parse`, `toml.parse_list` and
 `toml.parse_map` read a document whose arrays and tables are nested up to
-79 levels deep, and give a `TomlSyntax` error (`recursion limit exceeded`) for
+79 levels deep, and give a `Syntax` error (`recursion limit exceeded`) for
 one nested deeper. A value written at more levels than that is valid TOML
 that silt itself does not read back.
 

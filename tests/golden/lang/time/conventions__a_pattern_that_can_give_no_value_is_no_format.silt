@@ -1,0 +1,36 @@
+-- A pattern by which no text can be read as the value asked for is the
+-- pattern's fault, `InvalidFormat`, whatever the text: it has no time
+-- of day for a DateTime, no date, or nothing at all. `ParseFormat` is
+-- a text that does not match a pattern that could give the value, and
+-- `OutOfRange` a text that matches with a field that is no such day.
+import time
+
+fn show(label, r) {
+  match r {
+    Ok(_) -> println("{label}: Ok")
+    Err(time.ParseFormat(_)) -> println("{label}: ParseFormat")
+    Err(time.OutOfRange(_)) -> println("{label}: OutOfRange")
+    Err(time.InvalidFormat(why)) -> println("{label}: InvalidFormat({why})")
+    Err(time.Other(_)) -> println("{label}: Other")
+  }
+}
+
+fn main() {
+  show("a date and a time", time.parse("2024-02-29 13:05:09", "%Y-%m-%d %H:%M:%S"))
+  show("no time of day, a text that matches", time.parse("2024-02-29", "%Y-%m-%d"))
+  show("no time of day, a text that does not", time.parse("yesterday", "%Y-%m-%d"))
+  show("no date", time.parse("13:05:09", "%H:%M:%S"))
+  show("a 12-hour clock without its half of the day", time.parse("2024-02-29 01:05", "%Y-%m-%d %I:%M"))
+  show("the same with it", time.parse("2024-02-29 01:05 PM", "%Y-%m-%d %I:%M %p"))
+  show("an empty pattern", time.parse("", ""))
+  show("an empty pattern, a text", time.parse("2024", ""))
+  show("an unknown specifier", time.parse("2024", "%Q"))
+  show("a text that does not match", time.parse("yesterday", "%Y-%m-%d %H:%M:%S"))
+  show("a thirteenth month", time.parse("2024-13-01 00:00:00", "%Y-%m-%d %H:%M:%S"))
+  show("a date", time.parse_date("29.02.2024", "%d.%m.%Y"))
+  show("a date: no day", time.parse_date("02.2024", "%m.%Y"))
+  show("a date: only a time", time.parse_date("13:05", "%H:%M"))
+  show("a date: an empty pattern", time.parse_date("", ""))
+  show("a date: a text that does not match", time.parse_date("x", "%d.%m.%Y"))
+  show("a date: the 30th of February", time.parse_date("30.02.2024", "%d.%m.%Y"))
+}

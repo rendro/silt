@@ -8,8 +8,8 @@ fn main() {
     io.read_file("/var/log/slow.log")
   })
   match outcome {
-    Ok(contents) -> println(contents)
-    Err(io.IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
-    Err(_) -> println("other io error")
+    Ok(Ok(contents)) -> println(contents)
+    Ok(Err(_)) -> println("io error")
+    Err(_) -> println("the deadline passed")
   }
 }

@@ -24,22 +24,6 @@ impl BuiltinEnv {
         register_prelude(&mut checker, &mut env);
         enter_registry(&mut checker, &mut env);
         register_builtin_trait_impls(&mut checker);
-        // Each builtin variant is bound as `Enum.Variant` too, which is
-        // what a resolved use of it reads.
-        let mut variants: Vec<(Symbol, Scheme)> = Vec::new();
-        for (enum_name, info) in &checker.tables.enums {
-            for variant in &info.variants {
-                if let Some(scheme) = env.lookup(variant.name) {
-                    variants.push((
-                        intern(&format!("{enum_name}.{}", variant.name)),
-                        scheme.clone(),
-                    ));
-                }
-            }
-        }
-        for (name, scheme) in variants {
-            env.define(name, scheme);
-        }
         let mut tables = std::mem::take(&mut checker.tables);
         // (The builtins' rows are no module's.)
         tables.begin_rows();
@@ -171,7 +155,6 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 vars,
                 preds: vec![],
                 ty: Type::type_of(ty),
-                optional_last_param: false,
             },
         );
     }
@@ -240,12 +223,20 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
         checker.register_type_decl(td, &mut as_values);
     }
     checker.tables.trait_impl_set = impls;
-    // Each variant's scheme is the builtin scope's, under its name.
+    // Each variant's scheme is the builtin scope's, as `Enum.Variant`:
+    // what a resolved use of it reads ([`builtin_scheme`]). (Two enums
+    // may have a variant of one name: `tcp.Timeout`, `http.Timeout`.)
+    // A variant of the prelude (`Some`, `Ok`) is bound bare as well.
     let (defs, _) = names::builtins();
-    for variants in defs.variants.values() {
+    for (ty, variants) in &defs.variants {
+        let of = &defs.defs[ty.0 as usize];
         for id in variants {
             if let Some(scheme) = checker.tables.schemes.remove(id) {
-                env.define(defs.defs[id.0 as usize].name, scheme);
+                let variant = defs.defs[id.0 as usize].name;
+                if of.module == crate::session::ModuleId::PRELUDE {
+                    env.define(variant, scheme.clone());
+                }
+                env.define(intern(&format!("{}.{variant}", of.name)), scheme);
             }
         }
     }
@@ -273,7 +264,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
             {
                 scheme = Scheme::mono(*value);
             }
-            scheme.optional_last_param = row.optional_last;
             env.define(intern(&format!("{}.{name}", module.name)), scheme);
         }
         // The module's error enum implements `Error` natively

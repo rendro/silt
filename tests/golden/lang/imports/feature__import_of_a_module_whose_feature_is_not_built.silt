@@ -11,6 +11,6 @@ fn main() {
     Ok(_) -> println("connected")
     Err(e) -> println(e.message())
   }
-  let e = postgres.PgError.PgConnect("nope")
+  let e = postgres.PostgresError.Connect("nope")
   println(e)
 }

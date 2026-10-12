@@ -5,11 +5,11 @@ import int
 import http
 import regex
 fn main() {
-  let _io = io.IoNotFound("p")
-  let _json = json.JsonSyntax("m", 0)
-  let _toml = toml.TomlSyntax("m", 0)
-  let _parse = int.ParseEmpty
-  let _http = http.HttpConnect("host")
-  let _regex = regex.RegexTooBig
+  let _io = io.NotFound("p")
+  let _json = json.Syntax("m", 0)
+  let _toml = toml.Syntax("m", 0)
+  let _parse = int.Empty
+  let _http = http.Connect("host")
+  let _regex = regex.TooBig
   println(true)
 }

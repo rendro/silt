@@ -1,0 +1,17 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: send on closed channel 0
+-- Deep inside a callback of a builtin, a send on a closed channel is the
+-- same error.
+import channel
+import list
+import map
+
+fn main() {
+  let closed = channel.new(4)
+  channel.close(closed)
+  println("mapping")
+  let sent = map.map(#{ "a": [1, 2] }) { key, xs ->
+    (key, list.map(xs) { x -> channel.try_send(closed, x) })
+  }
+  println(sent)
+}

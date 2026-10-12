@@ -315,7 +315,7 @@ fn collect(ch, n, acc) {
   }
 }
 fn main() {
-  let ch = channel.new()
+  let ch = channel.new(0)
   let ps = 1..50 |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
   let r = task.spawn({ -> collect(ch, 25, 0) })
   let m = collect(ch, 25, 0)

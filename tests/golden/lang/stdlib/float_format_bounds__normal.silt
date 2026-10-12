@@ -1,0 +1,4 @@
+import float
+fn main() {
+  println(float.format(3.14159, 2))
+}

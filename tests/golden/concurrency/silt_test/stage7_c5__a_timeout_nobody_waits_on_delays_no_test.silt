@@ -12,8 +12,9 @@
 import channel
 import task
 import test
+import time
 
-let far: Channel(Int) = channel.timeout(60000)
+let far: Channel(Int) = channel.timeout(time.ms(60000))
 
 let requests: Channel(Int) = channel.new(0)
 
@@ -28,7 +29,7 @@ fn test_a_leaves_a_parked_task() {
 fn test_b_loses_no_time_to_its_own_timeout() {
   let ch = channel.new(1)
   channel.send(ch, 1)
-  let late = channel.timeout(60000)
+  let late = channel.timeout(time.ms(60000))
   let _ = channel.select([channel.Recv(ch), channel.Recv(late)])
   test.assert_eq(1, 1)
 }

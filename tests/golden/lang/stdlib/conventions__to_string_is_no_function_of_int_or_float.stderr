@@ -1,0 +1,29 @@
+error[type]: module 'int' has no member 'to_string'
+ --> conventions__to_string_is_no_function_of_int_or_float.silt:9:11
+   |
+ 9 |   println(int.to_string(1))
+   |           ^^^^^^^^^^^^^ module 'int' has no member 'to_string'
+
+error[type]: module 'float' has no member 'to_string'
+ --> conventions__to_string_is_no_function_of_int_or_float.silt:10:11
+    |
+ 10 |   println(float.to_string(1.5))
+    |           ^^^^^^^^^^^^^^^ module 'float' has no member 'to_string'
+
+error[type]: module 'float' has no member 'to_string'
+ --> conventions__to_string_is_no_function_of_int_or_float.silt:11:11
+    |
+ 11 |   println(float.to_string(1.5, 2))
+    |           ^^^^^^^^^^^^^^^ module 'float' has no member 'to_string'
+
+error[type]: module 'int' has no member 'to_string'
+ --> conventions__to_string_is_no_function_of_int_or_float.silt:13:11
+    |
+ 13 |   let f = int.to_string
+    |           ^^^^^^^^^^^^^ module 'int' has no member 'to_string'
+
+error[type]: function expects 2 arguments, got 1
+ --> conventions__to_string_is_no_function_of_int_or_float.silt:12:11
+    |
+ 12 |   println(float.format(1.5))
+    |           ^^^^^^^^^^^^^^^^^ function expects 2 arguments, got 1

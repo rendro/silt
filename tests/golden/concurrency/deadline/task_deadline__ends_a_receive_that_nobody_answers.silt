@@ -1,0 +1,22 @@
+-- repeat: 50
+-- timeout: 10
+-- stderr-not-contains: deadlock
+-- The deadline bounds every wait of the function, a wait on a channel
+-- too: a receive that nobody will ever answer is no deadlock inside a
+-- deadline, on the program's own thread or in a task. It ends when the
+-- deadline has passed.
+import channel
+import task
+import time
+
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  println(task.deadline(time.ms(20), { -> channel.receive(never) }))
+  let waits = task.spawn { -> task.deadline(time.ms(20), { -> channel.receive(never) }) }
+  println(task.join(waits))
+  println(task.deadline(time.ms(20), { -> channel.send(never, 1) }))
+  match task.deadline(time.ms(20), { -> channel.select([channel.Recv(never), channel.Send(never, 2)]) }) {
+    Err(e) -> println("Err({e})")
+    Ok(_) -> println("an arm of the select was ready")
+  }
+}

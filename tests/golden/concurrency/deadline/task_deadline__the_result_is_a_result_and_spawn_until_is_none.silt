@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- `task.deadline` returns a `Result`, so what the function returns is
+-- not there to use without a look at it; and `task.spawn_until(dur, f)`
+-- is no function: it is `task.spawn { -> task.deadline(dur, f) }`.
+import task
+import time
+
+fn main() {
+  let n: Int = task.deadline(time.seconds(1), { -> 1 })
+  let handle = task.spawn_until(time.seconds(1), { -> 1 })
+  println(n + task.join(handle))
+}

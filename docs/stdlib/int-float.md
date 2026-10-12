@@ -16,9 +16,8 @@ Functions for parsing, converting, and comparing integers.
 | `clamp` | `(Int, Int, Int) -> Int` | Clamp value to `[lo, hi]` |
 | `max` | `(Int, Int) -> Int` | Larger of two values |
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
-| `parse` | `(String) -> Result(Int, ParseError)` | Parse string to integer |
+| `parse` | `(String) -> Result(Int, IntError)` | Parse string to integer |
 | `to_float` | `(Int) -> Float` | Convert to float |
-| `to_string` | `(Int) -> String` | Convert to string |
 
 
 ## `int.abs`
@@ -98,12 +97,12 @@ fn main() {
 ## `int.parse`
 
 ```
-int.parse(s: String) -> Result(Int, ParseError)
+int.parse(s: String) -> Result(Int, IntError)
 ```
 
 Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
-`Ok(n)` on success, `Err(ParseError)` on failure — a typed enum with variants
-`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`, and `ParseUnderflow`.
+`Ok(n)` on success, `Err(IntError)` on failure — a typed enum with variants
+`Empty`, `InvalidDigit(offset)`, `Overflow`, `Underflow` and `Other(message)`.
 Match on the variant to handle specific cases, or fall back to `e.message()` for
 a human-readable default.
 
@@ -119,10 +118,11 @@ fn main() {
   -- Pattern-match on specific failure modes:
   match int.parse("") {
     Ok(_) -> ()
-    Err(int.ParseEmpty) -> println("cannot parse empty input")
-    Err(int.ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
-    Err(int.ParseOverflow) -> println("too large")
-    Err(int.ParseUnderflow) -> println("too small")
+    Err(int.Empty) -> println("cannot parse empty input")
+    Err(int.InvalidDigit(i)) -> println("bad digit at byte {i}")
+    Err(int.Overflow) -> println("too large")
+    Err(int.Underflow) -> println("too small")
+    Err(int.Other(message)) -> println(message)
   }
 }
 ```
@@ -142,24 +142,6 @@ import int
 fn main() {
   let f = int.to_float(42)
   println(f) -- 42
-}
-```
-
-
-## `int.to_string`
-
-```
-int.to_string(n: Int) -> String
-```
-
-Converts an integer to its string representation.
-
-```silt
-import int
-
-fn main() {
-  let s = int.to_string(42)
-  println(s) -- 42
 }
 ```
 
@@ -190,12 +172,12 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
 | `clamp` | `(Float, Float, Float) -> Float` | Clamp value to `[lo, hi]` |
 | `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
+| `format` | `(Float, Int) -> String` | Decimal text with that many decimal places |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
-| `parse` | `(String) -> Result(Float, ParseError)` | Parse string to float |
+| `parse` | `(String) -> Result(Float, FloatError)` | Parse string to float |
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
-| `to_string` | `(Float, Int?) -> String` | Shortest round-trippable representation; with `decimals`, that many decimal places |
 | **Constants** | | |
 | `float.max_value` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
 | `float.min_value` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
@@ -277,6 +259,27 @@ fn main() {
 ```
 
 
+## `float.format`
+
+```
+float.format(f: Float, decimals: Int) -> String
+```
+
+The decimal text of a float with exactly `decimals` decimal places, rounded
+to the nearest. `decimals` must not be negative. For the text a float is
+shown as (in `println`, in `"{f}"`), use `string.from(f)`.
+
+```silt
+import float
+
+fn main() {
+  println(float.format(3.14159, 2)) -- 3.14
+  println(float.format(42.0, 1)) -- 42.0
+  println(float.format(2.5, 0)) -- 2
+}
+```
+
+
 ## `float.max`
 
 ```
@@ -314,15 +317,15 @@ fn main() {
 ## `float.parse`
 
 ```
-float.parse(s: String) -> Result(Float, ParseError)
+float.parse(s: String) -> Result(Float, FloatError)
 ```
 
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
-`Ok(f)` on success, `Err(ParseError)` on failure — the same typed enum
-`int.parse` uses (`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`,
-`ParseUnderflow`). A `Float` is always finite, so `"NaN"` and `"inf"` are
-rejected as `ParseInvalidDigit(0)`, and a literal outside the `Float` range
-as `ParseOverflow` (`"1e400"`) or `ParseUnderflow` (`"-1e400"`).
+`Ok(f)` on success, `Err(FloatError)` on failure — an enum of its own with
+the variants `int.parse` has (`Empty`, `InvalidDigit(offset)`, `Overflow`,
+`Underflow`, `Other(message)`). A `Float` is always finite, so `"NaN"` and `"inf"` are
+rejected as `InvalidDigit(0)`, and a literal outside the `Float` range
+as `Overflow` (`"1e400"`) or `Underflow` (`"-1e400"`).
 
 ```silt
 import float
@@ -369,36 +372,6 @@ import float
 fn main() {
   println(float.to_int(3.9)) -- 3
   println(float.to_int(-3.9)) -- -3
-}
-```
-
-
-## `float.to_string`
-
-```
-float.to_string(f: Float) -> String
-float.to_string(f: Float, decimals: Int) -> String
-```
-
-Converts a float to its string representation.
-
-- **One-argument form:** returns the shortest round-trippable
-  representation. Whole-number floats always include a decimal point
-  (`3.0` rather than `3`) so the result parses back as a float.
-- **Two-argument form:** formats with exactly `decimals` decimal
-  places. `decimals` must be a non-negative `Int`.
-
-```silt
-import float
-
-fn main() {
-  -- 1-arg form: shortest round-trippable
-  println(float.to_string(3.14159)) -- 3.14159
-  println(float.to_string(42.0)) -- 42.0
-
-  -- 2-arg form: fixed decimal places
-  println(float.to_string(3.14159, 2)) -- 3.14
-  println(float.to_string(42.0, 0)) -- 42
 }
 ```
 

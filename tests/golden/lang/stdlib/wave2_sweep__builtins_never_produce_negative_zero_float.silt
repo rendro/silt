@@ -8,9 +8,9 @@ fn num(s: String) -> Float {
 }
 fn main() {
   let a = num("-0.0")
-  println("parse {a} {float.to_string(a)}")
+  println("parse {a} {float.format(a, 1)}")
   let b = num("-1e-400")
-  println("underflow {b} {float.to_string(b)}")
+  println("underflow {b} {float.format(b, 1)}")
   let c = math.atan2(num("-1e-300"), num("1e300"))
-  println("atan2 {c} {float.to_string(c)}")
+  println("atan2 {c} {float.format(c, 1)}")
 }

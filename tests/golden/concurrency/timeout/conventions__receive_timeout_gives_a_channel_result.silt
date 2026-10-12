@@ -1,0 +1,36 @@
+-- `channel.receive_timeout` answers in the words of every receive:
+-- `Message(v)` for a value that is there or comes in time, `Empty` when
+-- the duration passes with none, `Closed` for a closed and empty channel.
+import channel
+import task
+import time
+
+fn outcome(r: channel.ChannelResult(Int)) -> String {
+  match r {
+    channel.Message(v) -> "message {v}"
+    channel.Empty -> "empty"
+    channel.Closed -> "closed"
+    channel.Sent -> "sent"
+  }
+}
+
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 7)
+  println(outcome(channel.receive_timeout(ch, time.ms(0))))
+  println(outcome(channel.receive_timeout(ch, time.ms(0))))
+  println(outcome(channel.receive_timeout(ch, time.ms(20))))
+  let sender = task.spawn { ->
+    time.sleep(time.ms(5))
+    channel.send(ch, 8)
+  }
+  println(outcome(channel.receive_timeout(ch, time.seconds(30))))
+  task.join(sender)
+  channel.close(ch)
+  println(outcome(channel.receive_timeout(ch, time.seconds(30))))
+  -- In a task, where the wait parks instead of blocking a thread.
+  let quiet = channel.new(0)
+  let waiter = task.spawn { -> outcome(channel.receive_timeout(quiet, time.ms(20))) }
+  println(task.join(waiter))
+  println(channel.receive_timeout(quiet, time.ms(1)) == channel.try_receive(quiet))
+}

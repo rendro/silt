@@ -1,0 +1,31 @@
+-- repeat: 20
+-- timeout: 10
+-- stderr-not-contains: deadlock
+-- The function's wait may be deep inside a callback of a builtin: a
+-- `list.fold` whose callback receives from a channel that nobody sends
+-- on, a `map.each` whose callback sleeps. The deadline ends the
+-- function wherever it waits, in a task as on the program's own thread.
+import channel
+import list
+import map
+import task
+import time
+
+fn recv(ch) {
+  match channel.receive(ch) {
+    channel.Message(v) -> v
+    _ -> 0 - 1
+  }
+}
+
+fn main() {
+  let never = channel.new(0)
+  println(task.deadline(time.ms(20), { -> list.fold(1..3, 0) { acc, i -> acc + recv(never) } }))
+  let inside = task.spawn { ->
+    task.deadline(time.ms(20), { -> list.map(1..3) { i -> recv(never) * i } })
+  }
+  println(task.join(inside))
+  println(task.deadline(time.ms(20), { ->
+    map.each(#{ "a": 1 }) { key, value -> time.sleep(time.hours(1)) }
+  }))
+}

@@ -30,7 +30,7 @@ fn main() {
       true -> Some((s, s + 1))
       false -> None
     } }
-    let g = regex.replace_all_with("[0-9]", "a1b2") { m -> slow(m) }
+    let g = regex.replace_all_with("a1b2", "[0-9]") { m -> slow(m) } |> result.unwrap_or("")
     let h = Ok(1) |> result.map_ok { x -> slow(x) + 1 }
     let i = list.fold_until([1, 2, 3, 4], 0) { acc, x -> match slow(x) > 2 {
       true -> list.Stop(acc)

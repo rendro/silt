@@ -135,16 +135,16 @@ fn hover_on_println_returns_globals_doc() {
 fn hover_on_io_error_variant_returns_errors_doc() {
     let mut client = LspClient::spawn();
     let uri = unique_uri();
-    let source = "import io\n\nfn main() {\n    let e = io.IoNotFound(\"x\")\n    e\n}\n";
+    let source = "import io\n\nfn main() {\n    let e = io.NotFound(\"x\")\n    e\n}\n";
     client.did_open_and_wait(&uri, source);
 
-    // Cursor on `IoNotFound` line 3 col 17.
+    // Cursor on `NotFound` line 3 col 17.
     let resp = client.hover(&uri, 3, 17);
-    let md = hover_markdown(&resp).expect("expected hover markdown for IoNotFound");
+    let md = hover_markdown(&resp).expect("expected hover markdown for NotFound");
     // The IoError section in errors.md mentions the variant table.
     assert!(
-        md.contains("IoNotFound") || md.contains("path") || md.contains("Variant"),
-        "hover on IoNotFound should include the IoError section; got:\n{md}"
+        md.contains("NotFound") || md.contains("path") || md.contains("Variant"),
+        "hover on NotFound should include the IoError section; got:\n{md}"
     );
     client.shutdown();
 }
@@ -168,6 +168,41 @@ fn hover_on_channel_message_returns_its_own_section() {
     assert!(
         !md.contains("## `println`") && !md.contains("Always Available"),
         "hover on channel.Message should not show the whole globals page; got:\n{md}"
+    );
+    client.shutdown();
+}
+
+/// Hover on a variant whose name another module has too shows its own
+/// enum's text: `tcp.Closed` is `TcpError`'s, and what the globals page
+/// says of `channel.Closed` is shown for `channel.Closed` only.
+#[test]
+fn hover_on_a_variant_of_a_shared_name_shows_its_own_enum() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    let source = "import channel\nimport int\nimport tcp\n\nfn main() {\n    let a = tcp.Closed\n    let b: channel.ChannelResult(Int) = channel.Closed\n    let c = int.Empty\n    (a, b, c)\n}\n";
+    client.did_open_and_wait(&uri, source);
+
+    // `Closed` of `tcp.Closed`, line 5 col 16.
+    let md = hover_markdown(&client.hover(&uri, 5, 16)).expect("hover on tcp.Closed");
+    assert!(
+        md.contains("A variant of `tcp.TcpError`") && md.contains("connection closed"),
+        "hover on tcp.Closed should show TcpError; got:\n{md}"
+    );
+    assert!(
+        !md.contains("A variant of `channel`"),
+        "hover on tcp.Closed shows channel's text; got:\n{md}"
+    );
+    // `Closed` of `channel.Closed`, line 6 col 48.
+    let md = hover_markdown(&client.hover(&uri, 6, 48)).expect("hover on channel.Closed");
+    assert!(
+        md.contains("A variant of `channel`: write `channel.Closed`"),
+        "hover on channel.Closed should show its section; got:\n{md}"
+    );
+    // `Empty` of `int.Empty`, line 7 col 16.
+    let md = hover_markdown(&client.hover(&uri, 7, 16)).expect("hover on int.Empty");
+    assert!(
+        md.contains("A variant of `int.IntError`") && !md.contains("A variant of `channel`"),
+        "hover on int.Empty should show IntError; got:\n{md}"
     );
     client.shutdown();
 }

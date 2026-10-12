@@ -190,8 +190,7 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
 /// declaration, or two declarations may not share it, so which one a use
 /// refers to never depends on their order. (Shadowing inside a function
 /// body is unaffected.) Two items of `import m.{ ... }` lines are left
-/// to the resolver: they are one binding when they name one definition
-/// (`int.{ ParseError }` and `float.{ ParseError }`).
+/// to the resolver: they are one binding when they name one definition.
 ///
 /// Returns the first `keep` of the errors, and how many more there are.
 fn top_level_name_errors(decls: &[Decl], keep: usize) -> (Vec<Diagnostic>, usize) {

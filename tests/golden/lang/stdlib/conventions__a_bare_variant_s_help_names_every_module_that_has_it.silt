@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- The help for a bare variant that is not in scope names every module
+-- that has a variant of that name, whether the file imports some of
+-- them or none: the imported ones first, as they are written here,
+-- then the others. (`Timeout` is a variant of four modules, `Closed`
+-- of three, `NotFound` of one.)
+import http
+import io
+import tcp
+
+fn main() {
+  println(Timeout)
+  println(Closed)
+  println(NotFound("p"))
+}

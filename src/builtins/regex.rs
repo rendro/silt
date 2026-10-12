@@ -1,17 +1,20 @@
 //! The `regex.*` builtin functions.
 
+use super::common::ok;
 use super::typed::{builtins, unsound};
+use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError, iterate, next};
+use crate::vm::{Step, Vm, iterate, next};
 
 /// What `RegexError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
+        ("InvalidPattern", [Value::String(m), Value::Int(pos)]) => {
             format!("invalid regex pattern at position {pos}: {m}")
         }
-        ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
+        ("TooBig", []) => "compiled regex exceeds size budget".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -29,40 +32,114 @@ fn groups(caps: &regex::Captures) -> Value {
     Value::list(groups.collect())
 }
 
+fn option(found: Option<Value>) -> Value {
+    match found {
+        Some(value) => Value::variant(bv::SOME, vec![value]),
+        None => Value::variant(bv::NONE, vec![]),
+    }
+}
+
+/// What is wrong with a pattern, and the byte of the pattern where it
+/// is wrong, from the report of the `regex` crate. The report shows
+/// the pattern, marks the place with `^` under it, and says what is
+/// wrong after `error: `:
+///
+/// ```text
+/// regex parse error:
+///     a(b
+///      ^
+/// error: unclosed group
+/// ```
+///
+/// A report of another shape (the crate lays out a pattern of several
+/// lines differently) is given whole, with the place 0.
+fn syntax_error(pattern: &str, report: &str) -> (String, usize) {
+    const INDENT: &str = "    ";
+    let lines: Vec<&str> = report.lines().collect();
+    let found = (|| {
+        let shown = lines
+            .iter()
+            .position(|line| line.strip_prefix(INDENT) == Some(pattern))?;
+        let marks = lines.get(shown + 1)?.strip_prefix(INDENT)?;
+        if marks.trim_matches(|c| c == ' ' || c == '^').is_empty() && marks.contains('^') {
+            let column = marks.chars().take_while(|c| *c == ' ').count();
+            let at = pattern
+                .char_indices()
+                .nth(column)
+                .map_or(pattern.len(), |(at, _)| at);
+            let what = lines.last()?.strip_prefix("error: ")?;
+            return Some((what.to_string(), at));
+        }
+        None
+    })();
+    found.unwrap_or_else(|| (report.to_string(), 0))
+}
+
+/// `Err(RegexError)` of the pattern `pattern`, which did not compile.
+fn pattern_err(pattern: &str, error: &regex::Error) -> Value {
+    let variant = match error {
+        regex::Error::Syntax(report) => {
+            let (what, at) = syntax_error(pattern, report);
+            Value::variant(
+                bv::REGEX_INVALID_PATTERN,
+                vec![Value::String(what.into()), Value::Int(at as i64)],
+            )
+        }
+        regex::Error::CompiledTooBig(_) => Value::variant(bv::REGEX_TOO_BIG, vec![]),
+        other => Value::variant(
+            bv::REGEX_OTHER,
+            vec![Value::String(other.to_string().into())],
+        ),
+    };
+    Value::variant(bv::ERR, vec![variant])
+}
+
+/// What a function of the pattern gives: `Ok` of what `found` makes of
+/// the compiled pattern, or `Err(RegexError)` if it does not compile.
+fn with(vm: &mut Vm, pattern: &str, found: impl FnOnce(&regex::Regex) -> Value) -> Value {
+    match Vm::get_regex(&mut vm.regex_cache, pattern) {
+        Ok(re) => ok(found(re)),
+        Err(error) => pattern_err(pattern, &error),
+    }
+}
+
+// Every function takes the text first and the pattern second, and
+// returns a `Result`: a pattern is text like any other, and one that
+// is no pattern is an error value.
 builtins! {
-    fn is_match(vm, pattern: &str, text: &str) -> Result<bool, VmError> {
-        Ok(Vm::get_regex(&mut vm.regex_cache, pattern)?.is_match(text))
+    fn is_match(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| Value::Bool(re.is_match(text)))
     }
 
-    fn find(vm, pattern: &str, text: &str) -> Result<Option<Value>, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.find(text).map(|m| string(m.as_str())))
+    fn find(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| option(re.find(text).map(|m| string(m.as_str()))))
     }
 
-    fn find_all(vm, pattern: &str, text: &str) -> Result<Vec<Value>, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.find_iter(text).map(|m| string(m.as_str())).collect())
+    fn find_all(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| {
+            Value::list(re.find_iter(text).map(|m| string(m.as_str())).collect())
+        })
     }
 
-    fn split(vm, pattern: &str, text: &str) -> Result<Vec<Value>, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.split(text).map(string).collect())
+    fn split(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| Value::list(re.split(text).map(string).collect()))
     }
 
-    fn replace(vm, pattern: &str, text: &str, replacement: &str) -> Result<String, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.replace(text, replacement).to_string())
+    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Value {
+        with(vm, pattern, |re| string(&re.replace(text, replacement)))
     }
 
-    fn replace_all(vm, pattern: &str, text: &str, replacement: &str) -> Result<String, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.replace_all(text, replacement).to_string())
+    fn replace_all(vm, text: &str, pattern: &str, replacement: &str) -> Value {
+        with(vm, pattern, |re| string(&re.replace_all(text, replacement)))
     }
 
     // `f` is called with each match, in order, and the string it
     // returns stands for the match.
-    fn replace_all_with(vm, pattern: &str, text: &str, f: &Value) -> Result<Step, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
+    fn replace_all_with(vm, text: &str, pattern: &str, f: &Value) -> Step {
+        let re = match Vm::get_regex(&mut vm.regex_cache, pattern) {
+            Ok(re) => re,
+            Err(error) => return Step::Done(pattern_err(pattern, &error)),
+        };
         // The matches are the items; each carries where it ends, and the
         // state is the text built so far and the rest of the text with
         // where it starts.
@@ -89,7 +166,7 @@ builtins! {
                 _ => (0, 0),
             }
         }
-        Ok(iterate(
+        iterate(
             "regex.replace_all_with",
             matches,
             f.clone(),
@@ -115,40 +192,41 @@ builtins! {
             |state| {
                 let mut out = std::mem::take(&mut state.out);
                 out.push_str(&state.text[state.last_end..]);
-                Ok(Value::String(out.into()))
+                Ok(ok(Value::String(out.into())))
             },
-        ))
+        )
     }
 
-    fn captures(vm, pattern: &str, text: &str) -> Result<Option<Value>, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.captures(text).map(|caps| groups(&caps)))
+    fn captures(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| option(re.captures(text).map(|caps| groups(&caps))))
     }
 
-    fn captures_all(vm, pattern: &str, text: &str) -> Result<Vec<Value>, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        Ok(re.captures_iter(text).map(|caps| groups(&caps)).collect())
+    fn captures_all(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| {
+            Value::list(re.captures_iter(text).map(|caps| groups(&caps)).collect())
+        })
     }
 
-    fn captures_named(vm, pattern: &str, text: &str) -> Result<Option<Value>, VmError> {
-        let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-        // `capture_names()` yields one entry per group, including the
-        // implicit whole-match group at index 0 (whose name is `None`)
-        // and any numbered-only groups (also `None`). A pattern with no
-        // *named* group gives `None`.
-        if re.capture_names().flatten().next().is_none() {
-            return Ok(None);
-        }
-        let Some(caps) = re.captures(text) else {
-            return Ok(None);
-        };
-        // Collect (name → match) pairs. Skip any named group that
-        // did not participate in the match — per the spec we omit
-        // it entirely rather than mapping to "".
-        let named = re.capture_names().flatten().filter_map(|name| {
-            let m = caps.name(name)?;
-            Some((string(name), string(m.as_str())))
-        });
-        Ok(Some(Value::map(named.collect())))
+    fn captures_named(vm, text: &str, pattern: &str) -> Value {
+        with(vm, pattern, |re| {
+            // `capture_names()` yields one entry per group, including the
+            // implicit whole-match group at index 0 (whose name is `None`)
+            // and any numbered-only groups (also `None`). A pattern with no
+            // *named* group gives `None`.
+            if re.capture_names().flatten().next().is_none() {
+                return option(None);
+            }
+            let Some(caps) = re.captures(text) else {
+                return option(None);
+            };
+            // Collect (name → match) pairs. Skip any named group that
+            // did not participate in the match — per the spec we omit
+            // it entirely rather than mapping to "".
+            let named = re.capture_names().flatten().filter_map(|name| {
+                let m = caps.name(name)?;
+                Some((string(name), string(m.as_str())))
+            });
+            option(Some(Value::map(named.collect())))
+        })
     }
 }

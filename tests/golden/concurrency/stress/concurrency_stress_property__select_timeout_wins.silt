@@ -10,7 +10,7 @@ import time
 fn main() {
   let ch = channel.new(0)
   -- No sender on `ch`; only timer should fire.
-  let timer = channel.timeout(50)
+  let timer = channel.timeout(time.ms(50))
   let outcome = match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
     (_, channel.Closed) -> "timed_out"
     (_, channel.Message(_v)) -> "got_value"

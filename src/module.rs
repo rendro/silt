@@ -90,7 +90,7 @@ pub fn builtin_module_types() -> &'static [&'static str] {
 /// `time` for `Weekday`, `http` for `Request`. `None` for the prelude
 /// types and for any other name. A module's types are reached as
 /// `time.Weekday`; their variants as `time.Monday` (see
-/// [`builtin_variant_module`]).
+/// [`builtin_module_variants`]).
 pub fn builtin_type_module(name: &str) -> Option<&'static str> {
     registry()
         .modules
@@ -99,20 +99,18 @@ pub fn builtin_type_module(name: &str) -> Option<&'static str> {
         .map(|m| m.name)
 }
 
-/// The builtin module whose enum declares the variant `name`, which is
-/// how the variant is reached qualified: `channel` for `Message` and for
-/// `Recv`, `time` for `Monday`. `None` for the prelude variants and for
-/// any other name.
-pub fn builtin_variant_module(name: &str) -> Option<&'static str> {
+/// The variants of the enums the builtin module `module` declares, which
+/// are reached as `module.Variant`: `Message` and `Recv` for `channel`,
+/// `Monday` for `time`. Two modules may have a variant of one name
+/// (`tcp.Timeout`, `http.Timeout`). Empty for any other name.
+pub fn builtin_module_variants(module: &str) -> Vec<&'static str> {
     registry()
         .modules
         .iter()
-        .find(|m| {
-            m.type_decls
-                .iter()
-                .any(|ty| ty.variants().iter().any(|(variant, _)| *variant == name))
-        })
-        .map(|m| m.name)
+        .filter(|m| m.name == module)
+        .flat_map(|m| &m.type_decls)
+        .flat_map(|ty| ty.variants().iter().map(|(variant, _)| *variant))
+        .collect()
 }
 
 /// The `(enum, [(variant, arity)])` listing of the builtin enums `keep`

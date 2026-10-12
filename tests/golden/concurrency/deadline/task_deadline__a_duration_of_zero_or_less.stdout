@@ -1,0 +1,11 @@
+returns at once: Ok(1)
+returns at once, negative: Ok(1)
+computes a little: Ok(100)
+receives what is there: Ok(Message(7))
+selects what is there: Ok(Message(8))
+receives nothing: Err(the function was ended by its deadline)
+receives nothing, negative: Err(the function was ended by its deadline)
+selects nothing: Err(the function was ended by its deadline)
+sleeps: Err(the function was ended by its deadline)
+computes on: Err(the function was ended by its deadline)
+nothing was taken by the functions that were ended: Empty

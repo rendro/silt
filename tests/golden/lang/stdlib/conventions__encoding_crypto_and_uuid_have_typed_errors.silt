@@ -1,0 +1,43 @@
+-- No function returns `Result(_, String)`: `encoding`, `crypto` and
+-- `uuid` have error enums of their own, whose `message` is the text the
+-- functions used to return.
+import crypto
+import encoding
+import uuid
+
+fn main() {
+  match encoding.url_decode("bad%") {
+    Err(encoding.InvalidPercent(text)) -> println("url_decode InvalidPercent: {text}")
+    other -> println(other)
+  }
+  match encoding.url_decode("%C3%28") {
+    Err(encoding.InvalidUtf8(text)) -> println("url_decode InvalidUtf8: {text}")
+    other -> println(other)
+  }
+  match encoding.form_decode("a=1&b=%ZZ") {
+    Err(encoding.InvalidPercent(text)) -> println("form_decode InvalidPercent: {text}")
+    other -> println(other)
+  }
+  match encoding.form_decode("%FF=1") {
+    Err(e) -> println("form_decode: {e.message()}")
+    Ok(pairs) -> println(pairs)
+  }
+  match crypto.random_bytes(-1) {
+    Err(crypto.InvalidLength(n)) -> println("random_bytes InvalidLength: {n}")
+    _ -> println("something else")
+  }
+  match crypto.random_bytes(2000000) {
+    Err(e) -> println(e.message())
+    Ok(_) -> println("two million bytes")
+  }
+  match uuid.parse("not-a-uuid") {
+    Err(uuid.Invalid(why)) -> println("parse Invalid: {why}")
+    other -> println(other)
+  }
+  match uuid.parse("not-a-uuid") {
+    Err(e) -> println(e)
+    Ok(text) -> println(text)
+  }
+  println(uuid.parse("00000000-0000-0000-0000-000000000000"))
+  println(encoding.url_decode("a%20b"))
+}

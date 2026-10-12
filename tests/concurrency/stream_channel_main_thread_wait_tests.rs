@@ -235,7 +235,7 @@ const DEADLOCK_TESTS: &str = r#"
 fn test_b_real_deadlock() {
   let fresh = channel.new(0)
   let _ = channel.receive(fresh)
-  test.assert(false, "unreachable")
+  test.assert(false)
 }
 
 fn test_c_trivial() {

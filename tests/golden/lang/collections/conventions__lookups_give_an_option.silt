@@ -1,0 +1,44 @@
+-- A lookup that may find nothing gives an `Option`: an index that is no
+-- position (past the end, or negative), an empty string, a number that
+-- is no code point are `None`, not a runtime error. `bytes.slice` clamps
+-- its indices to the length, as `string.slice` does.
+import bytes
+import list
+import string
+
+fn main() {
+  let xs = [10, 20, 30]
+  println(list.get(xs, 2))
+  println(list.get(xs, 3))
+  println(list.get(xs, -1))
+  println(list.set(xs, 1, 99))
+  println(list.set(xs, 3, 99))
+  println(list.set(xs, -1, 99))
+  println(list.remove_at(xs, 0))
+  println(list.remove_at(xs, 3))
+  println(list.remove_at(xs, -1))
+  println(xs)
+  println(string.split_at("héllo", 2))
+  println(string.split_at("héllo", 5))
+  println(string.split_at("héllo", 6))
+  println(string.split_at("héllo", -1))
+  println(string.char_code("A"))
+  println(string.char_code(""))
+  println(string.from_char_code(233))
+  println(string.from_char_code(-1))
+  println(string.from_char_code(55296))
+  println(string.from_char_code(1114112))
+  let b = bytes.from_string("hello")
+  println(bytes.get(b, 1))
+  println(bytes.get(b, 5))
+  println(bytes.get(b, -1))
+  println(bytes.to_string(bytes.slice(b, 1, 3)))
+  println(bytes.to_string(bytes.slice(b, 1, 99)))
+  println(bytes.length(bytes.slice(b, 9, 12)))
+  println(bytes.length(bytes.slice(b, 3, 1)))
+  -- What is found is used as any Option is.
+  match list.set(xs, 0, 1) {
+    Some(ys) -> println(list.length(ys))
+    None -> println("no such position")
+  }
+}

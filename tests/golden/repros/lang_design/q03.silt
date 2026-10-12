@@ -1,7 +1,7 @@
 -- verdict: same
 import int
 
-fn both(a: String, b: String) -> Result(Bool, int.ParseError) {
+fn both(a: String, b: String) -> Result(Bool, int.IntError) {
   Ok(int.parse(a)? == int.parse(b)?)
 }
 

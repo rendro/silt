@@ -1,0 +1,46 @@
+-- timeout: 60
+-- A duration of zero or less is a time that is over when the function
+-- starts, and the rule is the same: the function runs until it would
+-- have to wait, or until the steps of a late function are used up. So a function
+-- that returns without waiting is `Ok`, also when what it asked for
+-- was there (a value in a channel wins over a time that has passed);
+-- one that would wait is ended there, and one that computes on is
+-- ended when those steps are used up.
+import channel
+import task
+import time
+
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn main() {
+  let empty: Channel(Int) = channel.new(1)
+  let full: Channel(Int) = channel.new(2)
+  channel.send(full, 7)
+  channel.send(full, 8)
+  println("returns at once: {task.deadline(time.ms(0), { -> 1 })}")
+  println("returns at once, negative: {task.deadline(time.ms(-5), { -> 1 })}")
+  println("computes a little: {task.deadline(time.ms(0), { -> count(100, 0) })}")
+  println("receives what is there: {task.deadline(time.ms(0), { -> channel.receive(full) })}")
+  let selected = task.deadline(time.ms(0), { ->
+    match channel.select([channel.Recv(empty), channel.Recv(full)]) {
+      (_, r) -> r
+    }
+  })
+  println("selects what is there: {selected}")
+  println("receives nothing: {task.deadline(time.ms(0), { -> channel.receive(empty) })}")
+  println("receives nothing, negative: {task.deadline(time.ms(-5), { -> channel.receive(empty) })}")
+  let nothing = task.deadline(time.ms(0), { ->
+    match channel.select([channel.Recv(empty)]) {
+      (_, r) -> r
+    }
+  })
+  println("selects nothing: {nothing}")
+  println("sleeps: {task.deadline(time.ms(0), { -> time.sleep(time.ms(1)) })}")
+  println("computes on: {task.deadline(time.ms(0), { -> count(2000000000, 0) })}")
+  println("nothing was taken by the functions that were ended: {channel.try_receive(empty)}")
+}

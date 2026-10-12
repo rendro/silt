@@ -2,9 +2,10 @@
 -- Two timeouts with different durations; select picks the shorter one first.
 import io
 import channel
+import time
 fn program() {
-  let short = channel.timeout(10)
-  let long = channel.timeout(5000)
+  let short = channel.timeout(time.ms(10))
+  let long = channel.timeout(time.ms(5000))
 
   match channel.select([channel.Recv(long), channel.Recv(short)]) {
     (ch, channel.Closed) -> {

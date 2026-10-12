@@ -2,11 +2,12 @@
 -- Select across multiple empty channels plus a timeout — timeout should win.
 import io
 import channel
+import time
 fn program() {
   let ch1 = channel.new(1)
   let ch2 = channel.new(1)
   let ch3 = channel.new(1)
-  let timer = channel.timeout(50)
+  let timer = channel.timeout(time.ms(50))
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2), channel.Recv(ch3), channel.Recv(timer)]) {
     (_, channel.Closed) -> "timeout_won"

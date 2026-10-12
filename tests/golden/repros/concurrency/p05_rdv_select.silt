@@ -4,8 +4,8 @@ import task
 import time
 
 fn main() {
-  let a = channel.new()
-  let b = channel.new()
+  let a = channel.new(0)
+  let b = channel.new(0)
   let done = channel.new(4)
   -- one receiver, takes exactly ONE message from either a or b, then exits
   let r = task.spawn(fn() {

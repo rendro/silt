@@ -418,7 +418,7 @@ fn lsp_dot_completion_after_float_still_includes_functions() {
     let source = "import float\nfn main() {\n  float.\n}\n";
     let labels = dot_completion_labels(source, 2, 8);
 
-    for expected in ["parse", "round", "abs", "to_string"] {
+    for expected in ["parse", "round", "abs", "format"] {
         assert!(
             labels.iter().any(|l| l == expected),
             "expected `float.{expected}` to still appear in dot-completion, got: {labels:?}"

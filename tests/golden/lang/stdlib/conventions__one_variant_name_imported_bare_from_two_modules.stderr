@@ -1,0 +1,31 @@
+error[parse]: 'Timeout' is bound twice at the top level: by the import and by the import here
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:13:15
+    |
+ 13 | import http.{ Timeout }
+    |               ^^^^^^^ 'Timeout' is bound twice at the top level: by the import and by the import here
+ ::: conventions__one_variant_name_imported_bare_from_two_modules.silt:12:14
+    |
+ 12 | import tcp.{ Timeout }
+    |              ------- first bound here, by the import
+  = note: a top-level name can be bound only once
+
+error[type]: undefined variable 'Empty'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:17:11
+    |
+ 17 |   println(Empty)
+    |           ^^^^^ undefined variable 'Empty'
+  = help: did you mean `channel.Empty` or `int.Empty`? or import one of them by name: `import channel.{ Empty }` (`Empty` is also in module `float`)
+
+error[type]: undefined variable 'Overflow'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:18:11
+    |
+ 18 |   println(Overflow)
+    |           ^^^^^^^^ undefined variable 'Overflow'
+  = help: did you mean `int.Overflow`? or import the name: `import int.{ Overflow }` (`Overflow` is also in module `float`)
+
+error[type]: undefined variable 'TooBig'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:19:11
+    |
+ 19 |   println(TooBig)
+    |           ^^^^^^ undefined variable 'TooBig'
+  = help: `TooBig` is in module `regex`: write `regex.TooBig` after `import regex`, or add `import regex.{ TooBig }`

@@ -7,12 +7,13 @@
 -- and without the fix.
 import channel
 import task
+import time
 
 fn main() {
   let x = channel.new(0)
   let dead = channel.new(0)
   let h = task.spawn({ ->
-    let t = channel.timeout(100)
+    let t = channel.timeout(time.ms(100))
     let _ = channel.receive(t)
     println("timer fired")
     let _ = channel.receive(dead)

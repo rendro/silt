@@ -23,8 +23,9 @@ use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
 
-use super::common::{err, nibble_to_hex, ok};
+use super::common::ok;
 use super::typed::{Bytes, builtins};
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
@@ -33,15 +34,23 @@ use crate::vm::VmError;
 /// security boundary.
 const RANDOM_BYTES_CAP: i64 = 1_048_576;
 
-/// Lower-case hex encoding, with the digit table every hex-emitting
-/// builtin shares (`nibble_to_hex`).
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push(nibble_to_hex(b >> 4, false));
-        out.push(nibble_to_hex(b & 0x0f, false));
-    }
-    out
+/// What `CryptoError`'s `message` says of the variant `tag` with
+/// `fields`: `None` if they are no variant of it.
+pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("InvalidLength", [Value::Int(n)]) if *n < 0 => {
+            format!("crypto.random_bytes: a length must not be negative: {n}")
+        }
+        ("InvalidLength", [Value::Int(n)]) => {
+            format!("crypto.random_bytes: {n} bytes exceed the cap of {RANDOM_BYTES_CAP} (1 MiB)")
+        }
+        ("Other", [Value::String(m)]) => m.to_string(),
+        _ => return None,
+    })
+}
+
+fn crypto_err(variant: Value) -> Value {
+    Value::variant(bv::ERR, vec![variant])
 }
 
 builtins! {
@@ -64,20 +73,12 @@ builtins! {
         Md5::digest(data.as_slice()).to_vec()
     }
 
-    fn md5_hex(data: Bytes) -> String {
-        hex_encode(&Md5::digest(data.as_slice()))
-    }
-
     // Blake2b512 = BLAKE2b at the full 512-bit (64-byte) output width,
     // per RFC 7693. Faster than SHA-512 on 64-bit hardware and with a
     // cleaner design than SHA-2; preferred for new protocols unless
     // there's a specific reason to match a SHA-family spec.
     fn blake2b(data: Bytes) -> Vec<u8> {
         Blake2b512::digest(data.as_slice()).to_vec()
-    }
-
-    fn blake2b_hex(data: Bytes) -> String {
-        hex_encode(&Blake2b512::digest(data.as_slice()))
     }
 
     // ── HMAC ───────────────────────────────────────────────────────────
@@ -102,15 +103,16 @@ builtins! {
     // ── CSPRNG ─────────────────────────────────────────────────────────
 
     fn random_bytes(n: i64) -> Value {
-        if n < 0 {
-            return err("n must be non-negative");
-        }
-        if n > RANDOM_BYTES_CAP {
-            return err("n exceeds 1 MiB cap");
+        if !(0..=RANDOM_BYTES_CAP).contains(&n) {
+            return crypto_err(Value::variant(bv::CRYPTO_INVALID_LENGTH, vec![Value::Int(n)]));
         }
         let mut buf = vec![0u8; n as usize];
         if let Err(e) = getrandom::getrandom(&mut buf) {
-            return err(format!("CSPRNG failure: {e}"));
+            let text = format!("CSPRNG failure: {e}");
+            return crypto_err(Value::variant(
+                bv::CRYPTO_OTHER,
+                vec![Value::String(text.into())],
+            ));
         }
         ok(Value::Bytes(Arc::new(buf)))
     }

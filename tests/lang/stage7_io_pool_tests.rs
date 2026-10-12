@@ -137,12 +137,11 @@ fn main() {{
     drop(vm);
 }
 
-/// Eight reads time out (`task.deadline`). Their connections are shut
-/// down, so their threads end; a file read afterwards runs at once,
-/// and the connection of a read that timed out is closed. (Wherever a
-/// read stood when its time was over, not begun, queued for a thread,
-/// in the system, or just done, it has timed out and its connection
-/// is shut down: the test does not depend on which it was.)
+/// Eight reads are given up at a deadline (`task.deadline`). Their
+/// connections are shut down, so their threads end; a file read
+/// afterwards runs at once, and the connection of a read that was
+/// given up is closed. (The deadline is long enough for each read to
+/// have begun: one that had not would leave its connection as it was.)
 #[test]
 fn timed_out_reads_free_their_threads() {
     let (listener, addr) = listener();
@@ -160,12 +159,12 @@ fn main() {{
   let readers = 1..8 |> list.map {{ _ ->
     task.spawn {{ ->
       when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
-      let first = match task.deadline(time.ms(30), {{ -> tcp.read(conn, 16) }}) {{
-        Err(tcp.TcpTimeout) -> "timed out"
+      let first = match task.deadline(time.ms(300), {{ -> tcp.read(conn, 16) }}) {{
+        Err(task.Timeout) -> "timed out"
         _ -> "something else"
       }}
       let second = match tcp.read(conn, 16) {{
-        Err(tcp.TcpClosed) -> "closed"
+        Err(tcp.Closed) -> "closed"
         _ -> "something else"
       }}
       "{{first}}, then {{second}}"
@@ -454,12 +453,13 @@ fn main() {{
   when let Ok(conn) = tcp.connect("{addr}") else {{ panic("cannot connect") }}
   let chunk = bytes.from_string(string.repeat("0123456789abcdef", 65536))
   match task.deadline(time.ms(300), {{ -> fill(conn, chunk, 256) }}) {{
-    Err(tcp.TcpTimeout) -> println("timed out")
-    Ok(_) -> println("the peer took everything")
+    Err(task.Timeout) -> println("timed out")
+    Ok(Ok(_)) -> println("the peer took everything")
+    Ok(Err(e)) -> println("a write failed: {{e.message()}}")
     Err(e) -> println("a write failed: {{e.message()}}")
   }}
   match tcp.write(conn, chunk) {{
-    Err(tcp.TcpClosed) -> println("closed")
+    Err(tcp.Closed) -> println("closed")
     _ -> println("something else")
   }}
   when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}

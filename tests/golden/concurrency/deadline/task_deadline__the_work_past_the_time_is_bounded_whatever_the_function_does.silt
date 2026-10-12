@@ -1,0 +1,165 @@
+-- timeout: 120
+-- The work a function does past its deadline is bounded in all,
+-- whatever the function does: about 2,000 steps, for the function and
+-- the functions of the deadlines inside it together. A function that
+-- only does operations that are ready at once (a `select` whose arm
+-- can be completed, a `receive` of what is there, `try_send`,
+-- `try_receive`), or calls `task.deadline` again and again, or reads
+-- a stream that has its elements or a file, is ended like one that
+-- only computes: none of the loops of 300,000 rounds reaches its last
+-- round. And a `select` the function is ended in front of takes and
+-- sends nothing: what was ready for it is still there.
+import channel
+import io
+import stream
+import task
+import time
+
+-- How many values `ch` holds, taken out of it.
+fn drained(ch) {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn filled(n) {
+  let ch: Channel(Int) = channel.new(n)
+  loop i = 0 {
+    match i >= n {
+      true -> ch
+      false -> {
+        channel.send(ch, i)
+        loop(i + 1)
+      }
+    }
+  }
+}
+
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+-- `round(i)` 300,000 times, with a mark for each round that was done.
+fn rounds(marks, round) {
+  loop i = 0 {
+    match i >= 300000 {
+      true -> i
+      false -> {
+        round(i)
+        let _ = channel.try_send(marks, i)
+        loop(i + 1)
+      }
+    }
+  }
+}
+
+-- What became of a function that is `rounds` of `round` under `dur`.
+-- With `few`, the rounds it did are counted too: where the time is
+-- over from the start, their number is no matter of the clock.
+fn fate(label, dur, few, round) {
+  let marks: Channel(Int) = channel.new(20000)
+  let out = task.deadline(dur, { -> rounds(marks, round) })
+  let n = drained(marks)
+  let ended = match out {
+    Err(task.Timeout) -> "ended"
+    Err(_) -> "another error"
+    Ok(_) -> "ran to its last round"
+  }
+  let how_many = match (few, n < 10000) {
+    (false, _) -> ""
+    (true, true) -> ", after fewer than 10,000 rounds"
+    (true, false) -> ", after {n} rounds"
+  }
+  println("{label}: {ended}{how_many}")
+  n
+}
+
+-- At most one value is sent, or taken, without its mark: the one of
+-- the round in which the function was ended.
+fn kept(what, moved, marked) {
+  let ok = moved - marked >= 0 && moved - marked <= 1
+  println("  {what} and not marked, at most one: {ok}")
+}
+
+fn cases(dur, few) {
+  let closed: Channel(Int) = channel.new(1)
+  channel.close(closed)
+  let sink: Channel(Int) = channel.new(20000)
+  let full = filled(12000)
+  let timed_out = channel.timeout(time.ms(0))
+  let _ = channel.receive(timed_out)
+  let _ = fate("a select with a Recv arm on a closed channel", dur, few, { _ ->
+    let _ = channel.select([channel.Recv(closed)])
+  })
+  let marked = fate("a select with a Send arm into a buffer with room", dur, few, { i ->
+    let _ = channel.select([channel.Send(sink, i)])
+  })
+  kept("sent", drained(sink), marked)
+  let marked = fate("a select with a Recv arm on a channel that is full", dur, few, { _ ->
+    let _ = channel.select([channel.Recv(full)])
+  })
+  kept("taken", 12000 - drained(full), marked)
+  let _ = fate("a select on a timeout channel that has closed", dur, few, { _ ->
+    let _ = channel.select([channel.Recv(timed_out)])
+  })
+  let _ = fate("a receive of a closed channel", dur, few, { _ ->
+    let _ = channel.receive(closed)
+  })
+  let _ = fate("try_receive", dur, few, { _ ->
+    let _ = channel.try_receive(closed)
+  })
+  let _ = fate("try_send", dur, few, { i ->
+    let _ = channel.try_send(sink, i)
+  })
+  let _ = fate("ready selects and computing", dur, few, { _ ->
+    let _ = channel.select([channel.Recv(closed)])
+    let _ = count(40, 0)
+  })
+  let _ = fate("an inner deadline of an hour", dur, few, { i ->
+    let _ = task.deadline(time.hours(1), { -> i })
+  })
+  let _ = fate("an inner deadline of no time", dur, few, { i ->
+    let _ = task.deadline(time.ms(0), { -> i })
+  })
+  let _ = fate("three deadlines in each other", dur, few, { i ->
+    let _ = task.deadline(time.hours(1), { ->
+      task.deadline(time.hours(2), { -> task.deadline(time.hours(3), { -> i }) })
+    })
+  })
+  let _ = fate("an inner deadline around ready selects", dur, few, { _ ->
+    let _ = task.deadline(time.hours(1), { ->
+      loop j = 0 {
+        match j >= 50 {
+          true -> j
+          false -> {
+            let _ = channel.select([channel.Recv(closed)])
+            loop(j + 1)
+          }
+        }
+      }
+    })
+  })
+  let _ = fate("a sink of a stream the function reads", dur, few, { _ ->
+    let _ = stream.from_list([1, 2, 3]) |> stream.count
+  })
+  let _ = fate("a read of a file", dur, few, { _ ->
+    let _ = io.read_file("/no/such/file")
+  })
+  let more = filled(12000)
+  let _ = fate("channel.each over a channel that is full", dur, few, { _ ->
+    channel.each(more, { _ -> () })
+  })
+}
+
+fn main() {
+  println("the time is over from the start:")
+  cases(time.ms(0), true)
+  println("the time passes while the function runs:")
+  cases(time.ms(20), false)
+}

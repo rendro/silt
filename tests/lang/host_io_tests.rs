@@ -433,10 +433,11 @@ fn keep_advancing(clock: &FakeClock) -> impl Drop {
 fn time_now_reads_the_clock() {
     let out = Buffer::new();
     let source = r#"
+import result
 import time
 fn main() {
-  let dt = time.now() |> time.to_utc
-  println(time.format(dt, "%Y-%m-%d %H:%M:%S"))
+  let dt = time.now() |> time.to_datetime(0)
+  println(time.format(dt, "%Y-%m-%d %H:%M:%S") |> result.unwrap_or(""))
 }
 "#;
     let io = HostIo::buffer(&out).clock(FakeClock::default());
@@ -511,7 +512,7 @@ fn main() {
     assert_eq!(out.contents(), "true\n");
 }
 
-/// `channel.timeout` and `channel.recv_timeout` end when the clock
+/// `channel.timeout` and `channel.receive_timeout` end when the clock
 /// reaches their deadline, on the main thread and in a task.
 #[test]
 fn channel_timeouts_follow_the_clock() {
@@ -525,19 +526,16 @@ fn main() {
   let quiet = channel.new(1)
   channel.send(quiet, 0)
   let _ = channel.receive(quiet)
-  println(channel.receive(channel.timeout(3600000)))
-  println(channel.recv_timeout(quiet, time.hours(1)))
-  let h = task.spawn({ -> channel.recv_timeout(quiet, time.hours(1)) })
+  println(channel.receive(channel.timeout(time.ms(3600000))))
+  println(channel.receive_timeout(quiet, time.hours(1)))
+  let h = task.spawn({ -> channel.receive_timeout(quiet, time.hours(1)) })
   println(task.join(h))
 }
 "#;
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
-    assert_eq!(
-        out.contents(),
-        "Closed\nErr(channel receive timed out)\nErr(channel receive timed out)\n"
-    );
+    assert_eq!(out.contents(), "Closed\nEmpty\nEmpty\n");
     assert!(clock.passed() >= Duration::from_secs(3 * 3600));
 }
 
@@ -549,9 +547,10 @@ fn a_timeout_does_not_end_while_the_clock_stands_still() {
     let clock = FakeClock::default();
     let source = r#"
 import channel
+import time
 fn main() {
   println("waiting")
-  println(channel.receive(channel.timeout(20)))
+  println(channel.receive(channel.timeout(time.ms(20))))
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&out).clock(clock.clone()));
@@ -566,10 +565,12 @@ fn main() {
 }
 
 /// The deadline of `task.deadline` is a reading of the clock: once the
-/// clock has passed it, I/O in the scope fails with the timeout.
+/// clock has passed it, the function is ended. (The function runs as a
+/// task, so its sleep waits for the clock to move, as a task's does.)
 #[test]
 fn task_deadline_is_measured_on_the_clock() {
     let out = Buffer::new();
+    let clock = FakeClock::default();
     let source = r#"
 import io
 import task
@@ -584,16 +585,18 @@ fn main() {
   println(late)
 }
 "#;
-    let io = HostIo::buffer(&out).clock(FakeClock::default());
+    let _ticking = keep_advancing(&clock);
+    let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
     assert_eq!(
         out.contents(),
-        "Err(file not found: /no/such/file)\nErr(I/O timeout (task.deadline exceeded))\n"
+        "Ok(Err(file not found: /no/such/file))\nErr(the function was ended by its deadline)\n"
     );
+    assert!(clock.passed() >= Duration::from_secs(3600));
 }
 
-/// The deadline of a task parked on I/O is the clock's too: the
-/// scheduler's watchdog cancels the wait when the clock passes it.
+/// The deadline of a function that waits for I/O is the clock's too:
+/// the function is ended when the clock passes it.
 #[cfg(feature = "tcp")]
 #[test]
 fn a_parked_tasks_deadline_follows_the_clock() {
@@ -605,14 +608,16 @@ import task
 import tcp
 import time
 fn main() {
-  let h = task.spawn_until(time.hours(1), { ->
-    match tcp.listen("127.0.0.1:0") {
-      Ok(listener) -> match tcp.accept(listener) {
-        Ok(_) -> "accepted"
-        Err(e) -> "{e}"
+  let h = task.spawn({ ->
+    task.deadline(time.hours(1), { ->
+      match tcp.listen("127.0.0.1:0") {
+        Ok(listener) -> match tcp.accept(listener) {
+          Ok(_) -> "accepted"
+          Err(e) -> "{e}"
+        }
+        Err(e) -> "cannot listen: {e}"
       }
-      Err(e) -> "cannot listen: {e}"
-    }
+    })
   })
   println(task.join(h))
 }
@@ -620,7 +625,10 @@ fn main() {
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
-    assert_eq!(out.contents(), "tcp operation timed out\n");
+    assert_eq!(
+        out.contents(),
+        "Err(the function was ended by its deadline)\n"
+    );
     assert!(clock.passed() >= Duration::from_secs(3600));
 }
 
@@ -681,7 +689,8 @@ fn a_clock_that_panics_in_a_builtin_is_a_runtime_error() {
     assert_eq!(run_bounded(now, broken()), failure);
     let sleep = "import time\nfn main() { time.sleep(time.ms(5)) }";
     assert_eq!(run_bounded(sleep, broken()), failure);
-    let timeout = "import channel\nfn main() { channel.receive(channel.timeout(5)) }";
+    let timeout =
+        "import channel\nimport time\nfn main() { channel.receive(channel.timeout(time.ms(5))) }";
     assert_eq!(run_bounded(timeout, broken()), failure);
 }
 
@@ -713,7 +722,7 @@ fn main() {
     );
 }
 
-/// The same on the main thread: a `channel.recv_timeout` that the
+/// The same on the main thread: a `channel.receive_timeout` that the
 /// timer thread would have ended.
 #[test]
 fn a_clock_that_panics_on_the_timer_thread_ends_a_wait_of_main() {
@@ -725,7 +734,7 @@ fn main() {
   let quiet = channel.new(1)
   channel.send(quiet, 0)
   let _ = channel.receive(quiet)
-  channel.recv_timeout(quiet, time.hours(1))
+  channel.receive_timeout(quiet, time.hours(1))
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));
@@ -851,11 +860,12 @@ fn docs_ffi_output_and_clock() {
         host: vec![],
     });
     let source = r#"
+import result
 import time
 fn main() {
   println("started")
   time.sleep(time.minutes(90))
-  println(time.now() |> time.to_utc |> time.format("%H:%M"))
+  println(time.now() |> time.to_datetime(0) |> time.format("%H:%M") |> result.unwrap_or(""))
 }
 "#;
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());

@@ -251,10 +251,11 @@ fn main() {
         "regex: is_match 1K (cached)",
         r#"
 import regex
+import result
 import list
 fn main() {
   list.fold(1..1001, 0) { acc, n ->
-    match regex.is_match("\\d+", "{n}") {
+    match (regex.is_match("{n}", "\\d+") |> result.unwrap_or(false)) {
       true -> acc + 1
       false -> acc
     }
@@ -267,10 +268,11 @@ fn main() {
         "regex: find_all 1K",
         r#"
 import regex
+import result
 import list
 fn main() {
   list.map(1..1001) { n ->
-    regex.find_all("[0-9]+", "abc{n}def{n}ghi") |> list.length
+    regex.find_all("abc{n}def{n}ghi", "[0-9]+") |> result.unwrap_or([]) |> list.length
   } |> list.fold(0) { acc, x -> acc + x }
 }
     "#,
@@ -280,10 +282,11 @@ fn main() {
         "regex: replace_all 1K",
         r#"
 import regex
+import result
 import list
 fn main() {
   list.map(1..1001) { n ->
-    regex.replace_all("[aeiou]", "hello world {n}", "_")
+    regex.replace_all("hello world {n}", "[aeiou]", "_") |> result.unwrap_or("")
   } |> list.length
 }
     "#,

@@ -75,13 +75,13 @@ A channel is a conduit for passing values between tasks.
 
 ```silt
 -- Rendezvous channel (capacity 0 -- sender blocks until receiver is ready)
-let ch = channel.new()
+let ch = channel.new(0)
 
 -- Buffered channel with capacity 10
 let ch = channel.new(10)
 ```
 
-`channel.new()` takes zero or one argument. With no argument, it creates a
+`channel.new(0)` takes zero or one argument. With no argument, it creates a
 rendezvous channel (capacity 0) where the sender blocks until a receiver is
 ready and vice versa. With an integer argument, it creates a buffered channel
 with that capacity.
@@ -144,7 +144,12 @@ channel.close(ch)
 
 Signals that no more values will be sent on this channel. After closing:
 
-- **Sends** on the closed channel produce a runtime error.
+- **A send on the closed channel is a runtime error**, `send on closed
+  channel N`, whichever function was to send: `channel.send`,
+  `channel.try_send`, or a `channel.select` that has a `Send` arm on the
+  channel. A send that was waiting when the channel was closed fails the
+  same way. So a channel is closed by the side that sends on it, or after
+  the senders are done.
 - **Receives** drain any remaining buffered values as `Message(value)`. Once
   the buffer is empty, `channel.receive` returns `Closed`.
 
@@ -160,8 +165,9 @@ println(channel.try_send(ch, "c")) -- false (buffer full)
 ```
 
 Attempts to send without blocking. Returns `true` if the value was placed in
-the buffer, or `false` if the buffer is full or the channel is closed. Never
-yields to the scheduler.
+the buffer (or handed to a receiver that waits), or `false` if there is no
+room for it now. Never yields to the scheduler. On a closed channel it is the
+runtime error of every send on one, not `false`.
 
 ### Non-blocking receive: `channel.try_receive(ch)`
 
@@ -215,7 +221,7 @@ behind round-robin fan-out (see Section 5).
 
 ### Unbuffered channels (true rendezvous)
 
-`channel.new()` with no arguments creates a true rendezvous channel with
+`channel.new(0)` with no arguments creates a true rendezvous channel with
 capacity 0. The sender blocks until a receiver is ready, and the receiver
 blocks until a sender is ready. The value is handed off directly -- it is
 never buffered. When `channel.send` returns, the value has been handed to a
@@ -224,14 +230,14 @@ reply channel if the sender must know that the value was processed.
 
 A sender on a rendezvous channel waits until its value is taken, and
 whoever takes it completes the send: a blocking `channel.receive`, a `Recv`
-arm of `channel.select`, a `channel.recv_timeout`, or a `channel.try_receive`.
+arm of `channel.select`, a `channel.receive_timeout`, or a `channel.try_receive`.
 The non-blocking operations do not wait themselves, so they only meet a
 counterpart that is already waiting: `channel.try_send` succeeds only while
 a receiver is parked on the channel, and `channel.try_receive` gives a value
 only while a sender is.
 
 ```silt
-let ch = channel.new() -- capacity 0, true rendezvous
+let ch = channel.new(0) -- capacity 0, true rendezvous
 
 let _ = task.spawn { ->
   -- this blocks until the main task calls channel.receive
@@ -247,13 +253,13 @@ println(msg) -- hello
 
 ### Timeout channels
 
-`channel.timeout(ms)` creates a channel that automatically closes after the
-given number of milliseconds. It is useful for adding deadlines to
-`channel.select` operations.
+`channel.timeout(dur)` creates a channel that automatically closes after the
+given `Duration`. It is useful for adding deadlines to `channel.select`
+operations.
 
 ```silt
 let ch = channel.new(10)
-let timer = channel.timeout(5000) -- closes after 5 seconds
+let timer = channel.timeout(time.ms(5000)) -- closes after 5 seconds
 
 match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
   (^ch, channel.Message(val)) -> println("got: {val}")
@@ -265,12 +271,12 @@ match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
 The timeout channel carries no values -- it simply closes when the duration
 elapses. Receiving from it will block until closure, at which point it
 returns `Closed`. For the common case of a *single* receive with a deadline,
-prefer `channel.recv_timeout` (next section) -- it does the same race in one
+prefer `channel.receive_timeout` (next section) -- it does the same race in one
 call.
 
-### Receive with timeout: `channel.recv_timeout(ch, dur)`
+### Receive with timeout: `channel.receive_timeout(ch, dur)`
 
-`channel.recv_timeout` is a blocking receive with a deadline. It is the
+`channel.receive_timeout` is a blocking receive with a deadline. It is the
 direct form of the `channel.timeout` + `channel.select` pattern above when
 you only need to wait on one channel:
 
@@ -279,34 +285,33 @@ let ch = channel.new(10)
 
 let _ = task.spawn { -> channel.send(ch, 42) }
 
-match channel.recv_timeout(ch, time.ms(500)) {
-  Ok(val) -> println("got: {val}")
-  Err(channel.ChannelTimeout) -> println("timed out")
-  Err(channel.ChannelClosed) -> println("channel closed")
+match channel.receive_timeout(ch, time.ms(500)) {
+  channel.Message(val) -> println("got: {val}")
+  channel.Empty -> println("timed out")
+  _ -> println("channel closed")
 }
 ```
 
-Unlike the other receive builtins, it returns a `Result(a, ChannelError)`
-rather than a `ChannelResult(a)`:
+Like the other receive builtins, it returns a `ChannelResult(a)`:
 
-- `Ok(val)` -- a value was delivered within `dur`.
-- `Err(ChannelTimeout)` -- `dur` elapsed with no value and no close.
-- `Err(ChannelClosed)` -- the channel is closed and its buffer is empty.
+- `Message(val)` -- a value was delivered within `dur`.
+- `Empty` -- `dur` elapsed with no value and no close: what
+  `channel.try_receive` gives when nothing is there now.
+- `Closed` -- the channel is closed and its buffer is empty.
 
 A value that is there wins over an expired timer: one in the buffer, or one
 held by a sender that waits on a rendezvous channel. The non-blocking path
 is always tried first, so a ready value is never preempted by the deadline.
 A `Duration` of zero gives try-receive semantics (no timer is scheduled): it
-returns such a value, and `Err(ChannelTimeout)` when there is none.
+returns such a value, and `Empty` when there is none.
 Negative durations are an error. Positive sub-millisecond durations are
 rounded up to one millisecond, so the caller always waits at least one timer
 tick.
 
 The `dur` argument is a `Duration` built with `time.ms` / `time.seconds`
-(the same shape `task.deadline` takes), and `ChannelError` implements the
-built-in `Error` trait, so `e.message()` works in generic error handling.
+(the same shape `task.deadline` takes).
 
-Signature: `channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)`.
+Signature: `channel.receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)`.
 
 
 ## 3. Tasks
@@ -391,6 +396,12 @@ depends on where that task is at the moment of cancellation:
   `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
   wait ends without taking or sending anything, and the task is dropped.
   A value sent afterwards goes to the next receiver, not to it.
+- **Its wait has just ended** (a sender handed it a value, the operation
+  it waited for gave its result) and it has not run again: the wait
+  stays ended, and the task is dropped with what it was given. The value
+  is lost, although its sender was told that it was sent. A cancel does
+  not ask whether the task holds something; where that matters, tell the
+  task to stop over a channel and let it finish what it has.
 - **Task is currently running** (executing a slice between parks): the
   handle's result is set to `Err("cancelled")` immediately, and the task
   runs no further than the end of its current slice (a few thousand
@@ -442,6 +453,13 @@ keeps going:
   A `channel.timeout` channel counts only while a task waits on it: one
   that lost its race in a `select`, or that nobody looks at any more,
   holds nothing up, however long it still has to run.
+- A wait under a `task.deadline` is such a wait: it ends when the
+  deadline has passed at the latest, so it is waited for. A task that
+  nobody joined and that sits in
+  `task.deadline(time.hours(1), { -> channel.receive(ch) })`, on a
+  channel nobody will send on, keeps the program going for that hour
+  after `main` has returned; without the deadline it would be dropped at
+  once, as a wait that can never end.
 - A task that waits for something only another task could give (a receive
   on a channel nobody will send on) is dropped when nothing else can run:
   such a wait could never end.
@@ -531,39 +549,104 @@ when the session ends, since a later input may still join or cancel the
 task; an input is not waited for beyond its own value, so the tasks it
 spawned go on while you type the next.
 
-### Scoped deadlines: `task.deadline(dur, fn)`
+### Deadlines: `task.deadline(dur, fn)`
 
 ```silt
 let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
 ```
 
-`task.deadline(dur, f)` runs `f` with a scoped I/O deadline and returns
-whatever `f` returns. If any blocking I/O builtin inside `f` (see
-[Blocking operations](#blocking-operations)) runs longer than `dur`, the
-builtin returns **the module's own typed timeout variant** instead of its
-normal result — surrounding silt code handles it through the usual
-`Result` match on the typed `IoError`, `TcpError`, or `HttpError` enum
-that builtin already declares. No exception is raised, and the deadline
-does not preempt pure CPU work; it only applies to I/O.
+`task.deadline(dur, f)` runs `f` and gives `Ok` of what it returns, or
+`Err(Timeout)` if `f` was ended because `dur` had passed.
 
-A wait on a channel or for a task inside `f` is **not** bounded by the
-deadline: `channel.receive`, `channel.send`, `channel.select` and
-`task.join` have no timeout value to return. Bound those with
-[`channel.recv_timeout`](#receive-with-timeout-channelrecv_timeoutch-dur)
-or a `channel.timeout` arm in a `select`. A `channel.receive` that nobody
-will ever answer is a deadlock inside `task.deadline` as outside it.
+The function runs as a task of its own, and the deadline is that task's:
+when `dur` has passed, its time is over. From then on the function is
+ended **where it would have to wait**, and a function that does not wait
+is ended after a small, fixed amount of further work. That is one rule
+for every wait of `f`, whatever it waits for: I/O (see
+[Blocking operations](#blocking-operations)), a `time.sleep`, a
+`channel.receive` or `channel.send`, a `channel.select`, a `task.join`, a
+wait deep inside the callback of a `list.fold`, or the read of a stream.
+A `channel.receive` that nobody will ever answer is no deadlock inside a
+deadline: it ends when the deadline has passed.
 
-Specifically (matching the [`SILT_IO_TIMEOUT`](#io-timeouts-silt_io_timeout)
-table):
+- **A wait ends one way or the other, never both.** Either the wait got
+  what it waited for (the value was received, the send was done, the
+  operation gave its result), and the function goes on with it; or the
+  deadline ended the wait, nothing was received and nothing was sent, and
+  the function is ended there: no further instruction of it runs. So a
+  receive under a deadline that answers `Err(Timeout)` took no value, and
+  a send that answers `Err(Timeout)` sent none: a loop that tries again
+  after a timeout loses nothing and sends nothing twice.
+- **`task.deadline` answers when the function has ended**, and says how:
+  it returned (`Ok`), it was ended by its deadline (`Err(Timeout)`), or
+  it failed. A function that got its value just in time and returns it is
+  `Ok`, even though the clock has moved past the deadline meanwhile: the
+  answer never contradicts what the function did. It comes at most two
+  time slices of the function after the deadline.
+- **What is there is not waited for.** An operation that can be done at
+  once is done, also when the time is over: a value that lies in a
+  channel is received, as by `channel.receive_timeout` with a duration
+  that has passed. A duration of zero or less is a time that is over from
+  the start, and the rule is the same: `task.deadline(time.ms(0), { -> 1 })`
+  is `Ok(1)`, and a function that receives from an empty channel is ended
+  there. At a time that is over an operation is done only if it is ready
+  at that instant; whether something the function itself has just started
+  is ready then (the join of a task it spawned, a timeout of no time) is
+  not determined. This holds for the work past the time that the next
+  item bounds, and not beyond it.
+- **The work past the time is bounded in all.** A function whose time is
+  over runs on for at most 2,000 steps: about 2,000 instructions, a few
+  hundred rounds of a small loop. That is what a function which got its
+  value just in time has to return it. Every step counts, whatever the
+  function does with it: computing, operations that are done at once (a
+  `receive` of what is there, a `select` whose arm is ready, `try_send`),
+  calls of `task.deadline` (the function of a deadline inside a function
+  that is past its time goes on with what is left; it gets no steps of
+  its own). When the steps are used up the function is ended: after the
+  step that used them up, or at the next wait it begins, of which no arm
+  is completed then, ready or not. (The steps are counted from the first
+  time slice that begins when the time is over, so a function that
+  computes is ended at most 2,000 steps and one time slice past its
+  time. One call of a builtin that is under way, the sort of a large
+  list, runs to its end first.) So a function that received a value and,
+  instead of returning it, goes on working past its time is ended with
+  the value in hand, and a value that it takes when its time is over is
+  its own risk. Return what you took, or hand it on, before more work.
+- **A failure of the function is the caller's**: a runtime error inside
+  `f` is raised by `task.deadline` as it is, at the place in `f` where it
+  happened, whatever the clock says. A function that fails is never
+  reported as timed out.
+- **I/O that was given up may have happened.** An I/O operation in flight
+  when the function is ended is given up as for a cancelled task (see
+  [the I/O pool](#the-io-pool-and-operations-that-nobody-waits-for)): a
+  TCP connection it was reading or writing is shut down, and what the
+  read had taken off the wire is gone with it; a file write, an HTTP
+  request or a database statement that had started may complete all the
+  same, and a line that an `io.read_line` reads after it was given up is
+  nobody's. `Err(Timeout)` says that the function did not finish, not
+  that nothing of it reached the outside. A connection that reaches a
+  `tcp.accept` which was given up is not lost: the listener keeps it for
+  the next accept.
+- **Deadlines nest**: the function of an inner `task.deadline` has the
+  outer time too, if that is earlier, and is ended by the same rule. When
+  the inner time passes first, the outer function goes on with the inner
+  `Err(Timeout)` as a value; when the outer time does, both functions are
+  over and the outer `task.deadline` gives `Err(Timeout)`.
+- **A deadline ends its function and nothing else.** A task that the
+  function started with `task.spawn` goes on when the function is ended,
+  and so does a task the function was joining: the join is ended, the
+  task is not. Who wants them ended keeps their handles and cancels them
+  with `task.cancel`. A task that goes on and fails later, with nobody
+  left to join it, is a failure that nobody joined (see
+  [Failures that nobody joins](#failures-that-nobody-joins)). The stages
+  of a stream the function built go on until nobody reads them.
+- The value of `f` is inside the `Ok`, so a function that returns a
+  `Result` gives two layers: `Ok(Err(io.NotFound(path)))` is a read that
+  failed in time, `Err(task.Timeout)` one that did not finish.
 
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
-
-The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
-or a surrounding `task.deadline`, whichever elapses first fires. The
-embedded message on the `IoUnknown` variant distinguishes the source so
-silt code can tell scoped timeouts from the global one.
+`SILT_IO_TIMEOUT` is another thing: it bounds each single wait for I/O,
+for the whole process, and gives the module's own timeout error
+(see [I/O timeouts](#io-timeouts-silt_io_timeout)).
 
 ```silt
 import io
@@ -573,51 +656,20 @@ import time
 fn main() {
   let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log") }
   match outcome {
-    Ok(contents) -> println(contents)
-    Err(io.IoUnknown(msg)) -> println(msg) -- I/O timeout (task.deadline exceeded)
-    Err(_) -> println("other io error")
+    Ok(Ok(contents)) -> println(contents)
+    Ok(Err(e)) -> println("the read failed: {e}")
+    Err(task.Timeout) -> println("the read took too long")
+    Err(e) -> println(e.message())
   }
 }
 ```
 
-Signature: `task.deadline(dur: Duration, f: () -> a) -> a`.
+A task with a deadline is the two together:
+`task.spawn { -> task.deadline(dur, f) }`, whose handle joins to the same
+`Result`. That is the shape for fan-out where each child must bound its
+own run time, such as racing replicas and dropping the stragglers.
 
-### Bounded spawn: `task.spawn_until(dur, fn)`
-
-```silt
-let h = task.spawn_until(time.seconds(2)) { -> io.read_file("/tmp/maybe_slow.txt") }
-```
-
-`task.spawn_until(dur, f)` spawns `f` as a task with a bounded
-wall-clock deadline. It is equivalent to
-`task.spawn({ -> task.deadline(dur, f) })` but with one less closure
-wrapper. The returned `task.Handle(a)` resolves to the function's result if
-it finishes in time, or to the deadline error inside any I/O builtin
-the task was blocked on when the deadline fired — the same typed
-timeout shapes as `task.deadline`:
-
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (task.deadline exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
-
-Useful for fan-out patterns where each child task must bound its own
-runtime — e.g. racing N replicas and dropping stragglers.
-
-```silt
-import io
-import task
-import time
-
-fn main() {
-  let h = task.spawn_until(time.seconds(2)) { -> io.read_file("/tmp/maybe_slow.txt") }
-  match task.join(h) {
-    Ok(contents) -> println(contents)
-    Err(msg) -> println("io error or timeout")
-  }
-}
-```
-
-Signature: `task.spawn_until(dur: Duration, f: () -> a) -> task.Handle(a)`.
+Signature: `task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, task.TaskError)`.
 
 
 ## 4. Select
@@ -712,7 +764,11 @@ priority -- the choice is fair, not ordered.
 If no branch is ready, the task is parked on all of them at once. Whoever
 makes one possible (a sender, a receiver, a close) completes that branch for
 the select, and only that one: a select performs exactly one of its
-operations. A closed channel is ready: its branch gives `(channel, Closed)`.
+operations. A closed channel is ready for a `Recv`: that branch gives
+`(channel, Closed)`. A `Send` on a closed channel is no branch at all: a
+select that has one is the runtime error of a send on a closed channel,
+whatever its other branches could do, and so is one whose channel is
+closed while it waits to send.
 A select never meets itself: a `Send` and a `Recv` on the same channel in
 one select do not complete each other. If no task can make progress, the
 deadlock is reported.
@@ -1191,15 +1247,14 @@ Setting `SILT_IO_TIMEOUT=5s` makes every I/O
 builtin that blocks longer than that duration return the module's own typed
 timeout variant instead of its normal value:
 
-- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
-- `tcp.*` surfaces `Err(TcpTimeout)`.
-- `http.*` surfaces `Err(HttpTimeout)`.
+- `io.*` and `fs.*` surface `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
+- `tcp.*` surfaces `Err(Timeout)`.
+- `http.*` surfaces `Err(Timeout)`.
 
-The deadline is *invisible* at the language surface — no new syntax, no
+The timeout is *invisible* at the language surface — no new syntax, no
 colored functions — because every I/O builtin already returns `Result` with
-the matching typed error enum. `time.sleep` is the one exception: it returns
-`Unit`, so when a task's deadline has already elapsed the sleep returns
-immediately with no error.
+the matching typed error enum. It is for waits for I/O only: a `time.sleep`
+or a wait on a channel is not I/O and is not ended by it.
 
 Accepted format: a suffixed duration only — `5s`, `500ms`, `2m`, `1h`.
 A bare integer with no unit (e.g. `SILT_IO_TIMEOUT=5000`) is NOT accepted; it
@@ -1210,12 +1265,12 @@ fails to parse and leaves the waits without an end.
 SILT_IO_TIMEOUT=5s silt run server.silt
 ```
 
-For scoped, per-call deadlines rather than a process-wide cap, use
-[`task.deadline(dur, fn)`](#scoped-deadlines-taskdeadlinedur-fn) or
-[`task.spawn_until(dur, fn)`](#bounded-spawn-taskspawn_untildur-fn).
-Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
-fires, and the caller sees the same typed variant as the module's normal
-timeout path.
+To bound one piece of work rather than every wait of the process, use
+[`task.deadline(dur, fn)`](#deadlines-taskdeadlinedur-fn): it ends the
+function it runs, whatever the function waits for, and says so with its own
+`Err(Timeout)`. The two are independent: inside a `task.deadline`, a wait
+for I/O still ends at `SILT_IO_TIMEOUT` with the module's error if that
+comes first.
 
 #### The I/O pool, and operations that nobody waits for
 
@@ -1230,16 +1285,17 @@ wait for a line from a silent peer do not delay a file read. There is
 nothing to configure.
 
 There is a bound: **4,096 operations in flight**. One more is not queued;
-it returns its module's error at once (`Err(TcpUnknown("too many I/O
-operations in flight (4096)"))`, `Err(IoUnknown(...))`, ...), because an
+it returns its module's error at once (`Err(Other("too many I/O
+operations in flight (4096)"))`, `Err(Other(...))`, ...), because an
 operation that waited for a thread might be the very one that would have
 released the others. A server that holds more connections than that open
 in blocking reads has to refuse some. (`http.serve` has one operation in
 flight for its accept, and one for each connection that waits for a
 request or sends a response.)
 
-A task stops waiting for its operation when its deadline passes
-(`task.deadline`, `SILT_IO_TIMEOUT`), when it is cancelled, or when it is
+A task stops waiting for its operation when `SILT_IO_TIMEOUT` passes,
+when it is cancelled by `task.cancel`, when it is the function of a
+`task.deadline` whose time is up, or when it is
 dropped at the end of the program. It resumes, or ends, at that moment.
 What becomes of the operation depends on what it is:
 
@@ -1248,13 +1304,13 @@ What becomes of the operation depends on what it is:
   `tcp.close`, which makes the operation return and frees its thread.
   The connection cannot be used afterwards: a read that timed out cannot
   be tried again. Give a read the time the peer may really take, and
-  treat a timeout as the end of the connection. That holds wherever
-  the operation stood when its task stopped waiting: a read or write
-  that begins when the deadline has already passed times out without
-  reading or writing anything, and one whose result arrives in that
-  very moment loses it; the connection is shut down in both cases.
+  treat a timeout as the end of the connection. An operation whose
+  result arrives in the very moment its task stops waiting loses it; the
+  connection is shut down all the same.
 - **`tcp.accept`**: the accept is woken and gives up; the listener
-  stays usable. (An accept that waits costs nothing: its thread sleeps
+  stays usable, and a client's connection that reached the accept as it
+  was given up is kept by the listener for the next accept (it is closed
+  with the listener if none comes). (An accept that waits costs nothing: its thread sleeps
   in the system until a connection comes. To wake it the listener
   connects to its own port on the loopback address; where that is not
   possible, say a packet filter forbids it, the thread stays until a
@@ -1292,8 +1348,7 @@ I/O operations follow the same transparent yielding pattern as channel
 operations -- no special syntax needed. When code calls `io.read_file` or
 `http.get`, the operation is dispatched to an I/O pool and the task is
 parked until the result is ready. `main` is a task like the others here:
-its I/O and its `time.sleep` are waits too, and a `task.deadline` around
-them ends them when it passes.
+its I/O and its `time.sleep` are waits too.
 
 ### Deadlock detection
 
@@ -1310,7 +1365,7 @@ that error, silt reports the tasks that failed and that nobody joined
 producer is the usual reason why a counterpart is missing.
 
 A wait that will end by itself counts as able to go on: a `time.sleep`, a
-`channel.recv_timeout` that has not expired, a wait on a `channel.timeout`
+`channel.receive_timeout` that has not expired, a wait on a `channel.timeout`
 channel that has not closed yet (a `channel.timeout` that no task waits on
 does not count: it could wake nobody). While a task is in such a wait, no
 deadlock is reported, whether or not that task could ever reach the channel
@@ -1348,7 +1403,7 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 
 | Operation | Syntax | Returns |
 |---|---|---|
-| Create channel | `channel.new()` / `channel.new(n)` | `Channel` |
+| Create channel | `channel.new(0)` / `channel.new(n)` | `Channel` |
 | Send (blocking) | `channel.send(ch, val)` | `Unit` |
 | Receive (blocking) | `channel.receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)` or `channel.Closed` in practice; `channel.Empty`/`channel.Sent` are unreachable here but still required by exhaustiveness |
 | Close | `channel.close(ch)` | `Unit` |
@@ -1356,13 +1411,12 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 | Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` in practice; `channel.Sent` is unreachable here but still required by exhaustiveness |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
 | Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `(channel, channel.Message(val))`, `(channel, channel.Closed)`, `(channel, channel.Sent)` |
-| Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
-| Receive with timeout | `channel.recv_timeout(ch, dur)` | `Result(a, channel.ChannelError)` -- `Ok(val)`, `Err(channel.ChannelTimeout)`, or `Err(channel.ChannelClosed)`; a buffered value wins over an expired timer |
+| Timeout channel | `channel.timeout(dur)` | `Channel` (closes after the `Duration`) |
+| Receive with timeout | `channel.receive_timeout(ch, dur)` | `channel.Message(val)`, `channel.Empty` (nothing came in time), or `channel.Closed`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn({ -> ... })` | `task.Handle(a)` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
 | Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |
-| Scoped deadline | `task.deadline(dur, { -> ... })` | Callback's return value (typed timeout variant if I/O exceeds `dur`) |
-| Bounded spawn | `task.spawn_until(dur, { -> ... })` | `task.Handle(a)` (typed timeout variant if I/O exceeds `dur`) |
+| Deadline | `task.deadline(dur, { -> ... })` | `Ok(value)` of the function, or `Err(task.Timeout)` if it was ended because its time was over |
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization

@@ -1,0 +1,10 @@
+url_decode InvalidPercent: truncated percent-escape at offset 3
+url_decode InvalidUtf8: decoded bytes are not valid UTF-8
+form_decode InvalidPercent: pair 1: value: invalid percent-escape `%ZZ` at offset 0
+form_decode: pair 0: key: decoded bytes are not valid UTF-8
+random_bytes InvalidLength: -1
+crypto.random_bytes: 2000000 bytes exceed the cap of 1048576 (1 MiB)
+parse Invalid: invalid character: found `n` at 1
+invalid uuid: invalid character: found `n` at 1
+Ok(00000000-0000-0000-0000-000000000000)
+Ok(a b)

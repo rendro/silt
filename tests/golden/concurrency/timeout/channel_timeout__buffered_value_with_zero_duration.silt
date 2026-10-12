@@ -4,9 +4,9 @@ import time
 fn main() {
   let ch = channel.new(4)
   channel.send(ch, 7)
-  let r = match channel.recv_timeout(ch, time.ms(0)) {
-    Ok(v) -> v
-    Err(_) -> -1
+  let r = match channel.receive_timeout(ch, time.ms(0)) {
+    channel.Message(v) -> v
+    _ -> -1
   }
   println("{r}")
 }

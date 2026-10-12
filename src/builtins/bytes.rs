@@ -23,19 +23,17 @@ use crate::vm::VmError;
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("BytesInvalidUtf8", [Value::Int(offset)]) => {
+        ("InvalidUtf8", [Value::Int(offset)]) => {
             format!("invalid UTF-8 at byte {offset}")
         }
-        ("BytesInvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
-        ("BytesInvalidBase64", [Value::String(m)]) => {
+        ("InvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
+        ("InvalidBase64", [Value::String(m)]) => {
             format!("invalid base64: {m}")
         }
-        ("BytesByteOutOfRange", [Value::Int(v)]) => {
+        ("ByteOutOfRange", [Value::Int(v)]) => {
             format!("byte value out of range (expected 0..=255): {v}")
         }
-        ("BytesOutOfBounds", [Value::Int(idx)]) => {
-            format!("index out of bounds: {idx}")
-        }
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -71,13 +69,6 @@ fn err_byte_range(value: i64) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_BYTE_OUT_OF_RANGE,
         vec![Value::Int(value)],
-    ))
-}
-
-fn err_oob(idx: i64) -> Value {
-    bytes_err(Value::variant(
-        bv::BYTES_OUT_OF_BOUNDS,
-        vec![Value::Int(idx)],
     ))
 }
 
@@ -194,20 +185,20 @@ builtins! {
         b.len() as i64
     }
 
-    fn slice(b: Bytes, start: i64, end: i64) -> Value {
-        let Ok(from) = usize::try_from(start) else {
-            return err_oob(start);
-        };
-        let Ok(to) = usize::try_from(end) else {
-            return err_oob(end);
-        };
-        if from > to {
-            return err_oob(start);
+    // As `string.slice`: an index past the end is the end, a start
+    // past the end gives nothing, and a negative index is an error.
+    fn slice(b: Bytes, start: i64, end: i64) -> Result<Vec<u8>, VmError> {
+        if let Some(negative) = [start, end].into_iter().find(|index| *index < 0) {
+            return Err(VmError::new(format!(
+                "bytes.slice: negative index {negative}"
+            )));
         }
-        match b.get(from..to) {
-            Some(part) => ok(bytes(part.to_vec())),
-            None => err_oob(end),
-        }
+        let start = (start as usize).min(b.len());
+        let end = (end as usize).min(b.len());
+        Ok(match start > end {
+            true => Vec::new(),
+            false => b[start..end].to_vec(),
+        })
     }
 
     fn concat(a: Bytes, b: Bytes) -> Vec<u8> {
@@ -226,15 +217,9 @@ builtins! {
         Ok(out)
     }
 
-    fn get(b: Bytes, i: i64) -> Value {
-        match usize::try_from(i).ok().and_then(|at| b.get(at)) {
-            Some(byte) => ok(Value::Int(*byte as i64)),
-            None => err_oob(i),
-        }
-    }
-
-    fn eq(a: Bytes, b: Bytes) -> bool {
-        a == b
+    fn get(b: Bytes, i: i64) -> Option<Value> {
+        let byte = b.get(usize::try_from(i).ok()?)?;
+        Some(Value::Int(*byte as i64))
     }
 
     // ── Search / prefix / suffix / split ──────────────────────────────

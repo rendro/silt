@@ -50,7 +50,7 @@ import task
 import time
 fn main() {
   let _ = task.spawn({ -> time.sleep(time.hours(1)) })
-  let _ = channel.timeout(3600000)
+  let _ = channel.timeout(time.ms(3600000))
   let reader = task.spawn({ -> io.read_file("/no/such/file") })
   let _ = task.join(reader)
   println("done")

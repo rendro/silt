@@ -256,14 +256,15 @@ pub trait Clock: Send + Sync {
 | The program | reads |
 |-------------|-------|
 | `time.now`, `time.today`, the timestamp in `uuid.v7`, the seed of `math.random` (at its first call) | `now` |
-| `time.sleep` outside a task | `sleep`, for no longer than a `task.deadline` around it allows |
-| `time.sleep` in a task, `channel.timeout`, `channel.recv_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
-| `task.deadline`, `task.spawn_until`, `SILT_IO_TIMEOUT` | `monotonic`: I/O started after the deadline fails at once, and a wait for I/O ends when the reading reaches the deadline |
+| `time.sleep` outside a task | `sleep` |
+| `time.sleep` in a task, `channel.timeout`, `channel.receive_timeout` | `monotonic`: the wait ends when the reading reaches its deadline |
+| `task.deadline` | `monotonic`: the time of the function is over when the reading reaches the deadline; a wait of it is ended then, and a function that goes on without waiting is ended 2,000 steps after the first time slice of it that begins with the reading past the deadline. The function runs as a task, so a `time.sleep` in it waits for `monotonic` too, also when `task.deadline` is called outside a task |
+| `SILT_IO_TIMEOUT` | `monotonic`: a wait for I/O ends when the reading reaches the deadline |
 
 The runtime's own threads wait in real time between two readings of an
-embedder's clock. A task's sleep, the channel timeouts and a deadline
-that ends a task's wait for I/O end within a millisecond of the moment
-the clock reaches the deadline. Everything that
+embedder's clock. A task's sleep, the channel timeouts, a
+`task.deadline` and a wait for I/O that `SILT_IO_TIMEOUT` ends end within
+a millisecond of the moment the clock reaches the deadline. Everything that
 is not the program's own waiting stays in real time: the scheduler's
 time slices, the socket timeouts of `http` and `tcp`, and how long I/O
 takes.
@@ -309,10 +310,11 @@ let mut session = Session::new(Config {
 });
 let source = r#"
 import time
+import result
 fn main() {
   println("started")
   time.sleep(time.minutes(90))
-  println(time.now() |> time.to_utc |> time.format("%H:%M"))
+  println(time.now() |> time.to_datetime(0) |> time.format("%H:%M") |> result.unwrap_or(""))
 }
 "#;
 let file = session.set_overlay(Path::new("main.silt"), source.to_string());

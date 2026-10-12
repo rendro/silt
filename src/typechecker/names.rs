@@ -274,27 +274,6 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         }
         scopes.modules.insert(id, exports);
     }
-    // A type a module shares with the module that declares it
-    // (`ParseError` is the error of `int.parse` and of `float.parse`) is
-    // reached through both, and so are its variants.
-    for module in registry.enabled_modules() {
-        let id = ModuleId::builtin(module.name).expect("a builtin module");
-        for (owner, ty_name) in module.shares {
-            let owner = ModuleId::builtin(owner).expect("a builtin module");
-            let ty_name = intern(ty_name);
-            let Some(Binding::Def(ty)) = scopes.modules[&owner].types.get(&ty_name).cloned() else {
-                continue;
-            };
-            let variants = defs.variants.get(&ty).cloned().unwrap_or_default();
-            let exports = scopes.modules.get_mut(&id).expect("the module's exports");
-            exports.types.insert(ty_name, Binding::Def(ty));
-            for v in variants {
-                exports
-                    .values
-                    .insert(defs.defs[v.0 as usize].name, Binding::Def(v));
-            }
-        }
-    }
     (defs, scopes)
 }
 
@@ -1119,24 +1098,72 @@ impl Resolver<'_> {
     }
 
     /// The help for `name`, which resolves to nothing here but which the
-    /// modules `elsewhere` offer.
+    /// modules `elsewhere` offer. Several modules may offer a name
+    /// (`tcp.Timeout`, `http.Timeout`): every one of them is named, the
+    /// ones this module binds first, as they are reached here. A module
+    /// that is not built is named only if no other offers the name.
     fn elsewhere_help(&self, name: Symbol, elsewhere: &[(Symbol, Option<Symbol>)]) -> String {
-        let (module, bound_as) = elsewhere[0];
-        if let Some(feature) = crate::module::missing_feature(&resolve(module)) {
+        let built: Vec<(Symbol, Option<Symbol>)> = elsewhere
+            .iter()
+            .copied()
+            .filter(|(module, _)| crate::module::missing_feature(&resolve(*module)).is_none())
+            .collect();
+        let Some(&(first, _)) = built.first() else {
+            let (module, _) = elsewhere[0];
+            let feature = crate::module::missing_feature(&resolve(module)).unwrap_or_default();
             return format!(
                 "`{name}` is in module `{module}`, which is not part of this build of silt: it \
                  needs the cargo feature `{feature}`"
             );
-        }
-        match bound_as {
-            Some(bound_as) => format!(
-                "did you mean `{bound_as}.{name}`? or import the name: `import {module}.{{ {name} }}`"
+        };
+        // "`a`, `b` or `c`".
+        let listed = |items: Vec<String>, last: &str| match items.split_last() {
+            Some((end, rest)) if !rest.is_empty() => {
+                format!("{} {last} {end}", rest.join(", "))
+            }
+            _ => items.concat(),
+        };
+        let modules = |modules: Vec<Symbol>| match modules.len() {
+            1 => format!("module `{}`", modules[0]),
+            _ => format!(
+                "modules {}",
+                listed(modules.iter().map(|m| format!("`{m}`")).collect(), "and")
             ),
-            None => format!(
-                "`{name}` is in module `{module}`: write `{module}.{name}` after `import {module}`, \
-                 or add `import {module}.{{ {name} }}`"
-            ),
-        }
+        };
+        // The modules this module binds, each with the name it has
+        // here, and the others.
+        let bound: Vec<(Symbol, Symbol)> = built
+            .iter()
+            .filter_map(|(module, bound_as)| Some((*module, (*bound_as)?)))
+            .collect();
+        let others: Vec<Symbol> = built
+            .iter()
+            .filter(|(_, bound_as)| bound_as.is_none())
+            .map(|(module, _)| *module)
+            .collect();
+        let Some(&(module, _)) = bound.first() else {
+            return format!(
+                "`{name}` is in {}: write `{first}.{name}` after `import {first}`, \
+                 or add `import {first}.{{ {name} }}`",
+                modules(others)
+            );
+        };
+        let meant = listed(
+            bound
+                .iter()
+                .map(|(_, bound_as)| format!("`{bound_as}.{name}`"))
+                .collect(),
+            "or",
+        );
+        let import = match bound.len() {
+            1 => "import the name",
+            _ => "import one of them by name",
+        };
+        let also = match others.is_empty() {
+            true => String::new(),
+            false => format!(" (`{name}` is also in {})", modules(others)),
+        };
+        format!("did you mean {meant}? or {import}: `import {module}.{{ {name} }}`{also}")
     }
 
     /// Report `AmbiguousVariant` for the bare use of `name` at `span`.

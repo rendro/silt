@@ -5,7 +5,6 @@ fn main() {
   let v_bytes_concat_all: Int = bytes.concat_all
   let v_bytes_empty: Int = bytes.empty
   let v_bytes_ends_with: Int = bytes.ends_with
-  let v_bytes_eq: Int = bytes.eq
   let v_bytes_from_base64: Int = bytes.from_base64
   let v_bytes_from_hex: Int = bytes.from_hex
   let v_bytes_from_list: Int = bytes.from_list

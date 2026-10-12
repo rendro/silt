@@ -1,0 +1,77 @@
+-- timeout: 120
+-- A select under a deadline: an arm was completed and `task.deadline`
+-- gives `Ok` of it, or none was and it gives `Err(Timeout)`. A
+-- producer sends 100 numbers in turn on two rendezvous channels; the
+-- one in the middle takes them with a select of two `Recv` arms under
+-- a deadline and passes each on with a select that has a `Send` arm,
+-- under a deadline too, until that is `Sent`; the consumer is slow.
+-- Whatever the timing, every number arrives once.
+import channel
+import task
+import time
+
+fn pass(out, never, v) {
+  let sent = task.deadline(time.ms(3), { ->
+    match channel.select([channel.Send(out, v), channel.Recv(never)]) {
+      (_, channel.Sent) -> true
+      _ -> false
+    }
+  })
+  match sent {
+    Ok(true) -> ()
+    _ -> pass(out, never, v)
+  }
+}
+
+fn main() {
+  let a: Channel(Int) = channel.new(0)
+  let b: Channel(Int) = channel.new(0)
+  let out: Channel(Int) = channel.new(0)
+  let never: Channel(Int) = channel.new(0)
+  let producer = task.spawn { ->
+    loop i = 0 {
+      match i >= 100 {
+        true -> {
+          channel.close(a)
+          channel.close(b)
+        }
+        false -> {
+          time.sleep(time.ms(3))
+          match i % 2 {
+            0 -> channel.send(a, i)
+            _ -> channel.send(b, i)
+          }
+          loop(i + 1)
+        }
+      }
+    }
+  }
+  let consumer = task.spawn { ->
+    loop n = 0, sum = 0 {
+      time.sleep(time.ms(3))
+      match channel.receive(out) {
+        channel.Message(v) -> loop(n + 1, sum + v)
+        _ -> (n, sum)
+      }
+    }
+  }
+  loop {
+    let got = task.deadline(time.ms(3), { ->
+      match channel.select([channel.Recv(a), channel.Recv(b)]) {
+        (_, r) -> r
+      }
+    })
+    match got {
+      Ok(channel.Message(v)) -> {
+        pass(out, never, v)
+        loop()
+      }
+      Ok(_) -> channel.close(out)
+      Err(_) -> loop()
+    }
+  }
+  task.join(producer)
+  match task.join(consumer) {
+    (got, sum) -> println("sent 100 (sum 4950), arrived {got} (sum {sum})")
+  }
+}

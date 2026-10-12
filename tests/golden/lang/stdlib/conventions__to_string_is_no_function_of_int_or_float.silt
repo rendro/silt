@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- `int.to_string` and `float.to_string` are no functions, and
+-- `float.format` always takes the number of decimal places.
+import float
+import int
+
+fn main() {
+  println(int.to_string(1))
+  println(float.to_string(1.5))
+  println(float.to_string(1.5, 2))
+  println(float.format(1.5))
+  let f = int.to_string
+}

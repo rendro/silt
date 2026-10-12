@@ -9,27 +9,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::time;
-use super::typed::{Arg, Called, Chan, Handle, List, builtins, unsound};
+use super::typed::{Arg, Chan, Handle, List, builtins, unsound};
 use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Native, Step, Vm, VmError};
 
-/// Build the canonical closed-channel-send VmError (message wording is
-/// pinned by tests in `tests/lang/error_tests.rs` and `tests/heavy/integration.rs`).
+/// A send on a closed channel is a runtime error, whichever function
+/// was to send: `channel.send`, `channel.try_send`, or a
+/// `channel.select` with a `Send` arm on the channel. This is the
+/// error, which names the channel.
 fn closed_channel_send_err(id: usize) -> VmError {
     VmError::new(format!("send on closed channel {id}"))
-}
-
-/// What `ChannelError`'s `message` says of the variant `tag` with `fields`:
-/// `None` if they are no variant of it.
-pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
-    Some(match (tag, fields) {
-        ("ChannelTimeout", []) => "channel receive timed out".to_string(),
-        ("ChannelClosed", []) => "channel closed with no more values".to_string(),
-        _ => return None,
-    })
 }
 
 fn message(value: Value) -> Value {
@@ -40,8 +32,8 @@ fn closed() -> Value {
     Value::variant(bv::CLOSED, vec![])
 }
 
-fn channel_err(tag: crate::typeinfo::BuiltinVariant) -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(tag, vec![])])
+fn empty() -> Value {
+    Value::variant(bv::EMPTY, vec![])
 }
 
 /// The time a `Duration` argument of `name` is: an error if it is
@@ -57,6 +49,15 @@ fn span(name: &str, duration: time::Duration) -> Result<Duration, VmError> {
 
 fn no_timer() -> VmError {
     VmError::new("cannot start a timer: the duration is out of range".into())
+}
+
+/// The time a timer of `channel.*` runs for a duration: whole
+/// milliseconds, and one for a positive duration below a millisecond.
+fn timer_span(dur: Duration) -> Duration {
+    match dur.as_nanos() as u64 {
+        0 => Duration::ZERO,
+        nanos => Duration::from_millis(nanos.div_ceil(1_000_000)),
+    }
 }
 
 /// The arms of a `channel.select`: each operation is `Recv(channel)`
@@ -83,28 +84,16 @@ fn select_arms(ops: List) -> Result<Vec<Arm>, VmError> {
 pub(crate) mod channel {
     use super::*;
 
-    /// `channel.new()` and `channel.new(capacity)`: with or without
-    /// its parameter, which the typed form has no way to say, so it is
-    /// written as the call the macro would write. (The conventions step
-    /// gives it one form.)
-    pub(crate) fn new(vm: &mut Vm, args: &[Value]) -> Called {
-        let capacity = match args {
-            [] => 0,
-            [capacity] => i64::take(capacity)?,
-            _ => return None,
-        };
-        Some(match usize::try_from(capacity) {
-            Ok(capacity) => {
-                let id = vm.next_channel_id();
-                Ok(Step::Done(Value::Channel(Channel::new(id, capacity))))
-            }
-            Err(_) => Err(VmError::new(
-                "channel.new capacity must be a non-negative integer".into(),
-            )),
-        })
-    }
-
     builtins! {
+        fn new(vm, capacity: i64) -> Result<Value, VmError> {
+            match usize::try_from(capacity) {
+                Ok(capacity) => Ok(Value::Channel(Channel::new(vm.next_channel_id(), capacity))),
+                Err(_) => Err(VmError::new(
+                    "channel.new capacity must be a non-negative integer".into(),
+                )),
+            }
+        }
+
         fn send(vm, ch: Chan, value: &Value) -> Result<Step, VmError> {
             let id = ch.id();
             let value = match ch.try_send(value.clone(), vm.scheduler().wake()) {
@@ -140,14 +129,20 @@ pub(crate) mod channel {
             ch.close(Close::default(), vm.scheduler().wake());
         }
 
-        fn try_send(vm, ch: Chan, value: &Value) -> bool {
-            matches!(ch.try_send(value.clone(), vm.scheduler().wake()), TrySend::Sent)
+        // `true` if the value was sent, `false` if there is no room and
+        // no receiver for it now.
+        fn try_send(vm, ch: Chan, value: &Value) -> Result<bool, VmError> {
+            match ch.try_send(value.clone(), vm.scheduler().wake()) {
+                TrySend::Sent => Ok(true),
+                TrySend::Full(_) => Ok(false),
+                TrySend::Closed(_) => Err(closed_channel_send_err(ch.id())),
+            }
         }
 
         fn try_receive(vm, ch: Chan) -> Value {
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => message(value),
-                TryReceive::Empty => Value::variant(bv::EMPTY, Vec::new()),
+                TryReceive::Empty => empty(),
                 TryReceive::Closed(_) => closed(),
             }
         }
@@ -159,10 +154,20 @@ pub(crate) mod channel {
                     "channel.select requires at least one operation".into(),
                 ));
             }
-            let channels: Vec<Arc<Channel>> = arms
+            // A `Send` arm on a closed channel is the error of a send
+            // on it, whatever the other arms could do.
+            if let Some(closed) = arms.iter().find_map(|arm| match arm {
+                Arm::Send(ch, _) if ch.is_closed() => Some(ch.id()),
+                _ => None,
+            }) {
+                return Err(closed_channel_send_err(closed));
+            }
+            // Each arm's channel, and whether the arm sends.
+            let channels: Vec<(Arc<Channel>, bool)> = arms
                 .iter()
                 .map(|arm| match arm {
-                    Arm::Recv(ch) | Arm::Send(ch, _) => ch.clone(),
+                    Arm::Recv(ch) => (ch.clone(), false),
+                    Arm::Send(ch, _) => (ch.clone(), true),
                     Arm::Cell(_) => unreachable!("a select has channel arms"),
                 })
                 .collect();
@@ -176,66 +181,61 @@ pub(crate) mod channel {
                         "internal VM error: a select ended without an arm".into(),
                     ));
                 };
+                let (channel, sends) = &channels[arm];
                 let outcome = match outcome {
                     Outcome::Received(value) => message(value),
                     Outcome::Sent => Value::variant(bv::SENT, vec![]),
+                    // The channel was closed while the arm waited to send.
+                    Outcome::Closed(_) if *sends => {
+                        return Err(closed_channel_send_err(channel.id()));
+                    }
                     Outcome::Closed(_) | Outcome::Done => closed(),
                 };
                 Ok(Step::Done(Value::tuple(vec![
-                    Value::Channel(channels[arm].clone()),
+                    Value::Channel(channel.clone()),
                     outcome,
                 ])))
             }))
         }
 
-        //   * Ok(value)            — a value was delivered within the
-        //                            timeout. A value that is there wins
-        //                            over a timeout that has passed, even
-        //                            at duration zero.
-        //   * Err(ChannelClosed)   — the channel is closed and empty.
-        //   * Err(ChannelTimeout)  — the timeout elapsed with no value
-        //                            and no close. A positive duration
-        //                            below a millisecond waits one.
-        fn recv_timeout(vm, ch: Chan, dur: time::Duration) -> Result<Step, VmError> {
+        // `Message(value)` if a value is there or comes within the
+        // duration: a value that is there wins over a duration that
+        // has passed, even at duration zero. `Closed` if the channel
+        // is closed and empty. `Empty` if the duration passed with no
+        // value and no close.
+        fn receive_timeout(vm, ch: Chan, dur: time::Duration) -> Result<Step, VmError> {
             // A negative duration is an error even when a value is
             // there.
-            let dur = span("channel.recv_timeout", dur)?;
+            let dur = span("channel.receive_timeout", dur)?;
             match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => {
-                    return Ok(Step::Done(Value::variant(bv::OK, vec![value])));
-                }
-                TryReceive::Closed(_) => return Ok(Step::Done(channel_err(bv::CHANNEL_CLOSED))),
+                TryReceive::Value(value) => return Ok(Step::Done(message(value))),
+                TryReceive::Closed(_) => return Ok(Step::Done(closed())),
                 TryReceive::Empty => {}
             }
             if dur.is_zero() {
-                return Ok(Step::Done(channel_err(bv::CHANNEL_TIMEOUT)));
+                return Ok(Step::Done(empty()));
             }
-            let millis = (dur.as_nanos() as u64).div_ceil(1_000_000).max(1);
             let deadline = vm
                 .runtime
                 .io
-                .deadline_after(Duration::from_millis(millis))
+                .deadline_after(timer_span(dur))
                 .ok_or_else(no_timer)?;
             let wait = Wait::new(vec![Arm::Recv(ch.clone())]).deadline(Some(deadline));
-            Ok(vm.park("channel.recv_timeout", wait, |_, fired| {
+            Ok(vm.park("channel.receive_timeout", wait, |_, fired| {
                 Ok(Step::Done(match fired {
-                    Fired::Arm(_, Outcome::Received(value)) => Value::variant(bv::OK, vec![value]),
-                    Fired::Arm(..) => channel_err(bv::CHANNEL_CLOSED),
-                    Fired::Deadline => channel_err(bv::CHANNEL_TIMEOUT),
+                    Fired::Arm(_, Outcome::Received(value)) => message(value),
+                    Fired::Arm(..) => closed(),
+                    Fired::Deadline => empty(),
                 }))
             }))
         }
 
-        fn timeout(vm, ms: i64) -> Result<Value, VmError> {
-            let Ok(ms) = u64::try_from(ms) else {
-                return Err(VmError::new(
-                    "channel.timeout duration must be non-negative".into(),
-                ));
-            };
+        fn timeout(vm, dur: time::Duration) -> Result<Value, VmError> {
+            let dur = span("channel.timeout", dur)?;
             let deadline = vm
                 .runtime
                 .io
-                .deadline_after(Duration::from_millis(ms))
+                .deadline_after(timer_span(dur))
                 .ok_or_else(no_timer)?;
             if let Some(failure) = vm.runtime.io.clock_failure() {
                 return Err(VmError::new(failure));
@@ -319,26 +319,27 @@ impl Native for Each {
     }
 }
 
-/// Spawn a child task with an optional scoped deadline, a reading of
-/// the host clock. Shared by `task.spawn` (deadline = None) and
-/// `task.spawn_until` (deadline = Some(now + dur)). Returns the Handle wrapping the
-/// spawned task; propagates scheduler.submit errors unchanged.
-fn spawn_with_deadline(
-    vm: &mut Vm,
-    f: &Value,
-    deadline: Option<Duration>,
-) -> Result<Value, VmError> {
+/// Start `f` as a task of whoever spawns it: the owner of the task
+/// that runs this, or the owner the front end set for the program.
+/// With `deadline` the task is over at that reading of the clock
+/// (`TaskHandle::deadline`). The handle of the task; an error of
+/// `scheduler.submit` as it is.
+fn start(vm: &mut Vm, f: &Value, deadline: Option<Duration>) -> Result<Arc<TaskHandle>, VmError> {
     let task_id = vm.next_task_id();
-    // The task belongs to whoever spawns it: the owner of the task that
-    // runs this, or the owner the front end set for the program.
-    let handle = Arc::new(TaskHandle::with_owner(
-        task_id,
-        vm.scheduler().current_owner(),
-    ));
+    let handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner());
+    let handle = Arc::new(match deadline {
+        // A task whose time is its caller's goes on with the caller's
+        // count of the steps run past that time: the work past a
+        // deadline is bounded in total, however many deadlines the
+        // function calls when its time is over.
+        Some(deadline) => {
+            let callers = vm.deadline.filter(|own| deadline >= *own);
+            handle.with_deadline(deadline, callers.and(vm.late.clone()))
+        }
+        None => handle,
+    });
 
     let mut child_vm = vm.spawn_child();
-    child_vm.current_deadline = deadline;
-
     match f {
         Value::VmClosure(closure) => child_vm.start_task(closure.clone()),
         // Any other function (a builtin, a host function): the task
@@ -350,7 +351,7 @@ fn spawn_with_deadline(
         .submit(task_id, child_vm, handle.clone())
         .map_err(VmError::new)?;
 
-    Ok(Value::Handle(handle))
+    Ok(handle)
 }
 
 /// The body of a task that is no function of silt's own code
@@ -371,25 +372,67 @@ impl Native for Body {
     }
 }
 
-/// `task.deadline(dur, fn)`: runs `fn` with a scoped wall-clock
-/// deadline of `dur` from now. A wait for I/O inside the callback
-/// ends at the deadline, with `Err("I/O timeout (task.deadline
-/// exceeded)")` in the module's typed shape. I/O builtins also check at entry and
-/// return the same Err immediately if the deadline is already past.
+/// What `TaskError`'s `message` says of the variant `tag` with `fields`:
+/// `None` if they are no variant of it.
+pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
+    Some(match (tag, fields) {
+        ("Timeout", []) => "the function was ended by its deadline".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
+        _ => return None,
+    })
+}
+
+/// `task.deadline(dur, f)`: `Ok(f())`, or `Err(Timeout)` if `f` was
+/// ended because `dur` had passed.
 ///
-/// Pure-CPU work inside the callback is NOT interrupted — this matches
-/// Go's context.WithDeadline semantics.
+/// The deadline is the function's task's, and it is decided in one
+/// place. `f` runs as a task of its own that is over at a set reading
+/// of the clock (`TaskHandle::deadline`), and the scheduler ends it
+/// there, never anybody from outside:
 ///
-/// A nested task.deadline tightens the deadline (earliest wins); a
-/// looser inner deadline cannot extend an outer one. The deadline stays
-/// in effect while the task is parked inside the callback.
+/// - Every wait of the task has that time beside its arms, in one
+///   claim (`runtime::sync::Wait::task_deadline`): the wait ends by an
+///   arm (the value is taken, the send is done, the operation's result
+///   is the task's) or by the time (nothing is taken, nothing is sent,
+///   an operation in flight is given up), never by both. A wait that
+///   the time ends, or that begins when the time is over, ends the
+///   task there.
+/// - The work of a task past its time is bounded: every step it runs
+///   in a slice that began when the time was over is counted, and
+///   when a standard slice of them is used up the task is ended, after
+///   that step or at the entry of the wait it began (no arm is tried).
+///
+/// So this frame only waits for the task to end, however long after
+/// the time that is (a slice and those steps at most), and reports how
+/// it did: it returned, it was ended by its deadline, or it failed. A
+/// function that took a value in time has the steps to return it, and
+/// its `Ok` is never thrown away for the clock's sake.
+///
+/// The task's time is no later than the caller's own, if the caller
+/// has one (a deadline inside a deadline): the outer time ends the
+/// inner function by the same rule, with no cancel. A task that has
+/// its caller's time goes on with its caller's count of steps
+/// (`TaskHandle::late`), so that the work past a deadline is bounded
+/// in total: a function that calls `task.deadline` again and again
+/// when its time is over gets no new steps with each call.
+///
+/// The frame owns the task: if the frame is dropped while it waits
+/// (the caller was cancelled by `task.cancel`, or the program ended),
+/// the task is cancelled too. That is the rule of a cancel, and the
+/// only cancel there is here.
 struct Deadline {
-    after: Duration,
-    /// The function, until it is called.
-    callback: Option<Value>,
-    /// The deadline that was in effect outside, while the callback
-    /// runs.
-    outer: Option<Option<Duration>>,
+    task: Arc<TaskHandle>,
+    state: DeadlineState,
+}
+
+enum DeadlineState {
+    /// The task is started and the frame has not parked.
+    Started,
+    /// The frame waits for the task to end.
+    Waiting,
+    /// The task was ended at a time that is the caller's own too: the
+    /// caller's task is over, and ends in the wait it has entered.
+    Over,
 }
 
 impl Native for Deadline {
@@ -397,25 +440,62 @@ impl Native for Deadline {
         "task.deadline"
     }
 
-    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if let Some(callee) = self.callback.take() {
-            let outer = vm.current_deadline;
-            self.outer = Some(outer);
-            // Tighten: earliest of current and new wins.
-            vm.current_deadline = match (outer, vm.runtime.io.deadline_after(self.after)) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (None, x) | (x, None) => x,
-            };
-            return Ok(vm.call(callee, []));
+    fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        let timeout = || {
+            let timeout = Value::variant(bv::TASK_TIMEOUT, vec![]);
+            Ok(Step::Done(Value::variant(bv::ERR, vec![timeout])))
+        };
+        match self.state {
+            DeadlineState::Started => {
+                self.state = DeadlineState::Waiting;
+                // Not ended by the caller's own deadline: the task's
+                // time is no later, and it ends by itself. Were this
+                // wait ended first, a value the function took in time
+                // would be lost with its `Ok`.
+                let wait = Wait::new(vec![Arm::Cell(self.task.done())]).unbounded();
+                return Ok(Step::Park(wait));
+            }
+            DeadlineState::Waiting => {}
+            DeadlineState::Over => return timeout(),
         }
-        self.abandon(vm);
-        Ok(Step::Done(input))
+        vm.woken()?;
+        if self.task.is_expired() {
+            // A clock that has panicked ended every wait that was
+            // pending on it: that is the clock's failure, not a time
+            // that passed.
+            if let Some(failure) = vm.runtime.io.clock_failure() {
+                return Err(VmError::new(failure));
+            }
+            // The time that ended the function is the caller's own
+            // (an outer deadline's): the caller is over as well, and a
+            // wait that begins now ends its task.
+            let inherited = self.task.deadline().zip(vm.deadline);
+            if inherited.is_some_and(|(its, own)| its >= own) {
+                self.state = DeadlineState::Over;
+                return Ok(Step::Park(Wait::new(vec![])));
+            }
+            return timeout();
+        }
+        let result = self.task.try_get().ok_or_else(|| {
+            VmError::new("internal VM error: a deadline's wait ended before its task".into())
+        })?;
+        // The function's failure is the caller's, as if the caller had
+        // called the function itself: where it happened, and below the
+        // function's own calls the calls that led to this
+        // `task.deadline`. It is raised whatever the clock says.
+        self.task.mark_joined();
+        match result {
+            Ok(value) => Ok(Step::Done(Value::variant(bv::OK, vec![value]))),
+            Err(mut failure) => {
+                let here = vm.enrich_error(VmError::new(String::new()));
+                failure.call_stack.extend(here.call_stack);
+                Err(failure)
+            }
+        }
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
-        if let Some(outer) = self.outer.take() {
-            vm.current_deadline = outer;
-        }
+        vm.scheduler().cancel(&self.task);
     }
 }
 
@@ -439,16 +519,23 @@ pub(crate) mod task {
     use super::*;
 
     builtins! {
-        fn deadline(dur: time::Duration, f: &Value) -> Result<Step, VmError> {
-            Ok(Step::Run(Box::new(Deadline {
-                after: span("task.deadline", dur)?,
-                callback: Some(f.clone()),
-                outer: None,
-            })))
+        fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
+            // A duration of zero or less is a time that is over now:
+            // the function runs to its first wait that has to wait,
+            // or until the steps of a late task are used up.
+            let after = Duration::from_nanos(u64::try_from(dur.0).unwrap_or(0));
+            let until = vm.runtime.io.deadline_after(after).ok_or_else(no_timer)?;
+            if let Some(failure) = vm.runtime.io.clock_failure() {
+                return Err(VmError::new(failure));
+            }
+            // No later than the caller's own time.
+            let until = vm.deadline.map_or(until, |own| own.min(until));
+            let task = start(vm, f, Some(until))?;
+            Ok(Step::Run(Box::new(Deadline { task, state: DeadlineState::Started })))
         }
 
         fn spawn(vm, f: &Value) -> Result<Value, VmError> {
-            spawn_with_deadline(vm, f, None)
+            Ok(Value::Handle(start(vm, f, None)?))
         }
 
         fn join(vm, handle: Handle) -> Result<Step, VmError> {
@@ -473,15 +560,6 @@ pub(crate) mod task {
         // result that came first.
         fn cancel(vm, handle: Handle) {
             vm.scheduler().cancel(handle);
-        }
-
-        // A task that runs with a scoped wall-clock deadline. Equivalent
-        // to `task.spawn { -> task.deadline(dur, fn) }` minus the
-        // closure-wrapping boilerplate.
-        fn spawn_until(vm, dur: time::Duration, f: &Value) -> Result<Value, VmError> {
-            let after = span("task.spawn_until", dur)?;
-            let deadline = vm.runtime.io.deadline_after(after);
-            spawn_with_deadline(vm, f, deadline)
         }
     }
 }

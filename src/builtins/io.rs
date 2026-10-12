@@ -120,7 +120,7 @@ pub(crate) fn io_error_to_variant(err: &std::io::Error, path: &str) -> Value {
         ErrorKind::Interrupted => (bv::IO_INTERRUPTED, None),
         ErrorKind::UnexpectedEof => (bv::IO_UNEXPECTED_EOF, None),
         ErrorKind::WriteZero => (bv::IO_WRITE_ZERO, None),
-        _ => (bv::IO_UNKNOWN, Some(err.to_string())),
+        _ => (bv::IO_OTHER, Some(err.to_string())),
     };
     match arg {
         Some(a) => Value::variant(variant, vec![Value::String(a.into())]),
@@ -135,13 +135,13 @@ pub(crate) fn io_result_err(err: &std::io::Error, path: &str) -> Value {
     io_err(io_error_to_variant(err, path))
 }
 
-/// Build an `Err(IoError)` with a synthetic `IoUnknown(msg)` variant
+/// Build an `Err(IoError)` with a synthetic `Other(msg)` variant
 /// for cases where no underlying `std::io::Error` exists (e.g. the
 /// `fs.walk` entry-cap cutoff). Keeps the result type
 /// `Result(T, IoError)` uniform.
 pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
     io_err(Value::variant(
-        bv::IO_UNKNOWN,
+        bv::IO_OTHER,
         vec![Value::String(msg.into())],
     ))
 }
@@ -150,26 +150,26 @@ pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("IoNotFound", [Value::String(p)]) => format!("file not found: {p}"),
-        ("IoPermissionDenied", [Value::String(p)]) => {
+        ("NotFound", [Value::String(p)]) => format!("file not found: {p}"),
+        ("PermissionDenied", [Value::String(p)]) => {
             format!("permission denied: {p}")
         }
-        ("IoAlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
-        ("IoInvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
-        ("IoInterrupted", []) => "operation interrupted".to_string(),
-        ("IoUnexpectedEof", []) => "unexpected end of file".to_string(),
-        ("IoWriteZero", []) => "zero-byte write".to_string(),
-        ("IoUnknown", [Value::String(m)]) => m.to_string(),
+        ("AlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
+        ("InvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
+        ("Interrupted", []) => "operation interrupted".to_string(),
+        ("UnexpectedEof", []) => "unexpected end of file".to_string(),
+        ("WriteZero", []) => "zero-byte write".to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
 
 /// The error of an `io` function whose operation has no value of its
 /// own: its wait timed out, or the operation could not run. Either
-/// way `IoUnknown` with the reason.
+/// way `Other` with the reason.
 fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
     io_err(Value::variant(
-        bv::IO_UNKNOWN,
+        bv::IO_OTHER,
         vec![Value::String(failure.text().into())],
     ))
 }
@@ -200,7 +200,7 @@ builtins! {
         vm.io("io.read_line", io_unknown_err, move || {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
-                // Ok(0) means EOF — surface as Err(IoUnexpectedEof) so
+                // Ok(0) means EOF — surface as Err(UnexpectedEof) so
                 // match-against-Err loops terminate cleanly instead of
                 // spinning on "".
                 Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
@@ -345,7 +345,7 @@ pub(crate) mod fs {
                     Ok(entry) => entry,
                     // walkdir::Error -> reconstruct an io::Error when
                     // possible so variant classification is accurate;
-                    // fall back to IoUnknown when walkdir wraps a
+                    // fall back to Other when walkdir wraps a
                     // non-io cause (cycle detection etc.).
                     Err(err) => {
                         return match err.io_error() {
@@ -378,7 +378,7 @@ pub(crate) mod fs {
             let paths = match glob::glob(pattern) {
                 Ok(paths) => paths,
                 // PatternError (bad glob pattern) is a user-input problem;
-                // route to IoInvalidInput so callers can distinguish
+                // route to InvalidInput so callers can distinguish
                 // "your pattern was malformed" from fs failures.
                 Err(e) => {
                     return io_err(Value::variant(
@@ -464,13 +464,16 @@ pub(crate) mod env {
             Ok(())
         }
 
-        // std::env::vars() snapshots the environment at call time
-        // into an iterator. The iteration order is unspecified (on
-        // glibc it's roughly insertion order into `environ`; we
-        // don't sort, to avoid lying about stability). Each entry
-        // becomes a `(String, String)` tuple.
+        // A snapshot of the environment at call time. The iteration
+        // order is unspecified (on glibc it's roughly insertion order
+        // into `environ`; we don't sort, to avoid lying about
+        // stability). Each entry becomes a `(String, String)` tuple.
+        // A variable whose name or value is not Unicode is left out,
+        // as `env.get` gives `None` for it (`std::env::vars` would
+        // panic on it).
         fn vars() -> Vec<Value> {
-            std::env::vars()
+            std::env::vars_os()
+                .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
                 .map(|(k, v)| Value::tuple(vec![Value::String(k.into()), Value::String(v.into())]))
                 .collect()
         }

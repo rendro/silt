@@ -1,0 +1,16 @@
+-- exit: 1
+-- repeat: 20
+-- stderr-contains: error[runtime]: joined task failed: send on closed channel 0
+-- In a task as on the main thread: `channel.try_send` on a closed
+-- channel fails the task, and the join of it says so.
+import channel
+import task
+
+fn main() {
+  let closed = channel.new(1)
+  channel.close(closed)
+  let sender = task.spawn { -> channel.try_send(closed, 1) }
+  println("joining")
+  let _ = task.join(sender)
+  println("not reached")
+}

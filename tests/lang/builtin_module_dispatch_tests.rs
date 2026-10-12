@@ -27,7 +27,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "test" => "test.assert(true)",
         "channel" => "channel.new(1)",
         "task" => "task.spawn({ -> 1 })",
-        "regex" => "regex.is_match(\"a+\", \"aa\")",
+        "regex" => "regex.is_match(\"aa\", \"a+\")",
         "json" => "json.stringify(1)",
         "toml" => "toml.parse_map(\"a = 1\", Int)",
         "set" => "set.new()",
@@ -41,7 +41,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "stream" => "stream.from_list([1])",
         "uuid" => "uuid.nil()",
         "http" if cfg!(feature = "http") => "http.segments(\"/a/b\")",
-        "postgres" if cfg!(feature = "postgres") => "postgres.uuidv7()",
+        "postgres" if cfg!(feature = "postgres") => "postgres.connect(\"not a url\")",
         // Port 1 on loopback refuses at once; the call returns an Err.
         "tcp" if cfg!(feature = "tcp") => "tcp.connect(\"127.0.0.1:1\")",
         "http" | "postgres" | "tcp" => return Some(None),
@@ -137,7 +137,7 @@ fn assert_needs_feature(label: &str, src: &str, module: &str, feature: &str) {
 fn importing_tcp_without_its_feature_is_one_error_that_names_it() {
     assert_needs_feature(
         "tcp_connect",
-        "import tcp\nfn main() {\n  let e = tcp.TcpError.TcpConnect(\"nope\")\n  println(e)\n}\n",
+        "import tcp\nfn main() {\n  let e = tcp.TcpError.Connect(\"nope\")\n  println(e)\n}\n",
         "tcp",
         "tcp",
     );

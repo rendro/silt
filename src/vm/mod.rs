@@ -80,7 +80,6 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value
 use regex::Regex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use crate::bytecode::{Function, Globals, VmClosure};
 use crate::runtime::sync::{Arm, Fired, Wait};
@@ -128,16 +127,14 @@ pub struct Vm {
     /// VM that runs the program itself. Set when the task is started
     /// (`Scheduler::submit`).
     pub(crate) cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
-    /// Scoped deadline in effect for this task, as a reading of the
-    /// host clock ([`Clock::monotonic`]). Set by
-    /// `task.deadline(dur, fn)` for the duration of the callback; a
-    /// wait for I/O ends at it ([`Vm::io`]), and I/O builtins check it
-    /// at entry so a call made past the
-    /// deadline returns `Err(...)` immediately without submitting to
-    /// the I/O pool. Nested `task.deadline` calls use the earlier
-    /// deadline (monotonic tightening); each one's frame holds the
-    /// deadline to restore when its callback returns.
-    pub(crate) current_deadline: Option<Duration>,
+    /// When the task this is the VM of is over (`TaskHandle::deadline`):
+    /// the VM of a function that `task.deadline` runs has one. A
+    /// `task.deadline` inside it gives its function no later time.
+    pub(crate) deadline: Option<std::time::Duration>,
+    /// The count of the steps the task has run past that time
+    /// (`TaskHandle::late`): the function of a `task.deadline` inside
+    /// it that has the same time goes on with it.
+    pub(crate) late: Option<Arc<std::sync::atomic::AtomicUsize>>,
 
     /// The callers that tail calls replaced, for an error's call stack
     /// ([`TailCalls`]).
@@ -176,48 +173,13 @@ impl Drop for Vm {
 }
 
 impl Vm {
-    /// If the current task.deadline has already elapsed, build an `Err`
-    /// Value via the caller's factory; otherwise return `None`. I/O
-    /// builtins call this at entry so a call made past the deadline
-    /// short-circuits into a clean `Err` without submitting to the
-    /// I/O pool. The factory determines which typed error variant the
-    /// caller's signature expects (io uses `IoUnknown`, tcp uses
-    /// `TcpTimeout`, etc.).
-    pub(crate) fn deadline_exceeded_with(&self, timeout_err: ErrFactory) -> Option<Value> {
-        let deadline = self.current_deadline?;
-        if self.runtime.io.monotonic() >= deadline {
-            Some(timeout_err(IoFailure::Timeout(
-                crate::scheduler::DeadlineSource::Task.message(),
-            )))
-        } else {
-            None
-        }
-    }
-
     /// The step of the I/O builtin `name` that runs the blocking
     /// operation `op` on the I/O pool and waits for its value, which
     /// is the builtin's: already `Ok(_)` or `Err(_)`.
     ///
-    /// The wait ends at the earlier of the task deadline in effect
-    /// and `SILT_IO_TIMEOUT`, with `timeout_err` of the reason: the
-    /// typed error the builtin's signature declares. With the task
-    /// deadline already past, nothing is run.
+    /// The wait ends at `SILT_IO_TIMEOUT`, if that is set, with
+    /// `timeout_err`: the typed error the builtin's signature declares.
     pub(crate) fn io(
-        &mut self,
-        name: &'static str,
-        timeout_err: ErrFactory,
-        op: impl FnOnce() -> Value + Send + 'static,
-    ) -> Result<Step, VmError> {
-        if let Some(err) = self.deadline_exceeded_with(timeout_err) {
-            return Ok(Step::Done(err));
-        }
-        self.io_started(name, timeout_err, op)
-    }
-
-    /// [`Vm::io`] for a caller that has looked at the task deadline
-    /// itself ([`Vm::deadline_exceeded_with`]) and done something
-    /// between that and the operation.
-    pub(crate) fn io_started(
         &mut self,
         name: &'static str,
         timeout_err: ErrFactory,
@@ -227,9 +189,9 @@ impl Vm {
         self.io_wait(name, timeout_err, op)
     }
 
-    /// [`Vm::io_started`] for an operation that can be made to return:
+    /// [`Vm::io`] for an operation that can be made to return:
     /// `stop` is called if the task stops waiting while the operation
-    /// runs (its deadline passed, it was cancelled, it was dropped at
+    /// runs (its time was over, it was cancelled, it was dropped at
     /// the end of the program), so that the thread of the operation
     /// ends.
     #[cfg(feature = "tcp-tls")]
@@ -251,10 +213,7 @@ impl Vm {
         timeout_err: ErrFactory,
         op: IoOp,
     ) -> Result<Step, VmError> {
-        let (deadline, source) = match self.runtime.scheduler.io_deadline(self.current_deadline) {
-            Some((deadline, source)) => (Some(deadline), source),
-            None => (None, crate::scheduler::DeadlineSource::Task),
-        };
+        let deadline = self.runtime.scheduler.io_deadline();
         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
         // The frame owns the operation: when the wait is over, however
         // it ends, the operation has no waiter and no longer counts as
@@ -267,7 +226,7 @@ impl Vm {
                 _ => None,
             };
             Ok(Step::Done(value.unwrap_or_else(|| {
-                timeout_err(IoFailure::Timeout(source.message()))
+                timeout_err(IoFailure::Timeout(crate::scheduler::IO_TIMEOUT))
             })))
         }))
     }
@@ -308,7 +267,8 @@ impl Vm {
             woken: None,
             spawned: false,
             cancelled: None,
-            current_deadline: None,
+            deadline: None,
+            late: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -648,7 +608,8 @@ impl Vm {
             woken: None,
             spawned: false,
             cancelled: None,
-            current_deadline: None,
+            deadline: None,
+            late: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -836,7 +797,7 @@ impl Vm {
     pub(crate) fn get_regex<'a>(
         cache: &'a mut RegexCache,
         pattern: &str,
-    ) -> Result<&'a Regex, VmError> {
+    ) -> Result<&'a Regex, regex::Error> {
         cache.get(pattern)
     }
 

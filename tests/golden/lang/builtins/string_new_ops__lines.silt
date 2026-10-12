@@ -1,7 +1,8 @@
+import option
 import string
 fn main() {
   -- silt string literals have no \r escape; build CR from its code
-  let cr = string.from_char_code(13)
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
   -- test_lines_basic
   println(string.lines("a\nb\nc") == ["a", "b", "c"])
   -- test_lines_trailing_newline_no_empty_element

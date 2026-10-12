@@ -1,0 +1,14 @@
+-- A builtin passed as a value takes what a call of it takes: `test.assert`
+-- is a function of one Bool, `channel.new` of one Int.
+import channel
+import list
+import test
+
+fn main() {
+  list.each([true, 1 + 1 == 2], test.assert)
+  let pairs = list.map([0, 2], channel.new)
+  list.each(pairs) { ch: Channel(Int) -> channel.close(ch) }
+  let same = test.assert_eq
+  same("a", "a")
+  println(list.length(pairs))
+}

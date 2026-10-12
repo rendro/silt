@@ -1,14 +1,15 @@
+import result
 import time
 fn main() {
   -- test_time_format_date_happy_path_still_works
   println(match time.date(2024, 6, 15) {
-    Ok(d) -> time.format_date(d, "%Y-%m-%d")
+    Ok(d) -> time.format_date(d, "%Y-%m-%d") |> result.unwrap_or("format err")
     Err(_) -> "err"
   })
   -- test_time_format_datetime_with_time_specifiers_still_works
   println(match time.date(2024, 6, 15) {
     Ok(d) -> match time.time(10, 30, 45) {
-      Ok(t) -> time.format(time.datetime(d, t), "%H:%M:%S")
+      Ok(t) -> time.format(time.datetime(d, t), "%H:%M:%S") |> result.unwrap_or("format err")
       Err(_) -> "time err"
     }
     Err(_) -> "date err"

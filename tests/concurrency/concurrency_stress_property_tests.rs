@@ -17,15 +17,17 @@
 //! - 1..=8 tasks, 1..=4 channels (capacity 0..=2 each), 1..=12 ops/task.
 //! - Ops: `send`, `try_send`, `receive`, `try_receive`, `select` (random
 //!   subset of channels), `close` (only on channels marked closeable; a
-//!   task body uses `try_send` on closeable channels to avoid
-//!   `send on closed channel` runtime errors), `yield`
+//!   task body uses `try_send` on closeable channels, which never
+//!   waits; a send of either kind on a channel that another task has
+//!   closed fails its task with `send on closed channel`, which is one
+//!   of the endings the invariants accept), `yield`
 //!   (`time.sleep(time.ms(0))`), short `time.sleep`.
 //! - A supervisor task runs random `task.cancel(h_i)` and
 //!   `task.join(h_i)` ops on worker handles (captured after the worker
 //!   spawns). The supervisor itself is spawned LAST so it sees every
 //!   worker handle.
 //! - Main spawns everyone then WAITS via `channel.select` on a
-//!   counting `done` channel and a `channel.timeout(3500)` bound —
+//!   counting `done` channel and a `channel.timeout(time.ms(3500))` bound —
 //!   main never calls `task.join` on a worker. This keeps per-task
 //!   errors (cancel, send-on-closed) from surfacing as the process
 //!   exit; the test then asserts main still exits cleanly.
@@ -214,7 +216,9 @@ fn check_invariants(src: &str, out: &RunOutcome) -> Result<(), String> {
     //
     // Exit 1 with the unjoined-failure report is acceptable too: the
     // generator's supervisor can join a peer it cancelled, which raises
-    // `cancelled` in the supervisor, and nobody joins the supervisor.
+    // `cancelled` in the supervisor, and nobody joins the supervisor;
+    // and a worker's `try_send` on a channel that another worker has
+    // closed fails that worker (`send on closed channel`).
     // `silt run` exits 1 for such a failure (owner decision of
     // 2026-09-28).
     match out.exit {
@@ -255,10 +259,10 @@ mod genp {
     #[derive(Clone, Debug)]
     pub enum Op {
         /// `channel.send(ch_i, value)` — only emitted for non-closeable
-        /// channels to avoid `send on closed channel` runtime errors.
+        /// channels: on a closeable one a task would wait in it.
         Send { ch: usize, value: i64 },
-        /// `channel.try_send(ch_i, value)` — safe on any channel;
-        /// returns Bool.
+        /// `channel.try_send(ch_i, value)` — never waits; returns Bool,
+        /// and fails its task on a channel that was closed.
         TrySend { ch: usize, value: i64 },
         /// `match channel.receive(ch_i) { ... }` — blocking; only on
         /// non-closeable channels (otherwise we'd receive Closed and
@@ -305,8 +309,8 @@ mod genp {
     }
 
     /// Generate a single worker op. `closeable[ch]` determines whether
-    /// `close` is allowed on that channel; blocking `send` is disallowed
-    /// on closeable channels to avoid VmError propagation.
+    /// `close` is allowed on that channel; blocking `send` is not
+    /// generated for closeable channels.
     fn arb_worker_op(num_channels: usize, closeable: Vec<bool>) -> impl Strategy<Value = Op> {
         // Each variant gets a weight; the vocabulary mix skews toward
         // non-blocking to keep deadlocks avoidable but possible.
@@ -574,7 +578,7 @@ fn emit_program(p: &genp::Program) -> String {
     // cancelled, while giving each property-test case a short wall
     // time. Generated programs use sleeps <= 10ms, so 800ms is ample
     // for every task that's not cancelled/deadlocked to finish.
-    src.push_str("  let timer = channel.timeout(800)\n");
+    src.push_str("  let timer = channel.timeout(time.ms(800))\n");
     src.push_str(&format!(
         "  let collected = loop c = 0 {{\n\
          \x20   match c >= {} {{\n\

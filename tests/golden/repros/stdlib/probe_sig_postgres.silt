@@ -13,5 +13,4 @@ fn main() {
   let v_postgres_query: Int = postgres.query
   let v_postgres_stream: Int = postgres.stream
   let v_postgres_transact: Int = postgres.transact
-  let v_postgres_uuidv7: Int = postgres.uuidv7
 }

@@ -1,0 +1,26 @@
+-- timeout: 120
+-- A join under a deadline that answers `Err(Timeout)` took nothing:
+-- the task's result is there for the next join. 100 tasks return
+-- their number after a short sleep; each is joined under a deadline
+-- of about that length until the join is `Ok`.
+import list
+import task
+import time
+
+fn joined(h) {
+  match task.deadline(time.micros(500), { -> task.join(h) }) {
+    Ok(v) -> v
+    Err(_) -> joined(h)
+  }
+}
+
+fn main() {
+  let handles = 0..99 |> list.map { i ->
+    task.spawn { ->
+      time.sleep(time.micros(i % 7 * 300))
+      i
+    }
+  }
+  let sum = list.fold(handles, 0) { acc, h -> acc + joined(h) }
+  println("the sum of what 100 tasks returned (4950): {sum}")
+}

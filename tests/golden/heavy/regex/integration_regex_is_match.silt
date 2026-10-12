@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.is_match("\\d+", "abc 123 def")
+  regex.is_match("abc 123 def", "\\d+") |> result.unwrap_or(false)
 }
 
 fn main() {

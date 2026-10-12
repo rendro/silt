@@ -13,12 +13,12 @@ with `{expr}` interpolation.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `char_code` | `(String) -> Int` | Unicode code point of first character |
+| `char_code` | `(String) -> Option(Int)` | Unicode code point of the first character, or None for an empty string |
 | `chars` | `(String) -> List(String)` | Split string into single-character strings |
 | `contains` | `(String, String) -> Bool` | Check if substring exists |
 | `ends_with` | `(String, String) -> Bool` | Check suffix |
 | `from` | `(a) -> String where a: Display` | Convert any value to its display string |
-| `from_char_code` | `(Int) -> String` | Character from Unicode code point |
+| `from_char_code` | `(Int) -> Option(String)` | Character of a Unicode code point, or None if it is none |
 | `index_of` | `(String, String) -> Option(Int)` | Character index of first occurrence |
 | `byte_length` | `(String) -> Int` | Length in bytes |
 | `is_alnum` | `(String) -> Bool` | All chars are alphanumeric |
@@ -38,7 +38,7 @@ with `{expr}` interpolation.
 | `replace` | `(String, String, String) -> String` | Replace all occurrences |
 | `slice` | `(String, Int, Int) -> String` | Substring by character indices |
 | `split` | `(String, String) -> List(String)` | Split on separator |
-| `split_at` | `(String, Int) -> (String, String)` | Split into two strings at character index |
+| `split_at` | `(String, Int) -> Option((String, String))` | Split into two strings at a character index, or None past the end |
 | `starts_with` | `(String, String) -> Bool` | Check prefix |
 | `starts_with_at` | `(String, Int, String) -> Bool` | Check prefix at a given character offset |
 | `to_lower` | `(String) -> String` | Convert to lowercase |
@@ -51,16 +51,18 @@ with `{expr}` interpolation.
 ## `string.char_code`
 
 ```
-string.char_code(s: String) -> Int
+string.char_code(s: String) -> Option(Int)
 ```
 
-Returns the Unicode code point of the first character. Panics on empty strings.
+Returns `Some` of the Unicode code point of the first character, or `None` for
+an empty string.
 
 ```silt
 import string
 
 fn main() {
-  println(string.char_code("A")) -- 65
+  println(string.char_code("A")) -- Some(65)
+  println(string.char_code("")) -- None
 }
 ```
 
@@ -139,17 +141,19 @@ fn main() {
 ## `string.from_char_code`
 
 ```
-string.from_char_code(code: Int) -> String
+string.from_char_code(code: Int) -> Option(String)
 ```
 
-Converts a Unicode code point to a single-character string. Panics on invalid
-code points.
+Returns `Some` of the single-character string of a Unicode code point, or
+`None` for a number that is none (a negative one, a surrogate, one above
+`0x10FFFF`).
 
 ```silt
 import string
 
 fn main() {
-  println(string.from_char_code(65)) -- A
+  println(string.from_char_code(65)) -- Some(A)
+  println(string.from_char_code(-1)) -- None
 }
 ```
 
@@ -523,21 +527,21 @@ fn main() {
 ## `string.split_at`
 
 ```
-string.split_at(s: String, idx: Int) -> (String, String)
+string.split_at(s: String, idx: Int) -> Option((String, String))
 ```
 
-Splits `s` into `(left, right)` at character index `idx`. `idx == 0` yields
-`("", s)` and `idx == length(s)` yields `(s, "")`. Panics on a negative index,
-on an index past the end of the string, or on an index that does not fall on
-a UTF-8 character boundary.
+Splits `s` into `Some((left, right))` at character index `idx`. `idx == 0`
+yields `("", s)` and `idx == length(s)` yields `(s, "")`. A negative index or
+one past the end of the string is `None`.
 
 ```silt
 import string
 
 fn main() {
-  println(string.split_at("hello", 2)) -- (he, llo)
-  println(string.split_at("hello", 0)) -- (, hello)
-  println(string.split_at("hello", 5)) -- (hello, )
+  println(string.split_at("hello", 2)) -- Some((he, llo))
+  println(string.split_at("hello", 0)) -- Some((, hello))
+  println(string.split_at("hello", 5)) -- Some((hello, ))
+  println(string.split_at("hello", 6)) -- None
 }
 ```
 

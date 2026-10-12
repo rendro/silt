@@ -5,7 +5,7 @@ import io
 import channel
 import task
 fn program() {
-  let ch = channel.new()
+  let ch = channel.new(0)
 
   let producer = task.spawn({ ->
     channel.send(ch, 99)

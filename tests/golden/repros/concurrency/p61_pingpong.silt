@@ -21,8 +21,8 @@ fn player(inp, out, rounds) {
 -- 1000 pairs (2000 tasks) ping-ponging 20 rounds each over rendezvous channels
 fn main() {
   let pairs = 1..1000 |> list.map { i ->
-    let a = channel.new()
-    let b = channel.new()
+    let a = channel.new(0)
+    let b = channel.new(0)
     let p1 = task.spawn(fn() { player(a, b, 20) })
     let p2 = task.spawn(fn() {
       channel.send(a, 0)

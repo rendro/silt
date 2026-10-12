@@ -42,15 +42,17 @@ pub fn pages() -> Vec<(String, &'static str)> {
     pages
 }
 
-/// The markdown an editor shows for each builtin name: `list.map`, a
-/// module's variant by its bare name (`IoNotFound`), a prelude name.
+/// The markdown an editor shows for each builtin name as it is reached
+/// qualified: `list.map`, a module's variant (`io.NotFound`,
+/// `channel.Message`), a prelude name bare. A variant's text is its
+/// own module's: two modules that have a variant of one name
+/// (`channel.Closed`, `tcp.Closed`) show two texts.
 pub fn builtin_docs() -> &'static HashMap<String, String> {
     static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
     DOCS.get_or_init(|| {
         let registry = registry();
         let mut docs: HashMap<String, String> = HashMap::new();
         let mut names: HashSet<String> = HashSet::new();
-        let mut module_variants: HashSet<&str> = HashSet::new();
         // A function with no section of its own shows its module's page.
         for module in registry.enabled_modules() {
             for row in module.enabled_rows() {
@@ -58,50 +60,48 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                 docs.insert(name.clone(), strip_frontmatter(module.page).to_string());
                 names.insert(name);
             }
+            // A variant is named with its module, like a function: the
+            // bare name is not one variant's (`Closed` is `channel`'s,
+            // `tcp`'s and `postgres`'s).
             for ty in &module.type_decls {
                 for (variant, _) in ty.variants() {
-                    module_variants.insert(variant);
+                    names.insert(format!("{}.{variant}", module.name));
                 }
             }
         }
         // A name's own section, in whichever page has it.
-        for (file, page) in pages() {
+        for (_, page) in pages() {
             for (keys, body) in iter_sections(page) {
                 for key in keys {
-                    let known = match file.as_str() {
-                        // The globals page documents the prelude as a
-                        // whole (below); its sections are for the
-                        // variants of the builtin modules.
-                        "globals.md" => module_variants.contains(key.as_str()),
-                        _ => names.contains(&key),
-                    };
-                    if known {
+                    if names.contains(&key) {
                         docs.insert(key, body.clone());
                     }
                 }
             }
         }
-        // A variant of a module's error enum shows the enum's section of
-        // the errors page, unless the globals page has one for it.
+        // A variant without a section of its own shows what documents
+        // its enum, under a line that says whose it is: the enum's
+        // section of the errors page for a variant of the module's
+        // error enum, the module's page for any other.
         let error_sections = iter_sections(ERRORS_PAGE);
         for module in registry.enabled_modules() {
-            let Some(error) = module.error else {
-                continue;
-            };
-            let Some((_, body)) = error_sections
-                .iter()
-                .find(|(keys, _)| keys.iter().any(|k| k == error))
-            else {
-                continue;
-            };
-            let variants = module
-                .type_decls
-                .iter()
-                .filter(|ty| ty.name == error)
-                .flat_map(|ty| ty.variants());
-            for (variant, _) in variants {
-                docs.entry(variant.to_string())
-                    .or_insert_with(|| body.clone());
+            for ty in &module.type_decls {
+                let section = error_sections
+                    .iter()
+                    .find(|(keys, _)| {
+                        module.error == Some(ty.name) && keys.iter().any(|k| k == ty.name)
+                    })
+                    .map(|(_, body)| body.as_str());
+                let below = section.unwrap_or_else(|| strip_frontmatter(module.page));
+                for (variant, _) in ty.variants() {
+                    let name = format!("{}.{variant}", module.name);
+                    docs.entry(name).or_insert_with(|| {
+                        format!(
+                            "A variant of `{0}.{1}`, reached as `{0}.{variant}`.\n\n{below}",
+                            module.name, ty.name
+                        )
+                    });
+                }
             }
         }
         let globals = strip_frontmatter(GLOBALS_PAGE);
@@ -254,8 +254,7 @@ fn trim_blank_edges(lines: &[&str]) -> String {
 // ── The generated parts of a page ───────────────────────────────────
 
 /// A row's signature without its parameter names, as a summary table
-/// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type. A
-/// last parameter that may be left out is marked `?`.
+/// shows it: `(List(a), Fn(a) -> b) -> List(b)`; a constant's type.
 fn summary_signature(row: &Row) -> String {
     let Some((label, ranges)) = row.qualified_signature("") else {
         return row
@@ -264,7 +263,7 @@ fn summary_signature(row: &Row) -> String {
             .map_or(row.signature, |(_, ty)| ty)
             .to_string();
     };
-    let mut types: Vec<String> = ranges
+    let types: Vec<String> = ranges
         .iter()
         .map(|[start, end]| {
             let param = &label[*start as usize..*end as usize];
@@ -274,11 +273,6 @@ fn summary_signature(row: &Row) -> String {
                 .to_string()
         })
         .collect();
-    if row.optional_last
-        && let Some(last) = types.last_mut()
-    {
-        last.push('?');
-    }
     let close = ranges.last().map_or_else(
         || label.find(')').unwrap_or(label.len()),
         |[_, end]| *end as usize,
@@ -287,24 +281,21 @@ fn summary_signature(row: &Row) -> String {
 }
 
 /// The signature block of a function's section: `list.map(xs: List(a),
-/// f: Fn(a) -> b) -> List(b)`; `math.pi: Float` for a constant. A
-/// function whose last parameter may be left out has two lines, the
-/// call without it first.
+/// f: Fn(a) -> b) -> List(b)`; `math.pi: Float` for a constant.
 fn section_signature(module: &Module, row: &Row) -> String {
-    let Some((label, ranges)) = row.qualified_signature(module.name) else {
-        return format!("{}.{}", module.name, row.signature);
-    };
-    let full = &label["fn ".len()..];
-    match ranges.as_slice() {
-        [.., [last, end]] if row.optional_last => {
-            // The text before the last parameter, without the comma
-            // that ends the parameter before it.
-            let before = label[..*last as usize].trim_end_matches(", ");
-            let short = format!("{before}{}", &label[*end as usize..]);
-            format!("{}\n{full}", &short["fn ".len()..])
-        }
-        _ => full.to_string(),
+    match row.qualified_signature(module.name) {
+        Some((label, _)) => label["fn ".len()..].to_string(),
+        None => format!("{}.{}", module.name, row.signature),
     }
+}
+
+/// The line that the signature block of `module.name` holds
+/// (`list.map(xs: List(a), f: Fn(a) -> b) -> List(b)`), if the module
+/// has such a row.
+pub fn signature_block(module: &str, name: &str) -> Option<String> {
+    let module = registry().module(module)?;
+    let row = module.rows.iter().find(|row| row.name == name)?;
+    Some(section_signature(module, row))
 }
 
 /// The module whose part of a page a `# ` heading opens (`# postgres
@@ -398,8 +389,12 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                 let [key] = keys.as_slice() else {
                     return None;
                 };
-                let (m, f) = key.split_once('.')?;
-                let m = registry().module(m)?;
+                // `## \`list.map\``, or the bare `## \`map\`` in the
+                // part of the page that is the module's.
+                let (m, f) = match key.split_once('.') {
+                    Some((m, f)) => (registry().module(m)?, f),
+                    None => (module?, key.as_str()),
+                };
                 let row = m.rows.iter().find(|row| row.name == f)?;
                 Some((m, row))
             });
@@ -513,6 +508,58 @@ mod tests {
         assert_eq!(summary_signature(row), "() -> List(String)");
         let row = registry().row("math", "pi").expect("math.pi");
         assert_eq!(summary_signature(row), "Float");
+    }
+
+    /// Every variant of every builtin module, as the registry has them,
+    /// shows a text of its own module and enum: it names the variant as
+    /// it is reached and its enum, and it is not the text of another
+    /// module's variant of the same name (`tcp.Closed` does not show
+    /// what is written for `channel.Closed`: "A variant of `channel`").
+    #[test]
+    fn every_builtin_variant_shows_the_docs_of_its_own_enum() {
+        let docs = builtin_docs();
+        let registry = registry();
+        let mut homes: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut variants = Vec::new();
+        for module in registry.enabled_modules() {
+            for ty in &module.type_decls {
+                for (variant, _) in ty.variants() {
+                    homes.entry(variant).or_default().push(module.name);
+                    variants.push((module.name, ty.name, variant));
+                }
+            }
+        }
+        assert!(variants.len() > 50, "{} variants", variants.len());
+        let mut shared = 0;
+        for (module, ty, variant) in variants {
+            let name = format!("{module}.{variant}");
+            let text = docs
+                .get(&name)
+                .unwrap_or_else(|| panic!("`{name}` has no text"));
+            assert!(text.contains(&name), "`{name}` is not named in:\n{text}");
+            assert!(
+                text.contains(ty),
+                "`{ty}` of `{name}` is not named in:\n{text}"
+            );
+            for other in homes[variant].iter().filter(|other| **other != module) {
+                shared += 1;
+                let theirs = format!("{other}.{variant}");
+                // (Its own text may speak of the other: "`float.Empty`
+                // is not `int.Empty`". What says whose variant a text
+                // is for is its line "A variant of ...".)
+                assert!(
+                    !text.contains(&format!("A variant of `{other}`"))
+                        && !text.contains(&format!("A variant of `{other}.")),
+                    "`{name}` shows the text of `{theirs}`:\n{text}"
+                );
+                assert_ne!(
+                    text, &docs[&theirs],
+                    "`{name}` and `{theirs}` show one text"
+                );
+            }
+        }
+        // `Closed`, `Timeout`, `Other`, ...: the case is not empty.
+        assert!(shared > 10, "{shared} pairs of one name");
     }
 
     #[test]

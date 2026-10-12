@@ -1,0 +1,68 @@
+-- timeout: 30
+-- requires-feature: http
+-- What a handler gets: the names of the headers in lower case, however
+-- the client wrote them (and so are the names of the headers of the
+-- response the client gets), and the body as the bytes that arrived,
+-- also when they are no text.
+import bytes
+import http
+import list
+import map
+import option
+import result
+import string
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  let wrote = map.get(req.headers, "x-request-id") |> option.unwrap_or("(none)")
+  let mixed = map.contains(req.headers, "X-Request-Id")
+  let lower = map.keys(req.headers) |> list.all { name -> name == string.to_lower(name) }
+  let text = match bytes.to_string(req.body) {
+    Ok(text) -> "text {text}"
+    Err(e) -> "no text ({e})"
+  }
+  http.Response {
+    status: 200,
+    body: "id {wrote}; mixed-case key {mixed}; all lower {lower}; {bytes.length(req.body)} bytes {bytes.to_hex(req.body)}; {text}",
+    headers: #{ "X-Answered-By": "silt" },
+  }
+}
+
+-- One request, written by hand: the header's name in mixed case, and a
+-- body of the given bytes.
+fn ask(port: Int, body: Bytes) -> String {
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { return "cannot connect" }
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  let head = "POST /upload HTTP/1.1{cr}\nHost: x{cr}\nX-ReQuEsT-Id: 42{cr}\nContent-Length: {bytes.length(body)}{cr}\nConnection: close{cr}\n{cr}\n"
+  let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), body))
+  let answer = loop got = bytes.empty() {
+    match tcp.read(conn, 4096) {
+      Ok(more) -> match bytes.length(more) {
+        0 -> got
+        _ -> loop(bytes.concat(got, more))
+      }
+      Err(_) -> got
+    }
+  }
+  tcp.close(conn)
+  -- The last line of the response is its body.
+  bytes.to_string(answer)
+    |> result.unwrap_or("")
+    |> string.lines
+    |> list.last
+    |> option.unwrap_or("(no answer)")
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  println(ask(port, bytes.from_string("héllo")))
+  println(ask(port, bytes.from_list([0, 255, 254, 104]) |> result.unwrap_or(bytes.empty())))
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(r) -> println("{map.get(r.headers, "x-answered-by")} {map.contains(r.headers, "X-Answered-By")}")
+    Err(e) -> println(e.message())
+  }
+  task.cancel(server)
+}

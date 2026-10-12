@@ -1,0 +1,51 @@
+-- timeout: 120
+-- An accept under a deadline: a connection is given to the function,
+-- and `task.deadline` gives `Ok` of it, or it stays with the listener
+-- for the next accept. A client connects 100 times, about every 3 ms;
+-- the server gives its accept up every 3 ms and accepts again. When
+-- the client has stopped, the server accepts until nothing has come
+-- for 20 deadlines. Whatever the timing, it is given every connection
+-- that was made.
+import channel
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let done: Channel(Int) = channel.new(1)
+  let client = task.spawn { ->
+    let made = loop i = 0, made = 0 {
+      match i >= 100 {
+        true -> made
+        false -> {
+          time.sleep(time.ms(3))
+          match tcp.connect("127.0.0.1:{port}") {
+            Ok(_) -> loop(i + 1, made + 1)
+            Err(_) -> loop(i + 1, made)
+          }
+        }
+      }
+    }
+    channel.close(done)
+    made
+  }
+  let given = loop given = 0, idle = 0 {
+    match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
+      Ok(Ok(c)) -> {
+        tcp.close(c)
+        loop(given + 1, 0)
+      }
+      Ok(Err(e)) -> panic("accept failed: {e}")
+      Err(_) -> match channel.try_receive(done) {
+        channel.Closed -> match idle >= 20 {
+          true -> given
+          false -> loop(given, idle + 1)
+        }
+        _ -> loop(given, idle)
+      }
+    }
+  }
+  println("connections made and not given to the server: {task.join(client) - given}")
+}

@@ -1,5 +1,5 @@
 //! Round-60 L5 regression: behavioural LSP test that rename on a
-//! gated builtin constructor (e.g. `IoNotFound`) is rejected.
+//! gated builtin constructor (e.g. `NotFound`) is rejected.
 //!
 //! `rename.rs` consults `module::all_builtin_constructor_names`; this
 //! test locks the rejection end-to-end through the LSP transport.
@@ -21,16 +21,16 @@ use crate::support::LspClient;
 fn rename_on_gated_constructor_is_rejected() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_rn_gated_ctor.silt";
-    // `IoNotFound` is a gated constructor under `module::io`. We use
+    // `NotFound` is a gated constructor under `module::io`. We use
     // it as a name in a context the parser will accept (a reference
     // mention) so the typechecker doesn't reject it before rename runs.
     // Even with a parse/typecheck error the rename pipeline is driven
-    // by AST tokens, so `IoNotFound` mentioned in source is enough for
+    // by AST tokens, so `NotFound` mentioned in source is enough for
     // `find_ident_at_offset` to surface the symbol to the rename guard.
-    let source = "import io\n\nfn main() {\n  let x = io.IoNotFound\n  x\n}\n";
+    let source = "import io\n\nfn main() {\n  let x = io.NotFound\n  x\n}\n";
     client.did_open_and_wait(uri, source);
 
-    // `IoNotFound` starts at line=3, char=13.
+    // `NotFound` starts at line=3, char=13.
     let resp = client.request(
         "textDocument/rename",
         json!({
@@ -59,7 +59,7 @@ fn rename_on_gated_constructor_is_rejected() {
 
     assert!(
         has_error || (result_present && (result_is_null || changes_empty)),
-        "rename on gated constructor `IoNotFound` must be explicitly \
+        "rename on gated constructor `NotFound` must be explicitly \
          rejected (error response) or explicitly empty (present null \
          result / present empty changes); a missing-both shape (no \
          `error`, no `result`) means the server did not respond — got \
@@ -69,14 +69,14 @@ fn rename_on_gated_constructor_is_rejected() {
 }
 
 /// Negative companion: rename on a *user-defined* identifier in a
-/// program that ALSO mentions `IoNotFound` succeeds. This locks the
+/// program that ALSO mentions `NotFound` succeeds. This locks the
 /// finer-grained behaviour: the rejection must apply only to the
 /// builtin, not blanket-block the document.
 #[test]
 fn rename_on_user_ident_in_doc_mentioning_gated_ctor_succeeds() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_rn_user_in_gated_doc.silt";
-    let source = "import io\n\nfn renamable_fn() { 0 }\nfn main() { let _ = io.IoNotFound\n  renamable_fn() }\n";
+    let source = "import io\n\nfn renamable_fn() { 0 }\nfn main() { let _ = io.NotFound\n  renamable_fn() }\n";
     client.did_open_and_wait(uri, source);
 
     // Cursor on `renamable_fn` call site at line 4, char=2.

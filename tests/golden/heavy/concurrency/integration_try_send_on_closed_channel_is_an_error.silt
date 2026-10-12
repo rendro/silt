@@ -1,0 +1,11 @@
+-- repeat: 3
+-- exit: 1
+-- stderr-contains: error[runtime]: send on closed channel 0
+-- try_send on a closed channel is the error of a send on it: `false`
+-- is for a channel that has no room.
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  println(channel.try_send(ch, 42))
+}

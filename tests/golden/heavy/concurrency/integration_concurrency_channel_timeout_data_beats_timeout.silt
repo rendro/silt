@@ -3,9 +3,10 @@
 import io
 import channel
 import task
+import time
 fn program() {
   let ch = channel.new(1)
-  let timer = channel.timeout(5000)
+  let timer = channel.timeout(time.ms(5000))
 
   channel.send(ch, "fast")
 

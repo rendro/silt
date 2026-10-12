@@ -3,9 +3,9 @@
 -- without-feature: postgres
 -- The items of a module that is not built are not reported one by one,
 -- and the program does not start.
-import postgres.{ PgTimeout, connect }
+import postgres.{ Timeout, connect }
 
 fn main() {
-  println(PgTimeout)
+  println(Timeout)
   println(connect("postgres://localhost/app"))
 }

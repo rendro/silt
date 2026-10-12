@@ -11,9 +11,9 @@ fn flag(done) {
 }
 
 fn one_round() {
-  let a = channel.new()
-  let b = channel.new()
-  let gate = channel.new()
+  let a = channel.new(0)
+  let b = channel.new(0)
+  let gate = channel.new(0)
   let done = channel.new(4)
   let r = task.spawn(fn() {
     match channel.select([channel.Recv(a), channel.Recv(b)]) {

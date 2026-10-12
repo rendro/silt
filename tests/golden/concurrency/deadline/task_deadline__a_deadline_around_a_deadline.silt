@@ -1,0 +1,25 @@
+-- repeat: 10
+-- timeout: 10
+-- A deadline around a deadline: the one that passes first ends its own
+-- function. When it is the outer one, the inner function is ended with
+-- it (the outer `Err(Timeout)`); when it is the inner one, the outer
+-- function goes on with the inner `Err(Timeout)` as a value.
+import channel
+import task
+import time
+
+fn main() {
+  let reached: Channel(String) = channel.new(4)
+  println(task.deadline(time.ms(30), { ->
+    let inner = task.deadline(time.hours(1), { -> time.sleep(time.hours(1)) })
+    channel.send(reached, "the outer function went on")
+    inner
+  }))
+  println(task.deadline(time.hours(1), { ->
+    let inner = task.deadline(time.ms(30), { -> time.sleep(time.hours(1)) })
+    channel.send(reached, "the outer function went on with {inner}")
+    inner
+  }))
+  println(channel.try_receive(reached))
+  println(channel.try_receive(reached))
+}

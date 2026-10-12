@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: bytes.slice: negative index -1
+-- As in `string.slice`, a negative index is an error.
+import bytes
+
+fn main() {
+  println(bytes.length(bytes.slice(bytes.from_string("hello"), -1, 3)))
+}

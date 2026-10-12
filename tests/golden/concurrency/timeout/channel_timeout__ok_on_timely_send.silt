@@ -1,5 +1,5 @@
 -- repeat: 3
--- A sibling sends well within the timeout: recv_timeout returns Ok(v).
+-- A sibling sends well within the timeout: receive_timeout gives Message(v).
 import channel
 import task
 import time
@@ -9,9 +9,9 @@ fn main() {
     time.sleep(time.ms(20))
     channel.send(ch, 42)
   })
-  let r = match channel.recv_timeout(ch, time.ms(1000)) {
-    Ok(v) -> v
-    Err(_) -> -1
+  let r = match channel.receive_timeout(ch, time.ms(1000)) {
+    channel.Message(v) -> v
+    _ -> -1
   }
   println("{r}")
 }

@@ -4,11 +4,12 @@
 -- waits for a timer. Without the fix the join is told "deadlock".
 import channel
 import task
+import time
 
 fn main() {
   let x = channel.new(0)
   let waiter = task.spawn({ ->
-    let t = channel.timeout(600)
+    let t = channel.timeout(time.ms(600))
     let _ = channel.receive(t)
     channel.send(x, 7)
   })

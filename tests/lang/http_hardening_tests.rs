@@ -388,7 +388,7 @@ fn main() {{
 
 #[test]
 fn med1_handler_error_does_not_leak_vm_error_details() {
-    // Handler calls test.assert(false, "secret-internal-info") inside a
+    // Handler calls panic("secret-internal-info") inside a
     // named helper so VmError carries both a distinctive message AND a
     // call stack. We assert:
     //   - response body is generic ("Internal Server Error"),
@@ -403,7 +403,6 @@ fn med1_handler_error_does_not_leak_vm_error_details() {
 import http
 import io
 import tcp
-import test
 
 -- Listen on a port the system chooses, and tell the test which.
 fn bound(port_file) {{
@@ -415,7 +414,7 @@ fn bound(port_file) {{
 }}
 
 fn private_helper() {{
-  test.assert(false, "secret-internal-info")
+  panic("secret-internal-info")
 }}
 
 fn main() {{

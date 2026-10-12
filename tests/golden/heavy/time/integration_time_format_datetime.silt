@@ -1,8 +1,9 @@
 import io
 import time
+import result
 fn program() {
   let dt = time.datetime(must_date(2024, 12, 25), must_time(18, 0, 0))
-  dt |> time.format("%Y-%m-%d %H:%M:%S")
+  dt |> time.format("%Y-%m-%d %H:%M:%S") |> result.unwrap_or("")
 }
 
 fn must_date(y, m, d) {

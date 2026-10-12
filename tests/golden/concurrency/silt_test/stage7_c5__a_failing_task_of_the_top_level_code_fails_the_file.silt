@@ -16,7 +16,7 @@ import test
 
 let requests = channel.new(0)
 let server = task.spawn({ ->
-  channel.each(requests) { n -> 10 / n }
+  channel.each(requests) { n -> println(10 / n) }
 })
 
 fn test_asks_for_too_much() {

@@ -1,11 +1,12 @@
--- exit: 1
--- stderr-contains: time.format
--- stderr-contains: invalid format specifier
 -- stderr-not-contains: panicked
+-- A pattern that is no format is an error value: no panic of the
+-- formatter, and no failure of the program.
 import time
 fn main() {
   let d = time.Date { year: 2024, month: 1, day: 1 }
   let t = time.Time { hour: 0, minute: 0, second: 0, ns: 0 }
-  let dt = time.datetime(d, t)
-  println(time.format(dt, "%Q"))
+  match time.format(time.datetime(d, t), "%Q") {
+    Err(time.InvalidFormat(why)) -> println("InvalidFormat: {why}")
+    other -> println(other)
+  }
 }

@@ -18,12 +18,12 @@ use super::typed::{Arg, Map, TcpListener, unsound};
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
 use crate::runtime::sync::{Arm, Cell, Fired, Wait};
+use crate::typeinfo::bv;
 #[cfg(feature = "http")]
-use crate::typeinfo::{BuiltinVariant, bv, ty};
+use crate::typeinfo::{BuiltinVariant, ty};
 use crate::value::Value;
-use crate::vm::VmError;
 #[cfg(feature = "http")]
-use crate::vm::{Step, Vm};
+use crate::vm::{Step, Vm, VmError};
 #[cfg(feature = "http")]
 use parking_lot::Mutex;
 
@@ -31,22 +31,22 @@ use parking_lot::Mutex;
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
-        ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
-        ("HttpTimeout", []) => "http request timed out".to_string(),
-        ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
-        ("HttpInvalidResponse", [Value::String(m)]) => {
+        ("Connect", [Value::String(m)]) => format!("http connect failed: {m}"),
+        ("Tls", [Value::String(m)]) => format!("http TLS error: {m}"),
+        ("Timeout", []) => "http request timed out".to_string(),
+        ("InvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
+        ("InvalidResponse", [Value::String(m)]) => {
             format!("http invalid response: {m}")
         }
-        ("HttpClosedEarly", []) => "http connection closed before response completed".to_string(),
-        ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
+        ("ClosedEarly", []) => "http connection closed before response completed".to_string(),
+        ("StatusCode", [Value::Int(code), Value::String(body)]) => {
             if body.is_empty() {
                 format!("http status {code}")
             } else {
                 format!("http status {code}: {body}")
             }
         }
-        ("HttpUnknown", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -75,7 +75,7 @@ fn make_http_request_value(
     path: &str,
     query: &str,
     headers: BTreeMap<Value, Value>,
-    body: std::string::String,
+    body: Vec<u8>,
 ) -> Value {
     Value::builtin_record(
         ty::REQUEST,
@@ -84,7 +84,7 @@ fn make_http_request_value(
             ("path", Value::String(path.into())),
             ("query", Value::String(query.into())),
             ("headers", Value::map(headers)),
-            ("body", Value::String(body.into())),
+            ("body", Value::Bytes(Arc::new(body))),
         ],
     )
 }
@@ -122,18 +122,17 @@ fn extract_http_response(
 #[cfg(feature = "http")]
 fn ureq_response_to_value(
     mut response: ureq::http::Response<ureq::Body>,
-) -> Result<Value, VmError> {
+) -> Result<Value, ureq::Error> {
     let status = response.status().as_u16();
+    // The names are in lower case, as the names of a request's
+    // headers are (`http::HeaderName` holds them so).
     let mut headers = BTreeMap::new();
     for (name, value) in response.headers().iter() {
         if let Ok(v) = value.to_str() {
             headers.insert(Value::String(name.as_str().into()), Value::String(v.into()));
         }
     }
-    let body = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| VmError::new(format!("http: failed to read body: {e}")))?;
+    let body = response.body_mut().read_to_string()?;
     Ok(make_http_response(status, headers, body))
 }
 
@@ -203,13 +202,8 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
     out
 }
 
-/// Classify a ureq error (or any transport-style error string) into a
-/// typed `HttpError` variant. The classifier is string-based because
-/// ureq's error enum shape is minor-version-unstable; we match on
-/// the rendered message and fall back to `HttpUnknown`.
-#[cfg(feature = "http")]
 /// The error of an `http` function whose operation has no value of
-/// its own: `HttpTimeout` when its deadline passed, `HttpUnknown` with
+/// its own: `Timeout` when its deadline passed, `Other` with
 /// the reason when it could not run or panicked.
 #[cfg(feature = "http")]
 fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
@@ -217,89 +211,148 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(why.into())])
+            Value::variant(bv::HTTP_OTHER, vec![Value::String(why.into())])
         }
     };
     Value::variant(bv::ERR, vec![error])
 }
 
+/// The `HttpError` of a failure of the transport library, for a
+/// request to `url`.
+///
+/// The library says what kind of failure it is (the variants of
+/// `ureq::Error`, and for one of the socket the kind of the
+/// `io::Error`), and that alone decides the variant: no text of a
+/// message is looked at. The message is what the variant carries.
+///
+/// - A URL that cannot be read as one, or whose scheme is not `http`
+///   or `https`, or that has no host: `InvalidUrl(url)`, with the URL
+///   as it was written (less a password in it).
+/// - No connection was made (refused, no route, no such host):
+///   `Connect(why)`.
+/// - One of the request's times passed: `Timeout`.
+/// - The other end went away before the response was complete, head
+///   or body: `ClosedEarly`.
+/// - What the server sent is no HTTP (a status line that is none, a
+///   chunk length that is no number, a head that is too large, a body
+///   that does not decompress): `InvalidResponse(why)`. The library
+///   keeps the kinds of these to itself (`Protocol` holds a type it
+///   does not export), so the few of them that are about the request
+///   and not the response (a header of the program's that the protocol
+///   forbids) are `InvalidResponse` too.
+/// - TLS: `Tls(why)`. A failed handshake reaches silt as a failure of
+///   the socket with invalid data, around an error of the TLS library;
+///   on an `https` URL that is `Tls`.
+/// - Anything else is `Other(why)`: a header name or value of the
+///   program's that is none, a redirect that cannot be followed, too
+///   many redirects, any failure of the socket not named above.
 #[cfg(feature = "http")]
-fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
-    let msg = redact_http_url_userinfo(raw_msg);
-    let lower = msg.to_lowercase();
-    let url_redacted = redact_http_url_userinfo(url);
-    if lower.contains("timed out") || lower.contains("timeout") {
-        Value::variant(bv::HTTP_TIMEOUT, vec![])
-    } else if lower.contains("invalid url") || lower.contains("not a valid url") {
-        Value::variant(
-            bv::HTTP_INVALID_URL,
-            vec![Value::String(url_redacted.into())],
-        )
-    } else if lower.contains("tls") || lower.contains("certificate") || lower.contains("handshake")
-    {
-        Value::variant(bv::HTTP_TLS, vec![Value::String(msg.into())])
-    } else if lower.contains("bad status")
-        || lower.contains("invalid response")
-        || lower.contains("bad header")
-    {
-        Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(msg.into())])
-    } else if lower.contains("connection closed")
-        || lower.contains("unexpected eof")
-        || lower.contains("closed before")
-    {
-        Value::variant(bv::HTTP_CLOSED_EARLY, vec![])
-    } else if lower.contains("resolve")
-        || lower.contains("refused")
-        || lower.contains("no such host")
-        || lower.contains("network unreachable")
-        || lower.contains("connect")
-    {
-        Value::variant(bv::HTTP_CONNECT, vec![Value::String(msg.into())])
-    } else {
-        Value::variant(bv::HTTP_UNKNOWN, vec![Value::String(msg.into())])
+fn http_error(error: &ureq::Error, url: &str) -> Value {
+    use std::io::ErrorKind;
+    use ureq::Error;
+
+    let why = || {
+        vec![Value::String(
+            redact_http_url_userinfo(&error.to_string()).into(),
+        )]
+    };
+    let invalid_url = || {
+        let url = redact_http_url_userinfo(url);
+        Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url.into())])
+    };
+    let https = url
+        .get(.."https://".len())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
+    match error {
+        Error::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
+        Error::Io(io) => match io.kind() {
+            ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::HTTP_TIMEOUT, vec![]),
+            ErrorKind::ConnectionRefused
+            | ErrorKind::AddrNotAvailable
+            | ErrorKind::NetworkUnreachable
+            | ErrorKind::HostUnreachable
+            | ErrorKind::NetworkDown => Value::variant(bv::HTTP_CONNECT, why()),
+            ErrorKind::UnexpectedEof
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, vec![]),
+            ErrorKind::InvalidData if https => Value::variant(bv::HTTP_TLS, why()),
+            _ => Value::variant(bv::HTTP_OTHER, why()),
+        },
+        Error::HostNotFound | Error::ConnectionFailed | Error::ConnectProxyFailed(_) => {
+            Value::variant(bv::HTTP_CONNECT, why())
+        }
+        Error::BadUri(_) => invalid_url(),
+        Error::Http(http) if http.is::<ureq::http::uri::InvalidUri>() => invalid_url(),
+        Error::Http(http) if http.is::<ureq::http::uri::InvalidUriParts>() => invalid_url(),
+        Error::Protocol(_) | Error::LargeResponseHeader(..) | Error::Decompress(..) => {
+            Value::variant(bv::HTTP_INVALID_RESPONSE, why())
+        }
+        Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) | Error::TlsRequired => {
+            Value::variant(bv::HTTP_TLS, why())
+        }
+        // (silt asks for a status as a response, not as an error.)
+        Error::StatusCode(code) => Value::variant(
+            bv::HTTP_STATUS_CODE,
+            vec![Value::Int(i64::from(*code)), Value::String("".into())],
+        ),
+        _ => Value::variant(bv::HTTP_OTHER, why()),
     }
 }
 
-/// Wrap a ureq error in `Err(HttpError)`.
+/// `Err(InvalidUrl(url))` for a URL whose port is no port: not a
+/// number, empty, or not in 1..=65535.
+///
+/// The transport library does not refuse such a URL. Its URL type
+/// keeps the port as text and gives no port when the text is not one,
+/// and the request then goes to the default port of the scheme:
+/// `http://host:99999/` was asked of port 80. So it is refused here,
+/// before any connection is made. (A URL that cannot be read at all
+/// is the library's to refuse: [`http_error`].)
 #[cfg(feature = "http")]
-fn http_err(raw_msg: &str, url: &str) -> Value {
-    Value::variant(bv::ERR, vec![http_error_to_variant(raw_msg, url)])
+fn refuse_port(url: &str) -> Option<Value> {
+    let uri = url.parse::<ureq::http::Uri>().ok()?;
+    let authority = uri.authority()?.as_str();
+    // Behind the user's name and password, and behind the brackets of
+    // an IPv6 address, whose colons are no port's.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let port = match host.rfind(']') {
+        Some(bracket) => host[bracket + 1..].strip_prefix(':'),
+        None => host.rsplit_once(':').map(|(_, port)| port),
+    }?;
+    let digits = !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit());
+    if digits && matches!(port.parse::<u16>(), Ok(1..)) {
+        return None;
+    }
+    let url = redact_http_url_userinfo(url);
+    let invalid = Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url.into())]);
+    Some(Value::variant(bv::ERR, vec![invalid]))
 }
 
-/// Wrap a response-body decode failure as `Err(HttpInvalidResponse(msg))`.
-#[cfg(feature = "http")]
-fn http_response_decode_err(msg: String) -> Value {
-    Value::variant(
-        bv::ERR,
-        vec![Value::variant(
-            bv::HTTP_INVALID_RESPONSE,
-            vec![Value::String(msg.into())],
-        )],
-    )
-}
-
-/// Convert a completed ureq request `Result` into the silt `Value` returned
-/// to the program. Shared by `do_http_get` and `do_http_request`, which had
-/// byte-identical match blocks here. Behavior: on transport success, decode
-/// the response (success → `Ok(resp)`, body-read failure →
-/// `Err(HttpInvalidResponse(..))`); on transport error → `Err(HttpError(..))`.
+/// What a request of the transport library came to, as the value of
+/// `http.get` and `http.request`: `Ok(Response)`, or `Err(HttpError)`
+/// for a failure of the request or of the read of the body
+/// ([`http_error`]).
 #[cfg(feature = "http")]
 fn finish_http_response(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     url: &str,
 ) -> Value {
-    match result {
-        Ok(response) => match ureq_response_to_value(response) {
-            Ok(resp) => Value::variant(bv::OK, vec![resp]),
-            Err(e) => http_response_decode_err(e.message),
-        },
-        Err(e) => http_err(&format!("{e}"), url),
+    match result.and_then(ureq_response_to_value) {
+        Ok(response) => Value::variant(bv::OK, vec![response]),
+        Err(error) => Value::variant(bv::ERR, vec![http_error(&error, url)]),
     }
 }
 
 /// Perform a synchronous HTTP GET and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
+    if let Some(refused) = refuse_port(url) {
+        return refused;
+    }
     // Security: conservative default timeouts so a slow/unreachable peer
     // cannot hang the underlying OS socket indefinitely (HIGH-3). These
     // apply even if the silt task's SILT_IO_TIMEOUT unblocks the VM task,
@@ -316,6 +369,9 @@ fn do_http_get(url: &str) -> Value {
 /// Perform a synchronous HTTP request and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, String)]) -> Value {
+    if let Some(refused) = refuse_port(url) {
+        return refused;
+    }
     // Security: conservative default timeouts (HIGH-3). See do_http_get.
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -573,17 +629,19 @@ impl Got {
             Some((path, query)) => (path, query),
             None => (request.target.as_str(), ""),
         };
+        // A header's name is in lower case, however the client wrote
+        // it: a name is not case-sensitive, and a lookup has one
+        // spelling to ask for. (Of a header sent twice the last stays.)
         let mut headers = BTreeMap::new();
         for (name, value) in request.headers {
-            headers.insert(Value::String(name.into()), Value::String(value.into()));
+            headers.insert(
+                Value::String(name.to_ascii_lowercase().into()),
+                Value::String(value.into()),
+            );
         }
-        // The Request API hands the body over as a String: bytes that
-        // are not UTF-8 are replaced, not dropped. (A body that is
-        // UTF-8 is the string, not a copy of it.)
-        let body = std::string::String::from_utf8(request.body)
-            .unwrap_or_else(|e| std::string::String::from_utf8_lossy(e.as_bytes()).into_owned());
+        // The body is the bytes that arrived.
         Got::Request(
-            make_http_request_value(method, path, query, headers, body),
+            make_http_request_value(method, path, query, headers, request.body),
             reply,
             held,
         )
@@ -1395,7 +1453,10 @@ builtins! {
             .collect()
     }
 
-    fn parse_query(query: &str) -> Result<BTreeMap<Value, Value>, VmError> {
+    // The pairs are decoded as `encoding.form_decode` decodes them, and
+    // a pair that does not decode is its error: a query string comes
+    // from whoever sent the request.
+    fn parse_query(query: &str) -> Value {
         // Accept a leading `?` for convenience — e.g. directly
         // passing a URL fragment like `?a=1&b=2` shouldn't require
         // the caller to strip it first.
@@ -1417,16 +1478,18 @@ builtins! {
             // "present with empty value", which matches how forms
             // serialize a checkbox with value "".
             let (raw_key, raw_val) = segment.split_once('=').unwrap_or((segment, ""));
-            let key = form_decode_component(raw_key)
-                .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} key: {msg}")))?;
-            let val = form_decode_component(raw_val)
-                .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} value: {msg}")))?;
+            let key = match form_decode_component(raw_key) {
+                Ok(key) => key,
+                Err(error) => return error.err(&format!("pair {i}: key: ")),
+            };
+            let val = match form_decode_component(raw_val) {
+                Ok(val) => val,
+                Err(error) => return error.err(&format!("pair {i}: value: ")),
+            };
             out.entry(Value::String(key.into())).or_default().push(Value::String(val.into()));
         }
-        Ok(out
-            .into_iter()
-            .map(|(key, values)| (key, Value::list(values)))
-            .collect())
+        let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
+        Value::variant(bv::OK, vec![Value::map(pairs.collect())])
     }
 }
 
@@ -1463,11 +1526,10 @@ mod http_response_tests {
         assert_eq!((status, body.as_str()), (204, "done"));
         assert_eq!(record.fields()[0], Value::Int(204));
 
-        let request =
-            make_http_request_value(bv::POST, "/jobs", "n=1", headers(), "go".to_string());
+        let request = make_http_request_value(bv::POST, "/jobs", "n=1", headers(), b"go".to_vec());
         assert_eq!(
             request.to_string(),
-            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: go}"
+            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2)}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");
@@ -1514,5 +1576,217 @@ mod http_response_tests {
                 err.message
             );
         }
+    }
+}
+
+/// What each failure of a request is sorted as, with the failures made
+/// on the loopback interface: a port nobody listens on, URLs that are
+/// none, a server that goes away, one that sends no HTTP, one that
+/// never answers, one that speaks no TLS.
+#[cfg(all(test, feature = "http"))]
+mod http_error_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    /// A client whose times are `ms`, so that a test of a timeout does
+    /// not wait for the times of `http.get`.
+    fn agent(ms: u64) -> ureq::Agent {
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_millis(ms)))
+            .timeout_global(Some(Duration::from_millis(ms)))
+            .build()
+            .into()
+    }
+
+    /// The URL of a server that takes one connection, reads what the
+    /// client sends first, and does `act` with the connection.
+    fn server(act: impl FnOnce(TcpStream) + Send + 'static) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = listener.local_addr().expect("its address");
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.read(&mut [0u8; 1024]);
+                act(stream);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// The variant of the error in `value` and what it carries:
+    /// `InvalidUrl(not a url)`, `ClosedEarly`.
+    fn failure(value: &Value) -> String {
+        let named = [
+            (bv::HTTP_CONNECT, "Connect"),
+            (bv::HTTP_TLS, "Tls"),
+            (bv::HTTP_TIMEOUT, "Timeout"),
+            (bv::HTTP_INVALID_URL, "InvalidUrl"),
+            (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
+            (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
+            (bv::HTTP_STATUS_CODE, "StatusCode"),
+            (bv::HTTP_OTHER, "Other"),
+        ];
+        let Value::Variant(result) = value else {
+            return format!("no Result: {value}");
+        };
+        let [Value::Variant(error)] = result.fields() else {
+            return format!("no error: {value}");
+        };
+        if !result.is(bv::ERR) {
+            return format!("no error: {value}");
+        }
+        let name = named.iter().find(|(which, _)| error.is(*which));
+        let name = name.map_or("no HttpError", |(_, name)| name);
+        match error.fields() {
+            [] => name.to_string(),
+            fields => {
+                let fields: Vec<String> = fields.iter().map(Value::to_string).collect();
+                format!("{name}({})", fields.join(", "))
+            }
+        }
+    }
+
+    fn get(url: &str, ms: u64) -> String {
+        failure(&finish_http_response(agent(ms).get(url).call(), url))
+    }
+
+    #[test]
+    fn a_url_that_is_none_is_invalid_url_with_the_url_as_written() {
+        for url in [
+            "not a url",
+            "",
+            "example.com/page",
+            "http://",
+            "http://127.0.0.1/a b",
+            "ftp://127.0.0.1/file",
+            "mailto:someone@example.com",
+        ] {
+            let expected = format!("InvalidUrl({url})");
+            assert_eq!(failure(&do_http_get(url)), expected);
+            assert_eq!(
+                failure(&do_http_request("POST", url, "body", &[])),
+                expected
+            );
+        }
+        // A password in an http URL is not handed back.
+        assert_eq!(
+            failure(&do_http_get("http://user:secret@127.0.0.1/a b")),
+            "InvalidUrl(http://***@127.0.0.1/a b)"
+        );
+    }
+
+    #[test]
+    fn a_port_that_is_no_port_is_invalid_url_and_nothing_is_asked() {
+        for url in [
+            "http://127.0.0.1:99999/",
+            "http://127.0.0.1:65536/",
+            "http://127.0.0.1:0/",
+            "http://127.0.0.1:abc/",
+            "http://127.0.0.1:/",
+            "http://127.0.0.1:80x/page?q=1",
+            "http://127.0.0.1:-1/",
+            "http://127.0.0.1:+80/",
+            "http://[::1]:99999/",
+            "https://example.com:123456",
+        ] {
+            let expected = format!("InvalidUrl({url})");
+            assert_eq!(failure(&do_http_get(url)), expected);
+            assert_eq!(
+                failure(&do_http_request("POST", url, "body", &[])),
+                expected
+            );
+        }
+        assert_eq!(
+            failure(&do_http_get("http://user:secret@127.0.0.1:99999/")),
+            "InvalidUrl(http://***@127.0.0.1:99999/)"
+        );
+        // A port that is one is not refused here: the colons of an IPv6
+        // address and of a password are no port's.
+        for url in [
+            "http://127.0.0.1:1/",
+            "http://127.0.0.1:65535/",
+            "http://127.0.0.1/",
+            "http://[::1]:1/",
+            "http://[::1]/",
+            "http://user:secret@127.0.0.1:1/",
+            "http://user:99999@127.0.0.1/",
+        ] {
+            assert!(refuse_port(url).is_none(), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_port_nobody_listens_on_is_connect() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let url = format!("http://{}/", listener.local_addr().expect("its address"));
+        drop(listener);
+        let got = failure(&do_http_get(&url));
+        assert!(got.starts_with("Connect("), "{got}");
+    }
+
+    #[test]
+    fn a_server_that_goes_away_is_closed_early() {
+        // Before any answer, in the middle of the head, in the middle
+        // of the body.
+        assert_eq!(get(&server(drop), 5000), "ClosedEarly");
+        let half_a_head = server(|mut stream| {
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Le");
+        });
+        assert_eq!(get(&half_a_head, 5000), "ClosedEarly");
+        let half_a_body = server(|mut stream| {
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc");
+        });
+        assert_eq!(get(&half_a_body, 5000), "ClosedEarly");
+    }
+
+    #[test]
+    fn a_server_that_sends_no_http_is_invalid_response() {
+        let no_status_line = server(|mut stream| {
+            let _ = stream.write_all(b"garbage\r\n\r\n");
+        });
+        let got = get(&no_status_line, 5000);
+        assert!(got.starts_with("InvalidResponse("), "{got}");
+        let no_chunk_length = server(|mut stream| {
+            let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc";
+            let _ = stream.write_all(head);
+        });
+        let got = get(&no_chunk_length, 5000);
+        assert!(got.starts_with("InvalidResponse("), "{got}");
+    }
+
+    #[test]
+    fn a_server_that_never_answers_is_timeout() {
+        let (done, wait) = std::sync::mpsc::channel::<()>();
+        let silent = server(move |stream| {
+            // Until the client has given up.
+            let _ = wait.recv();
+            drop(stream);
+        });
+        assert_eq!(get(&silent, 150), "Timeout");
+        drop(done);
+    }
+
+    #[test]
+    fn a_server_that_speaks_no_tls_is_tls() {
+        let (done, wait) = std::sync::mpsc::channel::<()>();
+        let plain = server(move |mut stream| {
+            let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n");
+            let _ = wait.recv();
+        });
+        let got = get(&plain.replace("http://", "https://"), 5000);
+        assert!(got.starts_with("Tls("), "{got}");
+        drop(done);
+    }
+
+    #[test]
+    fn a_header_of_the_program_that_is_none_is_other() {
+        let url = "http://127.0.0.1:9/";
+        let headers = [("a name".to_string(), "x".to_string())];
+        let got = failure(&do_http_request("POST", url, "body", &headers));
+        assert!(got.starts_with("Other("), "{got}");
+        let headers = [("name".to_string(), "a\nb".to_string())];
+        let got = failure(&do_http_request("GET", url, "", &headers));
+        assert!(got.starts_with("Other("), "{got}");
     }
 }

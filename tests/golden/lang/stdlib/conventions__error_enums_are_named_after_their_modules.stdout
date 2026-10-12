@@ -1,0 +1,12 @@
+io.NotFound: no/such/file/anywhere
+Err(Empty)
+Err(Overflow)
+Err(InvalidDigit(1))
+Err(Underflow)
+json.Syntax at 1
+toml.Syntax
+Err(OutOfRange("invalid date: 2024-13-1"))
+Err(InvalidHex("invalid hex character at position 0: 'z'"))
+[io, int, float, json, toml, time, bytes, regex, http]
+operation interrupted
+http request timed out

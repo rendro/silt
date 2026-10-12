@@ -1065,9 +1065,7 @@ impl Vm {
                     // before the next slice).
                     let _ = self.runtime.charge(1);
                     let who = match self.is_program() {
-                        true => Blocks::Program {
-                            in_deadline: self.current_deadline.is_some(),
-                        },
+                        true => Blocks::Program,
                         false => Blocks::Thread,
                     };
                     // A wait that cannot end (a deadlock) after the step

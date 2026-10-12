@@ -1,7 +1,8 @@
 import io
 import regex
+import result
 fn program() {
-  regex.split("\\s+", "hello   world   foo")
+  regex.split("hello   world   foo", "\\s+") |> result.unwrap_or([])
 }
 
 fn main() {

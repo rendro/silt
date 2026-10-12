@@ -16,7 +16,7 @@ fn rows(v: Value, q: QueryResult, e: ExecResult) -> Int {
 type Holder { pool: PgPool, values: List(Value) }
 
 fn main() {
-  println(postgres.uuidv7())
-  let e: PgError = PgClosed
+  println(postgres.close(1))
+  let e: PostgresError = TxnAborted
   println(e)
 }

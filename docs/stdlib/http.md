@@ -26,7 +26,7 @@ type Request {
   path: String,
   query: String,
   headers: Map(String, String),
-  body: String,
+  body: Bytes,
 }
 
 type Response {
@@ -46,7 +46,7 @@ type Response {
 | `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
-| `parse_query` | `(String) -> Map(String, List(String))` | Parse a URL query string into a multi-value map |
+| `parse_query` | `(String) -> Result(Map(String, List(String)), EncodingError)` | Parse a URL query string into a multi-value map |
 
 ## Errors
 
@@ -54,20 +54,24 @@ type Response {
 that a 4xx or 5xx HTTP response is an `Ok(Response)` — only failures
 *before* a response lands (DNS, connection, TLS, protocol) become `Err`.
 Servers that explicitly want to short-circuit on a non-2xx code can
-construct `HttpStatusCode(status, body)` themselves; the stdlib does
+construct `StatusCode(status, body)` themselves; the stdlib does
 not do that conversion for you. `HttpError` implements the built-in
 `Error` trait, so `e.message()` always yields a rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `HttpConnect(msg)` | `String` | TCP / DNS connect failure |
-| `HttpTls(msg)` | `String` | TLS handshake / cert failure |
-| `HttpTimeout` | — | request exceeded its deadline |
-| `HttpInvalidUrl(url)` | `String` | URL did not parse |
-| `HttpInvalidResponse(msg)` | `String` | response violated protocol |
-| `HttpClosedEarly` | — | peer closed before response completed |
-| `HttpStatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
-| `HttpUnknown(msg)` | `String` | unclassified transport error |
+| `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
+| `Tls(msg)` | `String` | TLS handshake / cert failure |
+| `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
+| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large) |
+| `ClosedEarly` | — | the server went away before the response was complete, head or body |
+| `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
+| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
+
+Which variant a failure is, is decided by the kind of failure the
+transport reports, never by the wording of its message: the message is
+only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
 
 
 ## `http.get`
@@ -79,6 +83,9 @@ http.get(url: String) -> Result(Response, HttpError)
 Makes an HTTP GET request. Returns `Ok(Response)` for any successful
 connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
 for network errors (DNS failure, connection refused, timeout, TLS).
+The names of the response's headers are in lower case
+(`map.get(resp.headers, "content-type")`), and its body is a `String`: a
+byte of the body that is no UTF-8 is replaced by `?`.
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
@@ -91,7 +98,7 @@ import string
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
-    Err(http.HttpTimeout) -> println("timed out; retry later")
+    Err(http.Timeout) -> println("timed out; retry later")
     Err(e) -> println("Network error: {e.message()}")
   }
 }
@@ -211,7 +218,7 @@ connection its descriptor, until the handler returns and the response
 cannot be sent. Clients that come and go without waiting for their
 answers can so fill every place, and every later request gets `503`. A
 handler that waits needs a limit of its own, for example
-`channel.recv_timeout` instead of `channel.receive`.
+`channel.receive_timeout` instead of `channel.receive`.
 
 ### What the server reads and sends
 
@@ -219,7 +226,7 @@ The server speaks HTTP/1.1, and HTTP/1.0 to a client that does (the
 connection is then closed after the response unless the request says
 `Connection: keep-alive`). A request body is given by `Content-Length`
 or sent in chunks (`Transfer-Encoding: chunked`; trailers are read and
-dropped); `req.body` is the body, decoded. A client that sends `Expect:
+dropped); `req.body` is the body's bytes, whichever way they came. A client that sends `Expect:
 100-continue` is told to go on before its body is read. `Connection:
 close` closes the connection after the response.
 
@@ -264,11 +271,16 @@ An `Expect` header that asks for anything but `100-continue` is answered
 
 ### What the handler gets
 
-- `req.headers` has the names as the client sent them: a lookup is
-  case-sensitive, and `Content-Type` and `content-type` are two keys. Of
-  a header sent twice under the same spelling the last one stays.
-- `req.body` is a `String`: bytes of a body that are not UTF-8 are
-  replaced (U+FFFD), so a binary upload does not arrive intact.
+- `req.headers` has every name in lower case, however the client wrote
+  it: a header's name is not case-sensitive, and a lookup asks for one
+  spelling, `map.get(req.headers, "content-type")`. Of a header sent
+  twice the last one stays. (The headers of a `Response` that `http.get`
+  or `http.request` returns have their names in lower case too.) A
+  header's value is text: bytes in it that are no UTF-8 reach the handler
+  as U+FFFD, unlike the body, which is exact.
+- `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.
+  A handler that wants text says so: `bytes.to_string(req.body)` is
+  `Err(InvalidUtf8(offset))` for a body that is no UTF-8.
 - `req.path` and `req.query` are the request target as sent, cut at the
   first `?`: nothing is decoded or normalised. A target in absolute form
   (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
@@ -277,13 +289,13 @@ An `Expect` header that asks for anything but `100-continue` is answered
 - If the program fails while requests are in flight, it ends as a
   process: their connections are closed without an answer.
 
-These times are the server's own, and the only ones that bound its
-waits. A `task.deadline` around `http.serve` does not end the server,
-nor a connection's wait for a request, a body or a client; neither does
-`SILT_IO_TIMEOUT`. Inside a handler both work as in any task: the
-handler's own I/O ends at `SILT_IO_TIMEOUT`, and a `task.deadline` that
-the handler sets bounds what it calls. A deadline set around
-`http.serve` is not handed on to the handlers.
+These times are the server's own, and the only ones that bound a
+connection's wait for a request, a body or a client: `SILT_IO_TIMEOUT`
+does not. Inside a handler it works as in any task: the handler's own
+I/O ends at `SILT_IO_TIMEOUT`, and a `task.deadline` that the handler
+sets ends what it runs. A `task.deadline` around `http.serve` itself
+ends the server when its time is up, as `task.cancel` of the server's
+task does: the listener stays bound and can be served again.
 
 Every connection that waits for a request has one I/O operation in
 flight, of the 4,096 a program can have (see
@@ -294,7 +306,7 @@ flight, of the 4,096 a program can have (see
 While `http.serve` serves a listener, the listener is the server's alone:
 
 - `tcp.accept`, `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
-  `Err(TcpUnknown("the listener is served by http.serve"))` at once. An
+  `Err(Other("the listener is served by http.serve"))` at once. An
   accept that was already waiting on the listener when the server started
   returns the same error at that moment: the server has every client.
 - A second `http.serve` on it is a runtime error.
@@ -317,6 +329,7 @@ written to stderr once, and the server tries again after 100 ms.
 Use pattern matching on `(req.method, segments)` for routing:
 
 ```silt
+import bytes
 import http
 import json
 import tcp
@@ -338,11 +351,14 @@ fn main() {
 
       (http.GET, ["users", id]) -> http.Response { status: 200, body: "User {id}", headers: #{} }
 
-      (http.POST, ["users"]) -> match json.parse(req.body, User) {
-        Ok(user) -> http.Response {
-          status: 201,
-          body: json.stringify(user),
-          headers: #{ "Content-Type": "application/json" },
+      (http.POST, ["users"]) -> match bytes.to_string(req.body) {
+        Ok(text) -> match json.parse(text, User) {
+          Ok(user) -> http.Response {
+            status: 201,
+            body: json.stringify(user),
+            headers: #{ "Content-Type": "application/json" },
+          }
+          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
         }
         Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
       }
@@ -374,7 +390,7 @@ This function has no dependencies and works even with `--no-default-features`.
 ## `http.parse_query`
 
 ```
-http.parse_query(query: String) -> Map(String, List(String))
+http.parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)
 ```
 
 Parses a URL query string into a map from key to a list of values. Repeated
@@ -382,8 +398,12 @@ keys accumulate into the same list in the order they appear, so a query like
 `tag=a&tag=b` parses as `#{"tag": ["a", "b"]}`.
 
 - A leading `?` is accepted and ignored.
-- Percent escapes (`%HH`) in both keys and values are decoded. Invalid or
-  truncated escapes cause a runtime error.
+- Percent escapes (`%HH`) in both keys and values are decoded. A query
+  string comes from whoever sent the request, so one that does not decode
+  is an error value, not a failure of the program: an invalid or truncated
+  escape is `Err(encoding.InvalidPercent(text))`, bytes that are no UTF-8
+  `Err(encoding.InvalidUtf8(text))`, as from `encoding.form_decode`, which
+  decodes the same pairs into a list in their order.
 - Following the `application/x-www-form-urlencoded` convention, `+` decodes
   to a space in values.
 - A key with no `=` (e.g. `flag&other=x`) is treated as having an empty
@@ -397,13 +417,16 @@ import io
 
 fn main() {
   println(io.inspect(http.parse_query("name=alice&tag=dev&tag=admin")))
-  -- #{"name": ["alice"], "tag": ["dev", "admin"]}
+  -- Ok(#{"name": ["alice"], "tag": ["dev", "admin"]})
 
   println(io.inspect(http.parse_query("?q=hello%20world")))
-  -- #{"q": ["hello world"]}
+  -- Ok(#{"q": ["hello world"]})
 
   println(io.inspect(http.parse_query("")))
-  -- #{}
+  -- Ok(#{})
+
+  println(http.parse_query("q=100%"))
+  -- Err(pair 0: value: truncated percent-escape at offset 3)
 }
 ```
 

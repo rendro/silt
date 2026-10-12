@@ -10,7 +10,13 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
     for name in ["print", "println", "panic", "Some", "None", "Ok", "Err"] {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
     }
-    for name in ["list.map", "math.pi", "Message", "ChannelResult.Message"] {
+    for name in ["list.map", "math.pi", "ChannelResult.Message"] {
+        assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
+    }
+    // A variant of a module's enum is bound through its enum only: two
+    // modules may have a variant of one name.
+    assert!(env.root.lookup(intern("Message")).is_none());
+    for name in ["HttpError.Timeout", "IntError.Other", "FloatError.Other"] {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
     }
     // A builtin type is not a value.
@@ -72,36 +78,28 @@ fn a_row_s_scheme_is_its_signature() {
             })
             .collect();
         let ty = checker.instantiate(&scheme);
-        (format!("{ty}"), constraints, scheme.optional_last_param)
+        (format!("{ty}"), constraints)
     };
     assert_eq!(
         show("map.get"),
         (
             "Fn(Map(_, _), _) -> Option(_)".to_string(),
-            vec!["Hash".to_string()],
-            false
+            vec!["Hash".to_string()]
         )
     );
     assert_eq!(
         show("json.parse"),
         (
             "Fn(String, type _) -> Result(_, JsonError)".to_string(),
-            vec![],
-            false
+            vec![]
         )
     );
-    assert_eq!(
-        show("set.new"),
-        ("Fn() -> Set(_)".to_string(), vec![], false)
-    );
-    assert_eq!(show("math.pi"), ("Float".to_string(), vec![], false));
-    assert_eq!(
-        show("test.assert"),
-        ("Fn(Bool, String) -> ()".to_string(), vec![], true)
-    );
+    assert_eq!(show("set.new"), ("Fn() -> Set(_)".to_string(), vec![]));
+    assert_eq!(show("math.pi"), ("Float".to_string(), vec![]));
+    assert_eq!(show("test.assert"), ("Fn(Bool) -> ()".to_string(), vec![]));
     assert_eq!(
         show("time.sleep"),
-        ("Fn(Duration) -> ()".to_string(), vec![], false)
+        ("Fn(Duration) -> ()".to_string(), vec![])
     );
 }
 

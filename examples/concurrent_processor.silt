@@ -2,6 +2,7 @@ import channel
 import io
 import list
 import regex
+import result
 import string
 import task
 
@@ -18,7 +19,10 @@ fn count_words(content) {
     |> string.split("\n")
     |> list.filter { l -> !string.is_empty(l) }
     |> list.map { line ->
-      regex.split("\\s+", line) |> list.filter { w -> !string.is_empty(w) } |> list.length
+      regex.split(line, "\\s+")
+        |> result.unwrap_or([])
+        |> list.filter { w -> !string.is_empty(w) }
+        |> list.length
     }
     |> list.fold(0) { acc, n -> acc + n }
 }

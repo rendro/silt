@@ -80,19 +80,20 @@ fn main() {
       Ok(cfg) -> println("loaded: {cfg.name}")
       Err(e) -> println("parse error: {e.message()}")
     }
-    Err(io.IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
+    Err(io.NotFound(path)) -> println("no config at {path} — run `silt init` first")
     Err(e) -> println("read error: {e.message()}")
   }
 }
 ```
 
-Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `IoNotFound(path)` and still fall back to `.message()` for the long tail.
+Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `NotFound(path)` and still fall back to `.message()` for the long tail.
 
 ## HTTP
 
 Built-in HTTP client and server. Pattern matching replaces routing frameworks. Requests are handled concurrently.
 
 ```silt
+import bytes
 import http
 import json
 import tcp
@@ -116,8 +117,11 @@ fn main() {
         ]
         http.Response { status: 200, body: json.stringify(todos), headers: #{} }
       }
-      (http.POST, ["todos"]) -> match json.parse(req.body, Todo) {
-        Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
+      (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
+        Ok(text) -> match json.parse(text, Todo) {
+          Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
+          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+        }
         Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
       }
       _ -> http.Response { status: 404, body: "Not found", headers: #{} }

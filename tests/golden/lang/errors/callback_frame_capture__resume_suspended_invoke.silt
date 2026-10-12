@@ -6,7 +6,7 @@ import task
 fn consumer(c, blocker) {
   channel.each(c, { x ->
     let v = channel.receive(blocker)
-    1 / 0
+    println(1 / 0)
   })
 }
 

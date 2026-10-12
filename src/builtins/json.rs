@@ -37,18 +37,18 @@ pub(crate) fn unsupported_field_type_message(
 // step.
 //
 // `JsonError` variants:
-//   JsonSyntax(message, byte_offset)
-//   JsonTypeMismatch(expected, actual)
-//   JsonMissingField(name)
-//   JsonUnknown(message)
+//   Syntax(message, byte_offset)
+//   TypeMismatch(expected, actual)
+//   MissingField(name)
+//   Other(message)
 
 fn json_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, vec![inner])
 }
 
 /// Classify a `serde_json::Error` into one of the `JsonError` variants.
-/// Syntax/Eof errors get `JsonSyntax(msg, column)`. Data and Io errors
-/// collapse to `JsonUnknown` because serde_json does not expose the
+/// Syntax/Eof errors get `Syntax(msg, column)`. Data and Io errors
+/// collapse to `Other` because serde_json does not expose the
 /// expected/actual type pair for a category=Data error in a way we can
 /// meaningfully surface; our hand-written record decoder covers the
 /// type-mismatch path with explicit `json_type_mismatch_err` calls.
@@ -66,10 +66,7 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error) -> Value {
                 vec![Value::String(err.to_string().into()), Value::Int(offset)],
             )
         }
-        _ => Value::variant(
-            bv::JSON_UNKNOWN,
-            vec![Value::String(err.to_string().into())],
-        ),
+        _ => Value::variant(bv::JSON_OTHER, vec![Value::String(err.to_string().into())]),
     }
 }
 
@@ -78,7 +75,7 @@ pub(crate) fn json_result_err(err: &serde_json::Error) -> Value {
     json_err_wrap(json_error_to_variant(err))
 }
 
-/// Build `Err(JsonTypeMismatch(expected, actual))`. Used by the
+/// Build `Err(TypeMismatch(expected, actual))`. Used by the
 /// hand-written record decoder to report a field whose value has the
 /// wrong shape.
 pub(crate) fn json_type_mismatch_err(expected: &str, actual: &str) -> Value {
@@ -88,7 +85,7 @@ pub(crate) fn json_type_mismatch_err(expected: &str, actual: &str) -> Value {
     ))
 }
 
-/// Build `Err(JsonMissingField(name))`.
+/// Build `Err(MissingField(name))`.
 pub(crate) fn json_missing_field_err(name: &str) -> Value {
     json_err_wrap(Value::variant(
         bv::JSON_MISSING_FIELD,
@@ -96,11 +93,11 @@ pub(crate) fn json_missing_field_err(name: &str) -> Value {
     ))
 }
 
-/// Build `Err(JsonUnknown(msg))` for ad-hoc failures (unknown type
+/// Build `Err(Other(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
 pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     json_err_wrap(Value::variant(
-        bv::JSON_UNKNOWN,
+        bv::JSON_OTHER,
         vec![Value::String(msg.into())],
     ))
 }
@@ -109,16 +106,16 @@ pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("JsonSyntax", [Value::String(m), Value::Int(offset)]) => {
+        ("Syntax", [Value::String(m), Value::Int(offset)]) => {
             format!("json syntax error at byte {offset}: {m}")
         }
-        ("JsonTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+        ("TypeMismatch", [Value::String(exp), Value::String(act)]) => {
             format!("json type mismatch: expected {exp}, got {act}")
         }
-        ("JsonMissingField", [Value::String(n)]) => {
+        ("MissingField", [Value::String(n)]) => {
             format!("json missing field: {n}")
         }
-        ("JsonUnknown", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -282,12 +279,12 @@ enum JsonDecodeErr {
     /// `Err(...)` — propagate unchanged.
     Variant(Value),
     /// A value was present for a type no decoder exists for (the type as
-    /// written). `json_to_record` turns it into a `JsonUnknown` that names
+    /// written). `json_to_record` turns it into a `Other` that names
     /// the record field whose type this is.
     Unsupported(std::string::String),
     /// VM-internal failure (e.g. record type missing from globals).
     /// Caught at the call site and converted to a silt-visible
-    /// `Err(JsonUnknown(...))`.
+    /// `Err(Other(...))`.
     Vm(VmError),
 }
 
@@ -416,7 +413,7 @@ fn json_to_typed_value(
     json: &serde_json::Value,
     expected: &FieldType,
 ) -> Result<Value, JsonDecodeErr> {
-    // Helper: construct the `JsonTypeMismatch` variant directly.
+    // Helper: construct the `TypeMismatch` variant directly.
     let mismatch = |expected: &str, actual: &str| -> JsonDecodeErr {
         JsonDecodeErr::Variant(Value::variant(
             bv::JSON_TYPE_MISMATCH,
@@ -425,7 +422,7 @@ fn json_to_typed_value(
     };
     let unknown = |msg: String| -> JsonDecodeErr {
         JsonDecodeErr::Variant(Value::variant(
-            bv::JSON_UNKNOWN,
+            bv::JSON_OTHER,
             vec![Value::String(msg.into())],
         ))
     };

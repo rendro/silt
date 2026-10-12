@@ -7,7 +7,7 @@ fn main() {
     Err(e) -> println(e.message())
   }
   let h = bytes.from_string("hello")
-  println(bytes.eq(bytes.concat(h, bytes.empty()), h))
+  println(bytes.concat(h, bytes.empty()) == h)
   println(bytes.length(bytes.concat_all([])))
   let parts = [
     bytes.from_string("a"),

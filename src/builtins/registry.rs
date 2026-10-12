@@ -92,10 +92,6 @@ pub struct Row {
     /// A function's parameter names, from the signature (`a` for a
     /// `type a` parameter). Empty for a constant.
     pub params: Vec<&'static str>,
-    /// Whether the last parameter may be left out of a call. A signature
-    /// cannot say so; the conventions step removes the five rows that
-    /// have it.
-    pub optional_last: bool,
     /// The cargo feature the row needs beyond its module's, if any.
     pub feature: Option<&'static str>,
     /// Whether the row's feature and its module's are built.
@@ -203,7 +199,6 @@ pub struct RowSpec {
     /// The typed body of a function row that has one.
     typed: Option<TypedCall>,
     constant: Option<Value>,
-    optional_last: bool,
     feature: Option<(&'static str, bool)>,
 }
 
@@ -222,7 +217,6 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
         summary,
         typed: None,
         constant: None,
-        optional_last: false,
         feature: None,
     }
 }
@@ -236,19 +230,11 @@ fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
         constant: Some(Value::Float(
             crate::value::Float::new(value).expect("a constant of the registry is a finite number"),
         )),
-        optional_last: false,
         feature: None,
     }
 }
 
 impl RowSpec {
-    /// The last parameter may be left out of a call (see
-    /// [`Row::optional_last`]).
-    fn optional_last(mut self) -> RowSpec {
-        self.optional_last = true;
-        self
-    }
-
     /// The row needs the cargo feature `name`, which is built or not:
     /// `.feature("tcp-tls", cfg!(feature = "tcp-tls"))`.
     fn feature(mut self, name: &'static str, built: bool) -> RowSpec {
@@ -327,9 +313,6 @@ pub struct Module {
     /// What each variant of the error enum reads as, in its `message`
     /// and where it is shown; none where the module is not built.
     pub text: Option<ErrorText>,
-    /// Types of other modules the module offers too, with their
-    /// variants, as (module, type): `float` offers `int`'s `ParseError`.
-    pub shares: &'static [(&'static str, &'static str)],
     pub rows: Vec<Row>,
 }
 
@@ -368,7 +351,6 @@ macro_rules! module {
         $(derives: $derives:expr,)?
         $(opaque: $opaque:expr,)?
         $(error: $error:literal => $text:expr,)?
-        $(shares: $shares:expr,)?
         rows: [$(
             $row:ident ( $($arg:expr),* $(,)? ) $(. $with:ident ( $($with_arg:tt)* ))*
         ),* $(,)?] $(,)?
@@ -393,9 +375,6 @@ macro_rules! module {
         #[allow(unused_mut, unused_assignments)]
         let mut error: Option<(&'static str, &'static str, Option<$crate::builtins::registry::ErrorText>)> = None;
         module!(@error error, [$($feature)?], [$($error => $text)?]);
-        #[allow(unused_mut, unused_assignments)]
-        let mut shares: &'static [(&'static str, &'static str)] = &[];
-        $(shares = &$shares;)?
         let rows;
         module!(
             @rows rows, [$($feature)?],
@@ -407,7 +386,6 @@ macro_rules! module {
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
             (types, derives, opaque),
             error,
-            shares,
             rows,
         )
     }};
@@ -432,17 +410,11 @@ macro_rules! module {
     (@rows $slot:ident, [$feature:literal], [$({ $($row:tt)* })*]) => {
         $slot = vec![$(module!(@row [$feature] $($row)*)),*];
     };
-    // A function row, `f(signature, summary, body)`: alone, with
-    // `.optional_last()`, or with `.feature("name")`, the cargo feature
-    // the row needs beyond its module's.
+    // A function row, `f(signature, summary, body)`: alone, or with
+    // `.feature("name")`, the cargo feature the row needs beyond its
+    // module's.
     (@row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr) []) => {
         module!(@typed [$($of)?] [] $signature, $summary, $body)
-    };
-    (
-        @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
-        [. optional_last ()]
-    ) => {
-        module!(@typed [$($of)?] [] $signature, $summary, $body).optional_last()
     };
     (
         @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
@@ -544,7 +516,6 @@ fn build_module(
         &'static [(&'static str, usize)],
     ),
     error: Option<(&'static str, &'static str, Option<ErrorText>)>,
-    shares: &'static [(&'static str, &'static str)],
     specs: Vec<RowSpec>,
 ) -> Module {
     // The `message` of the error enum: a row of the enum, not of the
@@ -570,7 +541,6 @@ fn build_module(
         error: error.map(|(error, _, _)| error),
         message,
         text: error.and_then(|(_, _, text)| text),
-        shares,
         rows: rows(name, enabled, specs),
     }
 }
@@ -588,7 +558,6 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
                 name: "",
                 module: name,
                 params: Vec::new(),
-                optional_last: spec.optional_last,
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
                 // (Its place among all rows: the registry's to say.)
@@ -926,19 +895,19 @@ mod tests {
                 format!("{error}.message takes (error: {error}), but was called with (Int, Int)")
             );
         }
-        assert!(seen >= 9, "{seen} error enums");
+        assert!(seen >= 8, "{seen} error enums");
         // A type that is no module's error enum has none.
         let option = crate::types::TypeRef::builtin("Option").id;
         assert!(registry.error_module(option).is_none());
         // The text of a variant, and of a value shown.
-        let closed = Value::variant(crate::typeinfo::bv::CHANNEL_CLOSED, vec![]);
-        assert_eq!(closed.to_string(), "channel closed with no more values");
-        let channel = registry.module("channel").expect("channel");
-        let message = channel.message.as_ref().expect("ChannelError.message");
-        let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[closed]) else {
-            panic!("ChannelError.message");
+        let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, vec![]);
+        let io = registry.module("io").expect("io");
+        let message = io.message.as_ref().expect("IoError.message");
+        let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[interrupted.clone()])
+        else {
+            panic!("IoError.message");
         };
-        assert_eq!(text, "channel closed with no more values".into());
+        assert_eq!(interrupted.to_string(), &*text);
     }
 
     /// A call whose arguments are not the row's (which no checked

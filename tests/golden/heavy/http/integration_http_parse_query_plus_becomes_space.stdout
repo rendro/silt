@@ -1,1 +1,1 @@
-#{"greeting": ["hello world"]}
+Ok(#{"greeting": ["hello world"]})

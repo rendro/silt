@@ -35,5 +35,4 @@ fn main() {
   }
   senders |> list.each { h -> task.cancel(h) }
   println("before={before} after<=4: {after <= 4} closed: {channel.receive(ch)}")
-  println("send after close: {channel.try_send(ch, 1)}")
 }

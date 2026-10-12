@@ -8,33 +8,53 @@ order: 9
 
 Regular expression functions. Pattern strings use standard regex syntax.
 
-Stdlib signatures return `Bool`, `Option`, `List`, or `String` — there is
-no `Result` slot on any `regex.*` fn. A pattern that fails to compile
-surfaces as a runtime error at the call site, not as an `Err`. A
-`RegexError` enum (`RegexInvalidPattern(String, Int)`, `RegexTooBig`)
-exists for user code that wants to model regex failures in its own
-types, but no stdlib function produces it.
+Every function takes the text first and the pattern second, so a text pipes
+into them (`line |> regex.split("\\s+")`), and returns a `Result`: a pattern
+is text like any other, and one that is no pattern is `Err(RegexError)`, not
+a failure of the program.
+
+```silt
+import regex
+
+fn main() {
+  match regex.find("abc 123", "(") {
+    Ok(found) -> println(found)
+    Err(regex.InvalidPattern(why, at)) -> println("{why} at {at}") -- unclosed group at 0
+    Err(e) -> println(e.message())
+  }
+}
+```
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `InvalidPattern(String, Int)` | what is wrong, the byte of the pattern where | the pattern does not parse |
+| `TooBig` | — | the compiled pattern exceeds the size budget |
+| `Other(String)` | message | unclassified failure |
+
+With a pattern the program writes itself, the error cannot happen, and
+`result.unwrap_or` says what the call is worth if it did:
+`regex.is_match(name, "^[a-z]+$") |> result.unwrap_or(false)`.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `captures` | `(String, String) -> Option(List(String))` | Capture groups from first match |
-| `captures_all` | `(String, String) -> List(List(String))` | Capture groups from all matches |
-| `captures_named` | `(String, String) -> Option(Map(String, String))` | Named capture groups from first match |
-| `find` | `(String, String) -> Option(String)` | First match |
-| `find_all` | `(String, String) -> List(String)` | All matches |
-| `is_match` | `(String, String) -> Bool` | Test if pattern matches |
-| `replace` | `(String, String, String) -> String` | Replace first match |
-| `replace_all` | `(String, String, String) -> String` | Replace all matches |
-| `replace_all_with` | `(String, String, Fn(String) -> String) -> String` | Replace all with callback |
-| `split` | `(String, String) -> List(String)` | Split on pattern |
+| `captures` | `(String, String) -> Result(Option(List(String)), RegexError)` | Capture groups from first match |
+| `captures_all` | `(String, String) -> Result(List(List(String)), RegexError)` | Capture groups from all matches |
+| `captures_named` | `(String, String) -> Result(Option(Map(String, String)), RegexError)` | Named capture groups from first match |
+| `find` | `(String, String) -> Result(Option(String), RegexError)` | First match |
+| `find_all` | `(String, String) -> Result(List(String), RegexError)` | All matches |
+| `is_match` | `(String, String) -> Result(Bool, RegexError)` | Test if pattern matches |
+| `replace` | `(String, String, String) -> Result(String, RegexError)` | Replace first match |
+| `replace_all` | `(String, String, String) -> Result(String, RegexError)` | Replace all matches |
+| `replace_all_with` | `(String, String, Fn(String) -> String) -> Result(String, RegexError)` | Replace all with callback |
+| `split` | `(String, String) -> Result(List(String), RegexError)` | Split on pattern |
 
 
 ## `regex.captures`
 
 ```
-regex.captures(pattern: String, text: String) -> Option(List(String))
+regex.captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)
 ```
 
 Returns capture groups from the first match, or `None` if no match. The full
@@ -45,12 +65,13 @@ import list
 import regex
 
 fn main() {
-  match regex.captures("(\\w+)@(\\w+)", "user@host") {
-    Some(groups) -> {
+  match regex.captures("user@host", "(\\w+)@(\\w+)") {
+    Ok(Some(groups)) -> {
       println(list.get(groups, 1)) -- Some(user)
       println(list.get(groups, 2)) -- Some(host)
     }
-    None -> println("no match")
+    Ok(None) -> println("no match")
+    Err(e) -> println(e.message())
   }
 }
 ```
@@ -59,7 +80,7 @@ fn main() {
 ## `regex.captures_all`
 
 ```
-regex.captures_all(pattern: String, text: String) -> List(List(String))
+regex.captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)
 ```
 
 Returns capture groups for every match. Each inner list has the full match at
@@ -69,8 +90,8 @@ index 0 followed by numbered groups.
 import regex
 
 fn main() {
-  let results = regex.captures_all("(\\d+)-(\\d+)", "1-2 and 3-4")
-  -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
+  println(regex.captures_all("1-2 and 3-4", "(\\d+)-(\\d+)"))
+  -- Ok([[1-2, 1, 2], [3-4, 3, 4]])
 }
 ```
 
@@ -78,7 +99,7 @@ fn main() {
 ## `regex.captures_named`
 
 ```
-regex.captures_named(pattern: String, text: String) -> Option(Map(String, String))
+regex.captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)
 ```
 
 Returns a map of named capture groups from the first match. Named groups use
@@ -96,12 +117,13 @@ import map
 import regex
 
 fn main() {
-  match regex.captures_named("(?P<user>\\w+)@(?P<host>\\w+)", "alice@example") {
-    Some(groups) -> {
+  match regex.captures_named("alice@example", "(?P<user>\\w+)@(?P<host>\\w+)") {
+    Ok(Some(groups)) -> {
       println(map.get(groups, "user")) -- Some(alice)
       println(map.get(groups, "host")) -- Some(example)
     }
-    None -> println("no match")
+    Ok(None) -> println("no match")
+    Err(e) -> println(e.message())
   }
 }
 ```
@@ -110,7 +132,7 @@ fn main() {
 ## `regex.find`
 
 ```
-regex.find(pattern: String, text: String) -> Option(String)
+regex.find(text: String, pattern: String) -> Result(Option(String), RegexError)
 ```
 
 Returns `Some(matched_text)` for the first match, or `None`.
@@ -119,8 +141,8 @@ Returns `Some(matched_text)` for the first match, or `None`.
 import regex
 
 fn main() {
-  let first = regex.find("\\d+", "abc 123 def")
-  println(first) -- Some(123)
+  println(regex.find("abc 123 def", "\\d+")) -- Ok(Some(123))
+  println(regex.find("abc", "\\d+")) -- Ok(None)
 }
 ```
 
@@ -128,7 +150,7 @@ fn main() {
 ## `regex.find_all`
 
 ```
-regex.find_all(pattern: String, text: String) -> List(String)
+regex.find_all(text: String, pattern: String) -> Result(List(String), RegexError)
 ```
 
 Returns all non-overlapping matches as a list of strings.
@@ -137,8 +159,7 @@ Returns all non-overlapping matches as a list of strings.
 import regex
 
 fn main() {
-  let nums = regex.find_all("\\d+", "a1 b22 c333")
-  println(nums) -- [1, 22, 333]
+  println(regex.find_all("a1 b22 c333", "\\d+")) -- Ok([1, 22, 333])
 }
 ```
 
@@ -146,7 +167,7 @@ fn main() {
 ## `regex.is_match`
 
 ```
-regex.is_match(pattern: String, text: String) -> Bool
+regex.is_match(text: String, pattern: String) -> Result(Bool, RegexError)
 ```
 
 Returns `true` if the pattern matches anywhere in the text.
@@ -155,8 +176,8 @@ Returns `true` if the pattern matches anywhere in the text.
 import regex
 
 fn main() {
-  println(regex.is_match("^\\d+$", "123")) -- true
-  println(regex.is_match("^\\d+$", "abc")) -- false
+  println(regex.is_match("123", "^\\d+$")) -- Ok(true)
+  println(regex.is_match("abc", "^\\d+$")) -- Ok(false)
 }
 ```
 
@@ -164,7 +185,7 @@ fn main() {
 ## `regex.replace`
 
 ```
-regex.replace(pattern: String, text: String, replacement: String) -> String
+regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 ```
 
 Replaces the first match with the replacement string.
@@ -173,8 +194,7 @@ Replaces the first match with the replacement string.
 import regex
 
 fn main() {
-  let replaced = regex.replace("\\d+", "abc 123 def 456", "NUM")
-  println(replaced) -- abc NUM def 456
+  println(regex.replace("abc 123 def 456", "\\d+", "NUM")) -- Ok(abc NUM def 456)
 }
 ```
 
@@ -182,7 +202,7 @@ fn main() {
 ## `regex.replace_all`
 
 ```
-regex.replace_all(pattern: String, text: String, replacement: String) -> String
+regex.replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 ```
 
 Replaces all matches with the replacement string.
@@ -191,8 +211,7 @@ Replaces all matches with the replacement string.
 import regex
 
 fn main() {
-  let scrubbed = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
-  println(scrubbed) -- abc NUM def NUM
+  println(regex.replace_all("abc 123 def 456", "\\d+", "NUM")) -- Ok(abc NUM def NUM)
 }
 ```
 
@@ -200,7 +219,7 @@ fn main() {
 ## `regex.replace_all_with`
 
 ```
-regex.replace_all_with(pattern: String, text: String, f: Fn(String) -> String) -> String
+regex.replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
 ```
 
 Replaces all matches by calling `f` with each matched text. The callback must
@@ -210,13 +229,14 @@ return a string.
 import int
 import regex
 import result
+import string
 
 fn main() {
-  let doubled = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
+  let doubled = regex.replace_all_with("a1 b22 c333", "\\d+") { m ->
     let n = int.parse(m) |> result.unwrap_or(0)
-    int.to_string(n * 2)
+    string.from(n * 2)
   }
-  println(doubled) -- a2 b44 c666
+  println(doubled) -- Ok(a2 b44 c666)
 }
 ```
 
@@ -224,16 +244,17 @@ fn main() {
 ## `regex.split`
 
 ```
-regex.split(pattern: String, text: String) -> List(String)
+regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
 ```
 
 Splits the text on every occurrence of the pattern.
 
 ```silt
 import regex
+import result
 
 fn main() {
-  let parts = regex.split("\\s+", "hello   world   silt")
+  let parts = "hello   world   silt" |> regex.split("\\s+") |> result.unwrap_or([])
   println(parts) -- [hello, world, silt]
 }
 ```

@@ -22,15 +22,14 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `concat_all` | `(List(Bytes)) -> Bytes` | Concatenate every element of a list |
 | `empty` | `() -> Bytes` | Zero-length byte sequence |
 | `ends_with` | `(Bytes, Bytes) -> Bool` | True if `b` ends with `suffix` |
-| `eq` | `(Bytes, Bytes) -> Bool` | Structural byte-by-byte comparison |
 | `from_base64` | `(String) -> Result(Bytes, BytesError)` | Decode base64 string |
 | `from_hex` | `(String) -> Result(Bytes, BytesError)` | Decode hex string (case-insensitive) |
 | `from_list` | `(List(Int)) -> Result(Bytes, BytesError)` | Build from a list of byte values (0..=255) |
 | `from_string` | `(String) -> Bytes` | UTF-8 encode a string |
-| `get` | `(Bytes, Int) -> Result(Int, BytesError)` | Read a single byte at index |
+| `get` | `(Bytes, Int) -> Option(Int)` | The byte at index, or None |
 | `index_of` | `(Bytes, Bytes) -> Option(Int)` | First offset at which `needle` appears |
 | `length` | `(Bytes) -> Int` | Number of bytes |
-| `slice` | `(Bytes, Int, Int) -> Result(Bytes, BytesError)` | Half-open `[start, end)` slice |
+| `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both clamped to the length |
 | `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (panics if `sep` is empty) |
 | `starts_with` | `(Bytes, Bytes) -> Bool` | True if `b` begins with `prefix` |
 | `to_base64` | `(Bytes) -> String` | Encode as base64 |
@@ -53,10 +52,8 @@ fn main() {
 
   -- Length and access
   println(bytes.length(hello)) -- 5
-  match bytes.get(hello, 0) {
-    Ok(n) -> println(n) -- 104
-    Err(e) -> println(e.message())
-  }
+  println(bytes.get(hello, 0)) -- Some(104)
+  println(bytes.get(hello, 5)) -- None
 
   -- Encoding
   println(bytes.to_hex(hello)) -- 68656c6c6f
@@ -71,11 +68,9 @@ fn main() {
     Err(e) -> println(e.message())
   }
 
-  -- Slicing (half-open)
-  match bytes.slice(greeting, 6, 11) {
-    Ok(s) -> println(bytes.to_hex(s)) -- 776f726c64
-    Err(e) -> println(e.message())
-  }
+  -- Slicing (half-open; an index past the end is the end)
+  println(bytes.to_hex(bytes.slice(greeting, 6, 11))) -- 776f726c64
+  println(bytes.to_hex(bytes.slice(greeting, 6, 99))) -- 776f726c64
 
   -- Equality is structural
   let a = bytes.from_string("foo")
@@ -99,16 +94,19 @@ fn main() {
 ## Errors
 
 Every fallible `bytes.*` call returns `Result(T, BytesError)`. The enum
-exposes five variants keyed by the structural failure; pattern-match
+exposes these variants keyed by the structural failure; pattern-match
 for granular handling or fall back to `e.message()`:
 
 | Variant | Fields | Raised by |
 |---------|--------|-----------|
-| `BytesInvalidUtf8(offset)` | `Int` | `to_string` on non-UTF-8 input |
-| `BytesInvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
-| `BytesInvalidBase64(msg)` | `String` | `from_base64` on malformed input |
-| `BytesByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
-| `BytesOutOfBounds(index)` | `Int` | `slice` / `get` on an out-of-range index |
+| `InvalidUtf8(offset)` | `Int` | `to_string` on non-UTF-8 input |
+| `InvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
+| `InvalidBase64(msg)` | `String` | `from_base64` on malformed input |
+| `ByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
+| `Other(msg)` | `String` | unclassified failure |
+
+`bytes.get` is a lookup and returns an `Option`; `bytes.slice` clamps its
+indices to the length, as `string.slice` does, and returns `Bytes`.
 
 `BytesError` implements the built-in `Error` trait.
 

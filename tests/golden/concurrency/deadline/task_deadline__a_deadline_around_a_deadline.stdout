@@ -1,0 +1,4 @@
+Err(the function was ended by its deadline)
+Ok(Err(the function was ended by its deadline))
+Message(the outer function went on with Err(the function was ended by its deadline))
+Empty

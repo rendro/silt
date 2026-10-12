@@ -28,9 +28,9 @@ type Styled {
 trait Display for Shape {
   fn display(self) -> String {
     match self {
-      Circle(r) -> "Circle(r={float.to_string(r, 2)})"
-      Rect(w, h) -> "Rect({float.to_string(w, 2)} x {float.to_string(h, 2)})"
-      Triangle(a, b, c) -> "Triangle({float.to_string(a, 2)}, {float.to_string(b, 2)}, {float.to_string(c, 2)})"
+      Circle(r) -> "Circle(r={float.format(r, 2)})"
+      Rect(w, h) -> "Rect({float.format(w, 2)} x {float.format(h, 2)})"
+      Triangle(a, b, c) -> "Triangle({float.format(a, 2)}, {float.format(b, 2)}, {float.format(c, 2)})"
     }
   }
 }
@@ -104,7 +104,7 @@ fn describe(item: a) where a: Display {
 -- Format a float to 4 decimal places
 
 fn fmt(f) {
-  float.to_string(f, 4)
+  float.format(f, 4)
 }
 
 fn main() {

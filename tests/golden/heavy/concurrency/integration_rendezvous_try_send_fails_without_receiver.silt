@@ -3,7 +3,7 @@
 import io
 import channel
 fn program() {
-  let ch = channel.new()
+  let ch = channel.new(0)
   channel.try_send(ch, 42)
 }
 

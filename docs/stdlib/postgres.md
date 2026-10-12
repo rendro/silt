@@ -20,7 +20,7 @@ cargo build --release --features postgres
 ```
 
 Pair the builtins below with a silt-side `pg.silt` package that
-declares the companion types (`PgPool`, `PgTx`, `PgError`, `Value`,
+declares the companion types (`PgPool`, `PgTx`, `PostgresError`, `Value`,
 `QueryResult`, `ExecResult`, and `PgCursor`). The
 built-in functions reference those types by name; the typechecker
 unifies them against whatever your `pg.silt` library defines.
@@ -29,23 +29,22 @@ unifies them against whatever your `pg.silt` library defines.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `connect` | `(String) -> Result(PgPool, PgError)` | Open a connection pool from a `postgresql://` URL (uses r2d2 defaults) |
-| `connect_with` | `(String, Map(String, Int)) -> Result(PgPool, PgError)` | Like `connect` with a tunable options bag (see [Connect options](#connect-options)) |
-| `query` | `(a, String, List(Value)) -> Result(QueryResult, PgError)` | Run a SELECT-style statement and materialize rows |
-| `execute` | `(a, String, List(Value)) -> Result(ExecResult, PgError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
-| `transact` | `(PgPool, Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
+| `connect` | `(String) -> Result(PgPool, PostgresError)` | Open a connection pool from a `postgresql://` URL (uses r2d2 defaults) |
+| `connect_with` | `(String, Map(String, Int)) -> Result(PgPool, PostgresError)` | Like `connect` with a tunable options bag (see [Connect options](#connect-options)) |
+| `query` | `(a, String, List(Value)) -> Result(QueryResult, PostgresError)` | Run a SELECT-style statement and materialize rows |
+| `execute` | `(a, String, List(Value)) -> Result(ExecResult, PostgresError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
+| `transact` | `(PgPool, Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
 | `close` | `(PgPool) -> ()` | Drop the pool; future ops on it error |
-| `stream` | `(a, String, List(Value)) -> Result(Channel(Result(Map(String, Value), PgError)), PgError)` | Stream rows through a bounded channel (backpressured) |
-| `cursor` | `(PgTx, String, List(Value), Int) -> Result(PgCursor, PgError)` | Declare a server-side cursor with batch size |
-| `cursor_next` | `(PgCursor) -> Result(List(Map(String, Value)), PgError)` | Fetch the next batch of rows from a cursor |
-| `cursor_close` | `(PgCursor) -> Result((), PgError)` | Release a cursor and its underlying connection |
-| `listen` | `(PgPool, String) -> Result(Channel(Notification), PgError)` | LISTEN on a channel; delivers async notifications |
-| `notify` | `(a, String, String) -> Result((), PgError)` | NOTIFY a channel with a payload |
-| `uuidv7` | `() -> String` | Generate a time-ordered UUIDv7 (RFC 9562) |
+| `stream` | `(a, String, List(Value)) -> Result(Channel(Result(Map(String, Value), PostgresError)), PostgresError)` | Stream rows through a bounded channel (backpressured) |
+| `cursor` | `(PgTx, String, List(Value), Int) -> Result(PgCursor, PostgresError)` | Declare a server-side cursor with batch size |
+| `cursor_next` | `(PgCursor) -> Result(List(Map(String, Value)), PostgresError)` | Fetch the next batch of rows from a cursor |
+| `cursor_close` | `(PgCursor) -> Result((), PostgresError)` | Release a cursor and its underlying connection |
+| `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
+| `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
 
 ## Cooperative I/O
 
-Every fallible op above (except `uuidv7`) cooperates with silt's task
+Every fallible op above cooperates with silt's task
 scheduler: when called from inside a `task.spawn`'d task, it submits
 the request to silt's I/O pool and yields the task slot until the
 response arrives. From silt's perspective the call looks synchronous.
@@ -65,7 +64,7 @@ use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
 ## Streaming and cursors
 
 `postgres.stream` returns a bounded `Channel` whose elements are
-`Result(Map(String, Value), PgError)` rows. A background worker pumps
+`Result(Map(String, Value), PostgresError)` rows. A background worker pumps
 the cursor into the channel and closes it when the query completes
 (or on error). Slow consumers backpressure the server side via the
 channel capacity.
@@ -89,10 +88,11 @@ does not consume a slot from the regular query pool.
 
 ```text
 -- Pair with a user-side `pg.silt` that declares the Value ADT
--- (VInt/VStr/VBool/VFloat/VNull/VList), PgPool, PgTx, PgError,
+-- (VInt/VStr/VBool/VFloat/VNull/VList), PgPool, PgTx, PostgresError,
 -- QueryResult, ExecResult, and PgCursor.
 import pg
 import postgres
+import uuid
 
 fn main() {
   match postgres.connect("postgresql://localhost/app") {
@@ -102,13 +102,13 @@ fn main() {
         let _ = postgres.execute(
           tx,
           "INSERT INTO users (id, name) VALUES ($1, $2)",
-          [VStr(postgres.uuidv7()), VStr("alice")],
+          [VStr(uuid.v7()), VStr("alice")],
         )?
         postgres.query(tx, "SELECT count(*) FROM users", [])
       })
       match result {
         Ok(rows) -> println("committed: {rows}")
-        Err(PgTxnAborted) -> println("rolled back (txn aborted — retry)")
+        Err(TxnAborted) -> println("rolled back (txn aborted — retry)")
         Err(e) -> println("rolled back: {e.message()}")
       }
       postgres.close(pool)
@@ -123,9 +123,9 @@ fn main() {
 - The `Value` parameter ADT (`VInt`, `VStr`, `VBool`, `VFloat`, `VNull`,
   `VList`) is declared in the user's `pg.silt`, not here — the builtin
   module references it by name only.
-- `postgres.uuidv7` produces a time-ordered UUID suitable for use as a
-  primary key; collisions within the same millisecond are disambiguated
-  with random bits per RFC 9562.
+- `uuid.v7` produces a time-ordered UUID suitable for use as a primary
+  key; collisions within the same millisecond are disambiguated with
+  random bits per RFC 9562.
 - `postgres-tls` pulls in `native-tls` / `postgres-native-tls` and
   therefore depends on the system TLS stack (OpenSSL / Schannel /
   SecureTransport depending on platform).
@@ -203,32 +203,32 @@ unauthenticated callers.
 Silt strips those follow-on fields before the error crosses the VM
 boundary into silt. The primary short message and SQLSTATE code
 remain intact so callers can still pattern-match on the typed
-`PgError` variants (e.g. `PgQuery(msg, sqlstate)` carries the five-
+`PostgresError` variants (e.g. `Query(msg, sqlstate)` carries the five-
 character SQLSTATE code so constraint-specific branches can match on
 `"23505"` for unique violations, `"23503"` for FK violations, etc.).
 If you need the full un-redacted text for diagnostics, log it on the
-Rust side (e.g. via a custom embedder) — the silt-side `PgError` value
+Rust side (e.g. via a custom embedder) — the silt-side `PostgresError` value
 is intentionally scrubbed.
 
-## PgError variants
+## PostgresError variants
 
-All fallible `postgres.*` calls return `Result(T, PgError)`. The
+All fallible `postgres.*` calls return `Result(T, PostgresError)`. The
 variants (declared in silt's stdlib, no user `pg.silt` entries
 needed) are:
 
 | Variant | Fields | Raised for |
 | --- | --- | --- |
-| `PgConnect(msg)` | `String` | Pool checkout, URL parse, SQLSTATE class `08` |
-| `PgTls(msg)` | `String` | TLS handshake / cert read / connector build |
-| `PgAuthFailed(msg)` | `String` | SQLSTATE class `28` (invalid auth) |
-| `PgQuery(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
-| `PgTypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
-| `PgNoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
-| `PgClosed` | — | Connection dropped mid-query |
-| `PgTimeout` | — | SQLSTATE `57014` or transport timeout |
-| `PgTxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
-| `PgUnknown(msg)` | `String` | Catch-all for shapes we can't classify |
+| `Connect(msg)` | `String` | Pool checkout, URL parse, SQLSTATE class `08` |
+| `Tls(msg)` | `String` | TLS handshake / cert read / connector build |
+| `AuthFailed(msg)` | `String` | SQLSTATE class `28` (invalid auth) |
+| `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
+| `TypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
+| `NoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
+| `Closed` | — | Connection dropped mid-query |
+| `Timeout` | — | SQLSTATE `57014` or transport timeout |
+| `TxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
+| `Other(msg)` | `String` | Catch-all for shapes we can't classify |
 
-`PgError` implements the stdlib `Error` trait, so if you don't want
+`PostgresError` implements the stdlib `Error` trait, so if you don't want
 to pattern-match on variants you can always call `err.message()` to
 get a formatted user-friendly string.
