@@ -1,0 +1,17 @@
+a date and a time: Ok
+no time of day, a text that matches: InvalidFormat(the fields of '%Y-%m-%d' do not make a time of day: no text read by it is a DateTime)
+no time of day, a text that does not: InvalidFormat(the fields of '%Y-%m-%d' do not make a time of day: no text read by it is a DateTime)
+no date: InvalidFormat(the fields of '%H:%M:%S' do not make a date: no text read by it is a DateTime)
+a 12-hour clock without its half of the day: InvalidFormat(the fields of '%Y-%m-%d %I:%M' do not make a time of day: no text read by it is a DateTime)
+the same with it: Ok
+an empty pattern: InvalidFormat(the pattern is empty: no text read by it is a DateTime)
+an empty pattern, a text: InvalidFormat(the pattern is empty: no text read by it is a DateTime)
+an unknown specifier: InvalidFormat(invalid format specifier in '%Q')
+a text that does not match: ParseFormat
+a thirteenth month: OutOfRange
+a date: Ok
+a date: no day: InvalidFormat(the fields of '%m.%Y' do not make a date: no text read by it is a Date)
+a date: only a time: InvalidFormat(the fields of '%H:%M' do not make a date: no text read by it is a Date)
+a date: an empty pattern: InvalidFormat(the pattern is empty: no text read by it is a Date)
+a date: a text that does not match: ParseFormat
+a date: the 30th of February: OutOfRange

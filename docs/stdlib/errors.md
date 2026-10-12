@@ -137,9 +137,9 @@ its own (`float.Empty` is not `int.Empty`).
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `ParseFormat(String)` | message | pattern did not match input |
+| `ParseFormat(String)` | message | the text did not match a pattern that could have given the value |
 | `OutOfRange(String)` | message | field out of valid range (e.g. month=13) |
-| `InvalidFormat(String)` | what is wrong | the pattern of `time.format`, `time.format_date`, `time.parse` or `time.parse_date` is no format |
+| `InvalidFormat(String)` | what is wrong | the pattern of `time.format`, `time.format_date`, `time.parse` or `time.parse_date` is no format, or one from which no text could give the value (no time of day for a `DateTime`, no date, empty) |
 | `Other(String)` | message | unclassified failure |
 
 ### `BytesError` (requires `import bytes`)

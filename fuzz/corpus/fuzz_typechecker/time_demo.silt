@@ -64,7 +64,7 @@ fn main() {
     Ok(d) -> println("parsed date: {d}")
     Err(e) -> println("parse date error: {e.message()}")
   }
-  let bad_parse = time.parse("not-a-date", "%Y-%m-%d")
+  let bad_parse = time.parse("not-a-date", "%Y-%m-%d %H:%M:%S")
   match bad_parse {
     Ok(dt) -> println("bad parse: {dt}")
     Err(e) -> println("bad parse: {e.message()}")

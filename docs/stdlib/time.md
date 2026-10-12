@@ -61,9 +61,9 @@ pattern that is no format are the structural failure modes:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `ParseFormat(msg)` | `String` | the text did not match the pattern |
+| `ParseFormat(msg)` | `String` | the text did not match a pattern that could have given the value |
 | `OutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
-| `InvalidFormat(msg)` | `String` | the pattern is no format: an unknown specifier, or one the value cannot fill (a time for a `Date`, a time zone) |
+| `InvalidFormat(msg)` | `String` | the pattern is at fault, whatever the value or the text: an unknown specifier; for a format, a specifier the value cannot fill (a time for a `Date`, a time zone); for a parse, fields that are not enough for the value (no time of day for a `DateTime`, no date, an empty pattern) |
 | `Other(msg)` | `String` | unclassified failure |
 
 `TimeError` implements the built-in `Error` trait, so `e.message()`
@@ -288,6 +288,14 @@ time.parse(s: String, pattern: String) -> Result(DateTime, TimeError)
 
 Parses a string into a `DateTime` using a strftime pattern.
 
+The pattern has to give a date and a time of day. One that cannot,
+whatever the text, is `Err(InvalidFormat(why))`: an unknown specifier, a
+pattern without a time of day (`"%Y-%m-%d"`: use `time.parse_date`),
+without a date, with a 12-hour clock and no `%p`, or an empty one. That
+is decided from the pattern alone. A text that does not match a pattern
+that could give a `DateTime` is `Err(ParseFormat(msg))`, and one that
+matches with a field that is no such day or time `Err(OutOfRange(msg))`.
+
 ```silt
 import time
 
@@ -304,7 +312,9 @@ fn main() {
 time.parse_date(s: String, pattern: String) -> Result(Date, TimeError)
 ```
 
-Parses a string into a `Date` using a strftime pattern.
+Parses a string into a `Date` using a strftime pattern. A pattern whose
+fields do not make a date (`"%m.%Y"`, `"%H:%M"`, an empty one) is
+`Err(InvalidFormat(why))` whatever the text, as in `time.parse`.
 
 ```silt
 import time
