@@ -9,7 +9,6 @@ use silt::session::ProjectSetup;
 /// The names <Tab> offers after `inputs` ran, each of which must run.
 fn names_after(inputs: &[&str]) -> Vec<String> {
     let mut repl = Repl::new(ProjectSetup::None);
-    let mut names = builtin_names();
     for input in inputs {
         let evaluation = repl.eval(input);
         assert!(
@@ -17,10 +16,55 @@ fn names_after(inputs: &[&str]) -> Vec<String> {
             "`{input}` must run: {:?}",
             evaluation.diagnostics
         );
-        names = builtin_names();
-        names.extend(evaluation.names);
     }
-    names
+    repl.completion_names()
+}
+
+/// The names are made when <Tab> asks for them, not after each input.
+/// What is offered is what the last input that ran to its end left: an
+/// input that fails, however it fails, adds no name and takes none
+/// away, and what an earlier input declared stays offered after it.
+#[test]
+fn the_names_offered_are_those_of_the_last_input_that_ran() {
+    let mut repl = Repl::new(ProjectSetup::None);
+    assert_eq!(repl.completion_names(), builtin_names());
+    let offered = |repl: &Repl, name: &str| repl.completion_names().iter().any(|n| n == name);
+
+    assert!(repl.eval("type Status { Active, Idle }").committed);
+    assert!(repl.eval("import string").committed);
+    let after_ran = repl.completion_names();
+    for name in ["Status", "Active", "Status.Idle", "string", "string.trim"] {
+        assert!(offered(&repl, name), "missing `{name}`: {after_ran:?}");
+    }
+    assert!(!offered(&repl, "list.map"));
+
+    // An input that does not check, one that does not parse, and
+    // inputs that fail when they run: statements, a declaration, and a
+    // declaration behind an import that was checked.
+    for failing in [
+        "let wrong: Int = \"s\"",
+        "fn (",
+        "1 / 0",
+        "let late = 1 / 0",
+        "import list\nlet boom = 1 / 0",
+    ] {
+        assert!(!repl.eval(failing).committed, "`{failing}` must fail");
+        assert_eq!(repl.completion_names(), after_ran, "after `{failing}`");
+    }
+    for name in ["wrong", "late", "boom", "list.map"] {
+        assert!(!offered(&repl, name), "`{name}` is offered");
+    }
+
+    // The next input that runs is seen at once, with what was there.
+    assert!(repl.eval("let fresh = 1").committed);
+    for name in ["fresh", "Status", "Idle", "string.trim"] {
+        assert!(offered(&repl, name), "missing `{name}`");
+    }
+    assert_ne!(repl.completion_names(), after_ran);
+    // A name bound again is offered once.
+    assert!(repl.eval("let fresh = 2").committed);
+    let fresh = repl.completion_names();
+    assert_eq!(fresh.iter().filter(|n| *n == "fresh").count(), 1);
 }
 
 #[test]

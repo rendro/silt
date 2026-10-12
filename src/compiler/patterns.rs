@@ -13,7 +13,7 @@ use crate::value::Value;
 use super::{BindDestructKind, Compiler, FieldRead, MATCH_ARM, name_without_binding};
 use crate::diagnostic::{Code, Diagnostic};
 
-impl Compiler {
+impl Compiler<'_> {
     /// The declared record type the record pattern `pattern` names, if
     /// it names one (`Pt { x }`).
     fn pattern_record_type(

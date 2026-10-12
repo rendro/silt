@@ -5,11 +5,17 @@
 //! write), which offers all it saw as well as all it declared (a REPL
 //! cell is resolved as `names::ModuleKind::Cell`), and carries the
 //! earlier cells' own imports over. A cell therefore imports one cell however long the session is.
-//! Of two impls of one trait for one type the newer one is seen, as a
-//! written impl replaces the derived one in a file.
+//! A trait has one impl for a type in a session as in a file: a second
+//! one is an error of the cell that writes it. (A written `Display`
+//! impl of a later cell is used from then on where the value was shown
+//! by its structure before.)
 //!
 //! A cell that is not committed (it had an error, or failed when it ran)
-//! is never imported, so it leaves the session as it was.
+//! is never imported, so it leaves the session as it was. What a cell
+//! that failed when it ran had installed in the VM (its own impls, the
+//! modules it imported) is installed anew, in global slots of its own,
+//! when a later cell declares or imports it again: the session takes
+//! the failed cell's definitions out of its globals (`Cells::compiled`).
 //!
 //! Redefinition is early-bound: a cell's definitions are new ones. A name
 //! a later cell binds again shadows the earlier binding for the cells
@@ -26,6 +32,7 @@ use crate::ast::{self, Decl, ImportTarget};
 use crate::bytecode::Globals;
 use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
+use crate::layers::Layers;
 use crate::source::{FileId, Span};
 
 use super::graph::{ModuleId, cell_name};
@@ -92,29 +99,51 @@ pub(super) struct Cells {
     /// The number of cells added.
     pub count: usize,
     pub info: HashMap<ModuleId, CellInfo>,
-    /// The committed cells, oldest first.
-    committed: Vec<Committed>,
+    /// The cells added, `info`'s keys: what a cell's check is told
+    /// the session's cells are.
+    ids: Arc<HashSet<ModuleId>>,
+    /// The last committed cell.
+    last: Option<ModuleId>,
+    /// The cells added since that were not committed, and whose
+    /// declarations the session has not forgotten yet.
+    dropped: Vec<ModuleId>,
+    /// Their type declarations, as checked, each by the span of its
+    /// name: a later cell's code knows those types.
+    types: Layers<Span, Arc<ast::TypeDecl>>,
     /// What binds each top-level name the committed cells bind.
     scope: HashMap<Symbol, Binder>,
     /// The modules (not cells) whose code the committed cells installed.
     installed: HashSet<ModuleId>,
-    /// The global slots of the cells compiled so far: a slot is never
-    /// given to another definition, even when its cell failed.
+    /// The global slots of the cells that ran to their end, and the
+    /// slots that cells that failed when they ran took: a slot is never
+    /// given to another definition.
     pub globals: Globals,
-}
-
-/// A committed cell.
-struct Committed {
-    id: ModuleId,
-    /// Its type declarations, as checked, when it has any: a later cell's
-    /// code knows those types.
-    types: Option<Arc<ast::Program>>,
+    /// The globals the cell compiled last was compiled into, until it
+    /// is committed: they are the session's then. If it is not (it
+    /// failed when it ran), its definitions are taken back.
+    compiled: Option<Globals>,
 }
 
 impl Cells {
-    /// Whether the cell `id` is committed.
-    pub fn is_committed(&self, id: ModuleId) -> bool {
-        self.committed.iter().any(|cell| cell.id == id)
+    /// The cells added that were not committed, each given once: what
+    /// one declared is forgotten when the next cell is added. One that
+    /// was compiled and failed when it ran keeps its global slots and
+    /// loses its definitions (`Globals::without_definitions_since`).
+    pub fn take_dropped(&mut self) -> Vec<ModuleId> {
+        if let Some(failed) = self.compiled.take() {
+            self.globals = failed.without_definitions_since(&self.globals);
+        }
+        std::mem::take(&mut self.dropped)
+    }
+
+    /// The cell being evaluated was compiled into `globals`.
+    pub fn compiled(&mut self, globals: Globals) {
+        self.compiled = Some(globals);
+    }
+
+    /// The cells added.
+    pub fn ids(&self) -> Arc<HashSet<ModuleId>> {
+        self.ids.clone()
     }
 
     /// Make the parsed cell `id`, the `n`th, see the committed cells: its
@@ -171,7 +200,7 @@ impl Cells {
             .iter()
             .filter(|(name, _)| !own_names.contains(name))
             .collect();
-        visible.sort_by_key(|(name, _)| resolve(**name));
+        visible.sort_by_cached_key(|(name, _)| resolve(**name));
         for (name, binder) in visible {
             match (binder.kind, &binder.import) {
                 (Kind::Module, Some((target, span))) => {
@@ -195,10 +224,9 @@ impl Cells {
         // The last committed cell offers every name of an earlier cell the
         // cell sees, and every type, trait and impl.
         let mut synthesized: Vec<Decl> = self
-            .committed
-            .last()
+            .last
             .map(|cell| {
-                let info = &self.info[&cell.id];
+                let info = &self.info[&cell];
                 Decl::Import(
                     ImportTarget::Items(intern(&cell_name(info.n)), seen),
                     Span::point(info.file, 0),
@@ -211,6 +239,8 @@ impl Cells {
         let count = synthesized.len();
         synthesized.append(&mut program.decls);
         program.decls = synthesized;
+        Arc::make_mut(&mut self.ids).insert(id);
+        self.dropped.push(id);
         self.info.insert(
             id,
             CellInfo {
@@ -227,11 +257,7 @@ impl Cells {
     /// a cell; `index` numbers the modules of its program.
     pub fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
         EarlierCells {
-            programs: self
-                .committed
-                .iter()
-                .filter_map(|cell| cell.types.clone())
-                .collect(),
+            types: self.types.clone(),
             installed: self
                 .installed
                 .iter()
@@ -241,10 +267,30 @@ impl Cells {
         }
     }
 
+    /// The parsed cell `id` will not be checked again, and no later
+    /// cell imports it: `program`, its declarations as
+    /// [`Cells::prepare`] left them, gives up the names of the import
+    /// of the cell before it, which are every name the cell saw. (The
+    /// import itself stays: the graph counts a module's imports.)
+    pub fn release(&self, id: ModuleId, program: &mut ast::Program) {
+        let imported = self.info.get(&id).map_or(0, |info| info.cell_imports);
+        for decl in program.decls.iter_mut().take(imported) {
+            if let Decl::Import(ImportTarget::Items(_, items), _) = decl {
+                *items = Vec::new();
+            }
+        }
+    }
+
     /// Commit cell `id`, which ran: later cells see what it binds. Its
     /// declarations are `checked`; `modules` are the modules of its
-    /// program, whose code is installed now.
-    pub fn commit(&mut self, id: ModuleId, checked: &ast::Program, modules: &[ModuleId]) {
+    /// program, whose code is installed now. Gives the cell that was
+    /// the last committed one until now: no later cell imports it.
+    pub fn commit(
+        &mut self,
+        id: ModuleId,
+        checked: &ast::Program,
+        modules: &[ModuleId],
+    ) -> Option<ModuleId> {
         let info = &self.info[&id];
         for (name, span, kind, import) in &info.own {
             self.scope.insert(
@@ -274,25 +320,20 @@ impl Cells {
                 }
             }
         }
-        let types: Vec<Decl> = own
-            .iter()
-            .filter(|decl| matches!(decl, Decl::Type(_)))
-            .cloned()
-            .collect();
-        self.committed.push(Committed {
-            id,
-            types: (!types.is_empty()).then(|| {
-                Arc::new(ast::Program {
-                    decls: types,
-                    unknown: Vec::new(),
-                    statements: Default::default(),
-                })
-            }),
-        });
+        for decl in own {
+            if let Decl::Type(t) = decl {
+                self.types.insert(t.name_span, Arc::new(t.clone()));
+            }
+        }
+        self.dropped.retain(|cell| *cell != id);
+        if let Some(globals) = self.compiled.take() {
+            self.globals = globals;
+        }
         self.installed.extend(
             modules
                 .iter()
                 .filter(|module| !self.info.contains_key(module)),
         );
+        self.last.replace(id).filter(|before| *before != id)
     }
 }

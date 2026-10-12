@@ -20,7 +20,7 @@ mod host;
 mod packages;
 pub mod testing;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -115,6 +115,13 @@ pub struct Program {
     pub types: crate::typeinfo::TypeTable,
     /// Its global slots, which the VM is given too.
     pub globals: Arc<Globals>,
+    /// The part of `globals` that stands whatever becomes of the
+    /// program's run. For a REPL entry: the slots, impl methods and
+    /// `Display` impls of the entries before it that ran to their end,
+    /// without the entry's own, which the session takes back if the
+    /// entry fails. For any other program: all of `globals`. (The VM
+    /// of a task keeps this table, see `Vm::look_again`.)
+    pub settled: Arc<Globals>,
     pub entry: EntryPoint,
 }
 
@@ -277,15 +284,9 @@ impl Session {
     /// the committed cells bind (see [`Session::commit_cell`]).
     pub fn add_cell(&mut self, text: String) -> FileId {
         // What an earlier cell that was not committed declared is gone.
-        let dropped: Vec<ModuleId> = self
-            .cells
-            .info
-            .keys()
-            .filter(|cell| !self.cells.is_committed(**cell))
-            .copied()
-            .collect();
-        for cell in dropped {
+        for cell in self.cells.take_dropped() {
             self.tables.forget(cell);
+            self.release_cell(cell);
         }
         self.cells.count += 1;
         let n = self.cells.count;
@@ -310,7 +311,29 @@ impl Session {
         let (Some(analysis), Some(result)) = (self.analyses.get(&id), self.results.get(&id)) else {
             return;
         };
-        self.cells.commit(id, &analysis.ast, &result.modules);
+        if let Some(before) = self.cells.commit(id, &analysis.ast, &result.modules) {
+            self.release_cell(before);
+        }
+    }
+
+    /// Give up what the session keeps of the REPL cell `cell` only to
+    /// check a cell that imports it: its [`ModuleAnalysis`] (its scope
+    /// and the types of its names, which are every name it saw) and
+    /// the names its parsed text imports from the cell before it. No
+    /// later cell imports it: a cell imports the last committed one,
+    /// and this one is committed no longer, or never was. Its text, its
+    /// definitions, what its check entered in the tables and its
+    /// [`Analysis`] stay: a diagnostic that points into it reads as
+    /// before, and it is never checked again.
+    ///
+    /// So a session keeps the analysis of one cell, not of every cell:
+    /// its memory grows with what the entries declare, not with the
+    /// entries times the names each of them sees.
+    fn release_cell(&mut self, cell: ModuleId) {
+        self.analyses.remove(&cell);
+        if let Some(program) = self.graph.ast_mut(cell) {
+            self.cells.release(cell, program);
+        }
     }
 
     /// The problems of the project the session is in: its manifests and
@@ -381,6 +404,8 @@ impl Session {
     }
 
     /// The check of module `id`, once [`Session::analyze`] has made it.
+    /// Of the REPL cells, the last committed one has it, and the one
+    /// being evaluated: an earlier cell's is given up.
     pub fn module_analysis(&self, id: ModuleId) -> Option<&ModuleAnalysis> {
         self.analyses.get(&id)
     }
@@ -495,8 +520,8 @@ impl Session {
         let cell = kind == ModuleKind::Cell;
         let reach = (!cell).then(|| self.graph.reach(id));
         let cells = match cell {
-            true => self.cells.info.keys().copied().collect(),
-            false => HashSet::new(),
+            true => self.cells.ids(),
+            false => Default::default(),
         };
         let check = typechecker::check_module(
             &mut ast,
@@ -728,10 +753,20 @@ impl Session {
         match compiled {
             Ok(_) if !entry_errors.is_empty() => Err(entry_errors),
             Ok(functions) => {
-                let globals = compiler.globals().clone();
-                if matches!(target, Entry::Cell) && self.cells.info.contains_key(&id) {
-                    self.cells.globals = globals.clone();
-                }
+                let globals = Arc::new(compiler.globals().clone());
+                let types = compiler.types();
+                // A cell's definitions are the session's when the cell
+                // has run to its end; until then the session's globals
+                // are what stands of the program.
+                let settled =
+                    match matches!(target, Entry::Cell) && self.cells.info.contains_key(&id) {
+                        true => {
+                            let settled = Arc::new(self.cells.globals.clone());
+                            self.cells.compiled((*globals).clone());
+                            settled
+                        }
+                        false => globals.clone(),
+                    };
                 let entry = match entry_point {
                     EntryPoint::Tests(mut tests) => {
                         for test in &mut tests {
@@ -743,8 +778,9 @@ impl Session {
                 };
                 Ok(Program {
                     functions,
-                    types: compiler.types(),
-                    globals: Arc::new(globals),
+                    types,
+                    globals,
+                    settled,
                     entry,
                 })
             }
@@ -760,7 +796,7 @@ impl Session {
     /// compiler takes them: numbered in graph order, with each import
     /// mapped to the unit of the module it names. For a REPL cell
     /// (`cell`), with what the earlier cells installed.
-    pub(crate) fn program_units(&self, id: ModuleId, cell: bool) -> ProgramUnits {
+    pub(crate) fn program_units(&self, id: ModuleId, cell: bool) -> ProgramUnits<'_> {
         let modules = &self.results[&id].modules;
         let index: HashMap<ModuleId, usize> =
             modules.iter().enumerate().map(|(i, id)| (*id, i)).collect();
@@ -771,14 +807,7 @@ impl Session {
         };
         ProgramUnits {
             defs: self.defs.clone(),
-            resolver: Arc::new(self.tables.resolver().clone()),
-            record_fields: Arc::new(
-                self.tables
-                    .record_fields()
-                    .into_iter()
-                    .map(|(ty, fields)| (ty.id, fields))
-                    .collect(),
-            ),
+            tables: &self.tables,
             earlier,
             modules: modules
                 .iter()

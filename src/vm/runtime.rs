@@ -785,6 +785,102 @@ impl Drop for IoOp {
 
 // ── Runtime (shared state) ───────────────────────────────────────
 
+/// What the VM that runs the program's own code has of the program,
+/// for the VMs of its tasks to take. A REPL session's VM takes in a
+/// program for each entry, each with the slots and tables of the
+/// entries before it and its own after them; a task started in an
+/// earlier entry finds here what the later ones added.
+#[derive(Default)]
+pub(crate) struct Newest {
+    /// How often `view` was written. A VM that has the view of this
+    /// count has the newest: it need not take the lock to know.
+    pub(crate) count: std::sync::atomic::AtomicU64,
+    pub(crate) view: parking_lot::Mutex<View>,
+}
+
+/// What a VM has of the program: the values of its global slots, and
+/// what each slot is.
+#[derive(Clone)]
+pub(crate) struct View {
+    /// The values, each unset until its definition's code has run. There
+    /// may be more slots than the program has definitions: room for
+    /// those of the next REPL entries.
+    pub(crate) slots: Arc<[std::sync::OnceLock<Value>]>,
+    /// What each global slot is, and the slot of each impl method: what
+    /// the VM looks a method up in. For the VM of a task this is what
+    /// STANDS of the program ([`crate::session::Program::settled`]):
+    /// nothing in it is ever taken back or changed, so what the VM
+    /// finds in it needs no second look.
+    pub(crate) table: Arc<crate::bytecode::Globals>,
+    /// All of the program that runs now: `table`, and what the REPL
+    /// entry being run adds to it, which is gone again if the entry
+    /// fails. The VM of a task looks here where `table` has nothing.
+    /// (The VM that runs the entry itself has this as its `table`.)
+    pub(crate) entry: Arc<crate::bytecode::Globals>,
+}
+
+impl Default for View {
+    fn default() -> Self {
+        // (One table for both: a VM whose `table` is its `entry` has
+        // all of its program, see `Vm::wider_table`.)
+        let table: Arc<crate::bytecode::Globals> = Arc::default();
+        View {
+            slots: Arc::from([]),
+            entry: table.clone(),
+            table,
+        }
+    }
+}
+
+impl View {
+    /// The value of the global slot `slot`, if it is set.
+    pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
+        self.slots.get(usize::from(slot))?.get()
+    }
+
+    /// Make this view the program's newest if it is not (`count` says
+    /// which it is). See [`Vm::look_again`], which is this for a VM.
+    pub(crate) fn renew(&mut self, count: &mut u64, newest: &Newest) -> bool {
+        use std::sync::atomic::Ordering;
+        if newest.count.load(Ordering::Relaxed) == *count {
+            return false;
+        }
+        let view = newest.view.lock();
+        *self = view.clone();
+        *count = newest.count.load(Ordering::Relaxed);
+        true
+    }
+
+    /// A read of the global slot `slot` found no value: its value in
+    /// the program's newest slots, or the error.
+    ///
+    /// The VM of a task comes here for a slot of a REPL entry later
+    /// than the one it was started in (it runs a closure of that
+    /// entry). Nothing else does: the checker orders the top-level
+    /// `let`s so that each is set before anything can read it, and the
+    /// definitions are set before any `let` runs. That holds for a task
+    /// as for the program's own code, since a task has the code of a
+    /// later entry only from that entry's code, which ran after what it
+    /// reads was set. A slot that is not set in the newest slots either
+    /// is a bug of silt, and said so.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn global_of_newest(
+        &mut self,
+        count: &mut u64,
+        newest: &Newest,
+        slot: u16,
+    ) -> Result<Value, VmError> {
+        self.renew(count, newest);
+        self.global(slot).cloned().ok_or_else(|| {
+            VmError::type_confusion(format!(
+                "the global '{}' is read before it is set",
+                self.entry.name(slot)
+            ))
+        })
+    }
+}
+
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {
@@ -805,6 +901,16 @@ pub struct Runtime {
     /// The steps the program may still run ([`Vm::set_step_budget`]);
     /// `u64::MAX` while it has no budget.
     pub(crate) steps_left: std::sync::atomic::AtomicU64,
+
+    // ── The program ─────────────────────────────────────────────
+    /// The global slots and the tables of the newest program the VM
+    /// that owns this runtime took in, for the VMs of its tasks
+    /// ([`Vm::look_again`]).
+    pub(crate) newest: Newest,
+    /// The program's types, by id: the decoders find the record types
+    /// of record fields here ([`Vm::type_info`]). One table for the VM
+    /// and the VMs of its tasks; a REPL entry adds its types to it.
+    pub(crate) types: parking_lot::Mutex<crate::typeinfo::TypeTable>,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it

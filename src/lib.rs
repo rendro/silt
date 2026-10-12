@@ -31,6 +31,7 @@ pub mod git;
 #[cfg(feature = "http")]
 pub mod http_wire;
 pub mod intern;
+pub mod layers;
 pub mod lexer;
 pub mod lockfile;
 #[cfg(feature = "lsp")]

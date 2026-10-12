@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
 use crate::defs::{DefId, TraitId, TypeId};
+use crate::layers::{Layers, Rows};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
@@ -93,38 +94,71 @@ impl Hasher for MethodHasher {
 /// impl, by the impl's trait, the type it is for and the method's name.
 /// A REPL session keeps one `Globals` for all its entries: a definition
 /// an entry makes again is a new definition with a slot of its own.
+///
+/// A copy is cheap however many slots there are (its tables are in
+/// layers that the copies share, see `layers.rs`): the
+/// session, the compiler of each entry, the VM and the VMs of the
+/// tasks each have one, and each entry makes new ones.
 #[derive(Debug, Clone, Default)]
 pub struct Globals {
     /// The name of each slot's definition, as disassembly and errors
     /// show it.
-    names: Vec<String>,
-    defs: HashMap<DefId, u16>,
+    names: Rows<String>,
+    defs: Layers<DefId, u16>,
     /// The names of the program's methods, each once: a method is
     /// named by its place here (a `CallMethod`'s operand, a key of
     /// `methods`), so a call that finds its method where the code runs
     /// compares no text.
-    method_names: Vec<String>,
-    method_ids: HashMap<String, u16>,
+    method_names: Rows<String>,
+    method_ids: Layers<String, u16>,
     /// The slot of each impl's method: by the impl's trait, the type it
     /// is for and the id of the method's name.
-    methods: HashMap<(TraitId, TypeId, u16), u16, BuildHasherDefault<MethodHasher>>,
+    methods: Layers<(TraitId, TypeId, u16), u16, BuildHasherDefault<MethodHasher>>,
     /// The default methods of each trait: the body the trait writes,
-    /// compiled once. An impl that leaves the method out has this slot
-    /// as its method's.
-    defaults: HashMap<(TraitId, String), u16>,
+    /// compiled once, by the trait and the method's place among the
+    /// trait's default methods, with the method's name. An impl that
+    /// leaves the method out has this slot as its method's.
+    defaults: Layers<(TraitId, u16), (String, u16)>,
     /// The slot of `display` of each type a program wrote a `Display`
     /// impl for: what showing a value of the type calls.
-    shown: HashMap<TypeId, u16>,
+    shown: Layers<TypeId, u16>,
     /// One bit for each type in `shown`, by the low bits of its id: a
     /// type whose bit is not set has no written `display`, which is
     /// what showing a value asks of every record and variant in it.
     shown_bits: u64,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
-    traits: Vec<(TraitId, String)>,
+    traits: Rows<(TraitId, String)>,
+    trait_indexes: Layers<TraitId, u16>,
 }
 
 impl Globals {
+    /// The globals a REPL session goes on with after an entry that was
+    /// compiled into `self` did not run to its end; `before` are the
+    /// globals the entry was compiled onto. The slots the entry took
+    /// stay taken, and what its code names by a number stays named
+    /// (the names of methods, the traits): code of the entry may still
+    /// be about, a closure it sent to a task. Its definitions are taken
+    /// back: which slot a definition, an impl's method, a trait's
+    /// default method and a type's `display` has is as in `before`. So
+    /// what the entry had defined (its own impls, a module it imported)
+    /// gets slots of its own when it is defined again, and no slot is
+    /// ever set twice.
+    pub fn without_definitions_since(&self, before: &Globals) -> Globals {
+        Globals {
+            names: self.names.clone(),
+            method_names: self.method_names.clone(),
+            method_ids: self.method_ids.clone(),
+            traits: self.traits.clone(),
+            trait_indexes: self.trait_indexes.clone(),
+            defs: before.defs.clone(),
+            methods: before.methods.clone(),
+            defaults: before.defaults.clone(),
+            shown: before.shown.clone(),
+            shown_bits: before.shown_bits,
+        }
+    }
+
     /// The number of slots.
     pub fn len(&self) -> usize {
         self.names.len()
@@ -221,11 +255,12 @@ impl Globals {
     /// The `CallMethod` operand of the trait `t`, named `name`; `None`
     /// when 65,536 traits are named already.
     pub fn trait_index(&mut self, t: TraitId, name: String) -> Option<u16> {
-        if let Some(k) = self.traits.iter().position(|(known, _)| *known == t) {
-            return u16::try_from(k).ok();
+        if let Some(k) = self.trait_indexes.get(&t) {
+            return Some(*k);
         }
         let k = u16::try_from(self.traits.len()).ok()?;
         self.traits.push((t, name));
+        self.trait_indexes.insert(t, k);
         Some(k)
     }
 
@@ -247,21 +282,24 @@ impl Globals {
         Some(slot)
     }
 
+    /// The default methods of the trait `t`, each with its slot, in
+    /// the order they were added.
+    fn defaults_of(&self, t: TraitId) -> impl Iterator<Item = &(String, u16)> {
+        (0..=u16::MAX).map_while(move |k| self.defaults.get(&(t, k)))
+    }
+
     /// The slot of the default method `method` of the trait `t`.
     pub fn default_method(&self, t: TraitId, method: &str) -> Option<u16> {
-        self.defaults.get(&(t, method.to_string())).copied()
+        self.defaults_of(t)
+            .find(|(name, _)| name == method)
+            .map(|(_, slot)| *slot)
     }
 
     /// The default methods of the trait `t`, each with its slot, by
     /// name: whatever declared the trait (the program, a module it
     /// imports, an earlier REPL entry, the builtins).
     pub fn default_methods(&self, t: TraitId) -> Vec<(String, u16)> {
-        let mut methods: Vec<(String, u16)> = self
-            .defaults
-            .iter()
-            .filter(|((of, _), _)| *of == t)
-            .map(|((_, method), slot)| (method.clone(), *slot))
-            .collect();
+        let mut methods: Vec<(String, u16)> = self.defaults_of(t).cloned().collect();
         methods.sort();
         methods
     }
@@ -272,8 +310,9 @@ impl Globals {
         if let Some(slot) = self.default_method(t, method) {
             return Some(slot);
         }
+        let k = u16::try_from(self.defaults_of(t).count()).ok()?;
         let slot = self.add(name)?;
-        self.defaults.insert((t, method.to_string()), slot);
+        self.defaults.insert((t, k), (method.to_string(), slot));
         Some(slot)
     }
 
@@ -290,9 +329,11 @@ impl Globals {
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for
-    /// the type `ty`, named `name`: a new one the first time. A later
-    /// impl of the trait for the type (a REPL entry's) takes the slot
-    /// over.
+    /// the type `ty`, named `name`: a new one the first time. (No
+    /// program asks a second time: a trait has one impl for a type, in
+    /// a REPL session as in a file, and what an entry that failed when
+    /// it ran had defined is taken back before it is defined again,
+    /// see [`Globals::without_definitions_since`].)
     pub fn add_method(
         &mut self,
         t: TraitId,

@@ -129,6 +129,70 @@ fn copy(value: &Value) -> Value {
     }
 }
 
+/// Let go of `value`, for the instructions that are done with a value
+/// they took off the stack or wrote over: a number, a Bool or unit owns
+/// nothing, and is not handed to the drop of a value of any kind, a
+/// call; a value of any other kind is dropped. (As [`copy`], which is
+/// the same for a read. The kinds are named: one that is added later
+/// does not compile until it is placed here.)
+#[inline(always)]
+fn done(value: Value) {
+    match value {
+        Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
+            std::mem::forget(value);
+        }
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => drop(value),
+    }
+}
+
+/// Write `value` over `*slot`, for the instructions that set a slot of
+/// the frame: [`done`] for the value that was there, where it is: a
+/// number, a Bool or unit is written over without a call of drop, a
+/// value of any other kind is dropped as an assignment drops it.
+#[inline(always)]
+fn put(slot: &mut Value, value: Value) {
+    match slot {
+        Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
+            std::mem::forget(std::mem::replace(slot, value));
+        }
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::VmClosure(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => *slot = value,
+    }
+}
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -280,6 +344,8 @@ impl Vm {
                 let a = pop(&mut self.stack);
                 let value = ok!(arithmetic($op, &a, &b));
                 self.stack.push(value);
+                done(a);
+                done(b);
             }};
         }
         macro_rules! compare {
@@ -288,6 +354,8 @@ impl Vm {
                 let a = pop(&mut self.stack);
                 let ordering = ok!(ordering(&a, &b));
                 self.stack.push(Value::Bool($holds(ordering)));
+                done(a);
+                done(b);
             }};
         }
 
@@ -314,35 +382,47 @@ impl Vm {
                     let a = pop(&mut self.stack);
                     ok!(equality_operands(&a, &b));
                     self.stack.push(Value::Bool(a == b));
+                    done(a);
+                    done(b);
                 }
                 Instr::Neq => {
                     let b = pop(&mut self.stack);
                     let a = pop(&mut self.stack);
                     ok!(equality_operands(&a, &b));
                     self.stack.push(Value::Bool(a != b));
+                    done(a);
+                    done(b);
                 }
                 Instr::Lt => compare!(Ordering::is_lt),
                 Instr::Gt => compare!(Ordering::is_gt),
                 Instr::Leq => compare!(Ordering::is_le),
                 Instr::Geq => compare!(Ordering::is_ge),
-                Instr::Negate => match pop(&mut self.stack) {
-                    Value::Int(n) => match n.checked_neg() {
-                        Some(v) => self.stack.push(Value::Int(v)),
-                        None => fail!(VmError::new(format!("integer overflow: negate {n}"))),
-                    },
-                    Value::Float(n) => self.stack.push(Value::Float(-n)),
-                    other => fail!(VmError::type_confusion(format!(
-                        "cannot negate {}",
-                        self.user_facing_type_name(&other)
-                    ))),
-                },
-                Instr::Not => match pop(&mut self.stack) {
-                    Value::Bool(b) => self.stack.push(Value::Bool(!b)),
-                    other => fail!(VmError::type_confusion(format!(
-                        "cannot apply 'not' to {}",
-                        self.user_facing_type_name(&other)
-                    ))),
-                },
+                Instr::Negate => {
+                    let value = pop(&mut self.stack);
+                    match &value {
+                        Value::Int(n) => match n.checked_neg() {
+                            Some(v) => self.stack.push(Value::Int(v)),
+                            None => fail!(VmError::new(format!("integer overflow: negate {n}"))),
+                        },
+                        Value::Float(n) => self.stack.push(Value::Float(-*n)),
+                        other => fail!(VmError::type_confusion(format!(
+                            "cannot negate {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    }
+                    done(value);
+                }
+                Instr::Not => {
+                    let value = pop(&mut self.stack);
+                    match &value {
+                        Value::Bool(b) => self.stack.push(Value::Bool(!*b)),
+                        other => fail!(VmError::type_confusion(format!(
+                            "cannot apply 'not' to {}",
+                            self.user_facing_type_name(other)
+                        ))),
+                    }
+                    done(value);
+                }
                 Instr::DisplayValue => {
                     let val = pop(&mut self.stack);
                     match &val {
@@ -430,24 +510,21 @@ impl Vm {
                 }
                 Instr::SetLocal { slot } => {
                     let value = copy(peek(&self.stack));
-                    self.stack[base + slot] = value;
+                    put(&mut self.stack[base + slot], value);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
                     Some(value) => {
                         let value = value.clone();
                         self.stack.push(value);
                     }
-                    // (The checker orders the top-level `let`s so that
-                    // each is set before anything can read it, and the
-                    // definitions are set before any `let` runs: no
-                    // checked program that is run as a whole comes
-                    // here. A task of an earlier REPL entry does, when
-                    // it runs a closure of a later entry that names
-                    // what that entry defined.)
-                    None => fail!(VmError::type_confusion(format!(
-                        "the global '{}' is read before it is set",
-                        self.global_slots.name(slot)
-                    ))),
+                    // (Not set in this VM's slots: see the function.)
+                    None => {
+                        let newest = &self.runtime.newest;
+                        match (self.view).global_of_newest(&mut self.view_count, newest, slot) {
+                            Ok(value) => self.stack.push(value),
+                            Err(error) => fail!(error),
+                        }
+                    }
                 },
                 Instr::SetGlobal { slot } => {
                     let value = peek(&self.stack).clone();
@@ -631,16 +708,16 @@ impl Vm {
                     if self.is_falsy(&val) {
                         ip = to;
                     }
+                    done(val);
                 }
                 Instr::JumpIfTrue { to } => {
                     let val = pop(&mut self.stack);
                     if self.is_truthy(&val) {
                         ip = to;
                     }
+                    done(val);
                 }
-                Instr::Pop => {
-                    pop(&mut self.stack);
-                }
+                Instr::Pop => done(pop(&mut self.stack)),
                 Instr::Dup => {
                     let val = peek(&self.stack).clone();
                     self.stack.push(val);
@@ -825,7 +902,8 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        self.stack[base + first_slot + i] = copy(&self.stack[start + i]);
+                        let value = copy(&self.stack[start + i]);
+                        put(&mut self.stack[base + first_slot + i], value);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
@@ -1144,6 +1222,38 @@ impl Vm {
             .log(depth, caller.function.clone(), caller_ip);
     }
 
+    /// The method of the impl of the trait `trait_index` names for the
+    /// type `ty`, whose name has the id `method`, in this VM's table.
+    #[inline(always)]
+    fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<Value> {
+        let slot = (self.view.table).call_method(trait_index, ty, method)?;
+        self.global(slot).cloned()
+    }
+
+    /// [`Vm::method_of`] found none: the method in the program's newest
+    /// table, and in the table of the REPL entry that is being run,
+    /// which have a later entry's impls for the VM of a task of an
+    /// earlier one (see [`Vm::look_again`]).
+    #[cold]
+    #[inline(never)]
+    fn method_of_newest(
+        &mut self,
+        trait_index: u16,
+        ty: crate::defs::TypeId,
+        method: u16,
+    ) -> Option<Value> {
+        if self.look_again()
+            && let Some(found) = self.method_of(trait_index, ty, method)
+        {
+            return Some(found);
+        }
+        if Arc::ptr_eq(&self.view.table, &self.view.entry) {
+            return None;
+        }
+        let slot = (self.view.entry).call_method(trait_index, ty, method)?;
+        self.global(slot).cloned()
+    }
+
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
     /// whose name has the id `method`, of the trait `trait_index`
     /// names, for the type of the receiver, the first of the top
@@ -1171,10 +1281,10 @@ impl Vm {
         );
         // The method of an impl is found by three numbers: the trait,
         // the receiver's type, and the name's id. No text is compared.
-        let found = self
-            .global_slots
-            .call_method(trait_index, receiver_type, method)
-            .and_then(|slot| self.global(slot).cloned());
+        let found = match self.method_of(trait_index, receiver_type, method) {
+            None => self.method_of_newest(trait_index, receiver_type, method),
+            found => found,
+        };
         if let Some(func) = found {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
@@ -1205,11 +1315,11 @@ impl Vm {
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.
         let receiver = self.stack[receiver_slot].clone();
-        let slots = self.global_slots.clone();
+        let slots = self.view.entry.clone();
         // (The compiler checks each function against the globals of
-        // the program it is compiled into. Code of a later REPL entry
-        // that a task of an earlier entry runs is the exception: the
-        // task has the globals of its own entry.)
+        // the program it is compiled into, and the VM of a task that
+        // runs code of a later REPL entry has that entry's by now: the
+        // call found no impl, so the VM has looked for the newest.)
         let Some(method_name) = slots.method_name(method) else {
             return Err(VmError::type_confusion(
                 "the call of a method names a method the program does not have",
@@ -1223,7 +1333,7 @@ impl Vm {
         // `display` of a value whose parts a written impl may show.
         if method_name == "display"
             && argc == 1
-            && self.global_slots.any_shown()
+            && slots.any_shown()
             && Self::value_implements_display(&receiver)
         {
             self.stack.truncate(receiver_slot);
@@ -1251,8 +1361,7 @@ impl Vm {
             // value's `display`.
             None if method_name == "message"
                 && argc == 1
-                && self.global_slots.trait_at(trait_index)
-                    == crate::defs::builtin_trait_id("Error") =>
+                && slots.trait_at(trait_index) == crate::defs::builtin_trait_id("Error") =>
             {
                 self.stack.truncate(receiver_slot);
                 let step = self.shown(&receiver)?;
