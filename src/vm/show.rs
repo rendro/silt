@@ -13,7 +13,6 @@
 use std::cell::{Cell, RefCell};
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
@@ -151,11 +150,13 @@ impl Vm {
     /// the program's newest, with what the REPL entry being run adds
     /// (see [`Vm::look_again`]): a later entry may have written the
     /// impl, for the VM of a task of an earlier one.
+    ///
+    /// A program that is no REPL session asks nothing: its VMs have
+    /// all of it in their table (`table` is `entry`, one table), and
+    /// nothing newer ever comes. So does the VM that runs a session's
+    /// entry. Only the VM of a session's task goes on from here.
     fn wider_table(&mut self) -> Option<Arc<Globals>> {
-        let newest = &self.runtime.newest;
-        let own = newest.count.load(Ordering::Relaxed) == self.view_count
-            && Arc::ptr_eq(&self.view.table, &self.view.entry);
-        match own {
+        match Arc::ptr_eq(&self.view.table, &self.view.entry) {
             true => None,
             false => self.entry_table_shown(),
         }

@@ -821,10 +821,13 @@ pub(crate) struct View {
 
 impl Default for View {
     fn default() -> Self {
+        // (One table for both: a VM whose `table` is its `entry` has
+        // all of its program, see `Vm::wider_table`.)
+        let table: Arc<crate::bytecode::Globals> = Arc::default();
         View {
             slots: Arc::from([]),
-            table: Arc::default(),
-            entry: Arc::default(),
+            entry: table.clone(),
+            table,
         }
     }
 }
