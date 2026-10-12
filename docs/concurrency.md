@@ -417,6 +417,12 @@ depends on where that task is at the moment of cancellation:
     reading or writing a file's contents, the network, a database,
     standard input. Nothing is started: a file it was about to write is
     not written;
+  - at a call that would start a task to take in its place:
+    `task.deadline` (its function runs as a task of its own) and every
+    stream function that starts a stage (`stream.map`, `stream.take`
+    and the other transforms, and the sources: `stream.from_list`,
+    `stream.tcp_lines`, ...). No task is started, so nothing is taken
+    from the channel a stream would have been built over;
   - when it has run 2,000 steps (about 2,000 instructions, a few
     hundred rounds of a small loop), if it reaches none of these
     before. The steps are counted from the first time slice that begins
@@ -425,13 +431,14 @@ depends on where that task is at the moment of cancellation:
 
   What is done in those steps is what gives: a `channel.send` into a
   channel with room or to a receiver that waits, `channel.try_send`, a
-  `Send` arm of a `channel.select` that can be done at once; and the
-  `task.join` of a task that has ended. It can still start a task
-  (`task.spawn`). (The `fs` functions, which never wait, are done too:
-  `fs.exists`, `fs.remove`, `fs.rename` and the others.) The side
-  effects of those steps happen. What the task
-  returns or fails with in them changes nothing: the handle keeps the
-  cancellation, and a failure is not reported.
+  `Send` arm of a `channel.select` that can be done at once,
+  `channel.close`; and the `task.join` of a task that has ended. It can
+  still start a task with `task.spawn`. A `time.sleep` of no time is
+  done, since it waits for nothing; any longer one is a wait. (The `fs`
+  functions, which never wait, are done too: `fs.exists`, `fs.remove`,
+  `fs.rename` and the others.) The side effects of those steps happen.
+  What the task returns or fails with in them changes nothing: the
+  handle keeps the cancellation, and a failure is not reported.
 
   The steps are those of a function that is past its `task.deadline`,
   in one count: a task that is past its deadline and cancelled has

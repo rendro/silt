@@ -236,9 +236,11 @@ impl Vm {
     /// the task asks this before it looks, and ends the task where it
     /// holds ([`Vm::end_here`], [`Vm::no_wait`]): a receive in each of
     /// its forms, the take of `channel.each` and of a stream's stage or
-    /// sink, and the start of an I/O operation ([`Vm::start_io`]). The
-    /// arms of a wait ask the same of the wait's flag
-    /// (`runtime::sync::park`).
+    /// sink, and the start of an I/O operation ([`Vm::start_io`]). So
+    /// does what would start a task whose one purpose is to take in
+    /// its place: a stream's stage, and `task.deadline`, which waits
+    /// for the function it starts. The arms of a wait ask the same of
+    /// the wait's flag (`runtime::sync::park`).
     ///
     /// It is the one condition of that rule. (A task that is past its
     /// deadline is not under it: it takes what is there for as long as

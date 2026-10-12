@@ -328,7 +328,13 @@ impl Native for Pipe {
 }
 
 /// Start a stage: a task that runs `logic` over `inputs` and feeds the
-/// channel that is returned, of capacity `capacity`.
+/// channel that is returned, of capacity `capacity`. Every source and
+/// every transform starts its task here.
+///
+/// A task that takes nothing new (`Vm::takes_nothing_new`: it was
+/// cancelled) starts no stage: the stage's task would take from its
+/// inputs, or from outside, for a reader that ends at its own next
+/// take. The task ends here, with nothing started.
 fn stage(
     vm: &mut Vm,
     name: &'static str,
@@ -336,6 +342,9 @@ fn stage(
     capacity: usize,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
+    if vm.takes_nothing_new() {
+        return Ok(vm.end_here(name));
+    }
     let out = Channel::new(vm.next_channel_id(), capacity);
     let id = vm.next_task_id();
     let handle = Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()));

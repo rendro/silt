@@ -538,6 +538,12 @@ pub(crate) mod task {
 
     builtins! {
         fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
+            // The call is a wait for the function, and a cancelled
+            // task begins none: it is ended here, before a task is
+            // started that would take in its place.
+            if vm.takes_nothing_new() {
+                return Ok(vm.end_here("task.deadline"));
+            }
             // A duration of zero or less is a time that is over now:
             // the function runs to its first wait that has to wait,
             // or until the steps of a late task are used up.

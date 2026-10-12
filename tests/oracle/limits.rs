@@ -1035,6 +1035,90 @@ fn main() {{
     }
 }
 
+/// A cancelled task starts nothing that would take in its place, at
+/// every time slice: a `task.deadline` (its function is a task of its
+/// own) and a stream stage (a source, a transform) end the task where
+/// it calls them, before a task is started. Each round a task cancels
+/// itself, says so, and comes to such a call around a channel that
+/// holds one value: the value is still there when `main` asks for it,
+/// which it does without a time limit, and the line after the call is
+/// never printed. (When the call started its task, that task took the
+/// value in a part of the rounds and gave it to nobody, since the
+/// cancelled task ends at its own next take or wait.)
+#[test]
+fn a_cancelled_task_starts_nothing_that_takes_for_it_at_every_slice() {
+    let starts = [
+        (
+            "task.deadline around a receive",
+            "task.deadline(time.seconds(5), { -> channel.receive(ch) })",
+        ),
+        (
+            "stream.take, then a sink",
+            "ch |> stream.take(1) |> stream.collect",
+        ),
+        (
+            "stream.map, then a sink",
+            "ch |> stream.map { x -> x } |> stream.first",
+        ),
+        (
+            "a source, then a sink",
+            "stream.from_list([1, 2]) |> stream.collect",
+        ),
+    ];
+    for (what, start) in starts {
+        let source = format!(
+            r#"
+import channel
+import stream
+import task
+import time
+
+fn main() {{
+  loop i = 0 {{
+    match i >= 60 {{
+      true -> i
+      false -> {{
+        let own: Channel(task.Handle(())) = channel.new(1)
+        let ch: Channel(Int) = channel.new(1)
+        channel.send(ch, 5)
+        let said = channel.new(1)
+        let t = task.spawn {{ ->
+          match channel.receive(own) {{
+            channel.Message(me) -> task.cancel(me)
+            _ -> ()
+          }}
+          channel.send(said, 0)
+          let _ = {start}
+          println("the task went on")
+        }}
+        channel.send(own, t)
+        let _ = channel.receive(said)
+        time.sleep(time.ms(1))
+        match channel.receive(ch) {{
+          channel.Message(5) -> loop(i + 1)
+          _ -> -1
+        }}
+      }}
+    }}
+  }}
+}}
+"#
+        );
+        for slice in FOUR_SLICES {
+            let (result, output) = run_with(&source, |vm| {
+                if let Some(slice) = slice {
+                    vm.set_time_slice(slice);
+                }
+            });
+            assert_eq!(
+                (result, output.as_str()),
+                (Ok(Value::Int(60)), ""),
+                "{what} at slice {slice:?}"
+            );
+        }
+    }
+}
+
 /// A worker that is cancelled loses no item, at every time slice,
 /// whatever its input holds: it passes on the item it has and takes no
 /// further one. (When a cancelled task still took what was ready, a
