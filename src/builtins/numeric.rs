@@ -248,7 +248,13 @@ pub(crate) mod float {
                     "float.format: decimals {decimals} exceeds maximum precision of 65535"
                 )));
             };
-            Ok(format!("{:.prec$}", f, prec = prec as usize))
+            let text = format!("{:.prec$}", f, prec = prec as usize);
+            // A number that rounds to zero from below is written as
+            // zero is: no Float is `-0.0`, and no text of one is.
+            Ok(match text.strip_prefix('-') {
+                Some(zero) if zero.bytes().all(|b| b == b'0' || b == b'.') => zero.to_string(),
+                _ => text,
+            })
         }
     }
 }

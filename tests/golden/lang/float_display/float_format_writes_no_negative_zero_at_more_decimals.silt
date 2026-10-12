@@ -1,0 +1,14 @@
+import float
+
+-- A negative number that rounds to zero at two decimals, at three and
+-- at six is written without a sign; one decimal more shows the number,
+-- with its sign.
+fn main() {
+  println(float.format(-0.004, 2))
+  println(float.format(-0.004, 3))
+  println(float.format(-0.0004, 3))
+  println(float.format(-0.0004, 4))
+  println(float.format(-0.0000001, 6))
+  println(float.format(-0.0000001, 7))
+  println(float.format(-1.0e-300, 2))
+}
