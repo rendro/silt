@@ -149,7 +149,11 @@ fn a_task_left_waiting_in_every_round_adds_what_it_holds_itself() {
 ///
 /// What is counted is copied rows, on this thread (the session is
 /// evaluated here, not by `silt repl`): no time, and nothing that
-/// depends on the machine.
+/// depends on the machine. The count comes in bursts (two layers made
+/// one, the slots given twice the room), so another mix of entries
+/// moves the ratio of two thousands; what stands behind the bound is
+/// that the rows copied per row added grow with the logarithm of the
+/// rows.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn the_last_thousand_entries_copy_what_the_first_thousand_do() {

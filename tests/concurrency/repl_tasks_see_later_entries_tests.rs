@@ -29,12 +29,22 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 /// greeting, and its errors. The session must end by itself, with
 /// success.
 fn repl(input: &str) -> (String, String) {
-    repl_beside(&[], input)
+    repl_beside(&[], input, Slice::Whole)
+}
+
+/// How long a task of a session runs before it gives way to the others.
+#[derive(Clone, Copy, Debug)]
+enum Slice {
+    /// As a session runs: 2,000 steps.
+    Whole,
+    /// One step (`SILT_TIME_SLICE=1`): every instruction of a task is
+    /// a place where the session and the other tasks come in between.
+    OneStep,
 }
 
 /// [`repl`] in a directory that has the module files `modules`, each a
-/// name and its text.
-fn repl_beside(modules: &[(&str, &str)], input: &str) -> (String, String) {
+/// name and its text, with tasks that give way after `slice`.
+fn repl_beside(modules: &[(&str, &str)], input: &str, slice: Slice) -> (String, String) {
     static RUNS: AtomicUsize = AtomicUsize::new(0);
     let dir: PathBuf = std::env::temp_dir().join(format!(
         "silt_repl_tasks_{}_{}",
@@ -50,7 +60,11 @@ fn repl_beside(modules: &[(&str, &str)], input: &str) -> (String, String) {
         std::fs::write(file(name), text).expect("a module is written");
     }
     let open = |name: &str| std::fs::File::create(file(name)).expect("a file of the session");
-    let mut silt = Command::new(env!("CARGO_BIN_EXE_silt"))
+    let mut silt = Command::new(env!("CARGO_BIN_EXE_silt"));
+    if let Slice::OneStep = slice {
+        silt.env("SILT_TIME_SLICE", "1");
+    }
+    let mut silt = silt
         .arg("repl")
         .current_dir(&dir)
         .env("NO_COLOR", "1")
@@ -158,15 +172,21 @@ fn session(workers: Workers, earlier: &str, later: &str, job: &str) -> String {
 /// The tasks, started after `earlier` and before `later`, each run
 /// `job` and give `expected`; the session reports no error.
 fn assert_tasks_see(earlier: &str, later: &str, job: &str, expected: &str) {
-    for workers in [Workers::Waiting, Workers::Polling, Workers::Three] {
+    // (The task that never waits also with a slice of one step.)
+    for (workers, slice) in [
+        (Workers::Waiting, Slice::Whole),
+        (Workers::Polling, Slice::Whole),
+        (Workers::Polling, Slice::OneStep),
+        (Workers::Three, Slice::Whole),
+    ] {
         let input = session(workers, earlier, later, job);
-        let (output, errors) = repl(&input);
+        let (output, errors) = repl_beside(&[], &input, slice);
         assert_eq!(
             output,
             format!("Message({expected})\n").repeat(workers.count()),
-            "{workers:?}\n{input}\nstderr:\n{errors}"
+            "{workers:?} {slice:?}\n{input}\nstderr:\n{errors}"
         );
-        assert_eq!(errors, "", "{workers:?}\n{input}");
+        assert_eq!(errors, "", "{workers:?} {slice:?}\n{input}");
     }
 }
 
@@ -485,7 +505,7 @@ fn a_task_reads_what_an_import_that_failed_once_defines() {
     }
   }
 }";
-    let (output, errors) = repl_beside(&[("late.silt", LATE)], &import_twice(work));
+    let (output, errors) = repl_beside(&[("late.silt", LATE)], &import_twice(work), Slice::Whole);
     assert_eq!(output, IMPORTED_TWICE, "{errors}");
     let errors: Vec<&str> = (errors.lines())
         .filter(|line| line.starts_with("error"))
@@ -495,7 +515,8 @@ fn a_task_reads_what_an_import_that_failed_once_defines() {
 
 /// The same with a task that never waits: it asks for its job again
 /// and again while the two imports are taken in and run. A hundred
-/// sessions: what the task reads does not depend on when it looks.
+/// sessions, every other one with tasks that give way after each step:
+/// what the task reads does not depend on when it looks.
 #[test]
 fn a_task_that_never_waits_reads_what_an_import_that_failed_once_defines() {
     let work = "fn work(left) {
@@ -512,8 +533,9 @@ fn a_task_that_never_waits_reads_what_an_import_that_failed_once_defines() {
 }";
     let session = import_twice(work);
     for round in 0..100 {
-        let (output, errors) = repl_beside(&[("late.silt", LATE)], &session);
-        assert_eq!(output, IMPORTED_TWICE, "round {round}\n{errors}");
+        let slice = [Slice::Whole, Slice::OneStep][round % 2];
+        let (output, errors) = repl_beside(&[("late.silt", LATE)], &session, slice);
+        assert_eq!(output, IMPORTED_TWICE, "round {round} {slice:?}\n{errors}");
     }
 }
 
