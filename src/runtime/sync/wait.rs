@@ -43,6 +43,8 @@ pub struct Wait {
     /// wait that begins, a send that can be done at once is done (the
     /// task gives what it holds) and a cell that is complete is found
     /// so, but no receive is tried, whether or not a value is there.
+    /// A wait that begins when the time of its task is over
+    /// ([`Wait::task_deadline`]) is under the same rule.
     pub cancel: Option<Arc<AtomicBool>>,
     /// The time at which the task that waits is over (a reading like
     /// [`Wait::deadline`]): the task of a function that
@@ -141,8 +143,9 @@ pub enum Park {
     /// sent.
     Cancelled,
     /// The time of the task was over when the wait began
-    /// ([`Wait::task_deadline`]) and no arm could be completed at
-    /// once: nothing was taken or sent.
+    /// ([`Wait::task_deadline`]) and none of the arms that are tried
+    /// then (a send, a cell) could be completed at once: nothing was
+    /// taken or sent.
     Expired,
 }
 
@@ -156,13 +159,12 @@ pub enum Park {
 /// [`Parked`].
 ///
 /// When the task's cancel flag is set ([`Wait::cancel`]), or the time
-/// of the task is over ([`Wait::task_deadline`]), and no arm can be
-/// completed now, the task is not queued: [`Park::Cancelled`],
-/// [`Park::Expired`]. (An arm that can be completed at once is, as by
-/// an operation that never waits: a value that is there wins over a
-/// time that has passed.) The two differ in one thing: a task that
-/// was cancelled takes nothing new, so its receive arms are not
-/// tried (`takes_nothing_new`, below).
+/// of the task is over ([`Wait::task_deadline`]), the task takes
+/// nothing new and waits for nothing: its receive arms are not tried
+/// (`takes_nothing_new`, below), a send that can be done at once is
+/// done and a cell that is complete is found so, and if none of those
+/// ends the wait the task is not queued: [`Park::Cancelled`],
+/// [`Park::Expired`]. The two differ in the name of the refusal only.
 pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
     let Wait {
         mut arms,
@@ -301,12 +303,12 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
 
 /// Whether the task of a wait that begins takes nothing new: its
 /// receive arms are not tried then. That holds for a task that was
-/// cancelled (`cancelled`: its flag is set). It does not hold for a
-/// task whose time is over (`task_expired`), which receives what is
-/// there. This is the one condition; `Vm::takes_nothing_new` is the
-/// same one for the operations that look before they wait.
-fn takes_nothing_new(cancelled: bool, _task_expired: bool) -> bool {
-    cancelled
+/// cancelled (`cancelled`: its flag is set) and for one whose time is
+/// over (`task_expired`). This is the one condition;
+/// `Vm::takes_nothing_new` is the same one for the operations that
+/// look before they wait.
+fn takes_nothing_new(cancelled: bool, task_expired: bool) -> bool {
+    cancelled || task_expired
 }
 
 /// The two times that can end a wait, and whether each had come when

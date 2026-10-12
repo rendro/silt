@@ -111,8 +111,8 @@ pub(crate) mod channel {
         }
 
         fn receive(vm, ch: Chan) -> Step {
-            // A cancelled task takes nothing new: not what is there
-            // either.
+            // A task that was cancelled, or whose time is over, takes
+            // nothing new: not what is there either.
             if vm.takes_nothing_new() {
                 return vm.end_here("channel.receive");
             }
@@ -319,9 +319,9 @@ impl Native for Each {
             }
             EachState::Take => {}
         }
-        // The first take and every later one. A cancelled task takes
-        // nothing new: the message it was called with last is the
-        // last.
+        // The first take and every later one. A task that was
+        // cancelled, or whose time is over, takes nothing new: the
+        // message it was called with last is the last.
         if vm.takes_nothing_new() {
             self.state = EachState::Waited;
             return Ok(Step::Park(Vm::no_wait()));
@@ -415,6 +415,9 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 ///   an operation in flight is given up), never by both. A wait that
 ///   the time ends, or that begins when the time is over, ends the
 ///   task there.
+/// - A task past its time takes nothing new (`Vm::takes_nothing_new`,
+///   as a cancelled task): an operation that would take ends it, and
+///   what it holds it may still give.
 /// - The work of a task past its time is bounded: every step it runs
 ///   in a slice that began when the time was over is counted, and
 ///   when a standard slice of them is used up the task is ended, after
@@ -431,8 +434,10 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 /// inner function by the same rule, with no cancel. A task that has
 /// its caller's time goes on with its caller's count of steps
 /// (`TaskHandle::late`), so that the work past a deadline is bounded
-/// in total: a function that calls `task.deadline` again and again
-/// when its time is over gets no new steps with each call.
+/// in total: a caller that gets its function's `Ok` when the time of
+/// both is over has what the function left of the steps. (A caller
+/// whose time is over when it comes to the call starts no function:
+/// the call ends it.)
 ///
 /// The frame owns the task: if the frame is dropped while it waits
 /// (the caller was cancelled by `task.cancel`, or the program ended),
@@ -538,9 +543,10 @@ pub(crate) mod task {
 
     builtins! {
         fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
-            // The call is a wait for the function, and a cancelled
-            // task begins none: it is ended here, before a task is
-            // started that would take in its place.
+            // The call is a wait for the function, and a task that
+            // was cancelled or whose time is over begins none: it is
+            // ended here, before a task is started that would take in
+            // its place.
             if vm.takes_nothing_new() {
                 return Ok(vm.end_here("task.deadline"));
             }

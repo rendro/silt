@@ -223,8 +223,9 @@ impl Native for Pipe {
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
-                // A task that was cancelled takes nothing new, though
-                // it still runs for some steps: a stage that was
+                // A task that was cancelled, or whose time is over,
+                // takes nothing new, though it still runs for some
+                // steps: a stage that was
                 // stopped (nobody reads its output any more: its task
                 // is cancelled) is over, and a sink ends the task that
                 // called it.
@@ -332,7 +333,7 @@ impl Native for Pipe {
 /// every transform starts its task here.
 ///
 /// A task that takes nothing new (`Vm::takes_nothing_new`: it was
-/// cancelled) starts no stage: the stage's task would take from its
+/// cancelled, or its time is over) starts no stage: the stage's task would take from its
 /// inputs, or from outside, for a reader that ends at its own next
 /// take. The task ends here, with nothing started.
 fn stage(

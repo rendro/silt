@@ -405,10 +405,9 @@ Its effect on the task depends on where the task is at that moment:
   What the task returns or fails with in them changes nothing: the
   handle keeps the cancellation, and a failure is not reported.
 
-  The steps are those of a function that is past its `task.deadline`,
-  in one count: a task that is past its deadline and cancelled has
-  2,000 steps in all, not twice that. (A function that is only past its
-  deadline still receives what is there; a cancelled task does not.)
+  This is the rule of a function that is past its `task.deadline`,
+  and the same count: a task that is past its deadline and cancelled has
+  2,000 steps in all, not twice that.
 
 **What the further work is for, and what it does not give.** A task that
 was just given something has the steps to pass it on by an operation
@@ -516,11 +515,13 @@ Runs `f` and gives `Ok` of what it returns, or `Err(Timeout)` if `f` was
 ended because `dur` had passed.
 
 The function runs as a task of its own whose time is over when `dur` has
-passed. From then on it is ended where it would have to wait, whatever it
-waits for (I/O, a `time.sleep`, a `channel.receive` or `channel.send`, a
-`channel.select`, a `task.join`, a wait deep inside the callback of a
-builtin, the read of a stream), and a function that does not wait is
-ended after a fixed amount of further work.
+passed. From then on it takes nothing new and may still give what it
+holds, as a task that was cancelled (see [`task.cancel`](#taskcancel)):
+it is ended where it would take something or would have to wait,
+whatever it waits for (I/O, a `time.sleep`, a `channel.receive` or
+`channel.send`, a `channel.select`, a `task.join`, a wait deep inside the
+callback of a builtin, the read of a stream), and a function that does
+neither is ended after a fixed amount of further work.
 
 - A wait of `f` ends one way or the other: it got what it waited for and
   `f` goes on, or the deadline ended it, nothing was received or sent, and
@@ -531,16 +532,19 @@ ended after a fixed amount of further work.
   returned (`Ok`, also when it got its value just in time and the clock
   has moved on), it was ended (`Err(Timeout)`), or it failed (the runtime
   error is raised by `task.deadline` as it is, whatever the clock says).
-- What can be done at once is done, also when the time is over: a value
-  that lies in a channel is received. A `dur` of zero or less is a time
+- When the time is over the function takes nothing new: a receive begun
+  then is `Err(Timeout)` whether or not a value is there, and the value
+  stays in its channel; no I/O, no stream stage and no inner
+  `task.deadline` is started. It may still give what it holds: a send
+  that can be done at once is done. A `dur` of zero or less is a time
   that is over from the start: `task.deadline(time.ms(0), { -> 1 })` is
-  `Ok(1)`.
+  `Ok(1)`, and a function that receives is `Err(Timeout)`.
 - The work past the time is bounded in all: a function whose time is over
   runs on for at most 2,000 steps (about 2,000 instructions, a few hundred
-  rounds of a small loop), whatever it does with them, the functions of
-  the deadlines it calls included. Then it is ended, with what it holds:
-  after the step that used them up, or at the next wait it begins, ready
-  or not. One call of a builtin that is under way runs to its end first.
+  rounds of a small loop), whatever it does with them. Then it is ended,
+  with what it holds: after the step that used them up, or at the next
+  wait it begins. One call of a builtin that is under way runs to its end
+  first.
 - An I/O operation in flight is given up (a connection it was reading or
   writing is shut down); what had started may have happened all the same.
   A connection that reaches a `tcp.accept` as it is given up stays with

@@ -1,21 +1,21 @@
 the time is over from the start:
-a select with a Recv arm on a closed channel: ended, after fewer than 10,000 rounds
-a select with a Send arm into a buffer with room: ended, after fewer than 10,000 rounds
+a select with a Recv arm on a closed channel: ended, before its first round was done
+a select with a Send arm into a buffer with room: ended, after some rounds, fewer than 10,000
   sent and not marked, at most one: true
-a select with a Recv arm on a channel that is full: ended, after fewer than 10,000 rounds
+a select with a Recv arm on a channel that is full: ended, before its first round was done
   taken and not marked, at most one: true
-a select on a timeout channel that has closed: ended, after fewer than 10,000 rounds
-a receive of a closed channel: ended, after fewer than 10,000 rounds
-try_receive: ended, after fewer than 10,000 rounds
-try_send: ended, after fewer than 10,000 rounds
-ready selects and computing: ended, after fewer than 10,000 rounds
-an inner deadline of an hour: ended, after fewer than 10,000 rounds
-an inner deadline of no time: ended, after fewer than 10,000 rounds
-three deadlines in each other: ended, after fewer than 10,000 rounds
-an inner deadline around ready selects: ended, after fewer than 10,000 rounds
-a sink of a stream the function reads: ended, after fewer than 10,000 rounds
-a read of a file: ended, after fewer than 10,000 rounds
-channel.each over a channel that is full: ended, after fewer than 10,000 rounds
+a select on a timeout channel that has closed: ended, before its first round was done
+a receive of a closed channel: ended, before its first round was done
+try_receive: ended, before its first round was done
+try_send: ended, after some rounds, fewer than 10,000
+ready selects and computing: ended, before its first round was done
+an inner deadline of an hour: ended, before its first round was done
+an inner deadline of no time: ended, before its first round was done
+three deadlines in each other: ended, before its first round was done
+an inner deadline around ready selects: ended, before its first round was done
+a sink of a stream the function reads: ended, before its first round was done
+a read of a file: ended, before its first round was done
+channel.each over a channel that is full: ended, before its first round was done
 the time passes while the function runs:
 a select with a Recv arm on a closed channel: ended
 a select with a Send arm into a buffer with room: ended

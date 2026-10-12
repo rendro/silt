@@ -440,10 +440,9 @@ depends on where that task is at the moment of cancellation:
   What the task returns or fails with in them changes nothing: the
   handle keeps the cancellation, and a failure is not reported.
 
-  The steps are those of a function that is past its `task.deadline`,
-  in one count: a task that is past its deadline and cancelled has
-  2,000 steps in all, not twice that. (A function that is only past its
-  deadline still receives what is there; a cancelled task does not.)
+  This is the rule of a function that is past its `task.deadline`,
+  and the same count: a task that is past its deadline and cancelled has
+  2,000 steps in all, not twice that.
 
 **What the further work is for, and what it does not give.** A task that
 was just given something has the steps to pass it on by an operation
@@ -608,15 +607,19 @@ let outcome = task.deadline(time.ms(200)) { -> io.read_file("/var/log/slow.log")
 `Err(Timeout)` if `f` was ended because `dur` had passed.
 
 The function runs as a task of its own, and the deadline is that task's:
-when `dur` has passed, its time is over. From then on the function is
-ended **where it would have to wait**, and a function that does not wait
-is ended after a small, fixed amount of further work. That is one rule
-for every wait of `f`, whatever it waits for: I/O (see
-[Blocking operations](#blocking-operations)), a `time.sleep`, a
-`channel.receive` or `channel.send`, a `channel.select`, a `task.join`, a
-wait deep inside the callback of a `list.fold`, or the read of a stream.
-A `channel.receive` that nobody will ever answer is no deadlock inside a
-deadline: it ends when the deadline has passed.
+when `dur` has passed, its time is over. From then on the function
+**takes nothing new; it may still give what it holds**, for a small,
+fixed amount of further work. It is ended where it would take something
+or would have to wait, and a function that does neither is ended after
+that work. That is one rule for everything `f` does, whatever it waits
+for: I/O (see [Blocking operations](#blocking-operations)), a
+`time.sleep`, a `channel.receive` or `channel.send`, a `channel.select`,
+a `task.join`, a wait deep inside the callback of a `list.fold`, or the
+read of a stream. A `channel.receive` that nobody will ever answer is no
+deadlock inside a deadline: it ends when the deadline has passed. It is
+the rule of a task that was cancelled (see
+[Cancelling](#cancelling-taskcancelhandle)), which lists what takes and
+what gives.
 
 - **A wait ends one way or the other, never both.** Either the wait got
   what it waited for (the value was received, the send was done, the
@@ -632,35 +635,46 @@ deadline: it ends when the deadline has passed.
   `Ok`, even though the clock has moved past the deadline meanwhile: the
   answer never contradicts what the function did. It comes at most two
   time slices of the function after the deadline.
-- **What is there is not waited for.** An operation that can be done at
-  once is done, also when the time is over: a value that lies in a
-  channel is received, as by `channel.receive_timeout` with a duration
-  that has passed. A duration of zero or less is a time that is over from
-  the start, and the rule is the same: `task.deadline(time.ms(0), { -> 1 })`
-  is `Ok(1)`, and a function that receives from an empty channel is ended
-  there. At a time that is over an operation is done only if it is ready
-  at that instant; whether something the function itself has just started
-  is ready then (the join of a task it spawned, a timeout of no time) is
-  not determined. This holds for the work past the time that the next
-  item bounds, and not beyond it.
+- **When the time is over the function takes nothing new.** An
+  operation that would take something ends it there, `Err(Timeout)`,
+  whether or not the thing is there: a `channel.receive`,
+  `channel.try_receive` or `channel.receive_timeout`, the next message of
+  a `channel.each`, the next element of a stream, `tcp.accept`, a
+  `channel.select` of which no `Send` arm can be done at once (its `Recv`
+  arms are not tried). So a receive begun when the time is over is a
+  timeout, every time, and the value stays in its channel. Nor does the
+  function start anything that would take or wait in its place: an
+  operation that waits for the outside (a file's contents, the network,
+  a database, standard input) is not started, a stream function that
+  would start a stage starts none, and a `task.deadline` it calls ends
+  it there, before the inner function is started.
+- **It may still give what it holds.** A `channel.send` into a channel
+  with room or to a receiver that waits, `channel.try_send`, a `Send`
+  arm of a `channel.select` that can be done at once and
+  `channel.close` are done; so are the `task.join` of a task that has
+  ended and `task.spawn`. That is what a function that got its value
+  just in time has to hand it on.
+- **A duration of zero or less is a time that is over from the start**,
+  and the rule is the same: `task.deadline(time.ms(0), { -> 1 })` is
+  `Ok(1)`, a function that sends into a channel with room is `Ok`, and a
+  function that receives is `Err(Timeout)` whether the channel is empty
+  or not.
 - **The work past the time is bounded in all.** A function whose time is
   over runs on for at most 2,000 steps: about 2,000 instructions, a few
   hundred rounds of a small loop. That is what a function which got its
-  value just in time has to return it. Every step counts, whatever the
-  function does with it: computing, operations that are done at once (a
-  `receive` of what is there, a `select` whose arm is ready, `try_send`),
-  calls of `task.deadline` (the function of a deadline inside a function
-  that is past its time goes on with what is left; it gets no steps of
-  its own). When the steps are used up the function is ended: after the
-  step that used them up, or at the next wait it begins, of which no arm
-  is completed then, ready or not. (The steps are counted from the first
-  time slice that begins when the time is over, so a function that
-  computes is ended at most 2,000 steps and one time slice past its
-  time. One call of a builtin that is under way, the sort of a large
-  list, runs to its end first.) So a function that received a value and,
-  instead of returning it, goes on working past its time is ended with
-  the value in hand, and a value that it takes when its time is over is
-  its own risk. Return what you took, or hand it on, before more work.
+  value just in time has to return it, or to hand it on. Every step
+  counts, whatever the function does with it: computing, sends that are
+  done at once. When the steps are used up the function is ended: after
+  the step that used them up, or at the next wait it begins, of which
+  nothing is done then. (The steps are counted from the first time slice
+  that begins when the time is over, so a function that computes is
+  ended at most 2,000 steps and one time slice past its time. One call
+  of a builtin that is under way, the sort of a large list, runs to its
+  end first.) So a function that received a value and, instead of
+  returning it or handing it on, goes on working past its time is ended
+  with the value in hand: a worker that needs more than those steps for
+  the item it holds, or has to wait to send it, loses that item, as
+  after a cancel.
 - **A failure of the function is the caller's**: a runtime error inside
   `f` is raised by `task.deadline` as it is, at the place in `f` where it
   happened, whatever the clock says. A function that fails is never
@@ -680,7 +694,9 @@ deadline: it ends when the deadline has passed.
   outer time too, if that is earlier, and is ended by the same rule. When
   the inner time passes first, the outer function goes on with the inner
   `Err(Timeout)` as a value; when the outer time does, both functions are
-  over and the outer `task.deadline` gives `Err(Timeout)`.
+  over and the outer `task.deadline` gives `Err(Timeout)`. The steps
+  past that time are one count for the two. (A function whose time is
+  already over cannot begin an inner deadline: the call ends it.)
 - **A deadline ends its function and nothing else.** A task that the
   function started with `task.spawn` goes on when the function is ended,
   and so does a task the function was joining: the join is ended, the

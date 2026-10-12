@@ -544,28 +544,27 @@ fn main() {
     }
 }
 
-/// The work a function does past its deadline is bounded in all,
-/// whatever the function does and whatever ends its slices: about
-/// 2,000 steps, counted one by one, in one count for the function and
-/// the functions of the deadlines inside it.
+/// A function that is past its deadline takes nothing new, and the
+/// work it still does is bounded in all, whatever ends its slices:
+/// about 2,000 steps, counted one by one.
 ///
 /// Each case is a loop of 300,000 rounds under a deadline whose time is
 /// over from the start (so nothing here depends on a clock), with a
-/// mark for every round that was done. The loop must not reach its last
-/// round, and the rounds it did reach are few: operations that are
-/// ready at once (a `select` whose arm can be completed, a `receive`
-/// of what is there, `try_send`, `try_receive`), such operations mixed
-/// with computing, a `task.deadline` in every round (one of an hour,
-/// one of no time, three in each other, one around ready selects). The
-/// count of the rounds is the same at every time slice: a slice that
-/// ends in a wait which is over at once counts like one that ran out.
-/// (But for the loop of I/O operations: whether an operation has its
-/// result when the function comes to wait for it is the I/O thread's
-/// to say, so that loop is only bounded, by the same count.)
+/// mark for every round that was done.
 ///
-/// And what a late function was ended in front of is still there: a
-/// `select` that was not to complete its arm any more took nothing
-/// and sent nothing.
+/// - A round that TAKES ends the function before its first mark,
+///   whether or not the thing to take is there: a `select` with `Recv`
+///   arms (on a closed channel, on a channel that is full, on a timeout
+///   channel that has closed), a `receive`, a `try_receive`, a read of a
+///   file, a `task.deadline` (its function would be a task that takes
+///   in its place). Nothing is taken: the full channel is still full.
+/// - A round that only GIVES or computes goes on, and is ended by the
+///   count: a `select` with a `Send` arm into room, a `send`, a
+///   `try_send`, computing. The loop does not reach its last round, the
+///   rounds it did reach are few, and their number is the same at every
+///   time slice: a slice that ends in a wait which is over at once
+///   counts like one that ran out. One value at most is sent without
+///   its mark: the one of the round in which the function was ended.
 #[test]
 fn the_work_past_a_deadline_is_bounded_whatever_the_function_does() {
     let source = r#"
@@ -637,32 +636,28 @@ fn main() {
   let full = filled(12000)
   let timed_out = channel.timeout(time.ms(0))
   let _ = channel.receive(timed_out)
+  -- Rounds that take.
   let recv_closed = late({ _ ->
     let _ = channel.select([channel.Recv(closed)])
   })
-  let send_room = late({ i ->
-    let _ = channel.select([channel.Send(sink, i)])
-  })
-  let sent = drained(sink)
   let recv_full = late({ _ ->
     let _ = channel.select([channel.Recv(full)])
   })
-  let taken = 12000 - drained(full)
   let recv_timed_out = late({ _ ->
     let _ = channel.select([channel.Recv(timed_out)])
   })
   let receive = late({ _ ->
-    let _ = channel.receive(closed)
+    let _ = channel.receive(full)
   })
   let try_receive = late({ _ ->
-    let _ = channel.try_receive(closed)
+    let _ = channel.try_receive(full)
   })
-  let try_send = late({ i ->
-    let _ = channel.try_send(sink, i)
+  let receive_timeout = late({ _ ->
+    let _ = channel.receive_timeout(full, time.ms(1))
   })
   let mixed = late({ _ ->
-    let _ = channel.select([channel.Recv(closed)])
     let _ = count(40, 0)
+    let _ = channel.select([channel.Recv(closed)])
   })
   let inner_hour = late({ i ->
     let _ = task.deadline(time.hours(1), { -> i })
@@ -670,30 +665,27 @@ fn main() {
   let inner_none = late({ i ->
     let _ = task.deadline(time.ms(0), { -> i })
   })
-  let three = late({ i ->
-    let _ = task.deadline(time.hours(1), { ->
-      task.deadline(time.hours(2), { -> task.deadline(time.hours(3), { -> i }) })
-    })
-  })
-  let inner_selects = late({ _ ->
-    let _ = task.deadline(time.hours(1), { ->
-      loop j = 0 {
-        match j >= 50 {
-          true -> j
-          false -> {
-            let _ = channel.select([channel.Recv(closed)])
-            loop(j + 1)
-          }
-        }
-      }
-    })
-  })
   let reads = late({ _ ->
     let _ = io.read_file("/no/such/file")
   })
+  let still_full = drained(full)
+  -- Rounds that give, or only compute.
+  let send_arm = late({ i ->
+    let _ = channel.select([channel.Recv(full), channel.Send(sink, i)])
+  })
+  let sent_by_arm = drained(sink)
+  let send = late({ i -> channel.send(sink, i) })
+  let sent = drained(sink)
+  let try_send = late({ i ->
+    let _ = channel.try_send(sink, i)
+  })
+  let computing = late({ _ ->
+    let _ = count(40, 0)
+  })
   let counts = [
-    recv_closed, send_room, recv_full, recv_timed_out, receive, try_receive, try_send, mixed,
-    inner_hour, inner_none, three, inner_selects, sent - send_room, taken - recv_full, reads,
+    recv_closed, recv_full, recv_timed_out, receive, try_receive, receive_timeout, mixed,
+    inner_hour, inner_none, reads, still_full, send_arm, send, try_send, computing,
+    sent_by_arm - send_arm, sent - send,
   ]
   counts |> list.map { n -> string.from(n) } |> string.join(" ")
 }
@@ -712,87 +704,92 @@ fn main() {
             .split(' ')
             .map(|n| n.parse().expect("a count"))
             .collect();
-        let (reads, counts) = counts.split_last().expect("the count of the reads");
-        assert!((0..10_000).contains(reads), "at slice {slice:?}: {text}");
-        let (rounds, kept) = counts.split_at(12);
-        // Ended, after some rounds and not many. (Three deadlines in
-        // each other and a deadline around fifty selects are large
-        // rounds: one or two of them are within the bound.)
-        for (case, rounds) in rounds.iter().enumerate() {
+        let (takes, rest) = counts.split_at(10);
+        let (still_full, rest) = rest.split_first().expect("the full channel's count");
+        let (gives, kept) = rest.split_at(4);
+        // Ended at the first take, before a mark, with nothing taken.
+        assert!(
+            takes.iter().all(|rounds| *rounds == 0),
+            "at slice {slice:?}: a round that takes was done ({text})"
+        );
+        assert_eq!(*still_full, 12000, "at slice {slice:?}: {text}");
+        // Ended by the count, after some rounds and not many.
+        for (case, rounds) in gives.iter().enumerate() {
             assert!(
                 (1..10_000).contains(rounds),
-                "case {case} at slice {slice:?}: {rounds} rounds ({text})"
+                "giving case {case} at slice {slice:?}: {rounds} rounds ({text})"
             );
         }
-        // What the last `select` of the function completed, it marked,
-        // or it was ended between the two: one value at most is sent,
-        // or taken, without its mark. Nothing was sent or taken by a
-        // `select` the function was ended in front of.
+        // What the function's last send did, it marked, or it was ended
+        // between the two: one value at most is sent without its mark.
         assert!(
             kept.iter().all(|more| (0..=1).contains(more)),
             "at slice {slice:?}: {text}"
         );
         // The count does not depend on the slice.
-        let counts = format!("{counts:?}");
+        let text = text.to_string();
         match &first {
-            None => first = Some(counts),
-            Some(first) => assert_eq!(&counts, first, "at slice {slice:?}"),
+            None => first = Some(text),
+            Some(first) => assert_eq!(&text, first, "at slice {slice:?}"),
         }
     }
 }
 
-/// An accept under a deadline loses no connection at any time slice:
-/// one that reaches an accept as it is given up stays with the
-/// listener, and the next accept is given it.
-#[cfg(feature = "tcp")]
+/// A function that is past its deadline with a backlog loses no item,
+/// at every time slice: a worker that takes an item and puts it into
+/// a channel with room, under a deadline that passes while its input
+/// still holds thousands, passes on the item it has and takes no
+/// further one. Then every item is in the input or in the output:
+/// `main` counts both when `task.deadline` has answered, which is when
+/// the function has ended. (When a late function still took what was
+/// there, it went on taking until its steps were used up, and was
+/// ended with an item in hand in most rounds.)
 #[test]
-fn an_accept_under_a_deadline_loses_no_connection_at_every_slice() {
+fn a_late_worker_loses_no_item_at_every_slice() {
     let source = r#"
 import channel
 import task
-import tcp
 import time
 
+fn count(ch) {
+  loop n = 0 {
+    match channel.try_receive(ch) {
+      channel.Message(_) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn fill(ch, n) {
+  loop i = 0 {
+    match i >= n {
+      true -> ()
+      false -> {
+        channel.send(ch, i)
+        loop(i + 1)
+      }
+    }
+  }
+}
+
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
-  let port = tcp.local_port(listener)
-  let done: Channel(Int) = channel.new(1)
-  let client = task.spawn { ->
-    let made = loop i = 0, made = 0 {
-      match i >= 40 {
-        true -> made
-        false -> {
-          time.sleep(time.ms(3))
-          match tcp.connect("127.0.0.1:{port}") {
-            Ok(_) -> loop(i + 1, made + 1)
-            Err(_) -> loop(i + 1, made)
-          }
-        }
-      }
-    }
-    channel.close(done)
-    made
-  }
-  let given = loop given = 0, idle = 0 {
-    match task.deadline(time.ms(3), { -> tcp.accept(listener) }) {
-      Ok(Ok(c)) -> {
-        tcp.close(c)
-        loop(given + 1, 0)
-      }
-      Ok(Err(e)) -> panic("accept failed: {e}")
-      Err(_) -> match channel.try_receive(done) {
-        channel.Closed -> match idle >= 20 {
-          true -> given
-          false -> loop(given, idle + 1)
-        }
-        _ -> loop(given, idle)
+  loop k = 0, lost = 0 {
+    match k >= 10 {
+      true -> lost
+      false -> {
+        let input: Channel(Int) = channel.new(20000)
+        let out: Channel(Int) = channel.new(20000)
+        fill(input, 20000)
+        let _ = task.deadline(time.ms(1), { ->
+          channel.each(input) { v -> channel.send(out, v) }
+        })
+        loop(k + 1, lost + 20000 - count(input) - count(out))
       }
     }
   }
-  task.join(client) - given
 }
 "#;
-    for slice in SLICES {
+    for slice in FOUR_SLICES {
         let (result, _) = run_with(source, |vm| {
             if let Some(slice) = slice {
                 vm.set_time_slice(slice);

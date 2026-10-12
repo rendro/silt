@@ -230,7 +230,9 @@ impl Vm {
     }
 
     /// Whether the task this is the VM of takes nothing new: it was
-    /// cancelled. The steps such a task still has are for what it
+    /// cancelled, or its time is over (it is the function of a
+    /// `task.deadline` that has passed). The steps such a task still
+    /// has are for what it
     /// holds, which it may give (a send that is ready), not for new
     /// work. So every operation that would take something from outside
     /// the task asks this before it looks, and ends the task where it
@@ -242,14 +244,19 @@ impl Vm {
     /// for the function it starts. The arms of a wait ask the same of
     /// the wait's flag (`runtime::sync::park`).
     ///
-    /// It is the one condition of that rule. (A task that is past its
-    /// deadline is not under it: it takes what is there for as long as
-    /// its steps last.)
+    /// It is the one condition of that rule, for a cancel and for a
+    /// deadline alike. Neither is ever taken back, so an operation
+    /// that found it true is refused the wait it then begins: as
+    /// cancelled, or as ended by the task's deadline. (Only a task
+    /// that has a deadline reads the clock here.)
     pub(crate) fn takes_nothing_new(&self) -> bool {
         let set = |flag: &Arc<std::sync::atomic::AtomicBool>| {
             flag.load(std::sync::atomic::Ordering::SeqCst)
         };
         self.cancelled.as_ref().is_some_and(set)
+            || self
+                .deadline
+                .is_some_and(|over| self.runtime.io.monotonic() >= over)
     }
 
     /// The wait that ends a task which takes nothing new

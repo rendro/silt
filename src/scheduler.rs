@@ -1233,10 +1233,9 @@ impl Inner {
                 // has ended (`ready`), or was over at once.
                 group.parking.fetch_add(1, Ordering::SeqCst);
                 // A task that is stopped with its owner's begins no
-                // wait. One whose time is over completes an arm that
-                // is ready, one that is cancelled a send that is
-                // ready, and each is refused the wait otherwise: that
-                // is the wait's own to say.
+                // wait. One that is cancelled, or whose time is over,
+                // does a send that is ready and is refused the wait
+                // otherwise: that is the wait's own to say.
                 let back = self.parking.park(id, Sleeper::Task(task), wait, || {
                     group.stopped.load(Ordering::SeqCst)
                 });
