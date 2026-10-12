@@ -1,0 +1,8 @@
+-- exit: 1
+import float
+
+-- 2^63 is the first Float above the Int range.
+fn main() {
+  println(float.to_int(9223372036854774784.0))
+  println(float.to_int(9223372036854775808.0))
+}

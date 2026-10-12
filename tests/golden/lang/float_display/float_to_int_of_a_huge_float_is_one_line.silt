@@ -1,0 +1,8 @@
+-- exit: 1
+import float
+
+-- A Float far outside the Int range is named with an exponent: the
+-- message is one line, not the number's 301 digits.
+fn main() {
+  println(float.to_int(1.0e300))
+}

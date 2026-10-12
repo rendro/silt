@@ -197,21 +197,18 @@ pub(crate) mod float {
         }
 
         fn to_int(f: f64) -> Result<i64, VmError> {
-            // B7 fix: `as i64` saturates for out-of-range finite floats,
-            // silently clamping e.g. 1e20 to i64::MAX. Reject such values
-            // explicitly so callers see a clear runtime error.
-            //
-            // The f64 representation of `i64::MIN` (-9223372036854775808) is
-            // exact, so `f >= i64::MIN as f64` correctly accepts values
-            // down to and including `i64::MIN`. `i64::MAX` is NOT exactly
-            // representable (rounds up to 9223372036854775808.0), so we
-            // compare strictly less than `(i64::MAX as f64) + 1.0` to
-            // reject everything that would round to or past i64::MAX+1.
-            const I64_MIN_AS_F64: f64 = i64::MIN as f64;
-            const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
-            if !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
+            // The Ints are the Floats from `i64::MIN`, which is a Float,
+            // to below 2^63: `i64::MAX` is no Float, and the Float
+            // nearest to it is 2^63, the first that is too large. (`as`
+            // would give the nearest Int for a number outside.)
+            const LEAST: f64 = i64::MIN as f64;
+            const TOO_LARGE: f64 = 9223372036854775808.0;
+            if !(LEAST..TOO_LARGE).contains(&f) {
+                // Such a number has nineteen digits or more, up to 309:
+                // it is named with an exponent, as a program may write
+                // it (`1e300`).
                 return Err(VmError::new(format!(
-                    "float.to_int: value out of i64 range: {f}"
+                    "float.to_int: {f:e} is outside the Int range"
                 )));
             }
             Ok(f as i64)
@@ -366,26 +363,18 @@ mod tests {
         }
     }
 
-    // ── float.to_int: B7 out-of-range regression ──────────────────
+    // ── float.to_int: a Float outside the Int range ───────────────
 
     #[test]
     fn float_to_int_rejects_positive_out_of_range() {
         let err = to_int(1.0e20).expect_err("expected out-of-range error");
-        assert!(
-            err.message.contains("out of i64 range"),
-            "error should mention out-of-range, got: {}",
-            err.message
-        );
+        assert_eq!(err.message, "float.to_int: 1e20 is outside the Int range");
     }
 
     #[test]
     fn float_to_int_rejects_negative_out_of_range() {
         let err = to_int(-1.0e20).expect_err("expected out-of-range error");
-        assert!(
-            err.message.contains("out of i64 range"),
-            "error should mention out-of-range, got: {}",
-            err.message
-        );
+        assert_eq!(err.message, "float.to_int: -1e20 is outside the Int range");
     }
 
     #[test]
@@ -395,10 +384,9 @@ mod tests {
         // range. It must be rejected.
         let err = to_int(9_223_372_036_854_775_808.0)
             .expect_err("expected out-of-range for i64::MAX + 1");
-        assert!(
-            err.message.contains("out of i64 range"),
-            "error should mention out-of-range, got: {}",
-            err.message
+        assert_eq!(
+            err.message,
+            "float.to_int: 9.223372036854776e18 is outside the Int range"
         );
     }
 
