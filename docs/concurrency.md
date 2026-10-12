@@ -426,9 +426,10 @@ depends on where that task is at the moment of cancellation:
   What is done in those steps is what gives: a `channel.send` into a
   channel with room or to a receiver that waits, `channel.try_send`, a
   `Send` arm of a `channel.select` that can be done at once; and the
-  `task.join` of a task that has ended. (The `fs` functions, which
-  never wait, are done too: `fs.exists`, `fs.remove`, `fs.rename` and
-  the others.) The side effects of those steps happen. What the task
+  `task.join` of a task that has ended. It can still start a task
+  (`task.spawn`). (The `fs` functions, which never wait, are done too:
+  `fs.exists`, `fs.remove`, `fs.rename` and the others.) The side
+  effects of those steps happen. What the task
   returns or fails with in them changes nothing: the handle keeps the
   cancellation, and a failure is not reported.
 
