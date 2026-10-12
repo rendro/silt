@@ -98,12 +98,12 @@ its own (`float.Empty` is not `int.Empty`).
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(String)` | message | TCP / DNS connect failure |
+| `Connect(String)` | message | no connection was made: refused, no route, no such host |
 | `Tls(String)` | message | TLS handshake / cert failure |
-| `Timeout` | — | request exceeded its deadline |
-| `InvalidUrl(String)` | url | URL did not parse |
-| `InvalidResponse(String)` | message | response violated protocol |
-| `ClosedEarly` | — | peer closed before response completed |
+| `Timeout` | — | one of the request's times passed |
+| `InvalidUrl(String)` | url | the URL cannot be read as one, has no host, or has a scheme other than `http` and `https` |
+| `InvalidResponse(String)` | message | what the server sent is no HTTP |
+| `ClosedEarly` | — | the server went away before the response was complete |
 | `StatusCode(Int, String)` | status, body preview | non-success status |
 | `Other(String)` | message | unclassified transport error |
 

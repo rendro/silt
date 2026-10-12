@@ -60,14 +60,18 @@ not do that conversion for you. `HttpError` implements the built-in
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(msg)` | `String` | TCP / DNS connect failure |
+| `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
-| `Timeout` | — | request exceeded its deadline |
-| `InvalidUrl(url)` | `String` | URL did not parse |
-| `InvalidResponse(msg)` | `String` | response violated protocol |
-| `ClosedEarly` | — | peer closed before response completed |
+| `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
+| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, or has a scheme other than `http` and `https` |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large) |
+| `ClosedEarly` | — | the server went away before the response was complete, head or body |
 | `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
-| `Other(msg)` | `String` | unclassified transport error |
+| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
+
+Which variant a failure is, is decided by the kind of failure the
+transport reports, never by the wording of its message: the message is
+only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
 
 
 ## `http.get`
