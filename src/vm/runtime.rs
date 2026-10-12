@@ -785,6 +785,39 @@ impl Drop for IoOp {
 
 // ── Runtime (shared state) ───────────────────────────────────────
 
+/// What the VM that runs the program's own code has of the program,
+/// for the VMs of its tasks to take. A REPL session's VM takes in a
+/// program for each entry, each with the slots and tables of the
+/// entries before it and its own after them; a task started in an
+/// earlier entry finds here what the later ones added.
+#[derive(Default)]
+pub(crate) struct Newest {
+    /// How often `view` was written. A VM that has the view of this
+    /// count has the newest: it need not take the lock to know.
+    pub(crate) count: std::sync::atomic::AtomicU64,
+    pub(crate) view: parking_lot::Mutex<View>,
+}
+
+/// The values of a program's global slots, and what each slot is.
+#[derive(Clone)]
+pub(crate) struct View {
+    /// The values, each unset until its definition's code has run. There
+    /// may be more slots than the program has definitions: room for
+    /// those of the next REPL entries.
+    pub(crate) slots: Arc<[std::sync::OnceLock<Value>]>,
+    /// What each global slot is, and the slot of each impl method.
+    pub(crate) globals: Arc<crate::bytecode::Globals>,
+}
+
+impl Default for View {
+    fn default() -> Self {
+        View {
+            slots: Arc::from([]),
+            globals: Arc::default(),
+        }
+    }
+}
+
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {
@@ -805,6 +838,12 @@ pub struct Runtime {
     /// The steps the program may still run ([`Vm::set_step_budget`]);
     /// `u64::MAX` while it has no budget.
     pub(crate) steps_left: std::sync::atomic::AtomicU64,
+
+    // ── The program ─────────────────────────────────────────────
+    /// The global slots and the tables of the newest program the VM
+    /// that owns this runtime took in, for the VMs of its tasks
+    /// ([`Vm::look_again`]).
+    pub(crate) newest: Newest,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it

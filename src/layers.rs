@@ -16,6 +16,28 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static COPIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only: how many rows this thread has copied so far to keep its
+/// tables and a VM's global slots: the rows of two layers made one, and
+/// the values of slots moved to an array with more room. What a REPL
+/// entry adds to it does not grow with the session's length.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn rows_copied() -> u64 {
+    COPIED.with(std::cell::Cell::get)
+}
+
+/// Note that `rows` rows were copied ([`rows_copied`]).
+pub(crate) fn count_copied(rows: usize) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    COPIED.with(|copied| copied.set(copied.get() + rows as u64));
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let _ = rows;
+}
+
 /// Add a row to the newest layer of `layers` with `add`, in a layer of
 /// its own (`alone`) if a copy shares that layer, and make one layer of
 /// the last two (`join`) while the older is not more than twice the
@@ -40,6 +62,7 @@ fn add_row<L: Clone>(
     {
         let newer = layers.pop().expect("the newer of two layers");
         let older = layers.pop().expect("the older of two layers");
+        count_copied(len(&older) + len(&newer));
         let mut joined = Arc::unwrap_or_clone(older);
         join(&mut joined, Arc::unwrap_or_clone(newer));
         layers.push(Arc::new(joined));

@@ -184,6 +184,43 @@ fn the_vm_of_a_task_shares_the_global_slots() {
     assert!(std::ptr::eq(slots, Arc::as_ptr(&vm.globals)));
 }
 
+/// The VM of a task finds the slots of a program its VM took in after
+/// the task was started (a later REPL entry's): where its own slots do
+/// not have one, it looks in the newest. A slot that is declared and
+/// not set is not set for the task either.
+#[test]
+fn the_vm_of_a_task_finds_the_slots_of_a_later_program() {
+    fn publish(vm: &mut Vm) {
+        let runtime = vm.runtime.clone();
+        vm.publish(&mut runtime.newest.view.lock());
+    }
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.globals = (0..2).map(|_| std::sync::OnceLock::new()).collect();
+    assert!(vm.set_global(0, Value::Int(1)));
+    publish(&mut vm);
+    let mut task = vm.spawn_child();
+    // The task has the newest: a slot that is not set is not looked
+    // for anywhere else.
+    assert_eq!(task.global_now(1), None);
+    assert!(!task.look_again());
+
+    // A later program: the slots there were, and two more.
+    vm.globals = (vm.globals.iter().cloned())
+        .chain((0..2).map(|_| std::sync::OnceLock::new()))
+        .collect();
+    assert!(vm.set_global(2, Value::Int(3)));
+    publish(&mut vm);
+    assert_eq!(task.global(2), None);
+    assert_eq!(task.global_now(2), Some(&Value::Int(3)));
+    assert!(Arc::ptr_eq(&vm.globals, &task.globals));
+    assert_eq!(task.global(0), Some(&Value::Int(1)));
+    // Declared, not set: for the task as for its VM.
+    assert_eq!((vm.global(3), task.global_now(3)), (None, None));
+    // Set from here on, the task has it without looking again.
+    assert!(vm.set_global(3, Value::Int(4)));
+    assert_eq!(task.global(3), Some(&Value::Int(4)));
+}
+
 #[test]
 fn test_locals() {
     let script = make_function(|e| {

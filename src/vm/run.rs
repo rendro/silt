@@ -437,17 +437,32 @@ impl Vm {
                         let value = value.clone();
                         self.stack.push(value);
                     }
-                    // (The checker orders the top-level `let`s so that
-                    // each is set before anything can read it, and the
-                    // definitions are set before any `let` runs: no
-                    // checked program that is run as a whole comes
-                    // here. A task of an earlier REPL entry does, when
-                    // it runs a closure of a later entry that names
-                    // what that entry defined.)
-                    None => fail!(VmError::type_confusion(format!(
-                        "the global '{}' is read before it is set",
-                        self.global_slots.name(slot)
-                    ))),
+                    // The VM of a task comes here for a slot of a REPL
+                    // entry later than the one it was started in (it
+                    // runs a closure of that entry), and finds it in
+                    // the program's newest slots.
+                    //
+                    // Nothing else comes here: the checker orders the
+                    // top-level `let`s so that each is set before
+                    // anything can read it, and the definitions are
+                    // set before any `let` runs. That holds for a task
+                    // as for the program's own code, since a task has
+                    // the code of a later entry only from that entry's
+                    // code, which ran after what it reads was set. A
+                    // slot that is not set in the newest slots either
+                    // is a bug of silt, and said so.
+                    None => {
+                        save!();
+                        let value = self.global_now(slot).cloned();
+                        load!();
+                        match value {
+                            Some(value) => self.stack.push(value),
+                            None => fail!(VmError::type_confusion(format!(
+                                "the global '{}' is read before it is set",
+                                self.global_slots.name(slot)
+                            ))),
+                        }
+                    }
                 },
                 Instr::SetGlobal { slot } => {
                     let value = peek(&self.stack).clone();
@@ -1146,6 +1161,13 @@ impl Vm {
             .log(depth, caller.function.clone(), caller_ip);
     }
 
+    /// The method of the impl of the trait `trait_index` names for the
+    /// type `ty`, whose name has the id `method`, in this VM's table.
+    fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<Value> {
+        let slot = (self.global_slots).call_method(trait_index, ty, method)?;
+        self.global(slot).cloned()
+    }
+
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
     /// whose name has the id `method`, of the trait `trait_index`
     /// names, for the type of the receiver, the first of the top
@@ -1173,10 +1195,12 @@ impl Vm {
         );
         // The method of an impl is found by three numbers: the trait,
         // the receiver's type, and the name's id. No text is compared.
-        let found = self
-            .global_slots
-            .call_method(trait_index, receiver_type, method)
-            .and_then(|slot| self.global(slot).cloned());
+        let mut found = self.method_of(trait_index, receiver_type, method);
+        // (No impl in this VM's table has the method: a later REPL
+        // entry's may, for the VM of a task of an earlier one.)
+        if found.is_none() && self.look_again() {
+            found = self.method_of(trait_index, receiver_type, method);
+        }
         if let Some(func) = found {
             // In tail position a method that is a closure takes the
             // current frame over, as a tail-called function does.
@@ -1209,9 +1233,9 @@ impl Vm {
         let receiver = self.stack[receiver_slot].clone();
         let slots = self.global_slots.clone();
         // (The compiler checks each function against the globals of
-        // the program it is compiled into. Code of a later REPL entry
-        // that a task of an earlier entry runs is the exception: the
-        // task has the globals of its own entry.)
+        // the program it is compiled into, and the VM of a task that
+        // runs code of a later REPL entry has that entry's by now: the
+        // call found no impl, so the VM has looked for the newest.)
         let Some(method_name) = slots.method_name(method) else {
             return Err(VmError::type_confusion(
                 "the call of a method names a method the program does not have",

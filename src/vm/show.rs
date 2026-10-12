@@ -12,9 +12,16 @@
 
 use std::cell::{Cell, RefCell};
 
+use std::sync::Arc;
+
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
+use crate::bytecode::Globals;
 use crate::value::{Shown, Value};
+
+/// The parts of a value that written `Display` impls show, each with
+/// its type's `display`, in the order the formatter comes to them.
+type Parts = Vec<(Value, Value)>;
 
 /// What is done with the text of a value once it is shown.
 type Then = Box<dyn FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send>;
@@ -23,9 +30,10 @@ type Then = Box<dyn FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send>;
 /// shows.
 struct Showing {
     value: Value,
-    /// Each such part, with its type's `display`, in the order the
-    /// formatter comes to them.
-    parts: Vec<(Value, Value)>,
+    /// The table the parts were found with: the VM may have a newer
+    /// one by the time the impls have run.
+    table: Arc<Globals>,
+    parts: Parts,
     /// What the impls gave for the parts so far.
     texts: Vec<String>,
     /// Whether a call is under way.
@@ -57,7 +65,7 @@ impl Native for Showing {
         let next = Cell::new(0);
         let texts = &self.texts;
         let text = Shown(&self.value, &|part, f| {
-            vm.written_slot(part)?;
+            written_slot(&self.table, part)?;
             let text = &texts[next.get()];
             next.set(next.get() + 1);
             Some(f.write_str(text))
@@ -70,18 +78,18 @@ impl Native for Showing {
     }
 }
 
-impl Vm {
-    /// Where the `display` the program wrote for the type of `value`, a
-    /// record or a variant, is kept.
-    fn written_slot(&self, value: &Value) -> Option<u16> {
-        let ty = match value {
-            Value::Record(record) => record.type_id(),
-            Value::Variant(variant) => variant.type_id(),
-            _ => return None,
-        };
-        self.global_slots.shown(ty)
-    }
+/// Where the `display` the program wrote for the type of `value`, a
+/// record or a variant, is kept, by the table `table`.
+fn written_slot(table: &Globals, value: &Value) -> Option<u16> {
+    let ty = match value {
+        Value::Record(record) => record.type_id(),
+        Value::Variant(variant) => variant.type_id(),
+        _ => return None,
+    };
+    table.shown(ty)
+}
 
+impl Vm {
     /// The `display` the program wrote for the type of `value`.
     ///
     /// An impl of `Display` is written in the module that declares its
@@ -90,7 +98,7 @@ impl Vm {
     /// an impl that is not set yet is a bug of silt, and said so, not
     /// taken for a type without one.
     fn written_display(&self, value: &Value) -> Result<Option<Value>, VmError> {
-        let Some(slot) = self.written_slot(value) else {
+        let Some(slot) = written_slot(&self.global_slots, value) else {
             return Ok(None);
         };
         match self.global(slot).cloned() {
@@ -99,6 +107,37 @@ impl Vm {
                 "the `display` written for '{}' is called before it is set",
                 self.user_facing_type_name(value)
             ))),
+        }
+    }
+
+    /// What the formatter writes for `value`, with nothing for the
+    /// parts a written impl of this VM's table shows; those parts, each
+    /// with its type's `display`, in the order the formatter comes to
+    /// them; and whether a record or variant in the value has no
+    /// written impl in the table.
+    fn parts_shown(&self, value: &Value) -> Result<(String, Parts, bool), VmError> {
+        let parts: RefCell<Parts> = RefCell::new(Vec::new());
+        let unset: RefCell<Option<VmError>> = RefCell::new(None);
+        let unwritten = Cell::new(false);
+        let text = Shown(value, &|part, _| {
+            let display = match self.written_display(part) {
+                Ok(Some(display)) => display,
+                Ok(None) => {
+                    unwritten.set(true);
+                    return None;
+                }
+                Err(error) => {
+                    unset.borrow_mut().get_or_insert(error);
+                    return None;
+                }
+            };
+            parts.borrow_mut().push((part.clone(), display));
+            Some(Ok(()))
+        })
+        .to_string();
+        match unset.into_inner() {
+            Some(error) => Err(error),
+            None => Ok((text, parts.into_inner(), unwritten.get())),
         }
     }
 
@@ -112,34 +151,36 @@ impl Vm {
     ) -> Result<Step, VmError> {
         value.writable()?;
         if !self.global_slots.any_shown() {
-            let text = self.display_value(value);
-            return then(self, text);
+            // No impl in this VM's table. A value that can hold a
+            // record or a variant may be of a later REPL entry, which
+            // may have written one (see `Vm::look_again`).
+            let holds_parts = matches!(
+                value,
+                Value::Record(_)
+                    | Value::Variant(_)
+                    | Value::List(_)
+                    | Value::Tuple(_)
+                    | Value::Map(_)
+                    | Value::Set(_)
+            );
+            if !(holds_parts && self.look_again() && self.global_slots.any_shown()) {
+                let text = self.display_value(value);
+                return then(self, text);
+            }
         }
         // What the formatter writes, with nothing for the parts a
         // written impl shows: complete if there is no such part.
-        let parts: RefCell<Vec<(Value, Value)>> = RefCell::new(Vec::new());
-        let unset: RefCell<Option<VmError>> = RefCell::new(None);
-        let text = Shown(value, &|part, _| {
-            let display = match self.written_display(part) {
-                Ok(display) => display?,
-                Err(error) => {
-                    unset.borrow_mut().get_or_insert(error);
-                    return None;
-                }
-            };
-            parts.borrow_mut().push((part.clone(), display));
-            Some(Ok(()))
-        })
-        .to_string();
-        if let Some(error) = unset.into_inner() {
-            return Err(error);
+        let (mut text, mut parts, unwritten) = self.parts_shown(value)?;
+        // (A part with no impl in this VM's table: as above.)
+        if unwritten && self.look_again() {
+            (text, parts, _) = self.parts_shown(value)?;
         }
-        let parts = parts.into_inner();
         if parts.is_empty() {
             return then(self, text);
         }
         Ok(Step::Run(Box::new(Showing {
             value: value.clone(),
+            table: self.global_slots.clone(),
             parts,
             texts: Vec::new(),
             calling: false,
