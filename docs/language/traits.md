@@ -32,7 +32,7 @@ trait Greet for Shape {
 }
 
 fn main() {
-  println(Circle(5.0).greet()) -- hi from a circle of radius 5
+  println(Circle(5.0).greet()) -- hi from a circle of radius 5.0
 }
 ```
 

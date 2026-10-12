@@ -62,7 +62,7 @@ fn a_float_is_finite_and_has_one_zero() {
     assert!(zero.get().is_sign_positive());
     assert!(negative.expect("a Float").get().is_sign_positive());
     assert_eq!(hash_of(&float(0.0)), hash_of(&float(-0.0)));
-    assert_eq!(format!("{}", float(-0.0)), "0");
+    assert_eq!(format!("{}", float(-0.0)), "0.0");
     for none in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert_eq!(Float::new(none), None);
     }
@@ -81,6 +81,29 @@ fn a_float_is_finite_and_has_one_zero() {
         assert!(float(pair[0]) < float(pair[1]), "{} < {}", pair[0], pair[1]);
         assert_ne!(hash_of(&float(pair[0])), hash_of(&float(pair[1])));
     }
+}
+
+/// A Float's text has a point and no exponent, and a whole Float ends
+/// in `.0`.
+#[test]
+fn a_float_is_written_with_a_point() {
+    for (number, text) in [
+        (1.0, "1.0"),
+        (-3.0, "-3.0"),
+        (0.0, "0.0"),
+        (2.5, "2.5"),
+        (0.1 + 0.2, "0.30000000000000004"),
+        (1e21, "1000000000000000000000.0"),
+        (-1e21, "-1000000000000000000000.0"),
+        (1e-7, "0.0000001"),
+        (9007199254740993.0, "9007199254740992.0"),
+    ] {
+        assert_eq!(format!("{}", float(number)), text);
+        assert_eq!(format!("{:?}", float(number)), text);
+    }
+    let largest = format!("{}", float(f64::MAX));
+    assert_eq!(largest.len(), 311);
+    assert!(largest.starts_with("17976931348623157") && largest.ends_with("0.0"));
 }
 
 #[test]

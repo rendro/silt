@@ -1,0 +1,5 @@
+error[runtime]: main returned Err: 1.0
+ --> main_returned_err_shows_a_whole_float.silt:3:4
+   |
+ 3 | fn main() -> Result(Int, Float) {
+   |    ^^^^ main returned Err: 1.0

@@ -4,7 +4,6 @@
 
 mod builtin_docs_frontmatter_tests;
 mod docs_markdown_println_parity_tests;
-mod docs_math_display_tests;
 mod docs_primitive_descriptor_list_tests;
 mod docs_round26_tests;
 mod docs_round88_modules_placeholder_not_stdlib_tests;

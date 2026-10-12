@@ -73,7 +73,7 @@ let ratio = match total {
 
 Because every `Float` is finite, `==`, ordering, hashing, sets and maps all
 treat floats as ordinary totally ordered values, and `-0.0` is the same value
-as `0.0` (`0.0 * -1.0` prints `0`).
+as `0.0` (`0.0 * -1.0` prints `0.0`).
 
 ## No Negative Indexing
 

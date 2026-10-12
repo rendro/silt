@@ -71,14 +71,23 @@ impl Hash for Float {
     }
 }
 
+/// The text of a Float, wherever one is shown: its digits with a point
+/// among them, and no exponent. A whole Float ends in `.0`, so its text
+/// is never an Int's; a Float of twenty-two digits is written with all
+/// of them. This is the one place that makes the text.
 impl fmt::Display for Float {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        // (Rust writes a whole number without a point, and any other
+        // with one.)
+        match self.0.fract() == 0.0 {
+            true => write!(f, "{}.0", self.0),
+            false => write!(f, "{}", self.0),
+        }
     }
 }
 
 impl fmt::Debug for Float {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        fmt::Display::fmt(self, f)
     }
 }

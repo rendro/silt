@@ -1,0 +1,9 @@
+import io
+
+-- `io.inspect` gives a Float as a program writes it.
+fn main() {
+  println(io.inspect(1.0))
+  println(io.inspect([1.0, 2.5]))
+  println(io.inspect(#{1.0: "a"}))
+  println(io.inspect(("a", 3.0)))
+}

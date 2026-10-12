@@ -3,4 +3,4 @@ inf: invalid digit at byte 0
 NaN: invalid digit at byte 0
 1e400: number too large
 -1e400: number too small
-1e-400: Ok(0)
+1e-400: Ok(0.0)

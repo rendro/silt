@@ -1,0 +1,3 @@
+-- cmd: repl
+-- stdin: 1.0\n[1.0, 2.5]\nlet x = 2.0\nx\nx * x\n(1.0, "a")\n:quit\n
+-- The REPL echoes a whole Float as `println` writes it.

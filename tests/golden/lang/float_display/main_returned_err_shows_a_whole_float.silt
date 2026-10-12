@@ -1,0 +1,5 @@
+-- exit: 1
+-- The error of a `main` that returned `Err` shows the value in it.
+fn main() -> Result(Int, Float) {
+  Err(1.0)
+}

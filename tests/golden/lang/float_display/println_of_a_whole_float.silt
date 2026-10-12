@@ -1,0 +1,18 @@
+import float
+import int
+
+-- A whole Float is written with `.0`, whatever made it; a large one as
+-- its digits and `.0`, never with an exponent.
+fn main() {
+  println(1.0)
+  println(-3.0)
+  println(0.0)
+  println(2.5)
+  println(float.round(2.5))
+  println(int.to_float(3))
+  println(1.5 + 1.5)
+  println(1.0e21)
+  println(-1.0e21)
+  println(1.0e-7)
+  println(0.1 + 0.2)
+}

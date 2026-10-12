@@ -332,3 +332,32 @@ proptest! {
         }
     }
 }
+
+// ── The text of a Float ───────────────────────────────────────────────
+
+/// Any finite number: every exponent is as likely as another, so whole
+/// numbers, fractions, and numbers of hundreds of digits all come up.
+fn arb_finite() -> impl Strategy<Value = f64> {
+    prop::num::f64::NORMAL | prop::num::f64::SUBNORMAL | prop::num::f64::ZERO
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    /// A Float's text is digits with one point among them, behind an
+    /// optional `-`: no exponent, and never the text of an Int. It
+    /// reads back as the same Float.
+    #[test]
+    fn a_float_s_text_has_one_point_and_reads_back(number in arb_finite()) {
+        let float = silt::value::Float::new(number).expect("a finite number");
+        let text = float.to_string();
+        let digits = text.strip_prefix('-').unwrap_or(&text);
+        prop_assert_eq!(digits.matches('.').count(), 1, "{}", &text);
+        prop_assert!(digits.chars().all(|c| c.is_ascii_digit() || c == '.'), "{}", &text);
+        prop_assert!(!digits.starts_with('.') && !digits.ends_with('.'), "{}", &text);
+        prop_assert_eq!(text.parse::<f64>().ok(), Some(float.get()), "{}", &text);
+        if float.get().fract() == 0.0 {
+            prop_assert!(text.ends_with(".0"), "{}", &text);
+        }
+    }
+}
