@@ -137,6 +137,30 @@ jobs:
       - name: cargo test --release (deep values)
         run: cargo test --release --all-features --test lang deep_value_stack_tests
 
+  loop-guard:
+    # The machine code of the instruction loop, in the binary the
+    # releases ship: built as release.yml builds it, with `stable`,
+    # which moves. The binary is stopped in two loops and stepped; a
+    # round must have no load that waits for a store and no more
+    # instructions than its bound. See .github/scripts/loop-guard/.
+    name: Loop guard (release build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: loop-guard
+      - name: cargo build --release (as the release job)
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Count a round of two loops
+        run: bash .github/scripts/loop-guard/run.sh target/x86_64-unknown-linux-gnu/release/silt
+
   test-macos:
     name: Test macOS (${{ matrix.partition }})
     runs-on: macos-latest
