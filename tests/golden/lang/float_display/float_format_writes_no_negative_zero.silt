@@ -5,6 +5,7 @@ import float
 -- its sign.
 fn main() {
   println(float.format(-0.4, 0))
+  println(float.format(-0.1, 0))
   println(float.format(-0.5, 0))
   println(float.format(-0.04, 1))
   println(float.format(-0.6, 0))

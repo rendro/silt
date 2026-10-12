@@ -1,20 +1,32 @@
 import json
 import toml
 
--- A map's key that is a Float is written into JSON and TOML as the
--- Float is shown: the whole one as "1.0", apart from the Int key 1.
+fn toml_of(value) {
+  match toml.stringify(value) {
+    Ok(text) -> print(text)
+    Err(e) -> println("error: {e}")
+  }
+}
+
+-- A map's key that is no String is written into JSON and TOML as it is
+-- shown. So a Float key, and a Float inside a key, is written with its
+-- point: the whole one as "1.0", apart from the Int key 1.
 fn main() {
   let by_float = #{1.0: "a", 2.5: "b"}
   println(json.stringify(by_float))
   println(json.stringify(#{1: "a"}))
-  match toml.stringify(by_float) {
-    Ok(text) -> print(text)
-    Err(e) -> println("error: {e}")
-  }
+  toml_of(by_float)
+  -- A large key is its digits and `.0`.
+  println(json.stringify(#{1.0e21: "large"}))
+  toml_of(#{1.0e21: "large"})
+  -- A key that holds a Float: a tuple, a list, an Option.
+  println(json.stringify(#{(1.0, 2.0): "tuple"}))
+  toml_of(#{(1.0, 2.0): "tuple"})
+  println(json.stringify(#{[1.0]: "list"}))
+  toml_of(#{[1.0]: "list"})
+  println(json.stringify(#{Some(1.0): "some"}))
+  toml_of(#{Some(1.0): "some"})
   -- A Float that is a value is written as each format writes a float.
   println(json.stringify([1.0, 2.5, 1.0e21]))
-  match toml.stringify(#{"whole": 1.0, "large": 1.0e21}) {
-    Ok(text) -> print(text)
-    Err(e) -> println("error: {e}")
-  }
+  toml_of(#{"whole": 1.0, "large": 1.0e21})
 }

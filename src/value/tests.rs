@@ -106,6 +106,30 @@ fn a_float_is_written_with_a_point() {
     assert!(largest.starts_with("17976931348623157") && largest.ends_with("0.0"));
 }
 
+/// A width and an alignment place a Float's text; a precision asks for
+/// its own decimals, as of an `f64`.
+#[test]
+fn a_float_s_text_takes_a_width_and_a_precision() {
+    let (whole, part) = (float(3.0), float(-2.5));
+    let (Value::Float(whole), Value::Float(part)) = (whole, part) else {
+        panic!("two Floats");
+    };
+    assert_eq!(format!("{whole:.2}"), "3.00");
+    assert_eq!(format!("{part:.2}"), "-2.50");
+    assert_eq!(format!("{whole:.0}"), "3");
+    assert_eq!(format!("{whole:>8}"), "     3.0");
+    assert_eq!(format!("{part:>8}"), "    -2.5");
+    assert_eq!(format!("{whole:<8}|"), "3.0     |");
+    assert_eq!(format!("{part:<8}|"), "-2.5    |");
+    assert_eq!(format!("{whole:^7}|"), "  3.0  |");
+    assert_eq!(format!("{whole:*>6}"), "***3.0");
+    assert_eq!(format!("{whole:08.3}"), "0003.000");
+    assert_eq!(format!("{part:08.3}"), "-002.500");
+    // A width the text already fills changes nothing.
+    assert_eq!(format!("{whole:2}"), "3.0");
+    assert_eq!(format!("{whole:?}"), "3.0");
+}
+
 #[test]
 fn hash_eq_int_values() {
     let a = Value::Int(42);

@@ -71,18 +71,38 @@ impl Hash for Float {
     }
 }
 
-/// The text of a Float, wherever one is shown: its digits with a point
-/// among them, and no exponent. A whole Float ends in `.0`, so its text
-/// is never an Int's; a Float of twenty-two digits is written with all
-/// of them. This is the one place that makes the text.
-impl fmt::Display for Float {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Float {
+    /// Write the number `n` as a Float is shown: its digits with a
+    /// point among them, and no exponent. A whole number ends in `.0`,
+    /// so the text is never an Int's; a number of twenty-two digits is
+    /// written with all of them. This is the one place that makes the
+    /// text. (The lexer writes the number of a Float token with it: it
+    /// makes no token of a literal that is not finite.)
+    pub(crate) fn write_text(n: f64, out: &mut impl fmt::Write) -> fmt::Result {
         // (Rust writes a whole number without a point, and any other
         // with one.)
-        match self.0.fract() == 0.0 {
-            true => write!(f, "{}.0", self.0),
-            false => write!(f, "{}", self.0),
+        match n.fract() == 0.0 {
+            true => write!(out, "{n}.0"),
+            false => write!(out, "{n}"),
         }
+    }
+}
+
+/// The text of a Float, wherever one is shown (`Float::write_text`).
+/// A width and an alignment place that text (`{:>8}`); a precision asks
+/// for its own decimals, and the number is written with exactly those
+/// (`{:.2}`), as an `f64` is.
+impl fmt::Display for Float {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.precision().is_some() {
+            return fmt::Display::fmt(&self.0, f);
+        }
+        if f.width().is_none() {
+            return Float::write_text(self.0, f);
+        }
+        let mut text = String::new();
+        Float::write_text(self.0, &mut text)?;
+        f.pad(&text)
     }
 }
 
