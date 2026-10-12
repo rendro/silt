@@ -66,7 +66,6 @@ use std::time::Duration;
 use crate::bytecode::{Function, Globals, VmClosure};
 use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::scheduler::Scheduler;
-use crate::typeinfo::TypeTable;
 use crate::value::Value;
 use runtime::{IoPool, RegexCache, TailCalls};
 
@@ -100,9 +99,6 @@ pub struct Vm {
     /// Which of the views the program's VM has published this VM's
     /// slots and tables are ([`runtime::Newest::count`]).
     view: u64,
-    /// The program's types, by id: the decoders find the record types
-    /// of record fields here.
-    pub(crate) types: Arc<TypeTable>,
 
     // ── Concurrency state ────────────────────────────────────────
     next_channel_id: Arc<AtomicU64>,
@@ -269,6 +265,7 @@ impl Vm {
                 time_slice: Default::default(),
                 steps_left: AtomicU64::new(u64::MAX),
                 newest: Default::default(),
+                types: Default::default(),
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
@@ -281,7 +278,6 @@ impl Vm {
             globals: Arc::from([]),
             global_slots: Arc::new(Globals::default()),
             view: 0,
-            types: Arc::new(TypeTable::default()),
             next_channel_id: Arc::new(AtomicU64::new(0)),
             next_task_id: Arc::new(AtomicU64::new(0)),
             woken: None,
@@ -469,7 +465,7 @@ impl Vm {
     /// slots and impl methods. A REPL entry's program has the slots of
     /// the entries before it too, whose values stay.
     pub(crate) fn load(&mut self, program: &crate::session::Program) {
-        Arc::make_mut(&mut self.types).extend(&program.types);
+        self.runtime.types.lock().extend(&program.types);
         self.global_slots = program.globals.clone();
         // More slots than the VM has room for: twice the room, with
         // the values it has, so that a session's entries copy each
@@ -536,6 +532,18 @@ impl Vm {
         true
     }
 
+    /// The description of the program's type `id`, or of the builtin
+    /// type. (The table is the program's, not this VM's: the VM of a
+    /// task finds a type of a REPL entry later than its own. Its lock
+    /// is held for the lookup, not while anything is built of what is
+    /// found.)
+    pub(crate) fn type_info(
+        &self,
+        id: crate::defs::TypeId,
+    ) -> Option<Arc<crate::typeinfo::TypeInfo>> {
+        self.runtime.types.lock().get(id).cloned()
+    }
+
     /// The value of the global slot `slot`, if it is set.
     pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
         self.globals.get(usize::from(slot))?.get()
@@ -596,7 +604,6 @@ impl Vm {
             globals: self.globals.clone(),
             global_slots: self.global_slots.clone(),
             view: self.view,
-            types: self.types.clone(),
             next_channel_id: self.next_channel_id.clone(),
             next_task_id: self.next_task_id.clone(),
             woken: None,

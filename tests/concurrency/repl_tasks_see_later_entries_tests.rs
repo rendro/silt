@@ -226,6 +226,19 @@ fn a_task_calls_a_method_of_a_trait_of_a_later_entry() {
     );
 }
 
+/// The decoder finds a record type of a later entry by its id, for a
+/// field of a record type of a later entry. It was
+/// `json.parse: unknown record type`.
+#[test]
+fn a_task_decodes_into_record_types_of_a_later_entry() {
+    assert_tasks_see(
+        "import json",
+        "type Inner { n: Int }\ntype Outer { name: String, inner: Inner, all: List(Inner) }",
+        r#"json.parse("\{\"name\": \"a\", \"inner\": \{\"n\": 2\}, \"all\": [\{\"n\": 3\}]\}", Outer)"#,
+        "Ok(Outer {name: a, inner: Inner {n: 2}, all: [Inner {n: 3}]})",
+    );
+}
+
 /// Not a closure but a value of a later entry's type, shown by the
 /// task's own code, which is of an entry before the type and its
 /// `Display` impl.

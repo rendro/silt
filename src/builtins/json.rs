@@ -267,9 +267,7 @@ pub(crate) fn field_record_type(
     caller: &str,
     id: TypeId,
 ) -> Result<Arc<TypeInfo>, VmError> {
-    vm.types
-        .get(id)
-        .cloned()
+    vm.type_info(id)
         .ok_or_else(|| VmError::new(format!("{caller}: unknown record type")))
 }
 

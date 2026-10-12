@@ -844,6 +844,10 @@ pub struct Runtime {
     /// that owns this runtime took in, for the VMs of its tasks
     /// ([`Vm::look_again`]).
     pub(crate) newest: Newest,
+    /// The program's types, by id: the decoders find the record types
+    /// of record fields here ([`Vm::type_info`]). One table for the VM
+    /// and the VMs of its tasks; a REPL entry adds its types to it.
+    pub(crate) types: parking_lot::Mutex<crate::typeinfo::TypeTable>,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it
