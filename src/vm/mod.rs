@@ -519,12 +519,14 @@ impl Vm {
     /// session's code handed it after the entry's program was taken in
     /// (`load`), and the hand-over (a channel's lock, a join) orders
     /// the two: the count read here is then the new one.
-    #[cold]
     pub(crate) fn look_again(&mut self) -> bool {
+        self.runtime.newest.count.load(Ordering::Relaxed) != self.view && self.take_newest()
+    }
+
+    /// Make the program's newest slots and tables this VM's.
+    #[cold]
+    fn take_newest(&mut self) -> bool {
         let newest = &self.runtime.newest;
-        if newest.count.load(Ordering::Relaxed) == self.view {
-            return false;
-        }
         let view = newest.view.lock();
         self.globals = view.slots.clone();
         self.global_slots = view.globals.clone();
