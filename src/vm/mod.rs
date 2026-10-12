@@ -113,13 +113,6 @@ pub struct Vm {
     /// slots and tables, not a copy of them: a task starts with nothing
     /// to copy, however many definitions the program has.
     pub(crate) view: runtime::View,
-    /// Which of the views the program's VM has published `view` is
-    /// ([`runtime::Newest::count`]).
-    view_count: u64,
-    /// The table the VMs of this VM's tasks look their methods up in:
-    /// for the VM of a task its own; for the VM that runs a REPL entry
-    /// what stands of the program whatever becomes of the entry.
-    settled: Arc<Globals>,
 
     // ── Concurrency state ────────────────────────────────────────
     next_channel_id: Arc<AtomicU64>,
@@ -157,6 +150,17 @@ pub struct Vm {
     /// to its order deque on miss; a hit does not re-order, so this
     /// is pure insertion order).
     pub(crate) regex_cache: RegexCache,
+
+    // ── What the loop does not read ─────────────────────────────
+    // (Declared last: the fields above are where they were before
+    // these were added, which the loop's speed was found to hang on.)
+    /// Which of the views the program's VM has published `view` is
+    /// ([`runtime::Newest::count`]).
+    view_count: u64,
+    /// The table the VMs of this VM's tasks look their methods up in:
+    /// for the VM of a task its own; for the VM that runs a REPL entry
+    /// what stands of the program whatever becomes of the entry.
+    settled: Arc<Globals>,
 }
 
 impl Drop for Vm {

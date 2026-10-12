@@ -96,7 +96,23 @@ where
     V: Clone,
     S: BuildHasher + Default + Clone,
 {
+    /// (A table of one layer, which a program's is, is asked as a map
+    /// is: the walk over the layers is kept out of the caller's code.)
+    #[inline]
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Eq + Hash + ?Sized,
+    {
+        match &self.layers[..] {
+            [only] => only.get(key),
+            _ => self.get_layered(key),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_layered<Q>(&self, key: &Q) -> Option<&V>
     where
         K: std::borrow::Borrow<Q>,
         Q: Eq + Hash + ?Sized,
@@ -160,7 +176,18 @@ impl<T: Clone> Rows<T> {
         self.len == 0
     }
 
-    pub fn get(&self, mut index: usize) -> Option<&T> {
+    /// (As [`Layers::get`]: one layer is asked as a list is.)
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<&T> {
+        match &self.layers[..] {
+            [only] => only.get(index),
+            _ => self.get_layered(index),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_layered(&self, mut index: usize) -> Option<&T> {
         for layer in &self.layers {
             match layer.get(index) {
                 Some(row) => return Some(row),
