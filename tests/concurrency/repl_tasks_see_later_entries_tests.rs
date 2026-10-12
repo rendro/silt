@@ -268,6 +268,106 @@ fn a_task_decodes_into_record_types_of_a_later_entry() {
     );
 }
 
+/// The function of a `task.deadline` is a task of its own, started by
+/// whoever calls `task.deadline`: here by a task of an earlier entry,
+/// in a closure of a later one. It starts with what that task has of
+/// the program, which may be the earlier entry's, and finds the later
+/// function, the later impl through an earlier generic function, and
+/// the later `Display` impl as any task does.
+#[test]
+fn the_function_of_a_deadline_sees_later_entries_in_a_task_of_an_earlier_one() {
+    assert_tasks_see(
+        "import time\ntrait N { fn n(self) -> String }\n\
+         fn call(v: a) -> String where a: N { v.n() }",
+        "fn later() -> String { \"fn\" }\n\
+         trait N for Int { fn n(self) -> String { \"int\" } }\n\
+         type Q { q: Int }\n\
+         trait Display for Q { fn display(self) -> String { \"Q!\" } }",
+        "task.deadline(time.ms(60000), { -> \"{later()} {call(5)} {[Q { q: 1 }]}\" })",
+        "Ok(fn int [Q!])",
+    );
+}
+
+/// A deadline whose time is over ends its function after a fixed
+/// amount of further work, wherever that is. Here it is over from the
+/// start, and the function works for longer and longer before it
+/// reads a later entry's function and calls a later entry's impl, the
+/// two places where its VM takes the program's newest definitions: the
+/// end falls before them, on them and behind them. Each call answers
+/// one of two things, the value or `Timeout`; none fails; and what
+/// the task and the session have of the program is whole afterwards.
+#[test]
+fn a_deadline_ends_its_function_around_its_look_for_later_entries() {
+    let rounds = 190..=235;
+    let mut input = format!(
+        "import task
+import channel
+import time
+let jobs = channel.new(64)
+let outs = channel.new(64)
+fn burn(n) {{
+  match n {{
+    0 -> 0
+    _ -> burn(n - 1)
+  }}
+}}
+trait N {{ fn n(self) -> String }}
+fn call(v: a) -> String where a: N {{ v.n() }}
+fn work(left) {{
+  match left {{
+    0 -> ()
+    _ -> match channel.receive(jobs) {{
+      channel.Message(job) -> {{
+        channel.send(outs, job())
+        work(left - 1)
+      }}
+      _ -> ()
+    }}
+  }}
+}}
+let worker = task.spawn {{ -> work({}) }}
+fn later() -> String {{ \"fn\" }}
+trait N for Int {{ fn n(self) -> String {{ \"int\" }} }}
+",
+        rounds.clone().count() + 1
+    );
+    for n in rounds.clone() {
+        input += &format!(
+            "channel.send(jobs, {{ -> task.deadline(time.ms(0), {{ -> {{
+  let burned = burn({n})
+  \"{{later()}} {{call(burned)}}\"
+}} }}) }})
+channel.receive(outs)
+"
+        );
+    }
+    input +=
+        "channel.send(jobs, { -> task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" }) })
+channel.receive(outs)
+task.join(worker)
+task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
+";
+    for slice in [Slice::Whole, Slice::OneStep] {
+        let (output, errors) = repl_beside(&[], &input, slice);
+        assert_eq!(errors, "", "{slice:?}\n{output}");
+        let answers: Vec<&str> = output.lines().collect();
+        let (swept, rest) = answers.split_at(rounds.clone().count());
+        let in_time = "Message(Ok(fn int))";
+        let ended = "Message(Err(the function was ended by its deadline))";
+        // In time first, ended from some amount of work on, and
+        // nothing else.
+        let first_ended = (swept.iter().position(|answer| *answer == ended))
+            .unwrap_or_else(|| panic!("{slice:?}: no function was ended: {swept:?}"));
+        assert!(first_ended > 0, "{slice:?}: every function was ended");
+        assert!(
+            swept[..first_ended].iter().all(|answer| *answer == in_time)
+                && swept[first_ended..].iter().all(|answer| *answer == ended),
+            "{slice:?}: {swept:?}"
+        );
+        assert_eq!(rest, [in_time, "Ok(fn int)"], "{slice:?}");
+    }
+}
+
 /// Not a closure but a value of a later entry's type, shown by the
 /// task's own code, which is of an entry before the type and its
 /// `Display` impl.
