@@ -1,0 +1,8 @@
+(?P<n>a)(?P<n>b): 16 characters, at 12 `n`: duplicate capture group name
+(?P<é>a)ü(?P<é>b): 17 characters, at 13 `é`: duplicate capture group name
+(?ii)a: 6 characters, at 3 `i`: duplicate flag
+(?i-i)a: 7 characters, at 4 `i`: duplicate flag
+(?i--i)a: 8 characters, at 4 `-`: flag negation operator repeated
+a[z-a]b: 7 characters, at 2 `z`: invalid character class range, the start must be <= the end
+(?P<n: 5 characters, at 5 ``: unclosed capture group name
+é\x: 3 characters, at 3 ``: incomplete escape sequence, reached end of pattern prematurely
