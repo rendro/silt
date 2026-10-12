@@ -1,0 +1,9 @@
+-- cmd: repl
+-- stdin: import list\nlet f = { y -> y / 0 }\nf(1)\nfn h(x) { x / 0 }\nlist.map([1]) { y -> h(y) + 1 }\n:quit\n
+-- stderr-contains:   -> closure in f  at <repl:2>:1:16
+-- stderr-contains:   -> <repl:3>  at <repl:3>:1:1
+-- stderr-contains:   -> h  at <repl:4>:1:11
+-- stderr-contains:   -> closure in <repl:5>  at <repl:5>:1:22
+-- stderr-contains:   -> <repl:5>  at <repl:5>:1:1
+-- In the REPL a closure in a `let` is named after the binding, and a
+-- closure in an entry that is an expression after the entry.

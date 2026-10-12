@@ -1,0 +1,25 @@
+-- exit: 1
+-- A closure in a method is named after the method as the method's own
+-- frame is: `closure in Half.size`, `closure in Sized.twice`.
+type Half {
+  n: Int,
+}
+
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int {
+    let double = { n -> n + self.size() }
+    double(1) + 0
+  }
+}
+
+trait Sized for Half {
+  fn size(self) -> Int {
+    let halve = { n -> n / (n - n) }
+    halve(self.n) + 0
+  }
+}
+
+fn main() {
+  println(Half { n: 4 }.twice())
+}

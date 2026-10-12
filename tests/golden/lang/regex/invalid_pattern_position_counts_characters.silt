@@ -1,0 +1,31 @@
+import regex
+import string
+
+-- The position of `InvalidPattern` counts characters from 0, as
+-- `string.slice` does: the slice at the position is the character the
+-- error is about, whatever the characters in front of it take in bytes.
+fn show(pattern) {
+  match regex.is_match("x", pattern) {
+    Err(regex.InvalidPattern(why, at)) -> {
+      let found = string.slice(pattern, at, at + 1)
+      println("{string.length(pattern)} characters, at {at} `{found}`: {why}")
+    }
+    other -> println(other)
+  }
+}
+
+fn main() {
+  -- ASCII.
+  show("abc(")
+  show("ab[c")
+  -- Characters of two bytes in front of the fault.
+  show("ééé(")
+  show("é[z-a]")
+  show("ñ(?z)ü")
+  -- A character of four bytes in front of it.
+  show("a😀b(")
+  show("😀😀x(?z)")
+  -- A fault at the first character, and one behind the last.
+  show("(é")
+  show("é\\")
+}

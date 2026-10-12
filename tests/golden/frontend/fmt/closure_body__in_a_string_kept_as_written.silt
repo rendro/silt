@@ -1,0 +1,20 @@
+-- cmd: fmt
+-- A closure in the hole of a string loses the braces around its body
+-- like any other. A string that is kept as it is written (a hole with
+-- a comment, a hole that cannot be on one line, a line break in the
+-- string) keeps them, in every hole.
+import list
+
+fn main() {
+  let short = "{list.map([1], { x -> { x + 1 } })} and {list.map([2]) { x -> { } }}"
+  let nested = "{list.map([1], { x -> { "{x}" } })}"
+  let comment = "{list.map([1], { x -> { {- one more -} x + 1 } })}"
+  let other_hole = "{list.map([1], { x -> {- one more -} x + 1 })} and {list.map([2]) { x -> { x } }}"
+  let line_break = "{list.map([1], { x -> { -- one more
+    x + 1 } })}"
+  let statements = "{list.map([1], { x -> {
+    let y = x
+    y + 1 } })}"
+  let three_lines = "{list.map([1]) { x -> { let y = x } }}"
+  println((short, nested, comment, other_hole, line_break, statements, three_lines))
+}

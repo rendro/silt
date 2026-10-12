@@ -1,0 +1,12 @@
+-- cmd: disasm
+-- The disassembler heads a closure's code with the name a call stack
+-- gives it, and names it so where it is a constant.
+-- stdout-contains: == closure in main (arity=1, upvalues=0) ==
+-- stdout-contains: ; <fn:closure in main>
+-- stdout-contains: == closure in top (arity=1, upvalues=0) ==
+let top = { y -> y + 1 }
+
+fn main() {
+  let f = { x -> x * 2 }
+  println(f(top(1)))
+}

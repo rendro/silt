@@ -1,0 +1,16 @@
+-- exit: 1
+-- A tail call replaces its caller's frame, and the call stack still
+-- names the caller: a closure like a function. `run` ends by calling
+-- its closure, the closure by calling `fail`.
+fn fail(x) {
+  x / 0
+}
+
+fn run(x) {
+  let f = { y -> fail(y) }
+  f(x)
+}
+
+fn main() {
+  println(run(1))
+}

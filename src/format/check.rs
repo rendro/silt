@@ -23,7 +23,12 @@
 //!     declaration comes first;
 //!   * a pattern alternative in parentheses inside another one,
 //!     `(a | b) | c`, is printed as `a | b | c`, so alternatives are
-//!     written flat.
+//!     written flat;
+//!   * a closure's body in braces of its own, `{ x -> { a } }`, is
+//!     printed without them, `{ x -> a }`: a block of one expression
+//!     that is the body of a closure is compared as that expression (a
+//!     block of statements there is the same tree with the braces and
+//!     without).
 
 use std::fmt::Write as _;
 
@@ -1153,6 +1158,14 @@ impl ShapeWriter {
             ExprKind::Lambda { params, body } => {
                 self.open("lambda");
                 self.params(params);
+                // A body that is a block of one expression is that
+                // expression in braces of its own.
+                let mut body: &Expr = body;
+                while let ExprKind::Block(stmts) = &body.kind
+                    && let [Stmt::Expr(inner)] = stmts.as_slice()
+                {
+                    body = inner;
+                }
                 self.expr(body);
             }
             ExprKind::RecordCreate {

@@ -1,0 +1,9 @@
+error[runtime]: joined task failed: division by zero
+ --> closure_frames__a_joined_task_names_its_closure.silt:7:3
+   |
+ 7 |   n / 0
+   |   ^^^^^ joined task failed: division by zero
+
+call stack:
+  -> work  at closure_frames__a_joined_task_names_its_closure.silt:7:3
+  -> closure in main  at closure_frames__a_joined_task_names_its_closure.silt:11:27

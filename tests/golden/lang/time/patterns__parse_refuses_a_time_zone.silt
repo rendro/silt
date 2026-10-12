@@ -1,0 +1,12 @@
+import time
+
+-- `time.parse` and `time.parse_date` refuse the pattern their formats
+-- refuse: a specifier of a time zone. No offset is read and dropped.
+fn main() {
+  println(time.parse("2026-10-12 07:30:00 +0200", "%Y-%m-%d %H:%M:%S %z"))
+  println(time.parse("2026-10-12 07:30:00 +02:00", "%Y-%m-%d %H:%M:%S %:z"))
+  println(time.parse("2026-10-12 07:30:00 UTC", "%Y-%m-%d %H:%M:%S %Z"))
+  println(time.parse("2026-10-12T07:30:00+02:00", "%+"))
+  println(time.parse_date("2026-10-12 +0200", "%Y-%m-%d %z"))
+  println(time.parse("2026-10-12 07:30:00", "%Y-%m-%d %H:%M:%S"))
+}

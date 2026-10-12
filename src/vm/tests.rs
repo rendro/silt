@@ -2997,7 +2997,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 2:10; <lambda> 2:10; main 8:11; <script> 4:1"
+            "division by zero at 2:10; closure in make 2:10; main 8:11; <script> 4:1"
         );
         let source = "\
 fn main() {
@@ -3080,7 +3080,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 5:13; <lambda> 5:13; main 4:12; <script> 2:1"
+            "division by zero at 5:13; closure in main 5:13; main 4:12; <script> 2:1"
         );
         let source = "\
 import list
@@ -3095,7 +3095,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "integer overflow: 4611686018427387904 * 2 at 3:3; step 3:3; <lambda> 7:44; main 7:15; <script> 5:1"
+            "integer overflow: 4611686018427387904 * 2 at 3:3; step 3:3; closure in main 7:44; main 7:15; <script> 5:1"
         );
     }
 
@@ -3376,7 +3376,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 3:3; work 3:3; <lambda> 6:27"
+            "joined task failed: division by zero at 3:3; work 3:3; closure in main 6:27"
         );
     }
 
@@ -3422,7 +3422,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "division by zero at 5:3; slow 5:3; <lambda> 8:46; main 8:11; <script> 7:1"
+            "division by zero at 5:3; slow 5:3; closure in main 8:46; main 8:11; <script> 7:1"
         );
         // The same from a task: the join's error has the stack of
         // the function and of the task that set the deadline.
@@ -3440,7 +3440,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 5:3; slow 5:3; <lambda> 8:62; <lambda> 8:27"
+            "joined task failed: division by zero at 5:3; slow 5:3; closure in main 8:62; closure in main 8:27"
         );
     }
 
