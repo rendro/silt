@@ -179,6 +179,13 @@ impl Pipe {
         }
     }
 
+    /// Whether this is a stage whose task was cancelled: whoever read
+    /// its output reads no more.
+    fn stopped(&self) -> bool {
+        let cancelled = |handle: &Arc<TaskHandle>| handle.is_cancelled();
+        self.handle.as_ref().is_some_and(cancelled)
+    }
+
     /// Nobody reads the output any more, and the pipe has a value for
     /// it: the pipe is over before its end. One on a connection shuts
     /// the connection down, as one that is stopped in a wait does
@@ -223,6 +230,13 @@ impl Native for Pipe {
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
+                // A stage that was stopped (nobody reads its output any
+                // more) takes nothing more from its input, though its
+                // task still runs for some steps.
+                Next::Take(_) | Next::TakeAny if self.stopped() => {
+                    self.cut_short(vm);
+                    return Ok(Step::Done(Value::Unit));
+                }
                 Next::Take(index) => {
                     let input = &self.inputs[index];
                     match input.try_receive(vm.scheduler().wake()) {
@@ -1289,5 +1303,48 @@ mod tests {
         until("the connection was left open", || {
             stopped.load(Ordering::SeqCst)
         });
+    }
+
+    /// A stage that was stopped takes nothing more from its input: a
+    /// cancelled task still runs for some steps, and the stage of one
+    /// that came to take its next element there, which lies ready,
+    /// leaves it where it is and ends, with its output closed.
+    #[test]
+    fn a_stage_that_was_stopped_takes_nothing_more() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let wake = vm.scheduler().clone();
+        let input = Channel::new(vm.next_channel_id(), 4);
+        for item in 0..3 {
+            let sent = input.try_send(Value::Int(item), wake.wake());
+            assert!(matches!(sent, TrySend::Sent));
+        }
+        let stage = |vm: &mut Vm, stopped: bool| {
+            let out = Channel::new(vm.next_channel_id(), DEFAULT_CAPACITY);
+            let handle = Arc::new(TaskHandle::new(vm.next_task_id()));
+            if stopped {
+                handle.cancel(wake.wake());
+            }
+            // What `stream.filter` with a predicate that is never true
+            // does: take, call, take.
+            let mut pipe = Pipe::new("test.stage", vec![input.clone()], |got| {
+                Ok(match got {
+                    Got::Start | Got::Returned(_) => Next::Take(0),
+                    Got::Value(_, v) => Next::Call(Value::Unit, vec![v]),
+                    _ => Next::Done(Value::Unit),
+                })
+            });
+            pipe.out = Some(out.clone());
+            pipe.handle = Some(handle);
+            (pipe.resume(vm, Value::Unit), out)
+        };
+        let (step, out) = stage(&mut vm, true);
+        assert!(matches!(step, Ok(Step::Done(Value::Unit))));
+        assert_eq!(input.len(), 3, "a stopped stage took an element");
+        assert!(out.is_closed());
+        // (One that was not stopped takes the first and calls with it.)
+        let (step, out) = stage(&mut vm, false);
+        assert!(matches!(step, Ok(Step::Call { .. })));
+        assert_eq!(input.len(), 2);
+        assert!(!out.is_closed());
     }
 }

@@ -1317,6 +1317,17 @@ impl crate::vm::Native for Serve {
             }
             ServeState::Accepting(op) => {
                 vm.woken()?;
+                // A server whose task was cancelled takes no connection
+                // more, though the task still runs for some steps: the
+                // one its accept was given is left with the operation,
+                // which hands it back to the listener for the next
+                // accept or the next server. The task ends in the wait
+                // it begins here.
+                let cancelled = |flag: &Arc<AtomicBool>| flag.load(Ordering::SeqCst);
+                if vm.cancelled.as_ref().is_some_and(cancelled) {
+                    drop(op);
+                    return Ok(Step::Park(Wait::new(vec![])));
+                }
                 let accepted = op.take();
                 drop(op);
                 let stream = match &accepted {
@@ -1576,6 +1587,67 @@ mod http_response_tests {
                 err.message
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod serve_tests {
+    use super::*;
+    use crate::runtime::sync::Outcome;
+    use crate::vm::Native;
+    use std::time::Instant;
+
+    /// A server whose task was cancelled just as its accept was given
+    /// a connection takes nothing: the task still runs for some steps,
+    /// and a server that took the connection then would start a task
+    /// for it and end, and the client would find its connection closed.
+    /// The connection stays with the listener, for the next accept or
+    /// the next server; no task is started for it.
+    #[test]
+    fn a_cancelled_server_leaves_an_accepted_connection_to_the_listener() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let bound = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = bound.local_addr().expect("its address");
+        let listener = Arc::new(TcpListenerHandle::new(0, bound));
+        let flag = Arc::new(AtomicBool::new(false));
+        let token = listener
+            .serve(Some(flag.clone()))
+            .expect("nobody serves it");
+        // The server's accept is given a client's connection.
+        let op = super::super::tcp::accept_op(&mut vm, &listener, true);
+        let _client = std::net::TcpStream::connect(addr).expect("a connection");
+        let limit = Instant::now() + Duration::from_secs(10);
+        while op.cell.get().is_none() {
+            assert!(Instant::now() < limit, "the accept did not return");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let server = Arc::new(Server {
+            handler: Value::Unit,
+            owner: 0,
+            handlers: AtomicUsize::new(0),
+            bodies: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+        });
+        let mut serve = Serve {
+            server: server.clone(),
+            listener: listener.clone(),
+            token,
+            scheduler: Arc::downgrade(vm.scheduler()),
+            state: ServeState::Accepting(op),
+            failing: false,
+        };
+        // The cancel comes before the task runs again.
+        flag.store(true, Ordering::SeqCst);
+        vm.cancelled = Some(flag);
+        vm.woken = Some(Fired::Arm(0, Outcome::Done));
+        let step = serve.resume(&mut vm, Value::Unit);
+        assert!(matches!(step, Ok(Step::Park(_))), "the server went on");
+        let started = server.conns.lock().as_ref().map(HashMap::len);
+        assert_eq!(started, Some(0), "a task was started for the connection");
+        assert!(
+            listener.take_kept().is_some(),
+            "the connection is not the listener's"
+        );
     }
 }
 
