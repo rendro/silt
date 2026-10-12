@@ -4411,3 +4411,194 @@ mod abandon {
         assert_eq!(abandoned.load(Ordering::SeqCst), 1);
     }
 }
+
+/// A push builds its value in its slot of the stack and makes room
+/// first (`push_with` in run.rs). A VM's stack starts without room and
+/// doubles, so a run of pushes of one form crosses its capacity
+/// several times at a push of exactly that form; one that found no
+/// room would panic.
+mod pushes_that_make_room {
+    use super::*;
+    use crate::bytecode::VmClosure;
+
+    /// More than the stack holds after eight doublings.
+    const COUNT: usize = 300;
+
+    fn closure() -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+            upvalues: vec![],
+        }))
+    }
+
+    /// A value of every sort the instruction loop builds in place (a
+    /// number, a Bool, unit, a closure), and three of the kinds it
+    /// clones and moves.
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Unit,
+            closure(),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::tuple(vec![float(0.5), Value::Bool(false)]),
+        ]
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// Emit `before`, then `push` `COUNT` times, then a list of what
+    /// was pushed, which the function returns.
+    fn listing(e: &mut Emitter, before: impl FnOnce(&mut Emitter), push: impl Fn(&mut Emitter)) {
+        before(e);
+        for _ in 0..COUNT {
+            push(e);
+        }
+        e.emit(Asm::MakeList { count: COUNT }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+    }
+
+    /// The values of the list `value`, which are `COUNT` of `expected`.
+    fn all_are(value: Value, expected: &Value) {
+        let Value::List(list) = value else {
+            panic!("a list, not {value:?}")
+        };
+        assert_eq!(list.len(), COUNT);
+        for pushed in list.iter() {
+            assert!(same(&pushed, expected), "{pushed:?} is not {expected:?}");
+        }
+    }
+
+    #[test]
+    fn a_constant_of_every_kind() {
+        for sample in samples() {
+            let script = make_function(|e| {
+                let k = e.constant(sample.clone(), span()).unwrap();
+                listing(e, |_| {}, |e| e.emit(Asm::Constant { k }, span()).unwrap());
+            });
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &sample,
+            );
+        }
+    }
+
+    #[test]
+    fn true_false_and_unit() {
+        for (asm, value) in [
+            (Asm::True, Value::Bool(true)),
+            (Asm::False, Value::Bool(false)),
+            (Asm::Unit, Value::Unit),
+        ] {
+            let script =
+                make_function(|e| listing(e, |_| {}, |e| e.emit(asm.clone(), span()).unwrap()));
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &value,
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_of_every_kind() {
+        for sample in samples() {
+            let script = make_function(|e| {
+                let k = e.constant(sample.clone(), span()).unwrap();
+                listing(
+                    e,
+                    |e| e.emit(Asm::Constant { k }, span()).unwrap(),
+                    |e| e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap(),
+                );
+            });
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &sample,
+            );
+        }
+    }
+
+    #[test]
+    fn a_global_of_every_kind() {
+        for sample in samples() {
+            let script = make_function(|e| {
+                let k = e.constant(sample.clone(), span()).unwrap();
+                listing(
+                    e,
+                    |e| {
+                        e.emit(Asm::Constant { k }, span()).unwrap();
+                        e.emit(Asm::SetGlobal { slot: 0 }, span()).unwrap();
+                        e.emit(Asm::Pop, span()).unwrap();
+                    },
+                    |e| e.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap(),
+                );
+            });
+            let mut vm = Vm::new(crate::HostIo::process());
+            vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
+            all_are(vm.run(script).unwrap(), &sample);
+        }
+    }
+
+    #[test]
+    fn an_upvalue_of_every_kind() {
+        for sample in samples() {
+            let mut inner = Emitter::new("inner".to_string(), 0, span()).unwrap();
+            listing(
+                &mut inner,
+                |_| {},
+                |e| e.emit(Asm::GetUpvalue { index: 0 }, span()).unwrap(),
+            );
+            let inner = Value::VmClosure(Arc::new(VmClosure {
+                function: Arc::new(inner.finish(1).unwrap_or_else(|e| panic!("{e:?}"))),
+                upvalues: vec![sample.clone()],
+            }));
+            let script = make_function(|e| {
+                let k = e.constant(inner, span()).unwrap();
+                e.emit(Asm::Constant { k }, span()).unwrap();
+                e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &sample,
+            );
+        }
+    }
+
+    /// The stack keeps what was pushed before it grew: values of every
+    /// kind in turn, pushed past eight doublings, come back in order.
+    #[test]
+    fn what_was_pushed_before_the_stack_grew_is_kept() {
+        let samples = samples();
+        let script = make_function(|e| {
+            let constants: Vec<_> = samples
+                .iter()
+                .map(|sample| e.constant(sample.clone(), span()).unwrap())
+                .collect();
+            for i in 0..COUNT {
+                let k = constants[i % constants.len()];
+                e.emit(Asm::Constant { k }, span()).unwrap();
+            }
+            e.emit(Asm::MakeList { count: COUNT }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let Value::List(list) = Vm::new(crate::HostIo::process()).run(script).unwrap() else {
+            panic!("a list")
+        };
+        assert_eq!(list.len(), COUNT);
+        for (i, pushed) in list.iter().enumerate() {
+            let expected = &samples[i % samples.len()];
+            assert!(
+                same(&pushed, expected),
+                "{i}: {pushed:?} is not {expected:?}"
+            );
+        }
+    }
+}

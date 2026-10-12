@@ -8,7 +8,7 @@ use crate::builtins::registry::registry;
 use crate::bytecode::{Chunk, Instr, Op, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{List, Record, Value};
+use crate::value::{Float, List, Record, Value};
 
 use super::arithmetic::{arithmetic, check_same_type, ordering};
 use super::calls::Entered;
@@ -193,6 +193,129 @@ fn put(slot: &mut Value, value: Value) {
     }
 }
 
+// A new value is written where it goes, and a push makes room first.
+// A Value is 40 bytes. One that was just written in two smaller stores
+// (its tag, its number) and is then read back in 16-byte pieces, as a
+// move of the whole value reads it, makes the processor wait for the
+// stores: 12 to 14 cycles each time. (Measured in the pull request
+// that brought this in, 2026-10-12.)
+
+/// A value as the instructions that copy one sort it: a number, a Bool
+/// or unit, which owns nothing and is built where it goes; a closure,
+/// which is one pointer and is built where it goes too; a value of any
+/// other kind, which is cloned and moved.
+enum Sort<'a> {
+    Int(i64),
+    Float(Float),
+    Bool(bool),
+    Unit,
+    Closure(&'a Arc<VmClosure>),
+    Other(&'a Value),
+}
+
+/// The [`Sort`] of `value`. (The kinds are named: one that is added
+/// later does not compile until it is placed here.)
+#[inline(always)]
+fn sort(value: &Value) -> Sort<'_> {
+    match value {
+        Value::Int(n) => Sort::Int(*n),
+        Value::Float(f) => Sort::Float(*f),
+        Value::Bool(b) => Sort::Bool(*b),
+        Value::Unit => Sort::Unit,
+        Value::VmClosure(closure) => Sort::Closure(closure),
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => Sort::Other(value),
+    }
+}
+
+/// Make room in `stack` for one more. Rare, and so a call.
+#[cold]
+#[inline(never)]
+fn grow<T>(stack: &mut Vec<T>) {
+    stack.reserve(1);
+}
+
+/// Push what `make` builds: it is built in its slot of `stack`. (A
+/// plain `Vec::push` builds its value somewhere else and copies it,
+/// because the value has to outlive the call that makes room. Here the
+/// room is made first, and the compiler sees that the push needs none.)
+#[inline(always)]
+pub(super) fn push_with<T>(stack: &mut Vec<T>, make: impl FnOnce() -> T) {
+    if stack.len() == stack.capacity() {
+        grow(stack);
+    }
+    if stack.len() < stack.capacity() {
+        stack.push(make());
+    } else {
+        unreachable!("`grow` made room for one more")
+    }
+}
+
+// The five functions below are not inlined into the loop. Inlined there,
+// rustc 1.99.0 calls `Vec::push_mut` out of line and the value is built
+// somewhere else again and copied (measured 2026-10-12).
+
+#[inline(never)]
+fn push_int(stack: &mut Vec<Value>, n: i64) {
+    push_with(stack, || Value::Int(n));
+}
+
+#[inline(never)]
+fn push_float(stack: &mut Vec<Value>, f: Float) {
+    push_with(stack, || Value::Float(f));
+}
+
+#[inline(never)]
+fn push_bool(stack: &mut Vec<Value>, b: bool) {
+    push_with(stack, || Value::Bool(b));
+}
+
+#[inline(never)]
+fn push_unit(stack: &mut Vec<Value>) {
+    push_with(stack, || Value::Unit);
+}
+
+#[inline(never)]
+fn push_closure(stack: &mut Vec<Value>, closure: Arc<VmClosure>) {
+    push_with(stack, move || Value::VmClosure(closure));
+}
+
+/// Push a copy of the value in the place `$value`, for the
+/// instructions that read a slot, a constant or a global.
+macro_rules! push_copy {
+    ($stack:expr, $value:expr) => {
+        match sort(&$value) {
+            Sort::Int(n) => push_int(&mut $stack, n),
+            Sort::Float(f) => push_float(&mut $stack, f),
+            Sort::Bool(b) => push_bool(&mut $stack, b),
+            Sort::Unit => push_unit(&mut $stack),
+            Sort::Closure(closure) => {
+                let closure = closure.clone();
+                push_closure(&mut $stack, closure);
+            }
+            Sort::Other(value) => {
+                let value = value.clone();
+                $stack.push(value);
+            }
+        }
+    };
+}
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -368,10 +491,10 @@ impl Vm {
             let (instr, next) = decode(code, ip).expect("verified code decodes");
             ip = next;
             match instr {
-                Instr::Constant { k } => self.stack.push(copy(chunk.constant(k))),
-                Instr::Unit => self.stack.push(Value::Unit),
-                Instr::True => self.stack.push(Value::Bool(true)),
-                Instr::False => self.stack.push(Value::Bool(false)),
+                Instr::Constant { k } => push_copy!(self.stack, *chunk.constant(k)),
+                Instr::Unit => push_unit(&mut self.stack),
+                Instr::True => push_bool(&mut self.stack, true),
+                Instr::False => push_bool(&mut self.stack, false),
                 Instr::Add => arithmetic!(Op::Add),
                 Instr::Sub => arithmetic!(Op::Sub),
                 Instr::Mul => arithmetic!(Op::Mul),
@@ -504,19 +627,13 @@ impl Vm {
                     self.stack.truncate(start);
                     self.stack.push(Value::String(result.into()));
                 }
-                Instr::GetLocal { slot } => {
-                    let value = copy(&self.stack[base + slot]);
-                    self.stack.push(value);
-                }
+                Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {
                     let value = copy(peek(&self.stack));
                     put(&mut self.stack[base + slot], value);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
-                    Some(value) => {
-                        let value = value.clone();
-                        self.stack.push(value);
-                    }
+                    Some(value) => push_copy!(self.stack, *value),
                     // (Not set in this VM's slots: see the function.)
                     None => {
                         let newest = &self.runtime.newest;
@@ -536,7 +653,7 @@ impl Vm {
                     }
                     load!();
                 }
-                Instr::GetUpvalue { index } => self.stack.push(copy(&closure.upvalues[index])),
+                Instr::GetUpvalue { index } => push_copy!(self.stack, closure.upvalues[index]),
                 Instr::Call { argc } => {
                     let func_slot = self.stack.len() - 1 - argc;
                     let callee = self.stack[func_slot].clone();
