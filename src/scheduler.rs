@@ -291,6 +291,10 @@ struct Inner {
     /// builtin asks, and reads this without a lock.)
     #[cfg(any(test, feature = "test-hooks"))]
     panic_in_a_builtin: AtomicBool,
+    /// Test-only: the same for the next call a worker makes
+    /// ([`PanicAt::BuiltinOfATask`]).
+    #[cfg(any(test, feature = "test-hooks"))]
+    panic_in_a_builtin_of_a_task: AtomicBool,
 }
 
 /// The panic of a thread of the runtime ([`Inner::fail`]).
@@ -332,6 +336,10 @@ pub enum PanicAt {
     /// it. This one is no panic of the runtime: it is the error of
     /// the call, as a panic of a builtin's own code would be.
     Builtin,
+    /// The same inside the next call of a builtin that a worker
+    /// makes: in a spawned task. (The first call of a builtin in any
+    /// program is on the program's own thread.)
+    BuiltinOfATask,
 }
 
 /// The tasks that wait for a worker.
@@ -488,6 +496,8 @@ impl Scheduler {
                 panic_at: Mutex::new(Vec::new()),
                 #[cfg(any(test, feature = "test-hooks"))]
                 panic_in_a_builtin: AtomicBool::new(false),
+                #[cfg(any(test, feature = "test-hooks"))]
+                panic_in_a_builtin_of_a_task: AtomicBool::new(false),
             }
         });
         Scheduler {
@@ -883,6 +893,9 @@ impl Scheduler {
     pub(crate) fn panic_for_test(&self, at: PanicAt) {
         match at {
             PanicAt::Builtin => (self.inner.panic_in_a_builtin).store(true, Ordering::SeqCst),
+            PanicAt::BuiltinOfATask => {
+                (self.inner.panic_in_a_builtin_of_a_task).store(true, Ordering::SeqCst)
+            }
             at => self.inner.panic_at.lock().push(at),
         }
     }
@@ -895,6 +908,13 @@ impl Scheduler {
         let asked = &self.inner.panic_in_a_builtin;
         if asked.load(Ordering::Relaxed) && asked.swap(false, Ordering::SeqCst) {
             panic!("a panic made for a test: {:?}", PanicAt::Builtin);
+        }
+        let asked = &self.inner.panic_in_a_builtin_of_a_task;
+        if asked.load(Ordering::Relaxed)
+            && thread::current().name() == Some("silt-worker")
+            && asked.swap(false, Ordering::SeqCst)
+        {
+            panic!("a panic made for a test: {:?}", PanicAt::BuiltinOfATask);
         }
     }
 
@@ -915,10 +935,11 @@ impl Scheduler {
 }
 
 thread_local! {
-    /// Whether a panic that reaches the top of this thread is one of
-    /// silt's own code: the command's own thread ([`exit_on_panic`])
-    /// and the threads of a runtime (a worker, the timer's thread, a
-    /// thread of the I/O pool; [`a_thread_of_the_runtime`]).
+    /// Whether a panic raised on this thread, outside every catch of
+    /// a call's panic, is one of silt's own code: the command's own
+    /// thread ([`exit_on_panic`]) and the threads of a runtime (a
+    /// worker, the timer's thread, a thread of the I/O pool;
+    /// [`a_thread_of_the_runtime`]).
     static ITS_PANICS_ARE_SILTS: Cell<bool> = const { Cell::new(false) };
     /// How many catches that make a panic the error of a call
     /// ([`catch_as_error`]) are around what this thread runs now, and
@@ -997,7 +1018,8 @@ pub(crate) fn unwinding<R>(call: impl FnOnce() -> R) -> R {
 ///
 /// So a process has Rust's lines for a panic of silt's own code, the
 /// internal-error line and the status 101 all together or none of
-/// them.
+/// them. (A stdout whose reader has gone does not kill a process that
+/// is ending so: `no_death_by_a_closed_stdout`.)
 pub fn exit_on_panic() {
     ITS_PANICS_ARE_SILTS.with(|silts| silts.set(true));
     static HOOKED: Once = Once::new();
@@ -1015,8 +1037,8 @@ static PANIC_LINES: Mutex<()> = Mutex::new(());
 /// How long the process waits for Rust's lines of the panic that ends
 /// it. They go to stderr, which can be held up without end (a pipe
 /// that is full and that nobody reads), and with a backtrace they
-/// take a while. When it runs out the process ends without the rest
-/// of them and without the internal-error line.
+/// take a while. When it runs out the last words are said without the
+/// rest of them, by another thread ([`InternalError::end`]).
 const RUSTS_LINES: Duration = Duration::from_secs(10);
 
 /// The panic hook of silt's own process ([`exit_on_panic`]); `rusts`
@@ -1045,15 +1067,33 @@ fn at_a_panic(rusts: &(dyn Fn(&PanicHookInfo<'_>) + Sync + Send), panic: &PanicH
             thread::park();
         }
     }
+    no_death_by_a_closed_stdout();
+    let text = panic.payload_as_str().unwrap_or(crate::vm::NO_PANIC_TEXT);
     // (If no thread can be started, nothing bounds the wait.)
-    let _ = thread::Builder::new().name("silt-exit".into()).spawn(|| {
-        thread::sleep(RUSTS_LINES);
-        std::process::exit(101)
+    let _ = thread::Builder::new().name("silt-exit".into()).spawn({
+        let text = text.to_string();
+        move || {
+            thread::sleep(RUSTS_LINES);
+            InternalError(()).end(&text)
+        }
     });
     let lines = PANIC_LINES.lock();
     rusts(panic);
     drop(lines);
-    InternalError(()).end(panic.payload_as_str().unwrap_or(crate::vm::NO_PANIC_TEXT))
+    InternalError(()).end(text)
+}
+
+/// The process is ending with the internal error: from here on a
+/// write to a stdout that its reader has closed is an error of the
+/// write, and no signal that kills the process. (The `silt` command
+/// sets SIGPIPE to its default, so that a program whose reader has
+/// gone dies quietly; this process is to end with the internal-error
+/// line and status 101, and its last words flush stdout.)
+fn no_death_by_a_closed_stdout() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
 }
 
 /// The calling thread has the state for the internal error: it ends
@@ -1131,6 +1171,7 @@ pub fn stand_back_for_internal_error() {
 /// was going to.
 pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
     end_as(WITH_INTERNAL_ERROR);
+    no_death_by_a_closed_stdout();
     // A panic that is writing Rust's lines ends them first, if it does
     // so in time: nothing follows the internal-error line.
     drop(PANIC_LINES.try_lock_for(LAST_WORDS));
@@ -1145,42 +1186,79 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
 /// or, where stderr is what is blocked, the line itself.
 const LAST_WORDS: Duration = Duration::from_secs(1);
 
+/// Set by the thread that says the last words: there is one
+/// ([`InternalError::end`]).
+static LAST_WORDS_BEGUN: AtomicBool = AtomicBool::new(false);
+
 impl InternalError {
     /// The last words and the exit: see [`exit_with_internal_error`].
+    /// One thread says them; another that comes here (the one that
+    /// waited for Rust's lines in the place of the panicking thread,
+    /// or that thread after all) waits for the end.
     fn end(self, text: &str) -> ! {
         use std::io::Write;
+        if LAST_WORDS_BEGUN.swap(true, Ordering::SeqCst) {
+            loop {
+                thread::park();
+            }
+        }
         let line = format!(
             "silt: internal error: {text}. This is a bug in silt, not in your program: please \
              report it.\n"
         );
         // The thread that ends the process waits for nothing of the
-        // program's without a bound: the line and the flush are another
-        // thread's. (`exit` runs no destructor, so nobody else flushes.)
-        let (said, waits) = std::sync::mpsc::channel();
-        let last_words = {
-            let line = line.clone();
+        // program's without a bound: the line and the flush are each
+        // another thread's, since stderr and stdout can each be held
+        // up without end. (`exit` runs no destructor, so nobody else
+        // flushes.)
+        let (done, waits) = std::sync::mpsc::channel();
+        let (line_said, line_waits) = std::sync::mpsc::channel::<()>();
+        let says = {
+            let (line, done) = (line.clone(), done.clone());
             move || {
                 let _ = std::io::stderr().write_all(line.as_bytes());
-                let _ = std::io::stdout().flush();
-                let _ = said.send(());
+                drop(line_said);
+                let _ = done.send(());
             }
         };
-        match thread::Builder::new()
-            .name("silt-exit".into())
-            .spawn(last_words)
-        {
-            Ok(_) => {
-                let _ = waits.recv_timeout(LAST_WORDS);
+        // The flush keeps stdout's lock until the process is gone:
+        // std's clean-up at the exit flushes stdout itself if it gets
+        // the lock, and that flush would wait for a stdout that is
+        // held up. The program's text comes after the line, if the
+        // line is written within half the time.
+        let flushes = move || {
+            let mut stdout = std::io::stdout().lock();
+            let _ = line_waits.recv_timeout(LAST_WORDS / 2);
+            let _ = stdout.flush();
+            let _ = done.send(());
+            loop {
+                thread::park();
             }
-            // No thread: the line from here, and nothing is flushed.
+        };
+        let exit_thread = || thread::Builder::new().name("silt-exit".into());
+        let mut awaited = 0;
+        match exit_thread().spawn(says) {
+            Ok(_) => awaited += 1,
+            // No thread: the line from here.
             Err(_) => {
                 let _ = std::io::stderr().write_all(line.as_bytes());
             }
         }
+        // (No thread: nothing is flushed.)
+        if exit_thread().spawn(flushes).is_ok() {
+            awaited += 1;
+        }
+        let until = std::time::Instant::now() + LAST_WORDS;
+        for _ in 0..awaited {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if waits.recv_timeout(left).is_err() {
+                break;
+            }
+        }
         // The exit itself does not wait for a writer either: std's
-        // clean-up of stdout takes its lock only if the lock is free, and
-        // a thread that is blocked in a write, the program's or the one
-        // above in its flush, holds it.
+        // clean-up of stdout takes its lock only if the lock is free,
+        // and the thread that flushes, or a thread of the program that
+        // is blocked in a write, holds it.
         std::process::exit(101)
     }
 }

@@ -576,17 +576,12 @@ fn main() {
     }
 }
 
-/// Stderr is a pipe that is full and that nobody reads when a worker
-/// panics, and `main` waits for the task that is lost: Rust cannot
-/// write its lines for the panic. The process ends all the same, with
-/// status 101, when it has waited for them for ten seconds. (The
-/// panicking thread stayed in that write for ever, the panic never
-/// reached the top of its thread, and the process hung.)
-#[test]
+/// A pipe that is filled to the last byte: its write end takes no
+/// more, and a write to it waits. The read end, which nobody reads,
+/// comes first.
 #[cfg(all(unix, feature = "test-hooks"))]
-fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
+fn full_pipe() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    // A pipe, filled to the last byte: the write end takes no more.
     let (unread, full) = {
         let mut ends = [0; 2];
         assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0, "a pipe");
@@ -598,6 +593,19 @@ fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
     let byte = [b'.'];
     while unsafe { libc::write(full.as_raw_fd(), byte.as_ptr().cast(), 1) } == 1 {}
     assert_eq!(set(flags), 0, "the pipe blocks again");
+    (unread, full)
+}
+
+/// Stderr is a pipe that is full and that nobody reads when a worker
+/// panics, and `main` waits for the task that is lost: Rust cannot
+/// write its lines for the panic. The process ends all the same, with
+/// status 101, when it has waited for them for ten seconds. (The
+/// panicking thread stayed in that write for ever, the panic never
+/// reached the top of its thread, and the process hung.)
+#[test]
+#[cfg(all(unix, feature = "test-hooks"))]
+fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
+    let (unread, full) = full_pipe();
     let run = Run {
         name: "stderr",
         files: &[("main.silt", LOST_WHILE_ALL_WAIT)],
@@ -613,6 +621,115 @@ fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
     let (status, _) = run.wait(child);
     drop(unread);
     assert_eq!(status, Some(101));
+}
+
+/// Stdout and stderr are both held up, each a full pipe that nobody
+/// reads, and `main` has printed a text without a line end, which
+/// waits in stdout's buffer, when a worker panics. The process ends
+/// with status 101: neither Rust's lines nor the line nor the flush
+/// of that text is waited for without a bound, and the exit does not
+/// flush stdout itself. (The exit did, when the thread that had
+/// waited ten seconds for Rust's lines made it, and the process
+/// hung.)
+#[test]
+#[cfg(all(unix, feature = "test-hooks"))]
+fn a_stdout_and_a_stderr_that_are_held_up_do_not_keep_the_process_alive() {
+    let source = r#"import channel
+import task
+import time
+
+fn main() {
+  let gate = channel.new(0)
+  let only = channel.new(0)
+  let lost = task.spawn { ->
+    let _ = channel.receive(gate)
+    time.sleep(time.ms(5))
+    channel.send(only, 1)
+  }
+  print("a line without its end")
+  channel.send(gate, 1)
+  let _ = channel.receive(only)
+  println("main went on")
+}
+"#;
+    let (unread_out, full_out) = full_pipe();
+    let (unread_err, full_err) = full_pipe();
+    let run = Run {
+        name: "both",
+        files: &[("main.silt", source)],
+        args: &["run", "main.silt"],
+        env: &[("SILT_TEST_PANIC", "task:0")],
+        unread_stdout: false,
+    };
+    let mut command = run.command();
+    command
+        .stdout(Stdio::from(full_out))
+        .stderr(Stdio::from(full_err));
+    let child = command.spawn().expect("silt starts");
+    drop(command);
+    let (status, _) = run.wait(child);
+    drop((unread_out, unread_err));
+    assert_eq!(status, Some(101));
+}
+
+/// The reader of stdout takes one line and closes, while `main`
+/// prints without end and a worker panics. A process whose reader is
+/// gone dies by the signal of the closed pipe, quietly; one that is
+/// ending with the internal error does not: it ends with Rust's
+/// lines, the line and status 101. Never Rust's lines and a death by
+/// the signal. (From the moment the process's end is decided, the
+/// closed stdout is an error of the write. Before, the signal could
+/// kill the process between Rust's lines and the line, or after the
+/// line.)
+#[test]
+#[cfg(all(unix, feature = "test-hooks"))]
+fn a_closed_stdout_does_not_kill_a_process_that_ends_with_the_internal_error() {
+    use std::io::{BufRead, BufReader};
+    let source = r#"import task
+import time
+
+fn flood(n) {
+  println("a line of some length to fill the pipe with, number {n}")
+  flood(n + 1)
+}
+
+fn tick() {
+  time.sleep(time.ms(1))
+  tick()
+}
+
+fn main() {
+  let _ticker = task.spawn { -> tick() }
+  flood(0)
+}
+"#;
+    for round in 0..30 {
+        let run = Run {
+            name: "closed",
+            files: &[("main.silt", source)],
+            args: &["run", "main.silt"],
+            env: &[("SILT_TEST_PANIC", "task:0")],
+            unread_stdout: true,
+        };
+        let mut child = run.command().spawn().expect("silt starts");
+        let mut reader = BufReader::new(child.stdout.take().expect("a pipe"));
+        let mut first = String::new();
+        reader.read_line(&mut first).expect("a line is read");
+        drop(reader);
+        let (status, stderr) = run.wait(child);
+        let rusts = stderr.lines().any(|line| line.contains(" panicked at "));
+        let line = stderr
+            .lines()
+            .any(|line| line.starts_with("silt: internal error: "));
+        match status {
+            // Killed by the signal: the reader was gone first.
+            None => assert!(!rusts && !line, "round {round}: {stderr}"),
+            status => {
+                assert_eq!(status, Some(101), "round {round}: {stderr}");
+                assert!(rusts && line, "round {round}: {stderr}");
+            }
+        }
+    }
 }
 
 /// A panic inside the call of a builtin is no panic of the runtime: it
@@ -650,6 +767,109 @@ fn a_panic_inside_a_builtin_is_the_error_of_the_call() {
         "{stderr}"
     );
     assert!(!stderr.contains("silt: internal error"), "{stderr}");
+}
+
+/// The same on a worker: a task's call of a builtin panics. The task
+/// fails with the call's error, `main` gets it from the join, and
+/// the program ends with it and status 1.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_panic_inside_a_builtin_of_a_task_is_the_error_of_the_task() {
+    let source = r#"import int
+import task
+
+fn main() {
+  let worker = task.spawn { -> int.abs(-1) }
+  println("main waits")
+  println(task.join(worker))
+  println("main went on")
+}
+"#;
+    let (status, stdout, stderr) = run("worker", source, Some("builtin-of-a-task"));
+    assert_eq!(status, Some(1), "stdout: {stdout}\nstderr: {stderr}");
+    assert_eq!(stdout, "main waits\n", "stderr: {stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("thread 'silt-worker' "))
+        .unwrap_or_else(|| panic!("no line of Rust's for the panic in: {stderr}"));
+    assert_eq!(
+        lines[at + 1],
+        "a panic made for a test: BuiltinOfATask",
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "error[runtime]: joined task failed: builtin module 'int' panicked: a panic made \
+             for a test: BuiltinOfATask"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("silt: internal error"), "{stderr}");
+}
+
+/// After a panic that was the error of a call, a panic of the runtime
+/// still ends the process at once: the catch around the call is
+/// around nothing any more. `silt test`: the first test fails with
+/// the builtin's error, the second passes, the third loses a worker,
+/// and the run ends there with the line and status 101.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn after_a_caught_panic_a_panic_of_the_runtime_still_ends_the_process() {
+    let source = r#"import channel
+import task
+import time
+
+fn test_a_builtin_panics() {
+  println("a: the call that panics")
+  println("a went on")
+}
+
+fn test_b_passes() {
+  println("b")
+}
+
+fn test_c_loses_a_worker() {
+  let gate = channel.new(0)
+  let only = channel.new(0)
+  let lost = task.spawn { ->
+    let _ = channel.receive(gate)
+    time.sleep(time.ms(2))
+    channel.send(only, 1)
+  }
+  let joiner = task.spawn { -> task.join(lost) }
+  let receiver = task.spawn { -> channel.receive(only) }
+  println("waits")
+  channel.send(gate, 1)
+  task.join(joiner)
+  let _ = task.join(receiver)
+  println("went on")
+}
+"#;
+    let (status, stdout, stderr) = Run {
+        name: "count",
+        files: &[("caught_test.silt", source)],
+        args: &["test", "caught_test.silt"],
+        env: &[("SILT_TEST_PANIC", "builtin,task:0")],
+        unread_stdout: false,
+    }
+    .ended();
+    assert_eq!(status, Some(101), "stdout: {stdout}\nstderr: {stderr}");
+    assert_eq!(stdout, "b\nwaits\n", "stderr: {stderr}");
+    assert!(
+        stderr.contains("  FAIL caught_test.silt::test_a_builtin_panics"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("builtin module 'println' panicked: a panic made for a test: Builtin"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("  PASS caught_test.silt::test_b_passes"),
+        "{stderr}"
+    );
+    let line = internal_error_line("a panic made for a test: Task(0)");
+    assert_eq!(stderr.lines().last(), Some(line.as_str()), "{stderr}");
 }
 
 /// `silt test`: the second test of a file loses a worker. The run ends
