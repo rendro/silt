@@ -188,10 +188,20 @@ impl Drop for Vm {
         // The calls in progress end here, however the VM ends: a task
         // that failed, was cancelled or was still waiting when the
         // program ended. Each builtin's frame is told ([`Native::abandon`]).
-        self.unwind(0, 0);
-        if self.owns_runtime {
-            self.runtime.shutdown();
+        let end = |vm: &mut Vm| {
+            vm.unwind(0, 0);
+            if vm.owns_runtime {
+                vm.runtime.shutdown();
+            }
+        };
+        if !self.runtime.scheduler.is_broken() {
+            return end(self);
         }
+        // A thread of the runtime has panicked, and that panic is on
+        // its way to the embedder. This runs over state that may be
+        // half updated: a second panic here, while the embedder's
+        // thread unwinds, would abort its process, so it is dropped.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| end(self)));
     }
 }
 

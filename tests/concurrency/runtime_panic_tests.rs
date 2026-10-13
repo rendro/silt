@@ -245,3 +245,28 @@ fn main() {
     assert_eq!(panic, "a panic made for a test: Program");
     assert_eq!(out.contents(), "main waits\n");
 }
+
+/// Dropping a VM whose runtime has panicked runs its shutdown over
+/// state that may be half updated. A second panic there is dropped:
+/// it would abort the embedder's process if its thread were unwinding
+/// with the first. A VM whose runtime has not panicked hides nothing:
+/// a panic of its shutdown comes out.
+#[test]
+fn a_second_panic_in_the_shutdown_of_a_broken_runtime_is_dropped() {
+    let program = compiled(LOST_WHILE_ALL_WAIT);
+    let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+    panic_for_test(&vm, PanicAt::Task(0));
+    let first = panic_of(|| {
+        let _ = vm.run_program(&program);
+    });
+    assert_eq!(first, "a panic made for a test: Task(0)");
+    panic_for_test(&vm, PanicAt::Shutdown);
+    drop(vm);
+
+    let sound = Vm::new(HostIo::buffer(&Buffer::new()));
+    panic_for_test(&sound, PanicAt::Shutdown);
+    assert_eq!(
+        panic_of(|| drop(sound)),
+        "a panic made for a test: Shutdown"
+    );
+}

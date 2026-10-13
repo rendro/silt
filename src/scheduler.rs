@@ -308,6 +308,8 @@ pub enum PanicAt {
     /// On a thread of the I/O pool, when its operation has returned
     /// and before the value is handed to the waiter.
     Io,
+    /// On the thread that drops the VM, as the scheduler is shut down.
+    Shutdown,
 }
 
 /// The tasks that wait for a worker.
@@ -838,6 +840,11 @@ impl Scheduler {
     /// around it. See [`Inner::fail`].
     pub(crate) fn give_panic_on(&self) {
         self.inner.give_panic_on();
+    }
+
+    /// Whether a thread of the runtime has panicked ([`Inner::fail`]).
+    pub(crate) fn is_broken(&self) -> bool {
+        self.inner.broken.load(Ordering::SeqCst)
     }
 
     /// What a thread of the runtime that is not the scheduler's own
@@ -1653,6 +1660,8 @@ impl Scheduler {
     /// running returns.
     pub(crate) fn shutdown(&self) {
         let inner = &self.inner;
+        #[cfg(any(test, feature = "test-hooks"))]
+        inner.panic_for_test(|at| at == PanicAt::Shutdown);
         let _ = report_unjoined_failures(inner);
         inner.shutdown.store(true, Ordering::SeqCst);
         {
