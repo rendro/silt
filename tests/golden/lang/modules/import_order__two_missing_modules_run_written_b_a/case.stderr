@@ -1,0 +1,15 @@
+error[compile]: cannot load module 'nope_a': no such file
+ --> main.silt:6:1
+   |
+ 6 | import nope_a
+   | ^^^^^^^^^^^^^ cannot load module 'nope_a': no such file
+  = note: looked for `nope_a.silt`
+  = help: if 'nope_a' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add nope_a`)
+
+error[compile]: cannot load module 'nope_b': no such file
+ --> main.silt:5:1
+   |
+ 5 | import nope_b
+   | ^^^^^^^^^^^^^ cannot load module 'nope_b': no such file
+  = note: looked for `nope_b.silt`
+  = help: if 'nope_b' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add nope_b`)

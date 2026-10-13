@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- A `let` binds the name an import binds. The import is the first of the two
+-- wherever its line stands (`silt fmt` writes the imports at the top), so the
+-- `let` is the error.
+let z = 1
+
+fn main() {
+  println(z)
+}
+
+import a as z

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use lsp_types::{Location, SymbolInformation, SymbolKind, Uri};
 
-use crate::ast::{Decl, FnDecl, ImportTarget, PatternKind, Program, Selection, TypeBody, TypeDecl};
+use crate::ast::{Decl, FnDecl, PatternKind, Program, Selection, TypeBody, TypeDecl};
 use crate::defs::{DefId, DefKind, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
 use crate::session::{ModuleId, Session};
@@ -448,12 +448,9 @@ impl Server {
     fn check_importers(&mut self) {
         let imports_a_file = |program: &Program| {
             program.decls.iter().any(|decl| match decl {
-                Decl::Import(
-                    ImportTarget::Module(m)
-                    | ImportTarget::Items(m, _)
-                    | ImportTarget::Alias(m, ..),
-                    _,
-                ) => !crate::module::is_builtin_module(&resolve_sym(*m)),
+                Decl::Import(target, _) => {
+                    !crate::module::is_builtin_module(&resolve_sym(target.module()))
+                }
                 _ => false,
             })
         };

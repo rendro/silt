@@ -1,0 +1,11 @@
+-- The form of an import does not matter for the order: the module it
+-- names does. A module imported in two forms is initialised once.
+import c.{ vc }
+import b as bee
+import list
+import a.{ va }
+import a
+
+fn main() {
+  println(list.sum([a.va, va, bee.vb, vc]))
+}

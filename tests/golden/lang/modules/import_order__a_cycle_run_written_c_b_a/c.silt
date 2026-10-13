@@ -1,0 +1,5 @@
+import a
+
+pub fn fc() -> Int {
+  3
+}

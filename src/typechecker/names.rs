@@ -336,13 +336,6 @@ pub fn resolve_module(
     Resolution { scope, diagnostics }
 }
 
-/// The module an import names.
-fn import_module(target: &ImportTarget) -> Symbol {
-    match target {
-        ImportTarget::Module(m) | ImportTarget::Items(m, _) | ImportTarget::Alias(m, _, _) => *m,
-    }
-}
-
 /// Enter the definitions of `program` and bind them in `scope`.
 fn declare(
     program: &Program,
@@ -497,7 +490,10 @@ fn bind_variant_aware(
     }
 }
 
-/// Bind the names the imports of `program` bring.
+/// Bind the names the imports of `program` bring, the imports taken in
+/// their one order (`crate::ast::imports_in_order`): of two imports
+/// that bind one name, which the parser reports, the one `silt fmt`
+/// writes first is the binding, whichever line stands first.
 fn bind_imports(
     program: &Program,
     kind: ModuleKind,
@@ -508,11 +504,11 @@ fn bind_imports(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut item_bindings: HashMap<Symbol, (Binding, Span)> = HashMap::new();
-    for decl in &program.decls {
+    for decl in crate::ast::imports_in_order(&program.decls) {
         let Decl::Import(target, _) = decl else {
             continue;
         };
-        let module = import_module(target);
+        let module = target.module();
         let imported = imports.get(&module).copied().unwrap_or(Imported::Poisoned);
         let exports: Option<&Exports> = match imported {
             Imported::Builtin(id) => builtins.modules.get(&id),

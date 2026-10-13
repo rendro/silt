@@ -8,6 +8,7 @@ mod checker_scaling;
 #[path = "../frontend/fmt_property/mod.rs"]
 mod fmt_property;
 mod fmt_property_sweep_tests;
+mod init_order_sweep;
 mod integration;
 mod lexer_scaling;
 mod lsp_workspace_perf;

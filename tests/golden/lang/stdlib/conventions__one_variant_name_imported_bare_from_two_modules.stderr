@@ -1,12 +1,12 @@
 error[parse]: 'Timeout' is bound twice at the top level: by the import and by the import here
- --> conventions__one_variant_name_imported_bare_from_two_modules.silt:13:15
-    |
- 13 | import http.{ Timeout }
-    |               ^^^^^^^ 'Timeout' is bound twice at the top level: by the import and by the import here
- ::: conventions__one_variant_name_imported_bare_from_two_modules.silt:12:14
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:12:14
     |
  12 | import tcp.{ Timeout }
-    |              ------- first bound here, by the import
+    |              ^^^^^^^ 'Timeout' is bound twice at the top level: by the import and by the import here
+ ::: conventions__one_variant_name_imported_bare_from_two_modules.silt:13:15
+    |
+ 13 | import http.{ Timeout }
+    |               ------- first bound here, by the import
   = note: a top-level name can be bound only once
 
 error[type]: undefined variable 'Empty'

@@ -1,0 +1,15 @@
+-- A module is initialised after the modules it imports, and those in
+-- the order of their names: `b` first, then for `x` its `a` and
+-- `c`, then `x`. The entry file is no different, and its own `let`
+-- runs after its imports.
+import x
+import b
+
+let first = {
+  println("main is initialised")
+  x.vx + b.vb
+}
+
+fn main() {
+  println(first)
+}

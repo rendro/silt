@@ -1,0 +1,13 @@
+error[compile]: circular import detected: a -> b -> c -> a (module 'a' imports itself directly or indirectly)
+ --> c.silt:1:1
+   |
+ 1 | import a
+   | ^^^^^^^^ circular import detected: a -> b -> c -> a (module 'a' imports itself directly or indirectly)
+ ::: a.silt:1:1
+   |
+ 1 | import b
+   | -------- 'a' imports 'b' here
+ ::: b.silt:1:1
+   |
+ 1 | import c
+   | -------- 'b' imports 'c' here
