@@ -236,6 +236,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         if setup.is_ok() {
             vm.wait_until_idle();
         }
+        // (No report of the command's once a thread of a runtime has
+        // panicked and is ending the process: here, before each
+        // test's result, and before the summary.)
+        silt::scheduler::stand_back_for_internal_error();
         if let Err(e) = setup {
             // Frame and error-header paths follow the style of the path
             // the user typed, as under `silt run`. The header says what
@@ -284,6 +288,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
             // The failures of the test's tasks are reported under its
             // result line.
+            silt::scheduler::stand_back_for_internal_error();
             let task_failures = owners.take_task_failures(owner, &mut counts);
             let test_failed = match outcome {
                 Ok(value) => match returned_err(&value) {
@@ -356,6 +361,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         failed,
         file_errors,
     } = counts;
+    silt::scheduler::stand_back_for_internal_error();
     let test_word = if total == 1 { "test" } else { "tests" };
     if file_errors.any() {
         eprintln!(

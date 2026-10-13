@@ -412,6 +412,65 @@ fn the_internal_error_line_and_the_status_101_go_together() {
     }
 }
 
+/// Nothing of the command's follows the internal-error line. `main`
+/// is spawning twenty tasks when a worker panics: a spawn that comes
+/// after it is refused by the broken runtime, and `main` ends with
+/// that refusal. It is not the program's error and is not printed as
+/// one: the line is the last on stderr, in every one of forty runs at
+/// a slice of one step, where the two meet most often. (Before, the
+/// runtime was marked as broken before the process's end was decided,
+/// and in some runs `error[runtime]: cannot spawn a task: ...` stood
+/// after the line.)
+#[test]
+#[cfg(feature = "test-hooks")]
+fn no_error_of_the_program_follows_the_internal_error_line() {
+    let source = r#"import channel
+import task
+import time
+import list
+
+fn main() {
+  let gate = channel.new(0)
+  let only = channel.new(0)
+  let lost = task.spawn { ->
+    let _ = channel.receive(gate)
+    channel.send(only, 1)
+  }
+  let waker = task.spawn { ->
+    time.sleep(time.ms(10))
+    channel.send(gate, 1)
+  }
+  print("main waits")
+  let js = list.map([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) { _ -> task.spawn { -> task.join(lost) } }
+  list.each(js) { j -> task.join(j) }
+  println("main went on")
+}
+"#;
+    let line = internal_error_line("a panic made for a test: Task(0)");
+    for round in 0..40 {
+        let (status, stdout, stderr) = Run {
+            name: "joiners",
+            files: &[("main.silt", source)],
+            args: &["run", "main.silt"],
+            env: &[("SILT_TEST_PANIC", "task:0"), ("SILT_TIME_SLICE", "1")],
+            unread_stdout: false,
+        }
+        .ended();
+        assert_eq!(status, Some(101), "round {round}: {stderr}");
+        assert!(!stdout.contains("main went on"), "round {round}: {stdout}");
+        let lines = stderr
+            .lines()
+            .filter(|l| l.starts_with("silt: internal error: "));
+        assert_eq!(lines.count(), 1, "round {round}: {stderr}");
+        assert_eq!(
+            stderr.lines().last(),
+            Some(line.as_str()),
+            "round {round}: {stderr}"
+        );
+        assert!(!stderr.contains("error["), "round {round}: {stderr}");
+    }
+}
+
 /// Two workers panic close together: one internal-error line, of the
 /// panic that came first, and status 101.
 #[test]

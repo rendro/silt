@@ -257,6 +257,9 @@ fn evaluate(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input:
     }
     let _ = rl.add_history_entry(input);
     let evaluation = repl.eval(input);
+    // (What an entry was told by a runtime that has panicked is not
+    // its error: the process is ending.)
+    crate::scheduler::stand_back_for_internal_error();
     for d in &evaluation.diagnostics {
         eprintln!("{}", repl.render(d));
     }
@@ -434,6 +437,7 @@ impl SourceView for ReplFiles<'_> {
 /// until then a handle may still be bound, and an input may join or
 /// cancel it.
 fn report_task_failures(repl: &Repl) {
+    crate::scheduler::stand_back_for_internal_error();
     let taken = crate::scheduler::take_unjoined_failures();
     for failure in &taken.failures {
         eprintln!("{}", repl.render(&failure.report_error().to_diagnostic()));

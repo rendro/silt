@@ -900,16 +900,30 @@ pub fn exit_on_panic() {
     EXIT_ON_PANIC.store(true, Ordering::SeqCst);
 }
 
-/// A thread of a runtime has panicked with the message `text`, and
-/// the runtime has done what it does for an embedder. This is the one
-/// place where the switch of [`exit_on_panic`] is read: in silt's own
-/// process the process ends here, whether or not the VM of that
-/// runtime still exists.
-fn runtime_panicked(text: &str) {
-    if EXIT_ON_PANIC.load(Ordering::SeqCst) {
-        end_with_internal_error(text);
-    }
+/// A thread of a runtime has panicked, and nothing shows it yet. This
+/// is the one place where the switch of [`exit_on_panic`] is read. In
+/// silt's own process the calling thread takes the state for the
+/// internal error here (or waits for ever, if the process is already
+/// ending with a status), and has what ends the process, whether or
+/// not the VM of that runtime still exists. `None` in an embedder's
+/// process.
+///
+/// The state comes first, before the runtime is marked as broken and
+/// before any thread is woken: whatever a thread then meets of the
+/// broken runtime (a task that cannot be spawned, a wait that is
+/// over), the state already says how the process ends, and the
+/// command writes no report of its own after the internal-error line
+/// ([`stand_back_for_internal_error`]).
+fn runtime_panics() -> Option<InternalError> {
+    EXIT_ON_PANIC.load(Ordering::SeqCst).then(|| {
+        end_as(WITH_INTERNAL_ERROR);
+        InternalError(())
+    })
 }
+
+/// The calling thread has the state for the internal error: it ends
+/// the process ([`InternalError::end`]).
+struct InternalError(());
 
 /// How the process ends, from the moment a thread of silt sets out to
 /// end it: with a status of the program's or the command's
@@ -948,6 +962,25 @@ pub fn exit_with_status(status: i32) -> ! {
     std::process::exit(status)
 }
 
+/// If the process is ending with the internal error, the calling
+/// thread waits for that and never returns; otherwise it returns at
+/// once. The `silt` command calls this before it writes a report of
+/// its own while a program's threads may exist (a program's runtime
+/// error, the tasks that failed and were never joined, a test's
+/// result, the errors of a REPL entry): what a thread of a broken
+/// runtime was told is not the program's error, and nothing of the
+/// command's follows the internal-error line.
+///
+/// A report written before the panic took the state stands before the
+/// line.
+pub fn stand_back_for_internal_error() {
+    if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
+        loop {
+            thread::park();
+        }
+    }
+}
+
 /// End the process after a panic of silt's own code, which `payload`
 /// was raised with: one line on stderr says that this is a bug in
 /// silt (Rust has written the panic's thread, place and message when
@@ -960,7 +993,8 @@ pub fn exit_with_status(status: i32) -> ! {
 /// ([`exit_with_status`]) nothing is written, and it ends as it was
 /// going to.
 pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
-    end_with_internal_error(crate::vm::panic_message(payload))
+    end_as(WITH_INTERNAL_ERROR);
+    InternalError(()).end(crate::vm::panic_message(payload))
 }
 
 /// How long the thread that ends the process waits for the
@@ -971,43 +1005,44 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
 /// or, where stderr is what is blocked, the line itself.
 const LAST_WORDS: Duration = Duration::from_secs(1);
 
-/// See [`exit_with_internal_error`].
-fn end_with_internal_error(text: &str) -> ! {
-    use std::io::Write;
-    end_as(WITH_INTERNAL_ERROR);
-    let line = format!(
-        "silt: internal error: {text}. This is a bug in silt, not in your program: please \
-         report it.\n"
-    );
-    // The thread that ends the process waits for nothing of the
-    // program's without a bound: the line and the flush are another
-    // thread's. (`exit` runs no destructor, so nobody else flushes.)
-    let (said, waits) = std::sync::mpsc::channel();
-    let last_words = {
-        let line = line.clone();
-        move || {
-            let _ = std::io::stderr().write_all(line.as_bytes());
-            let _ = std::io::stdout().flush();
-            let _ = said.send(());
+impl InternalError {
+    /// The last words and the exit: see [`exit_with_internal_error`].
+    fn end(self, text: &str) -> ! {
+        use std::io::Write;
+        let line = format!(
+            "silt: internal error: {text}. This is a bug in silt, not in your program: please \
+             report it.\n"
+        );
+        // The thread that ends the process waits for nothing of the
+        // program's without a bound: the line and the flush are another
+        // thread's. (`exit` runs no destructor, so nobody else flushes.)
+        let (said, waits) = std::sync::mpsc::channel();
+        let last_words = {
+            let line = line.clone();
+            move || {
+                let _ = std::io::stderr().write_all(line.as_bytes());
+                let _ = std::io::stdout().flush();
+                let _ = said.send(());
+            }
+        };
+        match thread::Builder::new()
+            .name("silt-exit".into())
+            .spawn(last_words)
+        {
+            Ok(_) => {
+                let _ = waits.recv_timeout(LAST_WORDS);
+            }
+            // No thread: the line from here, and nothing is flushed.
+            Err(_) => {
+                let _ = std::io::stderr().write_all(line.as_bytes());
+            }
         }
-    };
-    match thread::Builder::new()
-        .name("silt-exit".into())
-        .spawn(last_words)
-    {
-        Ok(_) => {
-            let _ = waits.recv_timeout(LAST_WORDS);
-        }
-        // No thread: the line from here, and nothing is flushed.
-        Err(_) => {
-            let _ = std::io::stderr().write_all(line.as_bytes());
-        }
+        // The exit itself does not wait for a writer either: std's
+        // clean-up of stdout takes its lock only if the lock is free, and
+        // a thread that is blocked in a write, the program's or the one
+        // above in its flush, holds it.
+        std::process::exit(101)
     }
-    // The exit itself does not wait for a writer either: std's
-    // clean-up of stdout takes its lock only if the lock is free, and
-    // a thread that is blocked in a write, the program's or the one
-    // above in its flush, holds it.
-    std::process::exit(101)
 }
 
 /// How a thread of the runtime that the scheduler did not start (a
@@ -1021,7 +1056,11 @@ impl Alarm {
     pub(crate) fn raise(&self, payload: Box<dyn Any + Send>) {
         match self.0.upgrade() {
             Some(inner) => inner.fail(payload),
-            None => runtime_panicked(crate::vm::panic_message(&payload)),
+            None => {
+                if let Some(ends) = runtime_panics() {
+                    ends.end(crate::vm::panic_message(&payload));
+                }
+            }
         }
     }
 }
@@ -1043,9 +1082,12 @@ impl Inner {
     /// of the threads that wait with the two flags of each: a list and
     /// flags, which no panic leaves half written, behind locks that a
     /// panic releases and does not poison. In silt's own process the
-    /// process is ended after that ([`runtime_panicked`]).
+    /// state for the internal error is taken before that, and the
+    /// process is ended after it ([`runtime_panics`]).
     fn fail(&self, payload: Box<dyn Any + Send>) {
         let text = crate::vm::panic_message(&payload).to_string();
+        // In silt's own process, first of all: see `runtime_panics`.
+        let ends = runtime_panics();
         let first = {
             let mut panic = self.panic.lock();
             // The first panic is the one that is reported; what
@@ -1060,11 +1102,12 @@ impl Inner {
         if first {
             self.poke_threads();
         }
-        // Then, and not before: the program's thread may be where
-        // nothing reaches it soon (a sleep on the clock, one long call
-        // of a builtin), and a process that is silt's own does not
-        // wait for it.
-        runtime_panicked(&text);
+        // The program's thread may be where nothing reaches it soon (a
+        // sleep on the clock, one long call of a builtin): a process
+        // that is silt's own does not wait for it.
+        if let Some(ends) = ends {
+            ends.end(&text);
+        }
     }
 
     /// See [`Scheduler::give_panic_on`]. The thread that comes first
@@ -1995,6 +2038,11 @@ fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
 /// (`collect_unjoined_failures`) and renders them itself; the record of
 /// the scheduler stays empty then.
 fn report_unjoined_failures(inner: &Inner) -> usize {
+    // (Nothing after the internal-error line: the failures of a
+    // process that is ending with it stay unreported.)
+    if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
+        return 0;
+    }
     let (handles, not_recorded) = inner.failed_tasks.lock().take();
     // The scheduler knows no files: the diagnostics show no place.
     let no_files = crate::source::SourceMap::new();

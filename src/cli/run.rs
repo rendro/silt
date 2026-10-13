@@ -218,7 +218,11 @@ pub(crate) fn vm_run_file(path: &str) {
         vm.settle();
     }
     // The program has ended. The tasks that failed and that nobody
-    // joined or cancelled are reported, and make the run fail.
+    // joined or cancelled are reported, and make the run fail. (Not
+    // when a thread of the runtime has panicked and is ending the
+    // process: nothing of the program's is reported then, here and
+    // before each report below.)
+    silt::scheduler::stand_back_for_internal_error();
     let tasks_failed = report_task_failures(path, &sources, file);
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
@@ -239,10 +243,12 @@ pub(crate) fn vm_run_file(path: &str) {
             main_span,
             format!("main returned Err: {}", vm.show_text(payload)),
         );
+        silt::scheduler::stand_back_for_internal_error();
         eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));
         silt::scheduler::exit_with_status(1);
     }
     if let Err(e) = run_result {
+        silt::scheduler::stand_back_for_internal_error();
         eprintln!("{}", render_runtime_error(&e, path, &sources));
         silt::scheduler::exit_with_status(1);
     }
