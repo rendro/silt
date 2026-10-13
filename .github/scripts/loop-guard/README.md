@@ -30,6 +30,16 @@ stores. A round of the loop must have
 
 Both numbers are exact and do not depend on the machine's load.
 
+The count of instructions is exact for one binary, but it is not a
+property of the loop's source alone. When the rest of the crate
+changes, the compiler builds the loop's one large function differently:
+in October 2026 the same source read 539 and 557 instructions for the
+plain loop (761 and 787 with an add) from one merge to the next. The
+loads did not move once. So the first rule is the one that holds the
+fix. The bound on instructions is there for a compiler that makes the
+loop grossly longer; if it fails on a change that did not touch the
+loop and the loads are still none, raise the bound.
+
 ## Running it
 
 ```
