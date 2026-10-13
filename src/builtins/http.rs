@@ -721,7 +721,7 @@ fn response_bytes(
     wire::response(status, headers, body, how)
 }
 
-/// What a body is unless the handler says otherwise.
+/// What the body of a response of the server's own is: a word.
 #[cfg(feature = "http")]
 const TEXT: &str = "text/plain; charset=UTF-8";
 
@@ -738,7 +738,8 @@ fn plain_response(vm: &Vm, status: u16, why: &str, reply: Reply) -> Vec<u8> {
 }
 
 /// The response that the handler returned, or 500 if what it returned
-/// is no response.
+/// is no response. The body is the handler's bytes, and what they are
+/// is the handler's to say: no `Content-Type` is added.
 #[cfg(feature = "http")]
 fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
     match extract_http_response(returned) {
@@ -750,10 +751,6 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
                         headers.push((name.to_string(), value.to_string()));
                     }
                 }
-            }
-            let typed = |(name, _): &(String, String)| name.eq_ignore_ascii_case("content-type");
-            if wire::has_body(status) && !headers.iter().any(typed) {
-                headers.push(("Content-Type".to_string(), TEXT.to_string()));
             }
             response_bytes(vm, status, &headers, body, reply)
         }

@@ -247,8 +247,11 @@ A response is sent with `Content-Length`, `Date` and, where the
 connection ends with it, `Connection: close`. Those three are the
 server's: headers of these names in `Response.headers` are left out, and
 so is a header whose name or value could not stand in one header line.
-`Content-Type` is `text/plain; charset=UTF-8` unless the handler sets
-one. There is no `Server` header.
+The body is the bytes of `Response.body`, as they are, and what they are
+is the handler's to say: a response has the `Content-Type` that
+`Response.headers` gives it, and none if the handler sets none. (The
+server's own answers, such as a `405` or a `503`, are a word of text and
+say `text/plain; charset=UTF-8`.) There is no `Server` header.
 
 ### Limits
 
@@ -353,9 +356,13 @@ type User {
   name: String,
 }
 
--- A body is bytes: this server answers with text.
+-- A body is bytes: this server answers with text, and says so.
 fn reply(status: Int, text: String) -> http.Response {
-  http.Response { status: status, body: bytes.from_string(text), headers: #{} }
+  http.Response {
+    status: status,
+    body: bytes.from_string(text),
+    headers: #{ "Content-Type": "text/plain; charset=UTF-8" },
+  }
 }
 
 fn main() {

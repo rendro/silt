@@ -316,10 +316,8 @@ fn the_headers_of_a_response() {
     // The length is the body's, whatever the handler said.
     assert_eq!(response.header("Content-Length"), Some("4"));
     assert_eq!(response.header("X-Made"), Some("yes"));
-    assert_eq!(
-        response.header("Content-Type"),
-        Some("text/plain; charset=UTF-8")
-    );
+    // What the bytes are is the handler's to say, and it did not.
+    assert_eq!(response.header("Content-Type"), None);
     // A date as HTTP writes it: `Mon, 05 Oct 2026 12:00:00 GMT`.
     let date = response.header("Date").expect("a date");
     assert!(date.len() == 29 && date.ends_with(" GMT"), "{date:?}");
