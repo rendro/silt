@@ -174,8 +174,20 @@ pub(crate) fn ensure_encodable_depth(caller: &str, level: usize) -> Result<(), V
     }
 }
 
+/// The error of `caller` for `v`, a value the format it writes has no
+/// form for: it names the kind of the value. (To a program every
+/// function is an `Fn`.)
+pub(crate) fn unsupported_kind(caller: &str, v: &Value) -> VmError {
+    let kind = match v.is_fn() {
+        true => "Fn",
+        false => v.kind(),
+    };
+    VmError::new(format!("{caller}: unsupported value kind {kind}"))
+}
+
 /// `v`, which is `level` levels inside the value `caller` writes, as
-/// JSON.
+/// JSON. A value JSON has no form for (a set, bytes, a function, a
+/// channel, a handle) is an error, wherever in the value it is.
 fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Value, VmError> {
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_json(caller, v, level + 1);
@@ -235,7 +247,7 @@ fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Va
         }
         Value::Unit => serde_json::Value::Null,
         Value::VariantConstructor(tag) => serde_json::Value::String(tag.name().into()),
-        _ => serde_json::Value::Null,
+        _ => return Err(unsupported_kind(caller, v)),
     })
 }
 

@@ -50,6 +50,7 @@ use crate::vm::{Vm, VmError};
 
 use super::json::{
     decodable_record, ensure_encodable_depth, field_record_type, unsupported_field_type_message,
+    unsupported_kind,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -289,16 +290,7 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
             )));
         }
         Value::VariantConstructor(tag) => ::toml::Value::String(tag.name().into()),
-        _ => {
-            // (To a program every function is an `Fn`.)
-            let kind = match v.is_fn() {
-                true => "Fn",
-                false => v.kind(),
-            };
-            return Err(VmError::new(format!(
-                "{caller}: unsupported value kind {kind}"
-            )));
-        }
+        _ => return Err(unsupported_kind(caller, v)),
     })
 }
 
