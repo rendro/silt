@@ -1143,11 +1143,26 @@ impl Vm {
                     go_on!(ok!(self.call_method(method, argc, of, true)));
                 }
                 Instr::Slide { slot } => {
-                    // Keep the top value, cut the frame back to `slot` values
-                    // and put the value on top of them.
-                    let value = pop(&mut self.stack);
-                    self.stack.truncate(base + slot);
-                    self.stack.push(value);
+                    // Keep the top value and cut the frame back to
+                    // `slot` values below it: the value is written
+                    // over the lowest of the values that go (one that
+                    // owns something is moved there), not taken off
+                    // the stack and pushed again. The values that go
+                    // end from the lowest up.
+                    let (to, top) = (base + slot, self.stack.len() - 1);
+                    if to < top {
+                        match sort(&self.stack[top]) {
+                            Sort::Int(n) => put(&mut self.stack[to], Value::Int(n)),
+                            Sort::Float(f) => put(&mut self.stack[to], Value::Float(f)),
+                            Sort::Bool(b) => put(&mut self.stack[to], Value::Bool(b)),
+                            Sort::Unit => put(&mut self.stack[to], Value::Unit),
+                            Sort::Closure(_) | Sort::Other(_) => {
+                                let value = std::mem::replace(&mut self.stack[top], Value::Unit);
+                                put(&mut self.stack[to], value);
+                            }
+                        }
+                        self.stack.truncate(to + 1);
+                    }
                 }
             }
         }

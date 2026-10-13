@@ -6231,3 +6231,106 @@ mod results_in_place {
         }
     }
 }
+
+/// `Slide` keeps the value on top and cuts the frame back below it:
+/// the value is written where it goes, and the values that go end from
+/// the lowest up.
+mod slide_in_place {
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+    use crate::bytecode::VmClosure;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// A value of every sort the instruction loop knows (`Sort` in
+    /// run.rs).
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Unit,
+            Value::VmClosure(Arc::new(VmClosure {
+                function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+                upvalues: vec![],
+            })),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+        ]
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// A value of every sort slides over values of every sort, over
+    /// none, one or three of them; what lies below stays.
+    #[test]
+    fn a_value_of_every_kind_slides_over_every_kind() {
+        for top in samples() {
+            for under in samples() {
+                for cut in [0, 1, 3] {
+                    let (vm, run, _) = left_by(|e, _| {
+                        push(e, Value::Int(99));
+                        for _ in 0..cut {
+                            push(e, under.clone());
+                        }
+                        push(e, top.clone());
+                        e.emit(Asm::Slide { slot: 1 }, span()).unwrap();
+                        // (The stack is looked at where an error of
+                        // the next instruction leaves it.)
+                        e.emit(Asm::Unit, span()).unwrap();
+                        e.emit(Asm::Negate, span()).unwrap();
+                        e.emit(Asm::Return, span()).unwrap();
+                    });
+                    run.expect_err("unit has no negative");
+                    let shown = format!("{top:?} over {cut} of {under:?}");
+                    assert_eq!(vm.stack.len(), 2, "{shown}: {:?}", vm.stack);
+                    assert_eq!(vm.stack[0], Value::Int(99), "{shown}");
+                    assert!(same(&vm.stack[1], &top), "{shown}: {:?}", vm.stack);
+                }
+            }
+        }
+    }
+
+    /// Probe 1 lies below and stays; probes 2, 3 and 4 are slid over
+    /// and end in that order, at the `Slide`; the value on top, probe 5
+    /// or a number, lives until it is taken off.
+    #[test]
+    fn a_slide_ends_the_values_under_the_top_from_the_lowest_up() {
+        for owns in [true, false] {
+            let (vm, run, log) = left_by(|e, k| {
+                for _ in 0..4 {
+                    probe(e, k);
+                }
+                match owns {
+                    true => probe(e, k),
+                    false => push(e, Value::Int(7)),
+                }
+                e.emit(Asm::Slide { slot: 1 }, span()).unwrap();
+                // A sixth probe, made after the slide: it ends before
+                // the value that slid.
+                probe(e, k);
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Unit, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert_eq!(run.unwrap(), Value::Unit);
+            let (after, top): (usize, &[usize]) = if owns { (6, &[5]) } else { (5, &[]) };
+            let mut expected = vec![2, 3, 4, after];
+            expected.extend_from_slice(top);
+            expected.push(1);
+            assert_eq!(ended(&log), expected, "the top owns something: {owns}");
+            assert!(vm.stack.is_empty());
+        }
+    }
+}
