@@ -80,6 +80,10 @@ where
 
 /// Resume the frame of a builtin, as a call of the builtin is made:
 /// a panic that escapes it is an error of the program.
+// Inlined into its one caller (`Vm::deliver_native`, in run.rs): as a call,
+// which rustc 1.99.0 mostly made of it, list callbacks ran 6 to 8% slower
+// (measured 2026-10-13).
+#[inline]
 pub(super) fn resume_native(
     vm: &mut Vm,
     native: &mut dyn Native,
