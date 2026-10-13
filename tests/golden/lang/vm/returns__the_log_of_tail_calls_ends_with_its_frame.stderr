@@ -1,0 +1,136 @@
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_stale_int
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> test_stale_int  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:64:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_stale_float
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> test_stale_float  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:70:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_stale_bool
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> test_stale_bool  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:76:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_stale_unit
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> test_stale_unit  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:82:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_stale_string
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> test_stale_string  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:88:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_real
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
+        |
+     51 |     0 -> 10 / n
+        |          ^^^^^^ division by zero
+
+    call stack:
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      ... (17 more frames)
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> test_real  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:92:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_mixed
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
+        |
+     51 |     0 -> 10 / n
+        |          ^^^^^^ division by zero
+
+    call stack:
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> test_mixed  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:97:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_nested
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> wrap  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:58:7
+      -> test_nested  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:101:15
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_callback
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> closure in test_callback  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:105:49
+      -> test_callback  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:105:11
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_task
+    error[runtime]: joined task failed: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+        |
+     46 |   10 / (n - n)
+        |   ^^^^^^^^^^^^ joined task failed: division by zero
+
+    call stack:
+      -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
+      -> wrap  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:58:7
+      -> closure in test_task  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:109:51
+  FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_twice
+    error[runtime]: division by zero
+     --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
+        |
+     51 |     0 -> 10 / n
+        |          ^^^^^^ division by zero
+
+    call stack:
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> tailboom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:52:10
+      -> test_twice  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:115:11
+
+11 tests: 0 passed, 11 failed, 0 skipped
