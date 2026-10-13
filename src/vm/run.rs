@@ -300,6 +300,20 @@ macro_rules! set_copy {
     }};
 }
 
+/// Make a slot that holds unit below the stack's slot `at`: the values
+/// from `at` on go one slot up, the highest first, and unit is written
+/// where each was. (`Vec::insert` builds the unit somewhere else and
+/// copies it in.)
+#[inline(always)]
+fn open_slot(stack: &mut Vec<Value>, at: usize) {
+    let top = stack.len();
+    push_unit(stack);
+    for i in (at..top).rev() {
+        let value = std::mem::replace(&mut stack[i], Value::Unit);
+        put(&mut stack[i + 1], value);
+    }
+}
+
 /// Take the value on top off the stack and let go of it ([`done`]),
 /// where it lies: a number, a Bool or unit is not moved out first.
 #[inline(always)]
@@ -1417,12 +1431,13 @@ impl Vm {
             .log(depth, caller.function.clone(), caller_ip);
     }
 
-    /// The method of the impl of the trait `trait_index` names for the
-    /// type `ty`, whose name has the id `method`, in this VM's table.
+    /// The global slot of the method of the impl of the trait
+    /// `trait_index` names for the type `ty`, whose name has the id
+    /// `method`, in this VM's table, if the slot is set.
     #[inline(always)]
-    fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<Value> {
+    fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<u16> {
         let slot = (self.view.table).call_method(trait_index, ty, method)?;
-        self.global(slot).cloned()
+        self.global(slot).map(|_| slot)
     }
 
     /// [`Vm::method_of`] found none: the method in the program's newest
@@ -1436,7 +1451,7 @@ impl Vm {
         trait_index: u16,
         ty: crate::defs::TypeId,
         method: u16,
-    ) -> Option<Value> {
+    ) -> Option<u16> {
         if self.look_again()
             && let Some(found) = self.method_of(trait_index, ty, method)
         {
@@ -1446,7 +1461,7 @@ impl Vm {
             return None;
         }
         let slot = (self.view.entry).call_method(trait_index, ty, method)?;
-        self.global(slot).cloned()
+        self.global(slot).map(|_| slot)
     }
 
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
@@ -1480,32 +1495,49 @@ impl Vm {
             None => self.method_of_newest(trait_index, receiver_type, method),
             found => found,
         };
-        if let Some(func) = found {
-            // In tail position a method that is a closure takes the
-            // current frame over, as a tail-called function does.
-            if tail && let Value::VmClosure(closure) = &func {
-                let args_at = receiver_slot + usize::from(descriptor_receiver);
-                let argc = self.stack.len() - args_at;
-                if argc != closure.function.arity() {
-                    return Err(VmError::type_confusion(format!(
-                        "function '{}' expects {} arguments, got {}",
-                        closure.function.name(),
-                        closure.function.arity(),
-                        argc
-                    )));
+        // (A method that is a closure, which a written method is, is
+        // taken by its pointer, as `Call` takes one: the value in the
+        // global's slot is not cloned and moved.)
+        if let Some(func) = found.and_then(|slot| self.global(slot)) {
+            match sort(func) {
+                Sort::Closure(closure) => {
+                    let closure = closure.clone();
+                    // In tail position the method takes the current
+                    // frame over, as a tail-called function does.
+                    if tail {
+                        let args_at = receiver_slot + usize::from(descriptor_receiver);
+                        let argc = self.stack.len() - args_at;
+                        if argc != closure.function.arity() {
+                            return Err(VmError::type_confusion(format!(
+                                "function '{}' expects {} arguments, got {}",
+                                closure.function.name(),
+                                closure.function.arity(),
+                                argc
+                            )));
+                        }
+                        self.reuse_frame(closure, args_at, argc);
+                        return Ok(DispatchResult::Continue);
+                    }
+                    // The method's frame starts above a slot of its
+                    // own, as a called function's does: the
+                    // descriptor's, or one made below the receiver.
+                    if !descriptor_receiver {
+                        open_slot(&mut self.stack, receiver_slot);
+                    }
+                    let argc = self.stack.len() - receiver_slot - 1;
+                    let entered = self.call_closure(closure, argc, receiver_slot)?;
+                    return Ok(self.entered(entered));
                 }
-                self.reuse_frame(closure.clone(), args_at, argc);
-                return Ok(DispatchResult::Continue);
+                Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit | Sort::Other(_) => {
+                    let func = func.clone();
+                    if !descriptor_receiver {
+                        open_slot(&mut self.stack, receiver_slot);
+                    }
+                    let argc = self.stack.len() - receiver_slot - 1;
+                    let entered = self.call_value(func, argc, receiver_slot)?;
+                    return Ok(self.entered(entered));
+                }
             }
-            // The method's frame starts above a slot of its own,
-            // as a called function's does: the descriptor's, or
-            // one made below the receiver.
-            if !descriptor_receiver {
-                self.stack.insert(receiver_slot, Value::Unit);
-            }
-            let argc = self.stack.len() - receiver_slot - 1;
-            let entered = self.call_value(func, argc, receiver_slot)?;
-            return Ok(self.entered(entered));
         }
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.

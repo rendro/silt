@@ -5722,3 +5722,311 @@ mod parts_in_place {
         }
     }
 }
+
+/// A call of a method that is found where the code runs (`CallMethod`,
+/// `TailCallMethod`): the method is entered by its closure's pointer,
+/// and the slot its frame starts above is made where it goes.
+mod methods_in_place {
+    use std::sync::OnceLock;
+
+    use super::seen_drops::{ended, maker, probe};
+    use super::*;
+    use crate::bytecode::{Const, VmClosure};
+    use crate::value::{HostFn, HostShape};
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn closure(function: Arc<Function>) -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function,
+            upvalues: vec![],
+        }))
+    }
+
+    /// A function that gives the list of what it was called with.
+    fn lister() -> Value {
+        Value::HostFn(Arc::new(HostFn {
+            name: "lister".to_string(),
+            call: Arc::new(|args| Ok(Value::list(args.to_vec()))),
+            returns: HostShape::Any,
+        }))
+    }
+
+    /// A method of `arity` parameters that gives the list of them.
+    fn listing(arity: u8) -> Value {
+        closure(make_function_of(arity, |e| {
+            for slot in 0..usize::from(arity) {
+                e.emit(Asm::GetLocal { slot }, span()).unwrap();
+            }
+            let count = usize::from(arity);
+            e.emit(Asm::MakeList { count }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        }))
+    }
+
+    /// A VM whose program has one impl: of a trait for the type of
+    /// `receiver`, with the one method `method`. The call's operands
+    /// (the method's name, the trait) are 0 and 0.
+    fn vm_with(receiver: &Value, method: Value) -> Vm {
+        let mut globals = crate::bytecode::Globals::default();
+        let t = crate::defs::builtin_trait_id("Display").unwrap();
+        let ty = crate::types::canonical::dispatch_type_for_value(receiver);
+        assert_eq!(globals.trait_index(t, "T".to_string()), Some(0));
+        let slot = globals.add_method(t, ty, "m", "T.m".to_string()).unwrap();
+        assert_eq!(globals.method_id("m"), Some(0));
+        let table = Arc::new(globals);
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.view.slots = std::iter::repeat_with(OnceLock::new)
+            .take(table.len())
+            .collect();
+        vm.view.entry = table.clone();
+        vm.view.table = table;
+        assert!(vm.set_global(slot, method));
+        vm
+    }
+
+    /// Run the script `build` emits on `vm` until it ends or fails,
+    /// and give the VM as the instruction loop left it (nothing is cut
+    /// back or unwound yet) and what the loop gave.
+    fn left(mut vm: Vm, build: impl FnOnce(&mut Emitter)) -> (Vm, Result<Value, VmError>) {
+        let script = make_function(build);
+        let floor = vm.frames.len();
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(VmClosure {
+                function: script,
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        let run = vm.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+        let run = run.map(|slice| match slice {
+            crate::vm::run::Slice::Done(value) => value,
+            _ => panic!("the script runs to its end or to an error"),
+        });
+        (vm, run)
+    }
+
+    fn call(argc: u8, tail: bool) -> Asm<'static> {
+        let (method, argc, of) = (0, usize::from(argc), 0);
+        match tail {
+            true => Asm::TailCallMethod { method, argc, of },
+            false => Asm::CallMethod { method, argc, of },
+        }
+    }
+
+    /// The values of the list `value`.
+    fn items(value: &Value) -> Vec<Value> {
+        let Value::List(list) = value else {
+            panic!("a list, not {value:?}")
+        };
+        list.iter().collect()
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// A receiver or an argument of every sort the instruction loop
+    /// knows (`Sort` in run.rs).
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Unit,
+            closure(Arc::new(Function::returning_unit("f".to_string(), 0))),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::anon_record([("x", Value::Int(1))]),
+        ]
+    }
+
+    /// The method gets the receiver and the arguments, in order, and
+    /// its result lies where the receiver lay; the value below is
+    /// untouched. In tail position its result is the caller's.
+    #[test]
+    fn a_method_gets_its_receiver_and_its_arguments() {
+        for method in [listing as fn(u8) -> Value, |_| lister()] {
+            for receiver in samples() {
+                for argument in samples() {
+                    for extra in [0u8, 1, 3] {
+                        for tail in [false, true] {
+                            let vm = vm_with(&receiver, method(1 + extra));
+                            let (vm, run) = left(vm, |e| {
+                                push(e, Value::Int(99));
+                                push(e, receiver.clone());
+                                for _ in 0..extra {
+                                    push(e, argument.clone());
+                                }
+                                e.emit(call(1 + extra, tail), span()).unwrap();
+                                if !tail {
+                                    e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+                                }
+                                e.emit(Asm::Return, span()).unwrap();
+                            });
+                            let result = run.unwrap();
+                            let got = match tail {
+                                true => result,
+                                false => {
+                                    let both = items(&result);
+                                    assert_eq!(both[0], Value::Int(99));
+                                    both[1].clone()
+                                }
+                            };
+                            let got = items(&got);
+                            assert_eq!(got.len(), usize::from(1 + extra));
+                            assert!(same(&got[0], &receiver), "{got:?}");
+                            for given in &got[1..] {
+                                assert!(same(given, &argument), "{got:?}");
+                            }
+                            assert!(vm.stack.is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A type named as the receiver chooses the method and is no
+    /// argument of it.
+    #[test]
+    fn a_type_as_the_receiver_is_not_an_argument() {
+        for tail in [false, true] {
+            let receiver = Value::PrimitiveDescriptor("Int");
+            let vm = vm_with(&receiver, listing(2));
+            let (vm, run) = left(vm, |e| {
+                push(e, Value::Int(99));
+                push(e, receiver.clone());
+                push(e, Value::Int(1));
+                push(e, Value::String("two".into()));
+                e.emit(call(3, tail), span()).unwrap();
+                if !tail {
+                    e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+                }
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            let result = run.unwrap();
+            let given = Value::list(vec![Value::Int(1), Value::String("two".into())]);
+            match tail {
+                true => assert_eq!(result, given),
+                false => assert_eq!(result, Value::list(vec![Value::Int(99), given])),
+            }
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// The slot a method's frame starts above is one more value on the
+    /// stack: with every number of values below, the stack's room is
+    /// used up exactly at that slot several times.
+    #[test]
+    fn a_method_call_makes_room_for_its_slot() {
+        for below in 0..70usize {
+            let receiver = Value::String("r".into());
+            let vm = vm_with(&receiver, listing(1));
+            let (vm, run) = left(vm, |e| {
+                for n in 0..below {
+                    push(e, Value::Int(n as i64));
+                }
+                push(e, receiver.clone());
+                e.emit(call(1, false), span()).unwrap();
+                e.emit(Asm::MakeList { count: below + 1 }, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            let mut expected: Vec<Value> = (0..below).map(|n| Value::Int(n as i64)).collect();
+            expected.push(Value::list(vec![receiver]));
+            assert_eq!(run.unwrap(), Value::list(expected), "{below} below");
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// Run `build` on a VM whose method, of `arity` parameters, gives
+    /// unit, for a receiver that is a probe; `build` gets the maker of
+    /// probes. The VM as the loop left it, what the loop gave, and the
+    /// probes that ended.
+    fn with_probes(
+        arity: u8,
+        build: impl FnOnce(&mut Emitter, Const),
+    ) -> (Vm, Result<Value, VmError>, Vec<usize>) {
+        let (maker, log) = maker();
+        let method = closure(Arc::new(Function::returning_unit("m".to_string(), arity)));
+        let vm = vm_with(&lister(), method);
+        let (vm, run) = left(vm, |e| {
+            let k = e.constant(maker, span()).unwrap();
+            build(e, k);
+        });
+        let ended = ended(&log);
+        (vm, run, ended)
+    }
+
+    /// The receiver and the arguments are the method's: they end when
+    /// it returns, the receiver first; the value below ends when the
+    /// caller is done.
+    #[test]
+    fn a_method_call_ends_what_it_was_given_at_the_return() {
+        let (vm, run, ended) = with_probes(3, |e, k| {
+            probe(e, k);
+            probe(e, k);
+            probe(e, k);
+            probe(e, k);
+            e.emit(call(3, false), span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert_eq!(ended, [2, 3, 4, 1]);
+        assert!(vm.stack.is_empty());
+    }
+
+    /// A call with the wrong number of arguments (which no checked
+    /// program makes) fails with the slot of the method's frame made
+    /// and nothing let go of; in tail position, with the stack as it
+    /// was.
+    #[test]
+    fn a_method_call_that_fails_leaves_the_stack_as_it_was() {
+        for (tail, left) in [(false, 4), (true, 3)] {
+            let (vm, run, ended) = with_probes(3, |e, k| {
+                probe(e, k);
+                probe(e, k);
+                probe(e, k);
+                e.emit(call(2, tail), span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            let err = run.unwrap_err();
+            assert!(err.type_confusion);
+            assert_eq!(err.message, "function 'm' expects 3 arguments, got 2");
+            assert_eq!(vm.stack.len(), left, "tail: {tail}");
+            assert_eq!(ended, [0; 0]);
+            if !tail {
+                assert_eq!(vm.stack[1], Value::Unit);
+            }
+        }
+    }
+
+    /// A method that is no closure and cannot be called: the receiver
+    /// and its slot are off the stack at the error.
+    #[test]
+    fn a_method_that_cannot_be_called_takes_the_receiver_off() {
+        let receiver = Value::Int(7);
+        let vm = vm_with(&receiver, Value::Int(3));
+        let (vm, run) = left(vm, |e| {
+            push(e, Value::Int(99));
+            push(e, receiver.clone());
+            e.emit(call(1, false), span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let err = run.unwrap_err();
+        assert!(err.type_confusion);
+        assert_eq!(err.message, "cannot call value of type Int");
+        assert_eq!(vm.stack, [Value::Int(99)]);
+    }
+}
