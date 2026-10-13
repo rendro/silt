@@ -1,0 +1,24 @@
+-- cmd: fmt
+-- A comment behind the arrow or behind the opening brace ends the
+-- arrow's line; the expression stands behind the arrow if the comment
+-- can end its line, and under it if not.
+fn pick(n) {
+  match n {
+    1 -> n + 1 -- behind the brace
+    2 -> n + 2 -- behind the arrow
+    3 -> -- behind the arrow
+      -- and behind the brace
+      n + 3
+    4 -> match n { -- behind the brace
+      4 -> 44
+      _ -> 0
+    }
+    _ -> -- behind the brace
+      -- and on the next line
+      0
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

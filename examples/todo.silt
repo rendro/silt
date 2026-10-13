@@ -41,16 +41,14 @@ fn remove_todo(todos, id) {
 fn show_todos(todos) {
   match list.length(todos) {
     0 -> println("  (no todos)")
-    _ -> {
-      todos
-        |> list.each { t ->
-          let check = match t.done {
-            true -> "x"
-            _ -> " "
-          }
-          println("  [{check}] {t.id}: {t.text}")
+    _ -> todos
+      |> list.each { t ->
+        let check = match t.done {
+          true -> "x"
+          _ -> " "
         }
-    }
+        println("  [{check}] {t.id}: {t.text}")
+      }
   }
 }
 

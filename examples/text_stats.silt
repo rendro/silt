@@ -97,9 +97,7 @@ fn print_row(label, value) {
 fn main() {
   let filename = get_filename()
   match io.read_file(filename) {
-    Err(e) -> {
-      println("Error reading file '{filename}': {e.message()}")
-    }
+    Err(e) -> println("Error reading file '{filename}': {e.message()}")
     Ok(content) -> {
       let lines = content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
       let line_count = list.length(lines)

@@ -1,0 +1,46 @@
+-- cmd: fmt
+-- The formatter does not look at how the pipeline of the inner match is
+-- written: where parentheses end it in front of the body, the body is
+-- no closure and the arm would parse without its braces, and they stay
+-- all the same. So this arm has two spellings, each kept as written.
+import list
+
+fn first(xs) {
+  list.head(xs)
+}
+
+fn empty(xs) {
+  list.length(xs) == 0
+}
+
+fn braced(r, xs) {
+  match r {
+    { a: 1 } -> {
+      match (xs |> first) {
+        x -> 1
+      }
+    }
+    { a: 2 } -> {
+      match !(xs |> empty) {
+        x -> 2
+      }
+    }
+    { a } -> a
+  }
+}
+
+fn bare(r, xs) {
+  match r {
+    { a: 1 } -> match (xs |> first) {
+      x -> 1
+    }
+    { a: 2 } -> match !(xs |> empty) {
+      x -> 2
+    }
+    { a } -> a
+  }
+}
+
+fn main() {
+  println((braced({ a: 1 }, [1]), bare({ a: 1 }, [1])))
+}

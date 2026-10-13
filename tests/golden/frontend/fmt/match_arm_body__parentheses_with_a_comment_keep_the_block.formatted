@@ -1,0 +1,31 @@
+-- cmd: fmt
+-- Parentheses with a comment directly inside them stay, and so does the
+-- block they hold. Parentheses inside the braces keep their comment and
+-- the braces go.
+fn pick(n) {
+  match n {
+    1 -> ( -- inside the parenthesis
+      {
+        n + 1
+      }
+    )
+    2 -> (
+      {
+        n + 2
+      }
+      -- in front of the closing parenthesis
+    )
+    3 -> ( -- inside the braces
+      n + 3
+    )
+    _ -> (
+      {
+        0
+      } {- behind the inner brace -}
+    )
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

@@ -1,0 +1,69 @@
+-- cmd: fmt
+-- An arm's body that is one expression in braces of its own is written
+-- without them: under a guard, behind alternatives, in the last arm, in
+-- a match without a scrutinee, and wherever the match stands.
+import list
+
+type Shape {
+  Circle(Float),
+  Square(Float),
+  Dot,
+}
+
+fn area(shape) {
+  match shape {
+    Circle(r) -> 3.14 * r * r
+    Square(side) -> side * side
+    Dot -> 0.0
+  }
+}
+
+fn describe(n) {
+  match n {
+    0 | 1 -> "small"
+    k when k < 0 -> "negative"
+    k when k > 100 -> list.map([k]) { x -> "{x}" } |> list.length |> size
+    _ -> "some"
+  }
+}
+
+fn size(n) {
+  match {
+    n > 10 -> "many"
+    n > 1 -> "few"
+    _ -> "one"
+  }
+}
+
+fn count(xs, acc) {
+  match xs {
+    [] -> acc
+    [_, ..rest] -> count(rest, acc + 1)
+  }
+}
+
+fn checked(text) {
+  let n = match text {
+    "" -> Err("empty")
+    _ -> Ok(1)
+  }?
+  Ok(n + 1)
+}
+
+fn main() {
+  let a = match area(Dot) {
+    0.0 -> "nothing"
+    _ -> "something"
+  }
+  println(
+    match a {
+      "nothing" -> 0
+      _ -> 1
+    },
+  )
+  println((describe(3), size(3), count([1, 2], 0), checked("")))
+  match a {
+    "nothing" -> println("no area")
+    _ -> return
+  }
+}

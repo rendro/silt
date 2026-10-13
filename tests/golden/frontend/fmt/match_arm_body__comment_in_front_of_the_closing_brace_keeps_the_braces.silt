@@ -1,0 +1,30 @@
+-- cmd: fmt
+-- A comment on a line of its own between the expression and the closing
+-- brace would stand in front of the next arm without the braces: the
+-- block stays.
+fn pick(n) {
+  match n {
+    1 -> {
+      n + 1
+      -- still about one
+    }
+    2 -> { n + 2
+      {- still about two -} }
+    3 -> { {
+      n + 3
+    }
+      -- between the closing braces
+    }
+    4 -> { { n + 4
+      -- in front of the inner brace
+    } }
+    _ -> {
+      0
+      -- the last arm
+    }
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

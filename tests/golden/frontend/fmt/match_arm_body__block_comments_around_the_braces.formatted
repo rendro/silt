@@ -1,0 +1,19 @@
+-- cmd: fmt
+-- A `{- -}` comment between two tokens stays between the same tokens
+-- when the braces between them go.
+fn pick(n) {
+  match n {
+    1 -> {- a -} {- b -} n + 1 {- c -} {- d -}
+    2 -> {- b -} {- c -} n {- d -} {- e -}
+    3 {- a -} -> {- b -} (
+      {- c -} {
+        n
+      }
+    )
+    _ -> {- a -} 0 {- b -} {- c -}
+  }
+}
+
+fn main() {
+  println(pick(1))
+}
