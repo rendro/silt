@@ -819,10 +819,11 @@ impl ImportTarget {
     }
 
     /// The import as `silt fmt` writes it behind `import`, on one
-    /// line: `m`, `m as a`, `m.{ a, b }`.
+    /// line: `m`, `m as a`, `m.{ a, b }`, `m.{}`.
     fn written(&self) -> String {
         match self {
             ImportTarget::Module(module) => module.to_string(),
+            ImportTarget::Items(module, items) if items.is_empty() => format!("{module}.{{}}"),
             ImportTarget::Items(module, items) => {
                 let items: Vec<String> = items.iter().map(|(item, _)| item.to_string()).collect();
                 format!("{module}.{{ {} }}", items.join(", "))
@@ -839,10 +840,12 @@ impl ImportTarget {
 /// meaning.
 ///
 /// The imports are sorted by their text (`m`, `m as a`, `m.{ a, b }`),
-/// byte by byte; two that read the same keep their order. So modules
-/// come in the order of their names, digits before capital letters
-/// before `_` before small letters, and of one module the plain import
-/// comes before the alias and the alias before the items.
+/// byte by byte; two that read the same (`import m.{ a }` written
+/// twice is one binding, and both lines stay) keep their order. So
+/// modules come in the order of their names, digits before capital
+/// letters before `_` before small letters, and of one module the
+/// plain import comes before the alias and the alias before the items
+/// (an empty list, `m.{}`, behind the lists that name something).
 pub fn import_order<'a>(imports: impl IntoIterator<Item = &'a ImportTarget>) -> Vec<usize> {
     let mut order: Vec<(String, usize)> = imports
         .into_iter()
@@ -915,14 +918,16 @@ mod import_order_tests {
     use crate::intern::intern;
     use crate::source::Span;
 
-    /// The imports `written`, each `m`, `m as a` or `m.{ a, b }`, in
-    /// their one order.
+    /// The imports `written`, each `m`, `m as a`, `m.{ a, b }` or
+    /// `m.{}`, in their one order.
     fn ordered(written: &[&str]) -> Vec<String> {
         let imports: Vec<ImportTarget> = written
             .iter()
             .map(|import| {
                 if let Some((module, alias)) = import.split_once(" as ") {
                     ImportTarget::Alias(intern(module), intern(alias), Span::BUILTIN)
+                } else if let Some(module) = import.strip_suffix(".{}") {
+                    ImportTarget::Items(intern(module), Vec::new())
                 } else if let Some((module, items)) = import.split_once(".{ ") {
                     let items = items.trim_end_matches(" }").split(", ");
                     ImportTarget::Items(
@@ -964,7 +969,7 @@ mod import_order_tests {
     }
 
     /// Of one module the plain import comes first, then the alias, then
-    /// the items; two imports that read the same keep their order.
+    /// the items.
     #[test]
     fn the_forms_of_one_module_have_an_order() {
         assert_eq!(
@@ -972,10 +977,24 @@ mod import_order_tests {
             ["a", "a as b", "a as z", "a.{ x }", "a.{ y }"]
         );
         assert_eq!(import_order(&[]), Vec::<usize>::new());
-        let twice = [
-            ImportTarget::Module(intern("a")),
-            ImportTarget::Module(intern("a")),
-        ];
-        assert_eq!(import_order(&twice), [0, 1]);
+    }
+
+    /// The key is the text `silt fmt` writes: an empty list is `b.{}`,
+    /// without a space, which comes behind `b.{ fb }`.
+    #[test]
+    fn an_empty_list_of_items_is_ordered_as_it_is_written() {
+        assert_eq!(
+            ordered(&["b.{}", "b.{ fb }", "b as z", "b2", "b"]),
+            ["b", "b as z", "b.{ fb }", "b.{}", "b2"]
+        );
+    }
+
+    /// Two imports that read the same keep their order: the item form
+    /// written twice is one binding, and `silt fmt` keeps both lines.
+    #[test]
+    fn two_imports_that_read_the_same_keep_their_order() {
+        let items = || ImportTarget::Items(intern("a"), vec![(intern("fa"), Span::BUILTIN)]);
+        let twice = [items(), ImportTarget::Module(intern("a")), items()];
+        assert_eq!(import_order(&twice), [1, 0, 2]);
     }
 }

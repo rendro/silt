@@ -336,13 +336,6 @@ pub fn resolve_module(
     Resolution { scope, diagnostics }
 }
 
-/// The module an import names.
-fn import_module(target: &ImportTarget) -> Symbol {
-    match target {
-        ImportTarget::Module(m) | ImportTarget::Items(m, _) | ImportTarget::Alias(m, _, _) => *m,
-    }
-}
-
 /// Enter the definitions of `program` and bind them in `scope`.
 fn declare(
     program: &Program,
@@ -512,7 +505,7 @@ fn bind_imports(
         let Decl::Import(target, _) = decl else {
             continue;
         };
-        let module = import_module(target);
+        let module = target.module();
         let imported = imports.get(&module).copied().unwrap_or(Imported::Poisoned);
         let exports: Option<&Exports> = match imported {
             Imported::Builtin(id) => builtins.modules.get(&id),
