@@ -1,0 +1,97 @@
+-- A task is cancelled while the server works on its statement. The
+-- task ends there. The statement is not interrupted: it goes on in the
+-- server, and meanwhile the pool answers other statements.
+--
+-- The statement waits for an advisory lock that `main` holds in a
+-- transaction, so it is in flight for as long as the case needs, and
+-- `main` reads in `pg_locks` that it still waits. It writes a row when
+-- it gets the lock. After its commit `main` waits for that row: a
+-- statement that the cancel had interrupted would never write it, and
+-- the case would not end. The task would print a line once it had the
+-- statement's answer, and a program does not end while a task waits
+-- for a statement: the line is not in the output because the task has
+-- ended, not because the case looked too early.
+import channel
+import env
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        channel.Message(Ok(_)) -> loop(n + 1)
+        channel.Message(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+-- Count the rows of `sql` again and again, until there are `n`.
+fn until(pool: postgres.PgPool, sql: String, n: Int) -> Int {
+  loop seen = count(pool, sql) {
+    match seen == n {
+      true -> seen
+      false -> {
+        time.sleep(time.ms(5))
+        loop(count(pool, sql))
+      }
+    }
+  }
+}
+
+-- The sessions that wait for the case's lock, a row each.
+fn waiting() -> String {
+  "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 7301 AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancel", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancel (said text)", [])
+      let done = postgres.transact(pool) { tx ->
+        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7301)", [])?
+        println("main holds the lock")
+        let t = task.spawn { ->
+          let _ = postgres.execute(
+            pool,
+            "INSERT INTO silt_database_cancel SELECT 'the statement got the lock' FROM pg_advisory_xact_lock(7301)",
+            [],
+          )
+          println("the task went on with the statement's answer")
+        }
+        println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
+        task.cancel(t)
+        println("after the cancel: {count(pool, waiting())}")
+        let one = count(pool, "SELECT 1")
+        println("the pool answers meanwhile: {one} row")
+        Ok(())
+      }
+      println("main's transaction: {done}")
+      let written = until(pool, "SELECT 1 FROM silt_database_cancel", 1)
+      println("rows the statement wrote when it got the lock: {written}")
+      println("statements that wait for the lock now: {count(pool, waiting())}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_cancel", [])
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

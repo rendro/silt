@@ -96,6 +96,56 @@ jobs:
           CI=1 perl -e 'alarm 1500; exec @ARGV or die "exec: $!"' \
             bash .github/scripts/run-test-partition.sh ${{ matrix.partition }}
 
+  test-linux-postgres:
+    # The `database` suite (tests/database): silt programs that use the
+    # `postgres` module, run against a PostgreSQL server that lives for
+    # this job on the runner. The role, the password and the database are
+    # throwaway names that protect nothing. No other job runs the suite,
+    # and in CI a case that finds no SILT_TEST_POSTGRES_URL fails rather
+    # than being skipped: without the server or the variable this job is
+    # red.
+    name: Test Linux (postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: silt_orm
+          POSTGRES_PASSWORD: silt_orm_dev
+          POSTGRES_DB: silt_orm_test
+        ports:
+          - 5432:5432
+        # The job's steps start when the server answers on its port. (With
+        # `-h`: while the image sets the database up, a temporary server
+        # answers on its socket only, and must not count as healthy.)
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U silt_orm -d silt_orm_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      SILT_TEST_POSTGRES_URL: postgres://silt_orm:silt_orm_dev@127.0.0.1:5432/silt_orm_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Reads the concurrency partition's cache (same features, same
+          # dependencies) and writes none: the repository's cache is full.
+          shared-key: test-concurrency
+          save-if: false
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: cargo nextest (database)
+        run: cargo nextest run --all-features --no-fail-fast --no-tests=fail --test database
+
   test-default-features:
     # Everything else runs with --all-features. This job runs the unit
     # tests and the golden corpus against the default build; golden cases
