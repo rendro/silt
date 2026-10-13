@@ -305,7 +305,10 @@ struct Panicked {
 pub enum PanicAt {
     /// On the worker that is about to run a slice of the spawned task
     /// with this id (`<handle:id>`), when the task has run before: a
-    /// task that waited is lost as it is woken.
+    /// task that waited is lost as it is woken. A test's task must
+    /// certainly have such a slice. A `time.sleep` makes it so (it
+    /// always ends the slice); a receive does not (it may find its
+    /// value there, and the task goes on in its first slice).
     Task(usize),
     /// On the program's own thread, when a wait of its code has ended.
     Program,

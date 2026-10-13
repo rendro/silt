@@ -31,10 +31,19 @@ fn panic_of(call: impl FnOnce()) -> String {
         .expect("the panic has a message")
 }
 
-/// `<handle:0>` waits to be woken, and would then send on a channel
-/// that nobody else sends on; a task joins it, a task receives on that
-/// channel, and `main` joins both. The task is woken when all of them
-/// wait (the sleep makes that likely; nothing depends on it).
+/// `<handle:0>` would send on a channel that nobody else sends on; a
+/// task joins it, a task receives on that channel, and `main` joins
+/// both.
+///
+/// The hook loses a task before a slice of it that is not its first,
+/// so the task must certainly have one. A receive alone does not make
+/// it so: it may find its value there and go on in the same slice. A
+/// sleep does: it always ends the slice. So the task is let through
+/// the gate by `main`, when `main` has started every task and printed
+/// its line (nothing is spawned or printed while the runtime may be
+/// broken), and then sleeps; it is lost as that sleep ends. That the
+/// joiner, the receiver and `main` wait by then is likely and not
+/// certain: the program ends either way.
 const LOST_WHILE_ALL_WAIT: &str = r#"
 import channel
 import task
@@ -45,18 +54,15 @@ fn main() {
   let only = channel.new(0)
   let lost = task.spawn { ->
     let _ = channel.receive(gate)
+    time.sleep(time.ms(5))
     channel.send(only, 1)
   }
   let joiner = task.spawn { -> task.join(lost) }
   let receiver = task.spawn { -> channel.receive(only) }
-  let waker = task.spawn { ->
-    time.sleep(time.ms(20))
-    channel.send(gate, 1)
-  }
   println("main waits")
+  channel.send(gate, 1)
   task.join(joiner)
   let _ = task.join(receiver)
-  task.join(waker)
   println("main went on")
 }
 "#;
@@ -106,44 +112,47 @@ import time
 
 fn main() {
   let gate = channel.new(0)
-  let lost = task.spawn { -> channel.receive(gate) }
-  let waker = task.spawn { ->
+  let lost = task.spawn { ->
+    let _ = channel.receive(gate)
     time.sleep(time.ms(20))
-    channel.send(gate, 1)
   }
   println("main returns")
+  channel.send(gate, 1)
 }
 "#,
     );
     let out = Buffer::new();
     let mut vm = Vm::new(HostIo::buffer(&out));
     panic_for_test(&vm, PanicAt::Task(0));
-    assert_eq!(
-        vm.run_program(&program).map_err(|e| e.message),
-        Ok(Value::Unit)
-    );
-    assert_eq!(panic_of(|| vm.settle()), "a panic made for a test: Task(0)");
+    // The task is let through the gate as `main` returns, and is lost
+    // when its sleep ends: 20 ms later, in `settle`, unless this
+    // thread was held up for that long before it got there (then the
+    // panic comes out of `run_program`, which is as right).
+    let panic = panic_of(|| {
+        let _ = vm.run_program(&program);
+        vm.settle();
+    });
+    assert_eq!(panic, "a panic made for a test: Task(0)");
     assert_eq!(out.contents(), "main returns\n");
 }
 
 /// The program's thread computes and never waits: it gets the panic
 /// where it looks for one, every million steps or so of its loop,
-/// which would never end otherwise.
+/// which would never end otherwise. (The task sleeps, which always
+/// ends its first slice: it is certainly lost when the sleep ends.)
 #[test]
 fn a_panic_of_a_worker_reaches_the_thread_that_computes() {
     let program = compiled(
         r#"
-import channel
 import task
+import time
 
 fn forever(n) {
   forever(n + 1)
 }
 
 fn main() {
-  let gate = channel.new(0)
-  let lost = task.spawn { -> channel.receive(gate) }
-  let waker = task.spawn { -> channel.send(gate, 1) }
+  let lost = task.spawn { -> time.sleep(time.ms(1)) }
   forever(0)
 }
 "#,

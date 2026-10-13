@@ -77,7 +77,14 @@ impl Run<'_> {
                 None if started.elapsed() >= Duration::from_secs(60) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    panic!("silt did not end: it hangs ({})", self.name);
+                    let written =
+                        |file: &str| fs::read_to_string(self.dir().join(file)).unwrap_or_default();
+                    panic!(
+                        "silt did not end: it hangs ({})\nstderr: {}\nstdout: {}",
+                        self.name,
+                        written("err"),
+                        written("out")
+                    );
                 }
                 None => std::thread::sleep(Duration::from_millis(10)),
             }
@@ -126,10 +133,19 @@ fn internal_error_line(message: &str) -> String {
     )
 }
 
-/// `<handle:0>` waits to be woken and would then send on a channel
-/// that nobody else sends on; a task joins it, a task receives on that
-/// channel, and `main` joins both. It is woken when all of them wait
-/// (the sleep makes that likely; nothing depends on it).
+/// `<handle:0>` would send on a channel that nobody else sends on; a
+/// task joins it, a task receives on that channel, and `main` joins
+/// both.
+///
+/// The hook loses a task before a slice of it that is not its first,
+/// so the task must certainly have one. A receive alone does not make
+/// it so: it may find its value there and go on in the same slice. A
+/// sleep does: it always ends the slice. So the task is let through
+/// the gate by `main`, when `main` has started every task and printed
+/// its line (nothing is spawned or printed while the runtime may be
+/// broken), and then sleeps; it is lost as that sleep ends. That the
+/// joiner, the receiver and `main` wait by then is likely and not
+/// certain: the program ends either way.
 const LOST_WHILE_ALL_WAIT: &str = r#"import channel
 import task
 import time
@@ -139,18 +155,15 @@ fn main() {
   let only = channel.new(0)
   let lost = task.spawn { ->
     let _ = channel.receive(gate)
+    time.sleep(time.ms(5))
     channel.send(only, 1)
   }
   let joiner = task.spawn { -> task.join(lost) }
   let receiver = task.spawn { -> channel.receive(only) }
-  let waker = task.spawn { ->
-    time.sleep(time.ms(20))
-    channel.send(gate, 1)
-  }
   println("main waits")
+  channel.send(gate, 1)
   task.join(joiner)
   let _ = task.join(receiver)
-  task.join(waker)
   println("main went on")
 }
 "#;
@@ -255,7 +268,9 @@ fn main() {
 /// panics: it sleeps on the clock for an hour, it computes without end,
 /// it polls for what the lost task would have sent. The process ends
 /// all the same, at once: the thread that caught the panic ends it.
-/// And what `main` had printed without a line end is not lost.
+/// And what `main` had printed without a line end is not lost. (The
+/// task is let through the gate when `main` has printed, and sleeps
+/// before it is lost: see `LOST_WHILE_ALL_WAIT`.)
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_a_worker_ends_a_program_whose_main_thread_is_busy() {
@@ -279,11 +294,12 @@ fn main() {
   let only = channel.new(0)
   let lost = task.spawn { ->
     let _ = channel.receive(gate)
+    time.sleep(time.ms(1))
     channel.send(only, 1)
   }
-  let waker = task.spawn { -> channel.send(gate, 1) }
   println("main waits")
   print("and has printed this")
+  channel.send(gate, 1)
   BUSY
   println("main went on")
 }
@@ -447,6 +463,8 @@ fn main() {
 }
 "#;
     let line = internal_error_line("a panic made for a test: Task(0)");
+    // (At a slice of one step the task is due again after its first
+    // instruction: it is lost there, before it comes to any wait.)
     for round in 0..40 {
         let (status, stdout, stderr) = Run {
             name: "joiners",
@@ -472,7 +490,11 @@ fn main() {
 }
 
 /// Two workers panic close together: one internal-error line, of the
-/// panic that came first, and status 101.
+/// panic that came first, and status 101. (Each task is let through
+/// the gate by `main` and then sleeps, so each is certainly lost if
+/// it is still to run when its sleep ends; the two sleeps end within
+/// microseconds of each other. Whether both workers panic or the
+/// second finds the runtime ended is the machine's to say.)
 #[test]
 #[cfg(feature = "test-hooks")]
 fn two_panics_close_together_are_one_internal_error() {
@@ -480,18 +502,20 @@ fn two_panics_close_together_are_one_internal_error() {
 import task
 import time
 
+fn nap(gate) {
+  let _ = channel.receive(gate)
+  time.sleep(time.ms(1))
+}
+
 fn main() {
   let gate = channel.new(0)
-  let first = task.spawn { -> channel.receive(gate) }
-  let second = task.spawn { -> channel.receive(gate) }
-  let waker = task.spawn { ->
-    time.sleep(time.ms(20))
-    channel.send(gate, 1)
-    channel.send(gate, 2)
-  }
+  let first = task.spawn { -> nap(gate) }
+  let second = task.spawn { -> nap(gate) }
   println("main waits")
-  let _ = task.join(first)
-  let _ = task.join(second)
+  channel.send(gate, 1)
+  channel.send(gate, 2)
+  task.join(first)
+  task.join(second)
   println("main went on")
 }
 "#;
