@@ -20,25 +20,19 @@ Which code a compiler makes of the loop cannot be seen in a test of
 what a program prints, and a wall time cannot be asserted. The guard
 counts instead. It starts the binary on a loop, stops it in the loop,
 steps 200,000 machine instructions (ptrace) and replays their loads and
-stores. A round of the loop must have
+stores. A round of the loop must have no load that overlaps a store of
+the last 60 executed instructions which does not cover it. The number
+is exact and does not depend on the machine's load.
 
-- no load that overlaps a store of the last 60 executed instructions
-  which does not cover it, and
-- no more executed instructions than a bound (about 8% above what the
-  compiler of 2026-10-12, rustc 1.99.0, makes: 557 for the plain loop,
-  787 for the round with an add).
-
-Both numbers are exact and do not depend on the machine's load.
-
-The count of instructions is exact for one binary, but it is not a
+The guard also prints how many instructions a round executes, and does
+not check it. That count is exact for one binary, but it is not a
 property of the loop's source alone. When the rest of the crate
 changes, the compiler builds the loop's one large function differently:
 in October 2026 the same source read 539 and 557 instructions for the
-plain loop (761 and 787 with an add) from one merge to the next. The
-loads did not move once. So the first rule is the one that holds the
-fix. The bound on instructions is there for a compiler that makes the
-loop grossly longer; if it fails on a change that did not touch the
-loop and the loads are still none, raise the bound.
+plain loop (761 and 787 with an add) from one merge to the next, and
+the loop before #54 read 593, so a bound could not tell the fix from
+its absence. The loads did not move once (none with the fix, 9 and 13
+per round without it).
 
 ## Running it
 
@@ -57,15 +51,13 @@ It prints each load that waits, with the stores it overlaps, and the
 instructions per round by function. If the compiler changed and silt
 did not, the listing shows which instruction's value is built somewhere
 else again; `push_with` and the comment above it in src/vm/run.rs say
-what the loop relies on. If the bound on instructions is passed and no
-load waits, look at what the round runs now and raise the bound if that
-is what is wanted.
+what the loop relies on.
 
 ## What it does not catch
 
-- A slowdown that is neither a waiting load nor more instructions: a
-  jump the processor predicts badly, code that falls on a worse
-  address.
+- A slowdown that is not a waiting load: a loop the compiler makes
+  longer, a jump the processor predicts badly, code that falls on a
+  worse address.
 - A round it does not run: only a plain loop and one with an add are
   counted, not a call, a method call or a Float.
 - Any other target. The releases for aarch64, macOS and Windows are
@@ -81,4 +73,4 @@ is what is wanted.
 - `count.py`: makes the two numbers of a round from that and the
   binary's disassembly.
 - `plain_loop.silt`, `add_round.silt`: the two loops.
-- `run.sh`: builds `step`, runs both loops, applies the bounds.
+- `run.sh`: builds `step`, runs both loops, fails on a waiting load.
