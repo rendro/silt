@@ -1,5 +1,6 @@
 toml.stringify: unsupported value kind Fn
 toml.stringify: unsupported value kind Fn
+toml.stringify: unsupported value kind Fn
 toml.stringify: unsupported value kind Set
 toml.pretty: unsupported value kind Channel
 toml.stringify: TOML cannot represent Unit

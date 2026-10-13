@@ -289,7 +289,6 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
                 "{caller}: TOML cannot represent Unit"
             )));
         }
-        Value::VariantConstructor(tag) => ::toml::Value::String(tag.name().into()),
         _ => return Err(unsupported_kind(caller, v)),
     })
 }
