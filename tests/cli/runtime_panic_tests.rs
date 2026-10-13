@@ -493,6 +493,89 @@ fn a_panic_of_a_worker_ends_a_test_run() {
     assert_eq!(stderr.lines().last(), Some(line.as_str()));
 }
 
+/// A thread of a runtime panics after its VM is gone, in silt's own
+/// process: the line and 101, like any other. `silt test` makes a VM
+/// for each file. The first file's test leaves a read of a FIFO behind
+/// that nobody waits for; its VM is dropped; while the second file's
+/// test sleeps, this test opens the FIFO, the read returns, and its
+/// thread panics with nobody left to give the panic to. Before, Rust's
+/// lines were all, and the run went on to its usual end.
+#[test]
+#[cfg(all(unix, feature = "test-hooks"))]
+fn a_panic_after_its_vm_is_gone_ends_the_process() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let first = r#"import channel
+import io
+import task
+import time
+
+fn test_a_leaves_a_read_behind() {
+  let started = channel.new(1)
+  let reader = task.spawn { ->
+    channel.send(started, 1)
+    io.read_file("pipe")
+  }
+  let _ = channel.receive(started)
+  time.sleep(time.ms(300))
+  task.cancel(reader)
+}
+"#;
+    let second = r#"import time
+
+fn test_b_goes_on() {
+  println("the second file runs")
+  time.sleep(time.seconds(20))
+}
+"#;
+    let run = Run {
+        name: "late",
+        files: &[("a_test.silt", first), ("b_test.silt", second)],
+        args: &["test"],
+        env: &[("SILT_TEST_PANIC", "io")],
+        unread_stdout: true,
+    };
+    let mut command = run.command();
+    let pipe = run.dir().join("pipe");
+    let made = Command::new("mkfifo").arg(&pipe).status();
+    assert!(
+        made.is_ok_and(|status| status.success()),
+        "mkfifo makes the FIFO"
+    );
+    let mut child = command.spawn().expect("silt starts");
+
+    // The first file's VM is gone when the second file's test runs.
+    let mut stdout = BufReader::new(child.stdout.take().expect("the child's stdout"));
+    let mut line = String::new();
+    stdout.read_line(&mut line).expect("a line of the child");
+    assert_eq!(line, "the second file runs\n");
+    // The read that was left behind has the FIFO open, or is about to:
+    // it gets its writer, and returns. (Without a reader the open
+    // fails, and is tried again.)
+    let started = Instant::now();
+    let mut writer = fs::OpenOptions::new();
+    writer.write(true).custom_flags(libc::O_NONBLOCK);
+    while writer.open(&pipe).is_err() {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "nobody reads the FIFO"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let (status, stderr) = run.wait(child);
+    let _ = fs::remove_dir_all(run.dir());
+    assert_eq!(status, Some(101), "{stderr}");
+    assert!(stderr.contains("thread 'silt-io' "), "{stderr}");
+    assert!(
+        stderr.contains("PASS ./a_test.silt::test_a_leaves_a_read_behind"),
+        "{stderr}"
+    );
+    let line = internal_error_line("a panic made for a test: Io");
+    assert_eq!(stderr.lines().last(), Some(line.as_str()));
+}
+
 /// Without the variable the program of the first test runs to its end.
 #[test]
 fn the_program_runs_to_its_end_when_nothing_panics() {
