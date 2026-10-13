@@ -58,7 +58,7 @@ jobs:
         run: cargo fmt -- --check
 
   test-linux:
-    # Split Linux test runs across 4 parallel matrix partitions so total
+    # Split Linux test runs across 5 parallel matrix partitions so total
     # wall-clock approximates max(slowest partition) instead of the sum.
     # The partitions follow the suite binaries under tests/ (see
     # .github/scripts/run-test-partition.sh): the `heavy` suite with the
@@ -191,8 +191,10 @@ jobs:
     # The machine code of the instruction loop, in the binary the
     # releases ship: built as release.yml builds it, with `stable`,
     # which moves. The binary is stopped in two loops and stepped; a
-    # round must have no load that waits for a store and no more
-    # instructions than its bound. See .github/scripts/loop-guard/.
+    # round must have no load that waits for a store. It keeps no
+    # cache: the repository's cache is over its limit, and an entry
+    # here would push out the test partitions'. See
+    # .github/scripts/loop-guard/.
     name: Loop guard (release build)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -202,10 +204,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
-      - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: loop-guard
       - name: cargo build --release (as the release job)
         run: cargo build --release --target x86_64-unknown-linux-gnu
       - name: Count a round of two loops
@@ -244,7 +242,7 @@ jobs:
   # the 25-min cap. Partition the same way Linux does so total wall-
   # clock is max(slowest partition) instead of the sum. The `rest` bucket
   # alone outgrew the 30-min in-script cap as the suite kept growing, so
-  # it is split into rest1/rest2 (~15 min each, headroom for growth).
+  # it is split in three (rest1, rest2, rest3).
   test-windows:
     name: Test Windows (${{ matrix.partition }})
     runs-on: windows-latest
