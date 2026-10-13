@@ -5,9 +5,10 @@
 --
 -- The statement waits for an advisory lock that `main` holds in a
 -- transaction, so it is still in flight when the deadline passes,
--- however long that takes, and `main` reads in `pg_locks` whether it
--- still waits. When `main` has committed, the statement gets the lock
--- and ends.
+-- however long that takes, and `main` reads in `pg_locks` that it
+-- still waits. It writes a row when it gets the lock. After its commit
+-- `main` waits for that row: a statement that had been interrupted
+-- would never write it, and the case would not end.
 import channel
 import env
 import postgres
@@ -41,35 +42,38 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
   }
 }
 
--- How many sessions wait for the case's lock.
-fn waiting(pool: postgres.PgPool) -> Int {
-  count(
-    pool,
-    "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 7302 AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-  )
-}
-
--- Look until `n` sessions wait for it.
-fn until_waiting(pool: postgres.PgPool, n: Int) -> Int {
-  loop seen = waiting(pool) {
+-- Count the rows of `sql` again and again, until there are `n`.
+fn until(pool: postgres.PgPool, sql: String, n: Int) -> Int {
+  loop seen = count(pool, sql) {
     match seen == n {
       true -> seen
       false -> {
         time.sleep(time.ms(5))
-        loop(waiting(pool))
+        loop(count(pool, sql))
       }
     }
   }
 }
 
+-- The sessions that wait for the case's lock, a row each.
+fn waiting() -> String {
+  "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 7302 AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+}
+
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_deadline", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_deadline (said text)", [])
       let done = postgres.transact(pool) { tx ->
         let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7302)", [])?
         println("main holds the lock")
         let late = task.deadline(time.ms(500)) { ->
-          match postgres.query(pool, "SELECT pg_advisory_xact_lock(7302)", []) {
+          match postgres.execute(
+            pool,
+            "INSERT INTO silt_database_deadline SELECT 'the statement got the lock' FROM pg_advisory_xact_lock(7302)",
+            [],
+          ) {
             Ok(_) -> "the statement's answer"
             Err(e) -> e.message()
           }
@@ -80,13 +84,16 @@ fn main() {
             Err(e) -> "task.deadline: {e.message()}"
           },
         )
-        println("statements that wait for the lock in the server: {until_waiting(pool, 1)}")
+        println("statements that wait for the lock in the server: {until(pool, waiting(), 1)}")
         let one = count(pool, "SELECT 1")
         println("the pool answers meanwhile: {one} row")
         Ok(())
       }
       println("main's transaction: {done}")
-      println("statements that wait for the lock now: {until_waiting(pool, 0)}")
+      let written = until(pool, "SELECT 1 FROM silt_database_deadline", 1)
+      println("rows the statement wrote when it got the lock: {written}")
+      println("statements that wait for the lock now: {count(pool, waiting())}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_deadline", [])
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")
