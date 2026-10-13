@@ -1,9 +1,9 @@
 -- cmd: fmt
--- The formatter takes every inner body for a possible closure unless it
--- starts with a number or a boolean. A text, a pin or a guard in the
--- first arm is no closure's parameter either, so the arm would parse
--- without its braces, and they stay all the same. So this arm has two
--- spellings, each kept as written.
+-- The formatter takes every inner body for a possible closure unless
+-- its first pattern is a number, a boolean or a range. A text, a pin,
+-- alternatives that are numbers, or a guard are no closure's parameters
+-- either, so the arm would parse without its braces, and they stay all
+-- the same. So this arm has two spellings, each kept as written.
 fn up(x) {
   x
 }
@@ -28,6 +28,12 @@ fn braced(r, text, k) {
         _ -> 0
       }
     }
+    { a: 4 } -> {
+      match k |> up {
+        1 | 2 -> 4
+        _ -> 0
+      }
+    }
     { a } -> a
   }
 }
@@ -44,6 +50,10 @@ fn bare(r, text, k) {
     }
     { a: 3 } -> match k |> up {
       n when n > 2 -> 3
+      _ -> 0
+    }
+    { a: 4 } -> match k |> up {
+      1 | 2 -> 4
       _ -> 0
     }
     { a } -> a
