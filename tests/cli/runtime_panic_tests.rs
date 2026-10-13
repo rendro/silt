@@ -497,28 +497,38 @@ fn a_panic_of_a_worker_ends_a_test_run() {
 /// process: the line and 101, like any other. `silt test` makes a VM
 /// for each file. The first file's test leaves a read of a FIFO behind
 /// that nobody waits for; its VM is dropped; while the second file's
-/// test sleeps, this test opens the FIFO, the read returns, and its
-/// thread panics with nobody left to give the panic to. Before, Rust's
-/// lines were all, and the run went on to its usual end.
+/// test sleeps, this test lets the read return, and its thread panics
+/// with nobody left to give the panic to. Before, Rust's lines were
+/// all, and the run went on to its usual end.
+///
+/// The order is certain, with no sleep to make it so: the FIFO can be
+/// opened for writing only when the read has it open, so the read is
+/// under way when this test makes the file `go`, which the first
+/// file's test waits for before it cancels its reader.
 #[test]
 #[cfg(all(unix, feature = "test-hooks"))]
 fn a_panic_after_its_vm_is_gone_ends_the_process() {
     use std::io::{BufRead, BufReader};
     use std::os::unix::fs::OpenOptionsExt;
 
-    let first = r#"import channel
+    let first = r#"import fs
 import io
 import task
 import time
 
-fn test_a_leaves_a_read_behind() {
-  let started = channel.new(1)
-  let reader = task.spawn { ->
-    channel.send(started, 1)
-    io.read_file("pipe")
+fn until_there(path) {
+  match fs.exists(path) {
+    true -> ()
+    false -> {
+      time.sleep(time.ms(1))
+      until_there(path)
+    }
   }
-  let _ = channel.receive(started)
-  time.sleep(time.ms(300))
+}
+
+fn test_a_leaves_a_read_behind() {
+  let reader = task.spawn { -> io.read_file("pipe") }
+  until_there("go")
   task.cancel(reader)
 }
 "#;
@@ -545,24 +555,30 @@ fn test_b_goes_on() {
     );
     let mut child = command.spawn().expect("silt starts");
 
+    // The read has the FIFO open when a writer can open it (until
+    // then the open fails, and is tried again). The writer is kept:
+    // the read waits for what it writes, or for its end.
+    let started = Instant::now();
+    let mut options = fs::OpenOptions::new();
+    options.write(true).custom_flags(libc::O_NONBLOCK);
+    let writer = loop {
+        match options.open(&pipe) {
+            Ok(writer) => break writer,
+            Err(_) if started.elapsed() < Duration::from_secs(60) => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("nobody reads the FIFO: {e}"),
+        }
+    };
+    // The test may cancel its reader now, and end.
+    fs::write(run.dir().join("go"), "").expect("the file is made");
     // The first file's VM is gone when the second file's test runs.
     let mut stdout = BufReader::new(child.stdout.take().expect("the child's stdout"));
     let mut line = String::new();
     stdout.read_line(&mut line).expect("a line of the child");
     assert_eq!(line, "the second file runs\n");
-    // The read that was left behind has the FIFO open, or is about to:
-    // it gets its writer, and returns. (Without a reader the open
-    // fails, and is tried again.)
-    let started = Instant::now();
-    let mut writer = fs::OpenOptions::new();
-    writer.write(true).custom_flags(libc::O_NONBLOCK);
-    while writer.open(&pipe).is_err() {
-        assert!(
-            started.elapsed() < Duration::from_secs(60),
-            "nobody reads the FIFO"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // The read that was left behind returns, and its thread panics.
+    drop(writer);
 
     let (status, stderr) = run.wait(child);
     let _ = fs::remove_dir_all(run.dir());
