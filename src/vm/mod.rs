@@ -199,14 +199,20 @@ impl Drop for Vm {
                 vm.runtime.shutdown();
             }
         };
-        if !self.runtime.scheduler.is_broken() {
+        if !self.runtime.scheduler.is_broken() && !std::thread::panicking() {
             return end(self);
         }
         // A thread of the runtime has panicked, and that panic is on
         // its way to the embedder. This runs over state that may be
         // half updated: a second panic here, while the embedder's
         // thread unwinds, would abort its process, so it is dropped.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| end(self)));
+        // The same on the thread that is unwinding from the first
+        // panic, which drops the VM of the task it was running.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            #[cfg(any(test, feature = "test-hooks"))]
+            self.runtime.scheduler.panic_while_unwinding_for_test();
+            end(self)
+        }));
     }
 }
 

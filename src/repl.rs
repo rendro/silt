@@ -145,7 +145,7 @@ pub fn run_repl() {
         Ok(editor) => editor,
         Err(err) => {
             eprintln!("silt repl: failed to initialize terminal: {err}");
-            std::process::exit(1);
+            crate::scheduler::exit_with_status(1);
         }
     };
     rl.set_helper(Some(helper));

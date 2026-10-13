@@ -77,7 +77,9 @@ impl Output for ProcessStdout {
     fn write(&self, text: &str) -> io::Result<()> {
         use std::io::Write;
         match io::stdout().lock().write_all(text.as_bytes()) {
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => std::process::exit(141),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                crate::scheduler::exit_with_status(141)
+            }
             result => result,
         }
     }

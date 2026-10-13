@@ -227,6 +227,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index);
 
         let mut vm = Vm::new(silt::HostIo::process());
+        #[cfg(feature = "test-hooks")]
+        crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);
         let setup = vm.run_program(&program);
         // The top-level code has ended when its tasks can do no more.
@@ -368,8 +370,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'"
         );
     }
+    // (The tests may have left threads: see `vm_run_file`.)
     if failed > 0 || file_errors.any() {
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
 }
 

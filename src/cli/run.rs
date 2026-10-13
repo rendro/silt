@@ -203,7 +203,9 @@ pub(crate) fn vm_run_file(path: &str) {
 
     // Run via VM. The failures of tasks that nobody joins are taken and
     // reported here, against the program's files, instead of by the
-    // scheduler.
+    // scheduler. From here on the program may have threads, and the
+    // process ends through `exit_with_status`: a thread of the runtime
+    // that has panicked may be ending it with the internal error.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new(silt::HostIo::process());
     #[cfg(feature = "test-hooks")]
@@ -238,40 +240,43 @@ pub(crate) fn vm_run_file(path: &str) {
             format!("main returned Err: {}", vm.show_text(payload)),
         );
         eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
     if let Err(e) = run_result {
         eprintln!("{}", render_runtime_error(&e, path, &sources));
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
     if tasks_failed {
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
 }
 
 /// In a build with `test-hooks` only: make the runtime of `vm` panic
-/// once at the place `SILT_TEST_PANIC` names (`task:<id>`, `program`,
-/// `timer`, `io`), for the tests of what the binary does when a thread
-/// of the runtime panics (tests/cli/runtime_panic_tests.rs). No other
-/// build reads the variable.
+/// once at each place `SILT_TEST_PANIC` names (`task:<id>`, `program`,
+/// `timer`, `io`; several with commas between), for the tests of what
+/// the binary does when a thread of the runtime panics
+/// (tests/cli/runtime_panic_tests.rs). `silt run` and `silt test` call
+/// it for each VM they make. No other build reads the variable.
 #[cfg(feature = "test-hooks")]
-fn panic_where_a_test_says(vm: &Vm) {
+pub(crate) fn panic_where_a_test_says(vm: &Vm) {
     use silt::vm::PanicAt;
-    let Ok(place) = std::env::var("SILT_TEST_PANIC") else {
+    let Ok(places) = std::env::var("SILT_TEST_PANIC") else {
         return;
     };
     let task = |id: &str| id.parse().ok().map(PanicAt::Task);
-    let at = match place.as_str() {
-        "program" => Some(PanicAt::Program),
-        "timer" => Some(PanicAt::Timer),
-        "io" => Some(PanicAt::Io),
-        place => place.strip_prefix("task:").and_then(task),
-    };
-    match at {
-        Some(at) => silt::vm::panic_for_test(vm, at),
-        None => {
-            eprintln!("silt run: SILT_TEST_PANIC names no place: '{place}'");
-            process::exit(2);
+    for place in places.split(',') {
+        let at = match place {
+            "program" => Some(PanicAt::Program),
+            "timer" => Some(PanicAt::Timer),
+            "io" => Some(PanicAt::Io),
+            place => place.strip_prefix("task:").and_then(task),
+        };
+        match at {
+            Some(at) => silt::vm::panic_for_test(vm, at),
+            None => {
+                eprintln!("silt: SILT_TEST_PANIC names no place: '{place}'");
+                process::exit(2);
+            }
         }
     }
 }

@@ -97,8 +97,12 @@ fn main() {
     // (the checker, the compiler, the VM on the program's thread), is a
     // bug in silt, and ends the process as a panic of a thread of the
     // runtime does.
-    if let Err(payload) = join.join() {
-        silt::scheduler::exit_with_internal_error(&payload);
+    // A command that returned may have left threads of a runtime
+    // behind: if one of them is ending the process with the internal
+    // error, that is how it ends.
+    match join.join() {
+        Ok(()) => silt::scheduler::exit_with_status(0),
+        Err(payload) => silt::scheduler::exit_with_internal_error(&payload),
     }
 }
 
