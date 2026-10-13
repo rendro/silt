@@ -1,0 +1,79 @@
+a function
+7
+2.5
+true
+()
+text
+[1, 2, 3]
+Point {x: 1, y: 2}
+Circle(1.5)
+42
+a function that returns its argument
+7
+2.5
+true
+()
+text
+[1, 2, 3]
+Point {x: 1, y: 2}
+Circle(1.5)
+Square
+42
+the target of a tail call
+7
+2.5
+true
+()
+text
+[1, 2, 3]
+Point {x: 1, y: 2}
+Circle(1.5)
+42
+a closure
+7
+2.5
+true
+()
+text
+[1, 2, 3]
+Point {x: 1, y: 2}
+Circle(1.5)
+42
+a method and a default method
+7
+2.5
+true
+()
+text
+[1, 2, 3]
+Point {x: 1, y: 2}
+Circle(1.5)
+42
+7
+2.5
+true
+()
+text
+[1, 2, 3]
+Point {x: 1, y: 2}
+Circle(1.5)
+42
+a function a builtin calls back
+[7, 8]
+[2.5, 2.5]
+[false, true]
+[(), ()]
+[text, text]
+[[1, 3], [2, 3]]
+[Point {x: 1, y: 2}, Point {x: 2, y: 2}]
+[Circle(1.5), Circle(1.5)]
+[41, 42]
+6
+4.0
+false
+123
+[3, 2, 1]
+a recursion
+99000
+49500.0
+2000

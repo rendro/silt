@@ -8,9 +8,9 @@ use crate::builtins::registry::registry;
 use crate::bytecode::{Chunk, Instr, Op, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{List, Record, Value};
+use crate::value::{Float, List, Record, Value};
 
-use super::arithmetic::{arithmetic, check_same_type, ordering};
+use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
 use super::{Vm, VmError};
@@ -96,45 +96,11 @@ fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
 // the pool, of the kinds it needs. The accessors below do not look
 // for anything else.
 
-/// A copy of `value`, for the instructions that read a slot or a
-/// constant: a number, a Bool or unit is copied here, in the loop; a
-/// value of any other kind is cloned, a call. (The kinds that are
-/// copied are named: one that is added later is cloned until it is
-/// named here.)
-#[inline(always)]
-fn copy(value: &Value) -> Value {
-    match value {
-        Value::Int(n) => Value::Int(*n),
-        Value::Float(f) => Value::Float(*f),
-        Value::Bool(b) => Value::Bool(*b),
-        Value::Unit => Value::Unit,
-        Value::String(_)
-        | Value::List(_)
-        | Value::Map(_)
-        | Value::Set(_)
-        | Value::Tuple(_)
-        | Value::Record(_)
-        | Value::Variant(_)
-        | Value::VmClosure(_)
-        | Value::BuiltinFn(_)
-        | Value::HostFn(_)
-        | Value::VariantConstructor(_)
-        | Value::TypeDescriptor(_)
-        | Value::PrimitiveDescriptor(_)
-        | Value::Channel(_)
-        | Value::Handle(_)
-        | Value::Bytes(_)
-        | Value::TcpListener(_)
-        | Value::TcpStream(_) => value.clone(),
-    }
-}
-
 /// Let go of `value`, for the instructions that are done with a value
 /// they took off the stack or wrote over: a number, a Bool or unit owns
 /// nothing, and is not handed to the drop of a value of any kind, a
-/// call; a value of any other kind is dropped. (As [`copy`], which is
-/// the same for a read. The kinds are named: one that is added later
-/// does not compile until it is placed here.)
+/// call; a value of any other kind is dropped. (The kinds are named:
+/// one that is added later does not compile until it is placed here.)
 #[inline(always)]
 fn done(value: Value) {
     match value {
@@ -190,6 +156,157 @@ fn put(slot: &mut Value, value: Value) {
         | Value::Bytes(_)
         | Value::TcpListener(_)
         | Value::TcpStream(_) => *slot = value,
+    }
+}
+
+// A new value is written where it goes, and a push makes room first.
+// A Value is 40 bytes; one just written in two smaller stores (its tag,
+// its number) and then read back in 16-byte pieces, as a move reads
+// it, makes the processor wait for the stores, 12 to 14 cycles each
+// time. (Measured in pull request #54, 2026-10-12.)
+
+/// A value as the instructions that copy one sort it: a number, a Bool
+/// or unit, which owns nothing and is built where it goes; a closure,
+/// which is one pointer and is built where it goes too; a value of any
+/// other kind, which is cloned and moved.
+enum Sort<'a> {
+    Int(i64),
+    Float(Float),
+    Bool(bool),
+    Unit,
+    Closure(&'a Arc<VmClosure>),
+    Other(&'a Value),
+}
+
+/// The [`Sort`] of `value`. (The kinds are named: one that is added
+/// later does not compile until it is placed here.)
+#[inline(always)]
+fn sort(value: &Value) -> Sort<'_> {
+    match value {
+        Value::Int(n) => Sort::Int(*n),
+        Value::Float(f) => Sort::Float(*f),
+        Value::Bool(b) => Sort::Bool(*b),
+        Value::Unit => Sort::Unit,
+        Value::VmClosure(closure) => Sort::Closure(closure),
+        Value::String(_)
+        | Value::List(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::Tuple(_)
+        | Value::Record(_)
+        | Value::Variant(_)
+        | Value::BuiltinFn(_)
+        | Value::HostFn(_)
+        | Value::VariantConstructor(_)
+        | Value::TypeDescriptor(_)
+        | Value::PrimitiveDescriptor(_)
+        | Value::Channel(_)
+        | Value::Handle(_)
+        | Value::Bytes(_)
+        | Value::TcpListener(_)
+        | Value::TcpStream(_) => Sort::Other(value),
+    }
+}
+
+/// Make room in `stack` for one more. Rare, and so a call.
+#[cold]
+#[inline(never)]
+fn grow<T>(stack: &mut Vec<T>) {
+    stack.reserve(1);
+}
+
+/// Push what `make` builds: it is built in its slot of `stack`. (A
+/// plain `Vec::push` builds its value somewhere else and copies it,
+/// because the value has to outlive the call that makes room. Here the
+/// room is made first, and the compiler sees that the push needs none.)
+#[inline(always)]
+pub(super) fn push_with<T>(stack: &mut Vec<T>, make: impl FnOnce() -> T) {
+    if stack.len() == stack.capacity() {
+        grow(stack);
+    }
+    if stack.len() < stack.capacity() {
+        stack.push(make());
+    } else {
+        unreachable!("`grow` made room for one more")
+    }
+}
+
+// These five are not inlined into the loop: there rustc 1.99.0 calls
+// `Vec::push_mut` out of line and copies the value in (measured 2026-10-12).
+
+#[inline(never)]
+fn push_int(stack: &mut Vec<Value>, n: i64) {
+    push_with(stack, || Value::Int(n));
+}
+
+#[inline(never)]
+fn push_float(stack: &mut Vec<Value>, f: Float) {
+    push_with(stack, || Value::Float(f));
+}
+
+#[inline(never)]
+fn push_bool(stack: &mut Vec<Value>, b: bool) {
+    push_with(stack, || Value::Bool(b));
+}
+
+#[inline(never)]
+fn push_unit(stack: &mut Vec<Value>) {
+    push_with(stack, || Value::Unit);
+}
+
+#[inline(never)]
+fn push_closure(stack: &mut Vec<Value>, closure: Arc<VmClosure>) {
+    push_with(stack, move || Value::VmClosure(closure));
+}
+
+/// Push a copy of the value in the place `$value`, for the
+/// instructions that read a slot, a constant or a global.
+macro_rules! push_copy {
+    ($stack:expr, $value:expr) => {
+        match sort(&$value) {
+            Sort::Int(n) => push_int(&mut $stack, n),
+            Sort::Float(f) => push_float(&mut $stack, f),
+            Sort::Bool(b) => push_bool(&mut $stack, b),
+            Sort::Unit => push_unit(&mut $stack),
+            Sort::Closure(closure) => {
+                let closure = closure.clone();
+                push_closure(&mut $stack, closure);
+            }
+            Sort::Other(value) => {
+                let value = value.clone();
+                $stack.push(value);
+            }
+        }
+    };
+}
+
+/// Write a copy of the value in slot `$from` of the stack over slot
+/// `$to` ([`put`]), for the instructions that set a slot from another.
+macro_rules! set_copy {
+    ($stack:expr, $to:expr, $from:expr) => {{
+        let (to, from) = ($to, $from);
+        match sort(&$stack[from]) {
+            Sort::Int(n) => put(&mut $stack[to], Value::Int(n)),
+            Sort::Float(f) => put(&mut $stack[to], Value::Float(f)),
+            Sort::Bool(b) => put(&mut $stack[to], Value::Bool(b)),
+            Sort::Unit => put(&mut $stack[to], Value::Unit),
+            Sort::Closure(_) | Sort::Other(_) => {
+                let value = $stack[from].clone();
+                put(&mut $stack[to], value);
+            }
+        }
+    }};
+}
+
+/// Take the value on top off the stack and let go of it ([`done`]),
+/// where it lies: a number, a Bool or unit is not moved out first.
+#[inline(always)]
+fn pop_done(stack: &mut Vec<Value>) {
+    match sort(peek(stack)) {
+        Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit => {
+            std::mem::forget(stack.pop());
+        }
+        Sort::Closure(_) | Sort::Other(_) => drop(stack.pop()),
     }
 }
 
@@ -338,24 +455,53 @@ impl Vm {
                 }
             };
         }
+        // An instruction of two operands reads them where they lie, on
+        // top of the stack, and writes its result over the first; the
+        // second is let go of. Nothing is taken off the stack and
+        // pushed again.
+        macro_rules! operands {
+            () => {{
+                let [.., a, b] = self.stack.as_mut_slice() else {
+                    unreachable!("verified code has both operands on the stack")
+                };
+                (a, b)
+            }};
+        }
+        // The instruction refuses its operands: they leave the stack,
+        // the first before the second, and the instruction fails.
+        macro_rules! refuse {
+            ($error:expr) => {{
+                let error = $error;
+                let below = self.stack.len() - 2;
+                self.stack.truncate(below);
+                fail!(error)
+            }};
+        }
         macro_rules! arithmetic {
             ($op:expr) => {{
-                let b = pop(&mut self.stack);
-                let a = pop(&mut self.stack);
-                let value = ok!(arithmetic($op, &a, &b));
-                self.stack.push(value);
-                done(a);
-                done(b);
+                let (a, b) = operands!();
+                if let (Value::Int(x), Value::Int(y)) = (&*a, &*b) {
+                    match int_arithmetic($op, *x, *y) {
+                        Ok(n) => put(a, Value::Int(n)),
+                        Err(error) => refuse!(error),
+                    }
+                } else {
+                    match float_arithmetic($op, a, b) {
+                        Ok(f) => put(a, Value::Float(f)),
+                        Err(error) => refuse!(error),
+                    }
+                }
+                pop_done(&mut self.stack);
             }};
         }
         macro_rules! compare {
             ($holds:expr) => {{
-                let b = pop(&mut self.stack);
-                let a = pop(&mut self.stack);
-                let ordering = ok!(ordering(&a, &b));
-                self.stack.push(Value::Bool($holds(ordering)));
-                done(a);
-                done(b);
+                let (a, b) = operands!();
+                match ordering(a, b) {
+                    Ok(ordering) => put(a, Value::Bool($holds(ordering))),
+                    Err(error) => refuse!(error),
+                }
+                pop_done(&mut self.stack);
             }};
         }
 
@@ -368,30 +514,32 @@ impl Vm {
             let (instr, next) = decode(code, ip).expect("verified code decodes");
             ip = next;
             match instr {
-                Instr::Constant { k } => self.stack.push(copy(chunk.constant(k))),
-                Instr::Unit => self.stack.push(Value::Unit),
-                Instr::True => self.stack.push(Value::Bool(true)),
-                Instr::False => self.stack.push(Value::Bool(false)),
+                Instr::Constant { k } => push_copy!(self.stack, *chunk.constant(k)),
+                Instr::Unit => push_unit(&mut self.stack),
+                Instr::True => push_bool(&mut self.stack, true),
+                Instr::False => push_bool(&mut self.stack, false),
                 Instr::Add => arithmetic!(Op::Add),
                 Instr::Sub => arithmetic!(Op::Sub),
                 Instr::Mul => arithmetic!(Op::Mul),
                 Instr::Div => arithmetic!(Op::Div),
                 Instr::Mod => arithmetic!(Op::Mod),
                 Instr::Eq => {
-                    let b = pop(&mut self.stack);
-                    let a = pop(&mut self.stack);
-                    ok!(equality_operands(&a, &b));
-                    self.stack.push(Value::Bool(a == b));
-                    done(a);
-                    done(b);
+                    let (a, b) = operands!();
+                    if let Err(error) = equality_operands(a, b) {
+                        refuse!(error);
+                    }
+                    let holds = *a == *b;
+                    put(a, Value::Bool(holds));
+                    pop_done(&mut self.stack);
                 }
                 Instr::Neq => {
-                    let b = pop(&mut self.stack);
-                    let a = pop(&mut self.stack);
-                    ok!(equality_operands(&a, &b));
-                    self.stack.push(Value::Bool(a != b));
-                    done(a);
-                    done(b);
+                    let (a, b) = operands!();
+                    if let Err(error) = equality_operands(a, b) {
+                        refuse!(error);
+                    }
+                    let holds = *a != *b;
+                    put(a, Value::Bool(holds));
+                    pop_done(&mut self.stack);
                 }
                 Instr::Lt => compare!(Ordering::is_lt),
                 Instr::Gt => compare!(Ordering::is_gt),
@@ -504,19 +652,13 @@ impl Vm {
                     self.stack.truncate(start);
                     self.stack.push(Value::String(result.into()));
                 }
-                Instr::GetLocal { slot } => {
-                    let value = copy(&self.stack[base + slot]);
-                    self.stack.push(value);
-                }
+                Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {
-                    let value = copy(peek(&self.stack));
-                    put(&mut self.stack[base + slot], value);
+                    let top = self.stack.len() - 1;
+                    set_copy!(self.stack, base + slot, top);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
-                    Some(value) => {
-                        let value = value.clone();
-                        self.stack.push(value);
-                    }
+                    Some(value) => push_copy!(self.stack, *value),
                     // (Not set in this VM's slots: see the function.)
                     None => {
                         let newest = &self.runtime.newest;
@@ -536,12 +678,26 @@ impl Vm {
                     }
                     load!();
                 }
-                Instr::GetUpvalue { index } => self.stack.push(copy(&closure.upvalues[index])),
+                Instr::GetUpvalue { index } => push_copy!(self.stack, closure.upvalues[index]),
                 Instr::Call { argc } => {
                     let func_slot = self.stack.len() - 1 - argc;
-                    let callee = self.stack[func_slot].clone();
                     save!();
-                    let entered = ok!(self.call_value(callee, argc, func_slot));
+                    // (A closure is called by its pointer: the value in
+                    // the slot is not cloned and moved.)
+                    let entered = match sort(&self.stack[func_slot]) {
+                        Sort::Closure(closure) => {
+                            let closure = closure.clone();
+                            ok!(self.call_closure(closure, argc, func_slot))
+                        }
+                        Sort::Int(_)
+                        | Sort::Float(_)
+                        | Sort::Bool(_)
+                        | Sort::Unit
+                        | Sort::Other(_) => {
+                            let callee = self.stack[func_slot].clone();
+                            ok!(self.call_value(callee, argc, func_slot))
+                        }
+                    };
                     go_on!(self.entered(entered));
                 }
                 Instr::TailCall { argc } => {
@@ -564,7 +720,40 @@ impl Vm {
                         go_on!(self.entered(entered));
                     }
                 }
-                Instr::Return => returned!(pop(&mut self.stack)),
+                Instr::Return => {
+                    let frames = self.frames.len();
+                    let top = self.stack.len() - 1;
+                    // Whether the value goes to a function's frame, the
+                    // caller's: `returned!` then pushes it where the
+                    // callee's own slot was.
+                    let to_caller = base >= 1
+                        && frames >= 2
+                        && frames - 1 != floor
+                        && matches!(self.frames[frames - 2], Frame::Code(_));
+                    match sort(&self.stack[top]) {
+                        // A number, a Bool or unit for the caller is
+                        // written from the top slot over the callee's
+                        // own: it is not taken off the stack and pushed
+                        // again. What is let go of, and in which order,
+                        // is `returned!`'s: the frame, the callee's
+                        // slot, the slots above it.
+                        Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit if to_caller => {
+                            self.frames.pop();
+                            if !self.tco_elided.is_empty() {
+                                self.tco_elided.prune(self.frames.len());
+                            }
+                            set_copy!(self.stack, base - 1, top);
+                            self.stack.truncate(base);
+                            load!();
+                        }
+                        Sort::Int(_)
+                        | Sort::Float(_)
+                        | Sort::Bool(_)
+                        | Sort::Unit
+                        | Sort::Closure(_)
+                        | Sort::Other(_) => returned!(pop(&mut self.stack)),
+                    }
+                }
                 Instr::CallBuiltin { builtin, argc } => {
                     save!();
                     let args_at = self.stack.len() - argc;
@@ -704,20 +893,18 @@ impl Vm {
                 }
                 Instr::Jump { to } => ip = to,
                 Instr::JumpIfFalse { to } => {
-                    let val = pop(&mut self.stack);
-                    if self.is_falsy(&val) {
+                    if self.is_falsy(peek(&self.stack)) {
                         ip = to;
                     }
-                    done(val);
+                    pop_done(&mut self.stack);
                 }
                 Instr::JumpIfTrue { to } => {
-                    let val = pop(&mut self.stack);
-                    if self.is_truthy(&val) {
+                    if self.is_truthy(peek(&self.stack)) {
                         ip = to;
                     }
-                    done(val);
+                    pop_done(&mut self.stack);
                 }
-                Instr::Pop => done(pop(&mut self.stack)),
+                Instr::Pop => pop_done(&mut self.stack),
                 Instr::Dup => {
                     let val = peek(&self.stack).clone();
                     self.stack.push(val);
@@ -902,8 +1089,7 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        let value = copy(&self.stack[start + i]);
-                        put(&mut self.stack[base + first_slot + i], value);
+                        set_copy!(self.stack, base + first_slot + i, start + i);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);

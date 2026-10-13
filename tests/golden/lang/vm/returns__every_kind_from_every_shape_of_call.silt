@@ -1,0 +1,283 @@
+-- A value of every kind comes back from every shape of call: a
+-- function, a closure, a method, a default method, a tail call's
+-- target, a function a builtin calls back, a function that returns its
+-- own argument, and a recursion.
+import list
+import string
+
+type Point {
+  x: Int,
+  y: Int,
+}
+
+type Shape {
+  Circle(Float),
+  Square,
+}
+
+fn an_int() -> Int {
+  7
+}
+
+fn a_float() -> Float {
+  2.5
+}
+
+fn a_bool() -> Bool {
+  true
+}
+
+fn a_unit() -> () {
+  ()
+}
+
+fn a_string() -> String {
+  "text"
+}
+
+fn a_list() -> List(Int) {
+  [1, 2, 3]
+}
+
+fn a_record() -> Point {
+  Point { x: 1, y: 2 }
+}
+
+fn a_variant() -> Shape {
+  Circle(1.5)
+}
+
+fn a_closure() -> Fn(Int) -> Int {
+  let n = 40
+  { x -> x + n }
+}
+
+fn id(x: a) -> a {
+  x
+}
+
+fn tail_int() -> Int {
+  an_int()
+}
+
+fn tail_float() -> Float {
+  a_float()
+}
+
+fn tail_bool() -> Bool {
+  a_bool()
+}
+
+fn tail_unit() -> () {
+  a_unit()
+}
+
+fn tail_string() -> String {
+  a_string()
+}
+
+fn tail_list() -> List(Int) {
+  a_list()
+}
+
+fn tail_record() -> Point {
+  a_record()
+}
+
+fn tail_variant() -> Shape {
+  a_variant()
+}
+
+fn tail_closure() -> Fn(Int) -> Int {
+  a_closure()
+}
+
+trait Kinds {
+  fn int(self) -> Int
+  fn float(self) -> Float
+  fn bool(self) -> Bool
+  fn unit(self) -> ()
+  fn string(self) -> String
+  fn list(self) -> List(Int)
+  fn record(self) -> Point
+  fn variant(self) -> Shape
+  fn closure(self) -> Fn(Int) -> Int
+  fn default_int(self) -> Int {
+    self.int()
+  }
+  fn default_float(self) -> Float {
+    self.float()
+  }
+  fn default_bool(self) -> Bool {
+    self.bool()
+  }
+  fn default_unit(self) -> () {
+    self.unit()
+  }
+  fn default_string(self) -> String {
+    self.string()
+  }
+  fn default_list(self) -> List(Int) {
+    self.list()
+  }
+  fn default_record(self) -> Point {
+    self.record()
+  }
+  fn default_variant(self) -> Shape {
+    self.variant()
+  }
+  fn default_closure(self) -> Fn(Int) -> Int {
+    self.closure()
+  }
+}
+
+trait Kinds for Point {
+  fn int(self) -> Int {
+    self.x + 6
+  }
+  fn float(self) -> Float {
+    2.5
+  }
+  fn bool(self) -> Bool {
+    self.x < self.y
+  }
+  fn unit(self) -> () {
+    ()
+  }
+  fn string(self) -> String {
+    "text"
+  }
+  fn list(self) -> List(Int) {
+    [self.x, self.y, 3]
+  }
+  fn record(self) -> Point {
+    self
+  }
+  fn variant(self) -> Shape {
+    Circle(1.5)
+  }
+  fn closure(self) -> Fn(Int) -> Int {
+    let n = self.x + 39
+    { x -> x + n }
+  }
+}
+
+fn depth(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + depth(n - 1)
+  }
+}
+
+fn depth_float(n: Int) -> Float {
+  match n {
+    0 -> 0.0
+    _ -> 0.5 + depth_float(n - 1)
+  }
+}
+
+fn depth_string(n: Int) -> String {
+  match n {
+    0 -> ""
+    _ -> "{depth_string(n - 1)}."
+  }
+}
+
+fn main() {
+  println("a function")
+  println(an_int())
+  println(a_float())
+  println(a_bool())
+  println(a_unit())
+  println(a_string())
+  println(a_list())
+  println(a_record())
+  println(a_variant())
+  println(a_closure()(2))
+
+  println("a function that returns its argument")
+  println(id(7))
+  println(id(2.5))
+  println(id(true))
+  println(id(()))
+  println(id("text"))
+  println(id([1, 2, 3]))
+  println(id(Point { x: 1, y: 2 }))
+  println(id(Circle(1.5)))
+  println(id(Square))
+  println(id(a_closure())(2))
+
+  println("the target of a tail call")
+  println(tail_int())
+  println(tail_float())
+  println(tail_bool())
+  println(tail_unit())
+  println(tail_string())
+  println(tail_list())
+  println(tail_record())
+  println(tail_variant())
+  println(tail_closure()(2))
+
+  println("a closure")
+  let n = 5
+  let c_int = { -> n + 2 }
+  let c_float = { -> 2.5 }
+  let c_bool = { -> n > 2 }
+  let c_unit = { -> () }
+  let c_string = { -> "text" }
+  let c_items = { -> [1, 2, n - 2] }
+  let c_record = { -> Point { x: 1, y: n - 3 } }
+  let c_variant = { -> Circle(1.5) }
+  let c_closure = { -> { x -> x + n + 35 } }
+  println(c_int())
+  println(c_float())
+  println(c_bool())
+  println(c_unit())
+  println(c_string())
+  println(c_items())
+  println(c_record())
+  println(c_variant())
+  println(c_closure()(2))
+
+  println("a method and a default method")
+  let p = Point { x: 1, y: 2 }
+  println(p.int())
+  println(p.float())
+  println(p.bool())
+  println(p.unit())
+  println(p.string())
+  println(p.list())
+  println(p.record())
+  println(p.variant())
+  println(p.closure()(2))
+  println(p.default_int())
+  println(p.default_float())
+  println(p.default_bool())
+  println(p.default_unit())
+  println(p.default_string())
+  println(p.default_list())
+  println(p.default_record())
+  println(p.default_variant())
+  println(p.default_closure()(2))
+
+  println("a function a builtin calls back")
+  println(list.map([1, 2]) { x -> x + 6 })
+  println(list.map([1, 2]) { x -> 2.5 })
+  println(list.map([1, 2]) { x -> x > 1 })
+  println(list.map([1, 2]) { x -> () })
+  println(list.map([1, 2]) { x -> "text" })
+  println(list.map([1, 2]) { x -> [x, 3] })
+  println(list.map([1, 2]) { x -> Point { x: x, y: 2 } })
+  println(list.map([1, 2]) { x -> Circle(1.5) })
+  println(list.map(list.map([1, 2]) { x -> { y -> x + y } }) { f -> f(40) })
+  println(list.fold([1, 2, 3], 0) { acc, x -> acc + x })
+  println(list.fold([1, 2, 3], 0.5) { acc, x -> acc * 2.0 })
+  println(list.fold([1, 2, 3], true) { acc, x -> acc && x < 3 })
+  println(list.fold([1, 2, 3], "") { acc, x -> "{acc}{x}" })
+  println(list.fold([1, 2, 3], []) { acc, x -> [x, ..acc] })
+
+  println("a recursion")
+  println(depth(99000))
+  println(depth_float(99000))
+  println(string.length(depth_string(2000)))
+}

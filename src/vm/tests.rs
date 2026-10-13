@@ -4411,3 +4411,958 @@ mod abandon {
         assert_eq!(abandoned.load(Ordering::SeqCst), 1);
     }
 }
+
+/// A push builds its value in its slot of the stack and makes room
+/// first (`push_with` in run.rs). A VM's stack starts without room and
+/// doubles, so a run of pushes of one form crosses its capacity
+/// several times at a push of exactly that form; one that found no
+/// room would panic.
+mod pushes_that_make_room {
+    use super::*;
+    use crate::bytecode::VmClosure;
+
+    /// More than the stack holds after eight doublings.
+    const COUNT: usize = 300;
+
+    fn closure() -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+            upvalues: vec![],
+        }))
+    }
+
+    /// A value of every sort the instruction loop builds in place (a
+    /// number, a Bool, unit, a closure), and three of the kinds it
+    /// clones and moves.
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Unit,
+            closure(),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::tuple(vec![float(0.5), Value::Bool(false)]),
+        ]
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// Emit `before`, then `push` `COUNT` times, then a list of what
+    /// was pushed, which the function returns.
+    fn listing(e: &mut Emitter, before: impl FnOnce(&mut Emitter), push: impl Fn(&mut Emitter)) {
+        before(e);
+        for _ in 0..COUNT {
+            push(e);
+        }
+        e.emit(Asm::MakeList { count: COUNT }, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+    }
+
+    /// The values of the list `value`, which are `COUNT` of `expected`.
+    fn all_are(value: Value, expected: &Value) {
+        let Value::List(list) = value else {
+            panic!("a list, not {value:?}")
+        };
+        assert_eq!(list.len(), COUNT);
+        for pushed in list.iter() {
+            assert!(same(&pushed, expected), "{pushed:?} is not {expected:?}");
+        }
+    }
+
+    #[test]
+    fn a_constant_of_every_kind() {
+        for sample in samples() {
+            let script = make_function(|e| {
+                let k = e.constant(sample.clone(), span()).unwrap();
+                listing(e, |_| {}, |e| e.emit(Asm::Constant { k }, span()).unwrap());
+            });
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &sample,
+            );
+        }
+    }
+
+    #[test]
+    fn true_false_and_unit() {
+        for (asm, value) in [
+            (Asm::True, Value::Bool(true)),
+            (Asm::False, Value::Bool(false)),
+            (Asm::Unit, Value::Unit),
+        ] {
+            let script = make_function(|e| listing(e, |_| {}, |e| e.emit(asm, span()).unwrap()));
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &value,
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_of_every_kind() {
+        for sample in samples() {
+            let script = make_function(|e| {
+                let k = e.constant(sample.clone(), span()).unwrap();
+                listing(
+                    e,
+                    |e| e.emit(Asm::Constant { k }, span()).unwrap(),
+                    |e| e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap(),
+                );
+            });
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &sample,
+            );
+        }
+    }
+
+    #[test]
+    fn a_global_of_every_kind() {
+        for sample in samples() {
+            let script = make_function(|e| {
+                let k = e.constant(sample.clone(), span()).unwrap();
+                listing(
+                    e,
+                    |e| {
+                        e.emit(Asm::Constant { k }, span()).unwrap();
+                        e.emit(Asm::SetGlobal { slot: 0 }, span()).unwrap();
+                        e.emit(Asm::Pop, span()).unwrap();
+                    },
+                    |e| e.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap(),
+                );
+            });
+            let mut vm = Vm::new(crate::HostIo::process());
+            vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
+            all_are(vm.run(script).unwrap(), &sample);
+        }
+    }
+
+    #[test]
+    fn an_upvalue_of_every_kind() {
+        for sample in samples() {
+            let mut inner = Emitter::new("inner".to_string(), 0, span()).unwrap();
+            listing(
+                &mut inner,
+                |_| {},
+                |e| e.emit(Asm::GetUpvalue { index: 0 }, span()).unwrap(),
+            );
+            let inner = Value::VmClosure(Arc::new(VmClosure {
+                function: Arc::new(inner.finish(1).unwrap_or_else(|e| panic!("{e:?}"))),
+                upvalues: vec![sample.clone()],
+            }));
+            let script = make_function(|e| {
+                let k = e.constant(inner, span()).unwrap();
+                e.emit(Asm::Constant { k }, span()).unwrap();
+                e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            all_are(
+                Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                &sample,
+            );
+        }
+    }
+
+    /// The stack keeps what was pushed before it grew: values of every
+    /// kind in turn, pushed past eight doublings, come back in order.
+    #[test]
+    fn what_was_pushed_before_the_stack_grew_is_kept() {
+        let samples = samples();
+        let script = make_function(|e| {
+            let constants: Vec<_> = samples
+                .iter()
+                .map(|sample| e.constant(sample.clone(), span()).unwrap())
+                .collect();
+            for i in 0..COUNT {
+                let k = constants[i % constants.len()];
+                e.emit(Asm::Constant { k }, span()).unwrap();
+            }
+            e.emit(Asm::MakeList { count: COUNT }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let Value::List(list) = Vm::new(crate::HostIo::process()).run(script).unwrap() else {
+            panic!("a list")
+        };
+        assert_eq!(list.len(), COUNT);
+        for (i, pushed) in list.iter().enumerate() {
+            let expected = &samples[i % samples.len()];
+            assert!(
+                same(&pushed, expected),
+                "{i}: {pushed:?} is not {expected:?}"
+            );
+        }
+    }
+}
+
+/// Values whose end is seen, for the tests of what an instruction lets
+/// go of and in which order.
+mod seen_drops {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::runtime::sync::Channel;
+    use crate::value::{HostFn, HostShape};
+
+    /// The numbers of the probes that ended, in the order they ended.
+    pub(super) type Log = Arc<Mutex<Vec<usize>>>;
+
+    struct Probe(usize, Log);
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.1.lock().unwrap().push(self.0);
+        }
+    }
+
+    /// A function that gives a new value at each call: the first is
+    /// probe 1, the next probe 2. A probe is a value nothing else
+    /// holds: when the VM lets go of it, its number is written to the
+    /// log. (A constant would not do: the function's constants hold it
+    /// too.)
+    pub(super) fn maker() -> (Value, Log) {
+        let log = Log::default();
+        let (made, seen) = (AtomicUsize::new(0), log.clone());
+        let make = move |_: &[Value]| {
+            let probe = Probe(made.fetch_add(1, Ordering::SeqCst) + 1, seen.clone());
+            Ok(Value::HostFn(Arc::new(HostFn {
+                name: "probe".to_string(),
+                call: Arc::new(move |_| {
+                    let _ = &probe;
+                    Ok(Value::Unit)
+                }),
+                returns: HostShape::Any,
+            })))
+        };
+        let maker = Value::HostFn(Arc::new(HostFn {
+            name: "maker".to_string(),
+            call: Arc::new(make),
+            returns: HostShape::Any,
+        }));
+        (maker, log)
+    }
+
+    /// Two functions that number their probes together: the first as
+    /// [`maker`]'s, the second gives a new closure of `function` at
+    /// each call, which captures a new probe and is held by nothing
+    /// else (the function's one upvalue).
+    pub(super) fn makers(function: Arc<Function>) -> (Value, Value, Log) {
+        let log = Log::default();
+        let made = Arc::new(AtomicUsize::new(0));
+        let new_probe = {
+            let (made, log) = (made.clone(), log.clone());
+            move || {
+                let probe = Probe(made.fetch_add(1, Ordering::SeqCst) + 1, log.clone());
+                Value::HostFn(Arc::new(HostFn {
+                    name: "probe".to_string(),
+                    call: Arc::new(move |_| {
+                        let _ = &probe;
+                        Ok(Value::Unit)
+                    }),
+                    returns: HostShape::Any,
+                }))
+            }
+        };
+        let host = |name: &str, call: crate::value::HostImpl| {
+            Value::HostFn(Arc::new(HostFn {
+                name: name.to_string(),
+                call,
+                returns: HostShape::Any,
+            }))
+        };
+        let probes = {
+            let new_probe = new_probe.clone();
+            host("maker", Arc::new(move |_| Ok(new_probe())))
+        };
+        let closures = host(
+            "closures",
+            Arc::new(move |_| {
+                Ok(Value::VmClosure(Arc::new(crate::bytecode::VmClosure {
+                    function: function.clone(),
+                    upvalues: vec![new_probe()],
+                })))
+            }),
+        );
+        (probes, closures, log)
+    }
+
+    /// A function that gives a new channel at each call, and the
+    /// channels it gave, each as long as something holds it. (A channel
+    /// can be compared, which a function cannot; it does not say when
+    /// it ended, only that it has.)
+    pub(super) fn channels() -> (Value, Arc<Mutex<Vec<std::sync::Weak<Channel>>>>) {
+        let given = Arc::new(Mutex::new(Vec::new()));
+        let (made, seen) = (AtomicUsize::new(0), given.clone());
+        let make = move |_: &[Value]| {
+            let channel = Channel::new(made.fetch_add(1, Ordering::SeqCst), 0);
+            seen.lock().unwrap().push(Arc::downgrade(&channel));
+            Ok(Value::Channel(channel))
+        };
+        let maker = Value::HostFn(Arc::new(HostFn {
+            name: "channels".to_string(),
+            call: Arc::new(make),
+            returns: HostShape::Any,
+        }));
+        (maker, given)
+    }
+
+    /// Emit the push of a new probe, made by the maker constant `k`.
+    pub(super) fn probe(e: &mut Emitter, k: crate::bytecode::Const) {
+        e.emit(Asm::Constant { k }, span()).unwrap();
+        e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+    }
+
+    /// What the log holds now.
+    pub(super) fn ended(log: &Log) -> Vec<usize> {
+        log.lock().unwrap().clone()
+    }
+
+    /// [`left_with`] the maker of probes: the VM, what the loop gave,
+    /// and the log.
+    pub(super) fn left_by(
+        build: impl FnOnce(&mut Emitter, crate::bytecode::Const),
+    ) -> (Vm, Result<Value, VmError>, Log) {
+        let (maker, log) = maker();
+        let (vm, run) = left_with(maker, build);
+        (vm, run, log)
+    }
+
+    /// Run the script `build` emits, given the constant of `maker`,
+    /// until it ends or fails, and give the VM as the instruction loop
+    /// left it (nothing is cut back or unwound yet) and what the loop
+    /// gave.
+    pub(super) fn left_with(
+        maker: Value,
+        build: impl FnOnce(&mut Emitter, crate::bytecode::Const),
+    ) -> (Vm, Result<Value, VmError>) {
+        let script = make_function(|e| {
+            let k = e.constant(maker, span()).unwrap();
+            build(e, k);
+        });
+        let mut vm = Vm::new(crate::HostIo::process());
+        let floor = vm.frames.len();
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(crate::bytecode::VmClosure {
+                function: script,
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        let run = vm.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+        let run = run.map(|slice| match slice {
+            crate::vm::run::Slice::Done(value) => value,
+            _ => panic!("the script runs to its end or to an error"),
+        });
+        (vm, run)
+    }
+}
+
+/// An instruction of two operands (arithmetic, a comparison, `==`,
+/// `!=`) reads them where they lie on the stack and writes its result
+/// over the first.
+mod two_operands {
+    use super::seen_drops::{channels, ended, left_by, left_with, probe};
+    use super::*;
+
+    fn string(s: &str) -> Value {
+        Value::String(s.into())
+    }
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// `a op b`, computed above a value that must stay what it is.
+    fn result(a: Value, op: Asm<'static>, b: Value) -> Value {
+        let below = string("below");
+        let script = make_function(|e| {
+            push(e, below.clone());
+            push(e, a);
+            push(e, b);
+            e.emit(op, span()).unwrap();
+            e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let Value::Tuple(pair) = Vm::new(crate::HostIo::process()).run(script).unwrap() else {
+            panic!("a tuple")
+        };
+        let [kept, result] = &pair[..] else {
+            panic!("a pair")
+        };
+        assert_eq!(kept, &below);
+        result.clone()
+    }
+
+    #[test]
+    fn two_ints() {
+        let int = Value::Int;
+        for (a, op, b, expected) in [
+            (7, Asm::Add, 5, int(12)),
+            (7, Asm::Sub, 5, int(2)),
+            (7, Asm::Mul, -5, int(-35)),
+            (-7, Asm::Div, 2, int(-3)),
+            (-7, Asm::Mod, 2, int(-1)),
+            (i64::MAX - 1, Asm::Add, 1, int(i64::MAX)),
+            (i64::MIN + 1, Asm::Sub, 1, int(i64::MIN)),
+            (7, Asm::Lt, 5, Value::Bool(false)),
+            (7, Asm::Gt, 5, Value::Bool(true)),
+            (5, Asm::Leq, 5, Value::Bool(true)),
+            (5, Asm::Geq, 6, Value::Bool(false)),
+            (5, Asm::Eq, 5, Value::Bool(true)),
+            (5, Asm::Neq, 5, Value::Bool(false)),
+        ] {
+            assert_eq!(result(int(a), op, int(b)), expected, "{a} {op:?} {b}");
+        }
+    }
+
+    #[test]
+    fn two_floats() {
+        for (a, op, b, expected) in [
+            (7.5, Asm::Add, 0.25, float(7.75)),
+            (7.5, Asm::Sub, 0.25, float(7.25)),
+            (7.5, Asm::Mul, -2.0, float(-15.0)),
+            (7.5, Asm::Div, 2.0, float(3.75)),
+            (7.5, Asm::Mod, 2.0, float(1.5)),
+            (7.5, Asm::Lt, 0.25, Value::Bool(false)),
+            (7.5, Asm::Gt, 0.25, Value::Bool(true)),
+            (0.25, Asm::Leq, 0.25, Value::Bool(true)),
+            (0.25, Asm::Geq, 7.5, Value::Bool(false)),
+            (0.25, Asm::Eq, 0.25, Value::Bool(true)),
+            (0.25, Asm::Neq, 0.25, Value::Bool(false)),
+        ] {
+            assert_eq!(result(float(a), op, float(b)), expected, "{a} {op:?} {b}");
+        }
+    }
+
+    /// A Float result that is zero is the one zero a Float has.
+    #[test]
+    fn a_float_result_of_zero_has_no_sign() {
+        for (a, op, b) in [
+            (0.0, Asm::Mul, -1.0),
+            (-1.0, Asm::Mul, 0.0),
+            (0.0, Asm::Div, -4.0),
+            (-0.5, Asm::Add, 0.5),
+            (-3.0, Asm::Mod, 3.0),
+        ] {
+            let Value::Float(zero) = result(float(a), op, float(b)) else {
+                panic!("a Float")
+            };
+            assert_eq!(zero.get().to_bits(), 0.0_f64.to_bits(), "{a} {op:?} {b}");
+        }
+    }
+
+    #[test]
+    fn two_values_of_another_kind_are_compared() {
+        let list = |items: &[i64]| Value::list(items.iter().copied().map(Value::Int).collect());
+        for (a, op, b, expected) in [
+            (string("a"), Asm::Lt, string("b"), true),
+            (string("b"), Asm::Leq, string("a"), false),
+            (string("a"), Asm::Eq, string("a"), true),
+            (string("a"), Asm::Neq, string("a"), false),
+            (list(&[1, 2]), Asm::Gt, list(&[1]), true),
+            (list(&[1, 2]), Asm::Eq, list(&[1, 2]), true),
+            (list(&[1, 2]), Asm::Neq, list(&[2, 1]), true),
+            (Value::Bool(false), Asm::Lt, Value::Bool(true), true),
+            (Value::Bool(true), Asm::Eq, Value::Bool(false), false),
+            (Value::Unit, Asm::Eq, Value::Unit, true),
+            (Value::Unit, Asm::Geq, Value::Unit, true),
+        ] {
+            let shown = format!("{a:?} {op:?} {b:?}");
+            assert_eq!(result(a, op, b), Value::Bool(expected), "{shown}");
+        }
+    }
+
+    /// The pairs of operands each instruction refuses, in every order.
+    fn refused() -> Vec<(Value, Asm<'static>, Value)> {
+        let int = Value::Int;
+        let mut pairs = vec![];
+        for op in [Asm::Add, Asm::Sub, Asm::Mul, Asm::Div, Asm::Mod] {
+            for (a, b) in [
+                (int(1), float(2.5)),
+                (float(2.5), int(1)),
+                (string("a"), string("b")),
+                (string("a"), int(1)),
+                (int(1), string("a")),
+                (Value::Bool(true), Value::Bool(false)),
+                (Value::Unit, int(1)),
+                (float(1.5), Value::Unit),
+            ] {
+                pairs.push((a, op, b));
+            }
+        }
+        pairs.extend([
+            (int(i64::MAX), Asm::Add, int(1)),
+            (int(i64::MIN), Asm::Sub, int(1)),
+            (int(i64::MAX), Asm::Mul, int(2)),
+            (int(i64::MIN), Asm::Div, int(-1)),
+            (int(i64::MIN), Asm::Mod, int(-1)),
+            (int(7), Asm::Div, int(0)),
+            (int(7), Asm::Mod, int(0)),
+            (float(7.0), Asm::Div, float(0.0)),
+            (float(7.0), Asm::Mod, float(0.0)),
+            (float(f64::MAX), Asm::Add, float(f64::MAX)),
+            (float(f64::MAX), Asm::Mul, float(2.0)),
+            (float(f64::MIN), Asm::Sub, float(f64::MAX)),
+        ]);
+        for op in [Asm::Lt, Asm::Gt, Asm::Leq, Asm::Geq, Asm::Eq, Asm::Neq] {
+            for (a, b) in [
+                (int(1), string("a")),
+                (string("a"), int(1)),
+                (int(1), float(1.0)),
+                (Value::Bool(true), Value::Unit),
+            ] {
+                pairs.push((a, op, b));
+            }
+        }
+        pairs
+    }
+
+    /// An instruction that refuses its operands has taken both off the
+    /// stack when it fails, and nothing else: what is read of the
+    /// stack after an error (the REPL goes on, an embedder runs the
+    /// next program) finds it as it was below them.
+    #[test]
+    fn refused_operands_are_off_the_stack_at_the_error() {
+        for (a, op, b) in refused() {
+            let shown = format!("{a:?} {op:?} {b:?}");
+            let (vm, run, _) = left_by(|e, _| {
+                push(e, string("below"));
+                e.emit(Asm::Unit, span()).unwrap();
+                push(e, a);
+                push(e, b);
+                e.emit(op, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.is_err(), "{shown} is refused");
+            assert_eq!(vm.stack, [string("below"), Value::Unit], "{shown}");
+        }
+    }
+
+    /// Operands that are refused are let go of the first before the
+    /// second.
+    #[test]
+    fn refused_operands_end_the_first_before_the_second() {
+        for op in [
+            Asm::Add,
+            Asm::Sub,
+            Asm::Mul,
+            Asm::Div,
+            Asm::Mod,
+            Asm::Lt,
+            Asm::Gt,
+            Asm::Leq,
+            Asm::Geq,
+            Asm::Eq,
+            Asm::Neq,
+        ] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                e.emit(op, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.is_err(), "{op:?} of two functions is refused");
+            assert_eq!(ended(&log), [1, 2], "{op:?}");
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// Operands that `==` and `!=` accept are let go of by the
+    /// instruction: nothing holds them when it is done. (No value that
+    /// can be compared says in which order it ended: a probe is a
+    /// function, and a function is refused, alone or in a list. And no
+    /// value that `<` accepts has an end that is seen at all: it
+    /// refuses a channel too.)
+    #[test]
+    fn compared_operands_are_let_go_of() {
+        for op in [Asm::Eq, Asm::Neq] {
+            let (maker, given) = channels();
+            let (vm, run) = left_with(maker, |e, k| {
+                probe(e, k);
+                probe(e, k);
+                e.emit(op, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(matches!(run, Ok(Value::Bool(_))), "{op:?} of two channels");
+            let given = given.lock().unwrap();
+            assert_eq!(given.len(), 2);
+            for channel in given.iter() {
+                assert_eq!(channel.strong_count(), 0, "{op:?}");
+            }
+            drop(vm);
+        }
+    }
+}
+
+/// The instructions that test the value on top (`JumpIfFalse`,
+/// `JumpIfTrue`), let go of it (`Pop`) or set a slot from another
+/// (`SetLocal`, `Recur`) read and write the values where they lie.
+mod slots_in_place {
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+    use crate::bytecode::VmClosure;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn closure() -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+            upvalues: vec![],
+        }))
+    }
+
+    /// A value of every sort the instruction loop knows (`Sort` in
+    /// run.rs) that can be compared with `==`.
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Unit,
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+        ]
+    }
+
+    /// `1` if the jump `jump` is taken on `value`, `2` if it is not.
+    fn taken(value: Value, jump: fn(crate::bytecode::Label) -> Asm<'static>) -> Value {
+        let script = make_function(|e| {
+            push(e, value);
+            let (there, end) = (e.label(), e.label());
+            e.emit(jump(there), span()).unwrap();
+            push(e, Value::Int(2));
+            e.emit(Asm::Jump { to: end }, span()).unwrap();
+            e.bind(there, span()).unwrap();
+            push(e, Value::Int(1));
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        Vm::new(crate::HostIo::process()).run(script).unwrap()
+    }
+
+    /// `false` and unit are false to a jump; a value of any other kind
+    /// is true.
+    #[test]
+    fn a_jump_tests_the_value_on_top() {
+        let (if_false, if_true): (fn(_) -> _, fn(_) -> _) =
+            (|to| Asm::JumpIfFalse { to }, |to| Asm::JumpIfTrue { to });
+        for value in samples().into_iter().chain([closure()]) {
+            let falsy = matches!(value, Value::Bool(false) | Value::Unit);
+            let (yes, no) = (Value::Int(1), Value::Int(2));
+            let shown = format!("{value:?}");
+            assert_eq!(
+                taken(value.clone(), if_false),
+                if falsy { yes.clone() } else { no.clone() },
+                "JumpIfFalse on {shown}"
+            );
+            assert_eq!(
+                taken(value, if_true),
+                if falsy { no } else { yes },
+                "JumpIfTrue on {shown}"
+            );
+        }
+    }
+
+    /// A jump and `Pop` let go of the value they take off the stack,
+    /// then and once.
+    #[test]
+    fn a_jump_and_pop_let_go_of_the_value_on_top() {
+        for take in [
+            |e: &mut Emitter| e.emit(Asm::Pop, span()).unwrap(),
+            |e: &mut Emitter| {
+                let next = e.label();
+                e.emit(Asm::JumpIfFalse { to: next }, span()).unwrap();
+                e.bind(next, span()).unwrap();
+            },
+            |e: &mut Emitter| {
+                let next = e.label();
+                e.emit(Asm::JumpIfTrue { to: next }, span()).unwrap();
+                e.bind(next, span()).unwrap();
+            },
+        ] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                take(e);
+                e.emit(Asm::Unit, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert_eq!(run.unwrap(), Value::Unit);
+            // The second probe was on top; the first was held until
+            // the script's return cut the stack back.
+            assert_eq!(ended(&log), [2, 1]);
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// `SetLocal` writes a copy of the value on top over a slot: the
+    /// slot's old value ends, the value on top stays.
+    #[test]
+    fn set_local_of_every_kind_over_every_kind() {
+        for new in samples() {
+            for old in samples() {
+                let script = make_function(|e| {
+                    push(e, old.clone());
+                    push(e, new.clone());
+                    e.emit(Asm::SetLocal { slot: 0 }, span()).unwrap();
+                    e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+                    e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+                    e.emit(Asm::Return, span()).unwrap();
+                });
+                assert_eq!(
+                    Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                    Value::tuple(vec![new.clone(), new.clone()]),
+                    "{new:?} over {old:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_local_ends_the_value_that_was_in_the_slot() {
+        let (vm, run, log) = left_by(|e, k| {
+            probe(e, k);
+            probe(e, k);
+            e.emit(Asm::SetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        // The first probe was in the slot; the second was there from
+        // then on, until the script's return cut the stack back.
+        assert_eq!(ended(&log), [1, 2]);
+        assert!(vm.stack.is_empty());
+    }
+
+    /// `Recur` writes the values on top over the loop's bindings and
+    /// cuts the stack back to them.
+    #[test]
+    fn recur_of_every_kind_over_every_kind() {
+        let samples = samples();
+        let count = samples.len();
+        let script = make_function(|e| {
+            // The bindings, then their next values: the same, turned
+            // by one.
+            for sample in &samples {
+                push(e, sample.clone());
+            }
+            for i in 0..count {
+                push(e, samples[(i + 1) % count].clone());
+            }
+            e.emit(
+                Asm::Recur {
+                    argc: count,
+                    first: 0,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::MakeTuple { count }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let mut turned = samples.clone();
+        turned.rotate_left(1);
+        assert_eq!(
+            Vm::new(crate::HostIo::process()).run(script).unwrap(),
+            Value::tuple(turned)
+        );
+    }
+
+    /// The bindings' old values end in the bindings' order, at the
+    /// `Recur`; the new ones are held by the bindings from then on,
+    /// until the script's return cuts the stack back.
+    #[test]
+    fn recur_ends_the_old_values_of_the_bindings_in_order() {
+        let (vm, run, log) = left_by(|e, k| {
+            for _ in 0..6 {
+                probe(e, k);
+            }
+            e.emit(Asm::Recur { argc: 3, first: 0 }, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert_eq!(ended(&log), [1, 2, 3, 4, 5, 6]);
+        assert!(vm.stack.is_empty());
+    }
+}
+
+/// A call of a closure enters it by its pointer, and a number, a Bool
+/// or unit that a function returns to its caller is written from the
+/// top slot over the callee's own slot. What a return lets go of, and
+/// in which order, is one thing for every kind of result: the callee,
+/// then its arguments and locals from the lowest slot up.
+mod calls_and_returns {
+    use super::seen_drops::{ended, makers};
+    use super::*;
+    use crate::bytecode::VmClosure;
+    use crate::value::{HostFn, HostShape};
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// The results a function returns in the tests: a value of every
+    /// sort the instruction loop knows (`Sort` in run.rs).
+    fn results() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Unit,
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::tuple(vec![float(0.5), Value::Bool(false)]),
+        ]
+    }
+
+    /// A function of two parameters that makes a probe its local and
+    /// returns its result, called with two probes, a closure that owns
+    /// a probe: when the function returns, the callee ends (probe 1,
+    /// its upvalue), then the arguments (2, 3), then the local (4).
+    /// The caller, a function's frame, gets the result and returns it
+    /// with a probe of its own beside it (5), which ends last.
+    #[test]
+    fn a_return_ends_the_callee_then_its_slots_from_the_lowest_up() {
+        for result in results() {
+            returned(result);
+        }
+    }
+
+    fn returned(result: Value) {
+        // The callee: `fn inner(a, b) { let local = probe(); result }`,
+        // where `probe` is global 0.
+        let mut inner = Emitter::new("inner".to_string(), 2, span()).unwrap();
+        inner.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap();
+        inner.emit(Asm::Call { argc: 0 }, span()).unwrap();
+        push(&mut inner, result.clone());
+        inner.emit(Asm::Return, span()).unwrap();
+        let inner = Arc::new(inner.finish(1).unwrap_or_else(|e| panic!("{e:?}")));
+        let (probes, closures, log) = makers(inner);
+        // The caller: `closures()(probe(), probe())`, then a probe of
+        // its own, and both in a tuple.
+        let script = make_function(|e| {
+            let probe = e.constant(probes.clone(), span()).unwrap();
+            let closure = e.constant(closures, span()).unwrap();
+            e.emit(Asm::Constant { k: probe }, span()).unwrap();
+            e.emit(Asm::SetGlobal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Constant { k: closure }, span()).unwrap();
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            for _ in 0..2 {
+                e.emit(Asm::Constant { k: probe }, span()).unwrap();
+                e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            }
+            e.emit(Asm::Call { argc: 2 }, span()).unwrap();
+            e.emit(Asm::Constant { k: probe }, span()).unwrap();
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        // (The script is called by an outer script, so that the inner
+        // function returns to a function's frame that is not the
+        // run's first.)
+        let outer = make_function(|e| {
+            push(
+                e,
+                Value::VmClosure(Arc::new(VmClosure {
+                    function: script,
+                    upvalues: vec![],
+                })),
+            );
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
+        let Value::Tuple(pair) = vm.run(outer).unwrap() else {
+            panic!("a tuple")
+        };
+        assert_eq!(pair[0], result, "the result");
+        // The callee's probe, its two arguments, its local: all ended
+        // at the return, in that order, before the caller made its own.
+        assert_eq!(ended(&log), [1, 2, 3, 4], "returning {result:?}");
+        drop(pair);
+        assert_eq!(ended(&log), [1, 2, 3, 4, 5], "returning {result:?}");
+    }
+
+    /// A value of every kind that can be called is called by `Call`.
+    #[test]
+    fn a_call_of_every_kind_of_function() {
+        let closure = Value::VmClosure(Arc::new(VmClosure {
+            function: make_function_of(1, |e| {
+                e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            }),
+            upvalues: vec![],
+        }));
+        let host = Value::HostFn(Arc::new(HostFn {
+            name: "same".to_string(),
+            call: Arc::new(|args| Ok(args[0].clone())),
+            returns: HostShape::Any,
+        }));
+        for callee in [closure, host] {
+            for argument in results() {
+                let script = make_function(|e| {
+                    push(e, callee.clone());
+                    push(e, argument.clone());
+                    e.emit(Asm::Call { argc: 1 }, span()).unwrap();
+                    e.emit(Asm::Return, span()).unwrap();
+                });
+                assert_eq!(
+                    Vm::new(crate::HostIo::process()).run(script).unwrap(),
+                    argument,
+                    "{callee:?} of {argument:?}"
+                );
+            }
+        }
+    }
+
+    /// The frames of a recursion 3,000 calls deep, which is past
+    /// eleven doublings of the room for frames, each made at the push
+    /// of a frame; and the values of the callers, which wait on the
+    /// stack meanwhile, are what they were when the calls return.
+    #[test]
+    fn a_recursion_makes_room_for_its_frames() {
+        for (base, step, expected) in [
+            ("0", "1", "3000"),
+            ("0.0", "0.5", "1500.0"),
+            ("\"\"", "\".\"", "3000"),
+        ] {
+            let sum = if base.starts_with('"') {
+                "\"{depth(n - 1)}{step()}\""
+            } else {
+                "step() + depth(n - 1)"
+            };
+            let shown = if base.starts_with('"') {
+                "string.length(depth(3000))"
+            } else {
+                "depth(3000)"
+            };
+            let source = format!(
+                "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ \"{{{shown}}}\" }}"
+            );
+            assert_eq!(run_vm(&source), Value::String(expected.into()), "{source}");
+        }
+    }
+}
