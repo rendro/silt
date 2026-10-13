@@ -60,7 +60,6 @@ fn main() {
       ConfigRead(inner) -> println("config file: {inner.message()}")
       ConfigParse(inner) -> println("config JSON invalid: {inner.message()}")
       ApiCall(http.Timeout) -> println("API timed out — retry later")
-      ApiCall(http.StatusCode(code, _)) -> println("API returned {code}")
       ApiCall(inner) -> println("API call failed: {inner.message()}")
       ApiResponse(inner) -> println("API response invalid: {inner.message()}")
       Custom(msg) -> println("app: {msg}")

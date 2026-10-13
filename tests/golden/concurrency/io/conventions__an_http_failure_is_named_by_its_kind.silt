@@ -22,7 +22,6 @@ fn kind(r) {
     Err(http.InvalidResponse(_)) -> "InvalidResponse"
     Err(http.Timeout) -> "Timeout"
     Err(http.Tls(_)) -> "Tls"
-    Err(http.StatusCode(_, _)) -> "StatusCode"
     Err(http.Other(why)) -> "Other({why})"
   }
 }

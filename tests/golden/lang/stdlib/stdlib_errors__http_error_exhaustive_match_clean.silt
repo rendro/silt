@@ -7,7 +7,6 @@ fn describe(e: http.HttpError) -> String {
     http.InvalidUrl(u) -> "url"
     http.InvalidResponse(m) -> "bad resp"
     http.ClosedEarly -> "closed"
-    http.StatusCode(s, b) -> "status"
     http.Other(m) -> "unknown"
   }
 }

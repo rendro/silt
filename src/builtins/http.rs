@@ -39,13 +39,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
             format!("http invalid response: {m}")
         }
         ("ClosedEarly", []) => "http connection closed before response completed".to_string(),
-        ("StatusCode", [Value::Int(code), Value::String(body)]) => {
-            if body.is_empty() {
-                format!("http status {code}")
-            } else {
-                format!("http status {code}: {body}")
-            }
-        }
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
@@ -311,11 +304,8 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) | Error::TlsRequired => {
             Value::variant(bv::HTTP_TLS, why())
         }
-        // (silt asks for a status as a response, not as an error.)
-        Error::StatusCode(code) => Value::variant(
-            bv::HTTP_STATUS_CODE,
-            vec![Value::Int(i64::from(*code)), Value::String("".into())],
-        ),
+        // (A status is no failure: silt asks the library for it as a
+        // response, and the library's error for one is never made.)
         _ => Value::variant(bv::HTTP_OTHER, why()),
     }
 }
@@ -1716,7 +1706,6 @@ mod http_error_tests {
             (bv::HTTP_INVALID_URL, "InvalidUrl"),
             (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
             (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
-            (bv::HTTP_STATUS_CODE, "StatusCode"),
             (bv::HTTP_OTHER, "Other"),
         ];
         let Value::Variant(result) = value else {

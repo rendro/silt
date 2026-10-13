@@ -421,7 +421,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }\n\
                 pub type Response { status: Int, body: Bytes, headers: Map(String, String) }\n\
                 pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes }\n\
-                pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, StatusCode(Int, String), Other(String) }\n\
+                pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }\n\
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError" => http::error_text,

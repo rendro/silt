@@ -59,10 +59,9 @@ one with `bytes.to_string(resp.body)`, a `Result`: it is
 `http.get` and `http.request` return `Result(Response, HttpError)`. Note
 that a 4xx or 5xx HTTP response is an `Ok(Response)` — only failures
 *before* a response lands (DNS, connection, TLS, protocol) become `Err`.
-Servers that explicitly want to short-circuit on a non-2xx code can
-construct `StatusCode(status, body)` themselves; the stdlib does
-not do that conversion for you. `HttpError` implements the built-in
-`Error` trait, so `e.message()` always yields a rendered string.
+A program for which a status is a failure looks at `resp.status`.
+`HttpError` implements the built-in `Error` trait, so `e.message()`
+always yields a rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
@@ -72,7 +71,6 @@ not do that conversion for you. `HttpError` implements the built-in
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and does not unpack), or its body is larger than 10 MiB |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body |
-| `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
 
 Which variant a failure is, is decided by the kind of failure the
