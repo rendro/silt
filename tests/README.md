@@ -24,13 +24,41 @@ checks for the library and the binary only
 ## One suite, one area
 
 ```
-cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, oracle, concurrency
+cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, oracle, concurrency, database
 SILT_GOLDEN_FILTER=lang/traits/ cargo nextest run --all-features --test golden
 ```
 
 The golden cases and their format are described in `golden/README.md`.
 The full repro corpus runs with
 `SILT_GOLDEN_FULL_CORPUS=1 cargo nextest run --all-features --test golden -E 'test(verdict_shard)'`.
+
+## The database suite
+
+`tests/database` runs silt programs that use the `postgres` module
+against a PostgreSQL server: each `<case>.silt` must exit with status 0,
+write nothing to stderr and write exactly `<case>.stdout`. The programs
+read the server's URL from `SILT_TEST_POSTGRES_URL`; the role it names
+must be allowed to create tables in the database, and needs nothing
+more. Each case drops the tables it makes.
+
+```
+SILT_TEST_POSTGRES_URL='postgres://silt_orm:silt_orm_dev@127.0.0.1/silt_orm_test?sslmode=disable' \
+  cargo nextest run --all-features --test database
+```
+
+A server for it, if none is at hand (the one CI starts):
+
+```
+docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_USER=silt_orm \
+  -e POSTGRES_PASSWORD=silt_orm_dev -e POSTGRES_DB=silt_orm_test postgres:16
+```
+
+Without the variable every case is skipped: it says so on stderr and
+passes, so the whole suite above stays runnable on a machine without a
+server. In CI (`CI` is set) a case without the variable fails instead:
+the job that runs this suite starts the server, and a run that tested
+nothing must not be green. No other CI job runs the suite
+(`.github/scripts/run-test-partition.sh` leaves it out).
 
 ## The formatter's property runner
 

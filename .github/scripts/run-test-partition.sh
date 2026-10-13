@@ -16,6 +16,9 @@
 #                   split in three by nextest's hash partitioning so the
 #                   shards stay balanced as tests are added.
 #
+# The `database` suite is in no partition: it needs a PostgreSQL server,
+# and the one CI job that starts one runs it.
+#
 # A new test goes into the suite whose subject it tests; no list here
 # needs to change.
 set -euo pipefail
@@ -27,7 +30,7 @@ if [[ "$runner" == "nextest" ]] && command -v cargo-nextest >/dev/null 2>&1; the
   nextest=true
 fi
 
-rest_filter='not (binary(=heavy) | binary(=oracle) | binary(=concurrency))'
+rest_filter='not (binary(=heavy) | binary(=oracle) | binary(=concurrency) | binary(=database))'
 
 set -x
 case "$partition" in
@@ -53,13 +56,13 @@ case "$partition" in
       exec cargo nextest run --no-fail-fast --all-features -E "$rest_filter" --partition "hash:${shard}/3"
     else
       # Without nextest there is no hash partitioning: rest1 runs
-      # everything outside heavy, oracle and concurrency, rest2 and rest3
-      # nothing.
+      # everything outside heavy, oracle, concurrency and database, rest2
+      # and rest3 nothing.
       if [[ "$partition" == "rest1" ]]; then
         suites=()
         for d in tests/*/; do
           name="$(basename "$d")"
-          [[ -f "$d/main.rs" && "$name" != heavy && "$name" != oracle && "$name" != concurrency ]] && suites+=("--test" "$name")
+          [[ -f "$d/main.rs" && "$name" != heavy && "$name" != oracle && "$name" != concurrency && "$name" != database ]] && suites+=("--test" "$name")
         done
         for f in tests/*.rs; do suites+=("--test" "$(basename "$f" .rs)"); done
         exec cargo test --all-features --lib --bins "${suites[@]}"

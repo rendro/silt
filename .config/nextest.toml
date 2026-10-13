@@ -8,6 +8,7 @@
 [test-groups]
 concurrency = { max-threads = 4 }
 timing = { max-threads = 1 }
+database = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'binary(=concurrency)'
@@ -40,3 +41,12 @@ threads-required = 2
 [[profile.default.overrides]]
 filter = 'binary(=oracle)'
 threads-required = 2
+
+# The `database` suite (tests/database) runs its programs against one
+# PostgreSQL server: one case at a time, so that no case sees another's
+# sessions. A case that is skipped because no server is named says so on
+# stderr, which nextest shows only when told to.
+[[profile.default.overrides]]
+filter = 'binary(=database)'
+test-group = 'database'
+success-output = 'immediate'
