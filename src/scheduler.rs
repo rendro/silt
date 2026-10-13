@@ -50,7 +50,12 @@
 //! ([`Inner::fail`]), no worker takes another task, and the program's
 //! own thread gives the panic on, out of the call of the VM it is in
 //! or makes next ([`Scheduler::give_panic_on`]): where a panic of the
-//! program's own code on that thread comes out.
+//! program's own code on that thread comes out. That is all the
+//! library does: it never ends an embedder's process. In a process
+//! that is silt's own ([`exit_on_panic`], which the `silt` command
+//! calls) the thread that caught the panic ends the process itself,
+//! whatever the program's thread is doing
+//! ([`exit_with_internal_error`]).
 
 use parking_lot::{Condvar, Mutex};
 use std::any::Any;
@@ -867,6 +872,44 @@ impl Scheduler {
     }
 }
 
+/// Set when the process is silt's own ([`exit_on_panic`]).
+static EXIT_ON_PANIC: AtomicBool = AtomicBool::new(false);
+
+/// The process is silt's own, not an embedder's: from now on a panic
+/// that escapes to the top of a thread of a runtime (a worker, the
+/// timer's thread, a thread of the I/O pool) ends the process at once
+/// ([`exit_with_internal_error`]), on the thread that caught it. The
+/// `silt` command calls this first thing. Nothing else does, and
+/// nothing an embedder does by using the library sets it: without it
+/// the panic comes out of the embedder's call of the VM, and its
+/// process lives.
+pub fn exit_on_panic() {
+    EXIT_ON_PANIC.store(true, Ordering::SeqCst);
+}
+
+/// End the process after a panic of silt's own code, which `payload`
+/// was raised with: what the program had printed is flushed, one line
+/// on stderr says that this is a bug in silt (Rust has written the
+/// panic's thread, place and message when it happened), and the
+/// status is 101, as Rust's own for a panic.
+///
+/// For the `silt` command, which calls it for a panic that reached the
+/// top of its own thread, and for the runtime's threads after
+/// [`exit_on_panic`].
+pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
+    use std::io::Write;
+    let text = crate::vm::panic_message(payload);
+    // (`exit` runs no destructor. A write that fails has nowhere to
+    // be reported.)
+    let _ = std::io::stdout().flush();
+    let _ = writeln!(
+        std::io::stderr(),
+        "silt: internal error: {text}. This is a bug in silt, not in your program: please \
+         report it."
+    );
+    std::process::exit(101)
+}
+
 /// How a thread of the runtime that the scheduler did not start (a
 /// thread of the I/O pool) says that a panic escaped to its top
 /// ([`Inner::fail`]). It does not keep the scheduler alive: when the
@@ -899,6 +942,12 @@ impl Inner {
     /// flags, which no panic leaves half written, behind locks that a
     /// panic releases and does not poison.
     fn fail(&self, payload: Box<dyn Any + Send>) {
+        // The program's thread may be where nothing reaches it soon (a
+        // sleep on the clock, one long call of a builtin): a process
+        // that is silt's own does not wait for it.
+        if EXIT_ON_PANIC.load(Ordering::SeqCst) {
+            exit_with_internal_error(&payload);
+        }
         {
             let mut panic = self.panic.lock();
             // The first panic is the one that is reported; what

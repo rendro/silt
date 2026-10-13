@@ -191,6 +191,59 @@ fn main() {
     assert_internal_error(ended, "silt-main", "Program");
 }
 
+/// `main` is not where the scheduler could wake it when the worker
+/// panics: it sleeps on the clock for an hour, it computes without end,
+/// it polls for what the lost task would have sent. The process ends
+/// all the same, at once: the thread that caught the panic ends it.
+/// And what `main` had printed without a line end is not lost.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_panic_of_a_worker_ends_a_program_whose_main_thread_is_busy() {
+    let lost = r#"import channel
+import task
+import time
+
+fn forever(n) {
+  forever(n + 1)
+}
+
+fn poll(only) {
+  match channel.try_receive(only) {
+    channel.Message(_) -> ()
+    _ -> poll(only)
+  }
+}
+
+fn main() {
+  let gate = channel.new(0)
+  let only = channel.new(0)
+  let lost = task.spawn { ->
+    let _ = channel.receive(gate)
+    channel.send(only, 1)
+  }
+  let waker = task.spawn { -> channel.send(gate, 1) }
+  println("main waits")
+  print("and has printed this")
+  BUSY
+  println("main went on")
+}
+"#;
+    let busy = [
+        ("sleeps", "time.sleep(time.seconds(3600))"),
+        ("computes", "forever(0)"),
+        ("polls", "poll(only)"),
+    ];
+    for (name, busy) in busy {
+        let (status, stdout, stderr) = run(name, &lost.replace("BUSY", busy), Some("task:0"));
+        assert_eq!(
+            stdout, "main waits\nand has printed this",
+            "{name}: {stderr}"
+        );
+        let ended = (status, "main waits\n".to_string(), stderr);
+        assert_internal_error(ended, "silt-worker", "Task(0)");
+    }
+}
+
 /// Without the variable the program of the first test runs to its end.
 #[test]
 fn the_program_runs_to_its_end_when_nothing_panics() {

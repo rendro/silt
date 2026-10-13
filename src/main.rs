@@ -85,28 +85,20 @@ fn main() {
             }
         }
     }
+    // The process is silt's own: a panic of a thread of a program's
+    // runtime ends it, where an embedder would get the panic.
+    silt::scheduler::exit_on_panic();
     let join = std::thread::Builder::new()
         .name("silt-main".into())
         .stack_size(SILT_STACK_SIZE)
         .spawn(move || run_main(args))
         .expect("spawning silt main worker thread");
     // A panic that reaches the top of silt's own thread, from wherever
-    // (the checker, the compiler, the VM, or a thread of the runtime,
-    // whose panic the program's thread gives on), is a bug in silt.
-    // Rust has written the panic's place and message when it happened.
+    // (the checker, the compiler, the VM on the program's thread), is a
+    // bug in silt, and ends the process as a panic of a thread of the
+    // runtime does.
     if let Err(payload) = join.join() {
-        let text = match (
-            payload.downcast_ref::<&str>(),
-            payload.downcast_ref::<String>(),
-        ) {
-            (Some(text), _) => text,
-            (_, Some(text)) => text.as_str(),
-            _ => "<non-string panic payload>",
-        };
-        eprintln!(
-            "silt: internal error: {text}. This is a bug in silt, not in your program: please report it."
-        );
-        process::exit(101);
+        silt::scheduler::exit_with_internal_error(&payload);
     }
 }
 

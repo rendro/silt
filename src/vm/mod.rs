@@ -183,6 +183,11 @@ pub struct Vm {
     pub(crate) over: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
+/// How many steps the program's own thread runs before it looks
+/// whether a thread of the runtime has panicked ([`Vm::own_slice`]):
+/// about a million, some milliseconds.
+const OWN_SLICE: usize = 1 << 20;
+
 impl Drop for Vm {
     fn drop(&mut self) {
         // The calls in progress end here, however the VM ends: a task
@@ -360,15 +365,18 @@ impl Vm {
     }
 
     /// How many steps the thread that runs the program's own code runs
-    /// at a time: without a break, unless an embedder set a slice or a
-    /// step budget.
+    /// at a time: [`OWN_SLICE`], unless an embedder set a slice or a
+    /// step budget. The thread gives way to nobody between two such
+    /// runs; it looks whether a thread of the runtime has panicked
+    /// (`Vm::run_thread`), which a thread that computes and never
+    /// waits would not learn otherwise.
     pub(crate) fn own_slice(&self) -> usize {
         match self.time_slice() {
             Some(steps) => steps,
             None if self.runtime.steps_left.load(Ordering::Relaxed) != u64::MAX => {
                 crate::scheduler::time_slice()
             }
-            None => usize::MAX,
+            None => OWN_SLICE,
         }
     }
 

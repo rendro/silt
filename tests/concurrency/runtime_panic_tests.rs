@@ -127,9 +127,8 @@ fn main() {
 }
 
 /// The program's thread computes and never waits: it gets the panic
-/// between two slices of its loop, which would never end otherwise.
-/// (An embedder's slice: without one the program's thread runs its
-/// code without a break.)
+/// where it looks for one, every million steps or so of its loop,
+/// which would never end otherwise.
 #[test]
 fn a_panic_of_a_worker_reaches_the_thread_that_computes() {
     let program = compiled(
@@ -150,7 +149,6 @@ fn main() {
 "#,
     );
     let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
-    vm.set_time_slice(2000);
     panic_for_test(&vm, PanicAt::Task(0));
     let panic = panic_of(|| {
         let _ = vm.run_program(&program);
@@ -269,4 +267,21 @@ fn a_second_panic_in_the_shutdown_of_a_broken_runtime_is_dropped() {
         panic_of(|| drop(sound)),
         "a panic made for a test: Shutdown"
     );
+}
+
+/// The library never ends the process, whatever the VM writes to: a VM
+/// on the process's own stdout and stderr, as the `silt` command makes
+/// it, gives the panic of its worker out of the call, and this process
+/// lives to say so. (Only `silt::scheduler::exit_on_panic`, which the
+/// command calls and no test of this binary does, makes a runtime end
+/// the process.)
+#[test]
+fn an_embedder_on_the_process_output_gets_the_panic_and_lives() {
+    let program = compiled(LOST_WHILE_ALL_WAIT);
+    let mut vm = Vm::new(HostIo::process());
+    panic_for_test(&vm, PanicAt::Task(0));
+    let panic = panic_of(|| {
+        let _ = vm.run_program(&program);
+    });
+    assert_eq!(panic, "a panic made for a test: Task(0)");
 }
