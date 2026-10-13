@@ -221,7 +221,14 @@ impl Vm {
             "" => row.name,
             module => module,
         };
-        let step = catch_builtin_panic(owner, AssertUnwindSafe(|| row.call(self, args)))?;
+        let step = catch_builtin_panic(
+            owner,
+            AssertUnwindSafe(|| {
+                #[cfg(any(test, feature = "test-hooks"))]
+                self.runtime.scheduler.panic_in_a_builtin_for_test();
+                row.call(self, args)
+            }),
+        )?;
         if let Some(failure) = self.runtime.io.clock_failure() {
             return Err(VmError::new(failure));
         }

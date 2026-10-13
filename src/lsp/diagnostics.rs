@@ -13,7 +13,7 @@
 //! definitions and its local bindings.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::panic::{self, AssertUnwindSafe};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -216,7 +216,8 @@ impl Server {
         // What the last queries learned was true of the texts before.
         self.def_uses = None;
         let pending = std::mem::take(&mut self.pending);
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| analyse(self, &pending)));
+        let outcome =
+            crate::scheduler::catch_as_error(AssertUnwindSafe(|| analyse(self, &pending)));
         if let Err(payload) = outcome {
             eprintln!(
                 "silt-lsp: internal error while analysing the open documents: {}; they are \

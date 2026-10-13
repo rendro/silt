@@ -53,16 +53,17 @@
 //! program's own code on that thread comes out. That is all the
 //! library does: it never ends an embedder's process. In a process
 //! that is silt's own ([`exit_on_panic`], which the `silt` command
-//! calls) the thread that caught the panic ends the process itself,
-//! whatever the program's thread is doing
-//! ([`exit_with_internal_error`]).
+//! calls) no such panic is caught: it ends the process where it is
+//! raised, on the thread that raised it, whatever the program's
+//! thread is doing.
 
 use parking_lot::{Condvar, Mutex};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::panic::{AssertUnwindSafe, PanicHookInfo, UnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
+use std::sync::Once;
 use std::sync::OnceLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -285,6 +286,15 @@ struct Inner {
     /// ([`PanicAt`]).
     #[cfg(any(test, feature = "test-hooks"))]
     panic_at: Mutex<Vec<PanicAt>>,
+    /// Test-only: whether the next call of a builtin is to panic
+    /// ([`PanicAt::Builtin`]). (Not in the list above: every call of a
+    /// builtin asks, and reads this without a lock.)
+    #[cfg(any(test, feature = "test-hooks"))]
+    panic_in_a_builtin: AtomicBool,
+    /// Test-only: the same for the next call a worker makes
+    /// ([`PanicAt::BuiltinOfATask`]).
+    #[cfg(any(test, feature = "test-hooks"))]
+    panic_in_a_builtin_of_a_task: AtomicBool,
 }
 
 /// The panic of a thread of the runtime ([`Inner::fail`]).
@@ -322,6 +332,14 @@ pub enum PanicAt {
     /// On a thread that is unwinding from a panic, as it drops a VM:
     /// a second panic while the first is on its way.
     Unwinding,
+    /// Inside the next call of a builtin, on the thread that makes
+    /// it. This one is no panic of the runtime: it is the error of
+    /// the call, as a panic of a builtin's own code would be.
+    Builtin,
+    /// The same inside the next call of a builtin that a worker
+    /// makes: in a spawned task. (The first call of a builtin in any
+    /// program is on the program's own thread.)
+    BuiltinOfATask,
 }
 
 /// The tasks that wait for a worker.
@@ -476,6 +494,10 @@ impl Scheduler {
                 panic: Mutex::default(),
                 #[cfg(any(test, feature = "test-hooks"))]
                 panic_at: Mutex::new(Vec::new()),
+                #[cfg(any(test, feature = "test-hooks"))]
+                panic_in_a_builtin: AtomicBool::new(false),
+                #[cfg(any(test, feature = "test-hooks"))]
+                panic_in_a_builtin_of_a_task: AtomicBool::new(false),
             }
         });
         Scheduler {
@@ -869,7 +891,31 @@ impl Scheduler {
     /// it was told before.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn panic_for_test(&self, at: PanicAt) {
-        self.inner.panic_at.lock().push(at);
+        match at {
+            PanicAt::Builtin => (self.inner.panic_in_a_builtin).store(true, Ordering::SeqCst),
+            PanicAt::BuiltinOfATask => {
+                (self.inner.panic_in_a_builtin_of_a_task).store(true, Ordering::SeqCst)
+            }
+            at => self.inner.panic_at.lock().push(at),
+        }
+    }
+
+    /// Test-only: panic on the calling thread, which is inside the
+    /// call of a builtin, if a test asked for it
+    /// ([`PanicAt::Builtin`]).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn panic_in_a_builtin_for_test(&self) {
+        let asked = &self.inner.panic_in_a_builtin;
+        if asked.load(Ordering::Relaxed) && asked.swap(false, Ordering::SeqCst) {
+            panic!("a panic made for a test: {:?}", PanicAt::Builtin);
+        }
+        let asked = &self.inner.panic_in_a_builtin_of_a_task;
+        if asked.load(Ordering::Relaxed)
+            && thread::current().name() == Some("silt-worker")
+            && asked.swap(false, Ordering::SeqCst)
+        {
+            panic!("a panic made for a test: {:?}", PanicAt::BuiltinOfATask);
+        }
     }
 
     /// Test-only: panic on the calling thread if it is unwinding from
@@ -888,40 +934,166 @@ impl Scheduler {
     }
 }
 
-/// Set when the process is silt's own ([`exit_on_panic`]).
-static EXIT_ON_PANIC: AtomicBool = AtomicBool::new(false);
-
-/// The process is silt's own, not an embedder's: from now on a panic
-/// that escapes to the top of a thread of a runtime (a worker, the
-/// timer's thread, a thread of the I/O pool) ends the process at once
-/// ([`exit_with_internal_error`]), on the thread that caught it. The
-/// `silt` command calls this first thing. Nothing else does, and
-/// nothing an embedder does by using the library sets it: without it
-/// the panic comes out of the embedder's call of the VM, and its
-/// process lives.
-pub fn exit_on_panic() {
-    EXIT_ON_PANIC.store(true, Ordering::SeqCst);
+thread_local! {
+    /// Whether a panic raised on this thread, outside every catch of
+    /// a call's panic, is one of silt's own code: the command's own
+    /// thread ([`exit_on_panic`]) and the threads of a runtime (a
+    /// worker, the timer's thread, a thread of the I/O pool;
+    /// [`a_thread_of_the_runtime`]).
+    static ITS_PANICS_ARE_SILTS: Cell<bool> = const { Cell::new(false) };
+    /// How many catches that make a panic the error of a call
+    /// ([`catch_as_error`]) are around what this thread runs now, and
+    /// calls that a panic is to unwind ([`unwinding`]).
+    static CATCHES: Cell<u32> = const { Cell::new(0) };
 }
 
-/// A thread of a runtime has panicked, and nothing shows it yet. This
-/// is the one place where the switch of [`exit_on_panic`] is read. In
-/// silt's own process the calling thread takes the state for the
-/// internal error here (or waits for ever, if the process is already
-/// ending with a status), and has what ends the process, whether or
-/// not the VM of that runtime still exists. `None` in an embedder's
-/// process.
+/// The calling thread is a thread of a runtime: a panic that nothing
+/// catches as the error of a call is the runtime's own. Each such
+/// thread says so first thing.
+pub(crate) fn a_thread_of_the_runtime() {
+    ITS_PANICS_ARE_SILTS.with(|silts| silts.set(true));
+}
+
+/// `catch_unwind` where a panic is the error of what was called, and
+/// the thread goes on: a builtin, a host function, an I/O operation,
+/// the host's clock or output, a request of the language server. In
+/// silt's own process the hook leaves a panic raised inside `call` to
+/// this catch ([`exit_on_panic`]); a panic raised anywhere else on a
+/// thread of silt's is the runtime's own and ends the process there.
+#[inline]
+pub(crate) fn catch_as_error<R>(call: impl FnOnce() -> R + UnwindSafe) -> thread::Result<R> {
+    let around = CATCHES.with(|catches| catches.replace(catches.get() + 1));
+    let caught = catch_unwind(call);
+    CATCHES.with(|catches| catches.set(around));
+    caught
+}
+
+/// Run `call` so that a panic raised inside it unwinds the calling
+/// thread, as every panic does without the hook of [`exit_on_panic`]:
+/// what the unwinding puts back is put back (the terminal, which the
+/// REPL's line editor holds while it reads a line). On the command's
+/// own thread the panic then reaches the top of the thread and ends
+/// the process there ([`exit_with_internal_error`]).
+pub(crate) fn unwinding<R>(call: impl FnOnce() -> R) -> R {
+    struct Around(u32);
+    impl Drop for Around {
+        fn drop(&mut self) {
+            let _ = CATCHES.try_with(|catches| catches.set(self.0));
+        }
+    }
+    let _around = Around(CATCHES.with(|catches| catches.replace(catches.get() + 1)));
+    call()
+}
+
+/// The process is silt's own, not an embedder's, and the calling
+/// thread is the command's own. From now on a panic of silt's own code
+/// ends the process at once, where it is raised and on the thread
+/// that raised it: Rust's lines for the panic, the internal-error
+/// line, status 101 (`InternalError::end`). Such a panic is one
+/// raised on the calling thread or on a thread of a runtime, outside
+/// every catch that makes a panic the error of a call
+/// (`catch_as_error`) and outside what is run to unwind
+/// (`unwinding`). The `silt` command calls this first thing on
+/// its thread. Nothing else does, and nothing an embedder does by
+/// using the library sets it: without it the panic is caught at the
+/// top of the runtime's thread, comes out of the embedder's call of
+/// the VM, and its process lives.
 ///
-/// The state comes first, before the runtime is marked as broken and
-/// before any thread is woken: whatever a thread then meets of the
-/// broken runtime (a task that cannot be spawned, a wait that is
-/// over), the state already says how the process ends, and the
-/// command writes no report of its own after the internal-error line
-/// ([`stand_back_for_internal_error`]).
-fn runtime_panics() -> Option<InternalError> {
-    EXIT_ON_PANIC.load(Ordering::SeqCst).then(|| {
-        end_as(WITH_INTERNAL_ERROR);
-        InternalError(())
-    })
+/// It is done in Rust's panic hook, which runs before the panicking
+/// thread unwinds: the process's end is decided at the moment of the
+/// panic, not when the panic has reached the top of its thread, and
+/// no other thread can end the process with a status of its own in
+/// between. Rust's lines for a panic are written under one lock, and
+/// only while the process is not ending:
+///
+/// - a panic of silt's own code that is the first to end the process
+///   writes them, then the internal-error line;
+/// - a panic of silt's own code that comes when the process is
+///   already ending, with a status or with the internal error, writes
+///   nothing, and its thread waits for the end;
+/// - any other panic (the error of a call, or a thread that is not
+///   silt's) writes them as it always did and goes on to its catch,
+///   but writes nothing once the process is ending with the internal
+///   error: nothing follows that line.
+///
+/// So a process has Rust's lines for a panic of silt's own code, the
+/// internal-error line and the status 101 all together or none of
+/// them. (A stdout whose reader has gone does not kill a process that
+/// is ending so: `no_death_by_a_closed_stdout`.)
+pub fn exit_on_panic() {
+    ITS_PANICS_ARE_SILTS.with(|silts| silts.set(true));
+    static HOOKED: Once = Once::new();
+    HOOKED.call_once(|| {
+        let rusts = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic| at_a_panic(&*rusts, panic)));
+    });
+}
+
+/// The lock under which Rust's lines for a panic are written: the
+/// lines of two panics do not mix, and no line of another panic comes
+/// after those of the panic that ends the process.
+static PANIC_LINES: Mutex<()> = Mutex::new(());
+
+/// How long the process waits for Rust's lines of the panic that ends
+/// it. They go to stderr, which can be held up without end (a pipe
+/// that is full and that nobody reads), and with a backtrace they
+/// take a while. When it runs out the last words are said without the
+/// rest of them, by another thread ([`InternalError::end`]).
+const RUSTS_LINES: Duration = Duration::from_secs(10);
+
+/// The panic hook of silt's own process ([`exit_on_panic`]); `rusts`
+/// is the hook that was there before, which writes Rust's lines.
+fn at_a_panic(rusts: &(dyn Fn(&PanicHookInfo<'_>) + Sync + Send), panic: &PanicHookInfo<'_>) {
+    // (A thread whose locals are gone is ending: not one of silt's.)
+    let silts = ITS_PANICS_ARE_SILTS.try_with(Cell::get).unwrap_or(false)
+        && CATCHES.try_with(Cell::get).unwrap_or(0) == 0;
+    if !silts {
+        let _lines = PANIC_LINES.lock();
+        if ENDING.load(Ordering::SeqCst) != WITH_INTERNAL_ERROR {
+            rusts(panic);
+        }
+        return;
+    }
+    // The state first, before anything is waited for: from here on no
+    // other thread ends the process.
+    let first = ENDING.compare_exchange(
+        RUNNING,
+        WITH_INTERNAL_ERROR,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+    if first.is_err() {
+        loop {
+            thread::park();
+        }
+    }
+    no_death_by_a_closed_stdout();
+    let text = panic.payload_as_str().unwrap_or(crate::vm::NO_PANIC_TEXT);
+    // (If no thread can be started, nothing bounds the wait.)
+    let _ = thread::Builder::new().name("silt-exit".into()).spawn({
+        let text = text.to_string();
+        move || {
+            thread::sleep(RUSTS_LINES);
+            InternalError(()).end(&text)
+        }
+    });
+    let lines = PANIC_LINES.lock();
+    rusts(panic);
+    drop(lines);
+    InternalError(()).end(text)
+}
+
+/// The process is ending with the internal error: from here on a
+/// write to a stdout that its reader has closed is an error of the
+/// write, and no signal that kills the process. (The `silt` command
+/// sets SIGPIPE to its default, so that a program whose reader has
+/// gone dies quietly; this process is to end with the internal-error
+/// line and status 101, and its last words flush stdout.)
+fn no_death_by_a_closed_stdout() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
 }
 
 /// The calling thread has the state for the internal error: it ends
@@ -958,8 +1130,8 @@ fn end_as(how: u8) {
 /// ending the process with the internal error, the process ends with
 /// that, not with `status`.
 ///
-/// A panic of a runtime thread that comes after this was called shows
-/// Rust's lines for the panic, and the process ends with `status`.
+/// A panic of silt's own code that comes after this was called writes
+/// nothing, and the process ends with `status` ([`exit_on_panic`]).
 pub fn exit_with_status(status: i32) -> ! {
     end_as(WITH_STATUS);
     std::process::exit(status)
@@ -991,12 +1163,18 @@ pub fn stand_back_for_internal_error() {
 /// status is 101, as Rust's own for a panic.
 ///
 /// For the `silt` command, which calls it for a panic that reached the
-/// top of its own thread, and for the runtime's threads after
-/// [`exit_on_panic`]. If the process is already ending
-/// ([`exit_with_status`]) nothing is written, and it ends as it was
-/// going to.
+/// top of its own thread. After [`exit_on_panic`] that is a panic
+/// which did not end the process where it was raised: one raised on a
+/// thread that is not silt's and passed on to the command's (the
+/// formatter's), or one that was to unwind (`unwinding`). If the
+/// process is already ending nothing is written, and it ends as it
+/// was going to.
 pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
     end_as(WITH_INTERNAL_ERROR);
+    no_death_by_a_closed_stdout();
+    // A panic that is writing Rust's lines ends them first, if it does
+    // so in time: nothing follows the internal-error line.
+    drop(PANIC_LINES.try_lock_for(LAST_WORDS));
     InternalError(()).end(crate::vm::panic_message(payload))
 }
 
@@ -1008,42 +1186,79 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
 /// or, where stderr is what is blocked, the line itself.
 const LAST_WORDS: Duration = Duration::from_secs(1);
 
+/// Set by the thread that says the last words: there is one
+/// ([`InternalError::end`]).
+static LAST_WORDS_BEGUN: AtomicBool = AtomicBool::new(false);
+
 impl InternalError {
     /// The last words and the exit: see [`exit_with_internal_error`].
+    /// One thread says them; another that comes here (the one that
+    /// waited for Rust's lines in the place of the panicking thread,
+    /// or that thread after all) waits for the end.
     fn end(self, text: &str) -> ! {
         use std::io::Write;
+        if LAST_WORDS_BEGUN.swap(true, Ordering::SeqCst) {
+            loop {
+                thread::park();
+            }
+        }
         let line = format!(
             "silt: internal error: {text}. This is a bug in silt, not in your program: please \
              report it.\n"
         );
         // The thread that ends the process waits for nothing of the
-        // program's without a bound: the line and the flush are another
-        // thread's. (`exit` runs no destructor, so nobody else flushes.)
-        let (said, waits) = std::sync::mpsc::channel();
-        let last_words = {
-            let line = line.clone();
+        // program's without a bound: the line and the flush are each
+        // another thread's, since stderr and stdout can each be held
+        // up without end. (`exit` runs no destructor, so nobody else
+        // flushes.)
+        let (done, waits) = std::sync::mpsc::channel();
+        let (line_said, line_waits) = std::sync::mpsc::channel::<()>();
+        let says = {
+            let (line, done) = (line.clone(), done.clone());
             move || {
                 let _ = std::io::stderr().write_all(line.as_bytes());
-                let _ = std::io::stdout().flush();
-                let _ = said.send(());
+                drop(line_said);
+                let _ = done.send(());
             }
         };
-        match thread::Builder::new()
-            .name("silt-exit".into())
-            .spawn(last_words)
-        {
-            Ok(_) => {
-                let _ = waits.recv_timeout(LAST_WORDS);
+        // The flush keeps stdout's lock until the process is gone:
+        // std's clean-up at the exit flushes stdout itself if it gets
+        // the lock, and that flush would wait for a stdout that is
+        // held up. The program's text comes after the line, if the
+        // line is written within half the time.
+        let flushes = move || {
+            let mut stdout = std::io::stdout().lock();
+            let _ = line_waits.recv_timeout(LAST_WORDS / 2);
+            let _ = stdout.flush();
+            let _ = done.send(());
+            loop {
+                thread::park();
             }
-            // No thread: the line from here, and nothing is flushed.
+        };
+        let exit_thread = || thread::Builder::new().name("silt-exit".into());
+        let mut awaited = 0;
+        match exit_thread().spawn(says) {
+            Ok(_) => awaited += 1,
+            // No thread: the line from here.
             Err(_) => {
                 let _ = std::io::stderr().write_all(line.as_bytes());
             }
         }
+        // (No thread: nothing is flushed.)
+        if exit_thread().spawn(flushes).is_ok() {
+            awaited += 1;
+        }
+        let until = std::time::Instant::now() + LAST_WORDS;
+        for _ in 0..awaited {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if waits.recv_timeout(left).is_err() {
+                break;
+            }
+        }
         // The exit itself does not wait for a writer either: std's
-        // clean-up of stdout takes its lock only if the lock is free, and
-        // a thread that is blocked in a write, the program's or the one
-        // above in its flush, holds it.
+        // clean-up of stdout takes its lock only if the lock is free,
+        // and the thread that flushes, or a thread of the program that
+        // is blocked in a write, holds it.
         std::process::exit(101)
     }
 }
@@ -1051,19 +1266,14 @@ impl InternalError {
 /// How a thread of the runtime that the scheduler did not start (a
 /// thread of the I/O pool) says that a panic escaped to its top
 /// ([`Inner::fail`]). It does not keep the scheduler alive: when the
-/// program is gone there is nobody to give the panic to, and only
-/// silt's own process still ends by it.
+/// program is gone there is nobody to give the panic to, and it is
+/// dropped.
 pub(crate) struct Alarm(Weak<Inner>);
 
 impl Alarm {
     pub(crate) fn raise(&self, payload: Box<dyn Any + Send>) {
-        match self.0.upgrade() {
-            Some(inner) => inner.fail(payload),
-            None => {
-                if let Some(ends) = runtime_panics() {
-                    ends.end(crate::vm::panic_message(&payload));
-                }
-            }
+        if let Some(inner) = self.0.upgrade() {
+            inner.fail(payload);
         }
     }
 }
@@ -1084,32 +1294,24 @@ impl Inner {
     /// is touched here is the panic's own slot and flag, and the list
     /// of the threads that wait with the two flags of each: a list and
     /// flags, which no panic leaves half written, behind locks that a
-    /// panic releases and does not poison. In silt's own process the
-    /// state for the internal error is taken before that, and the
-    /// process is ended after it ([`runtime_panics`]).
+    /// panic releases and does not poison.
+    ///
+    /// No panic comes here in silt's own process: there it has ended
+    /// the process where it was raised ([`exit_on_panic`]).
     fn fail(&self, payload: Box<dyn Any + Send>) {
-        let text = crate::vm::panic_message(&payload).to_string();
-        // In silt's own process, first of all: see `runtime_panics`.
-        let ends = runtime_panics();
         let first = {
             let mut panic = self.panic.lock();
             // The first panic is the one that is reported; what
             // follows it on a runtime that is broken says nothing new.
             let first = !self.broken.swap(true, Ordering::SeqCst);
             if first {
-                panic.text = text.clone();
+                panic.text = crate::vm::panic_message(&payload).to_string();
                 panic.payload = Some(payload);
             }
             first
         };
         if first {
             self.poke_threads();
-        }
-        // The program's thread may be where nothing reaches it soon (a
-        // sleep on the clock, one long call of a builtin): a process
-        // that is silt's own does not wait for it.
-        if let Some(ends) = ends {
-            ends.end(&text);
         }
     }
 
@@ -1914,6 +2116,7 @@ impl Drop for Scheduler {
 /// code, ends the program ([`Inner::fail`]); the worker has stopped
 /// using the runtime when it says so, and ends.
 fn worker_loop(inner: Arc<Inner>) {
+    a_thread_of_the_runtime();
     let work = AssertUnwindSafe(|| {
         while let Some(task) = inner.next_task() {
             inner.run_slice(task);
@@ -1928,6 +2131,7 @@ fn worker_loop(inner: Arc<Inner>) {
 /// an earlier one to be armed, and end the waits that are due. A panic
 /// that escapes it ends the program, as a worker's does.
 fn timer_loop(inner: Arc<Inner>) {
+    a_thread_of_the_runtime();
     if let Err(payload) = catch_unwind(AssertUnwindSafe(|| fire_timers(&inner))) {
         inner.fail(payload);
     }

@@ -15,7 +15,7 @@ use crate::value::{HostFn, Value};
 /// not of the type the signature returns is an error too. Every error
 /// names the function.
 pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| (host.call)(args))) {
+    match crate::scheduler::catch_as_error(AssertUnwindSafe(|| (host.call)(args))) {
         Ok(Ok(value)) if host.returns.admits(&value) => Ok(value),
         Ok(Ok(value)) => {
             let mut shown = value.to_string();
@@ -67,7 +67,7 @@ pub(super) fn catch_builtin_panic<F, T>(module: &str, f: F) -> Result<T, VmError
 where
     F: FnOnce() -> Result<T, VmError> + std::panic::UnwindSafe,
 {
-    match std::panic::catch_unwind(f) {
+    match crate::scheduler::catch_as_error(f) {
         Ok(result) => result,
         Err(payload) => {
             let msg = decode_panic_payload(&payload);
@@ -89,7 +89,7 @@ pub(super) fn resume_native(
     native: &mut dyn Native,
     input: Value,
 ) -> Result<Step, VmError> {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| native.resume(vm, input))) {
+    match crate::scheduler::catch_as_error(AssertUnwindSafe(|| native.resume(vm, input))) {
         Ok(step) => step,
         Err(payload) => {
             let msg = decode_panic_payload(&payload);

@@ -5,7 +5,7 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::panic::{self, AssertUnwindSafe};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -198,7 +198,7 @@ impl Server {
     fn guard_request(&mut self, req: Request, handler: fn(&mut Self, Request)) {
         let id = req.id.clone();
         let method = req.method.clone();
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| handler(self, req)));
+        let outcome = crate::scheduler::catch_as_error(AssertUnwindSafe(|| handler(self, req)));
         if let Err(payload) = outcome {
             eprintln!(
                 "silt-lsp: internal error while handling request '{method}': {}; the request \
@@ -221,7 +221,7 @@ impl Server {
     /// panic is only logged.
     fn guard_notification(&mut self, notif: Notification, handler: fn(&mut Self, Notification)) {
         let method = notif.method.clone();
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| handler(self, notif)));
+        let outcome = crate::scheduler::catch_as_error(AssertUnwindSafe(|| handler(self, notif)));
         if let Err(payload) = outcome {
             eprintln!(
                 "silt-lsp: internal error while handling notification '{method}': {}; the \
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn panic_message_reads_literal_and_formatted_payloads() {
         fn caught(raise: fn()) -> Box<dyn Any + Send> {
-            panic::catch_unwind(raise).expect_err("the function must panic")
+            std::panic::catch_unwind(raise).expect_err("the function must panic")
         }
 
         let literal = caught(|| panic!("plain text"));
@@ -1068,7 +1068,7 @@ mod tests {
         let formatted = caught(|| panic!("value {}", String::from("three")));
         assert_eq!(panic_message(formatted), "value three");
 
-        let other = caught(|| panic::panic_any(7_u8));
+        let other = caught(|| std::panic::panic_any(7_u8));
         assert_eq!(panic_message(other), "the panic carried no message");
     }
 }

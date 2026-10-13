@@ -215,7 +215,8 @@ impl HostIo {
         if self.clock_panic.get().is_some() {
             return T::default();
         }
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&*self.clock))) {
+        let read = std::panic::AssertUnwindSafe(|| read(&*self.clock));
+        match crate::scheduler::catch_as_error(read) {
             Ok(value) => value,
             Err(payload) => {
                 let _ = self.clock_panic.set(panic_message(&payload).to_string());
@@ -272,7 +273,8 @@ impl HostIo {
 /// `output.write(text)`, with a panic turned into an error that carries
 /// the panic's message.
 fn write_caught(output: &dyn Output, text: &str) -> io::Result<()> {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| output.write(text))) {
+    let write = std::panic::AssertUnwindSafe(|| output.write(text));
+    match crate::scheduler::catch_as_error(write) {
         Ok(result) => result,
         Err(payload) => {
             let message = panic_message(&payload);
@@ -281,6 +283,10 @@ fn write_caught(output: &dyn Output, text: &str) -> io::Result<()> {
     }
 }
 
+/// What stands for the message of a panic that was raised with
+/// something other than a text.
+pub(crate) const NO_PANIC_TEXT: &str = "<non-string panic payload>";
+
 /// The message a panic was raised with.
 pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
@@ -288,6 +294,6 @@ pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
     } else if let Some(s) = payload.downcast_ref::<String>() {
         s.as_str()
     } else {
-        "<non-string panic payload>"
+        NO_PANIC_TEXT
     }
 }
