@@ -84,6 +84,7 @@ fn shutdown(mut child: Child) -> (String, String) {
 fn server_src(host: &str, port_path: &str) -> String {
     format!(
         r#"
+import bytes
 import http
 import io
 import tcp
@@ -94,7 +95,7 @@ fn main() {{
     panic("cannot write the port")
   }}
   http.serve(listener) {{ _req ->
-    http.Response {{ status: 200, body: "ok", headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string("ok"), headers: #{{}} }}
   }}
 }}
 "#

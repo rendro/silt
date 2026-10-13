@@ -28,7 +28,11 @@
 //!     printed without them, `{ x -> a }`: a block of one expression
 //!     that is the body of a closure is compared as that expression (a
 //!     block of statements there is the same tree with the braces and
-//!     without).
+//!     without);
+//!   * the body of a `match` arm in braces of its own, `p -> { a }`, is
+//!     printed without them, `p -> a`: a block of one expression that
+//!     is the body of an arm is compared as that expression (an arm has
+//!     no other spelling for a block of statements or an empty one).
 
 use std::fmt::Write as _;
 
@@ -1151,15 +1155,7 @@ impl ShapeWriter {
             ExprKind::Lambda { params, body } => {
                 self.open("lambda");
                 self.params(params);
-                // A body that is a block of one expression is that
-                // expression in braces of its own.
-                let mut body: &Expr = body;
-                while let ExprKind::Block(stmts) = &body.kind
-                    && let [Stmt::Expr(inner)] = stmts.as_slice()
-                {
-                    body = inner;
-                }
-                self.expr(body);
+                self.expr(without_own_braces(body));
             }
             ExprKind::RecordCreate {
                 module,
@@ -1189,7 +1185,7 @@ impl ShapeWriter {
                     self.open("arm");
                     self.pattern(&arm.pattern);
                     self.opt_expr(arm.guard.as_deref());
-                    self.expr(&arm.body);
+                    self.expr(without_own_braces(&arm.body));
                     self.close();
                 }
             }
@@ -1223,6 +1219,18 @@ impl ShapeWriter {
         }
         self.close();
     }
+}
+
+/// The body of a closure or of a `match` arm as it is compared: one
+/// that is a block of one expression is that expression in braces of
+/// its own.
+fn without_own_braces(mut body: &Expr) -> &Expr {
+    while let ExprKind::Block(stmts) = &body.kind
+        && let [Stmt::Expr(inner)] = stmts.as_slice()
+    {
+        body = inner;
+    }
+    body
 }
 
 #[cfg(test)]
@@ -1403,5 +1411,28 @@ mod tests {
         let source = "fn f(x) {\n  match x {\n    (1 | 2) | 3 -> 1\n    _ -> 0\n  }\n}\n";
         let output = "fn f(x) {\n  match x {\n    1 | 2 | 3 -> 1\n    _ -> 0\n  }\n}\n";
         assert_eq!(judge(source, output), Ok(()));
+    }
+
+    #[test]
+    fn a_body_that_is_a_block_of_one_expression_is_that_expression() {
+        let arms = |one: &str, rest: &str| {
+            format!("fn f(x) {{\n  match x {{\n    1 -> {one}\n    _ -> {rest}\n  }}\n}}\n")
+        };
+        assert_eq!(judge(&arms("{ { x } }", "{ 0 }"), &arms("x", "0")), Ok(()));
+        let closure = |body: &str| format!("fn f() {{\n  {{ x -> {body} }}\n}}\n");
+        assert_eq!(judge(&closure("{ { x } }"), &closure("x")), Ok(()));
+        // A block of statements, of one that is no expression, or of
+        // nothing is not an expression in braces.
+        for (block, other) in [
+            ("{\n      x\n      x\n    }", "x"),
+            ("{\n      let y = x\n    }", "x"),
+            ("{}", "()"),
+        ] {
+            let message = refusal(&arms(block, "0"), &arms(other, "0"));
+            assert!(message.contains("function `f`"), "{block}: {message}");
+        }
+        // The braces do not go anywhere else: a statement, an operand.
+        let message = refusal(&arms("f({ x })", "0"), &arms("f(x)", "0"));
+        assert!(message.contains("function `f`"), "{message}");
     }
 }

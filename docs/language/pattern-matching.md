@@ -23,6 +23,12 @@ fn describe(shape) {
 Each arm starts on its own line; there is no separator between arms. A match
 with one arm may be written on one line: `match pair { (a, b) -> a + b }`.
 
+An arm's body is one expression; statements take a block, `p -> { ... }`,
+whose last expression is the arm's value. One expression needs no braces, and
+`silt fmt` takes them away: `0 -> { "done" }` becomes `0 -> "done"`. (It
+leaves them where taking them away would move a comment to the next arm or
+change how the next arm is read, and inside a string it keeps as written.)
+
 ## Match without Scrutinee (Boolean Dispatch)
 
 Omit the scrutinee for boolean conditions:

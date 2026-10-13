@@ -89,7 +89,7 @@ fn main() {
   let summary = loop collected = 0, successes = 0, failures = 0 {
     match collected >= num_files {
       true -> (successes, failures)
-      _ -> {
+      _ ->
         -- Use channel.select to wait on both result channels
         match channel.select([channel.Recv(results_1), channel.Recv(results_2)]) {
           (_, channel.Message(result)) -> {
@@ -117,7 +117,6 @@ fn main() {
             (successes, failures)
           }
         }
-      }
     }
   }
   -- Wait for all workers to finish

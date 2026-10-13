@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: http
+-- The body `http.request` sends is `Bytes`: a text is no body until the
+-- program makes bytes of it.
+import http
+
+fn main() {
+  let sent = http.request(http.POST, "http://127.0.0.1:1/", "text", #{})
+  println(sent)
+}

@@ -1,3 +1,4 @@
+import bytes
 import http
 import json
 import list
@@ -13,14 +14,20 @@ type Repo {
 }
 
 fn fetch_repos(user) {
-  -- http.get returns HttpError and json.parse_list returns JsonError.
-  -- Fold both into a single `String` channel via `e.message()` so
-  -- fetch_repos surfaces one uniform error type to its caller.
+  -- http.get returns HttpError, bytes.to_string BytesError and
+  -- json.parse_list JsonError. Fold them into a single `String` channel
+  -- via `e.message()` so fetch_repos surfaces one uniform error type to
+  -- its caller.
   let resp = match http.get("https://api.github.com/users/{user}/repos") {
     Ok(r) -> r
     Err(e) -> return Err(e.message())
   }
-  match json.parse_list(resp.body, Repo) {
+  -- The body is the bytes that arrived; JSON is text.
+  let text = match bytes.to_string(resp.body) {
+    Ok(text) -> text
+    Err(e) -> return Err(e.message())
+  }
+  match json.parse_list(text, Repo) {
     Ok(repos) -> Ok(repos)
     Err(e) -> Err(e.message())
   }

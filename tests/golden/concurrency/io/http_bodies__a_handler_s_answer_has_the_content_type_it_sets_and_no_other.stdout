@@ -1,0 +1,6 @@
+/text: 68656c6c6f, content-type None
+/set: 3c703e68656c6c6f3c2f703e, content-type Some(text/html; charset=UTF-8)
+/empty: , content-type None
+/bytes: 00ff, content-type None
+TRACE: HTTP/1.1 405 Method Not Allowed
+TRACE: Content-Type: text/plain; charset=UTF-8

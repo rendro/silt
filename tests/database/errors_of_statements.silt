@@ -1,0 +1,118 @@
+-- The errors a program meets from statements, as `message()` says
+-- them: the server's message with its SQLSTATE for a statement the
+-- server refuses, without the row's values (a unique violation names
+-- the constraint, not the address that was there twice); `Timeout` for
+-- a statement the server ended at its own `statement_timeout`;
+-- `TxnAborted` for a statement in a transaction after one that failed,
+-- and the transaction is rolled back when its function answers `Err`;
+-- `Connect` for a URL the module refuses and for a pool that is closed.
+import channel
+import env
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        channel.Message(Ok(_)) -> loop(n + 1)
+        channel.Message(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> e.message()
+  }
+}
+
+fn show(what: String, answer: Result(a, postgres.PostgresError)) {
+  println("{what}: {said(answer)}")
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      show("a syntax error", postgres.query(pool, "SELEC 1", []))
+      show("a missing table", postgres.query(pool, "SELECT * FROM silt_database_no_such_table", []))
+      show("a division by zero", postgres.query(pool, "SELECT 1/0", []))
+      match postgres.query(pool, "SELECT nope FROM generate_series(1, 2)", []) {
+        Err(postgres.NoSuchColumn(_)) -> println("a missing column: NoSuchColumn")
+        other -> show("a missing column", other)
+      }
+      show("a parameter too few", postgres.query(pool, "SELECT $1::int4", []))
+
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_errors", [])
+      show(
+        "a table",
+        postgres.execute(
+          pool,
+          "CREATE TABLE silt_database_errors (id int4 PRIMARY KEY, email text UNIQUE)",
+          [],
+        ),
+      )
+      show(
+        "a row",
+        postgres.execute(
+          pool,
+          "INSERT INTO silt_database_errors VALUES (1, 'alice@example.com')",
+          [],
+        ),
+      )
+      show(
+        "its address again",
+        postgres.execute(
+          pool,
+          "INSERT INTO silt_database_errors VALUES (2, 'alice@example.com')",
+          [],
+        ),
+      )
+
+      let timed = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "SET LOCAL statement_timeout = 50", [])?
+        postgres.query(tx, "SELECT pg_sleep(600)", [])
+      }
+      show("the server's statement timeout", timed)
+
+      let aborted = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(
+          tx,
+          "INSERT INTO silt_database_errors VALUES (3, 'bob@example.com')",
+          [],
+        )?
+        show("in a transaction, a division by zero", postgres.query(tx, "SELECT 1/0", []))
+        postgres.query(tx, "SELECT 1", [])
+      }
+      show("the statement after it, and the transaction", aborted)
+      let kept = count(pool, "SELECT 1 FROM silt_database_errors WHERE id = 3")
+      println("rows of that transaction in the table: {kept}")
+
+      show("the table dropped", postgres.execute(pool, "DROP TABLE silt_database_errors", []))
+      show(
+        "an unknown sslmode",
+        postgres.connect("postgres://nobody@127.0.0.1/nothing?sslmode=maybe"),
+      )
+      postgres.close(pool)
+      show("a closed pool", postgres.query(pool, "SELECT 1", []))
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

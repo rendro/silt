@@ -1,0 +1,25 @@
+-- cmd: fmt
+-- The spelling without braces is the one that is written: it stays.
+fn pick(n) {
+  match n {
+    1 -> n + 1
+    2 -> match n {
+      2 -> 22
+      _ -> 0
+    }
+    k when k > 10 -> [k]
+      |> first
+    _ -> 0
+  }
+}
+
+fn first(xs) {
+  match xs {
+    [x, .._] -> x
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

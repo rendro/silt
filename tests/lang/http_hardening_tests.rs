@@ -129,6 +129,7 @@ fn shutdown(mut child: Child) -> (String, String) {
 fn echo_server_src(port_path: &str) -> String {
     format!(
         r#"
+import bytes
 import http
 import io
 import tcp
@@ -143,7 +144,7 @@ fn bound(port_file) {{
 }}
 fn main() {{
   http.serve(bound("{port_path}")) {{ _req ->
-    http.Response {{ status: 200, body: "ok", headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string("ok"), headers: #{{}} }}
   }}
 }}
 "#
@@ -400,6 +401,7 @@ fn med1_handler_error_does_not_leak_vm_error_details() {
     let port_path = port_file.path();
     let src = format!(
         r#"
+import bytes
 import http
 import io
 import tcp
@@ -420,7 +422,7 @@ fn private_helper() {{
 fn main() {{
   http.serve(bound("{port_path}")) {{ _req ->
     private_helper()
-    http.Response {{ status: 200, body: "never", headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string("never"), headers: #{{}} }}
   }}
 }}
 "#
@@ -485,6 +487,7 @@ fn long_poll_handlers_wait_without_holding_a_thread() {
     let port_path = port_file.path();
     let src = format!(
         r#"
+import bytes
 import channel
 import http
 import io
@@ -503,12 +506,12 @@ fn main() {{
   http.serve(bound("{port_path}")) {{ req ->
     match req.path {{
       "/wait" -> match channel.receive(mailbox) {{
-        channel.Message(text) -> http.Response {{ status: 200, body: text, headers: #{{}} }}
-        _ -> http.Response {{ status: 500, body: "closed", headers: #{{}} }}
+        channel.Message(text) -> http.Response {{ status: 200, body: bytes.from_string(text), headers: #{{}} }}
+        _ -> http.Response {{ status: 500, body: bytes.from_string("closed"), headers: #{{}} }}
       }}
       _ -> {{
         channel.send(mailbox, "released")
-        http.Response {{ status: 200, body: "posted", headers: #{{}} }}
+        http.Response {{ status: 200, body: bytes.from_string("posted"), headers: #{{}} }}
       }}
     }}
   }}
@@ -566,6 +569,7 @@ fn the_handler_cap_turns_away_what_is_over_it_and_the_waiters_get_their_answers(
     let control_path = control_file.path();
     let src = format!(
         r#"
+import bytes
 import channel
 import http
 import io
@@ -588,12 +592,12 @@ fn main() {{
   let _control = task.spawn {{ ->
     http.serve(bound("{control_path}")) {{ _req ->
       channel.close(mailbox)
-      http.Response {{ status: 200, body: "closed", headers: #{{}} }}
+      http.Response {{ status: 200, body: bytes.from_string("closed"), headers: #{{}} }}
     }}
   }}
   http.serve(bound("{port_path}")) {{ _req ->
     let _ = channel.receive(mailbox)
-    http.Response {{ status: 200, body: "released", headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string("released"), headers: #{{}} }}
   }}
 }}
 "#

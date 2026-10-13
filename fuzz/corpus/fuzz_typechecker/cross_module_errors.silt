@@ -10,6 +10,7 @@
 -- propagates uniformly. Variant constructors are first-class
 -- `Fn(e) -> AppError`, so no closure wrapping is needed.
 
+import bytes
 import http
 import io
 import json
@@ -41,7 +42,7 @@ type AppError {
 -- typed error is wrapped into AppError by passing the variant
 -- constructor directly to result.map_err.
 
-fn load_and_fetch(path: String) -> Result(String, AppError) {
+fn load_and_fetch(path: String) -> Result(Bytes, AppError) {
   let contents = io.read_file(path)
   |> result.map_err(ConfigRead)?
   let config = json.parse(contents, Config)
@@ -57,14 +58,13 @@ fn load_and_fetch(path: String) -> Result(String, AppError) {
 
 fn main() {
   match load_and_fetch("config.json") {
-    Ok(body) -> println("Got {body}")
+    Ok(body) -> println("Got {bytes.length(body)} bytes")
     Err(e) -> match e {
       -- Granular handling per domain.
       ConfigRead(NotFound(path)) -> println("create a config at: {path}")
       ConfigRead(inner) -> println("config file: {inner.message()}")
       ConfigParse(inner) -> println("config JSON invalid: {inner.message()}")
       ApiCall(Timeout) -> println("API timed out — retry later")
-      ApiCall(StatusCode(code, _)) -> println("API returned {code}")
       ApiCall(inner) -> println("API call failed: {inner.message()}")
       ApiResponse(inner) -> println("API response invalid: {inner.message()}")
       Custom(msg) -> println("app: {msg}")

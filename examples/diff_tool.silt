@@ -64,21 +64,15 @@ fn trace_diff(table, old_lines, new_lines, i, j) {
       let old_line = list.get(old_lines, i) |> option.unwrap_or("")
       let new_line = list.get(new_lines, j) |> option.unwrap_or("")
       match old_line == new_line {
-        true -> {
-          list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j + 1), (" ", old_line))
-        }
+        true -> list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j + 1), (" ", old_line))
         _ -> {
           let row_i = list.get(table, i + 1) |> option.unwrap_or([])
           let below = list.get(row_i, j) |> option.unwrap_or(0)
           let row_curr = list.get(table, i) |> option.unwrap_or([])
           let right = list.get(row_curr, j + 1) |> option.unwrap_or(0)
           match below >= right {
-            true -> {
-              list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j), ("-", old_line))
-            }
-            _ -> {
-              list.prepend(trace_diff(table, old_lines, new_lines, i, j + 1), ("+", new_line))
-            }
+            true -> list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j), ("-", old_line))
+            _ -> list.prepend(trace_diff(table, old_lines, new_lines, i, j + 1), ("+", new_line))
           }
         }
       }

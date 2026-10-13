@@ -6,20 +6,27 @@
 -- round. (With a server that had an accept of its own on the listener
 -- a cancelled server went on taking connections, and about one request
 -- in ten was never answered.)
+import bytes
 import http
 import list
+import result
 import task
 import tcp
+
+-- A body as text.
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("(no text)")
+}
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
   let wrong = 1..300 |> list.fold(0) { wrong, round ->
     let server = task.spawn { ->
-      http.serve(listener) { _req -> http.Response { status: 200, body: "round {round}", headers: #{} } }
+      http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("round {round}"), headers: #{} } }
     }
     let answer = match http.get(url) {
-      Ok(r) -> r.body
+      Ok(r) -> text(r.body)
       Err(e) -> e.message()
     }
     task.cancel(server)

@@ -141,6 +141,7 @@ fn test_http_serve_non_blocking_in_task() {
     //
     // The listener is on a port the system chooses.
     let input = r#"
+import bytes
 import http
 import task
 import channel
@@ -151,7 +152,7 @@ fn main() {
   let done = channel.new(1)
   let server = task.spawn({ ->
     http.serve(listener, { req ->
-      http.Response { status: 200, body: "ok", headers: #{} }
+      http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
     })
   })
   let worker = task.spawn({ ->
@@ -185,6 +186,7 @@ fn test_http_serve_concurrent_requests() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -200,7 +202,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(req.path), headers: #{{}} }}
   }})
 }}
 "#
@@ -243,6 +245,7 @@ fn test_http_serve_basic_get_response() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -258,7 +261,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string("hello from silt"), headers: #{{}} }}
   }})
 }}
 "#
@@ -293,6 +296,7 @@ fn test_http_serve_returns_custom_status_code() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -308,7 +312,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 404, body: "not found", headers: #{{}} }}
+    http.Response {{ status: 404, body: bytes.from_string("not found"), headers: #{{}} }}
   }})
 }}
 "#
@@ -343,6 +347,7 @@ fn test_http_serve_echoes_request_path() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -358,7 +363,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(req.path), headers: #{{}} }}
   }})
 }}
 "#
@@ -397,6 +402,7 @@ fn test_http_serve_echoes_query_string() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -412,7 +418,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: req.query, headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(req.query), headers: #{{}} }}
   }})
 }}
 "#
@@ -448,10 +454,8 @@ fn test_http_serve_reads_request_body() {
     thread::spawn(move || {
         let input = format!(
             r#"
-import bytes
 import http
 import io
-import result
 import tcp
 
 -- Listen on a port the system chooses, and tell the test which.
@@ -465,7 +469,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: bytes.to_string(req.body) |> result.unwrap_or(""), headers: #{{}} }}
+    http.Response {{ status: 200, body: req.body, headers: #{{}} }}
   }})
 }}
 "#
@@ -500,6 +504,7 @@ fn test_http_serve_reads_request_method() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -522,7 +527,7 @@ fn main() {{
       http.DELETE -> "got-delete"
       _ -> "got-other"
     }}
-    http.Response {{ status: 200, body: method_name, headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(method_name), headers: #{{}} }}
   }})
 }}
 "#
@@ -577,6 +582,7 @@ fn test_http_serve_sets_response_headers() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -594,7 +600,7 @@ fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
     http.Response {{
       status: 200,
-      body: "ok",
+      body: bytes.from_string("ok"),
       headers: #{{ "X-Custom": "silt-value", "X-Another": "42" }}
     }}
   }})
@@ -641,6 +647,7 @@ fn test_http_serve_routing_by_path() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -657,9 +664,9 @@ fn bound(port_file) {{
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
     match req.path {{
-      "/health" -> http.Response {{ status: 200, body: "ok", headers: #{{}} }}
-      "/greet" -> http.Response {{ status: 200, body: "hello!", headers: #{{}} }}
-      _ -> http.Response {{ status: 404, body: "not found", headers: #{{}} }}
+      "/health" -> http.Response {{ status: 200, body: bytes.from_string("ok"), headers: #{{}} }}
+      "/greet" -> http.Response {{ status: 200, body: bytes.from_string("hello!"), headers: #{{}} }}
+      _ -> http.Response {{ status: 404, body: bytes.from_string("not found"), headers: #{{}} }}
     }}
   }})
 }}
@@ -712,6 +719,7 @@ fn test_http_serve_concurrent_requests_stress() {
     thread::spawn(move || {
         let input = format!(
             r#"
+import bytes
 import http
 import io
 import tcp
@@ -727,7 +735,7 @@ fn bound(port_file) {{
 
 fn main() {{
   http.serve(bound("{port_path}"), {{ req ->
-    http.Response {{ status: 200, body: req.path, headers: #{{}} }}
+    http.Response {{ status: 200, body: bytes.from_string(req.path), headers: #{{}} }}
   }})
 }}
 "#
@@ -771,6 +779,7 @@ fn test_http_serve_from_task_with_silt_client() {
     // hanging the test runner if something goes wrong.
     let handle = thread::spawn(move || {
         let input = r#"
+import bytes
 import http
 import task
 import channel
@@ -784,14 +793,17 @@ fn main() {
   -- Start the server in a task
   let server = task.spawn({ ->
     http.serve(listener, { req ->
-      http.Response { status: 200, body: "silt-response", headers: #{} }
+      http.Response { status: 200, body: bytes.from_string("silt-response"), headers: #{} }
     })
   })
 
   -- Make a request from another task
   let client = task.spawn({ ->
     let body = match http.get("http://127.0.0.1:{port}/test") {
-      Ok(resp) -> resp.body
+      Ok(resp) -> match bytes.to_string(resp.body) {
+        Ok(text) -> text
+        Err(e) -> "the body is no text: {e.message()}"
+      }
       Err(e) -> "the request failed: {e.message()}"
     }
     channel.send(result_ch, body)

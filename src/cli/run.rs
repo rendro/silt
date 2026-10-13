@@ -203,9 +203,13 @@ pub(crate) fn vm_run_file(path: &str) {
 
     // Run via VM. The failures of tasks that nobody joins are taken and
     // reported here, against the program's files, instead of by the
-    // scheduler.
+    // scheduler. From here on the program may have threads, and the
+    // process ends through `exit_with_status`: a thread of the runtime
+    // that has panicked may be ending it with the internal error.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new(silt::HostIo::process());
+    #[cfg(feature = "test-hooks")]
+    panic_where_a_test_says(&vm);
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,
@@ -214,7 +218,11 @@ pub(crate) fn vm_run_file(path: &str) {
         vm.settle();
     }
     // The program has ended. The tasks that failed and that nobody
-    // joined or cancelled are reported, and make the run fail.
+    // joined or cancelled are reported, and make the run fail. (Not
+    // when a thread of the runtime has panicked and is ending the
+    // process: nothing of the program's is reported then, here and
+    // before each report below.)
+    silt::scheduler::stand_back_for_internal_error();
     let tasks_failed = report_task_failures(path, &sources, file);
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
@@ -235,15 +243,47 @@ pub(crate) fn vm_run_file(path: &str) {
             main_span,
             format!("main returned Err: {}", vm.show_text(payload)),
         );
+        silt::scheduler::stand_back_for_internal_error();
         eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
     if let Err(e) = run_result {
+        silt::scheduler::stand_back_for_internal_error();
         eprintln!("{}", render_runtime_error(&e, path, &sources));
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
     if tasks_failed {
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
+    }
+}
+
+/// In a build with `test-hooks` only: make the runtime of `vm` panic
+/// once at each place `SILT_TEST_PANIC` names (`task:<id>`, `program`,
+/// `timer`, `io`; several with commas between), for the tests of what
+/// the binary does when a thread of the runtime panics
+/// (tests/cli/runtime_panic_tests.rs). `silt run` and `silt test` call
+/// it for each VM they make. No other build reads the variable.
+#[cfg(feature = "test-hooks")]
+pub(crate) fn panic_where_a_test_says(vm: &Vm) {
+    use silt::vm::PanicAt;
+    let Ok(places) = std::env::var("SILT_TEST_PANIC") else {
+        return;
+    };
+    let task = |id: &str| id.parse().ok().map(PanicAt::Task);
+    for place in places.split(',') {
+        let at = match place {
+            "program" => Some(PanicAt::Program),
+            "timer" => Some(PanicAt::Timer),
+            "io" => Some(PanicAt::Io),
+            place => place.strip_prefix("task:").and_then(task),
+        };
+        match at {
+            Some(at) => silt::vm::panic_for_test(vm, at),
+            None => {
+                eprintln!("silt: SILT_TEST_PANIC names no place: '{place}'");
+                process::exit(2);
+            }
+        }
     }
 }
 

@@ -26,6 +26,7 @@ use std::time::Duration;
 // ── The limits of the server ─────────────────────────────────────
 //
 // All of them, and nowhere else. `docs/stdlib/http.md` states them.
+// ([`BODY_MAX`] is the client's limit too: `crate::builtins::http`.)
 
 /// The longest request head (request line and headers), and the
 /// longest trailer section of a chunked body. Beyond it: 431.
@@ -34,8 +35,9 @@ pub const HEAD_MAX: usize = 64 * 1024;
 /// The most headers of a request. Beyond it: 431.
 pub const HEADERS_MAX: usize = 100;
 
-/// The longest request body, given by its length or in chunks.
-/// Beyond it: 413.
+/// The longest body that is read off the wire, given by its length or
+/// in chunks: a request's by the server (beyond it: 413), and a
+/// response's by the client (beyond it: `Err(InvalidResponse(_))`).
 pub const BODY_MAX: usize = 10 * 1024 * 1024;
 
 /// The longest method. A connection whose first bytes are no method
@@ -1396,5 +1398,12 @@ mod tests {
             String::from_utf8(response(200, &[], b"", kept)).unwrap(),
             "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
         );
+        // A body is bytes, whatever they are: every value, and what
+        // would end a head, follow the head as they were given.
+        let mut body: Vec<u8> = (0..=255).collect();
+        body.extend_from_slice(b"\r\n\r\nHTTP/1.1 200 OK\r\n\r\n");
+        let mut sent = b"HTTP/1.1 200 OK\r\nContent-Length: 279\r\n\r\n".to_vec();
+        sent.extend_from_slice(&body);
+        assert_eq!(response(200, &[], &body, Sending::default()), sent);
     }
 }

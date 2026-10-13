@@ -1,0 +1,20 @@
+-- cmd: fmt
+-- Braces in braces and parentheses around them go together; a block
+-- that needs its braces keeps one pair.
+fn pick(n) {
+  match n {
+    1 -> n + 1
+    2 -> n + 2
+    3 -> n + 3
+    4 -> n + 4
+    5 -> {
+      let m = n
+      m + 5
+    }
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

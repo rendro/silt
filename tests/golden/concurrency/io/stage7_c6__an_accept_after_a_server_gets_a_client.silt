@@ -17,7 +17,7 @@ fn main() {
     when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
     let port = tcp.local_port(listener)
     let server = task.spawn { ->
-      http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
+      http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
     }
     let _ = http.get("http://127.0.0.1:{port}/")
     task.cancel(server)

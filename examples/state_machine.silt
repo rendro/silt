@@ -79,28 +79,26 @@ fn transition(state, event, inventory) {
         "Added {amount} cents, total: {balance + amount} cents",
         inventory,
       )
-      SelectItem(item) -> {
-        match lookup_item(inventory, item) {
-          None -> (Accepting(balance), "Item '{item}' not found", inventory)
-          Some((qty, price)) -> match {
-            qty <= 0 -> (Accepting(balance), "'{item}' is out of stock", inventory)
-            balance < price -> (
-              Accepting(balance),
-              "Not enough money for '{item}' (need {price}, have {balance})",
-              inventory,
-            )
-            _ -> {
-              let change = balance - price
-              let new_inv = map.set(inventory, item, (qty - 1, price))
-              (Dispensing(item, change), "Dispensing '{item}' (price: {price} cents)", new_inv)
-            }
+      SelectItem(item) -> match lookup_item(inventory, item) {
+        None -> (Accepting(balance), "Item '{item}' not found", inventory)
+        Some((qty, price)) -> match {
+          qty <= 0 -> (Accepting(balance), "'{item}' is out of stock", inventory)
+          balance < price -> (
+            Accepting(balance),
+            "Not enough money for '{item}' (need {price}, have {balance})",
+            inventory,
+          )
+          _ -> {
+            let change = balance - price
+            let new_inv = map.set(inventory, item, (qty - 1, price))
+            (Dispensing(item, change), "Dispensing '{item}' (price: {price} cents)", new_inv)
           }
         }
       }
       Cancel -> (Idle, "Cancelled, returning {balance} cents", inventory)
       Restock -> (Accepting(balance), "Cannot restock while accepting coins", inventory)
     }
-    Dispensing(item, change) -> {
+    Dispensing(item, change) ->
       -- After dispensing, auto-transition back to Idle with the event
       match {
         change > 0 -> (
@@ -110,7 +108,6 @@ fn transition(state, event, inventory) {
         )
         _ -> (Idle, "Dispensed '{item}', no change due. Processing next event...", inventory)
       }
-    }
     OutOfStock -> match event {
       Restock -> {
         let new_inv = #{ "Cola": (5, 100), "Chips": (3, 75), "Water": (10, 50), "Candy": (4, 60) }

@@ -113,16 +113,14 @@ fn main() {
             println("Stack and history cleared.")
             loop([], [])
           }
-          "undo" -> {
-            match list.head(stack) {
-              Some(top) -> {
-                println("Undone. Removed {format(top)} from stack.")
-                loop(list.tail(stack), list.append(history, "undo: removed {format(top)}"))
-              }
-              None -> {
-                println("Nothing to undo.")
-                loop(stack, history)
-              }
+          "undo" -> match list.head(stack) {
+            Some(top) -> {
+              println("Undone. Removed {format(top)} from stack.")
+              loop(list.tail(stack), list.append(history, "undo: removed {format(top)}"))
+            }
+            None -> {
+              println("Nothing to undo.")
+              loop(stack, history)
             }
           }
           "+" -> {
@@ -218,7 +216,7 @@ fn main() {
             loop(list.prepend(stack, math.e), history)
           }
           "" -> loop(stack, history)
-          _ -> {
+          _ ->
             -- Try to parse as a number
             match float.parse(input) {
               Ok(n) -> {
@@ -230,7 +228,6 @@ fn main() {
                 loop(stack, history)
               }
             }
-          }
         }
       }
     }

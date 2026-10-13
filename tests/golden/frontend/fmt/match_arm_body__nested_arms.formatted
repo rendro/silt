@@ -1,0 +1,24 @@
+-- cmd: fmt
+-- A match that is an arm's body loses the braces around it, and its own
+-- arms lose theirs: the inner match ends at its closing brace, and the
+-- next arm of the outer one starts on the next line.
+fn pick(a, b) {
+  match a {
+    1 -> match b {
+      1 -> "one one"
+      _ -> match a + b {
+        3 -> "three"
+        _ -> "one more"
+      }
+    }
+    2 -> match {
+      b > 2 -> "two and more"
+      _ -> "two"
+    }
+    _ -> "more"
+  }
+}
+
+fn main() {
+  println(pick(1, 2))
+}

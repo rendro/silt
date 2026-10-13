@@ -1,0 +1,115 @@
+-- timeout: 30
+-- requires-feature: http
+-- A body of every byte value, 0 to 255, arrives as it was sent at the
+-- four places a body is, over connections on the loopback interface:
+-- what `http.request` sends (read off the wire by a server written by
+-- hand), what a handler gets (`req.body`), what a handler answers (read
+-- off the wire by a client written by hand) and what `http.request`
+-- gets (`resp.body`). The request carries the values upwards and the
+-- answer carries them downwards, so neither can stand in for the other.
+import bytes
+import http
+import list
+import option
+import result
+import string
+import task
+import tcp
+
+fn upwards() -> Bytes {
+  bytes.from_list(0..255) |> result.unwrap_or(bytes.empty())
+}
+
+fn downwards() -> Bytes {
+  bytes.from_list(list.reverse(0..255)) |> result.unwrap_or(bytes.empty())
+}
+
+fn line_end() -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  "{cr}\n"
+}
+
+-- What follows the head of `message`: its body, as far as it is there.
+fn body_of(message: Bytes) -> Option(Bytes) {
+  let nl = line_end()
+  match bytes.index_of(message, bytes.from_string("{nl}{nl}")) {
+    Some(at) -> Some(bytes.slice(message, at + 4, bytes.length(message)))
+    None -> None
+  }
+}
+
+-- Reads a message from `conn`: until its head is there and its body
+-- has `length` bytes, or until the other end has closed. All of it.
+fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  loop got = bytes.empty() {
+    let whole = match body_of(got) {
+      Some(body) -> length == Some(bytes.length(body))
+      None -> false
+    }
+    match whole {
+      true -> got
+      false -> match tcp.read(conn, 4096) {
+        Ok(more) -> match bytes.length(more) {
+          0 -> got
+          _ -> loop(bytes.concat(got, more))
+        }
+        Err(_) -> got
+      }
+    }
+  }
+}
+
+fn read_body(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  body_of(read_message(conn, length)) |> option.unwrap_or(bytes.empty())
+}
+
+fn show(place: String, body: Bytes) {
+  println("{place}: {bytes.length(body)} bytes {bytes.to_hex(body)}")
+}
+
+fn answer(req: http.Request) -> http.Response {
+  show("  the handler gets", req.body)
+  http.Response { status: 200, body: downwards(), headers: #{} }
+}
+
+fn main() {
+  let nl = line_end()
+  show("upwards", upwards())
+  show("downwards", downwards())
+
+  println("http.request to http.serve")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  match http.request(http.POST, "http://127.0.0.1:{port}/", upwards(), #{}) {
+    Ok(resp) -> show("  http.request gets", resp.body)
+    Err(e) -> println("  http.request: {e.message()}")
+  }
+
+  -- The client says that it closes, so the answer ends where the
+  -- server closes: all of it is read.
+  println("a client written by hand to http.serve")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  let head = "POST / HTTP/1.1{nl}Host: x{nl}Content-Length: 256{nl}Connection: close{nl}{nl}"
+  let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), upwards()))
+  show("  the answer on the wire", read_body(conn, None))
+  tcp.close(conn)
+  task.cancel(server)
+
+  println("http.request to a server written by hand")
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let reader = task.spawn { ->
+    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
+    let sent = read_body(conn, Some(256))
+    let head = "HTTP/1.1 200 OK{nl}Content-Length: 256{nl}Connection: close{nl}{nl}"
+    let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), downwards()))
+    tcp.close(conn)
+    sent
+  }
+  let got = http.request(http.POST, "http://127.0.0.1:{tcp.local_port(by_hand)}/", upwards(), #{})
+  show("  the request on the wire", task.join(reader))
+  match got {
+    Ok(resp) -> show("  http.request gets", resp.body)
+    Err(e) -> println("  http.request: {e.message()}")
+  }
+}

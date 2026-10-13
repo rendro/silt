@@ -1,0 +1,3 @@
+HEAD /head: 200, 0 bytes, of the three headers: [etag]
+GET /204: 204, 0 bytes, of the three headers: [etag]
+GET /304: 304, 0 bytes, of the three headers: [etag]

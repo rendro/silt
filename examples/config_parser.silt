@@ -22,30 +22,26 @@ fn classify_line(line_num, raw_line) {
     string.is_empty(trimmed) -> Blank
     string.starts_with(trimmed, ";") -> Comment(trimmed)
     string.starts_with(trimmed, "#") -> Comment(trimmed)
-    string.starts_with(trimmed, "[") -> {
-      match string.index_of(trimmed, "]") {
-        Some(end) -> {
-          let name = string.slice(trimmed, 1, end) |> string.trim
-          match string.is_empty(name) {
-            true -> ParseError(line_num, "empty section name")
-            _ -> Section(name)
-          }
+    string.starts_with(trimmed, "[") -> match string.index_of(trimmed, "]") {
+      Some(end) -> {
+        let name = string.slice(trimmed, 1, end) |> string.trim
+        match string.is_empty(name) {
+          true -> ParseError(line_num, "empty section name")
+          _ -> Section(name)
         }
-        None -> ParseError(line_num, "unclosed section bracket")
       }
+      None -> ParseError(line_num, "unclosed section bracket")
     }
-    _ -> {
-      match string.index_of(trimmed, "=") {
-        Some(eq_pos) -> {
-          let key = string.slice(trimmed, 0, eq_pos) |> string.trim
-          let value = string.slice(trimmed, eq_pos + 1, string.length(trimmed)) |> string.trim
-          match string.is_empty(key) {
-            true -> ParseError(line_num, "empty key in key=value pair")
-            _ -> KeyValue(key, value)
-          }
+    _ -> match string.index_of(trimmed, "=") {
+      Some(eq_pos) -> {
+        let key = string.slice(trimmed, 0, eq_pos) |> string.trim
+        let value = string.slice(trimmed, eq_pos + 1, string.length(trimmed)) |> string.trim
+        match string.is_empty(key) {
+          true -> ParseError(line_num, "empty key in key=value pair")
+          _ -> KeyValue(key, value)
         }
-        None -> ParseError(line_num, "unrecognized line: {trimmed}")
       }
+      None -> ParseError(line_num, "unrecognized line: {trimmed}")
     }
   }
 }
@@ -74,21 +70,19 @@ fn parse_config(text) {
           }
           (name, new_config, errors)
         }
-        KeyValue(key, value) -> {
-          match string.is_empty(current_section) {
-            true -> {
-              -- Key-value outside any section, put under "" key
-              let section_map = map.get(config, "") |> option.unwrap_or(#{})
-              let new_section = map.set(section_map, key, value)
-              let new_config = map.set(config, "", new_section)
-              ("", new_config, errors)
-            }
-            _ -> {
-              let section_map = map.get(config, current_section) |> option.unwrap_or(#{})
-              let new_section = map.set(section_map, key, value)
-              let new_config = map.set(config, current_section, new_section)
-              (current_section, new_config, errors)
-            }
+        KeyValue(key, value) -> match string.is_empty(current_section) {
+          true -> {
+            -- Key-value outside any section, put under "" key
+            let section_map = map.get(config, "") |> option.unwrap_or(#{})
+            let new_section = map.set(section_map, key, value)
+            let new_config = map.set(config, "", new_section)
+            ("", new_config, errors)
+          }
+          _ -> {
+            let section_map = map.get(config, current_section) |> option.unwrap_or(#{})
+            let new_section = map.set(section_map, key, value)
+            let new_config = map.set(config, current_section, new_section)
+            (current_section, new_config, errors)
           }
         }
         ParseError(line_num, msg) -> {

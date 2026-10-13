@@ -24,7 +24,7 @@ fn answer(req: http.Request) -> http.Response {
   }
   http.Response {
     status: 200,
-    body: "id {wrote}; mixed-case key {mixed}; all lower {lower}; {bytes.length(req.body)} bytes {bytes.to_hex(req.body)}; {text}",
+    body: bytes.from_string("id {wrote}; mixed-case key {mixed}; all lower {lower}; {bytes.length(req.body)} bytes {bytes.to_hex(req.body)}; {text}"),
     headers: #{ "X-Answered-By": "silt" },
   }
 }
