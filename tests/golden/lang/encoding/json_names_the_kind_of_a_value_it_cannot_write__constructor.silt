@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: json.stringify: unsupported value kind Fn
+-- The constructor of a variant with fields is a function, and JSON has
+-- no form for it: `json.stringify` ends the program with the runtime
+-- error it has for every function. The variants themselves are
+-- written (the first line). The constructor was written as its name,
+-- a string like no other form of a variant.
+import json
+
+type Shape {
+  Dot,
+  Box(Int, Int),
+}
+
+fn main() {
+  println(json.stringify((Dot, Box(1, 2))))
+  println(json.stringify((Dot, Box(1, 2), Box)))
+}

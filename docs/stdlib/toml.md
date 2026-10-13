@@ -208,6 +208,15 @@ arrays.
 Note: the top-level value must be a record or a map; TOML cannot represent a
 bare scalar or array at top level.
 
+A value TOML has no form for, wherever in the value it is, is an
+`Err(Other(message))` whose message names its kind: `Bytes`, a `Set`, a function
+(the constructor of a variant, such as `Some`, is one), a channel, a task
+handle, a TCP listener or stream.
+
+```text
+toml.stringify: unsupported value kind Fn
+```
+
 ```silt
 import toml
 

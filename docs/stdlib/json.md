@@ -233,8 +233,8 @@ object; a key of it that is no `String` is written as its shown text (so the
 
 `json.stringify` and `json.pretty` write the same values. A value JSON has no
 form for is a runtime error that names its kind, wherever in the value it is:
-`Bytes`, a `Set`, a function, a channel, a task handle, a TCP listener or
-stream.
+`Bytes`, a `Set`, a function (the constructor of a variant, such as `Some`,
+is one), a channel, a task handle, a TCP listener or stream.
 
 ```text
 json.stringify: unsupported value kind Bytes
