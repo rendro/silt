@@ -258,7 +258,7 @@ pub(crate) fn vm_run_file(path: &str) {
 
 /// In a build with `test-hooks` only: make the runtime of `vm` panic
 /// once at each place `SILT_TEST_PANIC` names (`task:<id>`, `program`,
-/// `timer`, `io`, `builtin`; several with commas between), for the tests of what
+/// `timer`, `io`, `builtin`, `builtin-of-a-task`; several with commas between), for the tests of what
 /// the binary does when a thread of the runtime panics
 /// (tests/cli/runtime_panic_tests.rs). `silt run` and `silt test` call
 /// it for each VM they make. No other build reads the variable.
@@ -275,6 +275,7 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
             "timer" => Some(PanicAt::Timer),
             "io" => Some(PanicAt::Io),
             "builtin" => Some(PanicAt::Builtin),
+            "builtin-of-a-task" => Some(PanicAt::BuiltinOfATask),
             place => place.strip_prefix("task:").and_then(task),
         };
         match at {
