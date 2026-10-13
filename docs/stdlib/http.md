@@ -44,6 +44,27 @@ Text is put into a body with `bytes.from_string("...")` and taken out of
 one with `bytes.to_string(resp.body)`, a `Result`: it is
 `Err(InvalidUtf8(offset))` for a body that is no UTF-8.
 
+```silt
+import bytes
+import http
+
+-- Text into a body: what a handler answers.
+fn hello(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("Hello"), headers: #{} }
+}
+
+-- Text out of a body: what a client got.
+fn main() {
+  match http.get("http://127.0.0.1:8080/") {
+    Ok(resp) -> match bytes.to_string(resp.body) {
+      Ok(text) -> println(text)
+      Err(e) -> println("the body is no text: {e.message()}")
+    }
+    Err(e) -> println(e.message())
+  }
+}
+```
+
 ## Summary
 
 | Name | Signature | Description |
