@@ -124,8 +124,6 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
-    env:
-      SILT_TEST_POSTGRES_URL: postgres://silt_orm:silt_orm_dev@127.0.0.1:5433/silt_orm_test?sslmode=disable
     steps:
       - uses: actions/checkout@v6
 
