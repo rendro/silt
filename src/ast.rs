@@ -875,8 +875,8 @@ pub fn imports_in_order(decls: &[Decl]) -> Vec<&Decl> {
 /// The declarations of a file in the order `silt fmt` writes them: the
 /// imports first, in their one order ([`imports_in_order`]), then the
 /// others as they are written. Whoever asks which of two declarations
-/// comes first asks here, so the answer does not change when the file
-/// is formatted.
+/// comes first asks here, so the answer does not depend on where the
+/// import lines stand.
 pub fn decls_as_formatted(decls: &[Decl]) -> Vec<&Decl> {
     let mut formatted = imports_in_order(decls);
     formatted.extend(

@@ -196,7 +196,8 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
 /// fmt` writes first (`ast::decls_as_formatted`: the imports in their
 /// one order, then the others as written), and the other is the error:
 /// the same declaration is blamed in whatever order the import lines
-/// are written, and before and after the file is formatted.
+/// are written and wherever an import stands in the file. (`silt fmt`
+/// does not format a file with such an error.)
 ///
 /// Returns the first `keep` of the errors, and how many more there are.
 fn top_level_name_errors(decls: &[Decl], keep: usize) -> (Vec<Diagnostic>, usize) {
