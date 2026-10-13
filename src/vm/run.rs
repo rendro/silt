@@ -160,11 +160,10 @@ fn put(slot: &mut Value, value: Value) {
 }
 
 // A new value is written where it goes, and a push makes room first.
-// A Value is 40 bytes. One that was just written in two smaller stores
-// (its tag, its number) and is then read back in 16-byte pieces, as a
-// move of the whole value reads it, makes the processor wait for the
-// stores: 12 to 14 cycles each time. (Measured in pull request #54,
-// 2026-10-12.)
+// A Value is 40 bytes; one just written in two smaller stores (its tag,
+// its number) and then read back in 16-byte pieces, as a move reads
+// it, makes the processor wait for the stores, 12 to 14 cycles each
+// time. (Measured in pull request #54, 2026-10-12.)
 
 /// A value as the instructions that copy one sort it: a number, a Bool
 /// or unit, which owns nothing and is built where it goes; a closure,
@@ -232,9 +231,8 @@ pub(super) fn push_with<T>(stack: &mut Vec<T>, make: impl FnOnce() -> T) {
     }
 }
 
-// The five functions below are not inlined into the loop. Inlined there,
-// rustc 1.99.0 calls `Vec::push_mut` out of line and the value is built
-// somewhere else again and copied (measured 2026-10-12).
+// These five are not inlined into the loop: there rustc 1.99.0 calls
+// `Vec::push_mut` out of line and copies the value in (measured 2026-10-12).
 
 #[inline(never)]
 fn push_int(stack: &mut Vec<Value>, n: i64) {
