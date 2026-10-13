@@ -107,7 +107,10 @@ fn report_diagnostics(
     diagnostics: &[Diagnostic],
     compiled: bool,
 ) -> bool {
-    silt::diagnostic::eprint_all(&ProgramFiles::new(path, sources), diagnostics);
+    // (Rendering a diagnostic runs no code of a program.)
+    silt::scheduler::report(|| {
+        silt::diagnostic::eprint_all(&ProgramFiles::new(path, sources), diagnostics)
+    });
     if compiled && !diagnostics.iter().any(Diagnostic::is_error) {
         return false;
     }
@@ -119,14 +122,14 @@ fn report_diagnostics(
         }
     }
     if kinds.is_empty() {
-        eprintln!("{path}: failed to compile — errors (see above)");
+        say(&format!("{path}: failed to compile — errors (see above)\n"));
         return true;
     }
     let kinds: Vec<String> = kinds.iter().map(|kind| format!("{kind} errors")).collect();
-    eprintln!(
-        "{path}: failed to compile — {} (see above)",
+    say(&format!(
+        "{path}: failed to compile — {} (see above)\n",
         kinds.join(" and ")
-    );
+    ));
     true
 }
 
@@ -168,10 +171,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 // An unreadable file cannot be asked for its tests, so
                 // `--filter` does not rule it out: the error is reported.
                 files_considered += 1;
-                eprintln!(
-                    "{path}: failed to read — {}",
+                say(&format!(
+                    "{path}: failed to read — {}\n",
                     silt::diagnostic::io_error_text(&e)
-                );
+                ));
                 counts.file_errors.unreadable += 1;
                 continue;
             }
@@ -237,19 +240,17 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             vm.wait_until_idle();
         }
         // (No report of the command's once a thread of a runtime has
-        // panicked and is ending the process: here, before each
-        // test's result, and before the summary.)
-        silt::scheduler::stand_back_for_internal_error();
+        // panicked and is ending the process: everything it writes
+        // from here on goes through `say`.)
         if let Err(e) = setup {
             // Frame and error-header paths follow the style of the path
             // the user typed, as under `silt run`. The header says what
             // the summary counts ("the top-level code of 1 file
             // failed").
-            eprintln!("{path}: the file's top-level code failed:");
-            eprintln!(
-                "{}",
+            say(&format!(
+                "{path}: the file's top-level code failed:\n{}\n",
                 render_runtime_error(&e, path, &owners.files[file_index].sources)
-            );
+            ));
             counts.file_errors.setup += 1;
             continue;
         }
@@ -265,7 +266,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             let name = &test.name;
             total += 1;
             if test.kind == TestKind::Skip {
-                eprintln!("  SKIP {path}::{name}");
+                say(&format!("  SKIP {path}::{name}\n"));
                 skipped += 1;
                 continue;
             }
@@ -287,21 +288,22 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 _ => vm.stop_tasks(),
             }
             // The failures of the test's tasks are reported under its
-            // result line.
-            silt::scheduler::stand_back_for_internal_error();
+            // result line: the line and what stands under it are one
+            // report.
             let task_failures = owners.take_task_failures(owner, &mut counts);
+            let mut said = String::new();
             let test_failed = match outcome {
                 Ok(value) => match returned_err(&value) {
                     // `Ok(..)`, Unit and every other value: the test ran
                     // to its end.
                     None if task_failures.is_empty() => {
-                        eprintln!("  PASS {path}::{name}");
+                        said += &format!("  PASS {path}::{name}\n");
                         false
                     }
                     // The test ran to its end, but a task it spawned
                     // failed and was neither joined nor cancelled.
                     None => {
-                        eprintln!("  FAIL {path}::{name}");
+                        said += &format!("  FAIL {path}::{name}\n");
                         true
                     }
                     // `Err(..)`: the test gave up, typically at a `?`, and
@@ -309,26 +311,26 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     // rule as for `main` under `silt run`; the error is
                     // at the test's name.
                     Some(payload) => {
-                        eprintln!("  FAIL {path}::{name}");
+                        said += &format!("  FAIL {path}::{name}\n");
                         let d = Diagnostic::error(
                             Code::MainReturnedErr,
                             test.span,
                             format!("{name} returned Err: {}", vm.show_text(payload)),
                         );
                         let files = ProgramFiles::new(path, &owners.files[file_index].sources);
-                        eprint_indented(&render_human(&files, &d));
+                        said += &indented(&render_human(&files, &d));
                         true
                     }
                 },
                 Err(e) => {
-                    eprintln!("  FAIL {path}::{name}");
+                    said += &format!("  FAIL {path}::{name}\n");
                     // The location is in the file the error's span
                     // names, mirroring `silt run`; the test file itself
                     // is named as typed.
                     // Indented under the FAIL header, with the call stack
                     // when the error crosses two or more meaningful
                     // frames, as under `silt run`.
-                    eprint_indented(&render_runtime_error(
+                    said += &indented(&render_runtime_error(
                         &e,
                         path,
                         &owners.files[file_index].sources,
@@ -337,8 +339,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 }
             };
             for report in &task_failures {
-                eprint_indented(report);
+                said += &indented(report);
             }
+            say(&said);
             if test_failed {
                 counts.failed += 1;
             } else {
@@ -361,21 +364,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         failed,
         file_errors,
     } = counts;
-    silt::scheduler::stand_back_for_internal_error();
     let test_word = if total == 1 { "test" } else { "tests" };
-    if file_errors.any() {
-        eprintln!(
-            "\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped ({})",
+    let mut said = match file_errors.any() {
+        true => format!(
+            "\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped ({})\n",
             file_errors.describe()
-        );
-    } else {
-        eprintln!("\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped");
-    }
+        ),
+        false => {
+            format!("\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped\n")
+        }
+    };
     if total == 0 && !file_errors.any() {
-        eprintln!(
-            "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'"
-        );
+        said += "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'\n";
     }
+    say(&said);
     // (The tests may have left threads: see `vm_run_file`.)
     if failed > 0 || file_errors.any() {
         silt::scheduler::exit_with_status(1);
@@ -552,11 +554,12 @@ impl TaskOwners {
             // Every task of the run is spawned under a tag of this
             // run: this is a failure that nothing can be charged with.
             None => {
-                eprintln!("  FAIL a task that no test can be named for failed");
+                let mut said = "  FAIL a task that no test can be named for failed\n".to_string();
                 counts.file_errors.stray_tasks += 1;
                 for report in &reports {
-                    eprint_indented(report);
+                    said += &indented(report);
                 }
+                say(&said);
             }
         }
     }
@@ -574,11 +577,13 @@ impl TaskOwners {
             return;
         }
         let path = self.files[owner.file].path.as_str();
-        eprintln!("  FAIL {path} (a task spawned by the file's top-level code failed)");
+        let mut said =
+            format!("  FAIL {path} (a task spawned by the file's top-level code failed)\n");
         counts.file_errors.tasks += 1;
         for report in &reports {
-            eprint_indented(report);
+            said += &indented(report);
         }
+        say(&said);
     }
 
     /// The file of the owner tagged `tag`.
@@ -593,14 +598,23 @@ fn owner_index(tag: u64) -> Option<usize> {
     usize::try_from(tag.checked_sub(1)?).ok()
 }
 
-/// Print a rendered diagnostic on stderr, indented under a test's result
-/// line.
-fn eprint_indented(text: &str) {
+/// A rendered diagnostic as it stands under a test's result line: each
+/// line indented, with its line end.
+fn indented(text: &str) -> String {
+    let mut lines = String::new();
     for line in text.lines() {
-        if line.is_empty() {
-            eprintln!();
-        } else {
-            eprintln!("    {line}");
+        if !line.is_empty() {
+            lines += "    ";
+            lines += line;
         }
+        lines.push('\n');
     }
+    lines
+}
+
+/// Write `text`, which ends its own lines, on stderr as one report of
+/// the command's: whole before the lines of a panic of silt's own
+/// code, or not at all (`silt::scheduler::report`).
+fn say(text: &str) {
+    silt::scheduler::report(|| eprint!("{text}"));
 }
