@@ -1,0 +1,6 @@
+main holds the lock
+task.deadline: the function was ended by its deadline
+statements that wait for the lock in the server: 1
+the pool answers meanwhile: 1 row
+main's transaction: Ok(())
+statements that wait for the lock now: 0

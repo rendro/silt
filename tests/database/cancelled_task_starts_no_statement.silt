@@ -1,0 +1,93 @@
+-- After a cancel a task takes nothing new, and so starts no statement:
+-- `postgres.stream` still gives it a channel, but no statement is sent
+-- for it, and at `postgres.execute` the task ends. Neither row reaches
+-- the table.
+--
+-- The task cancels itself, so the cancel comes at a known place,
+-- whatever the machine does.
+import channel
+import env
+import postgres
+import task
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        channel.Message(Ok(_)) -> loop(n + 1)
+        channel.Message(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancelled", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancelled (who text)", [])
+      let own: Channel(task.Handle(())) = channel.new(1)
+      let said: Channel(String) = channel.new(4)
+      let t = task.spawn { ->
+        let _ = postgres.execute(
+          pool,
+          "INSERT INTO silt_database_cancelled VALUES ('before the cancel')",
+          [],
+        )
+        match channel.receive(own) {
+          channel.Message(me) -> task.cancel(me)
+          _ -> ()
+        }
+        channel.send(said, "cancelled, and still running")
+        let rows = postgres.stream(
+          pool,
+          "INSERT INTO silt_database_cancelled VALUES ('a stream after the cancel') RETURNING who",
+          [],
+        )
+        channel.send(
+          said,
+          match rows {
+            Ok(_) -> "postgres.stream gave a channel"
+            Err(e) -> "postgres.stream: {e.message()}"
+          },
+        )
+        let _ = postgres.execute(
+          pool,
+          "INSERT INTO silt_database_cancelled VALUES ('a statement after the cancel')",
+          [],
+        )
+        channel.send(said, "not reached")
+      }
+      channel.send(own, t)
+      println(channel.receive(said))
+      println(channel.receive(said))
+      let before = count(
+        pool,
+        "SELECT 1 FROM silt_database_cancelled WHERE who = 'before the cancel'",
+      )
+      let all = count(pool, "SELECT 1 FROM silt_database_cancelled")
+      println("rows from before the cancel: {before}")
+      println("rows in the table: {all}")
+      println("a third word from the task: {channel.try_receive(said)}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_cancelled", [])
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

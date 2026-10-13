@@ -1,0 +1,7 @@
+main holds the lock
+statements that wait for it in the server: 1
+after the cancel: 1
+the pool answers meanwhile: 1 row
+main's transaction: Ok(())
+statements that wait for the lock now: 0
+a word from the task: Empty

@@ -1,0 +1,15 @@
+a syntax error: postgres query error [42601]: syntax error at or near "SELEC"
+a missing table: postgres query error [42P01]: relation "silt_database_no_such_table" does not exist
+a division by zero: postgres query error [22012]: division by zero
+a missing column: NoSuchColumn
+a parameter too few: expected 1 parameters but got 0
+a table: Ok
+a row: Ok
+its address again: postgres query error [23505]: duplicate key value violates unique constraint "silt_database_errors_email_key"
+the server's statement timeout: postgres operation timed out
+in a transaction, a division by zero: postgres query error [22012]: division by zero
+the statement after it, and the transaction: postgres transaction aborted; rollback required
+rows of that transaction in the table: 0
+the table dropped: Ok
+an unknown sslmode: postgres connect failed: postgres: invalid URL: unknown sslmode: maybe
+a closed pool: postgres connect failed: postgres: pool handle 1 is not registered (closed or never opened)

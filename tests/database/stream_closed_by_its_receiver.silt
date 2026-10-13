@@ -1,0 +1,62 @@
+-- The receiver of a `postgres.stream` reads one row of 2,000 and closes
+-- the channel. The stream's sender, which by then waits for room in the
+-- channel (it holds 256 rows), ends: the pool answers afterwards, and
+-- the program ends when `main` returns.
+import channel
+import env
+import map
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        channel.Message(Ok(_)) -> loop(n + 1)
+        channel.Message(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      match postgres.stream(pool, "SELECT g FROM generate_series(1, 2000) AS g", []) {
+        Ok(rows) -> {
+          println(
+            match channel.receive(rows) {
+              channel.Message(Ok(row)) -> "the first row has the columns {map.keys(row)}"
+              channel.Message(Err(e)) -> e.message()
+              _ -> "no row"
+            },
+          )
+          let beside = count(pool, "SELECT 1")
+          println("the pool answers beside the stream: {beside} row")
+          channel.close(rows)
+          println("closed by the receiver")
+        }
+        Err(e) -> println("postgres.stream: {e.message()}")
+      }
+      let after = count(pool, "SELECT 1")
+      println("the pool answers after it: {after} row")
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

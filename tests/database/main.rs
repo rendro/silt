@@ -135,4 +135,11 @@ macro_rules! cases {
     };
 }
 
-cases!(select_one);
+cases!(
+    select_one,
+    cancel_of_a_statement_in_flight,
+    cancelled_task_starts_no_statement,
+    deadline_over_a_statement_in_flight,
+    stream_closed_by_its_receiver,
+    errors_of_statements,
+);

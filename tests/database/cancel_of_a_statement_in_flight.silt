@@ -1,0 +1,89 @@
+-- A task is cancelled while the server works on its statement. The
+-- task ends there. The statement is not interrupted: it goes on in the
+-- server, and meanwhile the pool answers other statements.
+--
+-- The statement waits for an advisory lock that `main` holds in a
+-- transaction, so it is in flight for as long as the case needs, and
+-- `main` reads in `pg_locks` whether it still waits. When `main` has
+-- committed, the statement gets the lock and ends; the task, which
+-- would send a word once it had the answer, sends none.
+import channel
+import env
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        channel.Message(Ok(_)) -> loop(n + 1)
+        channel.Message(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+-- How many sessions wait for the case's lock.
+fn waiting(pool: postgres.PgPool) -> Int {
+  count(
+    pool,
+    "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 7301 AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+  )
+}
+
+-- Look until `n` sessions wait for it.
+fn until_waiting(pool: postgres.PgPool, n: Int) -> Int {
+  loop seen = waiting(pool) {
+    match seen == n {
+      true -> seen
+      false -> {
+        time.sleep(time.ms(5))
+        loop(waiting(pool))
+      }
+    }
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let went_on: Channel(String) = channel.new(1)
+      let done = postgres.transact(pool) { tx ->
+        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7301)", [])?
+        println("main holds the lock")
+        let t = task.spawn { ->
+          let _ = postgres.query(pool, "SELECT pg_advisory_xact_lock(7301)", [])
+          channel.send(went_on, "the task went on")
+        }
+        println("statements that wait for it in the server: {until_waiting(pool, 1)}")
+        task.cancel(t)
+        println("after the cancel: {waiting(pool)}")
+        let one = count(pool, "SELECT 1")
+        println("the pool answers meanwhile: {one} row")
+        Ok(())
+      }
+      println("main's transaction: {done}")
+      println("statements that wait for the lock now: {until_waiting(pool, 0)}")
+      println("a word from the task: {channel.try_receive(went_on)}")
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}
