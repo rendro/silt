@@ -1,0 +1,12 @@
+-- A loop that counts and adds: the round the guard counts.
+-- (It is stopped long before it ends.)
+fn main() {
+  let n = 400000000
+  let r = loop i = 0, acc = 0 {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+  println(r)
+}
