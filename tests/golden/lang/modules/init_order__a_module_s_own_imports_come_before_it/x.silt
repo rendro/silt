@@ -1,0 +1,7 @@
+pub let vx = {
+  println("x is initialised, with {c.vc + a.va}")
+  10
+}
+
+import c
+import a

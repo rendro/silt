@@ -81,12 +81,13 @@ impl Server {
     }
 
     /// The module the name `name` stands for in the open document `doc`:
-    /// the one `import name` imports, or `import m as name`.
+    /// the one `import name` imports, or `import m as name` (of two
+    /// that bind the name, the one the checker binds: the first in the
+    /// one order of imports).
     pub(super) fn imported_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView> {
         let program = doc.program.as_ref()?;
-        let module_name = program
-            .decls
-            .iter()
+        let module_name = crate::ast::imports_in_order(&program.decls)
+            .into_iter()
             .find_map(|decl| match decl {
                 Decl::Import(ImportTarget::Alias(module, alias, _), _) if *alias == name => {
                     Some(*module)
@@ -98,10 +99,12 @@ impl Server {
     }
 
     /// The module that binds `name` bare in the open document `doc`
-    /// through `import m.{ name }`.
+    /// through `import m.{ name }` (of two, the first in the one order
+    /// of imports, as the checker binds it).
     pub(super) fn item_module(&self, doc: &Document, name: Symbol) -> Option<ModuleView> {
         let program = doc.program.as_ref()?;
-        let module_name = program.decls.iter().find_map(|decl| match decl {
+        let imports = crate::ast::imports_in_order(&program.decls);
+        let module_name = imports.into_iter().find_map(|decl| match decl {
             Decl::Import(ImportTarget::Items(module, items), _)
                 if items.iter().any(|(item, _)| *item == name) =>
             {

@@ -77,6 +77,20 @@ SILT_FMT_FULL=1 SILT_FMT_CORPUS=<dir> SILT_FMT_REPORT=/tmp/fmt.txt \
 SILT_FMT_STRESS=200000 cargo test --release --all-features --test heavy random_comments -- --nocapture
 ```
 
+## The order of module initialisers
+
+`tests/heavy/init_order_sweep.rs` holds that `silt fmt` does not change
+the order a program's modules are initialised in: for every directory
+case of the corpus with more than one `.silt` file, `silt disasm` of the
+entry lists the module initialisers in the same order before and after
+`silt fmt` of a copy of the case. The run order itself is held by the
+golden cases `lang/modules/init_order__*`, whose modules print while
+they are initialised.
+
+```
+cargo nextest run --all-features --test heavy -E 'test(init_order)'
+```
+
 ## The differential oracle
 
 `tests/oracle` takes programs that check clean and whose code names no

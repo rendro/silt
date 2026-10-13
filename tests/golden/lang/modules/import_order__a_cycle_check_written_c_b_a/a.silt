@@ -1,0 +1,5 @@
+import b
+
+pub fn fa() -> Int {
+  1
+}

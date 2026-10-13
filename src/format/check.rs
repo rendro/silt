@@ -269,14 +269,7 @@ fn describe(decl: &Decl) -> (String, Span) {
             ),
             t.span,
         ),
-        Decl::Import(target, span) => {
-            let module = match target {
-                ImportTarget::Module(m)
-                | ImportTarget::Items(m, _)
-                | ImportTarget::Alias(m, ..) => m,
-            };
-            (format!("the import of `{module}`"), *span)
-        }
+        Decl::Import(target, span) => (format!("the import of `{}`", target.module()), *span),
         Decl::Let { pattern, span, .. } => {
             let label = match &pattern.kind {
                 PatternKind::Ident(name) => format!("the top-level binding `{name}`"),

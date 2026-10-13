@@ -305,6 +305,21 @@ shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
 is `Maybe.None`, and the prelude's is still `Option.None`.
 
 
+## When modules are initialised
+
+A module's top-level `let`s are evaluated once, before the first module that
+imports it uses them. The modules a file imports are initialised in the order
+`silt fmt` writes the file's imports: by the name of the module (digits, then
+capital letters, then `_`, then small letters), each after the modules it
+imports itself. A file's own top-level `let`s run after its imports.
+
+Modules are read and checked in that order too. So the order in which the
+import lines are written carries no meaning: formatting a file changes
+neither what a program does nor what is reported for one that has errors.
+The errors of several modules come in that order, whichever import line
+stands first.
+
+
 ## Circular imports
 
 silt **rejects circular imports** at compile time. If `a.silt` imports `b`
@@ -316,5 +331,7 @@ error[compile]: circular import detected: a -> b -> a (...)
 
 Cycles inside a single package render with bare module names; cycles that
 cross package boundaries use the qualified `package::module` form so the
-boundary is visible. Break the cycle by moving the shared code into a third
-module that both sides import.
+boundary is visible. The chain starts at the module of the cycle that is
+reached first, in the order modules are initialised in, so it is the same
+chain in whatever order the import lines are written. Break the cycle by
+moving the shared code into a third module that both sides import.

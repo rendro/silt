@@ -1,0 +1,10 @@
+error[parse]: 'z' is bound twice at the top level: by the import and by the import here
+ --> main.silt:8:13
+   |
+ 8 | import b as z
+   |             ^ 'z' is bound twice at the top level: by the import and by the import here
+ ::: main.silt:7:13
+   |
+ 7 | import a as z
+   |             - first bound here, by the import
+  = note: a top-level name can be bound only once

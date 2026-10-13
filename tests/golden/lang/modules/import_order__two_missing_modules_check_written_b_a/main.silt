@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Two imports name modules that do not exist. The errors come in the order
+-- `silt fmt` writes the imports, nope_a before nope_b, in whatever order the
+-- import lines are written (only the line of the import moves).
+import nope_b
+import nope_a
+
+fn main() {
+  println(1)
+}
