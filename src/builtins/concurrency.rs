@@ -111,6 +111,11 @@ pub(crate) mod channel {
         }
 
         fn receive(vm, ch: Chan) -> Step {
+            // A task that was cancelled, or whose time is over, takes
+            // nothing new: not what is there either.
+            if vm.takes_nothing_new() {
+                return vm.end_here("channel.receive");
+            }
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => return Step::Done(message(value)),
                 TryReceive::Closed(_) => return Step::Done(closed()),
@@ -139,12 +144,15 @@ pub(crate) mod channel {
             }
         }
 
-        fn try_receive(vm, ch: Chan) -> Value {
-            match ch.try_receive(vm.scheduler().wake()) {
+        fn try_receive(vm, ch: Chan) -> Step {
+            if vm.takes_nothing_new() {
+                return vm.end_here("channel.try_receive");
+            }
+            Step::Done(match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => message(value),
                 TryReceive::Empty => empty(),
                 TryReceive::Closed(_) => closed(),
-            }
+            })
         }
 
         fn select(vm, ops: List) -> Result<Step, VmError> {
@@ -207,6 +215,9 @@ pub(crate) mod channel {
             // A negative duration is an error even when a value is
             // there.
             let dur = span("channel.receive_timeout", dur)?;
+            if vm.takes_nothing_new() {
+                return Ok(vm.end_here("channel.receive_timeout"));
+            }
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => return Ok(Step::Done(message(value))),
                 TryReceive::Closed(_) => return Ok(Step::Done(closed())),
@@ -308,6 +319,13 @@ impl Native for Each {
             }
             EachState::Take => {}
         }
+        // The first take and every later one. A task that was
+        // cancelled, or whose time is over, takes nothing new: the
+        // message it was called with last is the last.
+        if vm.takes_nothing_new() {
+            self.state = EachState::Waited;
+            return Ok(Step::Park(Vm::no_wait()));
+        }
         match self.ch.try_receive(vm.scheduler().wake()) {
             TryReceive::Value(message) => Ok(self.call(vm, message)),
             TryReceive::Closed(close) => ended(close),
@@ -397,6 +415,9 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 ///   an operation in flight is given up), never by both. A wait that
 ///   the time ends, or that begins when the time is over, ends the
 ///   task there.
+/// - A task past its time takes nothing new (`Vm::takes_nothing_new`,
+///   as a cancelled task): an operation that would take ends it, and
+///   what it holds it may still give.
 /// - The work of a task past its time is bounded: every step it runs
 ///   in a slice that began when the time was over is counted, and
 ///   when a standard slice of them is used up the task is ended, after
@@ -413,8 +434,10 @@ pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 /// inner function by the same rule, with no cancel. A task that has
 /// its caller's time goes on with its caller's count of steps
 /// (`TaskHandle::late`), so that the work past a deadline is bounded
-/// in total: a function that calls `task.deadline` again and again
-/// when its time is over gets no new steps with each call.
+/// in total: a caller that gets its function's `Ok` when the time of
+/// both is over has what the function left of the steps. (A caller
+/// whose time is over when it comes to the call starts no function:
+/// the call ends it.)
 ///
 /// The frame owns the task: if the frame is dropped while it waits
 /// (the caller was cancelled by `task.cancel`, or the program ended),
@@ -520,6 +543,13 @@ pub(crate) mod task {
 
     builtins! {
         fn deadline(vm, dur: time::Duration, f: &Value) -> Result<Step, VmError> {
+            // The call is a wait for the function, and a task that
+            // was cancelled or whose time is over begins none: it is
+            // ended here, before a task is started that would take in
+            // its place.
+            if vm.takes_nothing_new() {
+                return Ok(vm.end_here("task.deadline"));
+            }
             // A duration of zero or less is a time that is over now:
             // the function runs to its first wait that has to wait,
             // or until the steps of a late task are used up.
@@ -552,8 +582,11 @@ pub(crate) mod task {
             }))
         }
 
-        // The task runs no further slice, and a wait of it ends
-        // without taking or sending anything. Cancelling a task
+        // A wait of the task ends without taking or sending
+        // anything, and the task with it; a task that is not waiting
+        // goes on for a bounded number of steps, to its next wait or
+        // its next take at the latest (`Scheduler::cancel`).
+        // Cancelling a task
         // handles it: if it had failed before, its failure is
         // dismissed and not reported as an unjoined failure. A join
         // still raises that failure, because the handle keeps the

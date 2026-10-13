@@ -80,8 +80,8 @@ enum State {
 pub struct Token {
     task: TaskId,
     /// The cancel flag of the task ([`Wait::cancel`](super::Wait)).
-    /// Once it is set nobody completes an arm for the task: its wait
-    /// ends only by the cancel.
+    /// Once it is set nobody completes an arm for the task: a wait
+    /// that is open ends only by the cancel.
     cancel: Option<Arc<AtomicBool>>,
     /// The arm that ended the wait, once one has: whoever completed it
     /// took the token off that arm's queue. `NO_ARM` otherwise.
@@ -113,6 +113,11 @@ impl Token {
             NO_ARM => None,
             arm => Some(arm),
         }
+    }
+
+    /// Whether the cancel flag of the task is set.
+    pub(super) fn is_cancelled(&self) -> bool {
+        is_set(&self.cancel)
     }
 
     /// Whether the wait is still open.

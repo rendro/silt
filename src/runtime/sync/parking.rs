@@ -128,20 +128,27 @@ impl<T: Send> Parking<T> {
     /// task; it comes back through `ready`, or from
     /// [`Parking::shutdown`].
     ///
-    /// `cancelled` reads the task's cancel flag. Whoever cancels a task
-    /// sets the flag first and then calls [`Parking::cancel`]; with
-    /// that order a cancel is never lost between the two, and a task
-    /// whose flag is set when it gets here completes no arm. A wait
-    /// that carries the flag itself ([`Wait::cancel`]) also has no arm
-    /// completed for it from the moment the flag is set.
+    /// The cancel flag of the task is on the wait ([`Wait::cancel`]).
+    /// Whoever cancels a task sets the flag first and then calls
+    /// [`Parking::cancel`]; with that order a cancel is never lost
+    /// between the two: a wait that begins with the flag set does a
+    /// send that is ready or is refused, one that is on the queues
+    /// when the flag is set has no arm completed for it, and a cancel
+    /// that came before the entry was there is found by the flag.
+    ///
+    /// `refused` says that the task is to begin no wait at all (the
+    /// tasks of its owner are being stopped): a task for which it
+    /// holds when it gets here completes no arm. Whoever makes it hold
+    /// then ends the waits of the tasks that are parked, as a
+    /// canceller does.
     pub fn park(
         &self,
         id: TaskId,
         task: T,
         wait: Wait,
-        cancelled: impl Fn() -> bool,
+        refused: impl Fn() -> bool,
     ) -> Option<(T, Resumed)> {
-        if cancelled() {
+        if refused() {
             return Some((task, Resumed::Cancelled));
         }
         let parked = match park(id, wait, &self.timer, self) {
@@ -168,10 +175,10 @@ impl<T: Send> Parking<T> {
             let before = tasks.insert(id, entry);
             assert!(before.is_none(), "task {} is parked already", id.0);
         }
-        // A cancel that came before the entry was there did not find
-        // it, and its flag is set by now. The token is not committed,
-        // so this cancel wakes nobody.
-        if cancelled() {
+        // A cancel, or a stop, that came before the entry was there
+        // did not find it, and its flag is set by now. The token is
+        // not committed, so this cancel wakes nobody.
+        if refused() || token.is_cancelled() {
             token.cancel(self);
         }
         let mut tasks = self.shard(id);

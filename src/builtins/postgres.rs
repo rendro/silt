@@ -1877,7 +1877,7 @@ builtins! {
         // value is unused (we return the channel, not a completion).
         let sql = sql.to_string();
         let scheduler = vm.scheduler().clone();
-        let op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
+        let op = vm.start_io(pg_timeout_err, move || {
             do_stream_worker(target, sql, params, worker_channel, scheduler);
             Value::Unit
         });
