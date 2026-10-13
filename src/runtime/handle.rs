@@ -980,8 +980,11 @@ pub struct TaskHandle {
     /// failed with, or that it was cancelled. A join waits for it.
     result: Arc<Cell<Ended>>,
     /// Set by `task.cancel`. The scheduler reads it before each slice
-    /// of the task and before each park, so a cancelled task runs no
-    /// further and takes nothing.
+    /// of the task and before each park, and the task's VM before each
+    /// operation that takes (`Vm::takes_nothing_new`): a cancelled
+    /// task begins no wait, has none completed for it and takes
+    /// nothing new, and runs on only for the steps that
+    /// [`TaskHandle::count_late`] counts.
     cancelled: Arc<AtomicBool>,
     /// True while the task has failed and nobody has handled the
     /// failure: no join has received it and no cancel has dismissed
@@ -1001,10 +1004,15 @@ pub struct TaskHandle {
     /// Set when the task was ended by its deadline: that is its
     /// result then ([`TaskHandle::expire`]).
     expired: AtomicBool,
-    /// The steps run past the deadline, counted by the scheduler: by
-    /// this task, and by every task of a deadline inside it that has
-    /// the same time (they share the count: of them only one runs at a
-    /// time, the innermost).
+    /// Set when the time of the task is over, as the scheduler finds
+    /// it at the start of a slice ([`TaskHandle::set_over`]): from
+    /// then on the task takes nothing new. The task's VM reads it at
+    /// every operation that takes, in place of the clock.
+    over: Arc<AtomicBool>,
+    /// The steps run past the deadline, or after a cancel, counted by
+    /// the scheduler: by this task, and by every task of a deadline
+    /// inside it that has the same time (they share the count: of them
+    /// only one runs at a time, the innermost).
     late: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -1023,6 +1031,7 @@ impl TaskHandle {
             owner,
             deadline: None,
             expired: AtomicBool::new(false),
+            over: Arc::default(),
             late: Arc::default(),
         }
     }
@@ -1049,8 +1058,8 @@ impl TaskHandle {
         self.late.clone()
     }
 
-    /// The task has run `steps` steps past its deadline: how many that
-    /// makes.
+    /// The task has run `steps` steps past its deadline, or after it
+    /// was cancelled: how many that makes. It is one count for both.
     pub fn count_late(&self, steps: usize) -> usize {
         self.late.fetch_add(steps, AtomicOrdering::SeqCst) + steps
     }
@@ -1058,6 +1067,23 @@ impl TaskHandle {
     /// When the task is over, if it has such a time.
     pub fn deadline(&self) -> Option<std::time::Duration> {
         self.deadline
+    }
+
+    /// The time of the task is over: a slice of it begins past its
+    /// deadline. It is never taken back.
+    pub fn set_over(&self) {
+        self.over.store(true, AtomicOrdering::SeqCst);
+    }
+
+    /// Whether [`TaskHandle::set_over`] was called.
+    pub fn is_over(&self) -> bool {
+        self.over.load(AtomicOrdering::SeqCst)
+    }
+
+    /// The flag that says so, for the task's VM
+    /// (`Vm::takes_nothing_new`).
+    pub fn over_flag(&self) -> Arc<AtomicBool> {
+        self.over.clone()
     }
 
     /// The task is ended by its deadline: that is its result, unless
@@ -1105,9 +1131,10 @@ impl TaskHandle {
         self.result.complete(Ended(Err(error)), wake).is_ok()
     }
 
-    /// `task.cancel`: the task runs no further, and its result is the
-    /// cancellation unless it had one. A failure it had is dismissed.
-    /// The caller ends the task's wait, if it waits
+    /// `task.cancel`: the task's result is the cancellation unless it
+    /// had one, at once, whatever the task still does (what it returns
+    /// or fails with later changes nothing). A failure it had is
+    /// dismissed. The caller ends the task's wait, if it waits
     /// (`Scheduler::cancel`).
     pub fn cancel(&self, wake: &dyn Wake) {
         self.cancelled.store(true, AtomicOrdering::SeqCst);

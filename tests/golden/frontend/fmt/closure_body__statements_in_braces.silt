@@ -1,0 +1,25 @@
+-- cmd: fmt
+-- A closure's body of statements in braces of its own is written as
+-- the statements, on lines of their own; an empty line between two of
+-- them stays.
+import list
+
+fn main() {
+  let sums = list.map([1, 2]) { x -> {
+    let y = x * 2
+    y + 1
+  } }
+  let shadowed = list.map([1, 2]) { x -> { let x = x * 10
+    x } }
+  let spaced = { x, y -> {
+    let z = x
+
+    z + y
+  } }
+  list.each([1]) { x -> { let _ = x } }
+  list.each([1]) { x -> {
+    when x > 0 else { return }
+    println(x)
+  } }
+  println((sums, shadowed, spaced(1, 2)))
+}

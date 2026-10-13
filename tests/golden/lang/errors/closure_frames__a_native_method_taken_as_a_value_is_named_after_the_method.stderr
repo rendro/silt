@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:13:7
+    |
+ 13 |     "{1 / (self.n - self.n)}"
+    |       ^^^^^^^^^^^^^^^^^^^^^ division by zero
+
+call stack:
+  -> Inner.display  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:13:7
+  -> Outer.display  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:23:67
+  -> main  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:23:15

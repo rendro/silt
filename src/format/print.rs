@@ -606,7 +606,7 @@ impl Printer<'_> {
 
     fn program(&mut self, program: &Program) -> Doc {
         let (header, blank_after_header) = self.cur.header();
-        let mut imports: Vec<(String, usize, Doc)> = Vec::new();
+        let mut imports: Vec<(&ImportTarget, usize, Doc)> = Vec::new();
         let mut others: Vec<(usize, Doc)> = Vec::new();
         for (index, decl) in program.decls.iter().enumerate() {
             if self.cur.offset() != decl_start(decl) {
@@ -616,18 +616,28 @@ impl Printer<'_> {
             }
             let doc = self.decl(decl);
             match decl {
-                Decl::Import(target, _) => imports.push((import_key(target), index, doc)),
+                Decl::Import(target, _) => imports.push((target, index, doc)),
                 _ => others.push((index, doc)),
             }
         }
-        imports.sort_by(|a, b| a.0.cmp(&b.0));
+        // The imports in their one order, which is also the order the
+        // modules are initialised in (`ast::import_order`).
+        let order = crate::ast::import_order(imports.iter().map(|(target, _, _)| *target));
+        let mut imports: Vec<Option<(usize, Doc)>> = imports
+            .into_iter()
+            .map(|(_, index, doc)| Some((index, doc)))
+            .collect();
+        let imports: Vec<(usize, Doc)> = order
+            .into_iter()
+            .filter_map(|at| imports[at].take())
+            .collect();
 
         // The header, the imports without empty lines, the other
         // declarations with one between two.
         let mut out = Vec::new();
         let first = imports
             .first()
-            .map(|(_, index, _)| *index)
+            .map(|(index, _)| *index)
             .or(others.first().map(|(index, _)| *index));
         if !header.is_nil() {
             out.push(header);
@@ -642,7 +652,7 @@ impl Printer<'_> {
             }
         }
         let has_imports = !imports.is_empty();
-        for (i, (_, _, doc)) in imports.into_iter().enumerate() {
+        for (i, (_, doc)) in imports.into_iter().enumerate() {
             if i > 0 {
                 out.push(Doc::HardLine);
             }
@@ -1911,8 +1921,10 @@ impl Printer<'_> {
         Doc::concat(vec![list, space(), closure, behind])
     }
 
-    /// `{ a, b -> body }`. Statements written directly behind the arrow
-    /// stand on lines of their own.
+    /// `{ a, b -> body }`. The body is one expression behind the arrow,
+    /// or statements on lines of their own, or nothing. A block written
+    /// there, `{ a -> { ... } }`, is the body in braces of its own:
+    /// they are not written, so a body has one spelling.
     fn lambda(&mut self, expr: &Expr, params: &[Param], body: &Expr) -> Doc {
         // The parameters may break behind their commas; they stand
         // under the first one then.
@@ -1930,15 +1942,64 @@ impl Printer<'_> {
         }
         head.push(Doc::group(Doc::nest(Doc::concat(list))));
         head.push(self.tok(Token::Arrow));
-        // The parser gives the statements behind the arrow the span of
-        // the closure; a block written there has its own.
-        let statements = match &body.kind {
-            ExprKind::Block(stmts) if body.span.start == expr.span.start => Some(stmts),
-            _ => None,
+        // The blocks around the body that are not written, from the
+        // outside in: for each, the parentheses around it, which go
+        // with it.
+        let mut unwritten: Vec<usize> = Vec::new();
+        let mut body = body;
+        let statements = loop {
+            let ExprKind::Block(stmts) = &body.kind else {
+                break None;
+            };
+            // The parser gives the statements behind the arrow the span
+            // of the closure; a block written there has its own.
+            if unwritten.is_empty() && body.span.start == expr.span.start {
+                break Some(stmts);
+            }
+            // Parentheses with a comment directly inside them stay, and
+            // what they hold stays as it is written.
+            let wrappers = self.cur.wrappers(body.span.end);
+            if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
+                break None;
+            }
+            // A comment that would come to stand above the `let` the
+            // block begins with would read as that binding's
+            // documentation: such a block stays.
+            if matches!(stmts.first(), Some(Stmt::Let { .. }))
+                && self.cur.pass_sets_a_comment_above(wrappers + 1)
+            {
+                break None;
+            }
+            for _ in 0..wrappers {
+                self.cur.pass(&Token::LParen);
+            }
+            self.cur.pass(&Token::LBrace);
+            // A comment behind the brace on its line ends the line of
+            // the arrow now.
+            head.push(self.cur.trailing());
+            unwritten.push(wrappers);
+            match stmts.as_slice() {
+                // One expression: the body, which may be a block again.
+                [Stmt::Expr(inner)] => body = inner,
+                _ => break Some(stmts),
+            }
         };
         match statements {
             Some(stmts) => {
-                let body = self.stmts(stmts);
+                // An empty block is an empty body, `{ a -> }`.
+                if stmts.is_empty() {
+                    head.push(self.pass_closers(&unwritten));
+                }
+                let last = stmts.len().saturating_sub(1);
+                let mut stmts = stmts.iter().enumerate();
+                let body = self.lines(|p| {
+                    let (i, stmt) = stmts.next()?;
+                    let stmt = p.stmt(stmt, i == 0);
+                    Some(match i == last {
+                        true => Doc::concat(vec![stmt, p.pass_closers(&unwritten)]),
+                        false => stmt,
+                    })
+                });
                 if body.is_nil() {
                     head.push(space());
                 }
@@ -1948,15 +2009,34 @@ impl Printer<'_> {
             }
             None => {
                 let body = self.expr(body, Ctx::top());
+                let behind = self.pass_closers(&unwritten);
                 let tail = self.dangling();
                 let close = self.tok(Token::RBrace);
                 Doc::group(Doc::concat(vec![
                     Doc::concat(head),
-                    Doc::nest(Doc::concat(vec![Doc::Line, body, tail])),
+                    Doc::nest(Doc::concat(vec![Doc::Line, body, behind, tail])),
                     Doc::Line,
                     close,
                 ]))
             }
+        }
+    }
+
+    /// Move past the closing braces of the blocks `unwritten`, which
+    /// are listed from the outside in, each with the count of the
+    /// parentheses around it. The comments in front of them stay where
+    /// they are, in front of the closure's own closing brace; given are
+    /// those that end the line of the body's last token now.
+    fn pass_closers(&mut self, unwritten: &[usize]) -> Doc {
+        for wrappers in unwritten.iter().rev() {
+            self.cur.pass(&Token::RBrace);
+            for _ in 0..*wrappers {
+                self.cur.pass(&Token::RParen);
+            }
+        }
+        match unwritten.is_empty() {
+            true => Doc::Nil,
+            false => self.cur.trailing(),
         }
     }
 
@@ -2357,26 +2437,5 @@ fn decl_start(decl: &Decl) -> u32 {
         Decl::Trait(t) => t.span.start,
         Decl::TraitImpl(t) => t.span.start,
         Decl::Import(_, span) | Decl::Let { span, .. } => span.start,
-    }
-}
-
-/// What imports are sorted by: the import as it is written.
-fn import_key(target: &ImportTarget) -> String {
-    match target {
-        ImportTarget::Module(module) => intern::resolve(*module),
-        ImportTarget::Items(module, items) => {
-            let items: Vec<String> = items
-                .iter()
-                .map(|(item, _)| intern::resolve(*item))
-                .collect();
-            format!("{}.{{ {} }}", intern::resolve(*module), items.join(", "))
-        }
-        ImportTarget::Alias(module, alias, _) => {
-            format!(
-                "{} as {}",
-                intern::resolve(*module),
-                intern::resolve(*alias)
-            )
-        }
     }
 }

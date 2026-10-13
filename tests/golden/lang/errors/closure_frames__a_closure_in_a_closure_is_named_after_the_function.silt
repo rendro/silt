@@ -1,0 +1,17 @@
+-- exit: 1
+-- A closure is named after the nearest named function around it,
+-- however deep it is written: each of the three is `closure in build`.
+fn build(x) {
+  let first = { a ->
+    let second = { b ->
+      let third = { c -> c / 0 }
+      third(b) + 0
+    }
+    second(a) + 0
+  }
+  first(x) + 0
+}
+
+fn main() {
+  println(build(1))
+}

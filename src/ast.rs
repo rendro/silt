@@ -808,6 +808,85 @@ pub enum ImportTarget {
     Alias(Symbol, Symbol, Span),
 }
 
+impl ImportTarget {
+    /// The module the import names.
+    pub fn module(&self) -> Symbol {
+        match self {
+            ImportTarget::Module(module)
+            | ImportTarget::Items(module, _)
+            | ImportTarget::Alias(module, _, _) => *module,
+        }
+    }
+
+    /// The import as `silt fmt` writes it behind `import`, on one
+    /// line: `m`, `m as a`, `m.{ a, b }`, `m.{}`.
+    fn written(&self) -> String {
+        match self {
+            ImportTarget::Module(module) => module.to_string(),
+            ImportTarget::Items(module, items) if items.is_empty() => format!("{module}.{{}}"),
+            ImportTarget::Items(module, items) => {
+                let items: Vec<String> = items.iter().map(|(item, _)| item.to_string()).collect();
+                format!("{module}.{{ {} }}", items.join(", "))
+            }
+            ImportTarget::Alias(module, alias, _) => format!("{module} as {alias}"),
+        }
+    }
+}
+
+/// The one order of a file's imports: the indices of `imports` in the
+/// order `silt fmt` writes them in, which is the order the modules they
+/// name are read, checked and initialised in (each after its own
+/// imports, once). The order the imports are written in carries no
+/// meaning.
+///
+/// The imports are sorted by their text (`m`, `m as a`, `m.{ a, b }`),
+/// byte by byte; two that read the same (`import m.{ a }` written
+/// twice is one binding, and both lines stay) keep their order. So
+/// modules come in the order of their names, digits before capital
+/// letters before `_` before small letters, and of one module the
+/// plain import comes before the alias and the alias before the items
+/// (an empty list, `m.{}`, behind the lists that name something).
+pub fn import_order<'a>(imports: impl IntoIterator<Item = &'a ImportTarget>) -> Vec<usize> {
+    let mut order: Vec<(String, usize)> = imports
+        .into_iter()
+        .enumerate()
+        .map(|(index, import)| (import.written(), index))
+        .collect();
+    order.sort();
+    order.into_iter().map(|(_, index)| index).collect()
+}
+
+/// The `import` declarations among `decls`, in their one order
+/// ([`import_order`]).
+pub fn imports_in_order(decls: &[Decl]) -> Vec<&Decl> {
+    let imports: Vec<(&Decl, &ImportTarget)> = decls
+        .iter()
+        .filter_map(|decl| match decl {
+            Decl::Import(target, _) => Some((decl, target)),
+            _ => None,
+        })
+        .collect();
+    import_order(imports.iter().map(|(_, target)| *target))
+        .into_iter()
+        .map(|at| imports[at].0)
+        .collect()
+}
+
+/// The declarations of a file in the order `silt fmt` writes them: the
+/// imports first, in their one order ([`imports_in_order`]), then the
+/// others as they are written. Whoever asks which of two declarations
+/// comes first asks here, so the answer does not depend on where the
+/// import lines stand.
+pub fn decls_as_formatted(decls: &[Decl]) -> Vec<&Decl> {
+    let mut formatted = imports_in_order(decls);
+    formatted.extend(
+        decls
+            .iter()
+            .filter(|decl| !matches!(decl, Decl::Import(..))),
+    );
+    formatted
+}
+
 #[derive(Debug, Clone)]
 pub enum Decl {
     Fn(FnDecl),
@@ -862,4 +941,91 @@ pub struct StatementMarks {
     /// (`(a + 1) * 2`, `(f)()`, `((a))`), and the statement's extent,
     /// from its first token to its last.
     pub parenthesised: Vec<(Span, Span)>,
+}
+
+#[cfg(test)]
+mod import_order_tests {
+    use super::{ImportTarget, import_order};
+    use crate::intern::intern;
+    use crate::source::Span;
+
+    /// The imports `written`, each `m`, `m as a`, `m.{ a, b }` or
+    /// `m.{}`, in their one order.
+    fn ordered(written: &[&str]) -> Vec<String> {
+        let imports: Vec<ImportTarget> = written
+            .iter()
+            .map(|import| {
+                if let Some((module, alias)) = import.split_once(" as ") {
+                    ImportTarget::Alias(intern(module), intern(alias), Span::BUILTIN)
+                } else if let Some(module) = import.strip_suffix(".{}") {
+                    ImportTarget::Items(intern(module), Vec::new())
+                } else if let Some((module, items)) = import.split_once(".{ ") {
+                    let items = items.trim_end_matches(" }").split(", ");
+                    ImportTarget::Items(
+                        intern(module),
+                        items.map(|item| (intern(item), Span::BUILTIN)).collect(),
+                    )
+                } else {
+                    ImportTarget::Module(intern(import))
+                }
+            })
+            .collect();
+        import_order(&imports)
+            .into_iter()
+            .map(|at| written[at].to_string())
+            .collect()
+    }
+
+    /// Modules come in the order of their names, byte by byte, whatever
+    /// the form of the import and whatever order they are written in.
+    #[test]
+    fn modules_come_in_the_order_of_their_names() {
+        assert_eq!(ordered(&["c", "a", "b"]), ["a", "b", "c"]);
+        assert_eq!(ordered(&["b", "c", "a"]), ordered(&["a", "c", "b"]));
+        assert_eq!(
+            ordered(&["c.{ x }", "list", "b as z", "a"]),
+            ["a", "b as z", "c.{ x }", "list"]
+        );
+        // Digits, capital letters, `_`, small letters.
+        assert_eq!(
+            ordered(&["b", "_b", "B", "b2", "a9", "a"]),
+            ["B", "_b", "a", "a9", "b", "b2"]
+        );
+        // A name that begins with another's comes behind every form of
+        // the other.
+        assert_eq!(
+            ordered(&["ab", "a.{ x }", "a_b", "a as z", "a2", "a"]),
+            ["a", "a as z", "a.{ x }", "a2", "a_b", "ab"]
+        );
+    }
+
+    /// Of one module the plain import comes first, then the alias, then
+    /// the items.
+    #[test]
+    fn the_forms_of_one_module_have_an_order() {
+        assert_eq!(
+            ordered(&["a.{ y }", "a.{ x }", "a as z", "a", "a as b"]),
+            ["a", "a as b", "a as z", "a.{ x }", "a.{ y }"]
+        );
+        assert_eq!(import_order(&[]), Vec::<usize>::new());
+    }
+
+    /// The key is the text `silt fmt` writes: an empty list is `b.{}`,
+    /// without a space, which comes behind `b.{ fb }`.
+    #[test]
+    fn an_empty_list_of_items_is_ordered_as_it_is_written() {
+        assert_eq!(
+            ordered(&["b.{}", "b.{ fb }", "b as z", "b2", "b"]),
+            ["b", "b as z", "b.{ fb }", "b.{}", "b2"]
+        );
+    }
+
+    /// Two imports that read the same keep their order: the item form
+    /// written twice is one binding, and `silt fmt` keeps both lines.
+    #[test]
+    fn two_imports_that_read_the_same_keep_their_order() {
+        let items = || ImportTarget::Items(intern("a"), vec![(intern("fa"), Span::BUILTIN)]);
+        let twice = [items(), ImportTarget::Module(intern("a")), items()];
+        assert_eq!(import_order(&twice), [1, 0, 2]);
+    }
 }

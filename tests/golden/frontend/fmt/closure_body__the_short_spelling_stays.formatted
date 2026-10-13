@@ -1,0 +1,16 @@
+-- cmd: fmt
+-- A body without braces of its own is as the formatter writes it: one
+-- expression behind the arrow, statements on lines of their own.
+import list
+
+fn main() {
+  let inc = { x -> x + 1 }
+  let sums = list.map([1, 2]) { x ->
+    let y = x * 2
+    y + 1
+  }
+  list.each([1]) { x ->
+    let _ = x
+  }
+  println((inc(1), sums))
+}

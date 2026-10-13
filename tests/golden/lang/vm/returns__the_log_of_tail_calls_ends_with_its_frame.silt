@@ -1,0 +1,116 @@
+-- cmd: test
+-- exit: 1
+-- The log of the tail calls that took no frame belongs to the frame that
+-- made them. When that frame has returned (a number, a Bool or unit,
+-- which is written into the caller's slot; a value of any other kind), a
+-- later failure at the same depth shows none of them in its call stack.
+import list
+import task
+
+fn count(n: Int, acc: Int) -> Int {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn countf(n: Int, acc: Float) -> Float {
+  match n {
+    0 -> acc
+    _ -> countf(n - 1, acc + 0.5)
+  }
+}
+
+fn countb(n: Int, acc: Bool) -> Bool {
+  match n {
+    0 -> acc
+    _ -> countb(n - 1, acc != true)
+  }
+}
+
+fn countu(n: Int) -> () {
+  match n {
+    0 -> ()
+    _ -> countu(n - 1)
+  }
+}
+
+fn counts(n: Int, acc: String) -> String {
+  match n {
+    0 -> acc
+    _ -> counts(n - 1, "{acc}.")
+  }
+}
+
+fn boom(n: Int) -> Int {
+  10 / (n - n)
+}
+
+fn tailboom(n: Int) -> Int {
+  match n {
+    0 -> 10 / n
+    _ -> tailboom(n - 1)
+  }
+}
+
+fn wrap(n: Int) -> Int {
+  let v = count(n, 0)
+  v + boom(v)
+}
+
+fn test_stale_int() {
+  let a = count(50, 0)
+  println(a)
+  println(boom(a))
+}
+
+fn test_stale_float() {
+  let a = countf(50, 0.0)
+  println(a)
+  println(boom(1))
+}
+
+fn test_stale_bool() {
+  let a = countb(50, true)
+  println(a)
+  println(boom(1))
+}
+
+fn test_stale_unit() {
+  let a = countu(50)
+  println(a)
+  println(boom(1))
+}
+
+fn test_stale_string() {
+  let a = counts(50, "")
+  println(a)
+  println(boom(1))
+}
+
+fn test_real() {
+  println(tailboom(30))
+}
+
+fn test_mixed() {
+  let a = count(5, 0)
+  println(tailboom(a))
+}
+
+fn test_nested() {
+  println(1 + wrap(7))
+}
+
+fn test_callback() {
+  println(list.map([3, 4]) { n -> count(n, 0) + boom(n) })
+}
+
+fn test_task() {
+  println(task.join(task.spawn { -> count(9, 0) + wrap(3) }))
+}
+
+fn test_twice() {
+  let a = count(3, 0) + count(4, 0)
+  let b = countu(2)
+  println(tailboom(a - 7 + 2))
+}

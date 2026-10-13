@@ -1,0 +1,13 @@
+-- exit: 1
+-- The failure of a joined task has a call stack: the function that
+-- failed, and the closure the task was spawned with.
+import task
+
+fn work(n) {
+  n / 0
+}
+
+fn main() {
+  let h = task.spawn({ -> work(1) + 1 })
+  println(task.join(h))
+}

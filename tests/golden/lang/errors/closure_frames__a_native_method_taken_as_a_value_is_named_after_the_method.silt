@@ -1,0 +1,25 @@
+-- exit: 1
+-- A method the language has for a type, taken as a value, is a frame
+-- under the method's name, as a written method is: the program wrote
+-- no closure there.
+import list
+
+type Inner {
+  n: Int,
+}
+
+trait Display for Inner {
+  fn display(self) -> String {
+    "{1 / (self.n - self.n)}"
+  }
+}
+
+type Outer {
+  inner: Inner,
+  tag: Int,
+}
+
+fn main() {
+  let shown = list.map([Outer { inner: Inner { n: 1 }, tag: 2 }], Outer.display)
+  println(shown)
+}

@@ -1,0 +1,16 @@
+import time
+
+-- `time.parse_date` refuses the pattern `time.format_date` refuses: a
+-- specifier of a time of day. Nothing is read and dropped; a text with
+-- a time of day is read by `time.parse`.
+fn main() {
+  println(time.parse_date("2026-10-12 07:30", "%Y-%m-%d %H:%M"))
+  println(time.parse_date("2026-10-12", "%Y-%m-%d %H:%M"))
+  println(time.parse_date("2026-10-12 07", "%Y-%m-%d %I"))
+  println(time.parse_date("1760254200", "%s"))
+  match time.parse("2026-10-12 07:30", "%Y-%m-%d %H:%M") {
+    Ok(moment) -> println((moment.date, moment.time))
+    Err(e) -> println(e)
+  }
+  println(time.parse_date("2026-10-12", "%Y-%m-%d"))
+}

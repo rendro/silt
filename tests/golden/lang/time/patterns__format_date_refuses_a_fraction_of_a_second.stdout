@@ -1,0 +1,7 @@
+Err(time format error: a specifier of a time of day in '%Y-%m-%d %3f' is not valid for a Date)
+Err(time format error: a specifier of a time of day in '%6f' is not valid for a Date)
+Err(time format error: a specifier of a time of day in '%9f' is not valid for a Date)
+Err(time format error: a specifier of a time of day in '%.3f' is not valid for a Date)
+Err(time format error: a specifier of a time of day in '%f' is not valid for a Date)
+Err(time format error: a specifier of a time of day in '%Y-%m-%d %3f' is not valid for a Date)
+Ok(16:05:06 000|000000|000000000|.000)

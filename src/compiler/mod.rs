@@ -141,6 +141,14 @@ enum BindDestructKind {
 ///   value is returned at once and the frame is discarded with it.
 struct CompileContext {
     emitter: Emitter,
+    /// The name of the closures written in this code, which is how an
+    /// error's call stack lists them: `closure in main` in the function
+    /// `main` and in every closure in it, however deep; `closure in
+    /// P.show` in a method; `closure in table` in the top-level
+    /// `let table = ...`, and `closure at the top level` in one that
+    /// binds several names or none. No function has `<...>` for a
+    /// closure's name.
+    closures: String,
     locals: Vec<Local>,
     scope_depth: usize,
     /// Frame height at the start of every open scope, innermost last.
@@ -604,16 +612,23 @@ impl<'a> Compiler<'a> {
         self.own_slots.get(&(module, name)).copied()
     }
 
-    /// The order in which a module's declarations are installed: first
-    /// everything that only defines something (imports, types, traits,
-    /// trait impls, functions), in source order; then the top-level
-    /// `let`s, in the order the checker decided (`let_order`, by the
-    /// span of each: every `let` after the ones its initialiser can
-    /// reach). A top-level initialiser can therefore use every
-    /// declaration of the program, wherever it is written.
+    /// The order in which a module's declarations are installed. First
+    /// its imports, in the one order of imports
+    /// (`crate::ast::import_order`, the order `silt fmt` writes them
+    /// in): an import compiles the module it names where it stands, so
+    /// that is the order the modules are initialised in, whatever
+    /// order the import lines are written in. Then everything else
+    /// that only defines something (types, traits, trait impls,
+    /// functions), in source order; then the top-level `let`s, in the
+    /// order the checker decided (`let_order`, by the span of each:
+    /// every `let` after the ones its initialiser can reach). A
+    /// top-level initialiser can therefore use every declaration of
+    /// the program, wherever it is written.
     fn decls_in_init_order<'d>(decls: &'d [Decl], let_order: &[Span]) -> Vec<&'d Decl> {
+        let imports = crate::ast::imports_in_order(decls).into_iter();
         let (mut lets, definitions): (Vec<&Decl>, Vec<&Decl>) = decls
             .iter()
+            .filter(|decl| !matches!(**decl, Decl::Import(..)))
             .partition(|decl| matches!(**decl, Decl::Let { .. }));
         // (A `let` the order does not name, which no checked module
         // has, keeps its place after the ones it names.)
@@ -625,7 +640,7 @@ impl<'a> Compiler<'a> {
             Decl::Let { span, .. } => place.get(span).copied().unwrap_or(usize::MAX),
             _ => usize::MAX,
         });
-        definitions.into_iter().chain(lets).collect()
+        imports.chain(definitions).chain(lets).collect()
     }
 
     /// Compile the method `method` (an impl's, or a trait's default) as
@@ -717,7 +732,22 @@ impl<'a> Compiler<'a> {
                 ..
             } => {
                 let span = *span;
-                self.compile_expr(value)?;
+                // The closures of the initialiser are named after the
+                // binding if the `let` binds one name. If it binds
+                // several, or none, no name is theirs alone.
+                let closures = match crate::parser::top_level_binders(decl).as_slice() {
+                    [(name, _, _)] => format!("closure in {name}"),
+                    _ => "closure at the top level".to_string(),
+                };
+                let around = self
+                    .contexts
+                    .last_mut()
+                    .map(|context| std::mem::replace(&mut context.closures, closures));
+                let compiled = self.compile_expr(value);
+                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                    context.closures = around;
+                }
+                compiled?;
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         let slot = self.own_slot(*name, span)?;
@@ -834,11 +864,7 @@ impl<'a> Compiler<'a> {
     /// An import of a module of the program compiles the module, once,
     /// before the importer's code. A builtin module has no code.
     fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), Diagnostic> {
-        let module = match target {
-            ImportTarget::Module(m) | ImportTarget::Items(m, _) | ImportTarget::Alias(m, _, _) => {
-                *m
-            }
-        };
+        let module = target.module();
         let importer = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         let Some(&target) = self.units.modules[importer].imports.get(&module) else {
             return Ok(());
@@ -1272,9 +1298,16 @@ impl<'a> Compiler<'a> {
             // `Int.display`, `Pt.compare` as a value, a method the VM has
             // natively for the type: the function `{ a -> a.display() }`
             // (`{ a, b -> a.compare(b) }` for the two-argument methods).
-            ExprKind::FieldAccess(_, method, _)
+            // The program wrote no closure there: the function has the
+            // method's name, `Int.display`, as a written method has.
+            ExprKind::FieldAccess(of, method, _)
                 if let Some(TypeMember::Native(tr)) = self.type_member(expr)? =>
             {
+                let ty = match &of.kind {
+                    ExprKind::Ident(ty) | ExprKind::FieldAccess(_, ty, _) => *ty,
+                    _ => return Err(checker_missed(span, "a method of no named type")),
+                };
+                let method_name = format!("{ty}.{method}");
                 let names: &[&str] = match resolve(*method).as_str() {
                     "compare" | "equal" => &["__self__", "__other__"],
                     _ => &["__self__"],
@@ -1309,7 +1342,15 @@ impl<'a> Compiler<'a> {
                     },
                     span,
                 );
-                self.compile_expr(&lambda)?;
+                let around = self
+                    .contexts
+                    .last_mut()
+                    .map(|context| std::mem::replace(&mut context.closures, method_name));
+                let compiled = self.compile_expr(&lambda);
+                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                    context.closures = around;
+                }
+                compiled?;
             }
 
             ExprKind::FieldAccess(..)
@@ -1363,8 +1404,16 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::Lambda { params, body, .. } => {
-                // Push a new context for the lambda body.
-                self.begin_function("<lambda>".into(), params.len(), span)?;
+                // A closure is named after what it is written in, and
+                // so are the closures in it.
+                let name = match self.contexts.last() {
+                    Some(around) => around.closures.clone(),
+                    None => return Err(checker_missed(span, "a closure outside any code")),
+                };
+                self.begin_function(name.clone(), params.len(), span)?;
+                if let Some(closure) = self.contexts.last_mut() {
+                    closure.closures = name;
+                }
 
                 self.compile_params(params, span)?;
 
@@ -2671,7 +2720,15 @@ impl<'a> Compiler<'a> {
         params: usize,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        // (The code of a file's top level, `<script>` or
+        // `<module:...>`, is its `let`s, each of which says how its
+        // closures are named.)
+        let closures = match name.starts_with("<script>") || name.starts_with("<module:") {
+            true => "closure at the top level".to_string(),
+            false => format!("closure in {name}"),
+        };
         self.contexts.push(CompileContext {
+            closures,
             emitter: Emitter::new(name, params, span)?,
             locals: Vec::new(),
             scope_depth: 0,
@@ -3907,7 +3964,7 @@ fn main() {
         // Lambda with destructured param is a VmClosure constant
         let lambda = main.chunk().constants().iter().find_map(|c| {
             if let Value::VmClosure(cl) = c
-                && cl.function.name() == "<lambda>"
+                && cl.function.name() == "closure in main"
             {
                 return Some(&cl.function);
             }

@@ -1,0 +1,3 @@
+every number that was sent was seen by its receiver, or is still in the channel
+  on a rendezvous channel: true
+  on a channel with room for one: true

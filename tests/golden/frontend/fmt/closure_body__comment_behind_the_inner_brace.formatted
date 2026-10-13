@@ -1,0 +1,16 @@
+-- cmd: fmt
+-- A comment behind the inner opening brace, on its line, ends the line
+-- of the arrow.
+fn main() {
+  let a = { x -> -- one more
+    x + 1
+  }
+  let b = { x -> -- twice, then one more
+    let y = x * 2
+    y + 1
+  }
+  let c = { x -> -- in parentheses too
+    x
+  }
+  println((a(1), b(1), c(1)))
+}

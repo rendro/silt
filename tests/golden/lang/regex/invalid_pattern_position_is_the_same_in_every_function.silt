@@ -1,0 +1,17 @@
+import regex
+
+-- Every function of a pattern names the same place for the same
+-- fault: the fourth character of `ééé(`, which is its seventh byte.
+fn main() {
+  let pattern = "ééé("
+  println(regex.is_match("x", pattern))
+  println(regex.find("x", pattern))
+  println(regex.find_all("x", pattern))
+  println(regex.split("x", pattern))
+  println(regex.replace("x", pattern, "#"))
+  println(regex.replace_all("x", pattern, "#"))
+  println(regex.replace_all_with("x", pattern) { m -> m })
+  println(regex.captures("x", pattern))
+  println(regex.captures_all("x", pattern))
+  println(regex.captures_named("x", pattern))
+}

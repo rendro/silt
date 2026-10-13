@@ -1,0 +1,20 @@
+-- cmd: fmt
+-- An empty block is an empty body: nothing stands behind the arrow.
+-- The unit value written out, `()`, is an expression and stays.
+fn main() {
+  let a = { x -> }
+  let b = { -> }
+  let c = { x -> }
+  let d = { x -> }
+  let e = { x -> }
+  let f = { x -> }
+  let g = { -> }
+  let h = { x -> () }
+  let i = { x -> } -- nothing yet
+  let j = { x ->
+    -- nothing yet
+  }
+  let k = { x -> } -- behind the closer
+  let l = { x -> {- nothing -} }
+  println((a(1), b(), c(1), d(1), e(1), f(1), g(), h(1), i(1), j(1), k(1), l(1)))
+}

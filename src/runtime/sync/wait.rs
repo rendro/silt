@@ -36,10 +36,15 @@ pub struct Wait {
     /// several arms that are ready none is always the one taken.
     pub first: usize,
     /// The cancel flag of the task that waits. Whoever cancels the
-    /// task sets it first. From then on no arm of the wait is
-    /// completed, by the task or for it: a cancelled task takes
-    /// nothing and sends nothing, even while it is on its way into the
-    /// wait.
+    /// task sets it first. From then on the task waits for nothing,
+    /// and nobody completes an arm for it: a wait that is open ends
+    /// only by the cancel, and one that begins is not queued
+    /// ([`Park::Cancelled`]). And the task takes nothing new: of a
+    /// wait that begins, a send that can be done at once is done (the
+    /// task gives what it holds) and a cell that is complete is found
+    /// so, but no receive is tried, whether or not a value is there.
+    /// A wait that begins when the time of its task is over
+    /// ([`Wait::task_deadline`]) is under the same rule.
     pub cancel: Option<Arc<AtomicBool>>,
     /// The time at which the task that waits is over (a reading like
     /// [`Wait::deadline`]): the task of a function that
@@ -132,11 +137,15 @@ pub enum Park {
     Ready(Fired),
     /// The task is on the queues of its arms.
     Parked(Parked),
-    /// The task's cancel flag is set: nothing was completed.
+    /// The task's cancel flag was set when the wait began
+    /// ([`Wait::cancel`]) and none of the arms that are tried then (a
+    /// send, a cell) could be completed at once: nothing was taken or
+    /// sent.
     Cancelled,
     /// The time of the task was over when the wait began
-    /// ([`Wait::task_deadline`]) and no arm could be completed at
-    /// once: nothing was taken or sent.
+    /// ([`Wait::task_deadline`]) and none of the arms that are tried
+    /// then (a send, a cell) could be completed at once: nothing was
+    /// taken or sent.
     Expired,
 }
 
@@ -149,12 +158,13 @@ pub enum Park {
 /// [module documentation](super) for what the scheduler does with the
 /// [`Parked`].
 ///
-/// With the task's cancel flag set ([`Wait::cancel`]) nothing is
-/// tried: the result is [`Park::Cancelled`]. When the time of the
-/// task is over ([`Wait::task_deadline`]) and no arm can be completed
-/// now, the task is not queued: [`Park::Expired`]. (An arm that can
-/// be completed at once is, as by an operation that never waits: a
-/// value that is there wins over a time that has passed.)
+/// When the task's cancel flag is set ([`Wait::cancel`]), or the time
+/// of the task is over ([`Wait::task_deadline`]), the task takes
+/// nothing new and waits for nothing: its receive arms are not tried
+/// (`takes_nothing_new`, below), a send that can be done at once is
+/// done and a cell that is complete is found so, and if none of those
+/// ends the wait the task is not queued: [`Park::Cancelled`],
+/// [`Park::Expired`]. The two differ in the name of the refusal only.
 pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Park {
     let Wait {
         mut arms,
@@ -206,10 +216,10 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     let mut states: Vec<_> = channels.iter().map(|c| c.state.lock()).collect();
 
     // Read under the locks: an operation on one of the channels that
-    // comes after the cancel finds that this task took nothing.
-    if is_set(&cancel) {
-        return Park::Cancelled;
-    }
+    // comes after this look finds the task on the queue, with its
+    // flag, or not there at all.
+    let cancelled = is_set(&cancel);
+    let no_takes = takes_nothing_new(cancelled, task_expired);
 
     let mut wakes = Wakes::default();
     let mut ready = None;
@@ -217,6 +227,7 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     for arm in (0..count).map(|i| (first + i) % count) {
         let source = &sources[arm];
         let outcome = match source {
+            Source::Recv(_) if no_takes => None,
             Source::Recv(channel) => match states[lock_of(channel)].receive(&mut wakes) {
                 TryReceive::Value(value) => Some(Outcome::Received(value)),
                 TryReceive::Closed(close) => Some(Outcome::Closed(close)),
@@ -239,6 +250,9 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
             ready = Some(Fired::Arm(arm, outcome));
             break;
         }
+    }
+    if ready.is_none() && cancelled {
+        return Park::Cancelled;
     }
     if ready.is_none() && task_expired {
         return Park::Expired;
@@ -287,6 +301,16 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     })
 }
 
+/// Whether the task of a wait that begins takes nothing new: its
+/// receive arms are not tried then. That holds for a task that was
+/// cancelled (`cancelled`: its flag is set) and for one whose time is
+/// over (`task_expired`). This is the one condition;
+/// `Vm::takes_nothing_new` is the same one for the operations that
+/// look before they wait.
+fn takes_nothing_new(cancelled: bool, task_expired: bool) -> bool {
+    cancelled || task_expired
+}
+
 /// The two times that can end a wait, and whether each had come when
 /// the wait began.
 #[derive(Copy, Clone)]
@@ -331,16 +355,18 @@ fn park_one(
     let (source, token) = match arm {
         Arm::Recv(channel) => {
             let mut state = channel.state.lock();
-            if is_set(&cancel) {
-                return Park::Cancelled;
-            }
-            let outcome = match state.receive(&mut wakes) {
-                TryReceive::Value(value) => Some(Outcome::Received(value)),
-                TryReceive::Closed(close) => Some(Outcome::Closed(close)),
-                TryReceive::Empty => None,
+            let cancelled = is_set(&cancel);
+            let outcome = match takes_nothing_new(cancelled, task_expired) {
+                true => None,
+                false => match state.receive(&mut wakes) {
+                    TryReceive::Value(value) => Some(Outcome::Received(value)),
+                    TryReceive::Closed(close) => Some(Outcome::Closed(close)),
+                    TryReceive::Empty => None,
+                },
             };
             let ready = match outcome {
                 Some(outcome) => Some(Fired::Arm(0, outcome)),
+                None if cancelled => return Park::Cancelled,
                 None if task_expired => return Park::Expired,
                 None => expired.then_some(Fired::Deadline),
             };
@@ -360,9 +386,7 @@ fn park_one(
         }
         Arm::Send(channel, value) => {
             let mut state = channel.state.lock();
-            if is_set(&cancel) {
-                return Park::Cancelled;
-            }
+            let cancelled = is_set(&cancel);
             let (outcome, value) = match state.send(value, &mut wakes) {
                 TrySend::Sent => (Some(Outcome::Sent), None),
                 TrySend::Closed(close) => (Some(Outcome::Closed(close)), None),
@@ -370,6 +394,7 @@ fn park_one(
             };
             let ready = match outcome {
                 Some(outcome) => Some(Fired::Arm(0, outcome)),
+                None if cancelled => return Park::Cancelled,
                 None if task_expired => return Park::Expired,
                 None => expired.then_some(Fired::Deadline),
             };

@@ -1,0 +1,4 @@
+pub let va = {
+  println("a is initialised")
+  1
+}

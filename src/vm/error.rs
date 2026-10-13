@@ -114,7 +114,9 @@ impl From<crate::value::TooLong> for VmError {
 /// the call site that triggered the module's load and the source file
 /// that owns the failing top-level statement.  `<repl:n>` frames are kept
 /// for the same reason: the function that holds the statements of the
-/// REPL's `n`th entry marks the call site the user typed.  Each returned
+/// REPL's `n`th entry marks the call site the user typed.  A closure is
+/// listed like a function, under the name the compiler gave it
+/// (`closure in main`).  Each returned
 /// line is already prefixed with "  -> " and has no trailing newline.
 ///
 /// `format_frame` turns a (name, span) pair into its location string —

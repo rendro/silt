@@ -137,6 +137,11 @@ struct Task {
     handle: Arc<TaskHandle>,
     /// The tasks it is counted with: those of its owner.
     group: Arc<Group>,
+    /// Whether a slice of it has run. A task that is cancelled before
+    /// its first slice is dropped without running; one that has run
+    /// goes on for the steps a cancelled task has
+    /// ([`Inner::late_slice`]).
+    ran: bool,
 }
 
 /// The tasks of one owner (`Vm::set_task_owner`): the program, or one
@@ -483,6 +488,7 @@ impl Scheduler {
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
         vm.late = handle.deadline().map(|_| handle.late());
+        vm.over = handle.deadline().map(|_| handle.over_flag());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
         }
@@ -516,6 +522,7 @@ impl Scheduler {
             vm,
             handle,
             group,
+            ran: false,
         });
         Ok(())
     }
@@ -526,14 +533,21 @@ impl Scheduler {
         &self.inner.parking
     }
 
-    /// `task.cancel` of the task `handle`: it runs no further, and if
-    /// it waits, its wait ends without taking or sending anything.
+    /// `task.cancel` of the task `handle`. What becomes of the task
+    /// depends on where it is:
     ///
-    /// A wait that had ended when the cancel came stays ended: the
-    /// value a receive of the task was handed, or that the operation
-    /// it waited for gave, is the task's, and is dropped with the task,
-    /// which runs no slice in which it could use it. Whoever sent the
-    /// value was told that it was sent.
+    /// - It waits: its wait ends without taking or sending anything,
+    ///   and the task is ended there.
+    /// - It has never run: it is dropped without running.
+    /// - It runs, or is to run again: a wait that had ended when the
+    ///   cancel came stays ended, and the value a receive of the task
+    ///   was handed, or that the operation it waited for gave, is the
+    ///   task's to use. The task goes on for a counted number of steps
+    ///   ([`LATE_STEPS`], as a task past its deadline does) and is
+    ///   ended where they are used up, or before that at the first
+    ///   wait that cannot end at once (`Inner::run_once`). It takes
+    ///   nothing new in them: an operation that would ends it too
+    ///   (`Vm::takes_nothing_new`).
     pub(crate) fn cancel(&self, handle: &TaskHandle) {
         // The flag first: a task that is about to park reads it.
         handle.cancel(self.wake());
@@ -934,26 +948,41 @@ impl Inner {
         self.ended(&group);
     }
 
-    /// Whether the time of the task is over (`TaskHandle::deadline`).
+    /// Whether the time of the task is over (`TaskHandle::deadline`),
+    /// asked at the start of a slice. This is where the task learns
+    /// it: the handle is told (`TaskHandle::set_over`) before the
+    /// slice's first instruction, and from then on the task takes
+    /// nothing new (`Vm::takes_nothing_new` reads the handle's flag,
+    /// not the clock). Once the time is over the clock is not asked
+    /// again.
     fn over(&self, task: &Task) -> bool {
-        task.handle
-            .deadline()
-            .is_some_and(|deadline| self.parking.timer().now() >= deadline)
+        let handle = &task.handle;
+        if handle.is_over() {
+            return true;
+        }
+        let passed = |deadline| self.parking.timer().now() >= deadline;
+        let over = handle.deadline().is_some_and(passed);
+        if over {
+            handle.set_over();
+        }
+        over
     }
 
-    /// One slice of a task whose time was over when the slice began:
-    /// its result, and whether the work the task may do past its time
-    /// is used up with it ([`LATE_STEPS`]).
+    /// One slice of a task whose time was over when the slice began,
+    /// or that was cancelled by then: its result, and whether the work
+    /// the task may still do is used up with it ([`LATE_STEPS`]).
     ///
-    /// The task runs a step at a time, so that every step past the time
-    /// is counted, whatever ends the slices the steps run in: a task
+    /// The task runs a step at a time, so that every such step is
+    /// counted, whatever ends the slices the steps run in: a task
     /// that only does waits that are over at once never runs a slice
     /// out. The count is the handle's, and one for a task and the tasks
     /// of the deadlines inside it that have its time
     /// (`TaskHandle::late`): the work past a deadline is bounded in
-    /// total. Nothing resets it. (A slice that began in time is not
-    /// counted, also when the time passed in it: a task that was given
-    /// a value in time has the whole count to return it.)
+    /// total, and a task that is past its deadline and cancelled has
+    /// the one count, not two. Nothing resets it. (A slice that began
+    /// in time, and before a cancel, is not counted, also when the
+    /// time passed or the cancel came in it: a task that was given a
+    /// value before that has the whole count to return it.)
     fn late_slice(task: &mut Task, slice: usize) -> (SliceResult, bool) {
         let mut ran = 0;
         loop {
@@ -969,8 +998,7 @@ impl Inner {
         }
     }
 
-    /// A task has ended: it completed, failed, was cancelled, or was
-    /// ended by its deadline.
+    /// A task has ended: it completed, failed, or was cancelled.
     fn end_task(&self, task: Task) {
         // Its frames are abandoned before it stops counting.
         let Task {
@@ -1142,9 +1170,10 @@ impl Inner {
     /// One slice of a task. `Some` when the slice ended in a wait that
     /// was over at once: the task has its result and can go on.
     fn run_once(self: &Arc<Self>, mut task: Task) -> Option<Task> {
-        // A task that was cancelled runs no further, nor does one that
-        // was stopped with its owner's.
-        if task.handle.is_cancelled() || task.group.stopped.load(Ordering::SeqCst) {
+        // A task that was stopped with its owner's runs no further,
+        // nor does one that was cancelled before its first slice.
+        let cancelled = task.handle.is_cancelled();
+        if task.group.stopped.load(Ordering::SeqCst) || (cancelled && !task.ran) {
             self.end_task(task);
             return None;
         }
@@ -1160,16 +1189,34 @@ impl Inner {
         // wait that step began, of which no arm is tried then. It is
         // never ended at the start of a slice, nor in a slice that it
         // ends by returning or failing.
-        let (result, spent) = match self.over(&task) {
+        //
+        // A task that was cancelled and is not waiting does the same,
+        // on the same count, however it came to be here: its wait had
+        // ended when the cancel came (it has what it was given to
+        // use), its last slice ran out, or the cancel came while it
+        // ran. It is ended as a cancelled task; and before the steps
+        // are used up at its first wait that cannot end at once, which
+        // is refused it below, as it is refused a task whose time is
+        // over, or at the first operation that would take something
+        // new, which begins a wait that nothing can end
+        // (`Vm::takes_nothing_new`).
+        let (result, spent) = match cancelled || self.over(&task) {
             true => Self::late_slice(&mut task, slice),
             false => (task.vm.execute_slice(slice), false),
         };
+        task.ran = true;
         RUNNING_TASK.with(|was| was.set(running));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
         match result {
-            SliceResult::Yielded | SliceResult::Blocked(_) if spent => self.expire_task(task),
+            SliceResult::Yielded | SliceResult::Blocked(_) if spent => {
+                // The cancel has given the handle its result.
+                match task.handle.is_cancelled() {
+                    true => self.end_task(task),
+                    false => self.expire_task(task),
+                }
+            }
             SliceResult::Yielded => self.enqueue(task),
             SliceResult::Completed(value) => {
                 task.handle.complete(Ok(value), &self.parking);
@@ -1194,14 +1241,17 @@ impl Inner {
                     .cancel(Some(task.handle.cancel_flag()))
                     .task_deadline(task.handle.deadline());
                 let timed = wait.deadline.is_some() || wait.task_deadline.is_some();
-                let cancelled = task.handle.clone();
                 let group = task.group.clone();
                 let id = TaskId(task.id as u64);
                 // Counted as on its way into the wait until the wait
                 // has ended (`ready`), or was over at once.
                 group.parking.fetch_add(1, Ordering::SeqCst);
+                // A task that is stopped with its owner's begins no
+                // wait. One that is cancelled, or whose time is over,
+                // does a send that is ready and is refused the wait
+                // otherwise: that is the wait's own to say.
                 let back = self.parking.park(id, Sleeper::Task(task), wait, || {
-                    cancelled.is_cancelled() || group.stopped.load(Ordering::SeqCst)
+                    group.stopped.load(Ordering::SeqCst)
                 });
                 match back {
                     Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {
@@ -1389,6 +1439,9 @@ const STANDARD_SLICE: usize = 2000;
 /// after its time is over, the functions of the deadlines inside it
 /// included: one standard slice, whatever the slice of the VM. It is
 /// what a function that was given a value in time has to return it.
+/// A task that is cancelled while it is not waiting has the same
+/// steps, from the first slice that begins after the cancel: what a
+/// task that was handed a value has to pass it on.
 const LATE_STEPS: usize = STANDARD_SLICE;
 
 /// How many steps a task runs before it gives way (`SILT_TIME_SLICE`).

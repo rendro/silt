@@ -805,6 +805,32 @@ mod tests {
         assert_eq!(value(&mut repl, r#"to_upper("a")"#), "A");
     }
 
+    /// Several imports in one entry are initialised like a file's: in
+    /// the order `silt fmt` writes them, whichever line stands first.
+    /// (An entry of two lines is what a pasted text gives.) Of two
+    /// modules whose initialisers both fail, the one that comes first
+    /// in that order is the one that is reached.
+    #[test]
+    fn the_imports_of_one_entry_are_initialised_in_their_one_order() {
+        for entry in ["import a\nimport b", "import b\nimport a"] {
+            let dir = std::path::PathBuf::from("/silt-repl-test");
+            let mut repl = Repl::new(ProjectSetup::Script(dir.clone()));
+            for module in ["a", "b"] {
+                repl.session.set_overlay(
+                    &dir.join(format!("{module}.silt")),
+                    format!("pub let v: Int = panic(\"{module} is initialised\")\n"),
+                );
+            }
+            let evaluation = repl.eval(entry);
+            let messages: Vec<&str> = evaluation
+                .diagnostics
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect();
+            assert_eq!(messages, ["panic: a is initialised"], "`{entry}`");
+        }
+    }
+
     #[test]
     fn an_inferred_return_type_is_seen_by_later_cells() {
         let mut repl = repl();

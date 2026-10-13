@@ -23,7 +23,12 @@
 //!     declaration comes first;
 //!   * a pattern alternative in parentheses inside another one,
 //!     `(a | b) | c`, is printed as `a | b | c`, so alternatives are
-//!     written flat.
+//!     written flat;
+//!   * a closure's body in braces of its own, `{ x -> { a } }`, is
+//!     printed without them, `{ x -> a }`: a block of one expression
+//!     that is the body of a closure is compared as that expression (a
+//!     block of statements there is the same tree with the braces and
+//!     without).
 
 use std::fmt::Write as _;
 
@@ -264,14 +269,7 @@ fn describe(decl: &Decl) -> (String, Span) {
             ),
             t.span,
         ),
-        Decl::Import(target, span) => {
-            let module = match target {
-                ImportTarget::Module(m)
-                | ImportTarget::Items(m, _)
-                | ImportTarget::Alias(m, ..) => m,
-            };
-            (format!("the import of `{module}`"), *span)
-        }
+        Decl::Import(target, span) => (format!("the import of `{}`", target.module()), *span),
         Decl::Let { pattern, span, .. } => {
             let label = match &pattern.kind {
                 PatternKind::Ident(name) => format!("the top-level binding `{name}`"),
@@ -1153,6 +1151,14 @@ impl ShapeWriter {
             ExprKind::Lambda { params, body } => {
                 self.open("lambda");
                 self.params(params);
+                // A body that is a block of one expression is that
+                // expression in braces of its own.
+                let mut body: &Expr = body;
+                while let ExprKind::Block(stmts) = &body.kind
+                    && let [Stmt::Expr(inner)] = stmts.as_slice()
+                {
+                    body = inner;
+                }
                 self.expr(body);
             }
             ExprKind::RecordCreate {

@@ -1,0 +1,10 @@
+error[parse]: 'f' is bound twice at the top level: by the import and by the import here
+ --> main.silt:8:12
+   |
+ 8 | import b.{ f }
+   |            ^ 'f' is bound twice at the top level: by the import and by the import here
+ ::: main.silt:9:12
+   |
+ 9 | import a.{ f }
+   |            - first bound here, by the import
+  = note: a top-level name can be bound only once

@@ -1,0 +1,4 @@
+pub let vb = {
+  println("b is initialised")
+  2
+}

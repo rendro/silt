@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Two imports bring a function `f`, each its own. The one `silt fmt` writes
+-- first, a's, is the binding, so `f() + 1` is an Int, and the other one is
+-- the error, in whatever order the two lines are written: one error, the
+-- same one.
+import b.{ f }
+import a.{ f }
+
+fn main() {
+  println(f() + 1)
+}

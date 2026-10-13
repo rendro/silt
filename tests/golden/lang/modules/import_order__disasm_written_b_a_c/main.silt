@@ -1,0 +1,11 @@
+-- cmd: disasm
+-- The disassembly of a program is the same text in whatever order its import
+-- lines are written: the modules' initialisers in the order `silt fmt` writes
+-- the imports, and the global slots numbered in that order.
+import b
+import a
+import c
+
+fn main() {
+  println(a.va + b.vb + c.vc)
+}

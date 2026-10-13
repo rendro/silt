@@ -158,6 +158,11 @@ pub struct Vm {
     /// for the VM of a task its own; for the VM that runs a REPL entry
     /// what stands of the program whatever becomes of the entry.
     settled: Arc<Globals>,
+    /// Set by the scheduler when a slice of the task begins past its
+    /// deadline (`TaskHandle::set_over`): the task takes nothing new
+    /// from then on ([`Vm::takes_nothing_new`]). `None` for a VM whose
+    /// task has no deadline.
+    pub(crate) over: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Drop for Vm {
@@ -185,7 +190,7 @@ impl Vm {
         timeout_err: ErrFactory,
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let op = self.runtime.io_pool.submit(timeout_err, op);
+        let op = self.start_io(timeout_err, op);
         self.io_wait(name, timeout_err, op)
     }
 
@@ -202,7 +207,7 @@ impl Vm {
         stop: impl FnOnce() + Send + 'static,
         op: impl FnOnce() -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let op = self.runtime.io_pool.submit(timeout_err, op).stop_with(stop);
+        let op = self.start_io(timeout_err, op).stop_with(stop);
         self.io_wait(name, timeout_err, op)
     }
 
@@ -269,6 +274,7 @@ impl Vm {
             cancelled: None,
             deadline: None,
             late: None,
+            over: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -610,6 +616,7 @@ impl Vm {
             cancelled: None,
             deadline: None,
             late: None,
+            over: None,
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }

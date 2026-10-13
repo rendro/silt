@@ -1,14 +1,20 @@
 -- timeout: 120
--- The work a function does past its deadline is bounded in all,
--- whatever the function does: about 2,000 steps, for the function and
--- the functions of the deadlines inside it together. A function that
--- only does operations that are ready at once (a `select` whose arm
--- can be completed, a `receive` of what is there, `try_send`,
--- `try_receive`), or calls `task.deadline` again and again, or reads
--- a stream that has its elements or a file, is ended like one that
--- only computes: none of the loops of 300,000 rounds reaches its last
--- round. And a `select` the function is ended in front of takes and
--- sends nothing: what was ready for it is still there.
+-- A function that is past its deadline takes nothing new, and the
+-- work it still does is bounded in all: about 2,000 steps. Each case
+-- is a loop of 300,000 rounds with a mark for every round done; none
+-- reaches its last round.
+--
+-- With a time that is over from the start: a round that takes (a
+-- `select` with `Recv` arms, a `receive`, a `try_receive`, a
+-- `channel.each`, a read of a stream or of a file) or that calls
+-- `task.deadline` ends the function before its first round is done,
+-- whether or not the thing to take is there; a round that only gives
+-- (a `select` with a `Send` arm into room, a `try_send`) goes on until
+-- the steps are used up, which is after few rounds. And a `select` the
+-- function is ended in front of takes and sends nothing: what was
+-- ready for it is still there.
+--
+-- With a time that passes while the function runs, each is ended.
 import channel
 import io
 import stream
@@ -71,10 +77,13 @@ fn fate(label, dur, few, round) {
     Err(_) -> "another error"
     Ok(_) -> "ran to its last round"
   }
-  let how_many = match (few, n < 10000) {
+  let how_many = match (few, n) {
     (false, _) -> ""
-    (true, true) -> ", after fewer than 10,000 rounds"
-    (true, false) -> ", after {n} rounds"
+    (true, 0) -> ", before its first round was done"
+    (true, _) -> match n < 10000 {
+      true -> ", after some rounds, fewer than 10,000"
+      false -> ", after {n} rounds"
+    }
   }
   println("{label}: {ended}{how_many}")
   n

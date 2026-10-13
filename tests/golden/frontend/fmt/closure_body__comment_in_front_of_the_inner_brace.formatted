@@ -1,0 +1,18 @@
+-- cmd: fmt
+-- A comment between the arrow and the inner opening brace stays where
+-- it is: behind the arrow, or on a line of its own above the body.
+fn main() {
+  let a = { x -> -- behind the arrow
+    x + 1
+  }
+  let b = { x ->
+    -- above the inner brace
+    x + 1
+  }
+  let c = { x ->
+    -- above the statements
+    println(x)
+    x
+  }
+  println((a(1), b(1), c(1)))
+}

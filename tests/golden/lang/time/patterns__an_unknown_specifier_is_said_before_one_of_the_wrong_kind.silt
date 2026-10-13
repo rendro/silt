@@ -1,0 +1,23 @@
+import time
+
+-- A pattern with a specifier the library does not know is a pattern of
+-- no type: that is said first, wherever the specifier stands, before a
+-- specifier that does not fit the type, and that before fields too few
+-- for a parse.
+fn main() -> Result((), time.TimeError) {
+  let day = time.date(2001, 2, 3)?
+  println(time.format_date(day, "%Y-%m-%d %H %Q"))
+  println(time.format_date(day, "%Y-%m-%d %Q %H"))
+  println(time.parse_date("x", "%Y-%m-%d %H %Q"))
+  println(time.parse("x", "%Y-%m-%d %H:%M:%S %z %Q"))
+  -- Two specifiers that do not fit: the first of them is named.
+  println(time.format_date(day, "%Y-%m-%d %z %H"))
+  println(time.format_date(day, "%Y-%m-%d %H %z"))
+  -- One that does not fit, and fields too few.
+  println(time.parse("x", "%H %z"))
+  println(time.parse_date("x", "%H"))
+  println(time.parse_date("x", "%Y %H"))
+  -- Fields too few alone.
+  println(time.parse_date("x", "%Y"))
+  Ok(())
+}

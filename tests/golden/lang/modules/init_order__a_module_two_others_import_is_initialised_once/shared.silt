@@ -1,0 +1,4 @@
+pub let vs = {
+  println("shared is initialised")
+  1
+}

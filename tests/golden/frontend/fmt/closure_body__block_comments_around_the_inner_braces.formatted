@@ -1,0 +1,11 @@
+-- cmd: fmt
+-- A `{- -}` comment at the inner braces stays between the tokens it
+-- stood between, the braces apart.
+fn main() {
+  let a = { x -> {- in front -} x + 1 {- behind -} {- between -} }
+  let b = { x -> {- at the arrow -} x + 1 }
+  let c = { x -> {- one -} -- two
+    x
+  }
+  println((a(1), b(1), c(1)))
+}
