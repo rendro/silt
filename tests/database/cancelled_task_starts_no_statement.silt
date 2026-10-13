@@ -5,6 +5,17 @@
 --
 -- The task cancels itself, so the cancel comes at a known place,
 -- whatever the machine does.
+--
+-- That nothing was started is not read off the table at a moment the
+-- case picks: a statement that was sent might not be there yet. The
+-- program itself would say so: the task prints a line if it gets past
+-- `postgres.execute`, and a task of `main` prints whatever the stream's
+-- channel gives, and when it is closed. A program does not end while a
+-- task is at work or a stream's sender runs, so had a statement been
+-- started, its line would be in the output before the program ends.
+-- With nothing started those lines are never printed, the reader waits
+-- on a channel nobody sends on and is dropped as the program ends, and
+-- the counts are of a table that nothing writes to any more.
 import channel
 import env
 import postgres
@@ -43,7 +54,10 @@ fn main() {
       let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancelled", [])
       let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancelled (who text)", [])
       let own: Channel(task.Handle(())) = channel.new(1)
-      let said: Channel(String) = channel.new(4)
+      let said: Channel(String) = channel.new(1)
+      let streams: Channel(
+        Channel(Result(Map(String, postgres.Value), postgres.PostgresError)),
+      ) = channel.new(1)
       let t = task.spawn { ->
         let _ = postgres.execute(
           pool,
@@ -55,28 +69,33 @@ fn main() {
           _ -> ()
         }
         channel.send(said, "cancelled, and still running")
-        let rows = postgres.stream(
+        match postgres.stream(
           pool,
           "INSERT INTO silt_database_cancelled VALUES ('a stream after the cancel') RETURNING who",
           [],
-        )
-        channel.send(
-          said,
-          match rows {
-            Ok(_) -> "postgres.stream gave a channel"
-            Err(e) -> "postgres.stream: {e.message()}"
-          },
-        )
+        ) {
+          Ok(rows) -> channel.send(streams, rows)
+          Err(e) -> println("postgres.stream: {e.message()}")
+        }
         let _ = postgres.execute(
           pool,
           "INSERT INTO silt_database_cancelled VALUES ('a statement after the cancel')",
           [],
         )
-        channel.send(said, "not reached")
+        println("the task went on after postgres.execute")
       }
       channel.send(own, t)
       println(channel.receive(said))
-      println(channel.receive(said))
+      match channel.receive(streams) {
+        channel.Message(rows) -> {
+          println("postgres.stream gave the task a channel")
+          let _ = task.spawn { ->
+            channel.each(rows) { _ -> println("the stream's channel gave something") }
+            println("the stream's channel was closed")
+          }
+        }
+        _ -> println("postgres.stream gave the task no channel")
+      }
       let before = count(
         pool,
         "SELECT 1 FROM silt_database_cancelled WHERE who = 'before the cancel'",
@@ -84,7 +103,6 @@ fn main() {
       let all = count(pool, "SELECT 1 FROM silt_database_cancelled")
       println("rows from before the cancel: {before}")
       println("rows in the table: {all}")
-      println("a third word from the task: {channel.try_receive(said)}")
       let _ = postgres.execute(pool, "DROP TABLE silt_database_cancelled", [])
       postgres.close(pool)
     }

@@ -1,7 +1,10 @@
 -- The receiver of a `postgres.stream` reads one row of 2,000 and closes
 -- the channel. The stream's sender, which by then waits for room in the
 -- channel (it holds 256 rows), ends: the pool answers afterwards, and
--- the program ends when `main` returns.
+-- the program ends when `main` returns. That it ends is what the case
+-- holds: with a sender that went on waiting the program would print the
+-- same four lines and never exit, and the suite would report that it
+-- did not exit within its 60 seconds.
 import channel
 import env
 import map

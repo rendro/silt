@@ -5,8 +5,10 @@
 -- The statement waits for an advisory lock that `main` holds in a
 -- transaction, so it is in flight for as long as the case needs, and
 -- `main` reads in `pg_locks` whether it still waits. When `main` has
--- committed, the statement gets the lock and ends; the task, which
--- would send a word once it had the answer, sends none.
+-- committed, the statement gets the lock and ends. The task would
+-- print a line once it had the answer, and a program does not end
+-- while a task waits for a statement: the line is not in the output
+-- because the task has ended, not because the case looked too early.
 import channel
 import env
 import postgres
@@ -64,13 +66,12 @@ fn until_waiting(pool: postgres.PgPool, n: Int) -> Int {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let went_on: Channel(String) = channel.new(1)
       let done = postgres.transact(pool) { tx ->
         let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7301)", [])?
         println("main holds the lock")
         let t = task.spawn { ->
           let _ = postgres.query(pool, "SELECT pg_advisory_xact_lock(7301)", [])
-          channel.send(went_on, "the task went on")
+          println("the task went on with the statement's answer")
         }
         println("statements that wait for it in the server: {until_waiting(pool, 1)}")
         task.cancel(t)
@@ -81,7 +82,6 @@ fn main() {
       }
       println("main's transaction: {done}")
       println("statements that wait for the lock now: {until_waiting(pool, 0)}")
-      println("a word from the task: {channel.try_receive(went_on)}")
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")

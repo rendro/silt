@@ -4,4 +4,3 @@ after the cancel: 1
 the pool answers meanwhile: 1 row
 main's transaction: Ok(())
 statements that wait for the lock now: 0
-a word from the task: Empty

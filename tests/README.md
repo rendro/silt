@@ -53,12 +53,24 @@ docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_USER=silt_orm \
   -e POSTGRES_PASSWORD=silt_orm_dev -e POSTGRES_DB=silt_orm_test postgres:16
 ```
 
-Without the variable every case is skipped: it says so on stderr and
-passes, so the whole suite above stays runnable on a machine without a
-server. In CI (`CI` is set) a case without the variable fails instead:
-the job that runs this suite starts the server, and a run that tested
-nothing must not be green. No other CI job runs the suite
-(`.github/scripts/run-test-partition.sh` leaves it out).
+Without the variable every case is skipped: it writes `database case
+SKIPPED` to stderr and passes, so the whole suite above stays runnable
+on a machine without a server. `cargo nextest` shows those lines (its
+summary still counts the cases as passed). Plain `cargo test` hides the
+output of a test that passes: there a run without a server reads
+"7 passed" and says nothing more, and `cargo test --all-features --test
+database -- --nocapture` shows the lines. In CI (`CI` is set) a case
+without the variable fails instead: the job that runs this suite starts
+the server, and a run that tested nothing must not be green. No other
+CI job runs the suite (`.github/scripts/run-test-partition.sh` leaves
+it out).
+
+One run at a time against one server: the cases' tables and locks are
+named by case, not by run, so two runs of the same case at once disturb
+each other (one may wait for the other's lock and never end). Within a
+run nextest takes the cases one at a time (`.config/nextest.toml`). A
+run that was killed may leave a case's table behind; the case's next
+run drops it first.
 
 ## The formatter's property runner
 
