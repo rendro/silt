@@ -402,6 +402,11 @@ fn main() {
 /// written and the thread had unwound, and `main` could end the
 /// process in between.) Half of the runs are made with a backtrace,
 /// which takes Rust a while to write.
+///
+/// And the line is the last of stderr: `main`'s own report stands
+/// whole before Rust's lines or is not written. (The command looked
+/// whether the process was ending and then wrote; a panic between the
+/// two put the report after the line, in about one run of 200.)
 #[test]
 #[cfg(feature = "test-hooks")]
 fn the_internal_error_line_and_the_status_101_go_together() {
@@ -438,6 +443,12 @@ fn the_internal_error_line_and_the_status_101_go_together() {
             );
             let rusts = stderr.lines().any(|line| line.contains(" panicked at "));
             assert_eq!(rusts, line, "{program}, round {round}: {stderr}");
+            let last = stderr.lines().last().unwrap_or_default();
+            assert_eq!(
+                last.starts_with("silt: internal error: "),
+                line,
+                "{program}, round {round}: {stderr}"
+            );
             assert!(
                 matches!(status, Some(1 | 101)),
                 "{program}, round {round}: {status:?}"

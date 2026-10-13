@@ -221,8 +221,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // joined or cancelled are reported, and make the run fail. (Not
     // when a thread of the runtime has panicked and is ending the
     // process: nothing of the program's is reported then, here and
-    // before each report below.)
-    silt::scheduler::stand_back_for_internal_error();
+    // in each report below. See `silt::scheduler::report`.)
     let tasks_failed = report_task_failures(path, &sources, file);
     // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
@@ -243,13 +242,13 @@ pub(crate) fn vm_run_file(path: &str) {
             main_span,
             format!("main returned Err: {}", vm.show_text(payload)),
         );
-        silt::scheduler::stand_back_for_internal_error();
-        eprintln!("{}", render_human(&ProgramFiles::new(path, &sources), &d));
+        let text = render_human(&ProgramFiles::new(path, &sources), &d);
+        silt::scheduler::report(|| eprintln!("{text}"));
         silt::scheduler::exit_with_status(1);
     }
     if let Err(e) = run_result {
-        silt::scheduler::stand_back_for_internal_error();
-        eprintln!("{}", render_runtime_error(&e, path, &sources));
+        let text = render_runtime_error(&e, path, &sources);
+        silt::scheduler::report(|| eprintln!("{text}"));
         silt::scheduler::exit_with_status(1);
     }
     if tasks_failed {
@@ -294,11 +293,9 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
 /// Returns true if there was one.
 fn report_task_failures(path: &str, sources: &SourceMap, entry: FileId) -> bool {
     let failures = silt::scheduler::take_unjoined_failures();
+    let mut texts: Vec<String> = Vec::new();
     for failure in &failures.failures {
-        eprintln!(
-            "{}",
-            render_runtime_error(&failure.report_error(), path, sources)
-        );
+        texts.push(render_runtime_error(&failure.report_error(), path, sources));
     }
     let not_kept: usize = failures.not_kept.iter().map(|(_, count)| count).sum();
     if not_kept > 0 {
@@ -309,8 +306,15 @@ fn report_task_failures(path: &str, sources: &SourceMap, entry: FileId) -> bool 
             Span::point(entry, 0),
             silt::scheduler::UnjoinedFailures::not_kept_message(not_kept),
         );
-        eprintln!("{}", render_human(&ProgramFiles::new(path, sources), &d));
+        texts.push(render_human(&ProgramFiles::new(path, sources), &d));
     }
+    // (Also when there is nothing to say: a process that is ending
+    // with the internal error goes no further than here.)
+    silt::scheduler::report(|| {
+        for text in &texts {
+            eprintln!("{text}");
+        }
+    });
     !failures.is_empty()
 }
 

@@ -191,7 +191,9 @@ pub fn run_repl() {
                         }
                         "" => continue,
                         other if other.starts_with(':') && !other.starts_with("::") => {
-                            eprintln!("unknown REPL command '{other}'; type :help for the list");
+                            crate::scheduler::report(|| {
+                                eprintln!("unknown REPL command '{other}'; type :help for the list")
+                            });
                             continue;
                         }
                         _ => {}
@@ -260,17 +262,23 @@ fn evaluate(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input:
     }
     let _ = rl.add_history_entry(input);
     let evaluation = repl.eval(input);
+    let errors: Vec<String> = (evaluation.diagnostics.iter())
+        .map(|d| repl.render(d))
+        .collect();
+    let shown = match &evaluation.value {
+        Some(value) if !matches!(value, Value::Unit) => Some(repl.show(value)),
+        _ => None,
+    };
     // (What an entry was told by a runtime that has panicked is not
     // its error: the process is ending.)
-    crate::scheduler::stand_back_for_internal_error();
-    for d in &evaluation.diagnostics {
-        eprintln!("{}", repl.render(d));
-    }
-    if let Some(value) = &evaluation.value
-        && !matches!(value, Value::Unit)
-    {
-        println!("{}", repl.show(value));
-    }
+    crate::scheduler::report(|| {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        if let Some(shown) = &shown {
+            println!("{shown}");
+        }
+    });
 }
 
 /// A REPL session: one compilation session, to which each input is
@@ -440,21 +448,23 @@ impl SourceView for ReplFiles<'_> {
 /// until then a handle may still be bound, and an input may join or
 /// cancel it.
 fn report_task_failures(repl: &Repl) {
-    crate::scheduler::stand_back_for_internal_error();
     let taken = crate::scheduler::take_unjoined_failures();
+    let mut texts: Vec<String> = Vec::new();
     for failure in &taken.failures {
-        eprintln!("{}", repl.render(&failure.report_error().to_diagnostic()));
+        texts.push(repl.render(&failure.report_error().to_diagnostic()));
     }
     for (_, count) in &taken.not_kept {
-        eprintln!(
-            "{}",
-            repl.render(&Diagnostic::error(
-                crate::diagnostic::Code::UnjoinedTaskFailure,
-                Span::BUILTIN,
-                crate::scheduler::UnjoinedFailures::not_kept_message(*count),
-            ))
-        );
+        texts.push(repl.render(&Diagnostic::error(
+            crate::diagnostic::Code::UnjoinedTaskFailure,
+            Span::BUILTIN,
+            crate::scheduler::UnjoinedFailures::not_kept_message(*count),
+        )));
     }
+    crate::scheduler::report(|| {
+        for text in &texts {
+            eprintln!("{text}");
+        }
+    });
 }
 
 /// The names `<Tab>` offers before any input: the REPL's commands, the

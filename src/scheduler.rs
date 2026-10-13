@@ -57,7 +57,7 @@
 //! raised, on the thread that raised it, whatever the program's
 //! thread is doing.
 
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, ReentrantMutex};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -1007,10 +1007,12 @@ pub fn exit_on_panic() {
     });
 }
 
-/// The lock under which Rust's lines for a panic are written: the
-/// lines of two panics do not mix, and no line of another panic comes
-/// after those of the panic that ends the process.
-static PANIC_LINES: Mutex<()> = Mutex::new(());
+/// The lock under which Rust's lines for a panic and the reports of
+/// the command ([`report`]) are written: the lines of two panics do
+/// not mix, and neither a line of another panic nor a report comes
+/// after those of the panic that ends the process. (A thread may take
+/// it again: a write of a report can panic.)
+static PANIC_LINES: ReentrantMutex<()> = ReentrantMutex::new(());
 
 /// How long the process waits for Rust's lines of the panic that ends
 /// it. They go to stderr, which can be held up without end (a pipe
@@ -1097,23 +1099,36 @@ pub fn exit_with_status(status: i32) -> ! {
     std::process::exit(status)
 }
 
-/// If the process is ending with the internal error, the calling
-/// thread waits for that and never returns; otherwise it returns at
-/// once. The `silt` command calls this before it writes a report of
-/// its own while a program's threads may exist (a program's runtime
-/// error, the tasks that failed and were never joined, a test's
-/// result, the errors of a REPL entry): what a thread of a broken
-/// runtime was told is not the program's error, and nothing of the
-/// command's follows the internal-error line.
+/// Write a report of the `silt` command's own with `write`, while a
+/// program's threads may exist: a program's runtime error, the tasks
+/// that failed and were never joined, a test's result, the errors of
+/// a REPL entry. If the process is ending with the internal error
+/// nothing is written, and the calling thread waits for the end and
+/// never returns: what a thread of a broken runtime was told is not
+/// the program's error, and nothing of the command's follows the
+/// internal-error line.
 ///
-/// A report written before the panic took the state stands before the
-/// line.
-pub fn stand_back_for_internal_error() {
+/// The look and the write are one step, under the lock of the panics'
+/// lines. A panic of silt's own code that comes while a report is
+/// being written takes the state at once and its lines wait for the
+/// report: the report stands whole before them. (They were two steps,
+/// and a panic between them put the report after the line.)
+///
+/// `write` only writes. The text is made before the call: making it
+/// can run code of the program (a `Display` of its own), and a report
+/// that is held up holds up the lines of a panic, for as long as the
+/// process waits for them.
+pub fn report(write: impl FnOnce()) {
+    let lines = PANIC_LINES.lock();
     if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
+        // (Without the lock: the panic that ends the process writes
+        // its lines under it.)
+        drop(lines);
         loop {
             thread::park();
         }
     }
+    write();
 }
 
 /// End the process after a panic of silt's own code, which `payload`
