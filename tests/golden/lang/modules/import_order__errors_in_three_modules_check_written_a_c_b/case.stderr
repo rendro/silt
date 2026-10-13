@@ -1,0 +1,17 @@
+error[type]: type mismatch: expected Int, got String
+ --> a.silt:1:20
+   |
+ 1 | pub fn fa() -> Int {
+   |                    ^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> b.silt:1:20
+   |
+ 1 | pub fn fb() -> Int {
+   |                    ^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> c.silt:1:20
+   |
+ 1 | pub fn fc() -> Int {
+   |                    ^ type mismatch: expected Int, got String

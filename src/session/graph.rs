@@ -73,7 +73,11 @@ pub struct Module {
     /// The import that first brought the module into the graph: the
     /// importing module, the name written and the span of the `import`.
     pub first_import: Option<(ModuleId, Symbol, Span)>,
-    /// The module's imports, in source order.
+    /// The module's imports, in their one order (`ast::import_order`):
+    /// the order `silt fmt` writes them in, whatever order they are
+    /// written in. Every walk over the graph follows it, so the order
+    /// of the import lines decides nothing: not which module is read,
+    /// checked or initialised first, not what a cycle is named from.
     pub imports: Vec<Import>,
     /// For a host module, its index in the session's `Config::host`.
     pub host: Option<usize>,
@@ -87,7 +91,8 @@ impl Module {
         self.ast.is_none() || !self.problems.is_empty()
     }
 
-    /// The modules this module imports, in source order, each once.
+    /// The modules this module imports, in the order of `imports`,
+    /// each once.
     pub fn imported_modules(&self) -> Vec<ModuleId> {
         let mut seen = HashSet::new();
         self.imports
@@ -489,7 +494,10 @@ impl ModuleGraph {
         let module = self.module(id);
         match &module.ast {
             None => true,
-            Some(ast) => module.imports.len() == import_decls(ast).count(),
+            Some(ast) => {
+                let written = ast.decls.iter().filter(|d| matches!(d, Decl::Import(..)));
+                module.imports.len() == written.count()
+            }
         }
     }
 
@@ -503,7 +511,7 @@ impl ModuleGraph {
         sources: &mut SourceMap,
     ) {
         let decls: Vec<(Symbol, Span)> = match &self.module(id).ast {
-            Some(ast) => import_decls(ast).collect(),
+            Some(ast) => import_decls(ast),
             None => return,
         };
         let package = self.module(id).package;
@@ -816,18 +824,23 @@ pub(super) fn cell_name(n: usize) -> String {
     format!("<repl:{n}>")
 }
 
-/// The `import` declarations of `program`: the module name written and
-/// the declaration's span.
-fn import_decls(program: &ast::Program) -> impl Iterator<Item = (Symbol, Span)> + '_ {
-    program.decls.iter().filter_map(|decl| match decl {
-        Decl::Import(
-            ast::ImportTarget::Module(m)
-            | ast::ImportTarget::Items(m, _)
-            | ast::ImportTarget::Alias(m, ..),
-            span,
-        ) => Some((*m, *span)),
-        _ => None,
-    })
+/// The `import` declarations of `program` in their one order
+/// (`ast::import_order`, the order `silt fmt` writes them in, whatever
+/// order they are written in): the module name written and the
+/// declaration's span.
+fn import_decls(program: &ast::Program) -> Vec<(Symbol, Span)> {
+    let imports: Vec<(&ast::ImportTarget, Span)> = program
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            Decl::Import(target, span) => Some((target, *span)),
+            _ => None,
+        })
+        .collect();
+    ast::import_order(imports.iter().map(|(target, _)| *target))
+        .into_iter()
+        .map(|at| (imports[at].0.module(), imports[at].1))
+        .collect()
 }
 
 /// The file an `import` of a user module names.

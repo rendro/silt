@@ -834,8 +834,9 @@ impl ImportTarget {
 
 /// The one order of a file's imports: the indices of `imports` in the
 /// order `silt fmt` writes them in, which is the order the modules they
-/// name are initialised in (each after its own imports, once). The
-/// order the imports are written in carries no meaning.
+/// name are read, checked and initialised in (each after its own
+/// imports, once). The order the imports are written in carries no
+/// meaning.
 ///
 /// The imports are sorted by their text (`m`, `m as a`, `m.{ a, b }`),
 /// byte by byte; two that read the same keep their order. So modules
