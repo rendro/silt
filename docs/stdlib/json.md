@@ -208,8 +208,8 @@ fn main() {
 json.pretty(value: a) -> String
 ```
 
-Serializes any value to a pretty-printed JSON string (with indentation and
-newlines).
+Serializes a value to a pretty-printed JSON string (with indentation and
+newlines). It writes and refuses the same values as `json.stringify`.
 
 ```silt
 import json
@@ -227,9 +227,22 @@ fn main() {
 json.stringify(value: a) -> String
 ```
 
-Serializes any value to a compact JSON string. A map is written as an
+Serializes a value to a compact JSON string. A map is written as an
 object; a key of it that is no `String` is written as its shown text (so the
 `Float` key `1.0` reads `"1.0"`).
+
+`json.stringify` and `json.pretty` write the same values. A value JSON has no
+form for is a runtime error that names its kind, wherever in the value it is:
+`Bytes`, a `Set`, a function, a channel, a task handle, a TCP listener or
+stream.
+
+```text
+json.stringify: unsupported value kind Bytes
+```
+
+To send bytes as JSON, turn them into text first (`bytes.to_string`,
+`bytes.to_hex` or `bytes.to_base64`); to send a set, make a list of it
+(`set.to_list`).
 
 ```silt
 import json

@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: json.stringify: unsupported value kind Channel
+-- JSON has no form for a channel: `json.stringify` ends the program
+-- with a runtime error that names the kind (here in an `Ok`).
+import channel
+import json
+
+fn main() {
+  println(json.stringify(Ok(channel.new(1))))
+}
