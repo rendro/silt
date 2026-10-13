@@ -606,7 +606,7 @@ impl Printer<'_> {
 
     fn program(&mut self, program: &Program) -> Doc {
         let (header, blank_after_header) = self.cur.header();
-        let mut imports: Vec<(String, usize, Doc)> = Vec::new();
+        let mut imports: Vec<(&ImportTarget, usize, Doc)> = Vec::new();
         let mut others: Vec<(usize, Doc)> = Vec::new();
         for (index, decl) in program.decls.iter().enumerate() {
             if self.cur.offset() != decl_start(decl) {
@@ -616,18 +616,28 @@ impl Printer<'_> {
             }
             let doc = self.decl(decl);
             match decl {
-                Decl::Import(target, _) => imports.push((import_key(target), index, doc)),
+                Decl::Import(target, _) => imports.push((target, index, doc)),
                 _ => others.push((index, doc)),
             }
         }
-        imports.sort_by(|a, b| a.0.cmp(&b.0));
+        // The imports in their one order, which is also the order the
+        // modules are initialised in (`ast::import_order`).
+        let order = crate::ast::import_order(imports.iter().map(|(target, _, _)| *target));
+        let mut imports: Vec<Option<(usize, Doc)>> = imports
+            .into_iter()
+            .map(|(_, index, doc)| Some((index, doc)))
+            .collect();
+        let imports: Vec<(usize, Doc)> = order
+            .into_iter()
+            .filter_map(|at| imports[at].take())
+            .collect();
 
         // The header, the imports without empty lines, the other
         // declarations with one between two.
         let mut out = Vec::new();
         let first = imports
             .first()
-            .map(|(_, index, _)| *index)
+            .map(|(index, _)| *index)
             .or(others.first().map(|(index, _)| *index));
         if !header.is_nil() {
             out.push(header);
@@ -642,7 +652,7 @@ impl Printer<'_> {
             }
         }
         let has_imports = !imports.is_empty();
-        for (i, (_, _, doc)) in imports.into_iter().enumerate() {
+        for (i, (_, doc)) in imports.into_iter().enumerate() {
             if i > 0 {
                 out.push(Doc::HardLine);
             }
@@ -2427,26 +2437,5 @@ fn decl_start(decl: &Decl) -> u32 {
         Decl::Trait(t) => t.span.start,
         Decl::TraitImpl(t) => t.span.start,
         Decl::Import(_, span) | Decl::Let { span, .. } => span.start,
-    }
-}
-
-/// What imports are sorted by: the import as it is written.
-fn import_key(target: &ImportTarget) -> String {
-    match target {
-        ImportTarget::Module(module) => intern::resolve(*module),
-        ImportTarget::Items(module, items) => {
-            let items: Vec<String> = items
-                .iter()
-                .map(|(item, _)| intern::resolve(*item))
-                .collect();
-            format!("{}.{{ {} }}", intern::resolve(*module), items.join(", "))
-        }
-        ImportTarget::Alias(module, alias, _) => {
-            format!(
-                "{} as {}",
-                intern::resolve(*module),
-                intern::resolve(*alias)
-            )
-        }
     }
 }

@@ -70,12 +70,7 @@ pub fn selected_tests<'a>(
 pub fn looks_like_test_file(program: &Program) -> bool {
     !test_functions(program).is_empty()
         || program.decls.iter().any(|decl| match decl {
-            Decl::Import(
-                ImportTarget::Module(module)
-                | ImportTarget::Items(module, _)
-                | ImportTarget::Alias(module, ..),
-                _,
-            ) => resolve(*module) == TEST_MODULE,
+            Decl::Import(target, _) => resolve(target.module()) == TEST_MODULE,
             _ => false,
         })
 }

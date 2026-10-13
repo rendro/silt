@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Three modules import each other in a circle. The cycle is named from the
+-- module that comes first in the order `silt fmt` writes the imports, a, and
+-- is reported at the import that closes it, in c.silt, in whatever order the
+-- import lines are written.
+import a
+import b
+import c
+
+fn main() {
+  println(a.fa() + b.fb() + c.fc())
+}

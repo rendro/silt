@@ -1,0 +1,6 @@
+import shared
+
+pub let vl = {
+  println("left is initialised")
+  shared.vs + 10
+}

@@ -1,0 +1,5 @@
+import c
+
+pub fn fb() -> Int {
+  2
+}

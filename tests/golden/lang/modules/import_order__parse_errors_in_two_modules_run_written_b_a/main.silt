@@ -1,0 +1,10 @@
+-- exit: 1
+-- Each of two modules has a parse error. The errors come in the order
+-- `silt fmt` writes the imports, a before b, in whatever order the import
+-- lines are written (only the line of the import in the label moves).
+import b
+import a
+
+fn main() {
+  println(a.fa() + b.fb())
+}

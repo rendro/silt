@@ -1,0 +1,8 @@
+-- Two modules import a third: it is initialised once, before the first
+-- of them, whichever of the two is written first.
+import right
+import left
+
+fn main() {
+  println(left.vl + right.vr)
+}
