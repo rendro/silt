@@ -625,17 +625,11 @@ impl<'a> Compiler<'a> {
     /// top-level initialiser can therefore use every declaration of
     /// the program, wherever it is written.
     fn decls_in_init_order<'d>(decls: &'d [Decl], let_order: &[Span]) -> Vec<&'d Decl> {
+        let imports = crate::ast::imports_in_order(decls).into_iter();
         let (mut lets, definitions): (Vec<&Decl>, Vec<&Decl>) = decls
             .iter()
+            .filter(|decl| !matches!(**decl, Decl::Import(..)))
             .partition(|decl| matches!(**decl, Decl::Let { .. }));
-        let (imports, definitions): (Vec<&Decl>, Vec<&Decl>) = definitions
-            .into_iter()
-            .partition(|decl| matches!(**decl, Decl::Import(..)));
-        let order = crate::ast::import_order(imports.iter().filter_map(|decl| match decl {
-            Decl::Import(target, _) => Some(target),
-            _ => None,
-        }));
-        let imports = order.into_iter().map(|at| imports[at]);
         // (A `let` the order does not name, which no checked module
         // has, keeps its place after the ones it names.)
         let mut place: HashMap<Span, usize> = HashMap::with_capacity(let_order.len());

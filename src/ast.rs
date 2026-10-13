@@ -856,6 +856,37 @@ pub fn import_order<'a>(imports: impl IntoIterator<Item = &'a ImportTarget>) -> 
     order.into_iter().map(|(_, index)| index).collect()
 }
 
+/// The `import` declarations among `decls`, in their one order
+/// ([`import_order`]).
+pub fn imports_in_order(decls: &[Decl]) -> Vec<&Decl> {
+    let imports: Vec<(&Decl, &ImportTarget)> = decls
+        .iter()
+        .filter_map(|decl| match decl {
+            Decl::Import(target, _) => Some((decl, target)),
+            _ => None,
+        })
+        .collect();
+    import_order(imports.iter().map(|(_, target)| *target))
+        .into_iter()
+        .map(|at| imports[at].0)
+        .collect()
+}
+
+/// The declarations of a file in the order `silt fmt` writes them: the
+/// imports first, in their one order ([`imports_in_order`]), then the
+/// others as they are written. Whoever asks which of two declarations
+/// comes first asks here, so the answer does not change when the file
+/// is formatted.
+pub fn decls_as_formatted(decls: &[Decl]) -> Vec<&Decl> {
+    let mut formatted = imports_in_order(decls);
+    formatted.extend(
+        decls
+            .iter()
+            .filter(|decl| !matches!(decl, Decl::Import(..))),
+    );
+    formatted
+}
+
 #[derive(Debug, Clone)]
 pub enum Decl {
     Fn(FnDecl),

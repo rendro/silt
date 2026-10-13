@@ -192,13 +192,19 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
 /// body is unaffected.) Two items of `import m.{ ... }` lines are left
 /// to the resolver: they are one binding when they name one definition.
 ///
+/// Of two declarations that bind one name, the first is the one `silt
+/// fmt` writes first (`ast::decls_as_formatted`: the imports in their
+/// one order, then the others as written), and the other is the error:
+/// the same declaration is blamed in whatever order the import lines
+/// are written, and before and after the file is formatted.
+///
 /// Returns the first `keep` of the errors, and how many more there are.
 fn top_level_name_errors(decls: &[Decl], keep: usize) -> (Vec<Diagnostic>, usize) {
     let mut first: std::collections::HashMap<Symbol, (Span, &'static str, bool)> =
         std::collections::HashMap::new();
     let mut errors = Vec::new();
     let mut more = 0;
-    for decl in decls {
+    for decl in decls_as_formatted(decls) {
         let is_item = matches!(decl, Decl::Import(ImportTarget::Items(..), _));
         for (name, span, kind) in top_level_binders(decl) {
             if intern::resolve(name) == "_" {

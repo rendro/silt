@@ -829,17 +829,12 @@ pub(super) fn cell_name(n: usize) -> String {
 /// order they are written in): the module name written and the
 /// declaration's span.
 fn import_decls(program: &ast::Program) -> Vec<(Symbol, Span)> {
-    let imports: Vec<(&ast::ImportTarget, Span)> = program
-        .decls
-        .iter()
+    ast::imports_in_order(&program.decls)
+        .into_iter()
         .filter_map(|decl| match decl {
-            Decl::Import(target, span) => Some((target, *span)),
+            Decl::Import(target, span) => Some((target.module(), *span)),
             _ => None,
         })
-        .collect();
-    ast::import_order(imports.iter().map(|(target, _)| *target))
-        .into_iter()
-        .map(|at| (imports[at].0.module(), imports[at].1))
         .collect()
 }
 
