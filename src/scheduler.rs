@@ -38,10 +38,25 @@
 //! nobody, and holds nothing up. After an error of the program's own
 //! code nothing is waited for: `Scheduler::stop_tasks` ends the
 //! owner's tasks where they are.
+//!
+//! # A panic of the runtime
+//!
+//! A panic inside a builtin, a host function, an I/O operation or the
+//! host's clock is caught where that is called, and is the error of
+//! the call. A panic anywhere else on a thread of the runtime (a
+//! worker, the timer's thread, a thread of the I/O pool) is a bug of
+//! the runtime itself, whose state is not to be trusted after it: it
+//! ends the program. It is caught at the top of the thread
+//! ([`Inner::fail`]), no worker takes another task, and the program's
+//! own thread gives the panic on, out of the call of the VM it is in
+//! or makes next ([`Scheduler::give_panic_on`]): where a panic of the
+//! program's own code on that thread comes out.
 
 use parking_lot::{Condvar, Mutex};
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -255,6 +270,44 @@ struct Inner {
     failed_tasks: Mutex<FailedTasks>,
     /// The host's clock and stderr.
     io: HostIo,
+    /// Set when a thread of the runtime has panicked
+    /// ([`Inner::fail`]): no task runs another slice, and the
+    /// program's thread gives the panic on.
+    broken: AtomicBool,
+    /// That panic.
+    panic: Mutex<Panicked>,
+    /// Test-only: where the runtime is to panic ([`PanicAt`]).
+    #[cfg(any(test, feature = "test-hooks"))]
+    panic_at: Mutex<Option<PanicAt>>,
+}
+
+/// The panic of a thread of the runtime ([`Inner::fail`]).
+#[derive(Default)]
+struct Panicked {
+    /// What it was raised with, until the program's thread takes it.
+    payload: Option<Box<dyn Any + Send>>,
+    /// Its message, for a call of the VM that comes after that.
+    text: String,
+}
+
+/// Test-only: a place in the runtime's own code, outside every catch
+/// of a builtin's or a host function's panic, where a test makes the
+/// runtime panic once (`silt::vm::panic_for_test`). No silt program
+/// can make it panic there.
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanicAt {
+    /// On the worker that is about to run a slice of the spawned task
+    /// with this id (`<handle:id>`), when the task has run before: a
+    /// task that waited is lost as it is woken.
+    Task(usize),
+    /// On the program's own thread, when a wait of its code has ended.
+    Program,
+    /// On the timer's thread, when a deadline is due.
+    Timer,
+    /// On a thread of the I/O pool, when its operation has returned
+    /// and before the value is handed to the waiter.
+    Io,
 }
 
 /// The tasks that wait for a worker.
@@ -405,6 +458,10 @@ impl Scheduler {
                 global_io_timeout,
                 failed_tasks: Mutex::new(FailedTasks::default()),
                 io,
+                broken: AtomicBool::new(false),
+                panic: Mutex::default(),
+                #[cfg(any(test, feature = "test-hooks"))]
+                panic_at: Mutex::new(None),
             }
         });
         Scheduler {
@@ -437,7 +494,7 @@ impl Scheduler {
         let mut stack_bytes = Some(WORKER_STACK_BYTES);
         while handles.len() < num_workers {
             let inner = self.inner.clone();
-            let mut builder = thread::Builder::new();
+            let mut builder = thread::Builder::new().name("silt-worker".into());
             if let Some(bytes) = stack_bytes {
                 builder = builder.stack_size(bytes);
             }
@@ -491,6 +548,9 @@ impl Scheduler {
         vm.over = handle.deadline().map(|_| handle.over_flag());
         if self.inner.shutdown.load(Ordering::SeqCst) {
             return Err("cannot spawn a task: the VM that ran the program has been dropped".into());
+        }
+        if self.inner.broken.load(Ordering::SeqCst) {
+            return Err("cannot spawn a task: a thread of the runtime has panicked".into());
         }
         // A target without threads runs the tasks on the threads that
         // wait ([`Scheduler::block_thread`]).
@@ -679,6 +739,8 @@ impl Scheduler {
             .lock()
             .retain(|other| !Arc::ptr_eq(other, &park));
         *inner.main.lock() = None;
+        // The wait is over too when a thread of the runtime panicked.
+        inner.give_panic_on();
         group
     }
 
@@ -741,9 +803,12 @@ impl Scheduler {
                 inner.wait_thread(&park)
             }
         };
-        // The verdict is the program's thread's.
+        // The verdict is the program's thread's, and so is the panic
+        // of a thread of the runtime, which ended the wait of every
+        // thread: the others get the error of a program that is gone.
         let verdict = if main {
             *inner.main.lock() = None;
+            inner.give_panic_on();
             inner.deadlock.lock().take()
         } else {
             None
@@ -766,7 +831,116 @@ impl Scheduler {
     }
 }
 
+impl Scheduler {
+    /// If a thread of the runtime has panicked, the panic goes on
+    /// here, on the calling thread: the program's own, between two
+    /// slices of its code, where no catch of a builtin's panic is
+    /// around it. See [`Inner::fail`].
+    pub(crate) fn give_panic_on(&self) {
+        self.inner.give_panic_on();
+    }
+
+    /// What a thread of the runtime that is not the scheduler's own
+    /// raises when a panic has escaped to its top.
+    pub(crate) fn alarm(&self) -> Alarm {
+        Alarm(Arc::downgrade(&self.inner))
+    }
+
+    /// Test-only: the runtime panics once at `at`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn panic_for_test(&self, at: PanicAt) {
+        *self.inner.panic_at.lock() = Some(at);
+    }
+
+    /// Test-only: panic on the calling thread, the program's own, if
+    /// a test asked for it ([`PanicAt::Program`]).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn panic_of_the_program_for_test(&self) {
+        self.inner.panic_for_test(|at| at == PanicAt::Program);
+    }
+}
+
+/// How a thread of the runtime that the scheduler did not start (a
+/// thread of the I/O pool) says that a panic escaped to its top
+/// ([`Inner::fail`]). It does not keep the scheduler alive: when the
+/// program is gone there is nobody to tell.
+pub(crate) struct Alarm(Weak<Inner>);
+
+impl Alarm {
+    pub(crate) fn raise(&self, payload: Box<dyn Any + Send>) {
+        if let Some(inner) = self.0.upgrade() {
+            inner.fail(payload);
+        }
+    }
+}
+
 impl Inner {
+    /// A panic escaped to the top of a thread of the runtime: a
+    /// worker, the timer's thread, a thread of the I/O pool. (A panic
+    /// inside a builtin, a host function or an I/O operation never
+    /// comes here: it is caught at the call and is the call's error.)
+    /// The state of the runtime is not to be trusted from here on (a
+    /// queue or a wait may be half updated, a task is lost), so the
+    /// program ends: no worker takes another task, and the program's
+    /// own thread gives the panic on ([`Inner::give_panic_on`]), now
+    /// if it waits, else after the slice it is running or at its next
+    /// call of the VM.
+    ///
+    /// The thread that calls this has stopped using the runtime. What
+    /// is touched here is the panic's own slot and flag, and the list
+    /// of the threads that wait with the two flags of each: a list and
+    /// flags, which no panic leaves half written, behind locks that a
+    /// panic releases and does not poison.
+    fn fail(&self, payload: Box<dyn Any + Send>) {
+        {
+            let mut panic = self.panic.lock();
+            // The first panic is the one that is reported; what
+            // follows it on a runtime that is broken says nothing new.
+            if self.broken.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            panic.text = crate::vm::panic_message(&payload).to_string();
+            panic.payload = Some(payload);
+        }
+        self.poke_threads();
+    }
+
+    /// See [`Scheduler::give_panic_on`]. The thread that comes first
+    /// resumes the panic itself; a call that comes later panics with
+    /// its message.
+    fn give_panic_on(&self) {
+        if !self.broken.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut panic = self.panic.lock();
+        let payload = panic.payload.take();
+        let text = panic.text.clone();
+        drop(panic);
+        match payload {
+            Some(payload) => resume_unwind(payload),
+            None => panic!("a thread of this VM's runtime has panicked: {text}"),
+        }
+    }
+
+    /// Whether the workers and the timer's thread are to end: the
+    /// program is gone, or a thread of the runtime has panicked.
+    fn ending(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst) || self.broken.load(Ordering::SeqCst)
+    }
+
+    /// Test-only: panic if a test asked for a panic at a place that
+    /// `here` says this is.
+    #[cfg(any(test, feature = "test-hooks"))]
+    fn panic_for_test(&self, here: impl FnOnce(PanicAt) -> bool) {
+        let mut at = self.panic_at.lock();
+        if let Some(place) = *at
+            && here(place)
+        {
+            *at = None;
+            panic!("a panic made for a test: {place:?}");
+        }
+    }
+
     /// The owner tag of a task spawned here and now: that of the task
     /// whose slice the thread runs, or the one set for the program.
     fn current_owner(&self) -> u64 {
@@ -839,7 +1013,7 @@ impl Inner {
     }
 
     /// The next task for a worker; `None` when the scheduler has shut
-    /// down. A worker that finds no task looks on for a moment before
+    /// down, or a thread of the runtime has panicked. A worker that finds no task looks on for a moment before
     /// it sleeps: in a program whose tasks wake each other, the next
     /// one comes within microseconds, and putting a thread to sleep
     /// and waking it costs more than that.
@@ -849,7 +1023,7 @@ impl Inner {
         loop {
             {
                 let mut queue = self.queue.lock();
-                if self.shutdown.load(Ordering::SeqCst) {
+                if self.ending() {
                     return None;
                 }
                 if let Some(task) = self.pop(&mut queue) {
@@ -862,8 +1036,7 @@ impl Inner {
                 if looks {
                     let until = std::time::Instant::now() + SPIN;
                     while !found && std::time::Instant::now() < until {
-                        found = self.queued.load(Ordering::SeqCst) > 0
-                            || self.shutdown.load(Ordering::SeqCst);
+                        found = self.queued.load(Ordering::SeqCst) > 0 || self.ending();
                         std::hint::spin_loop();
                     }
                 }
@@ -875,7 +1048,7 @@ impl Inner {
             // A task queued since the look above is found here: who
             // queued it saw this worker looking and woke nobody.
             let mut queue = self.queue.lock();
-            if self.shutdown.load(Ordering::SeqCst) {
+            if self.ending() {
                 return None;
             }
             if let Some(task) = self.pop(&mut queue) {
@@ -1073,6 +1246,12 @@ impl Inner {
 
     fn sleep_thread(self: &Arc<Self>, park: &ThreadPark) -> Resumed {
         loop {
+            // A thread of the runtime has panicked: nothing ends the
+            // wait any more, and it is over (`Inner::fail` pokes the
+            // threads that wait).
+            if self.broken.load(Ordering::SeqCst) {
+                return Resumed::Cancelled;
+            }
             // What there is to do for a thread that waits.
             if !self.has_workers.load(Ordering::SeqCst) {
                 let task = self.pop(&mut self.queue.lock());
@@ -1177,6 +1356,8 @@ impl Inner {
             self.end_task(task);
             return None;
         }
+        #[cfg(any(test, feature = "test-hooks"))]
+        self.panic_for_test(|at| at == PanicAt::Task(task.id) && task.ran);
         // The tasks that this slice spawns belong to the owner of this
         // task. See `Vm::set_task_owner`.
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(task.handle.owner())));
@@ -1282,6 +1463,11 @@ impl Inner {
     /// stop stays once it is there, so the last of those events sees
     /// it.
     fn check(&self, group: &Group) {
+        // After a panic of the runtime the counts say nothing, and the
+        // program's thread has been told.
+        if self.broken.load(Ordering::SeqCst) {
+            return;
+        }
         // A first look without a lock.
         if group.parking.load(Ordering::SeqCst) < group.live.load(Ordering::SeqCst) {
             return;
@@ -1515,20 +1701,35 @@ impl Drop for Scheduler {
 }
 
 /// A worker: take a task off the queue, run it for a slice, again.
+/// A panic that escapes it, from a slice or from the scheduler's own
+/// code, ends the program ([`Inner::fail`]); the worker has stopped
+/// using the runtime when it says so, and ends.
 fn worker_loop(inner: Arc<Inner>) {
-    while let Some(task) = inner.next_task() {
-        inner.run_slice(task);
+    let work = AssertUnwindSafe(|| {
+        while let Some(task) = inner.next_task() {
+            inner.run_slice(task);
+        }
+    });
+    if let Err(payload) = catch_unwind(work) {
+        inner.fail(payload);
     }
 }
 
 /// The thread that fires the timer: wait for the next deadline, or for
-/// an earlier one to be armed, and end the waits that are due.
+/// an earlier one to be armed, and end the waits that are due. A panic
+/// that escapes it ends the program, as a worker's does.
 fn timer_loop(inner: Arc<Inner>) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| fire_timers(&inner))) {
+        inner.fail(payload);
+    }
+}
+
+fn fire_timers(inner: &Inner) {
     let timer = inner.parking.timer().clone();
     loop {
         {
             let mut thread = inner.timer_lock.lock();
-            if inner.shutdown.load(Ordering::SeqCst) {
+            if inner.ending() {
                 return;
             }
             match timer.real_wait() {
@@ -1539,9 +1740,11 @@ fn timer_loop(inner: Arc<Inner>) {
                 }
             }
         }
-        if inner.shutdown.load(Ordering::SeqCst) {
+        if inner.ending() {
             return;
         }
+        #[cfg(any(test, feature = "test-hooks"))]
+        inner.panic_for_test(|at| at == PanicAt::Timer);
         // A deadline that ended nobody's wait (a channel that closed
         // unheard) may have been the last thing pending.
         if timer.fire_due(&inner.parking) > 0 {

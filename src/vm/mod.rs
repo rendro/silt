@@ -13,6 +13,7 @@ mod runtime;
 mod show;
 
 pub use error::VmError;
+pub(crate) use io::panic_message;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::IoFailure;
@@ -57,6 +58,23 @@ pub fn io_pool_threads(vm: &Vm) -> usize {
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn io_pool_live_threads(vm: &Vm) -> usize {
     vm.runtime.io_pool.live_threads()
+}
+
+/// Test-only: a place in the runtime's own code where a test makes it
+/// panic ([`panic_for_test`]).
+#[cfg(any(test, feature = "test-hooks"))]
+pub use crate::scheduler::PanicAt;
+
+/// Test-only: the runtime of this VM panics once at `at`, in its own
+/// code, outside every catch of a builtin's or a host function's
+/// panic: what no silt program can make it do. It is how the tests
+/// see what a panic of the runtime does to a program.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn panic_for_test(vm: &Vm, at: PanicAt) {
+    match at {
+        PanicAt::Io => vm.runtime.io_pool.panic_for_test(),
+        at => vm.runtime.scheduler.panic_for_test(at),
+    }
 }
 
 /// Test-only: run a panicking operation on this VM's I/O pool, wait

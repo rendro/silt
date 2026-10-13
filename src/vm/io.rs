@@ -280,7 +280,7 @@ fn write_caught(output: &dyn Output, text: &str) -> io::Result<()> {
 }
 
 /// The message a panic was raised with.
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
     } else if let Some(s) = payload.downcast_ref::<String>() {

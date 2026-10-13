@@ -1066,6 +1066,10 @@ impl Vm {
     /// task of the scheduler while it does; where the code parks, the
     /// thread waits, and the builtin that parked runs again when its
     /// wait has ended.
+    ///
+    /// If a thread of the runtime has panicked, the program's own
+    /// thread gives the panic on from here, before a slice and where
+    /// it waits (`Scheduler::give_panic_on`): the program has ended.
     pub(super) fn run_thread(
         &mut self,
         floor: usize,
@@ -1073,11 +1077,18 @@ impl Vm {
     ) -> Result<Slice, VmError> {
         let scheduler = self.runtime.scheduler.clone();
         let _running = scheduler.enter();
+        let program = self.is_program();
+        if program {
+            scheduler.give_panic_on();
+        }
         // No slice starts once the step budget is used up, as for a
         // task (`execute_slice`).
         self.runtime.charge(0)?;
         let mut run = start(self)?;
         loop {
+            if program {
+                scheduler.give_panic_on();
+            }
             match run {
                 Slice::Done(_) => return Ok(run),
                 // The frame gave way to other tasks, which a thread
@@ -1092,7 +1103,7 @@ impl Vm {
                     // A wait is a step of the budget (the error comes
                     // before the next slice).
                     let _ = self.runtime.charge(1);
-                    let who = match self.is_program() {
+                    let who = match program {
                         true => Blocks::Program,
                         false => Blocks::Thread,
                     };
@@ -1104,6 +1115,10 @@ impl Vm {
                         e
                     })?;
                     self.woken = Some(woken);
+                    #[cfg(any(test, feature = "test-hooks"))]
+                    if program {
+                        scheduler.panic_of_the_program_for_test();
+                    }
                 }
             }
             // A thread whose slices all end in a wait never runs one
