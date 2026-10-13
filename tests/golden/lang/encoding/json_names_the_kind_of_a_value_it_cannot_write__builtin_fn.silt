@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: json.stringify: unsupported value kind Fn
+-- A function of a builtin module is an `Fn` to `json.stringify` too,
+-- and no JSON is written for it (here in a tuple).
+import int
+import json
+
+fn main() {
+  println(json.stringify((1, int.abs)))
+}

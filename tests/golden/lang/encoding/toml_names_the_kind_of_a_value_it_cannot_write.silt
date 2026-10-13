@@ -1,5 +1,6 @@
 -- A value TOML has no form for is refused by its kind: a function is an
--- `Fn` whether the program wrote it or a builtin module has it, and a
+-- `Fn` whether the program wrote it, a builtin module has it or it is
+-- the constructor of a variant (which was written as its name), and a
 -- set and a channel are named as what they are; the message names the
 -- function that was called. (It held the text of the value as Rust
 -- shows it, which for a builtin function was once its name and then
@@ -19,6 +20,7 @@ fn said(result: Result(String, toml.TomlError)) -> String {
 fn main() {
   println(said(toml.stringify(#{"a": int.abs})))
   println(said(toml.stringify(#{"a": { x -> x + 1 }})))
+  println(said(toml.stringify(#{"a": Some})))
   println(said(toml.stringify(#{"a": #[1, 2]})))
   println(said(toml.pretty(#{"a": channel.new(1)})))
   println(said(toml.stringify(#{"a": ()})))
