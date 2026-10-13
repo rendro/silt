@@ -112,10 +112,36 @@ fn extract_http_response(val: &Value) -> Result<(u16, &[u8], &crate::value::Reco
     Ok((status, body, fields))
 }
 
+/// The body of `response` as the program gets it, which is what the
+/// transport library gives: the bytes that arrived, unpacked if the
+/// response says that they are packed (`Content-Encoding: gzip`).
+/// `None` for a body of more than `limit` bytes: no more than
+/// `limit + 1` bytes of it are read.
+#[cfg(feature = "http")]
+fn body_within(
+    response: &mut ureq::http::Response<ureq::Body>,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, ureq::Error> {
+    use std::io::Read;
+    // The library's own limit counts the bytes on the wire, before it
+    // unpacks them, and is not set (`as_reader` has none): this one
+    // counts what the reader gives, and is the only one.
+    let most = u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1));
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(most)
+        .read_to_end(&mut body)?;
+    Ok((body.len() <= limit).then_some(body))
+}
+
+/// The `Response` of a response of the transport library, or `None`
+/// if its body is larger than a body may be ([`wire::BODY_MAX`]).
 #[cfg(feature = "http")]
 fn ureq_response_to_value(
     mut response: ureq::http::Response<ureq::Body>,
-) -> Result<Value, ureq::Error> {
+) -> Result<Option<Value>, ureq::Error> {
     let status = response.status().as_u16();
     // The names are in lower case, as the names of a request's
     // headers are (`http::HeaderName` holds them so).
@@ -125,9 +151,8 @@ fn ureq_response_to_value(
             headers.insert(Value::String(name.as_str().into()), Value::String(v.into()));
         }
     }
-    // The body is the bytes that arrived.
-    let body = response.body_mut().read_to_vec()?;
-    Ok(make_http_response(status, headers, body))
+    let body = body_within(&mut response, wire::BODY_MAX)?;
+    Ok(body.map(|body| make_http_response(status, headers, body)))
 }
 
 /// Scrub URL userinfo (`user:password@`) from an error message.
@@ -329,14 +354,20 @@ fn refuse_port(url: &str) -> Option<Value> {
 /// What a request of the transport library came to, as the value of
 /// `http.get` and `http.request`: `Ok(Response)`, or `Err(HttpError)`
 /// for a failure of the request or of the read of the body
-/// ([`http_error`]).
+/// ([`http_error`]), and for a body that is larger than a body may be:
+/// `InvalidResponse`, as for a head that is too large.
 #[cfg(feature = "http")]
 fn finish_http_response(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     url: &str,
 ) -> Value {
     match result.and_then(ureq_response_to_value) {
-        Ok(response) => Value::variant(bv::OK, vec![response]),
+        Ok(Some(response)) => Value::variant(bv::OK, vec![response]),
+        Ok(None) => {
+            let why = format!("the body is larger than {} MiB", wire::BODY_MAX >> 20);
+            let error = Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(why.into())]);
+            Value::variant(bv::ERR, vec![error])
+        }
         Err(error) => Value::variant(bv::ERR, vec![http_error(&error, url)]),
     }
 }
@@ -1666,7 +1697,7 @@ mod http_error_tests {
 
     /// The URL of a server that takes one connection, reads what the
     /// client sends first, and does `act` with the connection.
-    fn server(act: impl FnOnce(TcpStream) + Send + 'static) -> String {
+    pub(super) fn server(act: impl FnOnce(TcpStream) + Send + 'static) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
         let addr = listener.local_addr().expect("its address");
         std::thread::spawn(move || {
@@ -1680,7 +1711,7 @@ mod http_error_tests {
 
     /// The variant of the error in `value` and what it carries:
     /// `InvalidUrl(not a url)`, `ClosedEarly`.
-    fn failure(value: &Value) -> String {
+    pub(super) fn failure(value: &Value) -> String {
         let named = [
             (bv::HTTP_CONNECT, "Connect"),
             (bv::HTTP_TLS, "Tls"),
@@ -1852,5 +1883,100 @@ mod http_error_tests {
         let headers = [("name".to_string(), "a\nb".to_string())];
         let got = failure(&do_http_request("GET", url, b"", &headers));
         assert!(got.starts_with("Other("), "{got}");
+    }
+}
+
+/// What the client makes of the body of a response: the bytes that
+/// arrived, unpacked if the response says that they are packed, and
+/// never more of them than a body may have.
+#[cfg(all(test, feature = "http"))]
+mod http_body_tests {
+    use super::http_error_tests::{failure, server};
+    use super::*;
+    use std::io::Write;
+
+    /// `pieces` times `piece`, packed as `Content-Encoding: gzip` says.
+    fn packed(pieces: usize, piece: &[u8]) -> Vec<u8> {
+        let level = flate2::Compression::fast();
+        let mut packer = flate2::write::GzEncoder::new(Vec::new(), level);
+        for _ in 0..pieces {
+            packer.write_all(piece).expect("packed");
+        }
+        packer.finish().expect("packed")
+    }
+
+    /// The URL of a server that answers one request with `body`, which
+    /// it says is packed.
+    fn says_packed(body: Vec<u8>) -> String {
+        server(move |mut stream| {
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            // (A client that has read enough goes away.)
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        })
+    }
+
+    /// The body and the names of the headers of the `Response` in
+    /// `value`.
+    fn response(value: &Value) -> (Vec<u8>, Vec<String>) {
+        let Value::Variant(result) = value else {
+            panic!("no Result: {value}");
+        };
+        let [Value::Record(record)] = result.fields() else {
+            panic!("no response: {value}");
+        };
+        let (Some(Value::Bytes(body)), Some(Value::Map(headers))) =
+            (record.get("body"), record.get("headers"))
+        else {
+            panic!("no Response: {value}");
+        };
+        let names = headers.keys().map(Value::to_string).collect();
+        (body.to_vec(), names)
+    }
+
+    #[test]
+    fn a_packed_body_arrives_unpacked_and_exact() {
+        let every_byte: Vec<u8> = (0..=255).collect();
+        let (body, headers) = response(&do_http_get(&says_packed(packed(1, &every_byte))));
+        assert_eq!(body, every_byte);
+        // What described the packed bytes describes nothing the
+        // program has.
+        assert_eq!(headers, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_limit_counts_what_a_packed_body_unpacks_to() {
+        let mib = vec![0u8; 1024 * 1024];
+        // At the limit: all of it.
+        let at = packed(wire::BODY_MAX >> 20, &mib);
+        let (body, _) = response(&do_http_get(&says_packed(at)));
+        assert_eq!(body.len(), wire::BODY_MAX);
+        // One byte more, and 128 MiB, in an answer that is small on
+        // the wire: refused, however little arrived.
+        let mut one_over = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        one_over
+            .write_all(&vec![0u8; wire::BODY_MAX + 1])
+            .expect("packed");
+        for over in [one_over.finish().expect("packed"), packed(128, &mib)] {
+            assert!(over.len() < 1024 * 1024, "{} bytes on the wire", over.len());
+            assert_eq!(
+                failure(&do_http_get(&says_packed(over))),
+                "InvalidResponse(the body is larger than 10 MiB)"
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_that_says_packed_and_is_not_is_invalid_response() {
+        let got = failure(&do_http_get(&says_packed(b"plain bytes".to_vec())));
+        assert!(got.starts_with("InvalidResponse("), "{got}");
+        // Packed bytes that stop short of their end.
+        let mut cut = packed(1, &[7u8; 4096]);
+        cut.truncate(cut.len() / 2);
+        let got = failure(&do_http_get(&says_packed(cut)));
+        assert!(got.starts_with("InvalidResponse("), "{got}");
     }
 }

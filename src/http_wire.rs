@@ -26,6 +26,7 @@ use std::time::Duration;
 // ── The limits of the server ─────────────────────────────────────
 //
 // All of them, and nowhere else. `docs/stdlib/http.md` states them.
+// ([`BODY_MAX`] is the client's limit too: `crate::builtins::http`.)
 
 /// The longest request head (request line and headers), and the
 /// longest trailer section of a chunked body. Beyond it: 431.
@@ -34,8 +35,9 @@ pub const HEAD_MAX: usize = 64 * 1024;
 /// The most headers of a request. Beyond it: 431.
 pub const HEADERS_MAX: usize = 100;
 
-/// The longest request body, given by its length or in chunks.
-/// Beyond it: 413.
+/// The longest body that is read off the wire, given by its length or
+/// in chunks: a request's by the server (beyond it: 413), and a
+/// response's by the client (beyond it: `Err(InvalidResponse(_))`).
 pub const BODY_MAX: usize = 10 * 1024 * 1024;
 
 /// The longest method. A connection whose first bytes are no method

@@ -70,7 +70,7 @@ not do that conversion for you. `HttpError` implements the built-in
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large) |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and does not unpack), or its body is larger than 10 MiB |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body |
 | `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
@@ -91,7 +91,11 @@ connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
 for network errors (DNS failure, connection refused, timeout, TLS).
 The names of the response's headers are in lower case
 (`map.get(resp.headers, "content-type")`), and its body is the bytes the
-server sent.
+server sent. A body that the server packed (`Content-Encoding: gzip`) is
+unpacked: `resp.body` is the content, and `content-encoding` and
+`content-length`, which describe the packed bytes, are then not in
+`resp.headers`. A body of more than 10 MiB, counted as the program would
+get it, is `Err(InvalidResponse(_))`: no part of it is returned.
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
@@ -253,6 +257,7 @@ one. There is no `Server` header.
 | The head of a request: request line and headers | 64 KiB | `431`, connection closed |
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10 MiB | `413`, connection closed |
+| The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10 MiB | `Err(InvalidResponse("the body is larger than 10 MiB"))`; no more than one byte beyond the limit is read |
 | The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10 MiB more: about 1.5 GiB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |

@@ -102,7 +102,7 @@ its own (`float.Empty` is not `int.Empty`).
 | `Tls(String)` | message | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed |
 | `InvalidUrl(String)` | url | the URL cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none |
-| `InvalidResponse(String)` | message | what the server sent is no HTTP |
+| `InvalidResponse(String)` | message | what the server sent is no HTTP, or its body is larger than 10 MiB |
 | `ClosedEarly` | — | the server went away before the response was complete |
 | `StatusCode(Int, String)` | status, body preview | non-success status |
 | `Other(String)` | message | unclassified transport error |
