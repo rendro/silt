@@ -5366,3 +5366,359 @@ mod calls_and_returns {
         }
     }
 }
+
+/// A read of a part of a value (a record's field, a tuple's element,
+/// what a variant holds, a map's value), `Dup`, and `?` on an `Ok` or a
+/// `Some` copy the part where it goes: over the value on top, or above
+/// it.
+mod parts_in_place {
+    use std::collections::BTreeMap;
+
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+    use crate::bytecode::{Const, VmClosure};
+    use crate::value::{HostFn, HostShape};
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn name(e: &mut Emitter, s: &str) -> Const {
+        e.constant(Value::String(s.into()), span()).unwrap()
+    }
+
+    /// A part of every sort the instruction loop knows (`Sort` in
+    /// run.rs), and of several kinds that own something.
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Unit,
+            Value::VmClosure(Arc::new(VmClosure {
+                function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+                upvalues: vec![],
+            })),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::anon_record([("x", Value::Int(1))]),
+            Value::variant(bv::SOME, vec![float(0.5)]),
+        ]
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// The record `{ a: 5, b: part }`, and the place of `b` in it.
+    fn record(part: &Value) -> (Value, usize) {
+        let record = Value::anon_record([("a", Value::Int(5)), ("b", part.clone())]);
+        let Value::Record(fields) = &record else {
+            unreachable!()
+        };
+        let index = fields.named().position(|(name, _)| name == "b").unwrap();
+        (record, index)
+    }
+
+    /// What the stack holds after the instruction `read` emits has run
+    /// on `whole`, which lay above a value that must stay.
+    fn read(whole: Value, read: impl FnOnce(&mut Emitter)) -> Vec<Value> {
+        let (vm, run, _) = left_by(|e, _| {
+            push(e, Value::Int(99));
+            push(e, whole);
+            read(e);
+            // (The loop runs until the script would return; the stack
+            // is looked at where an error of a last instruction leaves
+            // it.)
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Add, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        run.expect_err("unit and unit are not added");
+        vm.stack.clone()
+    }
+
+    /// The part alone, over the whole: the stack is the value below and
+    /// the part.
+    fn over(part: &Value, whole: Value, emit: impl FnOnce(&mut Emitter)) {
+        let stack = read(whole.clone(), emit);
+        assert_eq!(stack.len(), 2, "{part:?} of {whole:?}: {stack:?}");
+        assert_eq!(stack[0], Value::Int(99));
+        assert!(same(&stack[1], part), "{:?} is not {part:?}", stack[1]);
+    }
+
+    /// The part above the whole, which stays.
+    fn above(part: &Value, whole: Value, emit: impl FnOnce(&mut Emitter)) {
+        let stack = read(whole.clone(), emit);
+        assert_eq!(stack.len(), 3, "{part:?} of {whole:?}: {stack:?}");
+        assert_eq!(stack[0], Value::Int(99));
+        assert_eq!(format!("{:?}", stack[1]), format!("{whole:?}"));
+        assert!(same(&stack[2], part), "{:?} is not {part:?}", stack[2]);
+    }
+
+    #[test]
+    fn a_field_of_every_kind_is_written_over_its_record() {
+        for part in samples() {
+            let (whole, index) = record(&part);
+            over(&part, whole.clone(), |e| {
+                e.emit(Asm::GetField { index }, span()).unwrap();
+            });
+            over(&part, whole, |e| {
+                let b = name(e, "b");
+                e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            });
+        }
+    }
+
+    #[test]
+    fn what_an_ok_or_a_some_holds_is_written_over_it() {
+        for part in samples() {
+            for tag in [bv::OK, bv::SOME] {
+                over(&part, Value::variant(tag, vec![part.clone()]), |e| {
+                    e.emit(Asm::QuestionMark, span()).unwrap();
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn a_pattern_reads_a_part_of_every_kind_above_the_value() {
+        for part in samples() {
+            let (whole, index) = record(&part);
+            above(&part, whole.clone(), |e| {
+                e.emit(Asm::DestructRecordField { index }, span()).unwrap();
+            });
+            above(&part, whole, |e| {
+                let b = name(e, "b");
+                e.emit(Asm::DestructRecordFieldNamed { name: b }, span())
+                    .unwrap();
+            });
+            let tuple = Value::tuple(vec![Value::Int(5), part.clone()]);
+            above(&part, tuple, |e| {
+                e.emit(Asm::DestructTuple { index: 1 }, span()).unwrap();
+            });
+            let variant = Value::variant(bv::ERR, vec![part.clone()]);
+            above(&part, variant, |e| {
+                e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
+            });
+            let map = Value::map(BTreeMap::from([
+                (Value::String("j".into()), Value::Int(5)),
+                (Value::String("k".into()), part.clone()),
+            ]));
+            above(&part, map, |e| {
+                let k = name(e, "k");
+                e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+            });
+            above(&part, part.clone(), |e| {
+                e.emit(Asm::Dup, span()).unwrap();
+            });
+        }
+    }
+
+    /// A function the VM calls with values and that gives what `make`
+    /// makes of copies of them: a value that holds them and that
+    /// nothing else holds.
+    fn holder(name: &str, make: fn(&[Value]) -> Value) -> Value {
+        Value::HostFn(Arc::new(HostFn {
+            name: name.to_string(),
+            call: Arc::new(move |parts| Ok(make(parts))),
+            returns: HostShape::Any,
+        }))
+    }
+
+    /// Emit the making of a value that holds `count` new probes, by
+    /// the function `holder`; `k` is the maker of the probes.
+    fn held(e: &mut Emitter, k: Const, holder: Value, count: usize) {
+        push(e, holder);
+        for _ in 0..count {
+            probe(e, k);
+        }
+        e.emit(Asm::Call { argc: count }, span()).unwrap();
+    }
+
+    fn record_of(parts: &[Value]) -> Value {
+        Value::anon_record([("a", parts[0].clone()), ("b", parts[1].clone())])
+    }
+
+    fn ok_of(parts: &[Value]) -> Value {
+        Value::variant(bv::OK, parts.to_vec())
+    }
+
+    fn tuple_of(parts: &[Value]) -> Value {
+        Value::tuple(parts.to_vec())
+    }
+
+    fn map_of(parts: &[Value]) -> Value {
+        Value::map(BTreeMap::from([
+            (Value::String("j".into()), parts[0].clone()),
+            (Value::String("k".into()), parts[1].clone()),
+        ]))
+    }
+
+    /// The probes that ended, in order, when the script has run: probe
+    /// 1 lies below everything until the script returns; `whole` makes
+    /// a value of the next probes; `read` reads a part of it; the two
+    /// `Pop`s that follow take off what `read` left (a `Pop` of the
+    /// unit pushed for it, where `read` left one value).
+    fn ends(
+        whole: impl FnOnce(&mut Emitter, Const),
+        left: usize,
+        read: Asm<'static>,
+    ) -> Vec<usize> {
+        let (vm, run, log) = left_by(|e, k| {
+            probe(e, k);
+            whole(e, k);
+            e.emit(read, span()).unwrap();
+            for _ in left..2 {
+                e.emit(Asm::Unit, span()).unwrap();
+            }
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert!(vm.stack.is_empty());
+        ended(&log)
+    }
+
+    /// The record ends at the read of its field, with the field that
+    /// was not read (3); the field that was read (2) lives on the
+    /// stack until it is taken off.
+    #[test]
+    fn a_field_read_lets_go_of_the_record_and_keeps_the_field() {
+        let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
+        let (_, a) = record(&Value::Unit);
+        let a = if a == 0 { 1 } else { 0 };
+        assert_eq!(ends(whole, 1, Asm::GetField { index: a }), [3, 2, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
+        let (vm, run, log) = left_by(|e, k| {
+            probe(e, k);
+            whole(e, k);
+            let b = name(e, "b");
+            e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert!(vm.stack.is_empty());
+        assert_eq!(ended(&log), [2, 3, 1]);
+    }
+
+    /// `?` lets go of the `Ok` and keeps what it held.
+    #[test]
+    fn a_question_mark_lets_go_of_the_ok_and_keeps_what_it_held() {
+        let whole = |e: &mut Emitter, k| held(e, k, holder("ok", ok_of), 1);
+        assert_eq!(ends(whole, 1, Asm::QuestionMark), [2, 1]);
+    }
+
+    /// A pattern's read and `Dup` keep the value: its parts end when
+    /// it is taken off the stack, each once.
+    #[test]
+    fn a_pattern_read_holds_the_part_beside_the_value() {
+        let (_, b) = record(&Value::Unit);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
+        let read = Asm::DestructRecordField { index: b };
+        assert_eq!(ends(whole, 2, read), [2, 3, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("tuple", tuple_of), 2);
+        assert_eq!(ends(whole, 2, Asm::DestructTuple { index: 1 }), [2, 3, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("ok", ok_of), 1);
+        let read = Asm::DestructVariant { index: 0 };
+        assert_eq!(ends(whole, 2, read), [2, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("ok", ok_of), 1);
+        assert_eq!(ends(whole, 2, Asm::Dup), [2, 1]);
+        for named in ["record", "map"] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                let key = name(e, if named == "map" { "k" } else { "b" });
+                if named == "map" {
+                    held(e, k, holder("map", map_of), 2);
+                    e.emit(Asm::DestructMapValue { key }, span()).unwrap();
+                } else {
+                    held(e, k, holder("record", record_of), 2);
+                    e.emit(Asm::DestructRecordFieldNamed { name: key }, span())
+                        .unwrap();
+                }
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Unit, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert_eq!(run.unwrap(), Value::Unit);
+            assert!(vm.stack.is_empty());
+            assert_eq!(ended(&log), [2, 3, 1], "{named}");
+        }
+    }
+
+    /// A read that fails: a field read has taken the value off the
+    /// stack, and it ends with the error; a pattern's read and `?`
+    /// leave it where it was.
+    #[test]
+    fn a_read_that_fails_leaves_the_stack_as_it_was() {
+        type Read = fn(&mut Emitter);
+        let off: [Read; 2] = [
+            |e| {
+                e.emit(Asm::GetField { index: 0 }, span()).unwrap();
+            },
+            |e| {
+                let b = name(e, "b");
+                e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            },
+        ];
+        let kept: [Read; 6] = [
+            |e| {
+                e.emit(Asm::DestructRecordField { index: 0 }, span())
+                    .unwrap();
+            },
+            |e| {
+                let b = name(e, "b");
+                e.emit(Asm::DestructRecordFieldNamed { name: b }, span())
+                    .unwrap();
+            },
+            |e| {
+                e.emit(Asm::DestructTuple { index: 0 }, span()).unwrap();
+            },
+            |e| {
+                e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
+            },
+            |e| {
+                let k = name(e, "k");
+                e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+            },
+            |e| {
+                e.emit(Asm::QuestionMark, span()).unwrap();
+            },
+        ];
+        let failed = |read: Read| {
+            // Probe 1 lies below; probe 2, a function, is what the
+            // instruction is given: it is no record, tuple, variant or
+            // map.
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                read(e);
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.unwrap_err().type_confusion);
+            (vm.stack.len(), ended(&log))
+        };
+        for read in off {
+            assert_eq!(failed(read), (1, vec![2]));
+        }
+        for read in kept {
+            assert_eq!(failed(read), (2, vec![]));
+        }
+    }
+}

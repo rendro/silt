@@ -280,18 +280,20 @@ macro_rules! push_copy {
     };
 }
 
-/// Write a copy of the value in slot `$from` of the stack over slot
-/// `$to` ([`put`]), for the instructions that set a slot from another.
+/// Write a copy of the value in the place `$value` over slot `$to` of
+/// the stack ([`put`]), for the instructions that set a slot from
+/// another, or from a part of the value that is in it: the copy is
+/// made before the slot's old value is let go of.
 macro_rules! set_copy {
-    ($stack:expr, $to:expr, $from:expr) => {{
-        let (to, from) = ($to, $from);
-        match sort(&$stack[from]) {
+    ($stack:expr, $to:expr, $value:expr) => {{
+        let to = $to;
+        match sort(&$value) {
             Sort::Int(n) => put(&mut $stack[to], Value::Int(n)),
             Sort::Float(f) => put(&mut $stack[to], Value::Float(f)),
             Sort::Bool(b) => put(&mut $stack[to], Value::Bool(b)),
             Sort::Unit => put(&mut $stack[to], Value::Unit),
             Sort::Closure(_) | Sort::Other(_) => {
-                let value = $stack[from].clone();
+                let value = $value.clone();
                 put(&mut $stack[to], value);
             }
         }
@@ -655,7 +657,7 @@ impl Vm {
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {
                     let top = self.stack.len() - 1;
-                    set_copy!(self.stack, base + slot, top);
+                    set_copy!(self.stack, base + slot, self.stack[top]);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
                     Some(value) => push_copy!(self.stack, *value),
@@ -742,7 +744,7 @@ impl Vm {
                             if !self.tco_elided.is_empty() {
                                 self.tco_elided.prune(self.frames.len());
                             }
-                            set_copy!(self.stack, base - 1, top);
+                            set_copy!(self.stack, base - 1, self.stack[top]);
                             self.stack.truncate(base);
                             load!();
                         }
@@ -862,34 +864,49 @@ impl Vm {
                     let list = ok!(crate::builtins::collections::concat(&a, &b));
                     self.stack.push(list);
                 }
+                // A read of a field writes the field over the record,
+                // on top of the stack: the record is not taken off and
+                // the field pushed. A read that fails takes the record
+                // off first.
                 Instr::GetField { index } => {
-                    let target = pop(&mut self.stack);
-                    let field = match &target {
-                        Value::Record(record) => record.fields().get(index).cloned(),
+                    let top = self.stack.len() - 1;
+                    let field = match &self.stack[top] {
+                        Value::Record(record) => record.fields().get(index),
                         _ => None,
                     };
-                    let field = ok!(field.ok_or_else(|| {
-                        VmError::type_confusion(format!(
-                            "cannot access field {index} of {}",
-                            self.user_facing_type_name(&target)
-                        ))
-                    }));
-                    self.stack.push(field);
+                    match field {
+                        Some(field) => set_copy!(self.stack, top, *field),
+                        None => {
+                            let target = pop(&mut self.stack);
+                            fail!(VmError::type_confusion(format!(
+                                "cannot access field {index} of {}",
+                                self.user_facing_type_name(&target)
+                            )));
+                        }
+                    }
                 }
                 Instr::GetFieldNamed { name } => {
-                    let target = pop(&mut self.stack);
+                    let top = self.stack.len() - 1;
                     let name = chunk.string(name);
-                    let field = match &target {
-                        Value::Record(record) => ok!(record.get(name).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!("record has no field '{name}'"))
-                        })),
-                        other => fail!(VmError::type_confusion(format!(
-                            "cannot access field '{}' on {}",
-                            name,
-                            self.user_facing_type_name(other)
-                        ))),
+                    let field = match &self.stack[top] {
+                        Value::Record(record) => record.get(name),
+                        _ => None,
                     };
-                    self.stack.push(field);
+                    match field {
+                        Some(field) => set_copy!(self.stack, top, *field),
+                        None => {
+                            let target = pop(&mut self.stack);
+                            fail!(match &target {
+                                Value::Record(_) =>
+                                    VmError::type_confusion(format!("record has no field '{name}'")),
+                                other => VmError::type_confusion(format!(
+                                    "cannot access field '{}' on {}",
+                                    name,
+                                    self.user_facing_type_name(other)
+                                )),
+                            });
+                        }
+                    }
                 }
                 Instr::Jump { to } => ip = to,
                 Instr::JumpIfFalse { to } => {
@@ -906,8 +923,8 @@ impl Vm {
                 }
                 Instr::Pop => pop_done(&mut self.stack),
                 Instr::Dup => {
-                    let val = peek(&self.stack).clone();
-                    self.stack.push(val);
+                    let top = self.stack.len() - 1;
+                    push_copy!(self.stack, self.stack[top]);
                 }
                 Instr::TestTag { tag } => {
                     let expected = chunk.tag(tag);
@@ -947,43 +964,36 @@ impl Vm {
                     };
                     self.stack.push(Value::Bool(result));
                 }
-                Instr::DestructTuple { index } => {
-                    let val = peek(&self.stack).clone();
-                    if let Value::Tuple(elems) = val {
-                        let elem = ok!(elems.get(index).ok_or_else(|| {
-                            VmError::type_confusion(format!(
-                                "tuple destructure: expected at least {} elements, got {}",
-                                index + 1,
-                                elems.len()
-                            ))
-                        }));
-                        self.stack.push(elem.clone());
-                    } else {
-                        fail!(VmError::type_confusion(format!(
-                            "tuple destructure: expected tuple, got {}",
-                            self.user_facing_type_name(&val)
-                        )));
-                    }
-                }
-                Instr::DestructVariant { index } => {
-                    let field = match peek(&self.stack) {
-                        Value::Variant(variant) => {
-                            let fields = variant.fields();
-                            ok!(fields.get(index).cloned().ok_or_else(|| {
-                                VmError::type_confusion(format!(
-                                    "variant destructure: field index {} out of bounds (variant has {} fields)",
-                                    index,
-                                    fields.len()
-                                ))
-                            }))
-                        }
-                        other => fail!(VmError::type_confusion(format!(
-                            "variant destructure: expected variant, got {}",
-                            self.user_facing_type_name(other)
+                // A pattern's read of a part of the value on top pushes
+                // a copy of the part as a read of a local pushes one.
+                Instr::DestructTuple { index } => match peek(&self.stack) {
+                    Value::Tuple(elems) => match elems.get(index) {
+                        Some(elem) => push_copy!(self.stack, *elem),
+                        None => fail!(VmError::type_confusion(format!(
+                            "tuple destructure: expected at least {} elements, got {}",
+                            index + 1,
+                            elems.len()
                         ))),
-                    };
-                    self.stack.push(field);
-                }
+                    },
+                    other => fail!(VmError::type_confusion(format!(
+                        "tuple destructure: expected tuple, got {}",
+                        self.user_facing_type_name(other)
+                    ))),
+                },
+                Instr::DestructVariant { index } => match peek(&self.stack) {
+                    Value::Variant(variant) => match variant.fields().get(index) {
+                        Some(field) => push_copy!(self.stack, *field),
+                        None => fail!(VmError::type_confusion(format!(
+                            "variant destructure: field index {} out of bounds (variant has {} fields)",
+                            index,
+                            variant.fields().len()
+                        ))),
+                    },
+                    other => fail!(VmError::type_confusion(format!(
+                        "variant destructure: expected variant, got {}",
+                        self.user_facing_type_name(other)
+                    ))),
+                },
                 Instr::DestructList { index } => {
                     let element = match peek(&self.stack) {
                         Value::List(xs) => ok!(xs.get(index).ok_or_else(|| {
@@ -1017,29 +1027,31 @@ impl Vm {
                 }
                 Instr::DestructRecordField { index } => {
                     let field = match peek(&self.stack) {
-                        Value::Record(record) => record.fields().get(index).cloned(),
+                        Value::Record(record) => record.fields().get(index),
                         _ => None,
                     };
-                    let field = ok!(field.ok_or_else(|| {
-                        VmError::type_confusion(format!(
+                    match field {
+                        Some(field) => push_copy!(self.stack, *field),
+                        None => fail!(VmError::type_confusion(format!(
                             "record destructure: no field {index} in {}",
                             self.user_facing_type_name(peek(&self.stack))
-                        ))
-                    }));
-                    self.stack.push(field);
+                        ))),
+                    }
                 }
                 Instr::DestructRecordFieldNamed { name } => {
                     let name = chunk.string(name);
-                    let field = match peek(&self.stack) {
-                        Value::Record(record) => ok!(record.get(name).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!("record has no field '{name}'"))
-                        })),
+                    match peek(&self.stack) {
+                        Value::Record(record) => match record.get(name) {
+                            Some(field) => push_copy!(self.stack, *field),
+                            None => fail!(VmError::type_confusion(format!(
+                                "record has no field '{name}'"
+                            ))),
+                        },
                         other => fail!(VmError::type_confusion(format!(
                             "record destructure: expected record, got {}",
                             self.user_facing_type_name(other)
                         ))),
-                    };
-                    self.stack.push(field);
+                    }
                 }
                 Instr::DestructRecordRest { excluded } => {
                     let val = pop(&mut self.stack);
@@ -1067,21 +1079,19 @@ impl Vm {
                 }
                 Instr::DestructMapValue { key } => {
                     // (The key is the constant itself, a String.)
-                    let value = match peek(&self.stack) {
-                        Value::Map(map) => {
-                            ok!(map.get(chunk.constant(key)).cloned().ok_or_else(|| {
-                                VmError::type_confusion(format!(
-                                    "map has no key '{}'",
-                                    chunk.string(key)
-                                ))
-                            }))
-                        }
+                    match peek(&self.stack) {
+                        Value::Map(map) => match map.get(chunk.constant(key)) {
+                            Some(value) => push_copy!(self.stack, *value),
+                            None => fail!(VmError::type_confusion(format!(
+                                "map has no key '{}'",
+                                chunk.string(key)
+                            ))),
+                        },
                         other => fail!(VmError::type_confusion(format!(
                             "map destructure: expected map, got {}",
                             self.user_facing_type_name(other)
                         ))),
-                    };
-                    self.stack.push(value);
+                    }
                 }
                 Instr::Recur {
                     argc: arg_count,
@@ -1089,33 +1099,32 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        set_copy!(self.stack, base + first_slot + i, start + i);
+                        set_copy!(self.stack, base + first_slot + i, self.stack[start + i]);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
                 }
+                // `?` on an `Ok` or a `Some` writes what the variant
+                // holds over the variant, as a read of a field does.
                 Instr::QuestionMark => {
-                    let val = peek(&self.stack).clone();
-                    match val {
-                        Value::Variant(variant) => match variant {
-                            _ if variant.is(bv::OK) || variant.is(bv::SOME) => {
-                                pop(&mut self.stack);
-                                self.stack.push(match variant.fields() {
-                                    [value] => value.clone(),
-                                    _ => Value::Unit,
-                                });
+                    let top = self.stack.len() - 1;
+                    match &self.stack[top] {
+                        Value::Variant(variant) if variant.is(bv::OK) || variant.is(bv::SOME) => {
+                            match variant.fields() {
+                                [value] => set_copy!(self.stack, top, *value),
+                                _ => put(&mut self.stack[top], Value::Unit),
                             }
-                            _ if variant.is(bv::ERR) || variant.is(bv::NONE) => {
-                                returned!(pop(&mut self.stack));
-                            }
-                            _ => fail!(VmError::type_confusion(format!(
-                                "`?` applies only to Result or Option; got variant `{}`",
-                                variant.name()
-                            ))),
-                        },
-                        _ => fail!(VmError::type_confusion(format!(
+                        }
+                        Value::Variant(variant) if variant.is(bv::ERR) || variant.is(bv::NONE) => {
+                            returned!(pop(&mut self.stack));
+                        }
+                        Value::Variant(variant) => fail!(VmError::type_confusion(format!(
+                            "`?` applies only to Result or Option; got variant `{}`",
+                            variant.name()
+                        ))),
+                        other => fail!(VmError::type_confusion(format!(
                             "`?` applies only to Result or Option; got {}",
-                            self.user_facing_type_name(&val)
+                            self.user_facing_type_name(other)
                         ))),
                     }
                 }
