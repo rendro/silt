@@ -5,19 +5,26 @@
 -- A listener is served by one `http.serve` at a time: two servers on
 -- one listener would take each other's connections. The second call
 -- is an error at once.
+import bytes
 import http
+import result
 import task
 import tcp
+
+-- A body as text.
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("(no text)")
+}
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let _first = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: "first", headers: #{} } }
+    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("first"), headers: #{} } }
   }
   -- The server serves when it has answered.
   match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
-    Ok(r) -> println("{r.status} {r.body}")
+    Ok(r) -> println("{r.status} {text(r.body)}")
     Err(e) -> println("error: {e.message()}")
   }
-  http.serve(listener) { _req -> http.Response { status: 200, body: "second", headers: #{} } }
+  http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("second"), headers: #{} } }
 }

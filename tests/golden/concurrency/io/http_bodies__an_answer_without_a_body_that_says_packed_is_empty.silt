@@ -1,0 +1,42 @@
+-- timeout: 30
+-- requires-feature: http
+-- An answer that has no body by its nature (to `HEAD`; a 204; a 304) has
+-- none for the client, also when it says `Content-Encoding: gzip`, as a
+-- server does that would pack what it answers to `GET`: nothing is
+-- read, so nothing is unpacked that is not there. The headers that
+-- describe a packed body are not in `resp.headers` then; the others are.
+import bytes
+import http
+import list
+import map
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  let status = match req.path {
+    "/204" -> 204
+    "/304" -> 304
+    _ -> 200
+  }
+  let body = match req.path {
+    "/head" -> bytes.from_string("what a GET would get")
+    _ -> bytes.empty()
+  }
+  http.Response { status: status, body: body, headers: #{ "content-encoding": "gzip", "etag": "x" } }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  list.each([(http.HEAD, "/head"), (http.GET, "/204"), (http.GET, "/304")]) { (method, path) ->
+    match http.request(method, "http://127.0.0.1:{port}{path}", bytes.empty(), #{}) {
+      Ok(resp) -> {
+        let named = ["content-encoding", "content-length", "etag"] |> list.filter { name -> map.contains(resp.headers, name) }
+        println("{method} {path}: {resp.status}, {bytes.length(resp.body)} bytes, of the three headers: {named}")
+      }
+      Err(e) -> println("{method} {path}: Err {e.message()}")
+    }
+  }
+  task.cancel(server)
+}

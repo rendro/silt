@@ -1,0 +1,97 @@
+-- timeout: 30
+-- requires-feature: http
+-- The answer to a `HEAD` request has no body, and says the length of
+-- the body the handler returned: 256 bytes here, of every value. On the
+-- wire nothing follows the head, and `http.request` gets an empty body
+-- with the header that says 256.
+import bytes
+import http
+import list
+import map
+import option
+import result
+import string
+import task
+import tcp
+
+fn line_end() -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  "{cr}\n"
+}
+
+-- What follows the head of `message`: its body, as far as it is there.
+fn body_of(message: Bytes) -> Option(Bytes) {
+  let nl = line_end()
+  match bytes.index_of(message, bytes.from_string("{nl}{nl}")) {
+    Some(at) -> Some(bytes.slice(message, at + 4, bytes.length(message)))
+    None -> None
+  }
+}
+
+-- Reads a message from `conn`: until its head is there and its body
+-- has `length` bytes, or until the other end has closed. All of it.
+fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  loop got = bytes.empty() {
+    let whole = match body_of(got) {
+      Some(body) -> length == Some(bytes.length(body))
+      None -> false
+    }
+    match whole {
+      true -> got
+      false -> match tcp.read(conn, 4096) {
+        Ok(more) -> match bytes.length(more) {
+          0 -> got
+          _ -> loop(bytes.concat(got, more))
+        }
+        Err(_) -> got
+      }
+    }
+  }
+}
+
+fn read_body(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  body_of(read_message(conn, length)) |> option.unwrap_or(bytes.empty())
+}
+
+-- The line of a message's head that says the length of its body.
+fn length_line(message: Bytes) -> String {
+  let head = match bytes.index_of(message, bytes.from_string("{line_end()}{line_end()}")) {
+    Some(at) -> bytes.to_string(bytes.slice(message, 0, at))
+    None -> Ok("")
+  }
+  match head {
+    Ok(head) -> string.lines(head)
+      |> list.map { line -> string.to_lower(string.trim(line)) }
+      |> list.filter { line -> string.starts_with(line, "content-length:") }
+      |> list.head
+      |> option.unwrap_or("no content-length")
+    Err(_) -> "a head that is no text"
+  }
+}
+
+fn answer(req: http.Request) -> http.Response {
+  let body = bytes.from_list(0..255) |> result.unwrap_or(bytes.empty())
+  println("  the handler is asked with {req.method} and answers {bytes.length(body)} bytes")
+  http.Response { status: 200, body: body, headers: #{} }
+}
+
+fn main() {
+  let nl = line_end()
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+
+  println("http.request")
+  match http.request(http.HEAD, "http://127.0.0.1:{port}/", bytes.empty(), #{}) {
+    Ok(resp) -> println("  gets {resp.status}, content-length {map.get(resp.headers, "content-length")}, {bytes.length(resp.body)} bytes")
+    Err(e) -> println("  {e.message()}")
+  }
+
+  println("a client written by hand")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  let _ = tcp.write(conn, bytes.from_string("HEAD / HTTP/1.1{nl}Host: x{nl}Connection: close{nl}{nl}"))
+  let answered = read_message(conn, None)
+  println("  on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head")
+  tcp.close(conn)
+  task.cancel(server)
+}

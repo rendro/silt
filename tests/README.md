@@ -24,13 +24,53 @@ checks for the library and the binary only
 ## One suite, one area
 
 ```
-cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, oracle, concurrency
+cargo nextest run --all-features --test lang          # lang, meta, typecheck, cli, lsp, frontend, heavy, oracle, concurrency, database
 SILT_GOLDEN_FILTER=lang/traits/ cargo nextest run --all-features --test golden
 ```
 
 The golden cases and their format are described in `golden/README.md`.
 The full repro corpus runs with
 `SILT_GOLDEN_FULL_CORPUS=1 cargo nextest run --all-features --test golden -E 'test(verdict_shard)'`.
+
+## The database suite
+
+`tests/database` runs silt programs that use the `postgres` module
+against a PostgreSQL server: each `<case>.silt` must exit with status 0,
+write nothing to stderr and write exactly `<case>.stdout`. The programs
+read the server's URL from `SILT_TEST_POSTGRES_URL`; the role it names
+must be allowed to create tables in the database, and needs nothing
+more. Each case drops the tables it makes.
+
+```
+SILT_TEST_POSTGRES_URL='postgres://silt_orm:silt_orm_dev@127.0.0.1/silt_orm_test?sslmode=disable' \
+  cargo nextest run --all-features --test database
+```
+
+A server for it, if none is at hand (the one CI starts):
+
+```
+docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_USER=silt_orm \
+  -e POSTGRES_PASSWORD=silt_orm_dev -e POSTGRES_DB=silt_orm_test postgres:16
+```
+
+Without the variable every case is skipped: it writes `database case
+SKIPPED` to stderr and passes, so the whole suite above stays runnable
+on a machine without a server. `cargo nextest` shows those lines (its
+summary still counts the cases as passed). Plain `cargo test` hides the
+output of a test that passes: there a run without a server reads
+"7 passed" and says nothing more, and `cargo test --all-features --test
+database -- --nocapture` shows the lines. In CI (`CI` is set) a case
+without the variable fails instead: the job that runs this suite starts
+the server, and a run that tested nothing must not be green. No other
+CI job runs the suite (`.github/scripts/run-test-partition.sh` leaves
+it out).
+
+One run at a time against one server: the cases' tables and locks are
+named by case, not by run, so two runs of the same case at once disturb
+each other (one may wait for the other's lock and never end). Within a
+run nextest takes the cases one at a time (`.config/nextest.toml`). A
+run that was killed may leave a case's table behind; the case's next
+run drops it first.
 
 ## The formatter's property runner
 

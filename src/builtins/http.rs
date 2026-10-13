@@ -13,7 +13,7 @@ use std::time::Duration;
 use super::encoding::form_decode_component;
 use super::typed::builtins;
 #[cfg(feature = "http")]
-use super::typed::{Arg, Map, TcpListener, unsound};
+use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
@@ -39,13 +39,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
             format!("http invalid response: {m}")
         }
         ("ClosedEarly", []) => "http connection closed before response completed".to_string(),
-        ("StatusCode", [Value::Int(code), Value::String(body)]) => {
-            if body.is_empty() {
-                format!("http status {code}")
-            } else {
-                format!("http status {code}: {body}")
-            }
-        }
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
@@ -54,16 +47,12 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 // ── HTTP dispatch ───────────────────────────────────────────────────
 
 #[cfg(feature = "http")]
-fn make_http_response(
-    status: u16,
-    headers: BTreeMap<Value, Value>,
-    body: std::string::String,
-) -> Value {
+fn make_http_response(status: u16, headers: BTreeMap<Value, Value>, body: Vec<u8>) -> Value {
     Value::builtin_record(
         ty::RESPONSE,
         [
             ("status", Value::Int(status as i64)),
-            ("body", Value::String(body.into())),
+            ("body", Value::Bytes(Arc::new(body))),
             ("headers", Value::map(headers)),
         ],
     )
@@ -90,9 +79,7 @@ fn make_http_request_value(
 }
 
 #[cfg(feature = "http")]
-fn extract_http_response(
-    val: &Value,
-) -> Result<(u16, std::string::String, &crate::value::Record), VmError> {
+fn extract_http_response(val: &Value) -> Result<(u16, &[u8], &crate::value::Record), VmError> {
     // (What is no `Response` is no value the handler's type has.)
     let fields = match val {
         Value::Record(record) if record.type_id() == ty::RESPONSE => record,
@@ -100,7 +87,7 @@ fn extract_http_response(
     };
     let (Some(given), Some(body)) = (
         fields.get("status").and_then(i64::take),
-        fields.get("body").and_then(<&str>::take),
+        fields.get("body").and_then(Bytes::take),
     ) else {
         return Err(unsound("http.serve", "handler"));
     };
@@ -115,14 +102,41 @@ fn extract_http_response(
             )));
         }
     };
-    let body = body.to_string();
     Ok((status, body, fields))
 }
 
+/// The body of `response` as the program gets it, which is what the
+/// transport library gives: the bytes that arrived, unpacked if the
+/// response says that they are packed (`Content-Encoding: gzip`).
+/// `None` for a body of more than `limit` bytes: no more than
+/// `limit + 1` bytes of it are read.
+#[cfg(feature = "http")]
+fn body_within(
+    response: &mut ureq::http::Response<ureq::Body>,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, ureq::Error> {
+    use std::io::Read;
+    // The library's own limit counts the bytes on the wire, before it
+    // unpacks them, and is not set (`as_reader` has none): this one
+    // counts what the reader gives, and is the only one.
+    let most = u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1));
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(most)
+        .read_to_end(&mut body)?;
+    Ok((body.len() <= limit).then_some(body))
+}
+
+/// The `Response` of a response of the transport library, or `None`
+/// if its body is larger than a body may be ([`wire::BODY_MAX`]).
+/// `head` says that the request was `HEAD`.
 #[cfg(feature = "http")]
 fn ureq_response_to_value(
     mut response: ureq::http::Response<ureq::Body>,
-) -> Result<Value, ureq::Error> {
+    head: bool,
+) -> Result<Option<Value>, ureq::Error> {
     let status = response.status().as_u16();
     // The names are in lower case, as the names of a request's
     // headers are (`http::HeaderName` holds them so).
@@ -132,8 +146,15 @@ fn ureq_response_to_value(
             headers.insert(Value::String(name.as_str().into()), Value::String(v.into()));
         }
     }
-    let body = response.body_mut().read_to_string()?;
-    Ok(make_http_response(status, headers, body))
+    // An answer to `HEAD`, and one whose status says so, has no body,
+    // whatever its headers say of one (they describe what a `GET`
+    // would get): nothing is read, and so nothing is unpacked that is
+    // not there.
+    let body = match head || !wire::has_body(status) {
+        true => Some(Vec::new()),
+        false => body_within(&mut response, wire::BODY_MAX)?,
+    };
+    Ok(body.map(|body| make_http_response(status, headers, body)))
 }
 
 /// Scrub URL userinfo (`user:password@`) from an error message.
@@ -232,10 +253,10 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 ///   `Connect(why)`.
 /// - One of the request's times passed: `Timeout`.
 /// - The other end went away before the response was complete, head
-///   or body: `ClosedEarly`.
+///   or body, packed or not: `ClosedEarly`.
 /// - What the server sent is no HTTP (a status line that is none, a
 ///   chunk length that is no number, a head that is too large, a body
-///   that does not decompress): `InvalidResponse(why)`. The library
+///   that is all there and does not unpack): `InvalidResponse(why)`. The library
 ///   keeps the kinds of these to itself (`Protocol` holds a type it
 ///   does not export), so the few of them that are about the request
 ///   and not the response (a header of the program's that the protocol
@@ -286,17 +307,29 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         Error::BadUri(_) => invalid_url(),
         Error::Http(http) if http.is::<ureq::http::uri::InvalidUri>() => invalid_url(),
         Error::Http(http) if http.is::<ureq::http::uri::InvalidUriParts>() => invalid_url(),
-        Error::Protocol(_) | Error::LargeResponseHeader(..) | Error::Decompress(..) => {
+        Error::Decompress(_, under) => match under.kind() {
+            ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, vec![]),
+            // Two things end a packed body before its end, and both are
+            // this kind: the connection, which the library reports
+            // with an error of its own inside, and packed bytes that
+            // stop short in a body that is all there, which the
+            // unpacker reports as the bare kind.
+            ErrorKind::UnexpectedEof if under.get_ref().is_some() => {
+                Value::variant(bv::HTTP_CLOSED_EARLY, vec![])
+            }
+            _ => Value::variant(bv::HTTP_INVALID_RESPONSE, why()),
+        },
+        Error::Protocol(_) | Error::LargeResponseHeader(..) => {
             Value::variant(bv::HTTP_INVALID_RESPONSE, why())
         }
         Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) | Error::TlsRequired => {
             Value::variant(bv::HTTP_TLS, why())
         }
-        // (silt asks for a status as a response, not as an error.)
-        Error::StatusCode(code) => Value::variant(
-            bv::HTTP_STATUS_CODE,
-            vec![Value::Int(i64::from(*code)), Value::String("".into())],
-        ),
+        // (A status is no failure: silt asks the library for it as a
+        // response, and the library's error for one is never made.)
         _ => Value::variant(bv::HTTP_OTHER, why()),
     }
 }
@@ -335,14 +368,22 @@ fn refuse_port(url: &str) -> Option<Value> {
 /// What a request of the transport library came to, as the value of
 /// `http.get` and `http.request`: `Ok(Response)`, or `Err(HttpError)`
 /// for a failure of the request or of the read of the body
-/// ([`http_error`]).
+/// ([`http_error`]), and for a body that is larger than a body may be:
+/// `InvalidResponse`, as for a head that is too large. `head` says
+/// that the request was `HEAD`.
 #[cfg(feature = "http")]
 fn finish_http_response(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     url: &str,
+    head: bool,
 ) -> Value {
-    match result.and_then(ureq_response_to_value) {
-        Ok(response) => Value::variant(bv::OK, vec![response]),
+    match result.and_then(|response| ureq_response_to_value(response, head)) {
+        Ok(Some(response)) => Value::variant(bv::OK, vec![response]),
+        Ok(None) => {
+            let why = format!("the body is larger than {} MiB", wire::BODY_MAX >> 20);
+            let error = Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(why.into())]);
+            Value::variant(bv::ERR, vec![error])
+        }
         Err(error) => Value::variant(bv::ERR, vec![http_error(&error, url)]),
     }
 }
@@ -363,12 +404,17 @@ fn do_http_get(url: &str) -> Value {
         .timeout_global(Some(Duration::from_secs(60)))
         .build()
         .into();
-    finish_http_response(agent.get(url).call(), url)
+    finish_http_response(agent.get(url).call(), url, false)
 }
 
 /// Perform a synchronous HTTP request and return a `Value`.
 #[cfg(feature = "http")]
-fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, String)]) -> Value {
+fn do_http_request(
+    method_tag: &str,
+    url: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+) -> Value {
     if let Some(refused) = refuse_port(url) {
         return refused;
     }
@@ -431,7 +477,7 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
         }
     };
 
-    finish_http_response(result, url)
+    finish_http_response(result, url, method_tag == "HEAD")
 }
 
 // ── The server ──────────────────────────────────────────────────────
@@ -600,8 +646,9 @@ enum Got {
 
 #[cfg(feature = "http")]
 impl Got {
-    /// Made on the thread that read the request: a body of megabytes
-    /// is not turned into a string on a worker of the scheduler.
+    /// Made on the thread that read the request: the value of a
+    /// request with a body of megabytes is not built on a worker of
+    /// the scheduler.
     /// `held` is what was counted for the request's body: it goes
     /// with a request for the handler, and ends here otherwise.
     fn of(next: wire::Next, held: Held) -> Got {
@@ -691,7 +738,7 @@ fn response_bytes(
     wire::response(status, headers, body, how)
 }
 
-/// What a body is unless the handler says otherwise.
+/// What the body of a response of the server's own is: a word.
 #[cfg(feature = "http")]
 const TEXT: &str = "text/plain; charset=UTF-8";
 
@@ -708,7 +755,8 @@ fn plain_response(vm: &Vm, status: u16, why: &str, reply: Reply) -> Vec<u8> {
 }
 
 /// The response that the handler returned, or 500 if what it returned
-/// is no response.
+/// is no response. The body is the handler's bytes, and what they are
+/// is the handler's to say: no `Content-Type` is added.
 #[cfg(feature = "http")]
 fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
     match extract_http_response(returned) {
@@ -721,11 +769,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
                     }
                 }
             }
-            let typed = |(name, _): &(String, String)| name.eq_ignore_ascii_case("content-type");
-            if wire::has_body(status) && !headers.iter().any(typed) {
-                headers.push(("Content-Type".to_string(), TEXT.to_string()));
-            }
-            response_bytes(vm, status, &headers, body.as_bytes(), reply)
+            response_bytes(vm, status, &headers, body, reply)
         }
         Err(e) => {
             // Security: don't leak VmError contents (call stack, line
@@ -1410,8 +1454,8 @@ builtins! {
     }
 
     #[cfg(feature = "http")]
-    fn request(vm, method: Method, url: &str, body: &str, headers: Map) -> Result<Step, VmError> {
-        let (method, url, body) = (method.0.to_string(), url.to_string(), body.to_string());
+    fn request(vm, method: Method, url: &str, body: Bytes, headers: Map) -> Result<Step, VmError> {
+        let (method, url, body) = (method.0.to_string(), url.to_string(), body.clone());
         let headers: Vec<(String, String)> = headers
             .iter()
             .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
@@ -1506,7 +1550,7 @@ mod http_response_tests {
             ty::RESPONSE,
             [
                 ("status", Value::Int(status)),
-                ("body", Value::String(String::new().into())),
+                ("body", Value::Bytes(Arc::new(Vec::new()))),
                 ("headers", Value::map(BTreeMap::new())),
             ],
         )
@@ -1521,13 +1565,13 @@ mod http_response_tests {
             let name = Value::String("accept".into());
             BTreeMap::from([(name, Value::String("*/*".into()))])
         };
-        let response = make_http_response(204, headers(), "done".to_string());
+        let response = make_http_response(204, headers(), vec![0, 0xff, b'd']);
         assert_eq!(
             response.to_string(),
-            "Response {status: 204, body: done, headers: #{\"accept\": */*}}"
+            "Response {status: 204, body: bytes(00 ff 64, length: 3), headers: #{\"accept\": */*}}"
         );
         let (status, body, record) = extract_http_response(&response).expect("a Response");
-        assert_eq!((status, body.as_str()), (204, "done"));
+        assert_eq!((status, body), (204, &[0, 0xff, b'd'][..]));
         assert_eq!(record.fields()[0], Value::Int(204));
 
         let request = make_http_request_value(bv::POST, "/jobs", "n=1", headers(), b"go".to_vec());
@@ -1667,7 +1711,7 @@ mod http_error_tests {
 
     /// The URL of a server that takes one connection, reads what the
     /// client sends first, and does `act` with the connection.
-    fn server(act: impl FnOnce(TcpStream) + Send + 'static) -> String {
+    pub(super) fn server(act: impl FnOnce(TcpStream) + Send + 'static) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
         let addr = listener.local_addr().expect("its address");
         std::thread::spawn(move || {
@@ -1681,7 +1725,7 @@ mod http_error_tests {
 
     /// The variant of the error in `value` and what it carries:
     /// `InvalidUrl(not a url)`, `ClosedEarly`.
-    fn failure(value: &Value) -> String {
+    pub(super) fn failure(value: &Value) -> String {
         let named = [
             (bv::HTTP_CONNECT, "Connect"),
             (bv::HTTP_TLS, "Tls"),
@@ -1689,7 +1733,6 @@ mod http_error_tests {
             (bv::HTTP_INVALID_URL, "InvalidUrl"),
             (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
             (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
-            (bv::HTTP_STATUS_CODE, "StatusCode"),
             (bv::HTTP_OTHER, "Other"),
         ];
         let Value::Variant(result) = value else {
@@ -1713,7 +1756,7 @@ mod http_error_tests {
     }
 
     fn get(url: &str, ms: u64) -> String {
-        failure(&finish_http_response(agent(ms).get(url).call(), url))
+        failure(&finish_http_response(agent(ms).get(url).call(), url, false))
     }
 
     #[test]
@@ -1730,7 +1773,7 @@ mod http_error_tests {
             let expected = format!("InvalidUrl({url})");
             assert_eq!(failure(&do_http_get(url)), expected);
             assert_eq!(
-                failure(&do_http_request("POST", url, "body", &[])),
+                failure(&do_http_request("POST", url, b"body", &[])),
                 expected
             );
         }
@@ -1758,7 +1801,7 @@ mod http_error_tests {
             let expected = format!("InvalidUrl({url})");
             assert_eq!(failure(&do_http_get(url)), expected);
             assert_eq!(
-                failure(&do_http_request("POST", url, "body", &[])),
+                failure(&do_http_request("POST", url, b"body", &[])),
                 expected
             );
         }
@@ -1848,10 +1891,167 @@ mod http_error_tests {
     fn a_header_of_the_program_that_is_none_is_other() {
         let url = "http://127.0.0.1:9/";
         let headers = [("a name".to_string(), "x".to_string())];
-        let got = failure(&do_http_request("POST", url, "body", &headers));
+        let got = failure(&do_http_request("POST", url, b"body", &headers));
         assert!(got.starts_with("Other("), "{got}");
         let headers = [("name".to_string(), "a\nb".to_string())];
-        let got = failure(&do_http_request("GET", url, "", &headers));
+        let got = failure(&do_http_request("GET", url, b"", &headers));
         assert!(got.starts_with("Other("), "{got}");
+    }
+}
+
+/// What the client makes of the body of a response: the bytes that
+/// arrived, unpacked if the response says that they are packed, and
+/// never more of them than a body may have.
+#[cfg(all(test, feature = "http"))]
+mod http_body_tests {
+    use super::http_error_tests::{failure, server};
+    use super::*;
+    use std::io::Write;
+
+    /// `pieces` times `piece`, packed as `Content-Encoding: gzip` says.
+    fn packed(pieces: usize, piece: &[u8]) -> Vec<u8> {
+        let level = flate2::Compression::fast();
+        let mut packer = flate2::write::GzEncoder::new(Vec::new(), level);
+        for _ in 0..pieces {
+            packer.write_all(piece).expect("packed");
+        }
+        packer.finish().expect("packed")
+    }
+
+    /// The URL of a server that answers one request with `body`, which
+    /// it says is packed.
+    fn says_packed(body: Vec<u8>) -> String {
+        server(move |mut stream| {
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            // (A client that has read enough goes away.)
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        })
+    }
+
+    /// The body and the names of the headers of the `Response` in
+    /// `value`.
+    fn response(value: &Value) -> (Vec<u8>, Vec<String>) {
+        let Value::Variant(result) = value else {
+            panic!("no Result: {value}");
+        };
+        let [Value::Record(record)] = result.fields() else {
+            panic!("no response: {value}");
+        };
+        let (Some(Value::Bytes(body)), Some(Value::Map(headers))) =
+            (record.get("body"), record.get("headers"))
+        else {
+            panic!("no Response: {value}");
+        };
+        let names = headers.keys().map(Value::to_string).collect();
+        (body.to_vec(), names)
+    }
+
+    #[test]
+    fn a_packed_body_arrives_unpacked_and_exact() {
+        let every_byte: Vec<u8> = (0..=255).collect();
+        let (body, headers) = response(&do_http_get(&says_packed(packed(1, &every_byte))));
+        assert_eq!(body, every_byte);
+        // What described the packed bytes describes nothing the
+        // program has.
+        assert_eq!(headers, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_limit_counts_what_a_packed_body_unpacks_to() {
+        let mib = vec![0u8; 1024 * 1024];
+        // At the limit: all of it.
+        let at = packed(wire::BODY_MAX >> 20, &mib);
+        let (body, _) = response(&do_http_get(&says_packed(at)));
+        assert_eq!(body.len(), wire::BODY_MAX);
+        // One byte more, and 128 MiB, in an answer that is small on
+        // the wire: refused, however little arrived.
+        let mut one_over = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        one_over
+            .write_all(&vec![0u8; wire::BODY_MAX + 1])
+            .expect("packed");
+        for over in [one_over.finish().expect("packed"), packed(128, &mib)] {
+            assert!(over.len() < 1024 * 1024, "{} bytes on the wire", over.len());
+            assert_eq!(
+                failure(&do_http_get(&says_packed(over))),
+                "InvalidResponse(the body is larger than 10 MiB)"
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_that_says_packed_and_is_not_is_invalid_response() {
+        let got = failure(&do_http_get(&says_packed(b"plain bytes".to_vec())));
+        assert!(got.starts_with("InvalidResponse("), "{got}");
+        // Packed bytes that stop short of their end.
+        let mut cut = packed(1, &[7u8; 4096]);
+        cut.truncate(cut.len() / 2);
+        let got = failure(&do_http_get(&says_packed(cut)));
+        assert!(got.starts_with("InvalidResponse("), "{got}");
+    }
+
+    /// The URL of a server that answers one request with `message`
+    /// and closes.
+    fn says(message: Vec<u8>) -> String {
+        server(move |mut stream| {
+            let _ = stream.write_all(&message);
+        })
+    }
+
+    #[test]
+    fn a_packed_body_whose_connection_ends_is_closed_early() {
+        let whole = packed(1, &[7u8; 4096]);
+        let half = &whole[..whole.len() / 2];
+        // Half of what the length announces, and half of a chunk.
+        let length = format!("Content-Length: {}\r\n\r\n", whole.len());
+        let chunk = format!("Transfer-Encoding: chunked\r\n\r\n{:x}\r\n", whole.len());
+        for framing in [length, chunk] {
+            let mut message =
+                format!("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n{framing}").into_bytes();
+            message.extend_from_slice(half);
+            assert_eq!(failure(&do_http_get(&says(message))), "ClosedEarly");
+        }
+        // The same half as the whole of a body is a body that does not
+        // unpack: nothing went away.
+        let got = failure(&do_http_get(&says_packed(half.to_vec())));
+        assert!(got.starts_with("InvalidResponse("), "{got}");
+    }
+
+    /// An answer that has no body by its nature has none, whatever it
+    /// says of one: a server that packs what it answers to `GET` says
+    /// so in these too. The library takes the two headers that
+    /// describe a packed body out of every answer that says gzip.
+    #[test]
+    fn an_answer_without_a_body_is_read_as_none() {
+        let headers = "Content-Encoding: gzip\r\nContent-Length: 1234\r\nETag: x\r\n\r\n";
+        for status in ["204 No Content", "304 Not Modified"] {
+            let message = format!("HTTP/1.1 {status}\r\n{headers}").into_bytes();
+            let (body, names) = response(&do_http_get(&says(message)));
+            assert_eq!(
+                (body.len(), names),
+                (0, vec!["etag".to_string()]),
+                "{status}"
+            );
+        }
+        let message = format!("HTTP/1.1 200 OK\r\n{headers}").into_bytes();
+        let (body, names) = response(&do_http_request("HEAD", &says(message), b"", &[]));
+        assert_eq!((body.len(), names), (0, vec!["etag".to_string()]));
+        // Not packed, the length of what a `GET` would get stays.
+        let message = b"HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n".to_vec();
+        let (body, names) = response(&do_http_request("HEAD", &says(message), b"", &[]));
+        assert_eq!((body.len(), names), (0, vec!["content-length".to_string()]));
+    }
+
+    /// A status that has a body, a body of no bytes, and the word that
+    /// it is packed: no bytes are no packed body. (The library keeps
+    /// the length on the wire to itself once an answer says gzip, so
+    /// this is not told from a packed body that stops short.)
+    #[test]
+    fn no_bytes_that_say_packed_are_invalid_response() {
+        let got = failure(&do_http_get(&says_packed(Vec::new())));
+        assert!(got.starts_with("InvalidResponse("), "{got}");
     }
 }

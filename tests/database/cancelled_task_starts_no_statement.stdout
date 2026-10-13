@@ -1,0 +1,4 @@
+Message(cancelled, and still running)
+postgres.stream gave the task a channel
+rows from before the cancel: 1
+rows in the table: 1

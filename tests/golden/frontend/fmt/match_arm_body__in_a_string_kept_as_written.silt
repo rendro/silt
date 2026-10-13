@@ -1,0 +1,14 @@
+-- cmd: fmt
+-- A match does not fit on one line, and a string with such a hole is
+-- kept as it is written: the arms of a match in a string keep their
+-- braces.
+fn main() {
+  let n = 1
+  let short = "{match n { _ -> { n + 1 } }}"
+  let comment = "{match n { _ -> { {- one more -} n + 1 } }}"
+  let line_break = "{match n {
+    1 -> { "one" }
+    _ -> { "more" }
+  }}"
+  println((short, comment, line_break))
+}

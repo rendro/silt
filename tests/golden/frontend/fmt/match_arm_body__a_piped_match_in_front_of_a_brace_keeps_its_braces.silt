@@ -1,0 +1,82 @@
+-- cmd: fmt
+-- A match on a pipeline whose body could be a closure IS a closure for
+-- the pipeline's last stage when a `{` follows it, on whatever line:
+-- without the braces around them, the bodies in `stays` would not parse,
+-- because the next arm starts with `{`. Such a body keeps its braces. It
+-- loses them in the last arm, in front of an arm that starts with
+-- something else, and when the inner match is not on a pipeline or its
+-- body starts with a number.
+import list
+
+fn first(xs) {
+  list.head(xs)
+}
+
+fn stays(r, xs) {
+  match r {
+    { a: 1 } -> { match xs |> first { x -> 1 } }
+    { a: 2 } -> { 1 + match xs |> first { x -> 2 } }
+    { a: 3 } -> { -match xs |> first { x -> 3 } }
+    { a: 4 } -> { match xs |> list.map { x -> x } { [x] -> x
+      _ -> 4 } }
+    { a: 5 } -> { match 1 == xs |> list.length { x -> 5 } }
+    { a: 6 } -> { return match xs |> first { x -> 6 } }
+    { a: 7 } -> { match xs |> list.get(0) { None | Some(7) -> 7
+      _ -> 0 } }
+    { a } -> a
+  }
+}
+
+fn stays_in_front_of_a_condition(n, xs) {
+  match {
+    n > 1 -> { match xs |> first { x -> 1 } }
+    { a: n }.a > 0 -> 2
+    _ -> 3
+  }
+}
+
+fn goes(r, xs) {
+  let last_arm = match r {
+    { a: 1 } -> 1
+    { a } -> { match xs |> first { x -> a } }
+  }
+  let parentheses_follow = match r {
+    { a: 1 } -> { match xs |> first { x -> 1 } }
+    ({ a }) -> a
+  }
+  let a_name_follows = match xs {
+    [] -> { match xs |> first { x -> 1 } }
+    other -> { match other |> first { x -> 2 } }
+  }
+  let no_pipeline = match r {
+    { a: 1 } -> { match first(xs) { x -> 1 } }
+    { a } -> a
+  }
+  let no_closure = match r {
+    { a: 1 } -> { match xs |> list.length { 0 -> 1
+      _ -> 2 } }
+    { a } -> a
+  }
+  let in_an_inner_last_arm = match r {
+    { a: 1 } -> { match r.a { 0 -> 2
+      _ -> match xs |> first { x -> 1 } } }
+    { a } -> a
+  }
+  let a_closure_and_no_match = match r {
+    { a: 1 } -> { xs |> list.map { x -> x } |> list.length }
+    { a } -> a
+  }
+  [
+    last_arm,
+    parentheses_follow,
+    a_name_follows,
+    no_pipeline,
+    no_closure,
+    in_an_inner_last_arm,
+    a_closure_and_no_match,
+  ]
+}
+
+fn main() {
+  println((stays({ a: 1 }, [1]), stays_in_front_of_a_condition(1, [1]), goes({ a: 1 }, [1])))
+}

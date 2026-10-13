@@ -121,7 +121,7 @@
     },
     "constructors": {
       "name": "constant.language.constructor.silt",
-      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty|Sent|Recv|Send|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|NotFound|PermissionDenied|AlreadyExists|InvalidInput|Interrupted|UnexpectedEof|WriteZero|Other|Syntax|TypeMismatch|MissingField|InvalidDigit|Overflow|Underflow|Connect|Tls|Timeout|InvalidUrl|InvalidResponse|ClosedEarly|StatusCode|InvalidPattern|TooBig|AuthFailed|Query|NoSuchColumn|TxnAborted|ParseFormat|OutOfRange|InvalidFormat|InvalidUtf8|InvalidHex|InvalidBase64|ByteOutOfRange|InvalidPercent|InvalidLength|Invalid|Bind)\\b"
+      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty|Sent|Recv|Send|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|NotFound|PermissionDenied|AlreadyExists|InvalidInput|Interrupted|UnexpectedEof|WriteZero|Other|Syntax|TypeMismatch|MissingField|InvalidDigit|Overflow|Underflow|Connect|Tls|Timeout|InvalidUrl|InvalidResponse|ClosedEarly|InvalidPattern|TooBig|AuthFailed|Query|NoSuchColumn|TxnAborted|ParseFormat|OutOfRange|InvalidFormat|InvalidUtf8|InvalidHex|InvalidBase64|ByteOutOfRange|InvalidPercent|InvalidLength|Invalid|Bind)\\b"
     },
     "builtins": {
       "name": "support.function.builtin.silt",

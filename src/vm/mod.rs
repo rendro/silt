@@ -13,6 +13,7 @@ mod runtime;
 mod show;
 
 pub use error::VmError;
+pub(crate) use io::panic_message;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::IoFailure;
@@ -57,6 +58,23 @@ pub fn io_pool_threads(vm: &Vm) -> usize {
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn io_pool_live_threads(vm: &Vm) -> usize {
     vm.runtime.io_pool.live_threads()
+}
+
+/// Test-only: a place in the runtime's own code where a test makes it
+/// panic ([`panic_for_test`]).
+#[cfg(any(test, feature = "test-hooks"))]
+pub use crate::scheduler::PanicAt;
+
+/// Test-only: the runtime of this VM panics once at `at`, in its own
+/// code, outside every catch of a builtin's or a host function's
+/// panic: what no silt program can make it do. It is how the tests
+/// see what a panic of the runtime does to a program.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn panic_for_test(vm: &Vm, at: PanicAt) {
+    match at {
+        PanicAt::Io => vm.runtime.io_pool.panic_for_test(),
+        at => vm.runtime.scheduler.panic_for_test(at),
+    }
 }
 
 /// Test-only: run a panicking operation on this VM's I/O pool, wait
@@ -165,15 +183,36 @@ pub struct Vm {
     pub(crate) over: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
+/// How many steps the program's own thread runs before it looks
+/// whether a thread of the runtime has panicked ([`Vm::own_slice`]):
+/// about a million, some milliseconds.
+const OWN_SLICE: usize = 1 << 20;
+
 impl Drop for Vm {
     fn drop(&mut self) {
         // The calls in progress end here, however the VM ends: a task
         // that failed, was cancelled or was still waiting when the
         // program ended. Each builtin's frame is told ([`Native::abandon`]).
-        self.unwind(0, 0);
-        if self.owns_runtime {
-            self.runtime.shutdown();
+        let end = |vm: &mut Vm| {
+            vm.unwind(0, 0);
+            if vm.owns_runtime {
+                vm.runtime.shutdown();
+            }
+        };
+        if !self.runtime.scheduler.is_broken() && !std::thread::panicking() {
+            return end(self);
         }
+        // A thread of the runtime has panicked, and that panic is on
+        // its way to the embedder. This runs over state that may be
+        // half updated: a second panic here, while the embedder's
+        // thread unwinds, would abort its process, so it is dropped.
+        // The same on the thread that is unwinding from the first
+        // panic, which drops the VM of the task it was running.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            #[cfg(any(test, feature = "test-hooks"))]
+            self.runtime.scheduler.panic_while_unwinding_for_test();
+            end(self)
+        }));
     }
 }
 
@@ -284,7 +323,8 @@ impl Vm {
     /// gives way to the other tasks after that many, instead of the
     /// scheduler's own 2000, and the thread that runs the program's own
     /// code (`fn main`, a test) stops and goes on after that many too,
-    /// where it otherwise runs without a break.
+    /// where it otherwise does so about every million steps
+    /// (`Vm::own_slice`).
     ///
     /// What a program computes does not depend on the slice. An embedder
     /// sets one to see that: with `steps` 1 the program is stopped and
@@ -332,15 +372,18 @@ impl Vm {
     }
 
     /// How many steps the thread that runs the program's own code runs
-    /// at a time: without a break, unless an embedder set a slice or a
-    /// step budget.
+    /// at a time: [`OWN_SLICE`], unless an embedder set a slice or a
+    /// step budget. The thread gives way to nobody between two such
+    /// runs; it looks whether a thread of the runtime has panicked
+    /// (`Vm::run_thread`), which a thread that computes and never
+    /// waits would not learn otherwise.
     pub(crate) fn own_slice(&self) -> usize {
         match self.time_slice() {
             Some(steps) => steps,
             None if self.runtime.steps_left.load(Ordering::Relaxed) != u64::MAX => {
                 crate::scheduler::time_slice()
             }
-            None => usize::MAX,
+            None => OWN_SLICE,
         }
     }
 

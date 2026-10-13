@@ -1,0 +1,66 @@
+-- timeout: 30
+-- requires-feature: http
+-- What a body's bytes are is the handler's to say: its answer has the
+-- `Content-Type` it sets in `Response.headers`, and none if it sets
+-- none, whatever the bytes are. Only an answer of the server's own (a
+-- word of text, here for a method it does not know) says `text/plain`.
+import bytes
+import http
+import list
+import map
+import option
+import result
+import string
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  match req.path {
+    "/text" -> http.Response { status: 200, body: bytes.from_string("hello"), headers: #{} }
+    "/set" -> http.Response {
+      status: 200,
+      body: bytes.from_string("<p>hello</p>"),
+      headers: #{ "Content-Type": "text/html; charset=UTF-8" },
+    }
+    "/empty" -> http.Response { status: 200, body: bytes.empty(), headers: #{} }
+    _ -> http.Response {
+      status: 200,
+      body: bytes.from_list([0, 255]) |> result.unwrap_or(bytes.empty()),
+      headers: #{},
+    }
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  ["/text", "/set", "/empty", "/bytes"] |> list.each { path ->
+    match http.get("http://127.0.0.1:{port}{path}") {
+      Ok(resp) -> println("{path}: {bytes.to_hex(resp.body)}, content-type {map.get(resp.headers, "content-type")}")
+      Err(e) -> println("{path}: {e.message()}")
+    }
+  }
+
+  -- The server's own answer, to a request written by hand.
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  let _ = tcp.write(conn, bytes.from_string("TRACE / HTTP/1.1{cr}\nHost: x{cr}\nConnection: close{cr}\n{cr}\n"))
+  let answered = loop got = bytes.empty() {
+    match tcp.read(conn, 4096) {
+      Ok(more) -> match bytes.length(more) {
+        0 -> got
+        _ -> loop(bytes.concat(got, more))
+      }
+      Err(_) -> got
+    }
+  }
+  tcp.close(conn)
+  bytes.to_string(answered)
+    |> result.unwrap_or("")
+    |> string.lines
+    |> list.map { line -> string.trim(line) }
+    |> list.filter { line -> string.starts_with(line, "HTTP/") || string.starts_with(line, "Content-Type") }
+    |> list.each { line -> println("TRACE: {line}") }
+  task.cancel(server)
+}

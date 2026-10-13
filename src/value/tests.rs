@@ -658,7 +658,7 @@ fn records_are_ordered_and_hashed_in_declaration_order() {
     // `Response` declares `status` before `body`: the status decides.
     let response = |status, body: &str| {
         let headers = Value::map(BTreeMap::new());
-        let body = Value::String(body.into());
+        let body = Value::Bytes(Arc::new(body.as_bytes().to_vec()));
         Value::builtin_record(
             ty::RESPONSE,
             [

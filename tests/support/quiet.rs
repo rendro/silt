@@ -35,6 +35,7 @@ fn main() {
 /// A task serves HTTP, and the program itself waits in `tcp.accept`.
 #[cfg(feature = "http")]
 pub const SERVER: &str = r#"
+import bytes
 import http
 import task
 import tcp
@@ -43,7 +44,7 @@ fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   when let Ok(other) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let _ = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
+    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
   }
   println("waiting")
   let _ = tcp.accept(other)

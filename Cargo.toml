@@ -96,6 +96,9 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 proptest = "1.4"
 rcgen = "0.13"
+# Packs the answers of the client's gzip tests. The version is the one
+# the lock file holds for the transport library, so no crate is added.
+flate2 = "=1.1.9"
 
 [lints.clippy]
 # Newer clippy (1.95+) flags long compound types like `OnceLock<RwLock<HashMap<...>>>`

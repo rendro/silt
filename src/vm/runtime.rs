@@ -429,6 +429,10 @@ struct PoolShared {
     idle: std::time::Duration,
     /// The threads that exist: started and not yet returned.
     live: std::sync::atomic::AtomicUsize,
+    /// Test-only: the next thread whose operation returns panics
+    /// before it hands the value over (`PanicAt::Io`).
+    #[cfg(any(test, feature = "test-hooks"))]
+    panic_next: std::sync::atomic::AtomicBool,
 }
 
 struct PoolState {
@@ -480,6 +484,10 @@ impl PoolShared {
             state.busy += 1;
             drop(state);
             let finish = job();
+            #[cfg(any(test, feature = "test-hooks"))]
+            if (self.panic_next).swap(false, std::sync::atomic::Ordering::SeqCst) {
+                panic!("a panic made for a test: Io");
+            }
             state = self.state.lock();
             let left = std::mem::replace(&mut *op.phase.lock(), Phase::Finishing) == Phase::Left;
             if !left {
@@ -528,6 +536,8 @@ impl IoPool {
                 max,
                 idle,
                 live: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(any(test, feature = "test-hooks"))]
+                panic_next: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
@@ -557,6 +567,12 @@ impl IoPool {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn live_threads(&self) -> usize {
         self.shared.live.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Test-only: see `PanicAt::Io`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn panic_for_test(&self) {
+        (self.shared.panic_next).store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// An operation that is not handed to the pool: it never runs,
@@ -676,10 +692,20 @@ impl IoPool {
             .live
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pool = shared.clone();
+        // A panic of the operation is its error (`job`). One that
+        // escapes the pool's own code around it, or what hands the
+        // value to the waiter, is the runtime's, and ends the program
+        // (`Alarm`): the waiter would wait for ever.
+        let alarm = self.scheduler.alarm();
         let started = std::thread::Builder::new()
             .name("silt-io".into())
             .stack_size(IO_POOL_STACK_BYTES)
-            .spawn(move || pool.run());
+            .spawn(move || {
+                let run = std::panic::AssertUnwindSafe(|| pool.run());
+                if let Err(payload) = std::panic::catch_unwind(run) {
+                    alarm.raise(payload);
+                }
+            });
         let Err(e) = started else {
             state.started = true;
             return op;

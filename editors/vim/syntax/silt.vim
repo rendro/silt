@@ -30,7 +30,7 @@ syntax keyword siltConstructor GET POST PUT PATCH DELETE HEAD OPTIONS
 syntax keyword siltConstructor NotFound PermissionDenied AlreadyExists InvalidInput Interrupted UnexpectedEof WriteZero Other
 syntax keyword siltConstructor Syntax TypeMismatch MissingField
 syntax keyword siltConstructor InvalidDigit Overflow Underflow
-syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly StatusCode
+syntax keyword siltConstructor Connect Tls Timeout InvalidUrl InvalidResponse ClosedEarly
 syntax keyword siltConstructor InvalidPattern TooBig
 syntax keyword siltConstructor AuthFailed Query NoSuchColumn TxnAborted
 syntax keyword siltConstructor ParseFormat OutOfRange InvalidFormat

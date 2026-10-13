@@ -1,0 +1,32 @@
+-- cmd: fmt
+-- A comment behind the expression stays there, and one behind the
+-- closing brace ends the expression's last line. Two comments that both
+-- end their line cannot share one: such a block stays.
+fn pick(n) {
+  match n {
+    1 -> n + 1 -- behind the expression
+    2 -> n + 2 -- behind the brace
+    3 -> n + 3 -- behind the brace on its own line
+    4 -> match n {
+      4 -> 44
+      _ -> 0
+    } -- behind the match
+    5 -> {
+      n + 5 -- behind the expression
+    } -- and behind the brace: the braces stay
+    6 -> {
+      n + 6 -- behind the expression
+    } -- and behind the outer brace: one pair stays
+    7 -> {
+      {
+        n + 7
+      } -- behind the inner brace
+    } -- and behind the outer one: both stay
+    8 -> n + 8 {- behind the expression -} -- and behind the brace
+    _ -> 0 -- behind the parenthesis
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

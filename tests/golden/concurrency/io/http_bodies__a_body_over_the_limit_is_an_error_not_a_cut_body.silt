@@ -1,0 +1,117 @@
+-- timeout: 120
+-- requires-feature: http
+-- A body the client reads is at most 10 MiB. One of exactly that length
+-- arrives whole, to its last byte; one of a single byte more is
+-- `Err(InvalidResponse(_))`, never a body cut to the limit. So it is
+-- for a body sent with its length (by a handler) and for one sent in
+-- chunks (by a server written by hand).
+import bytes
+import http
+import list
+import option
+import string
+import task
+import tcp
+
+fn line_end() -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  "{cr}\n"
+}
+
+-- What follows the head of `message`: its body, as far as it is there.
+fn body_of(message: Bytes) -> Option(Bytes) {
+  let nl = line_end()
+  match bytes.index_of(message, bytes.from_string("{nl}{nl}")) {
+    Some(at) -> Some(bytes.slice(message, at + 4, bytes.length(message)))
+    None -> None
+  }
+}
+
+-- Reads a message from `conn`: until its head is there and its body
+-- has `length` bytes, or until the other end has closed. All of it.
+fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  loop got = bytes.empty() {
+    let whole = match body_of(got) {
+      Some(body) -> length == Some(bytes.length(body))
+      None -> false
+    }
+    match whole {
+      true -> got
+      false -> match tcp.read(conn, 4096) {
+        Ok(more) -> match bytes.length(more) {
+          0 -> got
+          _ -> loop(bytes.concat(got, more))
+        }
+        Err(_) -> got
+      }
+    }
+  }
+}
+
+fn read_body(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  body_of(read_message(conn, length)) |> option.unwrap_or(bytes.empty())
+}
+
+-- `length` bytes: `a` throughout, and a `z` as the last.
+fn body_of_length(length: Int) -> Bytes {
+  let piece = bytes.from_string(string.repeat("a", 1024 * 1024))
+  let whole = bytes.concat_all(list.map(0..10) { _ -> piece })
+  bytes.concat(bytes.slice(whole, 0, length - 1), bytes.from_string("z"))
+}
+
+fn answer(req: http.Request) -> http.Response {
+  let length = match req.path {
+    "/at" -> 10 * 1024 * 1024
+    _ -> 10 * 1024 * 1024 + 1
+  }
+  http.Response { status: 200, body: body_of_length(length), headers: #{} }
+}
+
+fn show(what: String, got: Result(http.Response, http.HttpError)) {
+  match got {
+    Ok(resp) -> {
+      let length = bytes.length(resp.body)
+      println("{what}: Ok, {length} bytes, the last is {bytes.get(resp.body, length - 1)}")
+    }
+    Err(http.InvalidResponse(why)) -> println("{what}: Err(InvalidResponse(\"{why}\"))")
+    Err(e) -> println("{what}: another error: {e.message()}")
+  }
+}
+
+-- A server that reads one request and answers with a body of `length`
+-- bytes in two chunks, whose sizes `first` and `second` say in
+-- hexadecimal.
+fn in_chunks(length: Int, first: String, second: String) -> Result(http.Response, http.HttpError) {
+  let nl = line_end()
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let body = body_of_length(length)
+  let half = 5 * 1024 * 1024
+  let writer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
+    let _ = read_message(conn, Some(0))
+    let _ = tcp.write(conn, bytes.concat_all([
+      bytes.from_string("HTTP/1.1 200 OK{nl}Transfer-Encoding: chunked{nl}Connection: close{nl}{nl}{first}{nl}"),
+      bytes.slice(body, 0, half),
+      bytes.from_string("{nl}{second}{nl}"),
+      bytes.slice(body, half, length),
+      bytes.from_string("{nl}0{nl}{nl}"),
+    ]))
+    -- The client may have given up before it has read all of it.
+    let _ = read_message(conn, None)
+    tcp.close(conn)
+  }
+  let got = http.get("http://127.0.0.1:{tcp.local_port(by_hand)}/")
+  task.cancel(writer)
+  got
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  show("10 MiB with its length", http.get("{url}/at"))
+  show("one byte more with its length", http.get("{url}/over"))
+  task.cancel(server)
+  show("10 MiB in chunks", in_chunks(10 * 1024 * 1024, "500000", "500000"))
+  show("one byte more in chunks", in_chunks(10 * 1024 * 1024 + 1, "500000", "500001"))
+}

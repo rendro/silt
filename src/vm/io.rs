@@ -77,7 +77,9 @@ impl Output for ProcessStdout {
     fn write(&self, text: &str) -> io::Result<()> {
         use std::io::Write;
         match io::stdout().lock().write_all(text.as_bytes()) {
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => std::process::exit(141),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                crate::scheduler::exit_with_status(141)
+            }
             result => result,
         }
     }
@@ -280,7 +282,7 @@ fn write_caught(output: &dyn Output, text: &str) -> io::Result<()> {
 }
 
 /// The message a panic was raised with.
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
     } else if let Some(s) = payload.downcast_ref::<String>() {

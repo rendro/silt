@@ -71,6 +71,19 @@ pub struct Cursor<'a> {
     pub error: Option<Mismatch>,
 }
 
+/// The comments at the closing brace of a block (see
+/// [`Cursor::closer_comments`]).
+pub struct CloserComments {
+    /// One stands in front of the brace.
+    pub in_front: bool,
+    /// One in front of the brace stands on a line of its own.
+    pub own_line: bool,
+    /// A `--` comment ends the line of the token in front of the brace.
+    pub ends_line: bool,
+    /// One stands behind the brace and its parentheses, on their line.
+    pub behind: bool,
+}
+
 enum Class {
     Inline,
     /// With whether it is a `--` comment: nothing can follow that on
@@ -522,8 +535,8 @@ impl<'a> Cursor<'a> {
     /// and is not written, and leave the comments around it where they
     /// are: they stand in front of the next token then. For a place
     /// where they may stand as they are (an opening parenthesis; the
-    /// braces of a block that is a closure's body, and the parentheses
-    /// around it).
+    /// braces of a block that is a closure's body, the opening brace of
+    /// one that is an arm's, and the parentheses around either).
     pub fn pass(&mut self, kind: &Token) {
         if !self.at(kind) {
             return;
@@ -557,6 +570,42 @@ impl<'a> Cursor<'a> {
                     .iter()
                     .any(|tok| tok.comments.end == index && tok.newlines_before > 0)
         })
+    }
+
+    /// The first token behind the expression that ends at byte `end` and
+    /// the closing parentheses around it.
+    pub fn behind(&self, end: u32) -> &'a Token {
+        let last = self.tokens.partition_point(|tok| tok.span.end < end);
+        self.tokens
+            .iter()
+            .skip(last + 1)
+            .find(|tok| tok.kind != Token::RParen)
+            .map_or(&Token::Eof, |tok| &tok.kind)
+    }
+
+    /// The comments at the closing brace of the block that ends at byte
+    /// `end` and has `wrappers` parentheses around it.
+    pub fn closer_comments(&self, end: u32, wrappers: usize) -> CloserComments {
+        let closer = self.tokens.partition_point(|tok| tok.span.end < end);
+        let in_front = self
+            .tokens
+            .get(closer)
+            .map_or(&[][..], |tok| self.lexed_comments(tok));
+        let behind = self
+            .tokens
+            .get(closer + wrappers + 1)
+            .map_or(&[][..], |tok| self.lexed_comments(tok));
+        CloserComments {
+            in_front: !in_front.is_empty(),
+            own_line: in_front.iter().any(|c| c.newlines_before > 0),
+            ends_line: in_front.iter().any(|c| c.kind == CommentKind::Line),
+            behind: behind.first().is_some_and(|c| c.newlines_before == 0),
+        }
+    }
+
+    /// The comments between the token in front of `tok` and `tok`.
+    fn lexed_comments(&self, tok: &Tok) -> &'a [Comment] {
+        &self.comments[tok.comments.start as usize..tok.comments.end as usize]
     }
 
     /// Carry the comments behind a skipped token, on its line.

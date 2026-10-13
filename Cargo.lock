@@ -1597,6 +1597,7 @@ dependencies = [
  "blake2",
  "chrono",
  "fallible-iterator",
+ "flate2",
  "getrandom 0.2.17",
  "glob",
  "hmac 0.12.1",

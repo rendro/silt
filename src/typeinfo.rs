@@ -443,8 +443,7 @@ pub mod bv {
     pub const HTTP_INVALID_URL: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 3);
     pub const HTTP_INVALID_RESPONSE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 4);
     pub const HTTP_CLOSED_EARLY: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 5);
-    pub const HTTP_STATUS_CODE: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
-    pub const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 7);
+    pub const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
     pub const REGEX_INVALID_PATTERN: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 0);
     pub const REGEX_TOO_BIG: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 1);
     pub const REGEX_OTHER: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 2);
@@ -855,7 +854,6 @@ mod tests {
             (bv::HTTP_INVALID_URL, "InvalidUrl"),
             (bv::HTTP_INVALID_RESPONSE, "InvalidResponse"),
             (bv::HTTP_CLOSED_EARLY, "ClosedEarly"),
-            (bv::HTTP_STATUS_CODE, "StatusCode"),
             (bv::HTTP_OTHER, "Other"),
             (bv::REGEX_INVALID_PATTERN, "InvalidPattern"),
             (bv::REGEX_TOO_BIG, "TooBig"),

@@ -267,19 +267,16 @@ parameters came first, every type-directed operation would break out
 of pipelines:
 
 ```silt
-let resp = http.get(url)?
--- resp.body is the response body, a String
-let done = resp.body
-  |> json.parse(Todo) -- works: parse(body, Todo)
+let text = io.read_file(path)?
+let done = text
+  |> json.parse(Todo) -- works: parse(text, Todo)
   |> result.map_ok(process)
 ```
 
-`http.get` returns `Result(Response, HttpError)`, and `?` unwraps it to
-a `Response` record — not the body string. The pipeline picks up after
-`resp.body` extracts the `String` field that `json.parse` actually
-wants. The "type params last" convention is what keeps the second and
-third arms (`json.parse(Todo)`, `result.map_ok(process)`) flowing in
-pipe form.
+`io.read_file` returns `Result(String, IoError)`, and `?` unwraps it to
+the `String` that `json.parse` wants. The "type params last" convention
+is what keeps the second and third arms (`json.parse(Todo)`,
+`result.map_ok(process)`) flowing in pipe form.
 
 The rule is a single convention that keeps silt's pipe-first idiom
 working cleanly across the entire type-directed surface
