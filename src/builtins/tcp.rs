@@ -523,35 +523,33 @@ pub(crate) fn accept_op(
     let next_id = vm.next_tcp_id();
     let (stopped, stop) = accept_stop(listener);
     let (accepting, listener) = (listener.clone(), listener.clone());
-    vm.runtime
-        .io_pool
-        .submit(tcp_timeout_err, move || {
-            match accepting.accept(&stopped, server) {
-                Ok(Accepted::Conn(stream)) => Value::variant(
-                    bv::OK,
-                    vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
-                ),
-                // Given up: nobody reads the value.
-                Ok(Accepted::GivenUp) => err_closed(),
-                // A server took the listener while the accept waited.
-                Ok(Accepted::Served) => err(SERVED),
-                Err(e) => tcp_io_err(Doing::Using, &e),
-            }
-        })
-        .stop_with(stop)
-        // A connection that came just as the task stopped waiting (it
-        // was cancelled, its deadline passed) reached no task: only
-        // the operation's value holds it. It is a client's, and goes
-        // to the next accept.
-        .unheard_with(move |value| {
-            if let Value::Variant(variant) = value
-                && variant.is(bv::OK)
-                && let [Value::TcpStream(conn)] = variant.fields()
-                && let Some(socket) = conn.socket()
-            {
-                listener.keep(socket);
-            }
-        })
+    vm.start_io(tcp_timeout_err, move || {
+        match accepting.accept(&stopped, server) {
+            Ok(Accepted::Conn(stream)) => Value::variant(
+                bv::OK,
+                vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+            ),
+            // Given up: nobody reads the value.
+            Ok(Accepted::GivenUp) => err_closed(),
+            // A server took the listener while the accept waited.
+            Ok(Accepted::Served) => err(SERVED),
+            Err(e) => tcp_io_err(Doing::Using, &e),
+        }
+    })
+    .stop_with(stop)
+    // A connection that came just as the task stopped waiting (it
+    // was cancelled, its deadline passed) reached no task: only
+    // the operation's value holds it. It is a client's, and goes
+    // to the next accept.
+    .unheard_with(move |value| {
+        if let Value::Variant(variant) = value
+            && variant.is(bv::OK)
+            && let [Value::TcpStream(conn)] = variant.fields()
+            && let Some(socket) = conn.socket()
+        {
+            listener.keep(socket);
+        }
+    })
 }
 
 /// What makes an operation on `stream` return when nobody waits for
@@ -585,11 +583,7 @@ fn on_connection(
     if stream.is_closed() {
         return Ok(Step::Done(err_closed()));
     }
-    let op = vm
-        .runtime
-        .io_pool
-        .submit(tcp_timeout_err, op)
-        .stop_unless_taken(unheard);
+    let op = vm.start_io(tcp_timeout_err, op).stop_unless_taken(unheard);
     vm.io_wait("tcp", tcp_timeout_err, op)
 }
 

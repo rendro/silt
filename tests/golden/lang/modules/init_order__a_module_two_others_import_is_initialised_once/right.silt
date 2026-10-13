@@ -1,0 +1,6 @@
+import shared
+
+pub let vr = {
+  println("right is initialised")
+  shared.vs + 20
+}

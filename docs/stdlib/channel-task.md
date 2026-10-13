@@ -354,19 +354,74 @@ the result is kept: a later `task.join` still returns it, or raises it if the
 task failed. Cancelling a
 task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
-the test that spawned it. The cancel does not wait for the task to stop:
+the test that spawned it. The cancel does not wait for the task to stop.
+Its effect on the task depends on where the task is at that moment:
 
-- If the task is **currently parked** (blocked on a channel, a select,
-  `task.join`, `time.sleep`, or I/O), its wait ends without taking or
-  sending anything, and the task is dropped.
-- If the task is **currently running**, it runs no further than the end of
-  its current slice (a few thousand steps); side effects of that slice still
-  happen. If the slice reaches a blocking operation, the task ends there
-  instead of waiting.
-- If the task is **queued but not yet running**, it is dropped without
-  running again. That includes a task whose wait has just ended: a value
-  that a sender handed it and that it has not yet run to use is dropped
-  with it, although the sender was told that it was sent.
+- **The task is waiting** (parked in a channel receive or send, a
+  `channel.select`, a `task.join`, a `time.sleep`, I/O, or similar): its
+  wait ends without taking or sending anything, and the task is ended
+  there. A value sent afterwards goes to the next receiver, not to it.
+- **The task has never run** (spawned, and not yet picked up by a
+  worker): it is dropped without running.
+- **The task is not waiting**: it is running, or its time slice ran out
+  and it is to run again, or **its wait has just ended** (a sender
+  handed it a value, a receiver took the value it waited to send, the
+  operation it waited for gave its result) and it has not run again. The
+  task goes on with what it holds, for a bounded amount of further
+  work. **After a cancel a task takes nothing new; it may still give
+  what it holds.** It is ended:
+  - at its next operation that would take something, whether or not
+    the thing is there: a `channel.receive`, `channel.try_receive` or
+    `channel.receive_timeout`, the next message of a `channel.each`,
+    the next element of a stream, `tcp.accept` (the connection stays
+    with the listener), and a `channel.select` of which no `Send` arm
+    can be done at once (its `Recv` arms, timeouts among them, are not
+    tried);
+  - at its next operation that would have to wait, with nothing sent;
+    and at one that would start something which waits for the outside:
+    reading or writing a file's contents, the network, a database,
+    standard input. Nothing is started: a file it was about to write is
+    not written;
+  - at a call that would start a task to take in its place:
+    `task.deadline` (its function runs as a task of its own) and every
+    stream function that starts a stage (`stream.map`, `stream.take`
+    and the other transforms, and the sources: `stream.from_list`,
+    `stream.tcp_lines`, ...). No task is started, so nothing is taken
+    from the channel a stream would have been built over;
+  - when it has run 2,000 steps (about 2,000 instructions, a few
+    hundred rounds of a small loop), if it reaches none of these
+    before. The steps are counted from the first time slice that begins
+    after the cancel, so a task that was computing when the cancel came
+    is ended at most one time slice and 2,000 steps later.
+
+  What is done in those steps is what gives: a `channel.send` into a
+  channel with room or to a receiver that waits, `channel.try_send`, a
+  `Send` arm of a `channel.select` that can be done at once,
+  `channel.close`; and the `task.join` of a task that has ended. It can
+  still start a task with `task.spawn`. A `time.sleep` of no time is
+  done, since it waits for nothing; any longer one is a wait. (The `fs`
+  functions, which never wait, are done too: `fs.exists`, `fs.remove`,
+  `fs.rename` and the others.) The side effects of those steps happen.
+  What the task returns or fails with in them changes nothing: the
+  handle keeps the cancellation, and a failure is not reported.
+
+  This is the rule of a function that is past its `task.deadline`,
+  and the same count: a task that is past its deadline and cancelled has
+  2,000 steps in all, not twice that.
+
+**What the further work is for, and what it does not give.** A task that
+was just given something has the steps to pass it on by an operation
+that does not wait: a worker that receives an item and puts it, or its
+result, into a channel with room does not lose the item to a cancel,
+and takes no further one. A cancel is still no orderly shutdown. A
+worker that receives an item, computes, and then has to *wait* to send
+its result (its output channel is full, or is a rendezvous channel
+whose receiver is not there yet) is ended in that send, and the item is
+gone; so is the item of a worker that computes on it for more than
+2,000 steps, or that has to read or write a file for it. Where nothing
+may be lost when the work stops, tell the task to stop over a channel
+(a stop message, or the close of its input), let it finish what it has,
+and join it.
 
 `task.join` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form
@@ -460,11 +515,13 @@ Runs `f` and gives `Ok` of what it returns, or `Err(Timeout)` if `f` was
 ended because `dur` had passed.
 
 The function runs as a task of its own whose time is over when `dur` has
-passed. From then on it is ended where it would have to wait, whatever it
-waits for (I/O, a `time.sleep`, a `channel.receive` or `channel.send`, a
-`channel.select`, a `task.join`, a wait deep inside the callback of a
-builtin, the read of a stream), and a function that does not wait is
-ended after a fixed amount of further work.
+passed. From then on it takes nothing new and may still give what it
+holds, as a task that was cancelled (see [`task.cancel`](#taskcancel)):
+it is ended where it would take something or would have to wait,
+whatever it waits for (I/O, a `time.sleep`, a `channel.receive` or
+`channel.send`, a `channel.select`, a `task.join`, a wait deep inside the
+callback of a builtin, the read of a stream), and a function that does
+neither is ended after a fixed amount of further work.
 
 - A wait of `f` ends one way or the other: it got what it waited for and
   `f` goes on, or the deadline ended it, nothing was received or sent, and
@@ -475,16 +532,22 @@ ended after a fixed amount of further work.
   returned (`Ok`, also when it got its value just in time and the clock
   has moved on), it was ended (`Err(Timeout)`), or it failed (the runtime
   error is raised by `task.deadline` as it is, whatever the clock says).
-- What can be done at once is done, also when the time is over: a value
-  that lies in a channel is received. A `dur` of zero or less is a time
+- When the time is over the function takes nothing new: a receive begun
+  then is `Err(Timeout)` whether or not a value is there, and the value
+  stays in its channel; no I/O, no stream stage and no inner
+  `task.deadline` is started. (The function's time is over from the
+  first time slice that begins after it; in the slice in which it
+  passes, a receive of a value that is there may still complete.) It may
+  still give what it holds: a send
+  that can be done at once is done. A `dur` of zero or less is a time
   that is over from the start: `task.deadline(time.ms(0), { -> 1 })` is
-  `Ok(1)`.
+  `Ok(1)`, and a function that receives is `Err(Timeout)`.
 - The work past the time is bounded in all: a function whose time is over
   runs on for at most 2,000 steps (about 2,000 instructions, a few hundred
-  rounds of a small loop), whatever it does with them, the functions of
-  the deadlines it calls included. Then it is ended, with what it holds:
-  after the step that used them up, or at the next wait it begins, ready
-  or not. One call of a builtin that is under way runs to its end first.
+  rounds of a small loop), whatever it does with them. Then it is ended,
+  with what it holds: after the step that used them up, or at the next
+  wait it begins. One call of a builtin that is under way runs to its end
+  first.
 - An I/O operation in flight is given up (a connection it was reading or
   writing is shut down); what had started may have happened all the same.
   A connection that reaches a `tcp.accept` as it is given up stays with

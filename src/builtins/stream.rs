@@ -223,6 +223,19 @@ impl Native for Pipe {
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
+                // A task that was cancelled, or whose time is over,
+                // takes nothing new, though it still runs for some
+                // steps: a stage that was
+                // stopped (nobody reads its output any more: its task
+                // is cancelled) is over, and a sink ends the task that
+                // called it.
+                Next::Take(_) | Next::TakeAny if vm.takes_nothing_new() => {
+                    self.cut_short(vm);
+                    return Ok(match self.handle {
+                        Some(_) => Step::Done(Value::Unit),
+                        None => Step::Park(Vm::no_wait()),
+                    });
+                }
                 Next::Take(index) => {
                     let input = &self.inputs[index];
                     match input.try_receive(vm.scheduler().wake()) {
@@ -271,7 +284,7 @@ impl Native for Pipe {
                     return Ok(vm.call(callee, args));
                 }
                 Next::Io(operation, stop) => {
-                    let mut op = vm.runtime.io_pool.submit(io_failure, operation);
+                    let mut op = vm.start_io(io_failure, operation);
                     if let Some(stop) = stop {
                         self.stop = Some(stop.clone());
                         op = op.stop_with(move || stop());
@@ -316,7 +329,13 @@ impl Native for Pipe {
 }
 
 /// Start a stage: a task that runs `logic` over `inputs` and feeds the
-/// channel that is returned, of capacity `capacity`.
+/// channel that is returned, of capacity `capacity`. Every source and
+/// every transform starts its task here.
+///
+/// A task that takes nothing new (`Vm::takes_nothing_new`: it was
+/// cancelled, or its time is over) starts no stage: the stage's task would take from its
+/// inputs, or from outside, for a reader that ends at its own next
+/// take. The task ends here, with nothing started.
 fn stage(
     vm: &mut Vm,
     name: &'static str,
@@ -324,6 +343,9 @@ fn stage(
     capacity: usize,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
+    if vm.takes_nothing_new() {
+        return Ok(vm.end_here(name));
+    }
     let out = Channel::new(vm.next_channel_id(), capacity);
     let id = vm.next_task_id();
     let handle = Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()));
@@ -1289,5 +1311,63 @@ mod tests {
         until("the connection was left open", || {
             stopped.load(Ordering::SeqCst)
         });
+    }
+
+    /// A stage that was stopped takes nothing more from its input: a
+    /// cancelled task still runs for some steps, and the stage of one
+    /// that came to take its next element there, which lies ready,
+    /// leaves it where it is and ends, with its output closed. A sink
+    /// in a task that was cancelled takes nothing either, and ends the
+    /// task: it begins the wait that such a task is refused.
+    #[test]
+    fn a_stage_that_was_stopped_takes_nothing_more() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let wake = vm.scheduler().clone();
+        let input = Channel::new(vm.next_channel_id(), 4);
+        for item in 0..3 {
+            let sent = input.try_send(Value::Int(item), wake.wake());
+            assert!(matches!(sent, TrySend::Sent));
+        }
+        let stage = |vm: &mut Vm, stopped: bool| {
+            let out = Channel::new(vm.next_channel_id(), DEFAULT_CAPACITY);
+            let handle = Arc::new(TaskHandle::new(vm.next_task_id()));
+            if stopped {
+                handle.cancel(wake.wake());
+            }
+            // What `stream.filter` with a predicate that is never true
+            // does: take, call, take.
+            let mut pipe = Pipe::new("test.stage", vec![input.clone()], |got| {
+                Ok(match got {
+                    Got::Start | Got::Returned(_) => Next::Take(0),
+                    Got::Value(_, v) => Next::Call(Value::Unit, vec![v]),
+                    _ => Next::Done(Value::Unit),
+                })
+            });
+            pipe.out = Some(out.clone());
+            // The VM of a stage's task has the task's flag.
+            vm.cancelled = Some(handle.cancel_flag());
+            pipe.handle = Some(handle);
+            (pipe.resume(vm, Value::Unit), out)
+        };
+        let (step, out) = stage(&mut vm, true);
+        assert!(matches!(step, Ok(Step::Done(Value::Unit))));
+        assert_eq!(input.len(), 3, "a stopped stage took an element");
+        assert!(out.is_closed());
+        // A sink has no output and no task of its own.
+        let mut sink = Pipe::new("test.sink", vec![input.clone()], |got| {
+            Ok(match got {
+                Got::Start | Got::Value(..) => Next::Take(0),
+                _ => Next::Done(Value::Unit),
+            })
+        });
+        let step = sink.resume(&mut vm, Value::Unit);
+        assert!(matches!(step, Ok(Step::Park(wait)) if wait.arms.is_empty()));
+        assert_eq!(input.len(), 3, "a sink in a cancelled task took an element");
+        // (A stage that was not stopped takes the first and calls with
+        // it.)
+        let (step, out) = stage(&mut vm, false);
+        assert!(matches!(step, Ok(Step::Call { .. })));
+        assert_eq!(input.len(), 2);
+        assert!(!out.is_closed());
     }
 }

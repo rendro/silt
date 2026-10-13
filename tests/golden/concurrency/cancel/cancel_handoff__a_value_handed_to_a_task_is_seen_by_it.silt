@@ -1,0 +1,64 @@
+-- timeout: 120
+-- A value that a sender handed to a task is not dropped with the task
+-- when a cancel arrives before the task has run again: the task goes
+-- on with it for a bounded number of steps, enough to pass it on by an
+-- operation that does not wait.
+--
+-- Each round a sender offers one number and a receiver is cancelled at
+-- about that moment. Whenever the sender was told that its number was
+-- sent, the number is somewhere: the receiver passed it on (`seen`),
+-- or it still lies in the channel. `main` waits for it in one of the
+-- two places without a time limit; a number that is in neither would
+-- leave `main` waiting for ever, which is a deadlock. The sleeps only
+-- bring the cancel close to the send: nothing here depends on how long
+-- anything takes.
+import channel
+import task
+import time
+
+-- 1 if the number of round `i` was sent and then found, 0 if it was
+-- not sent.
+fn round(i, capacity) {
+  let ch: Channel(Int) = channel.new(capacity)
+  let seen: Channel(Int) = channel.new(1)
+  let sender = task.spawn { ->
+    time.sleep(time.ms(1))
+    match channel.select([channel.Send(ch, i), channel.Recv(channel.timeout(time.ms(3)))]) {
+      (_, channel.Sent) -> true
+      _ -> false
+    }
+  }
+  let receiver = task.spawn { ->
+    match channel.receive(ch) {
+      channel.Message(v) -> channel.send(seen, v)
+      _ -> ()
+    }
+  }
+  time.sleep(time.ms(1))
+  task.cancel(receiver)
+  match task.join(sender) {
+    false -> 0
+    true -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
+      (_, channel.Message(^i)) -> 1
+      _ -> panic("round {i}: another value than the one that was sent")
+    }
+  }
+}
+
+fn rounds(capacity) {
+  loop i = 0, found = 0, sent = 0 {
+    match i >= 300 {
+      true -> found == sent
+      false -> {
+        let n = round(i, capacity)
+        loop(i + 1, found + n, sent + n)
+      }
+    }
+  }
+}
+
+fn main() {
+  println("every number that was sent was seen by its receiver, or is still in the channel")
+  println("  on a rendezvous channel: {rounds(0)}")
+  println("  on a channel with room for one: {rounds(1)}")
+}

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- verdict: same
+-- Each of three modules has a type error. The errors come in the order
+-- `silt fmt` writes the imports, a, b, c, in whatever order the import lines
+-- are written.
+import a
+import c
+import b
+
+fn main() {
+  println(a.fa() + b.fb() + c.fc())
+}

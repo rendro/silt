@@ -1,0 +1,13 @@
+-- cmd: fmt
+-- Imports are sorted by the text `silt fmt` writes for them, byte by
+-- byte: of one module the plain import, the alias, the lists of items,
+-- and last the empty list, which is written `b.{}` (a space comes before
+-- `}`); then a module whose name begins with the other's.
+
+import b
+import b as z
+import b.{ fb }
+import b.{ fb }
+import b.{}
+import b.{}
+import b2

@@ -1,0 +1,27 @@
+error[parse]: expected '}' or ',' to continue anon record pattern, found EOF
+ --> a.silt:1:13
+   |
+ 1 | pub fn fa( {
+   |             ^ expected '}' or ',' to continue anon record pattern, found EOF
+ ::: a.silt:1:12
+   |
+ 1 | pub fn fa( {
+   |            - the anon record pattern starts here
+ ::: main.silt:6:1
+   |
+ 6 | import a
+   | -------- module 'a' is imported here
+
+error[parse]: expected '}' or ',' to continue anon record pattern, found EOF
+ --> b.silt:1:13
+   |
+ 1 | pub fn fb( {
+   |             ^ expected '}' or ',' to continue anon record pattern, found EOF
+ ::: b.silt:1:12
+   |
+ 1 | pub fn fb( {
+   |            - the anon record pattern starts here
+ ::: main.silt:5:1
+   |
+ 5 | import b
+   | -------- module 'b' is imported here

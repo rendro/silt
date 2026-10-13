@@ -1,0 +1,4 @@
+pub let vc = {
+  println("c is initialised")
+  3
+}
