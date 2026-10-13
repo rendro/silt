@@ -620,8 +620,9 @@ enum Got {
 
 #[cfg(feature = "http")]
 impl Got {
-    /// Made on the thread that read the request: a body of megabytes
-    /// is not turned into a string on a worker of the scheduler.
+    /// Made on the thread that read the request: the value of a
+    /// request with a body of megabytes is not built on a worker of
+    /// the scheduler.
     /// `held` is what was counted for the request's body: it goes
     /// with a request for the handler, and ends here otherwise.
     fn of(next: wire::Next, held: Held) -> Got {

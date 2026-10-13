@@ -1398,5 +1398,12 @@ mod tests {
             String::from_utf8(response(200, &[], b"", kept)).unwrap(),
             "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
         );
+        // A body is bytes, whatever they are: every value, and what
+        // would end a head, follow the head as they were given.
+        let mut body: Vec<u8> = (0..=255).collect();
+        body.extend_from_slice(b"\r\n\r\nHTTP/1.1 200 OK\r\n\r\n");
+        let mut sent = b"HTTP/1.1 200 OK\r\nContent-Length: 279\r\n\r\n".to_vec();
+        sent.extend_from_slice(&body);
+        assert_eq!(response(200, &[], &body, Sending::default()), sent);
     }
 }
