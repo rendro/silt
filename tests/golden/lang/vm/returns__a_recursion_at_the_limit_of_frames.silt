@@ -1,0 +1,46 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: PASS returns__a_recursion_at_the_limit_of_frames.silt::test_an_int_one_call_under_the_limit
+-- stderr-contains: FAIL returns__a_recursion_at_the_limit_of_frames.silt::test_an_int_at_the_limit
+-- stderr-contains: PASS returns__a_recursion_at_the_limit_of_frames.silt::test_a_string_one_call_under_the_limit
+-- stderr-contains: FAIL returns__a_recursion_at_the_limit_of_frames.silt::test_a_string_at_the_limit
+-- stderr-contains: error[runtime]: stack overflow: recursion depth exceeded 100000 frames
+-- stderr-contains:  --> returns__a_recursion_at_the_limit_of_frames.silt:18:14
+-- stderr-contains:  --> returns__a_recursion_at_the_limit_of_frames.silt:26:15
+-- stderr-contains: ... (99984 more frames)
+-- stderr-contains: 4 tests: 2 passed, 2 failed, 0 skipped
+-- A recursion may be 100,000 frames deep. One call under that limit every
+-- frame returns its result, an Int (written into the caller's slot) or a
+-- String (taken off the stack and pushed again); one call more is refused.
+fn down(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> 1 + down(n - 1)
+  }
+}
+
+fn downs(n: Int) -> String {
+  match n {
+    0 -> "s"
+    _ -> {
+      let s = downs(n - 1)
+      s
+    }
+  }
+}
+
+fn test_an_int_one_call_under_the_limit() {
+  println(down(99997))
+}
+
+fn test_an_int_at_the_limit() {
+  println(down(99998))
+}
+
+fn test_a_string_one_call_under_the_limit() {
+  println(downs(99997))
+}
+
+fn test_a_string_at_the_limit() {
+  println(downs(99998))
+}
