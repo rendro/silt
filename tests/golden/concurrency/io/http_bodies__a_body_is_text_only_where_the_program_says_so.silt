@@ -1,0 +1,51 @@
+-- timeout: 30
+-- requires-feature: http
+-- A body is bytes at both ends, and nothing reads it as text unless the
+-- program does: `bytes.to_string` of a body that is no UTF-8 is
+-- `Err(InvalidUtf8(offset))` with the offset of the first byte that is
+-- none, in the handler and in the client alike, and the bytes are still
+-- all there. NUL bytes are text and are kept. (The handler answers with
+-- the body turned round, so the client's offset is not the handler's.)
+import bytes
+import http
+import list
+import result
+import string
+import task
+import tcp
+
+fn as_text(body: Bytes) -> String {
+  match bytes.to_string(body) {
+    Ok(text) -> "Ok, {string.length(text)} characters"
+    Err(bytes.InvalidUtf8(offset)) -> "Err(InvalidUtf8({offset}))"
+    Err(e) -> "Err({e})"
+  }
+}
+
+-- The handler answers with the body it got, turned round.
+fn answer(req: http.Request) -> http.Response {
+  println("  the handler: {bytes.to_hex(req.body)} {as_text(req.body)}")
+  let turned = bytes.from_list(list.reverse(bytes.to_list(req.body))) |> result.unwrap_or(bytes.empty())
+  http.Response { status: 200, body: turned, headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let bodies = [
+    ("text", Ok(bytes.from_string("héllo"))),
+    ("no text from its third byte", bytes.from_list([104, 105, 255, 0, 104])),
+    ("a character cut short", bytes.from_list([104, 195])),
+    ("NUL bytes", bytes.from_list([0, 0, 65, 0, 0])),
+  ]
+  list.each(bodies) { (what, made) ->
+    let body = made |> result.unwrap_or(bytes.empty())
+    println("{what}")
+    match http.request(http.POST, url, body, #{}) {
+      Ok(resp) -> println("  the client:  {bytes.to_hex(resp.body)} {as_text(resp.body)}")
+      Err(e) -> println("  the client: {e.message()}")
+    }
+  }
+  task.cancel(server)
+}

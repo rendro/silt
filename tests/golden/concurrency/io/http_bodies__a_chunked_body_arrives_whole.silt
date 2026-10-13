@@ -1,0 +1,123 @@
+-- timeout: 30
+-- requires-feature: http
+-- A body sent in chunks arrives whole, whichever way it goes: a client
+-- written by hand sends the 256 byte values in three chunks and the
+-- handler gets them as one body; a server written by hand answers with
+-- them in three chunks and `http.get` gets them as one body. (A handler's
+-- own answer is never chunked: the server sends it with its length.)
+import bytes
+import http
+import list
+import option
+import result
+import string
+import task
+import tcp
+
+fn upwards() -> Bytes {
+  bytes.from_list(0..255) |> result.unwrap_or(bytes.empty())
+}
+
+fn downwards() -> Bytes {
+  bytes.from_list(list.reverse(0..255)) |> result.unwrap_or(bytes.empty())
+}
+
+fn line_end() -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  "{cr}\n"
+}
+
+-- What follows the head of `message`: its body, as far as it is there.
+fn body_of(message: Bytes) -> Option(Bytes) {
+  let nl = line_end()
+  match bytes.index_of(message, bytes.from_string("{nl}{nl}")) {
+    Some(at) -> Some(bytes.slice(message, at + 4, bytes.length(message)))
+    None -> None
+  }
+}
+
+-- Reads a message from `conn`: until its head is there and its body
+-- has `length` bytes, or until the other end has closed. All of it.
+fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  loop got = bytes.empty() {
+    let whole = match body_of(got) {
+      Some(body) -> length == Some(bytes.length(body))
+      None -> false
+    }
+    match whole {
+      true -> got
+      false -> match tcp.read(conn, 4096) {
+        Ok(more) -> match bytes.length(more) {
+          0 -> got
+          _ -> loop(bytes.concat(got, more))
+        }
+        Err(_) -> got
+      }
+    }
+  }
+}
+
+fn read_body(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  body_of(read_message(conn, length)) |> option.unwrap_or(bytes.empty())
+}
+
+fn show(place: String, body: Bytes) {
+  println("{place}: {bytes.length(body)} bytes {bytes.to_hex(body)}")
+}
+
+-- `body` in chunks of 1, 127 and 128 bytes, and the chunk that ends
+-- them.
+fn in_chunks(body: Bytes) -> Bytes {
+  let nl = bytes.from_string(line_end())
+  bytes.concat_all([
+    bytes.from_string("1"),
+    nl,
+    bytes.slice(body, 0, 1),
+    nl,
+    bytes.from_string("7f"),
+    nl,
+    bytes.slice(body, 1, 128),
+    nl,
+    bytes.from_string("80"),
+    nl,
+    bytes.slice(body, 128, 256),
+    nl,
+    bytes.from_string("0"),
+    nl,
+    nl,
+  ])
+}
+
+fn answer(req: http.Request) -> http.Response {
+  show("  the handler gets", req.body)
+  http.Response { status: 200, body: bytes.empty(), headers: #{} }
+}
+
+fn main() {
+  let nl = line_end()
+  println("a client written by hand to http.serve")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let server = task.spawn { -> http.serve(listener, answer) }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }
+  let head = "POST / HTTP/1.1{nl}Host: x{nl}Transfer-Encoding: chunked{nl}Connection: close{nl}{nl}"
+  let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), in_chunks(upwards())))
+  let _ = read_message(conn, None)
+  tcp.close(conn)
+  task.cancel(server)
+
+  println("http.get to a server written by hand")
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let writer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
+    let _ = read_message(conn, Some(0))
+    let head = "HTTP/1.1 200 OK{nl}Transfer-Encoding: chunked{nl}Connection: close{nl}{nl}"
+    let _ = tcp.write(conn, bytes.concat(bytes.from_string(head), in_chunks(downwards())))
+    tcp.close(conn)
+  }
+  let got = http.get("http://127.0.0.1:{tcp.local_port(by_hand)}/")
+  task.join(writer)
+  match got {
+    Ok(resp) -> show("  http.get gets", resp.body)
+    Err(e) -> println("  http.get: {e.message()}")
+  }
+}

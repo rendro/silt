@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected String, got Bytes
+ --> http_bodies__a_response_body_read_as_text.silt:11:39
+    |
+ 11 |     Ok(resp) -> println(string.length(resp.body))
+    |                                       ^^^^^^^^^ type mismatch: expected String, got Bytes

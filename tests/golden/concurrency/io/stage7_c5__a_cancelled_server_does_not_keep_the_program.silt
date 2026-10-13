@@ -5,6 +5,7 @@
 -- ends with the task that served: the program ends. (The listener is
 -- bound before the server starts, so the first request needs no
 -- waiting: it is queued until the server accepts it.)
+import bytes
 import http
 import task
 import tcp
@@ -23,7 +24,7 @@ fn main() {
     http.serve(listener) { req ->
       match req.path {
         "/boom" -> panic("handler fails")
-        _ -> http.Response { status: 200, body: "ok", headers: #{} }
+        _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
       }
     }
   }

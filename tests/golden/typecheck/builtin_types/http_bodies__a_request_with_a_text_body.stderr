@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected Bytes, got String
+ --> http_bodies__a_request_with_a_text_body.silt:9:61
+   |
+ 9 |   let sent = http.request(http.POST, "http://127.0.0.1:1/", "text", #{})
+   |                                                             ^^^^^^ type mismatch: expected Bytes, got String

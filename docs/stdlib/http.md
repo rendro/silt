@@ -31,19 +31,46 @@ type Request {
 
 type Response {
   status: Int,
-  body: String,
+  body: Bytes,
   headers: Map(String, String),
 }
 ```
 
 `Method` and its variants are members of `http`: `http.Method`, `http.GET`, `http.POST`, etc.
 
+A body is [`Bytes`](bytes.md), in a request and in a response, sent and
+received: exactly the bytes that are on the wire, whatever they are.
+Text is put into a body with `bytes.from_string("...")` and taken out of
+one with `bytes.to_string(resp.body)`, a `Result`: it is
+`Err(InvalidUtf8(offset))` for a body that is no UTF-8.
+
+```silt
+import bytes
+import http
+
+-- Text into a body: what a handler answers.
+fn hello(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("Hello"), headers: #{} }
+}
+
+-- Text out of a body: what a client got.
+fn main() {
+  match http.get("http://127.0.0.1:8080/") {
+    Ok(resp) -> match bytes.to_string(resp.body) {
+      Ok(text) -> println(text)
+      Err(e) -> println("the body is no text: {e.message()}")
+    }
+    Err(e) -> println(e.message())
+  }
+}
+```
+
 ## Summary
 
 | Name | Signature | Description |
 |------|-----------|-------------|
 | `get` | `(String) -> Result(Response, HttpError)` | HTTP GET request |
-| `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
+| `request` | `(Method, String, Bytes, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 | `parse_query` | `(String) -> Result(Map(String, List(String)), EncodingError)` | Parse a URL query string into a multi-value map |
@@ -51,12 +78,14 @@ type Response {
 ## Errors
 
 `http.get` and `http.request` return `Result(Response, HttpError)`. Note
-that a 4xx or 5xx HTTP response is an `Ok(Response)` — only failures
-*before* a response lands (DNS, connection, TLS, protocol) become `Err`.
-Servers that explicitly want to short-circuit on a non-2xx code can
-construct `StatusCode(status, body)` themselves; the stdlib does
-not do that conversion for you. `HttpError` implements the built-in
-`Error` trait, so `e.message()` always yields a rendered string.
+that a 4xx or 5xx HTTP response is an `Ok(Response)`: an `Err` is a
+response that did not arrive whole. That is a failure before its head
+is there (DNS, connection, TLS, a timeout, a head that is no HTTP), and
+one after it: a body that is cut short (`ClosedEarly`), and a body that
+does not unpack or is larger than 10 MiB (`InvalidResponse`).
+A program for which a status is a failure looks at `resp.status`.
+`HttpError` implements the built-in `Error` trait, so `e.message()`
+always yields a rendered string.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
@@ -64,9 +93,8 @@ not do that conversion for you. `HttpError` implements the built-in
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large) |
-| `ClosedEarly` | — | the server went away before the response was complete, head or body |
-| `StatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10 MiB |
+| `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
 
 Which variant a failure is, is decided by the kind of failure the
@@ -80,36 +108,50 @@ only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
 http.get(url: String) -> Result(Response, HttpError)
 ```
 
-Makes an HTTP GET request. Returns `Ok(Response)` for any successful
-connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
-for network errors (DNS failure, connection refused, timeout, TLS).
+Makes an HTTP GET request. Returns `Ok(Response)` for a response of any
+status (4xx and 5xx too) that arrived whole, and `Err(HttpError)`
+otherwise: see [Errors](#errors).
 The names of the response's headers are in lower case
-(`map.get(resp.headers, "content-type")`), and its body is a `String`: a
-byte of the body that is no UTF-8 is replaced by `?`.
+(`map.get(resp.headers, "content-type")`), and its body is the bytes the
+server sent, with one exception:
+
+- A body with the header `Content-Encoding: gzip`, written exactly so, is
+  unpacked: `resp.body` is the content, and `content-encoding` and
+  `content-length`, which describe the packed bytes, are not in
+  `resp.headers`. (Every request says `accept-encoding: gzip`.) A body
+  in any other coding, `GZIP` and `x-gzip` among them, is handed over as
+  it came, with its header.
+- An answer to `HEAD`, a `204` and a `304` have no body: `resp.body` is
+  empty and nothing is read, whatever the headers say. They may say what
+  a `GET` would get; of those, `content-encoding` and `content-length`
+  are not in `resp.headers` when the answer says `gzip`.
+- A body of more than 10 MiB, counted as the program would get it, is
+  `Err(InvalidResponse(_))`: no part of it is returned.
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
 call site looks the same.
 
 ```silt
+import bytes
 import http
-import string
 
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
-    Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
+    Ok(resp) -> println("Status: {resp.status}, body length: {bytes.length(resp.body)}")
     Err(http.Timeout) -> println("timed out; retry later")
     Err(e) -> println("Network error: {e.message()}")
   }
 }
 ```
 
-Compose with `json.parse` and `?` for typed API responses. Since
-`http.get` and `json.parse` return different error types, wrap each in
+Compose with `bytes.to_string`, `json.parse` and `?` for typed API
+responses. Since the three return different error types, wrap each in
 a local enum using `result.map_err` with a variant constructor as a
 first-class `Fn`:
 
 ```silt
+import bytes
 import http
 import json
 import result
@@ -121,12 +163,14 @@ type User {
 
 type FetchError {
   Network(http.HttpError),
+  NotText(bytes.BytesError),
   Parse(json.JsonError),
 }
 
 fn fetch_user(name: String) -> Result(User, FetchError) {
   let resp = http.get("https://api.example.com/users/{name}") |> result.map_err(Network)?
-  json.parse(resp.body, User) |> result.map_err(Parse)
+  let text = bytes.to_string(resp.body) |> result.map_err(NotText)?
+  json.parse(text, User) |> result.map_err(Parse)
 }
 ```
 
@@ -134,10 +178,14 @@ fn fetch_user(name: String) -> Result(User, FetchError) {
 ## `http.request`
 
 ```
-http.request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)
+http.request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)
 ```
 
 Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.
+
+The body is sent as it is, with its length: `bytes.from_string("...")` for
+a text, `bytes.empty()` for none. What the bytes are is the request's to
+say, in a `Content-Type` header among `headers`: none is added.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a spawned task.
@@ -147,18 +195,18 @@ a spawned task.
 let resp = http.request(
   http.POST,
   "https://api.example.com/users",
-  json.stringify(#{ "name": "Alice" }),
+  bytes.from_string(json.stringify(#{ "name": "Alice" })),
   #{ "Content-Type": "application/json", "Authorization": "Bearer tok123" },
 )?
 
 -- DELETE
-let resp = http.request(http.DELETE, "https://api.example.com/users/42", "", #{})?
+let resp = http.request(http.DELETE, "https://api.example.com/users/42", bytes.empty(), #{})?
 
 -- GET with custom headers
 let resp = http.request(
   http.GET,
   "https://api.example.com/data",
-  "",
+  bytes.empty(),
   #{ "Accept": "text/plain" },
 )?
 ```
@@ -234,8 +282,11 @@ A response is sent with `Content-Length`, `Date` and, where the
 connection ends with it, `Connection: close`. Those three are the
 server's: headers of these names in `Response.headers` are left out, and
 so is a header whose name or value could not stand in one header line.
-`Content-Type` is `text/plain; charset=UTF-8` unless the handler sets
-one. There is no `Server` header.
+The body is the bytes of `Response.body`, as they are, and what they are
+is the handler's to say: a response has the `Content-Type` that
+`Response.headers` gives it, and none if the handler sets none. (The
+server's own answers, such as a `405` or a `503`, are a word of text and
+say `text/plain; charset=UTF-8`.) There is no `Server` header.
 
 ### Limits
 
@@ -244,6 +295,7 @@ one. There is no `Server` header.
 | The head of a request: request line and headers | 64 KiB | `431`, connection closed |
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10 MiB | `413`, connection closed |
+| The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10 MiB | `Err(InvalidResponse("the body is larger than 10 MiB"))`; no more than one byte beyond the limit is read |
 | The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10 MiB more: about 1.5 GiB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
@@ -280,7 +332,8 @@ An `Expect` header that asks for anything but `100-continue` is answered
   as U+FFFD, unlike the body, which is exact.
 - `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.
   A handler that wants text says so: `bytes.to_string(req.body)` is
-  `Err(InvalidUtf8(offset))` for a body that is no UTF-8.
+  `Err(InvalidUtf8(offset))` for a body that is no UTF-8. The body of the
+  `Response` it returns is `Bytes` in the same way, sent exactly.
 - `req.path` and `req.query` are the request target as sent, cut at the
   first `?`: nothing is decoded or normalised. A target in absolute form
   (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
@@ -339,6 +392,15 @@ type User {
   name: String,
 }
 
+-- A body is bytes: this server answers with text, and says so.
+fn reply(status: Int, text: String) -> http.Response {
+  http.Response {
+    status: status,
+    body: bytes.from_string(text),
+    headers: #{ "Content-Type": "text/plain; charset=UTF-8" },
+  }
+}
+
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:8080") else {
     panic("cannot listen on port 8080")
@@ -347,23 +409,23 @@ fn main() {
 
   http.serve(listener) { req ->
     match (req.method, http.segments(req.path)) {
-      (http.GET, []) -> http.Response { status: 200, body: "Hello!", headers: #{} }
+      (http.GET, []) -> reply(200, "Hello!")
 
-      (http.GET, ["users", id]) -> http.Response { status: 200, body: "User {id}", headers: #{} }
+      (http.GET, ["users", id]) -> reply(200, "User {id}")
 
       (http.POST, ["users"]) -> match bytes.to_string(req.body) {
         Ok(text) -> match json.parse(text, User) {
           Ok(user) -> http.Response {
             status: 201,
-            body: json.stringify(user),
+            body: bytes.from_string(json.stringify(user)),
             headers: #{ "Content-Type": "application/json" },
           }
-          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+          Err(e) -> reply(400, e.message())
         }
-        Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+        Err(e) -> reply(400, e.message())
       }
 
-      _ -> http.Response { status: 404, body: "Not found", headers: #{} }
+      _ -> reply(404, "Not found")
     }
   }
 }

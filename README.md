@@ -104,6 +104,15 @@ type Todo {
   done: Bool,
 }
 
+-- A body is bytes: this server answers with JSON, and says so.
+fn reply(status, data) {
+  http.Response {
+    status: status,
+    body: bytes.from_string(json.stringify(data)),
+    headers: #{ "Content-Type": "application/json" },
+  }
+}
+
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:8080") else {
     panic("cannot listen on port 8080")
@@ -115,16 +124,16 @@ fn main() {
           Todo { id: 1, title: "Learn silt", done: true },
           Todo { id: 2, title: "Build an API", done: false },
         ]
-        http.Response { status: 200, body: json.stringify(todos), headers: #{} }
+        reply(200, todos)
       }
       (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
         Ok(text) -> match json.parse(text, Todo) {
-          Ok(todo) -> http.Response { status: 201, body: json.stringify(todo), headers: #{} }
-          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+          Ok(todo) -> reply(201, todo)
+          Err(e) -> reply(400, #{ "error": e.message() })
         }
-        Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+        Err(e) -> reply(400, #{ "error": e.message() })
       }
-      _ -> http.Response { status: 404, body: "Not found", headers: #{} }
+      _ -> reply(404, #{ "error": "Not found" })
     }
   }
 }

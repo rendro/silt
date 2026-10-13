@@ -419,15 +419,15 @@ pub(super) fn modules() -> Vec<Module> {
             page: "http.md",
             types: "\
                 pub type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }\n\
-                pub type Response { status: Int, body: String, headers: Map(String, String) }\n\
+                pub type Response { status: Int, body: Bytes, headers: Map(String, String) }\n\
                 pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes }\n\
-                pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, StatusCode(Int, String), Other(String) }\n\
+                pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }\n\
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
             error: "HttpError" => http::error_text,
             rows: [
                 f("fn get(url: String) -> Result(Response, HttpError)", "HTTP GET request", http::get).feature("http"),
-                f("fn request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
+                f("fn request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)", "HTTP request with method, URL, body, headers", http::request).feature("http"),
                 f("fn serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()", "Serve HTTP on a listener made with `tcp.listen`, a task per connection", http::serve).feature("http"),
                 f("fn segments(path: String) -> List(String)", "Split URL path into segments", http::segments),
                 f("fn parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)", "Parse a URL query string into a multi-value map", http::parse_query),

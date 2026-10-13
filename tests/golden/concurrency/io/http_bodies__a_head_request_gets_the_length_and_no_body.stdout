@@ -1,0 +1,6 @@
+http.request
+  the handler is asked with HEAD and answers 256 bytes
+  gets 200, content-length Some(256), 0 bytes
+a client written by hand
+  the handler is asked with HEAD and answers 256 bytes
+  on the wire: content-length: 256, 0 bytes after the head
