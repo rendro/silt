@@ -495,6 +495,15 @@ fn main() {
 /// it is still to run when its sleep ends; the two sleeps end within
 /// microseconds of each other. Whether both workers panic or the
 /// second finds the runtime ended is the machine's to say.)
+///
+/// The line is the last thing silt writes, not always the last line
+/// of stderr: Rust writes its lines for a panic at the moment of the
+/// panic, and the second worker's may come between the line and the
+/// exit. So after the line this test lets through Rust's own lines
+/// for a panic of a silt thread and nothing else: an empty line,
+/// `thread 'silt-...' ... panicked at ...`, the hook's message, the
+/// note about RUST_BACKTRACE. A second internal-error line fails it,
+/// and so does an `error[` of the program anywhere.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn two_panics_close_together_are_one_internal_error() {
@@ -536,11 +545,16 @@ fn main() {
             either.iter().any(|line| line == lines[0]),
             "round {round}: {stderr}"
         );
-        assert_eq!(
-            stderr.lines().last(),
-            Some(lines[0]),
-            "round {round}: {stderr}"
-        );
+        assert!(!stderr.contains("error["), "round {round}: {stderr}");
+        let rusts_own = |line: &&str| {
+            line.is_empty()
+                || (line.starts_with("thread 'silt-") && line.contains(" panicked at "))
+                || line.starts_with("a panic made for a test: Task(")
+                || line.starts_with("note: run with `RUST_BACKTRACE")
+        };
+        let after = stderr.lines().skip_while(|line| *line != lines[0]).skip(1);
+        let other: Vec<&str> = after.filter(|line| !rusts_own(line)).collect();
+        assert!(other.is_empty(), "round {round}: {other:?} in {stderr}");
     }
 }
 
