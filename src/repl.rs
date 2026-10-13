@@ -175,7 +175,10 @@ pub fn run_repl() {
             "  ... "
         };
 
-        match rl.readline(prompt) {
+        // (A panic of the helper, which the editor calls while it holds
+        // the terminal, unwinds through the editor: the terminal is put
+        // back before the process ends.)
+        match crate::scheduler::unwinding(|| rl.readline(prompt)) {
             Ok(line) => {
                 let line = line.trim_end();
 

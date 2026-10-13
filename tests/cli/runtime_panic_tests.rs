@@ -6,6 +6,11 @@
 //! waited for what the lost thread was doing, and `main` with them,
 //! waited for ever.
 //!
+//! The process ends where the panic is raised, in a panic hook of the
+//! command's own: the three go together (Rust's lines, the line, the
+//! status), the line is the last of stderr, and a stderr that is held
+//! up does not keep the process alive.
+//!
 //! No silt program can make the runtime panic. A build with the
 //! `test-hooks` feature reads `SILT_TEST_PANIC` in `silt run` and makes
 //! the runtime panic once at the place it names; every other build
@@ -389,8 +394,14 @@ fn main() {
 /// The line and the status go together. `main` ends with an error of
 /// its own, or returns `Err`, without waiting for its tasks, just as a
 /// worker panics: two threads set out to end the process. Whichever
-/// comes first ends it: with 101 and the line, or with the program's
-/// status 1 and no line. Never 1 with the line.
+/// comes first ends it: with 101, Rust's lines for the panic and the
+/// line, or with the program's status 1 and none of them. Never 1 with
+/// the line, and never 1 with Rust's lines: the process's end is
+/// decided where the panic is raised, before Rust writes them. (It was
+/// decided at the top of the panicking thread, after they were
+/// written and the thread had unwound, and `main` could end the
+/// process in between.) Half of the runs are made with a backtrace,
+/// which takes Rust a while to write.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn the_internal_error_line_and_the_status_101_go_together() {
@@ -404,11 +415,16 @@ fn the_internal_error_line_and_the_status_101_go_together() {
     ] {
         let source = fs::read_to_string(format!("{tasks}/{program}.silt")).expect("the golden");
         for round in 0..20 {
+            let backtrace = ["0", "1"][round % 2];
             let (status, _, stderr) = Run {
                 name: "status",
                 files: &[("main.silt", &source)],
                 args: &["run", "main.silt"],
-                env: &[("SILT_TEST_PANIC", "task:0"), ("SILT_TIME_SLICE", "1")],
+                env: &[
+                    ("SILT_TEST_PANIC", "task:0"),
+                    ("SILT_TIME_SLICE", "1"),
+                    ("RUST_BACKTRACE", backtrace),
+                ],
                 unread_stdout: false,
             }
             .ended();
@@ -420,6 +436,8 @@ fn the_internal_error_line_and_the_status_101_go_together() {
                 line,
                 "{program}, round {round}: {stderr}"
             );
+            let rusts = stderr.lines().any(|line| line.contains(" panicked at "));
+            assert_eq!(rusts, line, "{program}, round {round}: {stderr}");
             assert!(
                 matches!(status, Some(1 | 101)),
                 "{program}, round {round}: {status:?}"
@@ -489,21 +507,18 @@ fn main() {
     }
 }
 
-/// Two workers panic close together: one internal-error line, of the
-/// panic that came first, and status 101. (Each task is let through
-/// the gate by `main` and then sleeps, so each is certainly lost if
-/// it is still to run when its sleep ends; the two sleeps end within
-/// microseconds of each other. Whether both workers panic or the
-/// second finds the runtime ended is the machine's to say.)
+/// Two workers panic close together: Rust's lines and the
+/// internal-error line of the panic that came first, and status 101.
+/// (Each task is let through the gate by `main` and then sleeps, so
+/// each is certainly lost if it is still to run when its sleep ends;
+/// the two sleeps end within microseconds of each other. Whether both
+/// workers panic or the second finds the process ended is the
+/// machine's to say.)
 ///
-/// The line is the last thing silt writes, not always the last line
-/// of stderr: Rust writes its lines for a panic at the moment of the
-/// panic, and the second worker's may come between the line and the
-/// exit. So after the line this test lets through Rust's own lines
-/// for a panic of a silt thread and nothing else: an empty line,
-/// `thread 'silt-...' ... panicked at ...`, the hook's message, the
-/// note about RUST_BACKTRACE. A second internal-error line fails it,
-/// and so does an `error[` of the program anywhere.
+/// The panic that comes second writes nothing: Rust's lines are there
+/// once, for the panic the line names, and the line is the last of
+/// stderr. (Rust wrote its lines for the second panic too, and they
+/// could stand after the line.)
 #[test]
 #[cfg(feature = "test-hooks")]
 fn two_panics_close_together_are_one_internal_error() {
@@ -546,16 +561,95 @@ fn main() {
             "round {round}: {stderr}"
         );
         assert!(!stderr.contains("error["), "round {round}: {stderr}");
-        let rusts_own = |line: &&str| {
-            line.is_empty()
-                || (line.starts_with("thread 'silt-") && line.contains(" panicked at "))
-                || line.starts_with("a panic made for a test: Task(")
-                || line.starts_with("note: run with `RUST_BACKTRACE")
-        };
-        let after = stderr.lines().skip_while(|line| *line != lines[0]).skip(1);
-        let other: Vec<&str> = after.filter(|line| !rusts_own(line)).collect();
-        assert!(other.is_empty(), "round {round}: {other:?} in {stderr}");
+        assert_eq!(stderr.lines().last(), Some(lines[0]), "round {round}");
+        let rusts: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.contains(" panicked at "))
+            .collect();
+        assert_eq!(rusts.len(), 1, "round {round}: {stderr}");
+        let message = lines[0]
+            .strip_prefix("silt: internal error: ")
+            .and_then(|rest| rest.split_once(". This is a bug"))
+            .map(|(message, _)| message);
+        let named = stderr.lines().skip_while(|line| *line != rusts[0]).nth(1);
+        assert_eq!(named, message, "round {round}: {stderr}");
     }
+}
+
+/// Stderr is a pipe that is full and that nobody reads when a worker
+/// panics, and `main` waits for the task that is lost: Rust cannot
+/// write its lines for the panic. The process ends all the same, with
+/// status 101, when it has waited for them for ten seconds. (The
+/// panicking thread stayed in that write for ever, the panic never
+/// reached the top of its thread, and the process hung.)
+#[test]
+#[cfg(all(unix, feature = "test-hooks"))]
+fn a_stderr_that_is_held_up_does_not_keep_the_process_alive() {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    // A pipe, filled to the last byte: the write end takes no more.
+    let (unread, full) = {
+        let mut ends = [0; 2];
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0, "a pipe");
+        unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) }
+    };
+    let flags = unsafe { libc::fcntl(full.as_raw_fd(), libc::F_GETFL) };
+    let set = |flags: libc::c_int| unsafe { libc::fcntl(full.as_raw_fd(), libc::F_SETFL, flags) };
+    assert_eq!(set(flags | libc::O_NONBLOCK), 0, "the pipe does not block");
+    let byte = [b'.'];
+    while unsafe { libc::write(full.as_raw_fd(), byte.as_ptr().cast(), 1) } == 1 {}
+    assert_eq!(set(flags), 0, "the pipe blocks again");
+    let run = Run {
+        name: "stderr",
+        files: &[("main.silt", LOST_WHILE_ALL_WAIT)],
+        args: &["run", "main.silt"],
+        env: &[("SILT_TEST_PANIC", "task:0")],
+        unread_stdout: false,
+    };
+    let mut command = run.command();
+    command.stderr(Stdio::from(full));
+    let child = command.spawn().expect("silt starts");
+    // The command holds the write end no longer: only the process does.
+    drop(command);
+    let (status, _) = run.wait(child);
+    drop(unread);
+    assert_eq!(status, Some(101));
+}
+
+/// A panic inside the call of a builtin is no panic of the runtime: it
+/// is the error of the call, in the command's process as in an
+/// embedder's. Rust writes its lines, the program ends with that
+/// error and status 1, and no internal-error line is written. (The
+/// hook that ends the process for a panic of silt's own code leaves
+/// this one to the catch around the call.)
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_panic_inside_a_builtin_is_the_error_of_the_call() {
+    let source = r#"fn main() {
+  println("the call that panics")
+  println("main went on")
+}
+"#;
+    let (status, stdout, stderr) = run("builtin", source, Some("builtin"));
+    assert_eq!(status, Some(1), "stdout: {stdout}\nstderr: {stderr}");
+    assert_eq!(stdout, "", "stderr: {stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("thread 'silt-main' "))
+        .unwrap_or_else(|| panic!("no line of Rust's for the panic in: {stderr}"));
+    assert!(lines[at].contains(" panicked at src"), "{stderr}");
+    assert_eq!(
+        lines[at + 1],
+        "a panic made for a test: Builtin",
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "error[runtime]: builtin module 'println' panicked: a panic made for a test: Builtin"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("silt: internal error"), "{stderr}");
 }
 
 /// `silt test`: the second test of a file loses a worker. The run ends

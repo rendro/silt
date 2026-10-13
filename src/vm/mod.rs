@@ -13,8 +13,8 @@ mod runtime;
 mod show;
 
 pub use error::VmError;
-pub(crate) use io::panic_message;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
+pub(crate) use io::{NO_PANIC_TEXT, panic_message};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::IoFailure;
 pub use runtime::Runtime;
@@ -68,7 +68,9 @@ pub use crate::scheduler::PanicAt;
 /// Test-only: the runtime of this VM panics once at `at`, in its own
 /// code, outside every catch of a builtin's or a host function's
 /// panic: what no silt program can make it do. It is how the tests
-/// see what a panic of the runtime does to a program.
+/// see what a panic of the runtime does to a program. (One place,
+/// [`PanicAt::Builtin`], is inside such a catch: for what a panic of a
+/// builtin's own code does.)
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn panic_for_test(vm: &Vm, at: PanicAt) {
     match at {
@@ -208,7 +210,7 @@ impl Drop for Vm {
         // thread unwinds, would abort its process, so it is dropped.
         // The same on the thread that is unwinding from the first
         // panic, which drops the VM of the task it was running.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = crate::scheduler::catch_as_error(std::panic::AssertUnwindSafe(|| {
             #[cfg(any(test, feature = "test-hooks"))]
             self.runtime.scheduler.panic_while_unwinding_for_test();
             end(self)

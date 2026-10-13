@@ -617,7 +617,7 @@ impl IoPool {
         let (cell, in_flight) = (op.cell.clone(), op.in_flight.clone());
         let scheduler = self.scheduler.clone();
         let job: IoJob = Box::new(move || {
-            let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            let result = match crate::scheduler::catch_as_error(std::panic::AssertUnwindSafe(f)) {
                 Ok(value) => value,
                 Err(panic) => {
                     let msg = if let Some(s) = panic.downcast_ref::<&str>() {
@@ -701,6 +701,7 @@ impl IoPool {
             .name("silt-io".into())
             .stack_size(IO_POOL_STACK_BYTES)
             .spawn(move || {
+                crate::scheduler::a_thread_of_the_runtime();
                 let run = std::panic::AssertUnwindSafe(|| pool.run());
                 if let Err(payload) = std::panic::catch_unwind(run) {
                     alarm.raise(payload);
