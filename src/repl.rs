@@ -240,7 +240,8 @@ pub fn run_repl() {
                 break;
             }
             Err(err) => {
-                eprintln!("error: {err}");
+                let text = format!("error: {err}");
+                crate::scheduler::report(|| eprintln!("{text}"));
                 break;
             }
         }
