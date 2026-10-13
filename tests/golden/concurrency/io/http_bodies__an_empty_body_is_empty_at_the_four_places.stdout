@@ -1,0 +1,9 @@
+http.request to http.serve
+  the handler gets: 0 bytes, equal to bytes.empty(): true
+  http.request gets: 200, 0 bytes, equal to bytes.empty(): true
+a client written by hand to http.serve
+  the handler gets: 0 bytes, equal to bytes.empty(): true
+  the answer on the wire: content-length: 0, 0 bytes after the head
+http.request to a server written by hand
+  the request on the wire: content-length: 0, 0 bytes after the head
+  http.request gets: 200, 0 bytes, equal to bytes.empty(): true

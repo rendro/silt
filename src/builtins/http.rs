@@ -13,7 +13,7 @@ use std::time::Duration;
 use super::encoding::form_decode_component;
 use super::typed::builtins;
 #[cfg(feature = "http")]
-use super::typed::{Arg, Map, TcpListener, unsound};
+use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
@@ -54,16 +54,12 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 // ── HTTP dispatch ───────────────────────────────────────────────────
 
 #[cfg(feature = "http")]
-fn make_http_response(
-    status: u16,
-    headers: BTreeMap<Value, Value>,
-    body: std::string::String,
-) -> Value {
+fn make_http_response(status: u16, headers: BTreeMap<Value, Value>, body: Vec<u8>) -> Value {
     Value::builtin_record(
         ty::RESPONSE,
         [
             ("status", Value::Int(status as i64)),
-            ("body", Value::String(body.into())),
+            ("body", Value::Bytes(Arc::new(body))),
             ("headers", Value::map(headers)),
         ],
     )
@@ -90,9 +86,7 @@ fn make_http_request_value(
 }
 
 #[cfg(feature = "http")]
-fn extract_http_response(
-    val: &Value,
-) -> Result<(u16, std::string::String, &crate::value::Record), VmError> {
+fn extract_http_response(val: &Value) -> Result<(u16, &[u8], &crate::value::Record), VmError> {
     // (What is no `Response` is no value the handler's type has.)
     let fields = match val {
         Value::Record(record) if record.type_id() == ty::RESPONSE => record,
@@ -100,7 +94,7 @@ fn extract_http_response(
     };
     let (Some(given), Some(body)) = (
         fields.get("status").and_then(i64::take),
-        fields.get("body").and_then(<&str>::take),
+        fields.get("body").and_then(Bytes::take),
     ) else {
         return Err(unsound("http.serve", "handler"));
     };
@@ -115,7 +109,6 @@ fn extract_http_response(
             )));
         }
     };
-    let body = body.to_string();
     Ok((status, body, fields))
 }
 
@@ -132,7 +125,8 @@ fn ureq_response_to_value(
             headers.insert(Value::String(name.as_str().into()), Value::String(v.into()));
         }
     }
-    let body = response.body_mut().read_to_string()?;
+    // The body is the bytes that arrived.
+    let body = response.body_mut().read_to_vec()?;
     Ok(make_http_response(status, headers, body))
 }
 
@@ -368,7 +362,12 @@ fn do_http_get(url: &str) -> Value {
 
 /// Perform a synchronous HTTP request and return a `Value`.
 #[cfg(feature = "http")]
-fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, String)]) -> Value {
+fn do_http_request(
+    method_tag: &str,
+    url: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+) -> Value {
     if let Some(refused) = refuse_port(url) {
         return refused;
     }
@@ -725,7 +724,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
             if wire::has_body(status) && !headers.iter().any(typed) {
                 headers.push(("Content-Type".to_string(), TEXT.to_string()));
             }
-            response_bytes(vm, status, &headers, body.as_bytes(), reply)
+            response_bytes(vm, status, &headers, body, reply)
         }
         Err(e) => {
             // Security: don't leak VmError contents (call stack, line
@@ -1410,8 +1409,8 @@ builtins! {
     }
 
     #[cfg(feature = "http")]
-    fn request(vm, method: Method, url: &str, body: &str, headers: Map) -> Result<Step, VmError> {
-        let (method, url, body) = (method.0.to_string(), url.to_string(), body.to_string());
+    fn request(vm, method: Method, url: &str, body: Bytes, headers: Map) -> Result<Step, VmError> {
+        let (method, url, body) = (method.0.to_string(), url.to_string(), body.clone());
         let headers: Vec<(String, String)> = headers
             .iter()
             .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
@@ -1506,7 +1505,7 @@ mod http_response_tests {
             ty::RESPONSE,
             [
                 ("status", Value::Int(status)),
-                ("body", Value::String(String::new().into())),
+                ("body", Value::Bytes(Arc::new(Vec::new()))),
                 ("headers", Value::map(BTreeMap::new())),
             ],
         )
@@ -1521,13 +1520,13 @@ mod http_response_tests {
             let name = Value::String("accept".into());
             BTreeMap::from([(name, Value::String("*/*".into()))])
         };
-        let response = make_http_response(204, headers(), "done".to_string());
+        let response = make_http_response(204, headers(), vec![0, 0xff, b'd']);
         assert_eq!(
             response.to_string(),
-            "Response {status: 204, body: done, headers: #{\"accept\": */*}}"
+            "Response {status: 204, body: bytes(00 ff 64, length: 3), headers: #{\"accept\": */*}}"
         );
         let (status, body, record) = extract_http_response(&response).expect("a Response");
-        assert_eq!((status, body.as_str()), (204, "done"));
+        assert_eq!((status, body), (204, &[0, 0xff, b'd'][..]));
         assert_eq!(record.fields()[0], Value::Int(204));
 
         let request = make_http_request_value(bv::POST, "/jobs", "n=1", headers(), b"go".to_vec());
@@ -1730,7 +1729,7 @@ mod http_error_tests {
             let expected = format!("InvalidUrl({url})");
             assert_eq!(failure(&do_http_get(url)), expected);
             assert_eq!(
-                failure(&do_http_request("POST", url, "body", &[])),
+                failure(&do_http_request("POST", url, b"body", &[])),
                 expected
             );
         }
@@ -1758,7 +1757,7 @@ mod http_error_tests {
             let expected = format!("InvalidUrl({url})");
             assert_eq!(failure(&do_http_get(url)), expected);
             assert_eq!(
-                failure(&do_http_request("POST", url, "body", &[])),
+                failure(&do_http_request("POST", url, b"body", &[])),
                 expected
             );
         }
@@ -1848,10 +1847,10 @@ mod http_error_tests {
     fn a_header_of_the_program_that_is_none_is_other() {
         let url = "http://127.0.0.1:9/";
         let headers = [("a name".to_string(), "x".to_string())];
-        let got = failure(&do_http_request("POST", url, "body", &headers));
+        let got = failure(&do_http_request("POST", url, b"body", &headers));
         assert!(got.starts_with("Other("), "{got}");
         let headers = [("name".to_string(), "a\nb".to_string())];
-        let got = failure(&do_http_request("GET", url, "", &headers));
+        let got = failure(&do_http_request("GET", url, b"", &headers));
         assert!(got.starts_with("Other("), "{got}");
     }
 }

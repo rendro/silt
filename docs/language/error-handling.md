@@ -144,7 +144,7 @@ type AppError {
   ApiCall(http.HttpError),
 }
 
-fn load_and_fetch(path: String) -> Result(String, AppError) {
+fn load_and_fetch(path: String) -> Result(Bytes, AppError) {
   let contents = result.map_err(io.read_file(path)) { e -> ConfigRead(e) }?
   let config = result.map_err(json.parse(contents, Config)) { e -> ConfigParse(e) }?
   let resp = result.map_err(http.get(config.api_url)) { e -> ApiCall(e) }?

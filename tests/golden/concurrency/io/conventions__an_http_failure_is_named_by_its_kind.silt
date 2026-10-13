@@ -51,7 +51,7 @@ fn main() {
   println("empty: {kind(http.get(""))}")
   println("another scheme: {kind(http.get("ftp://127.0.0.1/file"))}")
   println("a port that is none: {kind(http.get("http://127.0.0.1:99999/"))}")
-  println("a posted one: {kind(http.request(http.POST, "not a url", "body", #{}))}")
+  println("a posted one: {kind(http.request(http.POST, "not a url", bytes.from_string("body"), #{}))}")
   println("nobody listens: {kind(http.get("http://127.0.0.1:1/"))}")
   println("the server goes away: {kind(against(""))}")
   println("in the head: {kind(against("HTTP/1.1 200 OK{nl}Content-Le"))}")

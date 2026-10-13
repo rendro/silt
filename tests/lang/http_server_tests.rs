@@ -32,7 +32,7 @@ const PATIENCE: Duration = Duration::from_secs(60);
 /// `/fail`.
 const ECHO: &str = r#"match req.path {
         "/fail" -> panic("the handler failed: secret-detail")
-        _ -> http.Response { status: 200, body: "{req.method} {req.path} [{text(req.body)}]", headers: #{} }
+        _ -> http.Response { status: 200, body: bytes.from_string("{req.method} {req.path} [{text(req.body)}]"), headers: #{} }
       }"#;
 
 /// A clock that stands still unless the test moves it: its reading,
@@ -305,7 +305,7 @@ impl Client {
 #[test]
 fn the_headers_of_a_response() {
     let server = Server::new(
-        r#"http.Response { status: 201, body: "made", headers: #{
+        r#"http.Response { status: 201, body: bytes.from_string("made"), headers: #{
         "X-Made": "yes", "Content-Length": "999", "Connection": "keep-alive", "X-Two\nLines": "no",
         "X-Split": "a\nSet-Cookie: stolen",
       } }"#,
@@ -491,11 +491,11 @@ fn a_handler_that_fails_is_500_and_the_connection_goes_on() {
 fn a_status_that_is_none_is_500() {
     let server = Server::new(
         r#"match req.path {
-        "/100" -> http.Response { status: 100, body: "", headers: #{} }
-        "/0" -> http.Response { status: 0, body: "", headers: #{} }
-        "/1000" -> http.Response { status: 1000, body: "", headers: #{} }
-        "/204" -> http.Response { status: 204, body: "dropped", headers: #{} }
-        _ -> http.Response { status: 599, body: "odd", headers: #{} }
+        "/100" -> http.Response { status: 100, body: bytes.empty(), headers: #{} }
+        "/0" -> http.Response { status: 0, body: bytes.empty(), headers: #{} }
+        "/1000" -> http.Response { status: 1000, body: bytes.empty(), headers: #{} }
+        "/204" -> http.Response { status: 204, body: bytes.from_string("dropped"), headers: #{} }
+        _ -> http.Response { status: 599, body: bytes.from_string("odd"), headers: #{} }
       }"#,
     );
     let mut client = server.connect();
@@ -535,6 +535,7 @@ fn a_connection_gives_way_after_a_few_requests() {
     const REQUESTS: usize = 200;
     let source = format!(
         r#"
+import bytes
 import channel
 import http
 import list
@@ -556,7 +557,7 @@ fn main() {{
         }}
         _ -> channel.send(log, "served")
       }}
-      http.Response {{ status: 200, body: "ok", headers: #{{}} }}
+      http.Response {{ status: 200, body: bytes.from_string("ok"), headers: #{{}} }}
     }}
   }}
   println("{{tcp.local_port(listener)}} {{tcp.local_port(control)}}")
@@ -618,7 +619,7 @@ fn main() {{
 #[test]
 fn a_request_beyond_a_limit_is_refused() {
     let server = Server::new(
-        r#"http.Response { status: 200, body: "{bytes.length(req.body)}", headers: #{} }"#,
+        r#"http.Response { status: 200, body: bytes.from_string("{bytes.length(req.body)}"), headers: #{} }"#,
     );
     let refused = |request: &[u8], status: u16| {
         let mut client = server.connect();
@@ -691,7 +692,7 @@ fn a_request_beyond_a_limit_is_refused() {
 #[test]
 fn the_bodies_that_wait_for_a_handler_are_bounded_together() {
     let server = Server::new(
-        r#"http.Response { status: 200, body: "{bytes.length(req.body)}", headers: #{} }"#,
+        r#"http.Response { status: 200, body: bytes.from_string("{bytes.length(req.body)}"), headers: #{} }"#,
     );
     let largest = format!(
         "POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: {BODY_MAX}\r\n\r\n"
@@ -806,7 +807,7 @@ fn a_request_of_uncertain_length_is_refused_and_nothing_after_it_is_served() {
 fn what_is_no_request_is_not_served() {
     let server = Server::new(
         r#"match req.path {
-        "/fine" -> http.Response { status: 200, body: "fine", headers: #{} }
+        "/fine" -> http.Response { status: 200, body: bytes.from_string("fine"), headers: #{} }
         _ -> panic("called for {req.path}")
       }"#,
     );
@@ -987,8 +988,8 @@ fn a_response_that_is_not_taken_is_given_up() {
     let clock = TestClock::default();
     let server = Server::on(
         r#"{
-        let part = string.repeat("x", 8000000)
-        http.Response { status: 200, body: "{part}{part}{part}{part}{part}{part}{part}{part}", headers: #{} }
+        let part = bytes.from_string(string.repeat("x", 8000000))
+        http.Response { status: 200, body: bytes.concat_all([part, part, part, part, part, part, part, part]), headers: #{} }
       }"#,
         Some(clock.clone()),
     );
@@ -1490,10 +1491,10 @@ fn a_request_behind_a_response_that_is_not_read_is_served() {
     let server = Server::new(
         r#"match req.path {
         "/big" -> {
-          let part = string.repeat("x", 8000000)
-          http.Response { status: 200, body: "{part}{part}{part}{part}{part}{part}{part}{part}", headers: #{} }
+          let part = bytes.from_string(string.repeat("x", 8000000))
+          http.Response { status: 200, body: bytes.concat_all([part, part, part, part, part, part, part, part]), headers: #{} }
         }
-        _ -> http.Response { status: 200, body: "{req.path} [{text(req.body)}]", headers: #{} }
+        _ -> http.Response { status: 200, body: bytes.from_string("{req.path} [{text(req.body)}]"), headers: #{} }
       }"#,
     );
     let mut client = server.connect();

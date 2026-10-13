@@ -1,0 +1,110 @@
+-- timeout: 30
+-- requires-feature: http
+-- An empty body is empty at the four places a body is: what
+-- `http.request` sends, what a handler gets, what a handler answers and
+-- what `http.request` gets. On the wire its length is said, and it is 0.
+import bytes
+import http
+import list
+import option
+import string
+import task
+import tcp
+
+fn line_end() -> String {
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  "{cr}\n"
+}
+
+-- What follows the head of `message`: its body, as far as it is there.
+fn body_of(message: Bytes) -> Option(Bytes) {
+  let nl = line_end()
+  match bytes.index_of(message, bytes.from_string("{nl}{nl}")) {
+    Some(at) -> Some(bytes.slice(message, at + 4, bytes.length(message)))
+    None -> None
+  }
+}
+
+-- Reads a message from `conn`: until its head is there and its body
+-- has `length` bytes, or until the other end has closed. All of it.
+fn read_message(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  loop got = bytes.empty() {
+    let whole = match body_of(got) {
+      Some(body) -> length == Some(bytes.length(body))
+      None -> false
+    }
+    match whole {
+      true -> got
+      false -> match tcp.read(conn, 4096) {
+        Ok(more) -> match bytes.length(more) {
+          0 -> got
+          _ -> loop(bytes.concat(got, more))
+        }
+        Err(_) -> got
+      }
+    }
+  }
+}
+
+fn read_body(conn: tcp.TcpStream, length: Option(Int)) -> Bytes {
+  body_of(read_message(conn, length)) |> option.unwrap_or(bytes.empty())
+}
+
+-- The line of a message's head that says the length of its body.
+fn length_line(message: Bytes) -> String {
+  let head = match bytes.index_of(message, bytes.from_string("{line_end()}{line_end()}")) {
+    Some(at) -> bytes.to_string(bytes.slice(message, 0, at))
+    None -> Ok("")
+  }
+  match head {
+    Ok(head) -> string.lines(head)
+      |> list.map { line -> string.to_lower(string.trim(line)) }
+      |> list.filter { line -> string.starts_with(line, "content-length:") }
+      |> list.head
+      |> option.unwrap_or("no content-length")
+    Err(_) -> "a head that is no text"
+  }
+}
+
+fn answer(req: http.Request) -> http.Response {
+  println("  the handler gets: {bytes.length(req.body)} bytes, equal to bytes.empty(): {req.body == bytes.empty()}")
+  http.Response { status: 200, body: bytes.empty(), headers: #{} }
+}
+
+fn main() {
+  let nl = line_end()
+  println("http.request to http.serve")
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  match http.request(http.POST, "http://127.0.0.1:{port}/", bytes.empty(), #{}) {
+    Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
+    Err(e) -> println("  http.request: {e.message()}")
+  }
+
+  println("a client written by hand to http.serve")
+  when let Ok(conn) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  let head = "POST / HTTP/1.1{nl}Host: x{nl}Content-Length: 0{nl}Connection: close{nl}{nl}"
+  let _ = tcp.write(conn, bytes.from_string(head))
+  let answered = read_message(conn, None)
+  println("  the answer on the wire: {length_line(answered)}, {bytes.length(body_of(answered) |> option.unwrap_or(bytes.empty()))} bytes after the head")
+  tcp.close(conn)
+  task.cancel(server)
+
+  println("http.request to a server written by hand")
+  when let Ok(by_hand) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let reader = task.spawn { ->
+    when let Ok(conn) = tcp.accept(by_hand) else { panic("cannot accept") }
+    let sent = read_message(conn, Some(0))
+    let _ = tcp.write(conn, bytes.from_string("HTTP/1.1 200 OK{nl}Content-Length: 0{nl}Connection: close{nl}{nl}"))
+    tcp.close(conn)
+    sent
+  }
+  let got = http.request(http.POST, "http://127.0.0.1:{tcp.local_port(by_hand)}/", bytes.empty(), #{})
+  let sent = task.join(reader)
+  println("  the request on the wire: {length_line(sent)}, {bytes.length(body_of(sent) |> option.unwrap_or(bytes.empty()))} bytes after the head")
+  match got {
+    Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
+    Err(e) -> println("  http.request: {e.message()}")
+  }
+}

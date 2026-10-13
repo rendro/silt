@@ -4,9 +4,16 @@
 -- given up at that moment: its task gets the error that an accept on a
 -- served listener gets, and the server has every client. (The accept
 -- used to stay, and took the next client from the server.)
+import bytes
 import http
+import result
 import task
 import tcp
+
+-- A body as text.
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("(no text)")
+}
 
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
@@ -17,13 +24,13 @@ fn main() {
     }
   }
   let server = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: "served", headers: #{} } }
+    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("served"), headers: #{} } }
   }
   -- Whichever of the two ran first, the accept ends when the server has
   -- the listener: no client has connected yet.
   println("the accept: {task.join(waiting)}")
   match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
-    Ok(r) -> println("the client: {r.status} {r.body}")
+    Ok(r) -> println("the client: {r.status} {text(r.body)}")
     Err(e) -> println("the client: {e.message()}")
   }
   task.cancel(server)

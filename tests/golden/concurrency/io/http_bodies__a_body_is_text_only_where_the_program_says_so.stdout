@@ -1,0 +1,12 @@
+text
+  the handler: 68c3a96c6c6f Ok, 5 characters
+  the client:  6f6c6ca9c368 Err(InvalidUtf8(3))
+no text from its third byte
+  the handler: 6869ff0068 Err(InvalidUtf8(2))
+  the client:  6800ff6968 Err(InvalidUtf8(2))
+a character cut short
+  the handler: 68c3 Err(InvalidUtf8(1))
+  the client:  c368 Err(InvalidUtf8(0))
+NUL bytes
+  the handler: 0000410000 Ok, 5 characters
+  the client:  0000410000 Ok, 5 characters

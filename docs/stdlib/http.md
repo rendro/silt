@@ -31,19 +31,25 @@ type Request {
 
 type Response {
   status: Int,
-  body: String,
+  body: Bytes,
   headers: Map(String, String),
 }
 ```
 
 `Method` and its variants are members of `http`: `http.Method`, `http.GET`, `http.POST`, etc.
 
+A body is [`Bytes`](bytes.md), in a request and in a response, sent and
+received: exactly the bytes that are on the wire, whatever they are.
+Text is put into a body with `bytes.from_string("...")` and taken out of
+one with `bytes.to_string(resp.body)`, a `Result`: it is
+`Err(InvalidUtf8(offset))` for a body that is no UTF-8.
+
 ## Summary
 
 | Name | Signature | Description |
 |------|-----------|-------------|
 | `get` | `(String) -> Result(Response, HttpError)` | HTTP GET request |
-| `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
+| `request` | `(Method, String, Bytes, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(TcpListener, Fn(Request) -> Response) -> ()` | Serve HTTP on a listener made with `tcp.listen`, a task per connection |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 | `parse_query` | `(String) -> Result(Map(String, List(String)), EncodingError)` | Parse a URL query string into a multi-value map |
@@ -84,32 +90,33 @@ Makes an HTTP GET request. Returns `Ok(Response)` for any successful
 connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
 for network errors (DNS failure, connection refused, timeout, TLS).
 The names of the response's headers are in lower case
-(`map.get(resp.headers, "content-type")`), and its body is a `String`: a
-byte of the body that is no UTF-8 is replaced by `?`.
+(`map.get(resp.headers, "content-type")`), and its body is the bytes the
+server sent.
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
 call site looks the same.
 
 ```silt
+import bytes
 import http
-import string
 
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
-    Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
+    Ok(resp) -> println("Status: {resp.status}, body length: {bytes.length(resp.body)}")
     Err(http.Timeout) -> println("timed out; retry later")
     Err(e) -> println("Network error: {e.message()}")
   }
 }
 ```
 
-Compose with `json.parse` and `?` for typed API responses. Since
-`http.get` and `json.parse` return different error types, wrap each in
+Compose with `bytes.to_string`, `json.parse` and `?` for typed API
+responses. Since the three return different error types, wrap each in
 a local enum using `result.map_err` with a variant constructor as a
 first-class `Fn`:
 
 ```silt
+import bytes
 import http
 import json
 import result
@@ -121,12 +128,14 @@ type User {
 
 type FetchError {
   Network(http.HttpError),
+  NotText(bytes.BytesError),
   Parse(json.JsonError),
 }
 
 fn fetch_user(name: String) -> Result(User, FetchError) {
   let resp = http.get("https://api.example.com/users/{name}") |> result.map_err(Network)?
-  json.parse(resp.body, User) |> result.map_err(Parse)
+  let text = bytes.to_string(resp.body) |> result.map_err(NotText)?
+  json.parse(text, User) |> result.map_err(Parse)
 }
 ```
 
@@ -134,7 +143,7 @@ fn fetch_user(name: String) -> Result(User, FetchError) {
 ## `http.request`
 
 ```
-http.request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)
+http.request(method: Method, url: String, body: Bytes, headers: Map(String, String)) -> Result(Response, HttpError)
 ```
 
 Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.
@@ -147,18 +156,18 @@ a spawned task.
 let resp = http.request(
   http.POST,
   "https://api.example.com/users",
-  json.stringify(#{ "name": "Alice" }),
+  bytes.from_string(json.stringify(#{ "name": "Alice" })),
   #{ "Content-Type": "application/json", "Authorization": "Bearer tok123" },
 )?
 
 -- DELETE
-let resp = http.request(http.DELETE, "https://api.example.com/users/42", "", #{})?
+let resp = http.request(http.DELETE, "https://api.example.com/users/42", bytes.empty(), #{})?
 
 -- GET with custom headers
 let resp = http.request(
   http.GET,
   "https://api.example.com/data",
-  "",
+  bytes.empty(),
   #{ "Accept": "text/plain" },
 )?
 ```
@@ -339,6 +348,11 @@ type User {
   name: String,
 }
 
+-- A body is bytes: this server answers with text.
+fn reply(status: Int, text: String) -> http.Response {
+  http.Response { status: status, body: bytes.from_string(text), headers: #{} }
+}
+
 fn main() {
   when let Ok(listener) = tcp.listen("127.0.0.1:8080") else {
     panic("cannot listen on port 8080")
@@ -347,23 +361,23 @@ fn main() {
 
   http.serve(listener) { req ->
     match (req.method, http.segments(req.path)) {
-      (http.GET, []) -> http.Response { status: 200, body: "Hello!", headers: #{} }
+      (http.GET, []) -> reply(200, "Hello!")
 
-      (http.GET, ["users", id]) -> http.Response { status: 200, body: "User {id}", headers: #{} }
+      (http.GET, ["users", id]) -> reply(200, "User {id}")
 
       (http.POST, ["users"]) -> match bytes.to_string(req.body) {
         Ok(text) -> match json.parse(text, User) {
           Ok(user) -> http.Response {
             status: 201,
-            body: json.stringify(user),
+            body: bytes.from_string(json.stringify(user)),
             headers: #{ "Content-Type": "application/json" },
           }
-          Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+          Err(e) -> reply(400, e.message())
         }
-        Err(e) -> http.Response { status: 400, body: e.message(), headers: #{} }
+        Err(e) -> reply(400, e.message())
       }
 
-      _ -> http.Response { status: 404, body: "Not found", headers: #{} }
+      _ -> reply(404, "Not found")
     }
   }
 }

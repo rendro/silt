@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected Bytes, got String
+ --> http_bodies__a_response_with_a_text_body.silt:8:15
+   |
+ 8 |   let hello = http.Response { status: 200, body: "Hello", headers: #{} }
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Bytes, got String

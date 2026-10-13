@@ -6,6 +6,7 @@
 -- stderr-contains: 2 tests: 2 passed, 0 failed
 -- A test starts a server in a task and cancels it on its last line:
 -- the test ends, and the next one runs.
+import bytes
 import http
 import task
 import tcp
@@ -21,7 +22,7 @@ fn get(url) {
 fn test_a_uses_a_server() {
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
   let server = task.spawn { ->
-    http.serve(listener) { _req -> http.Response { status: 200, body: "ok", headers: #{} } }
+    http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} } }
   }
   test.assert_eq(get("http://127.0.0.1:{tcp.local_port(listener)}/"), 200)
   task.cancel(server)
