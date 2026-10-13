@@ -397,9 +397,9 @@ slices of that many steps: a task gives way to the other tasks after
 that runs the program's own code stops and goes on after `steps` too,
 where it otherwise does so about every million steps. What a program
 computes does not depend on the slice; a host sets one to test exactly
-that. With
-`set_time_slice(1)` the program is stopped and resumed after every
-instruction and after every step of a builtin that calls back into it.
+that. With `set_time_slice(1)` the program is stopped and resumed after
+every instruction and after every step of a builtin that calls back
+into it.
 
 **Step budget.** `vm.set_step_budget(steps)` lets the program run that
 many more steps, those of its tasks included. When they are used up,
@@ -449,7 +449,9 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   gets the panic at once where it waits for a task, a channel or an I/O
   operation, and within about a million steps where it computes; a
   thread asleep in your `Clock::sleep`, or inside one call of a builtin
-  or a host function, gets it when that returns.
+  or a host function, gets it when that returns. (A thread that still
+  finishes an I/O operation after its `Vm` was dropped has nobody left
+  to give a panic to: Rust's lines for it are all there is.)
 
 ```rust
 match vm.run_program(&program) {
