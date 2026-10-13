@@ -78,8 +78,11 @@ fn main() {
 ## Errors
 
 `http.get` and `http.request` return `Result(Response, HttpError)`. Note
-that a 4xx or 5xx HTTP response is an `Ok(Response)` — only failures
-*before* a response lands (DNS, connection, TLS, protocol) become `Err`.
+that a 4xx or 5xx HTTP response is an `Ok(Response)`: an `Err` is a
+response that did not arrive whole. That is a failure before its head
+is there (DNS, connection, TLS, a timeout, a head that is no HTTP), and
+one after it: a body that is cut short (`ClosedEarly`), and a body that
+does not unpack or is larger than 10 MiB (`InvalidResponse`).
 A program for which a status is a failure looks at `resp.status`.
 `HttpError` implements the built-in `Error` trait, so `e.message()`
 always yields a rendered string.
@@ -90,8 +93,8 @@ always yields a rendered string.
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and does not unpack), or its body is larger than 10 MiB |
-| `ClosedEarly` | — | the server went away before the response was complete, head or body |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10 MiB |
+| `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
 
 Which variant a failure is, is decided by the kind of failure the
@@ -105,16 +108,25 @@ only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
 http.get(url: String) -> Result(Response, HttpError)
 ```
 
-Makes an HTTP GET request. Returns `Ok(Response)` for any successful
-connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
-for network errors (DNS failure, connection refused, timeout, TLS).
+Makes an HTTP GET request. Returns `Ok(Response)` for a response of any
+status (4xx and 5xx too) that arrived whole, and `Err(HttpError)`
+otherwise: see [Errors](#errors).
 The names of the response's headers are in lower case
 (`map.get(resp.headers, "content-type")`), and its body is the bytes the
-server sent. A body that the server packed (`Content-Encoding: gzip`) is
-unpacked: `resp.body` is the content, and `content-encoding` and
-`content-length`, which describe the packed bytes, are then not in
-`resp.headers`. A body of more than 10 MiB, counted as the program would
-get it, is `Err(InvalidResponse(_))`: no part of it is returned.
+server sent, with one exception:
+
+- A body with the header `Content-Encoding: gzip`, written exactly so, is
+  unpacked: `resp.body` is the content, and `content-encoding` and
+  `content-length`, which describe the packed bytes, are not in
+  `resp.headers`. (Every request says `accept-encoding: gzip`.) A body
+  in any other coding, `GZIP` and `x-gzip` among them, is handed over as
+  it came, with its header.
+- An answer to `HEAD`, a `204` and a `304` have no body: `resp.body` is
+  empty and nothing is read, whatever the headers say. They may say what
+  a `GET` would get; of those, `content-encoding` and `content-length`
+  are not in `resp.headers` when the answer says `gzip`.
+- A body of more than 10 MiB, counted as the program would get it, is
+  `Err(InvalidResponse(_))`: no part of it is returned.
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the

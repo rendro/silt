@@ -104,9 +104,13 @@ type Todo {
   done: Bool,
 }
 
--- A body is bytes: this server answers with text.
-fn reply(status: Int, text: String) -> http.Response {
-  http.Response { status: status, body: bytes.from_string(text), headers: #{} }
+-- A body is bytes: this server answers with JSON, and says so.
+fn reply(status, data) {
+  http.Response {
+    status: status,
+    body: bytes.from_string(json.stringify(data)),
+    headers: #{ "Content-Type": "application/json" },
+  }
 }
 
 fn main() {
@@ -120,16 +124,16 @@ fn main() {
           Todo { id: 1, title: "Learn silt", done: true },
           Todo { id: 2, title: "Build an API", done: false },
         ]
-        reply(200, json.stringify(todos))
+        reply(200, todos)
       }
       (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
         Ok(text) -> match json.parse(text, Todo) {
-          Ok(todo) -> reply(201, json.stringify(todo))
-          Err(e) -> reply(400, e.message())
+          Ok(todo) -> reply(201, todo)
+          Err(e) -> reply(400, #{ "error": e.message() })
         }
-        Err(e) -> reply(400, e.message())
+        Err(e) -> reply(400, #{ "error": e.message() })
       }
-      _ -> reply(404, "Not found")
+      _ -> reply(404, #{ "error": "Not found" })
     }
   }
 }
