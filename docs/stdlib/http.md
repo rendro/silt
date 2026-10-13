@@ -150,6 +150,10 @@ http.request(method: Method, url: String, body: Bytes, headers: Map(String, Stri
 
 Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.
 
+The body is sent as it is, with its length: `bytes.from_string("...")` for
+a text, `bytes.empty()` for none. What the bytes are is the request's to
+say, in a `Content-Type` header among `headers`: none is added.
+
 Like `http.get`, this transparently yields to the scheduler when called from
 a spawned task.
 
@@ -295,7 +299,8 @@ An `Expect` header that asks for anything but `100-continue` is answered
   as U+FFFD, unlike the body, which is exact.
 - `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.
   A handler that wants text says so: `bytes.to_string(req.body)` is
-  `Err(InvalidUtf8(offset))` for a body that is no UTF-8.
+  `Err(InvalidUtf8(offset))` for a body that is no UTF-8. The body of the
+  `Response` it returns is `Bytes` in the same way, sent exactly.
 - `req.path` and `req.query` are the request target as sent, cut at the
   first `?`: nothing is decoded or normalised. A target in absolute form
   (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
