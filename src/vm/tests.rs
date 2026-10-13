@@ -6030,3 +6030,204 @@ mod methods_in_place {
         assert_eq!(vm.stack, [Value::Int(99)]);
     }
 }
+
+/// `Negate` and `Not` write their result over their operand, and a
+/// pattern's test pushes its Bool above the value it tests: each is
+/// built where it goes.
+mod results_in_place {
+    use std::collections::BTreeMap;
+
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(s.into())
+    }
+
+    /// The stack after `op` has run on `operand`, which lay above a
+    /// value that must stay, or the error with the stack as the loop
+    /// left it.
+    fn one(operand: Value, op: Asm<'static>) -> (Vec<Value>, Option<VmError>) {
+        let (vm, run, _) = left_by(|e, _| {
+            push(e, Value::Int(99));
+            push(e, operand);
+            e.emit(op, span()).unwrap();
+            e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        match run {
+            Ok(Value::List(list)) => (list.iter().collect(), None),
+            Ok(other) => panic!("a list, not {other:?}"),
+            Err(error) => (vm.stack.clone(), Some(error)),
+        }
+    }
+
+    #[test]
+    fn negate_and_not_give_their_result_where_the_operand_was() {
+        let half = crate::value::Float::new(0.5).unwrap();
+        let zero = crate::value::Float::new(0.0).unwrap();
+        for (operand, op, result) in [
+            (Value::Int(5), Asm::Negate, Value::Int(-5)),
+            (Value::Int(0), Asm::Negate, Value::Int(0)),
+            (Value::Int(i64::MIN + 1), Asm::Negate, Value::Int(i64::MAX)),
+            (Value::Float(half), Asm::Negate, Value::Float(-half)),
+            (Value::Float(-half), Asm::Negate, Value::Float(half)),
+            (Value::Float(zero), Asm::Negate, Value::Float(-zero)),
+            (Value::Bool(true), Asm::Not, Value::Bool(false)),
+            (Value::Bool(false), Asm::Not, Value::Bool(true)),
+        ] {
+            let shown = format!("{operand:?}");
+            let (stack, error) = one(operand, op);
+            assert!(error.is_none(), "{shown}: {error:?}");
+            assert_eq!(stack, [Value::Int(99), result], "{shown}");
+        }
+    }
+
+    /// An operand that is refused is off the stack at the error, and
+    /// the value below it is where it was.
+    #[test]
+    fn a_refused_operand_is_off_the_stack_at_the_error() {
+        let (stack, error) = one(Value::Int(i64::MIN), Asm::Negate);
+        let error = error.unwrap();
+        assert_eq!(
+            error.message,
+            "integer overflow: negate -9223372036854775808"
+        );
+        assert!(!error.type_confusion);
+        assert_eq!(stack, [Value::Int(99)]);
+        for (operand, op, message) in [
+            (string("a"), Asm::Negate, "cannot negate String"),
+            (Value::Bool(true), Asm::Negate, "cannot negate Bool"),
+            (Value::Unit, Asm::Negate, "cannot negate Unit"),
+            (Value::Int(1), Asm::Not, "cannot apply 'not' to Int"),
+            (float(0.5), Asm::Not, "cannot apply 'not' to Float"),
+            (string("a"), Asm::Not, "cannot apply 'not' to String"),
+        ] {
+            let (stack, error) = one(operand, op);
+            let error = error.unwrap();
+            assert_eq!(error.message, message);
+            assert!(error.type_confusion);
+            assert_eq!(stack, [Value::Int(99)], "{message}");
+        }
+    }
+
+    /// A refused operand that owns something ends with the error; the
+    /// value below it lives on.
+    #[test]
+    fn a_refused_operand_ends_with_the_error() {
+        for op in [Asm::Negate, Asm::Not] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                e.emit(op, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.unwrap_err().type_confusion);
+            assert_eq!(ended(&log), [2]);
+            assert_eq!(vm.stack.len(), 1);
+        }
+    }
+
+    /// The nine tests of a pattern, each with a value it holds for and
+    /// one it does not.
+    fn tests(e: &mut Emitter) -> Vec<(Asm<'static>, Value, Value)> {
+        let mut constant = |value: Value| e.constant(value, span()).unwrap();
+        let some = Value::variant(bv::SOME, vec![Value::Int(1)]);
+        let record = Value::anon_record([("x", Value::Int(1))]);
+        let Value::Record(fields) = &record else {
+            unreachable!()
+        };
+        let anon = Value::TypeDescriptor(fields.ty().clone());
+        let pair = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
+        let triple = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let map = Value::map(BTreeMap::from([(string("k"), Value::Int(1))]));
+        vec![
+            (
+                Asm::TestTag {
+                    tag: constant(Value::VariantConstructor(bv::SOME.tag())),
+                },
+                some.clone(),
+                Value::variant(bv::NONE, vec![]),
+            ),
+            (
+                Asm::TestEqual {
+                    k: constant(string("a")),
+                },
+                string("a"),
+                string("b"),
+            ),
+            (Asm::TestTupleLen { len: 2 }, pair.clone(), Value::Int(1)),
+            (
+                Asm::TestListMin { len: 3 },
+                triple.clone(),
+                Value::list(vec![]),
+            ),
+            (Asm::TestListExact { len: 3 }, triple, Value::list(vec![])),
+            (
+                Asm::TestIntRange {
+                    lo: constant(Value::Int(1)),
+                    hi: constant(Value::Int(5)),
+                },
+                Value::Int(5),
+                Value::Int(6),
+            ),
+            (
+                Asm::TestFloatRange {
+                    lo: constant(float(0.5)),
+                    hi: constant(float(1.5)),
+                },
+                float(1.0),
+                float(2.0),
+            ),
+            (Asm::TestRecordTag { ty: constant(anon) }, record, some),
+            (
+                Asm::TestMapHasKey {
+                    key: constant(string("k")),
+                },
+                map,
+                Value::map(BTreeMap::new()),
+            ),
+        ]
+    }
+
+    /// Each test pushes `true` or `false` above the value, which stays;
+    /// with every number of values below, so that the stack's room is
+    /// used up exactly at the test's push several times.
+    #[test]
+    fn a_pattern_test_pushes_its_bool_above_the_value() {
+        for which in 0..9 {
+            for holds in [true, false] {
+                for below in 0..70usize {
+                    let mut tested = Value::Unit;
+                    let (vm, run, _) = left_by(|e, _| {
+                        let (test, yes, no) = tests(e).swap_remove(which);
+                        tested = if holds { yes } else { no };
+                        for n in 0..below {
+                            push(e, Value::Int(n as i64));
+                        }
+                        push(e, tested.clone());
+                        e.emit(test, span()).unwrap();
+                        e.emit(Asm::MakeList { count: below + 2 }, span()).unwrap();
+                        e.emit(Asm::Return, span()).unwrap();
+                    });
+                    let mut expected: Vec<Value> =
+                        (0..below).map(|n| Value::Int(n as i64)).collect();
+                    expected.push(tested);
+                    expected.push(Value::Bool(holds));
+                    assert_eq!(
+                        run.unwrap(),
+                        Value::list(expected),
+                        "test {which}, {holds}, {below} below"
+                    );
+                    assert!(vm.stack.is_empty());
+                }
+            }
+        }
+    }
+}
