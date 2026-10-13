@@ -968,11 +968,11 @@ pub(crate) fn unwinding<R>(call: impl FnOnce() -> R) -> R {
 /// thread is the command's own. From now on a panic of silt's own code
 /// ends the process at once, where it is raised and on the thread
 /// that raised it: Rust's lines for the panic, the internal-error
-/// line, status 101 ([`InternalError::end`]). Such a panic is one
+/// line, status 101 (`InternalError::end`). Such a panic is one
 /// raised on the calling thread or on a thread of a runtime, outside
 /// every catch that makes a panic the error of a call
-/// ([`catch_as_error`]) and outside what is run to unwind
-/// ([`unwinding`]). The `silt` command calls this first thing on
+/// (`catch_as_error`) and outside what is run to unwind
+/// (`unwinding`). The `silt` command calls this first thing on
 /// its thread. Nothing else does, and nothing an embedder does by
 /// using the library sets it: without it the panic is caught at the
 /// top of the runtime's thread, comes out of the embedder's call of
@@ -1126,7 +1126,7 @@ pub fn stand_back_for_internal_error() {
 /// top of its own thread. After [`exit_on_panic`] that is a panic
 /// which did not end the process where it was raised: one raised on a
 /// thread that is not silt's and passed on to the command's (the
-/// formatter's), or one that was to unwind ([`unwinding`]). If the
+/// formatter's), or one that was to unwind (`unwinding`). If the
 /// process is already ending nothing is written, and it ends as it
 /// was going to.
 pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
