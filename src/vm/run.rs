@@ -96,42 +96,12 @@ fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
 // the pool, of the kinds it needs. The accessors below do not look
 // for anything else.
 
-/// Let go of `value`, for the instructions that are done with a value
-/// they took off the stack or wrote over: a number, a Bool or unit owns
-/// nothing, and is not handed to the drop of a value of any kind, a
-/// call; a value of any other kind is dropped. (The kinds are named:
-/// one that is added later does not compile until it is placed here.)
-#[inline(always)]
-fn done(value: Value) {
-    match value {
-        Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
-            std::mem::forget(value);
-        }
-        Value::String(_)
-        | Value::List(_)
-        | Value::Map(_)
-        | Value::Set(_)
-        | Value::Tuple(_)
-        | Value::Record(_)
-        | Value::Variant(_)
-        | Value::VmClosure(_)
-        | Value::BuiltinFn(_)
-        | Value::HostFn(_)
-        | Value::VariantConstructor(_)
-        | Value::TypeDescriptor(_)
-        | Value::PrimitiveDescriptor(_)
-        | Value::Channel(_)
-        | Value::Handle(_)
-        | Value::Bytes(_)
-        | Value::TcpListener(_)
-        | Value::TcpStream(_) => drop(value),
-    }
-}
-
 /// Write `value` over `*slot`, for the instructions that set a slot of
-/// the frame: [`done`] for the value that was there, where it is: a
-/// number, a Bool or unit is written over without a call of drop, a
-/// value of any other kind is dropped as an assignment drops it.
+/// the stack. The value that was there is let go of where it is: a
+/// number, a Bool or unit owns nothing and is written over without a
+/// call of drop, a value of any other kind is dropped as an assignment
+/// drops it. (The kinds are named: one that is added later does not
+/// compile until it is placed here.)
 #[inline(always)]
 fn put(slot: &mut Value, value: Value) {
     match slot {
@@ -280,26 +250,43 @@ macro_rules! push_copy {
     };
 }
 
-/// Write a copy of the value in slot `$from` of the stack over slot
-/// `$to` ([`put`]), for the instructions that set a slot from another.
+/// Write a copy of the value in the place `$value` over slot `$to` of
+/// the stack ([`put`]), for the instructions that set a slot from
+/// another, or from a part of the value that is in it: the copy is
+/// made before the slot's old value is let go of.
 macro_rules! set_copy {
-    ($stack:expr, $to:expr, $from:expr) => {{
-        let (to, from) = ($to, $from);
-        match sort(&$stack[from]) {
+    ($stack:expr, $to:expr, $value:expr) => {{
+        let to = $to;
+        match sort(&$value) {
             Sort::Int(n) => put(&mut $stack[to], Value::Int(n)),
             Sort::Float(f) => put(&mut $stack[to], Value::Float(f)),
             Sort::Bool(b) => put(&mut $stack[to], Value::Bool(b)),
             Sort::Unit => put(&mut $stack[to], Value::Unit),
             Sort::Closure(_) | Sort::Other(_) => {
-                let value = $stack[from].clone();
+                let value = $value.clone();
                 put(&mut $stack[to], value);
             }
         }
     }};
 }
 
-/// Take the value on top off the stack and let go of it ([`done`]),
-/// where it lies: a number, a Bool or unit is not moved out first.
+/// Make a slot that holds unit below the stack's slot `at`: the values
+/// from `at` on go one slot up, the highest first, and unit is written
+/// where each was. (`Vec::insert` builds the unit somewhere else and
+/// copies it in.)
+#[inline(always)]
+fn open_slot(stack: &mut Vec<Value>, at: usize) {
+    let top = stack.len();
+    push_unit(stack);
+    for i in (at..top).rev() {
+        let value = std::mem::replace(&mut stack[i], Value::Unit);
+        put(&mut stack[i + 1], value);
+    }
+}
+
+/// Take the value on top off the stack and let go of it where it
+/// lies: a number, a Bool or unit, which owns nothing, is not moved
+/// out first and not handed to the drop of a value of any kind.
 #[inline(always)]
 fn pop_done(stack: &mut Vec<Value>) {
     match sort(peek(stack)) {
@@ -545,31 +532,45 @@ impl Vm {
                 Instr::Gt => compare!(Ordering::is_gt),
                 Instr::Leq => compare!(Ordering::is_le),
                 Instr::Geq => compare!(Ordering::is_ge),
+                // An instruction of one operand writes its result over
+                // the operand. One that refuses its operand takes it
+                // off the stack first.
                 Instr::Negate => {
-                    let value = pop(&mut self.stack);
-                    match &value {
-                        Value::Int(n) => match n.checked_neg() {
-                            Some(v) => self.stack.push(Value::Int(v)),
-                            None => fail!(VmError::new(format!("integer overflow: negate {n}"))),
+                    let top = self.stack.len() - 1;
+                    match sort(&self.stack[top]) {
+                        Sort::Int(n) => match n.checked_neg() {
+                            Some(v) => put(&mut self.stack[top], Value::Int(v)),
+                            None => {
+                                pop_done(&mut self.stack);
+                                fail!(VmError::new(format!("integer overflow: negate {n}")));
+                            }
                         },
-                        Value::Float(n) => self.stack.push(Value::Float(-*n)),
-                        other => fail!(VmError::type_confusion(format!(
-                            "cannot negate {}",
-                            self.user_facing_type_name(other)
-                        ))),
+                        Sort::Float(n) => put(&mut self.stack[top], Value::Float(-n)),
+                        Sort::Bool(_) | Sort::Unit | Sort::Closure(_) | Sort::Other(_) => {
+                            let value = pop(&mut self.stack);
+                            fail!(VmError::type_confusion(format!(
+                                "cannot negate {}",
+                                self.user_facing_type_name(&value)
+                            )));
+                        }
                     }
-                    done(value);
                 }
                 Instr::Not => {
-                    let value = pop(&mut self.stack);
-                    match &value {
-                        Value::Bool(b) => self.stack.push(Value::Bool(!*b)),
-                        other => fail!(VmError::type_confusion(format!(
-                            "cannot apply 'not' to {}",
-                            self.user_facing_type_name(other)
-                        ))),
+                    let top = self.stack.len() - 1;
+                    match sort(&self.stack[top]) {
+                        Sort::Bool(b) => put(&mut self.stack[top], Value::Bool(!b)),
+                        Sort::Int(_)
+                        | Sort::Float(_)
+                        | Sort::Unit
+                        | Sort::Closure(_)
+                        | Sort::Other(_) => {
+                            let value = pop(&mut self.stack);
+                            fail!(VmError::type_confusion(format!(
+                                "cannot apply 'not' to {}",
+                                self.user_facing_type_name(&value)
+                            )));
+                        }
                     }
-                    done(value);
                 }
                 Instr::DisplayValue => {
                     let val = pop(&mut self.stack);
@@ -655,7 +656,7 @@ impl Vm {
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {
                     let top = self.stack.len() - 1;
-                    set_copy!(self.stack, base + slot, top);
+                    set_copy!(self.stack, base + slot, self.stack[top]);
                 }
                 Instr::GetGlobal { slot } => match self.global(slot) {
                     Some(value) => push_copy!(self.stack, *value),
@@ -742,7 +743,7 @@ impl Vm {
                             if !self.tco_elided.is_empty() {
                                 self.tco_elided.prune(self.frames.len());
                             }
-                            set_copy!(self.stack, base - 1, top);
+                            set_copy!(self.stack, base - 1, self.stack[top]);
                             self.stack.truncate(base);
                             load!();
                         }
@@ -862,34 +863,49 @@ impl Vm {
                     let list = ok!(crate::builtins::collections::concat(&a, &b));
                     self.stack.push(list);
                 }
+                // A read of a field writes the field over the record,
+                // on top of the stack: the record is not taken off and
+                // the field pushed. A read that fails takes the record
+                // off first.
                 Instr::GetField { index } => {
-                    let target = pop(&mut self.stack);
-                    let field = match &target {
-                        Value::Record(record) => record.fields().get(index).cloned(),
+                    let top = self.stack.len() - 1;
+                    let field = match &self.stack[top] {
+                        Value::Record(record) => record.fields().get(index),
                         _ => None,
                     };
-                    let field = ok!(field.ok_or_else(|| {
-                        VmError::type_confusion(format!(
-                            "cannot access field {index} of {}",
-                            self.user_facing_type_name(&target)
-                        ))
-                    }));
-                    self.stack.push(field);
+                    match field {
+                        Some(field) => set_copy!(self.stack, top, *field),
+                        None => {
+                            let target = pop(&mut self.stack);
+                            fail!(VmError::type_confusion(format!(
+                                "cannot access field {index} of {}",
+                                self.user_facing_type_name(&target)
+                            )));
+                        }
+                    }
                 }
                 Instr::GetFieldNamed { name } => {
-                    let target = pop(&mut self.stack);
+                    let top = self.stack.len() - 1;
                     let name = chunk.string(name);
-                    let field = match &target {
-                        Value::Record(record) => ok!(record.get(name).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!("record has no field '{name}'"))
-                        })),
-                        other => fail!(VmError::type_confusion(format!(
-                            "cannot access field '{}' on {}",
-                            name,
-                            self.user_facing_type_name(other)
-                        ))),
+                    let field = match &self.stack[top] {
+                        Value::Record(record) => record.get(name),
+                        _ => None,
                     };
-                    self.stack.push(field);
+                    match field {
+                        Some(field) => set_copy!(self.stack, top, *field),
+                        None => {
+                            let target = pop(&mut self.stack);
+                            fail!(match &target {
+                                Value::Record(_) =>
+                                    VmError::type_confusion(format!("record has no field '{name}'")),
+                                other => VmError::type_confusion(format!(
+                                    "cannot access field '{}' on {}",
+                                    name,
+                                    self.user_facing_type_name(other)
+                                )),
+                            });
+                        }
+                    }
                 }
                 Instr::Jump { to } => ip = to,
                 Instr::JumpIfFalse { to } => {
@@ -906,84 +922,77 @@ impl Vm {
                 }
                 Instr::Pop => pop_done(&mut self.stack),
                 Instr::Dup => {
-                    let val = peek(&self.stack).clone();
-                    self.stack.push(val);
+                    let top = self.stack.len() - 1;
+                    push_copy!(self.stack, self.stack[top]);
                 }
                 Instr::TestTag { tag } => {
                     let expected = chunk.tag(tag);
                     let result = matches!(peek(&self.stack), Value::Variant(variant) if variant.has_tag(expected));
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestEqual { k } => {
                     let result = peek(&self.stack) == chunk.constant(k);
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestTupleLen { len } => {
                     let val = peek(&self.stack);
                     let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestListMin { len: min_len } => {
                     let val = peek(&self.stack);
                     let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestListExact { len } => {
                     let val = peek(&self.stack);
                     let result = matches!(val, Value::List(xs) if xs.len() == len);
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestIntRange { lo, hi } => {
                     let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi)) {
                         (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
                         _ => false,
                     };
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestFloatRange { lo, hi } => {
                     let result = match (peek(&self.stack), chunk.constant(lo), chunk.constant(hi)) {
                         (Value::Float(n), Value::Float(lo), Value::Float(hi)) => n >= lo && n <= hi,
                         _ => false,
                     };
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
-                Instr::DestructTuple { index } => {
-                    let val = peek(&self.stack).clone();
-                    if let Value::Tuple(elems) = val {
-                        let elem = ok!(elems.get(index).ok_or_else(|| {
-                            VmError::type_confusion(format!(
-                                "tuple destructure: expected at least {} elements, got {}",
-                                index + 1,
-                                elems.len()
-                            ))
-                        }));
-                        self.stack.push(elem.clone());
-                    } else {
-                        fail!(VmError::type_confusion(format!(
-                            "tuple destructure: expected tuple, got {}",
-                            self.user_facing_type_name(&val)
-                        )));
-                    }
-                }
-                Instr::DestructVariant { index } => {
-                    let field = match peek(&self.stack) {
-                        Value::Variant(variant) => {
-                            let fields = variant.fields();
-                            ok!(fields.get(index).cloned().ok_or_else(|| {
-                                VmError::type_confusion(format!(
-                                    "variant destructure: field index {} out of bounds (variant has {} fields)",
-                                    index,
-                                    fields.len()
-                                ))
-                            }))
-                        }
-                        other => fail!(VmError::type_confusion(format!(
-                            "variant destructure: expected variant, got {}",
-                            self.user_facing_type_name(other)
+                // A pattern's read of a part of the value on top pushes
+                // a copy of the part as a read of a local pushes one.
+                Instr::DestructTuple { index } => match peek(&self.stack) {
+                    Value::Tuple(elems) => match elems.get(index) {
+                        Some(elem) => push_copy!(self.stack, *elem),
+                        None => fail!(VmError::type_confusion(format!(
+                            "tuple destructure: expected at least {} elements, got {}",
+                            index + 1,
+                            elems.len()
                         ))),
-                    };
-                    self.stack.push(field);
-                }
+                    },
+                    other => fail!(VmError::type_confusion(format!(
+                        "tuple destructure: expected tuple, got {}",
+                        self.user_facing_type_name(other)
+                    ))),
+                },
+                Instr::DestructVariant { index } => match peek(&self.stack) {
+                    Value::Variant(variant) => match variant.fields().get(index) {
+                        Some(field) => push_copy!(self.stack, *field),
+                        None => fail!(VmError::type_confusion(format!(
+                            "variant destructure: field index {} out of bounds (variant has {} fields)",
+                            index,
+                            variant.fields().len()
+                        ))),
+                    },
+                    other => fail!(VmError::type_confusion(format!(
+                        "variant destructure: expected variant, got {}",
+                        self.user_facing_type_name(other)
+                    ))),
+                },
                 Instr::DestructList { index } => {
                     let element = match peek(&self.stack) {
                         Value::List(xs) => ok!(xs.get(index).ok_or_else(|| {
@@ -1017,29 +1026,31 @@ impl Vm {
                 }
                 Instr::DestructRecordField { index } => {
                     let field = match peek(&self.stack) {
-                        Value::Record(record) => record.fields().get(index).cloned(),
+                        Value::Record(record) => record.fields().get(index),
                         _ => None,
                     };
-                    let field = ok!(field.ok_or_else(|| {
-                        VmError::type_confusion(format!(
+                    match field {
+                        Some(field) => push_copy!(self.stack, *field),
+                        None => fail!(VmError::type_confusion(format!(
                             "record destructure: no field {index} in {}",
                             self.user_facing_type_name(peek(&self.stack))
-                        ))
-                    }));
-                    self.stack.push(field);
+                        ))),
+                    }
                 }
                 Instr::DestructRecordFieldNamed { name } => {
                     let name = chunk.string(name);
-                    let field = match peek(&self.stack) {
-                        Value::Record(record) => ok!(record.get(name).cloned().ok_or_else(|| {
-                            VmError::type_confusion(format!("record has no field '{name}'"))
-                        })),
+                    match peek(&self.stack) {
+                        Value::Record(record) => match record.get(name) {
+                            Some(field) => push_copy!(self.stack, *field),
+                            None => fail!(VmError::type_confusion(format!(
+                                "record has no field '{name}'"
+                            ))),
+                        },
                         other => fail!(VmError::type_confusion(format!(
                             "record destructure: expected record, got {}",
                             self.user_facing_type_name(other)
                         ))),
-                    };
-                    self.stack.push(field);
+                    }
                 }
                 Instr::DestructRecordRest { excluded } => {
                     let val = pop(&mut self.stack);
@@ -1055,7 +1066,7 @@ impl Vm {
                 Instr::TestRecordTag { ty } => {
                     let expected = chunk.type_info(ty).id;
                     let result = matches!(peek(&self.stack), Value::Record(record) if record.type_id() == expected);
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::TestMapHasKey { key } => {
                     // (The key is the constant itself, a String.)
@@ -1063,25 +1074,23 @@ impl Vm {
                         Value::Map(map) => map.contains_key(chunk.constant(key)),
                         _ => false,
                     };
-                    self.stack.push(Value::Bool(result));
+                    push_bool(&mut self.stack, result);
                 }
                 Instr::DestructMapValue { key } => {
                     // (The key is the constant itself, a String.)
-                    let value = match peek(&self.stack) {
-                        Value::Map(map) => {
-                            ok!(map.get(chunk.constant(key)).cloned().ok_or_else(|| {
-                                VmError::type_confusion(format!(
-                                    "map has no key '{}'",
-                                    chunk.string(key)
-                                ))
-                            }))
-                        }
+                    match peek(&self.stack) {
+                        Value::Map(map) => match map.get(chunk.constant(key)) {
+                            Some(value) => push_copy!(self.stack, *value),
+                            None => fail!(VmError::type_confusion(format!(
+                                "map has no key '{}'",
+                                chunk.string(key)
+                            ))),
+                        },
                         other => fail!(VmError::type_confusion(format!(
                             "map destructure: expected map, got {}",
                             self.user_facing_type_name(other)
                         ))),
-                    };
-                    self.stack.push(value);
+                    }
                 }
                 Instr::Recur {
                     argc: arg_count,
@@ -1089,33 +1098,32 @@ impl Vm {
                 } => {
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        set_copy!(self.stack, base + first_slot + i, start + i);
+                        set_copy!(self.stack, base + first_slot + i, self.stack[start + i]);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
                 }
+                // `?` on an `Ok` or a `Some` writes what the variant
+                // holds over the variant, as a read of a field does.
                 Instr::QuestionMark => {
-                    let val = peek(&self.stack).clone();
-                    match val {
-                        Value::Variant(variant) => match variant {
-                            _ if variant.is(bv::OK) || variant.is(bv::SOME) => {
-                                pop(&mut self.stack);
-                                self.stack.push(match variant.fields() {
-                                    [value] => value.clone(),
-                                    _ => Value::Unit,
-                                });
+                    let top = self.stack.len() - 1;
+                    match &self.stack[top] {
+                        Value::Variant(variant) if variant.is(bv::OK) || variant.is(bv::SOME) => {
+                            match variant.fields() {
+                                [value] => set_copy!(self.stack, top, *value),
+                                _ => put(&mut self.stack[top], Value::Unit),
                             }
-                            _ if variant.is(bv::ERR) || variant.is(bv::NONE) => {
-                                returned!(pop(&mut self.stack));
-                            }
-                            _ => fail!(VmError::type_confusion(format!(
-                                "`?` applies only to Result or Option; got variant `{}`",
-                                variant.name()
-                            ))),
-                        },
-                        _ => fail!(VmError::type_confusion(format!(
+                        }
+                        Value::Variant(variant) if variant.is(bv::ERR) || variant.is(bv::NONE) => {
+                            returned!(pop(&mut self.stack));
+                        }
+                        Value::Variant(variant) => fail!(VmError::type_confusion(format!(
+                            "`?` applies only to Result or Option; got variant `{}`",
+                            variant.name()
+                        ))),
+                        other => fail!(VmError::type_confusion(format!(
                             "`?` applies only to Result or Option; got {}",
-                            self.user_facing_type_name(&val)
+                            self.user_facing_type_name(other)
                         ))),
                     }
                 }
@@ -1135,11 +1143,26 @@ impl Vm {
                     go_on!(ok!(self.call_method(method, argc, of, true)));
                 }
                 Instr::Slide { slot } => {
-                    // Keep the top value, cut the frame back to `slot` values
-                    // and put the value on top of them.
-                    let value = pop(&mut self.stack);
-                    self.stack.truncate(base + slot);
-                    self.stack.push(value);
+                    // Keep the top value and cut the frame back to
+                    // `slot` values below it: the value is written
+                    // over the lowest of the values that go (one that
+                    // owns something is moved there), not taken off
+                    // the stack and pushed again. The values that go
+                    // end from the lowest up.
+                    let (to, top) = (base + slot, self.stack.len() - 1);
+                    if to < top {
+                        match sort(&self.stack[top]) {
+                            Sort::Int(n) => put(&mut self.stack[to], Value::Int(n)),
+                            Sort::Float(f) => put(&mut self.stack[to], Value::Float(f)),
+                            Sort::Bool(b) => put(&mut self.stack[to], Value::Bool(b)),
+                            Sort::Unit => put(&mut self.stack[to], Value::Unit),
+                            Sort::Closure(_) | Sort::Other(_) => {
+                                let value = std::mem::replace(&mut self.stack[top], Value::Unit);
+                                put(&mut self.stack[to], value);
+                            }
+                        }
+                        self.stack.truncate(to + 1);
+                    }
                 }
             }
         }
@@ -1423,12 +1446,13 @@ impl Vm {
             .log(depth, caller.function.clone(), caller_ip);
     }
 
-    /// The method of the impl of the trait `trait_index` names for the
-    /// type `ty`, whose name has the id `method`, in this VM's table.
+    /// The global slot of the method of the impl of the trait
+    /// `trait_index` names for the type `ty`, whose name has the id
+    /// `method`, in this VM's table, if the slot is set.
     #[inline(always)]
-    fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<Value> {
+    fn method_of(&self, trait_index: u16, ty: crate::defs::TypeId, method: u16) -> Option<u16> {
         let slot = (self.view.table).call_method(trait_index, ty, method)?;
-        self.global(slot).cloned()
+        self.global(slot).map(|_| slot)
     }
 
     /// [`Vm::method_of`] found none: the method in the program's newest
@@ -1442,7 +1466,7 @@ impl Vm {
         trait_index: u16,
         ty: crate::defs::TypeId,
         method: u16,
-    ) -> Option<Value> {
+    ) -> Option<u16> {
         if self.look_again()
             && let Some(found) = self.method_of(trait_index, ty, method)
         {
@@ -1452,7 +1476,7 @@ impl Vm {
             return None;
         }
         let slot = (self.view.entry).call_method(trait_index, ty, method)?;
-        self.global(slot).cloned()
+        self.global(slot).map(|_| slot)
     }
 
     /// `CallMethod`, and `TailCallMethod` (`tail`): call the method
@@ -1486,32 +1510,49 @@ impl Vm {
             None => self.method_of_newest(trait_index, receiver_type, method),
             found => found,
         };
-        if let Some(func) = found {
-            // In tail position a method that is a closure takes the
-            // current frame over, as a tail-called function does.
-            if tail && let Value::VmClosure(closure) = &func {
-                let args_at = receiver_slot + usize::from(descriptor_receiver);
-                let argc = self.stack.len() - args_at;
-                if argc != closure.function.arity() {
-                    return Err(VmError::type_confusion(format!(
-                        "function '{}' expects {} arguments, got {}",
-                        closure.function.name(),
-                        closure.function.arity(),
-                        argc
-                    )));
+        // (A method that is a closure, which a written method is, is
+        // taken by its pointer, as `Call` takes one: the value in the
+        // global's slot is not cloned and moved.)
+        if let Some(func) = found.and_then(|slot| self.global(slot)) {
+            match sort(func) {
+                Sort::Closure(closure) => {
+                    let closure = closure.clone();
+                    // In tail position the method takes the current
+                    // frame over, as a tail-called function does.
+                    if tail {
+                        let args_at = receiver_slot + usize::from(descriptor_receiver);
+                        let argc = self.stack.len() - args_at;
+                        if argc != closure.function.arity() {
+                            return Err(VmError::type_confusion(format!(
+                                "function '{}' expects {} arguments, got {}",
+                                closure.function.name(),
+                                closure.function.arity(),
+                                argc
+                            )));
+                        }
+                        self.reuse_frame(closure, args_at, argc);
+                        return Ok(DispatchResult::Continue);
+                    }
+                    // The method's frame starts above a slot of its
+                    // own, as a called function's does: the
+                    // descriptor's, or one made below the receiver.
+                    if !descriptor_receiver {
+                        open_slot(&mut self.stack, receiver_slot);
+                    }
+                    let argc = self.stack.len() - receiver_slot - 1;
+                    let entered = self.call_closure(closure, argc, receiver_slot)?;
+                    return Ok(self.entered(entered));
                 }
-                self.reuse_frame(closure.clone(), args_at, argc);
-                return Ok(DispatchResult::Continue);
+                Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit | Sort::Other(_) => {
+                    let func = func.clone();
+                    if !descriptor_receiver {
+                        open_slot(&mut self.stack, receiver_slot);
+                    }
+                    let argc = self.stack.len() - receiver_slot - 1;
+                    let entered = self.call_value(func, argc, receiver_slot)?;
+                    return Ok(self.entered(entered));
+                }
             }
-            // The method's frame starts above a slot of its own,
-            // as a called function's does: the descriptor's, or
-            // one made below the receiver.
-            if !descriptor_receiver {
-                self.stack.insert(receiver_slot, Value::Unit);
-            }
-            let argc = self.stack.len() - receiver_slot - 1;
-            let entered = self.call_value(func, argc, receiver_slot)?;
-            return Ok(self.entered(entered));
         }
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name.

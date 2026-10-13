@@ -5366,3 +5366,971 @@ mod calls_and_returns {
         }
     }
 }
+
+/// A read of a part of a value (a record's field, a tuple's element,
+/// what a variant holds, a map's value), `Dup`, and `?` on an `Ok` or a
+/// `Some` copy the part where it goes: over the value on top, or above
+/// it.
+mod parts_in_place {
+    use std::collections::BTreeMap;
+
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+    use crate::bytecode::{Const, VmClosure};
+    use crate::value::{HostFn, HostShape};
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn name(e: &mut Emitter, s: &str) -> Const {
+        e.constant(Value::String(s.into()), span()).unwrap()
+    }
+
+    /// A part of every sort the instruction loop knows (`Sort` in
+    /// run.rs), and of several kinds that own something.
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Unit,
+            Value::VmClosure(Arc::new(VmClosure {
+                function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+                upvalues: vec![],
+            })),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::anon_record([("x", Value::Int(1))]),
+            Value::variant(bv::SOME, vec![float(0.5)]),
+        ]
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// The record `{ a: 5, b: part }`, and the place of `b` in it.
+    fn record(part: &Value) -> (Value, usize) {
+        let record = Value::anon_record([("a", Value::Int(5)), ("b", part.clone())]);
+        let Value::Record(fields) = &record else {
+            unreachable!()
+        };
+        let index = fields.named().position(|(name, _)| name == "b").unwrap();
+        (record, index)
+    }
+
+    /// What the stack holds after the instruction `read` emits has run
+    /// on `whole`, which lay above a value that must stay.
+    fn read(whole: Value, read: impl FnOnce(&mut Emitter)) -> Vec<Value> {
+        let (vm, run, _) = left_by(|e, _| {
+            push(e, Value::Int(99));
+            push(e, whole);
+            read(e);
+            // (The loop runs until the script would return; the stack
+            // is looked at where an error of a last instruction leaves
+            // it.)
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Add, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        run.expect_err("unit and unit are not added");
+        vm.stack.clone()
+    }
+
+    /// The part alone, over the whole: the stack is the value below and
+    /// the part.
+    fn over(part: &Value, whole: Value, emit: impl FnOnce(&mut Emitter)) {
+        let stack = read(whole.clone(), emit);
+        assert_eq!(stack.len(), 2, "{part:?} of {whole:?}: {stack:?}");
+        assert_eq!(stack[0], Value::Int(99));
+        assert!(same(&stack[1], part), "{:?} is not {part:?}", stack[1]);
+    }
+
+    /// The part above the whole, which stays.
+    fn above(part: &Value, whole: Value, emit: impl FnOnce(&mut Emitter)) {
+        let stack = read(whole.clone(), emit);
+        assert_eq!(stack.len(), 3, "{part:?} of {whole:?}: {stack:?}");
+        assert_eq!(stack[0], Value::Int(99));
+        assert_eq!(format!("{:?}", stack[1]), format!("{whole:?}"));
+        assert!(same(&stack[2], part), "{:?} is not {part:?}", stack[2]);
+    }
+
+    #[test]
+    fn a_field_of_every_kind_is_written_over_its_record() {
+        for part in samples() {
+            let (whole, index) = record(&part);
+            over(&part, whole.clone(), |e| {
+                e.emit(Asm::GetField { index }, span()).unwrap();
+            });
+            over(&part, whole, |e| {
+                let b = name(e, "b");
+                e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            });
+        }
+    }
+
+    #[test]
+    fn what_an_ok_or_a_some_holds_is_written_over_it() {
+        for part in samples() {
+            for tag in [bv::OK, bv::SOME] {
+                over(&part, Value::variant(tag, vec![part.clone()]), |e| {
+                    e.emit(Asm::QuestionMark, span()).unwrap();
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn a_pattern_reads_a_part_of_every_kind_above_the_value() {
+        for part in samples() {
+            let (whole, index) = record(&part);
+            above(&part, whole.clone(), |e| {
+                e.emit(Asm::DestructRecordField { index }, span()).unwrap();
+            });
+            above(&part, whole, |e| {
+                let b = name(e, "b");
+                e.emit(Asm::DestructRecordFieldNamed { name: b }, span())
+                    .unwrap();
+            });
+            let tuple = Value::tuple(vec![Value::Int(5), part.clone()]);
+            above(&part, tuple, |e| {
+                e.emit(Asm::DestructTuple { index: 1 }, span()).unwrap();
+            });
+            let variant = Value::variant(bv::ERR, vec![part.clone()]);
+            above(&part, variant, |e| {
+                e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
+            });
+            let map = Value::map(BTreeMap::from([
+                (Value::String("j".into()), Value::Int(5)),
+                (Value::String("k".into()), part.clone()),
+            ]));
+            above(&part, map, |e| {
+                let k = name(e, "k");
+                e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+            });
+            above(&part, part.clone(), |e| {
+                e.emit(Asm::Dup, span()).unwrap();
+            });
+        }
+    }
+
+    /// A function the VM calls with values and that gives what `make`
+    /// makes of copies of them: a value that holds them and that
+    /// nothing else holds.
+    fn holder(name: &str, make: fn(&[Value]) -> Value) -> Value {
+        Value::HostFn(Arc::new(HostFn {
+            name: name.to_string(),
+            call: Arc::new(move |parts| Ok(make(parts))),
+            returns: HostShape::Any,
+        }))
+    }
+
+    /// Emit the making of a value that holds `count` new probes, by
+    /// the function `holder`; `k` is the maker of the probes.
+    fn held(e: &mut Emitter, k: Const, holder: Value, count: usize) {
+        push(e, holder);
+        for _ in 0..count {
+            probe(e, k);
+        }
+        e.emit(Asm::Call { argc: count }, span()).unwrap();
+    }
+
+    fn record_of(parts: &[Value]) -> Value {
+        Value::anon_record([("a", parts[0].clone()), ("b", parts[1].clone())])
+    }
+
+    fn ok_of(parts: &[Value]) -> Value {
+        Value::variant(bv::OK, parts.to_vec())
+    }
+
+    fn tuple_of(parts: &[Value]) -> Value {
+        Value::tuple(parts.to_vec())
+    }
+
+    fn map_of(parts: &[Value]) -> Value {
+        Value::map(BTreeMap::from([
+            (Value::String("j".into()), parts[0].clone()),
+            (Value::String("k".into()), parts[1].clone()),
+        ]))
+    }
+
+    /// The probes that ended, in order, when the script has run: probe
+    /// 1 lies below everything until the script returns; `whole` makes
+    /// a value of the next probes; `read` reads a part of it; the two
+    /// `Pop`s that follow take off what `read` left (a `Pop` of the
+    /// unit pushed for it, where `read` left one value).
+    fn ends(
+        whole: impl FnOnce(&mut Emitter, Const),
+        left: usize,
+        read: Asm<'static>,
+    ) -> Vec<usize> {
+        let (vm, run, log) = left_by(|e, k| {
+            probe(e, k);
+            whole(e, k);
+            e.emit(read, span()).unwrap();
+            for _ in left..2 {
+                e.emit(Asm::Unit, span()).unwrap();
+            }
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert!(vm.stack.is_empty());
+        ended(&log)
+    }
+
+    /// The record ends at the read of its field, with the field that
+    /// was not read (3); the field that was read (2) lives on the
+    /// stack until it is taken off.
+    #[test]
+    fn a_field_read_lets_go_of_the_record_and_keeps_the_field() {
+        let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
+        let (_, a) = record(&Value::Unit);
+        let a = if a == 0 { 1 } else { 0 };
+        assert_eq!(ends(whole, 1, Asm::GetField { index: a }), [3, 2, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
+        let (vm, run, log) = left_by(|e, k| {
+            probe(e, k);
+            whole(e, k);
+            let b = name(e, "b");
+            e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert!(vm.stack.is_empty());
+        assert_eq!(ended(&log), [2, 3, 1]);
+    }
+
+    /// `?` lets go of the `Ok` and keeps what it held.
+    #[test]
+    fn a_question_mark_lets_go_of_the_ok_and_keeps_what_it_held() {
+        let whole = |e: &mut Emitter, k| held(e, k, holder("ok", ok_of), 1);
+        assert_eq!(ends(whole, 1, Asm::QuestionMark), [2, 1]);
+    }
+
+    /// A pattern's read and `Dup` keep the value: its parts end when
+    /// it is taken off the stack, each once.
+    #[test]
+    fn a_pattern_read_holds_the_part_beside_the_value() {
+        let (_, b) = record(&Value::Unit);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
+        let read = Asm::DestructRecordField { index: b };
+        assert_eq!(ends(whole, 2, read), [2, 3, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("tuple", tuple_of), 2);
+        assert_eq!(ends(whole, 2, Asm::DestructTuple { index: 1 }), [2, 3, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("ok", ok_of), 1);
+        let read = Asm::DestructVariant { index: 0 };
+        assert_eq!(ends(whole, 2, read), [2, 1]);
+        let whole = |e: &mut Emitter, k| held(e, k, holder("ok", ok_of), 1);
+        assert_eq!(ends(whole, 2, Asm::Dup), [2, 1]);
+        for named in ["record", "map"] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                let key = name(e, if named == "map" { "k" } else { "b" });
+                if named == "map" {
+                    held(e, k, holder("map", map_of), 2);
+                    e.emit(Asm::DestructMapValue { key }, span()).unwrap();
+                } else {
+                    held(e, k, holder("record", record_of), 2);
+                    e.emit(Asm::DestructRecordFieldNamed { name: key }, span())
+                        .unwrap();
+                }
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Unit, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert_eq!(run.unwrap(), Value::Unit);
+            assert!(vm.stack.is_empty());
+            assert_eq!(ended(&log), [2, 3, 1], "{named}");
+        }
+    }
+
+    /// A read that fails: a field read has taken the value off the
+    /// stack, and it ends with the error; a pattern's read and `?`
+    /// leave it where it was.
+    #[test]
+    fn a_read_that_fails_leaves_the_stack_as_it_was() {
+        type Read = fn(&mut Emitter);
+        let off: [Read; 2] = [
+            |e| {
+                e.emit(Asm::GetField { index: 0 }, span()).unwrap();
+            },
+            |e| {
+                let b = name(e, "b");
+                e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            },
+        ];
+        let kept: [Read; 6] = [
+            |e| {
+                e.emit(Asm::DestructRecordField { index: 0 }, span())
+                    .unwrap();
+            },
+            |e| {
+                let b = name(e, "b");
+                e.emit(Asm::DestructRecordFieldNamed { name: b }, span())
+                    .unwrap();
+            },
+            |e| {
+                e.emit(Asm::DestructTuple { index: 0 }, span()).unwrap();
+            },
+            |e| {
+                e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
+            },
+            |e| {
+                let k = name(e, "k");
+                e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
+            },
+            |e| {
+                e.emit(Asm::QuestionMark, span()).unwrap();
+            },
+        ];
+        let failed = |read: Read| {
+            // Probe 1 lies below; probe 2, a function, is what the
+            // instruction is given: it is no record, tuple, variant or
+            // map.
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                read(e);
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.unwrap_err().type_confusion);
+            (vm.stack.len(), ended(&log))
+        };
+        for read in off {
+            assert_eq!(failed(read), (1, vec![2]));
+        }
+        for read in kept {
+            assert_eq!(failed(read), (2, vec![]));
+        }
+    }
+}
+
+/// A call of a method that is found where the code runs (`CallMethod`,
+/// `TailCallMethod`): the method is entered by its closure's pointer,
+/// and the slot its frame starts above is made where it goes.
+mod methods_in_place {
+    use std::sync::OnceLock;
+
+    use super::seen_drops::{ended, maker, probe};
+    use super::*;
+    use crate::bytecode::{Const, VmClosure};
+    use crate::value::{HostFn, HostShape};
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn closure(function: Arc<Function>) -> Value {
+        Value::VmClosure(Arc::new(VmClosure {
+            function,
+            upvalues: vec![],
+        }))
+    }
+
+    /// A function that gives the list of what it was called with.
+    fn lister() -> Value {
+        Value::HostFn(Arc::new(HostFn {
+            name: "lister".to_string(),
+            call: Arc::new(|args| Ok(Value::list(args.to_vec()))),
+            returns: HostShape::Any,
+        }))
+    }
+
+    /// A method of `arity` parameters that gives the list of them.
+    fn listing(arity: u8) -> Value {
+        closure(make_function_of(arity, |e| {
+            for slot in 0..usize::from(arity) {
+                e.emit(Asm::GetLocal { slot }, span()).unwrap();
+            }
+            let count = usize::from(arity);
+            e.emit(Asm::MakeList { count }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        }))
+    }
+
+    /// A VM whose program has one impl: of a trait for the type of
+    /// `receiver`, with the one method `method`. The call's operands
+    /// (the method's name, the trait) are 0 and 0.
+    fn vm_with(receiver: &Value, method: Value) -> Vm {
+        let mut globals = crate::bytecode::Globals::default();
+        let t = crate::defs::builtin_trait_id("Display").unwrap();
+        let ty = crate::types::canonical::dispatch_type_for_value(receiver);
+        assert_eq!(globals.trait_index(t, "T".to_string()), Some(0));
+        let slot = globals.add_method(t, ty, "m", "T.m".to_string()).unwrap();
+        assert_eq!(globals.method_id("m"), Some(0));
+        let table = Arc::new(globals);
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.view.slots = std::iter::repeat_with(OnceLock::new)
+            .take(table.len())
+            .collect();
+        vm.view.entry = table.clone();
+        vm.view.table = table;
+        assert!(vm.set_global(slot, method));
+        vm
+    }
+
+    /// Run the script `build` emits on `vm` until it ends or fails,
+    /// and give the VM as the instruction loop left it (nothing is cut
+    /// back or unwound yet) and what the loop gave.
+    fn left(mut vm: Vm, build: impl FnOnce(&mut Emitter)) -> (Vm, Result<Value, VmError>) {
+        let script = make_function(build);
+        let floor = vm.frames.len();
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(VmClosure {
+                function: script,
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        let run = vm.run_thread(floor, |vm| vm.run_frames(floor, usize::MAX));
+        let run = run.map(|slice| match slice {
+            crate::vm::run::Slice::Done(value) => value,
+            _ => panic!("the script runs to its end or to an error"),
+        });
+        (vm, run)
+    }
+
+    fn call(argc: u8, tail: bool) -> Asm<'static> {
+        let (method, argc, of) = (0, usize::from(argc), 0);
+        match tail {
+            true => Asm::TailCallMethod { method, argc, of },
+            false => Asm::CallMethod { method, argc, of },
+        }
+    }
+
+    /// The values of the list `value`.
+    fn items(value: &Value) -> Vec<Value> {
+        let Value::List(list) = value else {
+            panic!("a list, not {value:?}")
+        };
+        list.iter().collect()
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// A receiver or an argument of every sort the instruction loop
+    /// knows (`Sort` in run.rs).
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Unit,
+            closure(Arc::new(Function::returning_unit("f".to_string(), 0))),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+            Value::anon_record([("x", Value::Int(1))]),
+        ]
+    }
+
+    /// The method gets the receiver and the arguments, in order, and
+    /// its result lies where the receiver lay; the value below is
+    /// untouched. In tail position its result is the caller's.
+    #[test]
+    fn a_method_gets_its_receiver_and_its_arguments() {
+        for method in [listing as fn(u8) -> Value, |_| lister()] {
+            for receiver in samples() {
+                for argument in samples() {
+                    for extra in [0u8, 1, 3] {
+                        for tail in [false, true] {
+                            let vm = vm_with(&receiver, method(1 + extra));
+                            let (vm, run) = left(vm, |e| {
+                                push(e, Value::Int(99));
+                                push(e, receiver.clone());
+                                for _ in 0..extra {
+                                    push(e, argument.clone());
+                                }
+                                e.emit(call(1 + extra, tail), span()).unwrap();
+                                if !tail {
+                                    e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+                                }
+                                e.emit(Asm::Return, span()).unwrap();
+                            });
+                            let result = run.unwrap();
+                            let got = match tail {
+                                true => result,
+                                false => {
+                                    let both = items(&result);
+                                    assert_eq!(both[0], Value::Int(99));
+                                    both[1].clone()
+                                }
+                            };
+                            let got = items(&got);
+                            assert_eq!(got.len(), usize::from(1 + extra));
+                            assert!(same(&got[0], &receiver), "{got:?}");
+                            for given in &got[1..] {
+                                assert!(same(given, &argument), "{got:?}");
+                            }
+                            assert!(vm.stack.is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A type named as the receiver chooses the method and is no
+    /// argument of it.
+    #[test]
+    fn a_type_as_the_receiver_is_not_an_argument() {
+        for tail in [false, true] {
+            let receiver = Value::PrimitiveDescriptor("Int");
+            let vm = vm_with(&receiver, listing(2));
+            let (vm, run) = left(vm, |e| {
+                push(e, Value::Int(99));
+                push(e, receiver.clone());
+                push(e, Value::Int(1));
+                push(e, Value::String("two".into()));
+                e.emit(call(3, tail), span()).unwrap();
+                if !tail {
+                    e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+                }
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            let result = run.unwrap();
+            let given = Value::list(vec![Value::Int(1), Value::String("two".into())]);
+            match tail {
+                true => assert_eq!(result, given),
+                false => assert_eq!(result, Value::list(vec![Value::Int(99), given])),
+            }
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// The slot a method's frame starts above is one more value on the
+    /// stack: with every number of values below, the stack's room is
+    /// used up exactly at that slot several times.
+    #[test]
+    fn a_method_call_makes_room_for_its_slot() {
+        for below in 0..70usize {
+            let receiver = Value::String("r".into());
+            let vm = vm_with(&receiver, listing(1));
+            let (vm, run) = left(vm, |e| {
+                for n in 0..below {
+                    push(e, Value::Int(n as i64));
+                }
+                push(e, receiver.clone());
+                e.emit(call(1, false), span()).unwrap();
+                e.emit(Asm::MakeList { count: below + 1 }, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            let mut expected: Vec<Value> = (0..below).map(|n| Value::Int(n as i64)).collect();
+            expected.push(Value::list(vec![receiver]));
+            assert_eq!(run.unwrap(), Value::list(expected), "{below} below");
+            assert!(vm.stack.is_empty());
+        }
+    }
+
+    /// Run `build` on a VM whose method, of `arity` parameters, gives
+    /// unit, for a receiver that is a probe; `build` gets the maker of
+    /// probes. The VM as the loop left it, what the loop gave, and the
+    /// probes that ended.
+    fn with_probes(
+        arity: u8,
+        build: impl FnOnce(&mut Emitter, Const),
+    ) -> (Vm, Result<Value, VmError>, Vec<usize>) {
+        let (maker, log) = maker();
+        let method = closure(Arc::new(Function::returning_unit("m".to_string(), arity)));
+        let vm = vm_with(&lister(), method);
+        let (vm, run) = left(vm, |e| {
+            let k = e.constant(maker, span()).unwrap();
+            build(e, k);
+        });
+        let ended = ended(&log);
+        (vm, run, ended)
+    }
+
+    /// The receiver and the arguments are the method's: they end when
+    /// it returns, the receiver first; the value below ends when the
+    /// caller is done.
+    #[test]
+    fn a_method_call_ends_what_it_was_given_at_the_return() {
+        let (vm, run, ended) = with_probes(3, |e, k| {
+            probe(e, k);
+            probe(e, k);
+            probe(e, k);
+            probe(e, k);
+            e.emit(call(3, false), span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(run.unwrap(), Value::Unit);
+        assert_eq!(ended, [2, 3, 4, 1]);
+        assert!(vm.stack.is_empty());
+    }
+
+    /// A call with the wrong number of arguments (which no checked
+    /// program makes) fails with the slot of the method's frame made
+    /// and nothing let go of; in tail position, with the stack as it
+    /// was.
+    #[test]
+    fn a_method_call_that_fails_leaves_the_stack_as_it_was() {
+        for (tail, left) in [(false, 4), (true, 3)] {
+            let (vm, run, ended) = with_probes(3, |e, k| {
+                probe(e, k);
+                probe(e, k);
+                probe(e, k);
+                e.emit(call(2, tail), span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            let err = run.unwrap_err();
+            assert!(err.type_confusion);
+            assert_eq!(err.message, "function 'm' expects 3 arguments, got 2");
+            assert_eq!(vm.stack.len(), left, "tail: {tail}");
+            assert_eq!(ended, [0; 0]);
+            if !tail {
+                assert_eq!(vm.stack[1], Value::Unit);
+            }
+        }
+    }
+
+    /// A method that is no closure and cannot be called: the receiver
+    /// and its slot are off the stack at the error.
+    #[test]
+    fn a_method_that_cannot_be_called_takes_the_receiver_off() {
+        let receiver = Value::Int(7);
+        let vm = vm_with(&receiver, Value::Int(3));
+        let (vm, run) = left(vm, |e| {
+            push(e, Value::Int(99));
+            push(e, receiver.clone());
+            e.emit(call(1, false), span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let err = run.unwrap_err();
+        assert!(err.type_confusion);
+        assert_eq!(err.message, "cannot call value of type Int");
+        assert_eq!(vm.stack, [Value::Int(99)]);
+    }
+}
+
+/// `Negate` and `Not` write their result over their operand, and a
+/// pattern's test pushes its Bool above the value it tests: each is
+/// built where it goes.
+mod results_in_place {
+    use std::collections::BTreeMap;
+
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(s.into())
+    }
+
+    /// The stack after `op` has run on `operand`, which lay above a
+    /// value that must stay, or the error with the stack as the loop
+    /// left it.
+    fn one(operand: Value, op: Asm<'static>) -> (Vec<Value>, Option<VmError>) {
+        let (vm, run, _) = left_by(|e, _| {
+            push(e, Value::Int(99));
+            push(e, operand);
+            e.emit(op, span()).unwrap();
+            e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        match run {
+            Ok(Value::List(list)) => (list.iter().collect(), None),
+            Ok(other) => panic!("a list, not {other:?}"),
+            Err(error) => (vm.stack.clone(), Some(error)),
+        }
+    }
+
+    #[test]
+    fn negate_and_not_give_their_result_where_the_operand_was() {
+        let half = crate::value::Float::new(0.5).unwrap();
+        let zero = crate::value::Float::new(0.0).unwrap();
+        for (operand, op, result) in [
+            (Value::Int(5), Asm::Negate, Value::Int(-5)),
+            (Value::Int(0), Asm::Negate, Value::Int(0)),
+            (Value::Int(i64::MIN + 1), Asm::Negate, Value::Int(i64::MAX)),
+            (Value::Float(half), Asm::Negate, Value::Float(-half)),
+            (Value::Float(-half), Asm::Negate, Value::Float(half)),
+            (Value::Float(zero), Asm::Negate, Value::Float(-zero)),
+            (Value::Bool(true), Asm::Not, Value::Bool(false)),
+            (Value::Bool(false), Asm::Not, Value::Bool(true)),
+        ] {
+            let shown = format!("{operand:?}");
+            let (stack, error) = one(operand, op);
+            assert!(error.is_none(), "{shown}: {error:?}");
+            assert_eq!(stack, [Value::Int(99), result], "{shown}");
+        }
+    }
+
+    /// An operand that is refused is off the stack at the error, and
+    /// the value below it is where it was.
+    #[test]
+    fn a_refused_operand_is_off_the_stack_at_the_error() {
+        let (stack, error) = one(Value::Int(i64::MIN), Asm::Negate);
+        let error = error.unwrap();
+        assert_eq!(
+            error.message,
+            "integer overflow: negate -9223372036854775808"
+        );
+        assert!(!error.type_confusion);
+        assert_eq!(stack, [Value::Int(99)]);
+        for (operand, op, message) in [
+            (string("a"), Asm::Negate, "cannot negate String"),
+            (Value::Bool(true), Asm::Negate, "cannot negate Bool"),
+            (Value::Unit, Asm::Negate, "cannot negate Unit"),
+            (Value::Int(1), Asm::Not, "cannot apply 'not' to Int"),
+            (float(0.5), Asm::Not, "cannot apply 'not' to Float"),
+            (string("a"), Asm::Not, "cannot apply 'not' to String"),
+        ] {
+            let (stack, error) = one(operand, op);
+            let error = error.unwrap();
+            assert_eq!(error.message, message);
+            assert!(error.type_confusion);
+            assert_eq!(stack, [Value::Int(99)], "{message}");
+        }
+    }
+
+    /// A refused operand that owns something ends with the error; the
+    /// value below it lives on.
+    #[test]
+    fn a_refused_operand_ends_with_the_error() {
+        for op in [Asm::Negate, Asm::Not] {
+            let (vm, run, log) = left_by(|e, k| {
+                probe(e, k);
+                probe(e, k);
+                e.emit(op, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert!(run.unwrap_err().type_confusion);
+            assert_eq!(ended(&log), [2]);
+            assert_eq!(vm.stack.len(), 1);
+        }
+    }
+
+    /// The nine tests of a pattern, each with a value it holds for and
+    /// one it does not.
+    fn tests(e: &mut Emitter) -> Vec<(Asm<'static>, Value, Value)> {
+        let mut constant = |value: Value| e.constant(value, span()).unwrap();
+        let some = Value::variant(bv::SOME, vec![Value::Int(1)]);
+        let record = Value::anon_record([("x", Value::Int(1))]);
+        let Value::Record(fields) = &record else {
+            unreachable!()
+        };
+        let anon = Value::TypeDescriptor(fields.ty().clone());
+        let pair = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
+        let triple = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let map = Value::map(BTreeMap::from([(string("k"), Value::Int(1))]));
+        vec![
+            (
+                Asm::TestTag {
+                    tag: constant(Value::VariantConstructor(bv::SOME.tag())),
+                },
+                some.clone(),
+                Value::variant(bv::NONE, vec![]),
+            ),
+            (
+                Asm::TestEqual {
+                    k: constant(string("a")),
+                },
+                string("a"),
+                string("b"),
+            ),
+            (Asm::TestTupleLen { len: 2 }, pair.clone(), Value::Int(1)),
+            (
+                Asm::TestListMin { len: 3 },
+                triple.clone(),
+                Value::list(vec![]),
+            ),
+            (Asm::TestListExact { len: 3 }, triple, Value::list(vec![])),
+            (
+                Asm::TestIntRange {
+                    lo: constant(Value::Int(1)),
+                    hi: constant(Value::Int(5)),
+                },
+                Value::Int(5),
+                Value::Int(6),
+            ),
+            (
+                Asm::TestFloatRange {
+                    lo: constant(float(0.5)),
+                    hi: constant(float(1.5)),
+                },
+                float(1.0),
+                float(2.0),
+            ),
+            (Asm::TestRecordTag { ty: constant(anon) }, record, some),
+            (
+                Asm::TestMapHasKey {
+                    key: constant(string("k")),
+                },
+                map,
+                Value::map(BTreeMap::new()),
+            ),
+        ]
+    }
+
+    /// Each test pushes `true` or `false` above the value, which stays;
+    /// with every number of values below, so that the stack's room is
+    /// used up exactly at the test's push several times.
+    #[test]
+    fn a_pattern_test_pushes_its_bool_above_the_value() {
+        for which in 0..9 {
+            for holds in [true, false] {
+                for below in 0..70usize {
+                    let mut tested = Value::Unit;
+                    let (vm, run, _) = left_by(|e, _| {
+                        let (test, yes, no) = tests(e).swap_remove(which);
+                        tested = if holds { yes } else { no };
+                        for n in 0..below {
+                            push(e, Value::Int(n as i64));
+                        }
+                        push(e, tested.clone());
+                        e.emit(test, span()).unwrap();
+                        e.emit(Asm::MakeList { count: below + 2 }, span()).unwrap();
+                        e.emit(Asm::Return, span()).unwrap();
+                    });
+                    let mut expected: Vec<Value> =
+                        (0..below).map(|n| Value::Int(n as i64)).collect();
+                    expected.push(tested);
+                    expected.push(Value::Bool(holds));
+                    assert_eq!(
+                        run.unwrap(),
+                        Value::list(expected),
+                        "test {which}, {holds}, {below} below"
+                    );
+                    assert!(vm.stack.is_empty());
+                }
+            }
+        }
+    }
+}
+
+/// `Slide` keeps the value on top and cuts the frame back below it:
+/// the value is written where it goes, and the values that go end from
+/// the lowest up.
+mod slide_in_place {
+    use super::seen_drops::{ended, left_by, probe};
+    use super::*;
+    use crate::bytecode::VmClosure;
+
+    /// Emit the push of `value`.
+    fn push(e: &mut Emitter, value: Value) {
+        let k = e.constant(value, span()).unwrap();
+        e.emit(Asm::Constant { k }, span()).unwrap();
+    }
+
+    /// A value of every sort the instruction loop knows (`Sort` in
+    /// run.rs).
+    fn samples() -> Vec<Value> {
+        vec![
+            Value::Int(-7),
+            float(2.5),
+            Value::Bool(true),
+            Value::Unit,
+            Value::VmClosure(Arc::new(VmClosure {
+                function: Arc::new(Function::returning_unit("f".to_string(), 0)),
+                upvalues: vec![],
+            })),
+            Value::String("text".into()),
+            Value::list(vec![Value::Int(1), Value::Unit]),
+        ]
+    }
+
+    /// Whether `a` is `b`: the same closure, or an equal value.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            _ => a == b,
+        }
+    }
+
+    /// A value of every sort slides over values of every sort, over
+    /// none, one or three of them; what lies below stays.
+    #[test]
+    fn a_value_of_every_kind_slides_over_every_kind() {
+        for top in samples() {
+            for under in samples() {
+                for cut in [0, 1, 3] {
+                    let (vm, run, _) = left_by(|e, _| {
+                        push(e, Value::Int(99));
+                        for _ in 0..cut {
+                            push(e, under.clone());
+                        }
+                        push(e, top.clone());
+                        e.emit(Asm::Slide { slot: 1 }, span()).unwrap();
+                        // (The stack is looked at where an error of
+                        // the next instruction leaves it.)
+                        e.emit(Asm::Unit, span()).unwrap();
+                        e.emit(Asm::Negate, span()).unwrap();
+                        e.emit(Asm::Return, span()).unwrap();
+                    });
+                    run.expect_err("unit has no negative");
+                    let shown = format!("{top:?} over {cut} of {under:?}");
+                    assert_eq!(vm.stack.len(), 2, "{shown}: {:?}", vm.stack);
+                    assert_eq!(vm.stack[0], Value::Int(99), "{shown}");
+                    assert!(same(&vm.stack[1], &top), "{shown}: {:?}", vm.stack);
+                }
+            }
+        }
+    }
+
+    /// Probe 1 lies below and stays; probes 2, 3 and 4 are slid over
+    /// and end in that order, at the `Slide`; the value on top, probe 5
+    /// or a number, lives until it is taken off.
+    #[test]
+    fn a_slide_ends_the_values_under_the_top_from_the_lowest_up() {
+        for owns in [true, false] {
+            let (vm, run, log) = left_by(|e, k| {
+                for _ in 0..4 {
+                    probe(e, k);
+                }
+                match owns {
+                    true => probe(e, k),
+                    false => push(e, Value::Int(7)),
+                }
+                e.emit(Asm::Slide { slot: 1 }, span()).unwrap();
+                // A sixth probe, made after the slide: it ends before
+                // the value that slid.
+                probe(e, k);
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Pop, span()).unwrap();
+                e.emit(Asm::Unit, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            });
+            assert_eq!(run.unwrap(), Value::Unit);
+            let (after, top): (usize, &[usize]) = if owns { (6, &[5]) } else { (5, &[]) };
+            let mut expected = vec![2, 3, 4, after];
+            expected.extend_from_slice(top);
+            expected.push(1);
+            assert_eq!(ended(&log), expected, "the top owns something: {owns}");
+            assert!(vm.stack.is_empty());
+        }
+    }
+}
