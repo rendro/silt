@@ -1,0 +1,38 @@
+-- cmd: fmt
+-- A comment on a line of its own above the expression stays above it:
+-- both stand under the arrow, as they do without braces.
+fn pick(n) {
+  match n {
+    1 -> {
+      -- about one
+      n + 1
+    }
+    2 -> {
+      -- about two
+
+      -- and more about two
+      match n {
+        2 -> 22
+        _ -> 0
+      }
+    }
+    3 ->
+      -- above the brace
+      {
+        n + 3
+      }
+    4 ->
+      -- without braces
+      n + 4
+    _ -> {
+
+      {- a block comment on its line -}
+      0
+
+    }
+  }
+}
+
+fn main() {
+  println(pick(1))
+}

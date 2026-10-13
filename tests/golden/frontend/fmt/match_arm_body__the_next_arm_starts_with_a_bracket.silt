@@ -1,0 +1,57 @@
+-- cmd: fmt
+-- A `(`, `[`, `{` or `-` that starts the next arm starts a line: the
+-- body in front of it does not take it without its braces.
+type Wrap {
+  Wrap(Int),
+}
+
+fn tuples(pair, f) {
+  match pair {
+    (1, _) -> { f }
+    (2, _) -> { Wrap }
+    (_, _) -> { f }
+  }
+}
+
+fn lists(xs, f) {
+  match xs {
+    [1] -> { f }
+    [_] -> { Wrap }
+    [_, ..rest] -> { lists(rest, f) }
+    _ -> { f }
+  }
+}
+
+fn numbers(n) {
+  match n {
+    1 -> { n }
+    -1 -> { n }
+    -9..-2 -> { n }
+    _ -> { n }
+  }
+}
+
+fn records(r, f) {
+  match r {
+    { a: 1 } -> { f }
+    { a: 2 } -> { Wrap }
+    { a: _ } -> { f }
+  }
+}
+
+fn conditions(n, f) {
+  match {
+    (n) > 1 -> { f }
+    [n] == [1] -> { Wrap }
+    -n > 5 -> { f }
+    !(n == 0) -> { f }
+    _ -> { f }
+  }
+}
+
+fn main() {
+  let f = tuples((1, 2), Wrap)
+  let g = lists([1], f)
+  let h = records({ a: 1 }, g)
+  println((conditions(1, h)(1), numbers(1)))
+}

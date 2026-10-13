@@ -309,6 +309,35 @@ fn closure_shaped(arm: &MatchArm) -> bool {
     )
 }
 
+/// Whether `expr`, printed without parentheses around it, ends with the
+/// body of a `match` that the parser reads as a closure if a `{` follows
+/// it, on whatever line: the scrutinee ends in a stage of a pipeline,
+/// and the body starts as a closure may (see where a `match` is
+/// printed).
+fn ends_in_piped_match(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Match {
+            expr: Some(scrutinee),
+            arms,
+        } => ends_in_stage(scrutinee) && arms.first().is_some_and(closure_shaped),
+        ExprKind::Binary(_, _, right) | ExprKind::Pipe(_, right) | ExprKind::Range(_, right) => {
+            ends_in_piped_match(right)
+        }
+        ExprKind::Unary(_, inner) | ExprKind::Return(Some(inner)) => ends_in_piped_match(inner),
+        _ => false,
+    }
+}
+
+/// Whether the last operand of `expr` stands in a stage of a pipeline.
+fn ends_in_stage(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Pipe(..) => true,
+        ExprKind::Binary(_, _, right) | ExprKind::Range(_, right) => ends_in_stage(right),
+        ExprKind::Unary(_, inner) | ExprKind::Return(Some(inner)) => ends_in_stage(inner),
+        _ => false,
+    }
+}
+
 /// Whether `pattern`, printed without parentheses, starts with a `{`.
 fn pattern_starts_with_brace(pattern: &Pattern) -> bool {
     match &pattern.kind {
@@ -2082,7 +2111,68 @@ impl Printer<'_> {
         }
         docs.push(space());
         docs.push(self.tok(Token::Arrow));
-        docs.push(self.after(&arm.body));
+        docs.push(self.arm_body(&arm.body));
+        Doc::concat(docs)
+    }
+
+    /// What stands behind the `->` of an arm. A block of one expression
+    /// written there, `p -> { a }`, is the expression in braces of its
+    /// own: they are not written, so such a body has one spelling. (A
+    /// block of statements, of one `let` or `when`, or of nothing is
+    /// the only spelling of what it says.)
+    fn arm_body(&mut self, body: &Expr) -> Doc {
+        // The next arm starts with a `{`.
+        let brace_follows = matches!(self.cur.behind(body.span.end), Token::LBrace);
+        let mut docs = Vec::new();
+        // The blocks that are not written, from the outside in: for
+        // each, the parentheses around it, which go with it.
+        let mut unwritten: Vec<usize> = Vec::new();
+        // Whether a comment follows the closing brace of the block
+        // looked at, up to the end of the arm's last line.
+        let mut comment_follows = None;
+        let mut body = body;
+        while let ExprKind::Block(stmts) = &body.kind
+            && let [Stmt::Expr(inner)] = stmts.as_slice()
+        {
+            // Parentheses with a comment directly inside them stay, and
+            // what they hold stays as it is written.
+            let wrappers = self.cur.wrappers(body.span.end);
+            if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
+                break;
+            }
+            // Without the braces, the `{` of the next arm would stand
+            // behind the body of a match that the parser then takes for
+            // a closure.
+            if brace_follows && ends_in_piped_match(inner) {
+                break;
+            }
+            // The comments at the closing brace end the expression's
+            // last line without it. One on a line of its own would
+            // stand in front of the next arm, and so would one behind a
+            // `--` comment, which nothing follows on its line: such a
+            // block stays.
+            let closer = self.cur.closer_comments(body.span.end, wrappers);
+            let follows = comment_follows.unwrap_or(closer.behind);
+            if closer.own_line || (closer.ends_line && follows) {
+                break;
+            }
+            comment_follows = Some(follows || closer.in_front);
+            for _ in 0..wrappers {
+                self.cur.pass(&Token::LParen);
+            }
+            self.cur.pass(&Token::LBrace);
+            // A comment behind the brace on its line ends the line of
+            // the arrow now.
+            docs.push(self.cur.trailing());
+            unwritten.push(wrappers);
+            body = inner;
+        }
+        docs.push(self.after(body));
+        for wrappers in unwritten.iter().rev() {
+            self.cur.skip_n(&Token::RBrace, 1);
+            self.cur.skip_n(&Token::RParen, *wrappers);
+        }
+        docs.push(self.cur.carried());
         Doc::concat(docs)
     }
 

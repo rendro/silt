@@ -1,0 +1,55 @@
+-- cmd: fmt
+-- The formatter takes every inner body for a possible closure unless it
+-- starts with a number or a boolean. A text, a pin or a guard in the
+-- first arm is no closure's parameter either, so the arm would parse
+-- without its braces, and they stay all the same. So this arm has two
+-- spellings, each kept as written.
+fn up(x) {
+  x
+}
+
+fn braced(r, text, k) {
+  match r {
+    { a: 1 } -> {
+      match text |> up {
+        "one" -> 1
+        _ -> 0
+      }
+    }
+    { a: 2 } -> {
+      match k |> up {
+        ^k -> 2
+        _ -> 0
+      }
+    }
+    { a: 3 } -> {
+      match k |> up {
+        n when n > 2 -> 3
+        _ -> 0
+      }
+    }
+    { a } -> a
+  }
+}
+
+fn bare(r, text, k) {
+  match r {
+    { a: 1 } -> match text |> up {
+      "one" -> 1
+      _ -> 0
+    }
+    { a: 2 } -> match k |> up {
+      ^k -> 2
+      _ -> 0
+    }
+    { a: 3 } -> match k |> up {
+      n when n > 2 -> 3
+      _ -> 0
+    }
+    { a } -> a
+  }
+}
+
+fn main() {
+  println((braced({ a: 1 }, "one", 2), bare({ a: 1 }, "one", 2)))
+}
