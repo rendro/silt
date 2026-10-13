@@ -206,6 +206,8 @@ pub(crate) fn vm_run_file(path: &str) {
     // scheduler.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new(silt::HostIo::process());
+    #[cfg(feature = "test-hooks")]
+    panic_where_a_test_says(&vm);
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,
@@ -244,6 +246,33 @@ pub(crate) fn vm_run_file(path: &str) {
     }
     if tasks_failed {
         process::exit(1);
+    }
+}
+
+/// In a build with `test-hooks` only: make the runtime of `vm` panic
+/// once at the place `SILT_TEST_PANIC` names (`task:<id>`, `program`,
+/// `timer`, `io`), for the tests of what the binary does when a thread
+/// of the runtime panics (tests/cli/runtime_panic_tests.rs). No other
+/// build reads the variable.
+#[cfg(feature = "test-hooks")]
+fn panic_where_a_test_says(vm: &Vm) {
+    use silt::vm::PanicAt;
+    let Ok(place) = std::env::var("SILT_TEST_PANIC") else {
+        return;
+    };
+    let task = |id: &str| id.parse().ok().map(PanicAt::Task);
+    let at = match place.as_str() {
+        "program" => Some(PanicAt::Program),
+        "timer" => Some(PanicAt::Timer),
+        "io" => Some(PanicAt::Io),
+        place => place.strip_prefix("task:").and_then(task),
+    };
+    match at {
+        Some(at) => silt::vm::panic_for_test(vm, at),
+        None => {
+            eprintln!("silt run: SILT_TEST_PANIC names no place: '{place}'");
+            process::exit(2);
+        }
     }
 }
 

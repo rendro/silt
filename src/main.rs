@@ -90,8 +90,23 @@ fn main() {
         .stack_size(SILT_STACK_SIZE)
         .spawn(move || run_main(args))
         .expect("spawning silt main worker thread");
+    // A panic that reaches the top of silt's own thread, from wherever
+    // (the checker, the compiler, the VM, or a thread of the runtime,
+    // whose panic the program's thread gives on), is a bug in silt.
+    // Rust has written the panic's place and message when it happened.
     if let Err(payload) = join.join() {
-        std::panic::resume_unwind(payload);
+        let text = match (
+            payload.downcast_ref::<&str>(),
+            payload.downcast_ref::<String>(),
+        ) {
+            (Some(text), _) => text,
+            (_, Some(text)) => text.as_str(),
+            _ => "<non-string panic payload>",
+        };
+        eprintln!(
+            "silt: internal error: {text}. This is a bug in silt, not in your program: please report it."
+        );
+        process::exit(101);
     }
 }
 
