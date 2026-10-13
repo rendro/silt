@@ -227,6 +227,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index);
 
         let mut vm = Vm::new(silt::HostIo::process());
+        #[cfg(feature = "test-hooks")]
+        crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);
         let setup = vm.run_program(&program);
         // The top-level code has ended when its tasks can do no more.
@@ -234,6 +236,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         if setup.is_ok() {
             vm.wait_until_idle();
         }
+        // (No report of the command's once a thread of a runtime has
+        // panicked and is ending the process: here, before each
+        // test's result, and before the summary.)
+        silt::scheduler::stand_back_for_internal_error();
         if let Err(e) = setup {
             // Frame and error-header paths follow the style of the path
             // the user typed, as under `silt run`. The header says what
@@ -282,6 +288,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
             // The failures of the test's tasks are reported under its
             // result line.
+            silt::scheduler::stand_back_for_internal_error();
             let task_failures = owners.take_task_failures(owner, &mut counts);
             let test_failed = match outcome {
                 Ok(value) => match returned_err(&value) {
@@ -354,6 +361,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         failed,
         file_errors,
     } = counts;
+    silt::scheduler::stand_back_for_internal_error();
     let test_word = if total == 1 { "test" } else { "tests" };
     if file_errors.any() {
         eprintln!(
@@ -368,8 +376,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'"
         );
     }
+    // (The tests may have left threads: see `vm_run_file`.)
     if failed > 0 || file_errors.any() {
-        process::exit(1);
+        silt::scheduler::exit_with_status(1);
     }
 }
 

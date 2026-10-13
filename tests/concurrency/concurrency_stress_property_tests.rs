@@ -175,6 +175,7 @@ fn check_invariants(src: &str, out: &RunOutcome) -> Result<(), String> {
     }
     if out.stderr.contains("thread 'main' panicked")
         || out.stderr.contains("thread '<unnamed>' panicked")
+        || out.stderr.contains("thread 'silt-")
         || out.stderr.contains("internal error:")
         || out.stderr.contains("internal compiler error")
     {

@@ -85,13 +85,24 @@ fn main() {
             }
         }
     }
+    // The process is silt's own: a panic of a thread of a program's
+    // runtime ends it, where an embedder would get the panic.
+    silt::scheduler::exit_on_panic();
     let join = std::thread::Builder::new()
         .name("silt-main".into())
         .stack_size(SILT_STACK_SIZE)
         .spawn(move || run_main(args))
         .expect("spawning silt main worker thread");
-    if let Err(payload) = join.join() {
-        std::panic::resume_unwind(payload);
+    // A panic that reaches the top of silt's own thread, from wherever
+    // (the checker, the compiler, the VM on the program's thread), is a
+    // bug in silt, and ends the process as a panic of a thread of the
+    // runtime does.
+    // A command that returned may have left threads of a runtime
+    // behind: if one of them is ending the process with the internal
+    // error, that is how it ends.
+    match join.join() {
+        Ok(()) => silt::scheduler::exit_with_status(0),
+        Err(payload) => silt::scheduler::exit_with_internal_error(&payload),
     }
 }
 
