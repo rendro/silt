@@ -47,9 +47,9 @@
 //! worker, the timer's thread, a thread of the I/O pool) is a bug of
 //! the runtime itself, whose state is not to be trusted after it: it
 //! ends the program. It is caught at the top of the thread
-//! ([`Inner::fail`]), no worker takes another task, and the program's
+//! (`Inner::fail`), no worker takes another task, and the program's
 //! own thread gives the panic on, out of the call of the VM it is in
-//! or makes next ([`Scheduler::give_panic_on`]): where a panic of the
+//! or makes next (`Scheduler::give_panic_on`): where a panic of the
 //! program's own code on that thread comes out. That is all the
 //! library does: it never ends an embedder's process. In a process
 //! that is silt's own ([`exit_on_panic`], which the `silt` command

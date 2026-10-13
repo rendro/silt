@@ -395,8 +395,9 @@ several scripts in parallel from Rust, create one `Vm` per thread.
 slices of that many steps: a task gives way to the other tasks after
 `steps` instructions (the scheduler's own slice is 2000), and the thread
 that runs the program's own code stops and goes on after `steps` too,
-where it otherwise runs `main` without a break. What a program computes
-does not depend on the slice; a host sets one to test exactly that. With
+where it otherwise does so about every million steps. What a program
+computes does not depend on the slice; a host sets one to test exactly
+that. With
 `set_time_slice(1)` the program is stopped and resumed after every
 instruction and after every step of a builtin that calls back into it.
 
@@ -435,6 +436,20 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   error (`host function 'mylib.parse' panicked: ...`). The scheduler
   worker survives and other tasks keep running. Returning `Err` is still
   the way to fail; the catch is a safety net.
+- **A panic of silt's own runtime** is a bug in silt, and ends the
+  program, not your process. Wherever it happens (on the thread that
+  runs the program, on a worker that runs a task, on the timer's thread
+  or a thread that does I/O), it comes out of the `Vm` call your thread
+  is in, or of the next one it makes, as a Rust panic with the original
+  payload: `run_program`, `call_test`, `settle`, `stop_tasks`,
+  `wait_until_idle` and `show_text` alike. Wrap those calls in
+  `std::panic::catch_unwind` if your process is to survive it. No task
+  of the program runs further, every later call on that `Vm` panics
+  again, and the `Vm` can only be dropped, which is safe. Your thread
+  gets the panic at once where it waits for a task, a channel or an I/O
+  operation, and within about a million steps where it computes; a
+  thread asleep in your `Clock::sleep`, or inside one call of a builtin
+  or a host function, gets it when that returns.
 
 ```rust
 match vm.run_program(&program) {

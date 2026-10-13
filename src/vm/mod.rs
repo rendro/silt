@@ -317,7 +317,8 @@ impl Vm {
     /// gives way to the other tasks after that many, instead of the
     /// scheduler's own 2000, and the thread that runs the program's own
     /// code (`fn main`, a test) stops and goes on after that many too,
-    /// where it otherwise runs without a break.
+    /// where it otherwise does so about every million steps
+    /// (`Vm::own_slice`).
     ///
     /// What a program computes does not depend on the slice. An embedder
     /// sets one to see that: with `steps` 1 the program is stopped and
