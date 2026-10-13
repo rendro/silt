@@ -16,48 +16,114 @@
 //! a minute so that the test fails instead of hanging the run.
 
 use std::fs;
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// A run of the `silt` command in a directory of its own.
+struct Run<'a> {
+    name: &'a str,
+    /// The files of the directory.
+    files: &'a [(&'a str, &'a str)],
+    args: &'a [&'a str],
+    /// Variables beside the ones every run has.
+    env: &'a [(&'a str, &'a str)],
+    /// Stdout is a pipe that nobody reads while the process runs: a
+    /// thread that writes enough to it is blocked in its write.
+    unread_stdout: bool,
+}
+
+impl Run<'_> {
+    fn dir(&self) -> PathBuf {
+        let name = format!("silt_runtime_panic_{}_{}", std::process::id(), self.name);
+        std::env::temp_dir().join(name)
+    }
+
+    /// The command, in its directory with its files.
+    fn command(&self) -> Command {
+        let dir = self.dir();
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("a directory for the program");
+        for (file, text) in self.files {
+            fs::write(dir.join(file), text).expect("a file is written");
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
+        command
+            .args(self.args)
+            .current_dir(&dir)
+            .env("NO_COLOR", "1")
+            .env_remove("FORCE_COLOR")
+            .env_remove("RUST_BACKTRACE")
+            .env_remove("SILT_TEST_PANIC")
+            .env_remove("SILT_TIME_SLICE")
+            .envs(self.env.iter().copied())
+            .stdin(Stdio::null())
+            .stderr(fs::File::create(dir.join("err")).expect("a file for stderr"));
+        match self.unread_stdout {
+            true => command.stdout(Stdio::piped()),
+            false => command.stdout(fs::File::create(dir.join("out")).expect("a file for stdout")),
+        };
+        command
+    }
+
+    /// Wait for `child`, which the command started: its status and
+    /// what it wrote to stderr. A process that has not ended after a
+    /// minute is killed, and the test fails.
+    fn wait(&self, mut child: Child) -> (Option<i32>, String) {
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait().expect("the process is asked") {
+                Some(status) => break status,
+                None if started.elapsed() >= Duration::from_secs(60) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("silt did not end: it hangs ({})", self.name);
+                }
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+        let stderr = fs::read_to_string(self.dir().join("err")).expect("stderr is read");
+        (status.code(), stderr)
+    }
+
+    /// The status, and what the process wrote to stdout (nothing is
+    /// read of a pipe) and to stderr.
+    fn ended(&self) -> (Option<i32>, String, String) {
+        let child = self.command().spawn().expect("silt starts");
+        let (status, stderr) = self.wait(child);
+        let stdout = match self.unread_stdout {
+            true => String::new(),
+            false => fs::read_to_string(self.dir().join("out")).expect("stdout is read"),
+        };
+        let _ = fs::remove_dir_all(self.dir());
+        (status, stdout, stderr)
+    }
+}
 
 /// What `silt run` of `source` wrote and how it ended, with
 /// `SILT_TEST_PANIC` set to `place` if there is one.
 fn run(name: &str, source: &str, place: Option<&str>) -> (Option<i32>, String, String) {
-    let dir =
-        std::env::temp_dir().join(format!("silt_runtime_panic_{}_{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("a directory for the program");
-    fs::write(dir.join("main.silt"), source).expect("the program is written");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_silt"));
-    command
-        .args(["run", "main.silt"])
-        .current_dir(&dir)
-        .env("NO_COLOR", "1")
-        .env_remove("FORCE_COLOR")
-        .env_remove("RUST_BACKTRACE")
-        .env_remove("SILT_TEST_PANIC")
-        .stdin(Stdio::null())
-        .stdout(fs::File::create(dir.join("out")).expect("a file for stdout"))
-        .stderr(fs::File::create(dir.join("err")).expect("a file for stderr"));
-    if let Some(place) = place {
-        command.env("SILT_TEST_PANIC", place);
+    let env: Vec<(&str, &str)> = place
+        .iter()
+        .map(|place| ("SILT_TEST_PANIC", *place))
+        .collect();
+    Run {
+        name,
+        files: &[("main.silt", source)],
+        args: &["run", "main.silt"],
+        env: &env,
+        unread_stdout: false,
     }
-    let mut child = command.spawn().expect("silt starts");
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait().expect("the process is asked") {
-            Some(status) => break status,
-            None if started.elapsed() >= Duration::from_secs(60) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("silt run did not end: the program hangs ({name})");
-            }
-            None => std::thread::sleep(Duration::from_millis(10)),
-        }
-    };
-    let read = |file: &str| fs::read_to_string(dir.join(file)).expect("the output is read");
-    let ended = (status.code(), read("out"), read("err"));
-    let _ = fs::remove_dir_all(&dir);
-    ended
+    .ended()
+}
+
+/// The line that says a panic with `message` is a bug in silt.
+#[cfg(feature = "test-hooks")]
+fn internal_error_line(message: &str) -> String {
+    format!(
+        "silt: internal error: {message}. This is a bug in silt, not in your program: please \
+         report it."
+    )
 }
 
 /// `<handle:0>` waits to be woken and would then send on a channel
@@ -106,13 +172,7 @@ fn assert_internal_error(ended: (Option<i32>, String, String), thread: &str, pla
     assert_eq!(lines[at + 1], message, "{stderr}");
     assert_eq!(
         lines.last().copied(),
-        Some(
-            format!(
-                "silt: internal error: {message}. This is a bug in silt, not in your program: \
-                 please report it."
-            )
-            .as_str()
-        ),
+        Some(internal_error_line(&message).as_str()),
         "{stderr}"
     );
     assert!(
@@ -242,6 +302,195 @@ fn main() {
         let ended = (status, "main waits\n".to_string(), stderr);
         assert_internal_error(ended, "silt-worker", "Task(0)");
     }
+}
+
+/// A thread of the program is blocked in a write to stdout, a pipe
+/// that nobody reads, and holds stdout's lock when a thread of the
+/// runtime panics. The process ends all the same: the thread that ends
+/// it waits for the flush of stdout for a moment and no longer. The
+/// writer is `main` when the timer's thread panics; a task, with
+/// `main` asleep, when a worker does; a task when `main`'s own thread
+/// does.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_writer_blocked_in_stdout_does_not_keep_the_process_alive() {
+    let flood = r#"import channel
+import task
+import time
+
+fn flood(n) {
+  println("a line of some length to fill the pipe with, number {n}")
+  flood(n + 1)
+}
+
+fn main() {
+  MAIN
+}
+"#;
+    let writer_is_main = "let sleeper = task.spawn { -> time.sleep(time.ms(300)) }\n  flood(0)";
+    let writer_is_a_task = "let sleeper = task.spawn { -> time.sleep(time.ms(300)) }\n  \
+                            let writer = task.spawn { -> flood(0) }\n  \
+                            time.sleep(time.seconds(3600))";
+    let main_panics = "let never = channel.new(0)\n  \
+                       let writer = task.spawn { -> flood(0) }\n  \
+                       let _ = channel.receive_timeout(never, time.ms(300))";
+    let cases = [
+        ("flood_main", writer_is_main, "timer", "silt-timer", "Timer"),
+        (
+            "flood_task",
+            writer_is_a_task,
+            "task:0",
+            "silt-worker",
+            "Task(0)",
+        ),
+        (
+            "flood_program",
+            main_panics,
+            "program",
+            "silt-main",
+            "Program",
+        ),
+    ];
+    for (name, main, place, thread, at) in cases {
+        let (status, _, stderr) = Run {
+            name,
+            files: &[("main.silt", &flood.replace("MAIN", main))],
+            args: &["run", "main.silt"],
+            env: &[("SILT_TEST_PANIC", place)],
+            unread_stdout: true,
+        }
+        .ended();
+        assert_eq!(status, Some(101), "{name}: {stderr}");
+        assert!(
+            stderr.contains(&format!("thread '{thread}' ")),
+            "{name}: {stderr}"
+        );
+        let line = internal_error_line(&format!("a panic made for a test: {at}"));
+        assert_eq!(stderr.lines().last(), Some(line.as_str()), "{name}");
+    }
+}
+
+/// The line and the status go together. `main` ends with an error of
+/// its own, or returns `Err`, without waiting for its tasks, just as a
+/// worker panics: two threads set out to end the process. Whichever
+/// comes first ends it: with 101 and the line, or with the program's
+/// status 1 and no line. Never 1 with the line.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn the_internal_error_line_and_the_status_101_go_together() {
+    let tasks = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/concurrency/tasks"
+    );
+    for program in [
+        "stage7_c5__a_program_whose_main_fails_does_not_wait",
+        "stage7_c5__a_main_that_returns_err_does_not_wait",
+    ] {
+        let source = fs::read_to_string(format!("{tasks}/{program}.silt")).expect("the golden");
+        for round in 0..20 {
+            let (status, _, stderr) = Run {
+                name: "status",
+                files: &[("main.silt", &source)],
+                args: &["run", "main.silt"],
+                env: &[("SILT_TEST_PANIC", "task:0"), ("SILT_TIME_SLICE", "1")],
+                unread_stdout: false,
+            }
+            .ended();
+            let line = stderr
+                .lines()
+                .any(|line| line.starts_with("silt: internal error: "));
+            assert_eq!(
+                status == Some(101),
+                line,
+                "{program}, round {round}: {stderr}"
+            );
+            assert!(
+                matches!(status, Some(1 | 101)),
+                "{program}, round {round}: {status:?}"
+            );
+        }
+    }
+}
+
+/// Two workers panic close together: one internal-error line, of the
+/// panic that came first, and status 101.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn two_panics_close_together_are_one_internal_error() {
+    let source = r#"import channel
+import task
+import time
+
+fn main() {
+  let gate = channel.new(0)
+  let first = task.spawn { -> channel.receive(gate) }
+  let second = task.spawn { -> channel.receive(gate) }
+  let waker = task.spawn { ->
+    time.sleep(time.ms(20))
+    channel.send(gate, 1)
+    channel.send(gate, 2)
+  }
+  println("main waits")
+  let _ = task.join(first)
+  let _ = task.join(second)
+  println("main went on")
+}
+"#;
+    for round in 0..10 {
+        let (status, stdout, stderr) = run("two", source, Some("task:0,task:1"));
+        assert_eq!(status, Some(101), "round {round}: {stderr}");
+        assert_eq!(stdout, "main waits\n", "round {round}: {stderr}");
+        let lines: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("silt: internal error: "))
+            .collect();
+        let either = [
+            internal_error_line("a panic made for a test: Task(0)"),
+            internal_error_line("a panic made for a test: Task(1)"),
+        ];
+        assert_eq!(lines.len(), 1, "round {round}: {stderr}");
+        assert!(
+            either.iter().any(|line| line == lines[0]),
+            "round {round}: {stderr}"
+        );
+        assert_eq!(
+            stderr.lines().last(),
+            Some(lines[0]),
+            "round {round}: {stderr}"
+        );
+    }
+}
+
+/// `silt test`: the second test of a file loses a worker. The run ends
+/// there with the internal error; the first test's result was written.
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_panic_of_a_worker_ends_a_test_run() {
+    let tests = LOST_WHILE_ALL_WAIT.replace(
+        "fn main() {",
+        "fn test_a_passes() {\n  println(\"the first test runs\")\n}\n\nfn test_b_loses_a_worker() {",
+    );
+    let (status, stdout, stderr) = Run {
+        name: "test",
+        files: &[("lost_test.silt", &tests)],
+        args: &["test", "lost_test.silt"],
+        env: &[("SILT_TEST_PANIC", "task:0")],
+        unread_stdout: false,
+    }
+    .ended();
+    assert_eq!(status, Some(101), "{stderr}");
+    assert_eq!(stdout, "the first test runs\nmain waits\n", "{stderr}");
+    assert!(
+        stderr.contains("PASS lost_test.silt::test_a_passes"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("lost_test.silt::test_b_loses_a_worker"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("thread 'silt-worker' "), "{stderr}");
+    let line = internal_error_line("a panic made for a test: Task(0)");
+    assert_eq!(stderr.lines().last(), Some(line.as_str()));
 }
 
 /// Without the variable the program of the first test runs to its end.

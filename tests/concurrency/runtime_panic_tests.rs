@@ -285,3 +285,20 @@ fn an_embedder_on_the_process_output_gets_the_panic_and_lives() {
     });
     assert_eq!(panic, "a panic made for a test: Task(0)");
 }
+
+/// A second panic while the first is still unwinding: the worker that
+/// panicked drops the VM of the task it was about to run, and that
+/// drop panics too. It is dropped, the first panic goes its way to the
+/// program's thread, and the process is not aborted (which is what
+/// Rust does with a panic that leaves a destructor during unwinding).
+#[test]
+fn a_second_panic_while_the_first_unwinds_is_dropped() {
+    let program = compiled(LOST_WHILE_ALL_WAIT);
+    let mut vm = Vm::new(HostIo::buffer(&Buffer::new()));
+    panic_for_test(&vm, PanicAt::Task(0));
+    panic_for_test(&vm, PanicAt::Unwinding);
+    let panic = panic_of(|| {
+        let _ = vm.run_program(&program);
+    });
+    assert_eq!(panic, "a panic made for a test: Task(0)");
+}
