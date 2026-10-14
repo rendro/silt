@@ -1,0 +1,35 @@
+[package]
+name = "silt-playground"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "silt for a web page: check, run, format and colour a program, built for wasm32-unknown-unknown"
+license = "MIT"
+
+[lib]
+# `cdylib` is the wasm module; `rlib` lets the tests call the same
+# functions on the machine that builds it.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dependencies.silt]
+path = ".."
+default-features = false
+
+# The browser's side. `getrandom` and `uuid` refuse to build for the
+# target until a source of randomness is picked: the page's.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1", features = ["js"] }
+
+# Disable workspace auto-discovery
+[workspace]
+
+[profile.release]
+opt-level = "s"
+lto = true

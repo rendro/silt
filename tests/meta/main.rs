@@ -8,6 +8,7 @@ mod docs_primitive_descriptor_list_tests;
 mod docs_round26_tests;
 mod docs_round88_modules_placeholder_not_stdlib_tests;
 mod docs_round88_supervisor_runs_tests;
+mod docs_site_tests;
 mod editor_grammar_builtins_tests;
 mod editor_grammar_constructors_tests;
 mod editor_grammar_keywords_tests;

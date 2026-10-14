@@ -130,7 +130,7 @@ fn run_main(args: Vec<String>) {
         // for `--version`. silt has no verbose flag, so treating `-v` as a
         // synonym for `--version` / `-V` is unambiguous here.
         "--version" | "-V" | "-v" => {
-            println!("silt {}", env!("CARGO_PKG_VERSION"));
+            println!("silt {}", silt::VERSION);
             process::exit(0);
         }
         "--help" | "-h" => {

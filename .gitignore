@@ -1,6 +1,9 @@
 /target
 /fuzz/target
 /fuzz/Cargo.lock
+/playground/target
+/playground/Cargo.lock
+/playground/pkg
 # Fuzz corpus entries are generated artifacts; we keep a hand-seeded
 # corpus under version control via individual `.silt` / named entries,
 # but the auto-generated hex-name files are transient and would swamp

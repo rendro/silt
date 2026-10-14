@@ -1,7 +1,7 @@
 ---
 title: "math"
 section: "Standard Library"
-order: 11
+order: 12
 ---
 
 # math

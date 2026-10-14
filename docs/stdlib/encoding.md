@@ -1,7 +1,7 @@
 ---
 title: "encoding"
 section: "Standard Library"
-order: 18
+order: 20
 ---
 
 # encoding

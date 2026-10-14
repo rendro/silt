@@ -342,11 +342,17 @@ source of randomness of its own, so the embedder supplies them:
   send, a join, a sleep). A task that nobody ever waits for does not
   run.
 - **Timers and I/O.** The same thread fires the timers while it waits,
-  and an I/O operation runs on it.
+  and an I/O operation runs on it. Where every task waits and the next
+  thing to happen is a deadline (a task's sleep, a timeout), the thread
+  cannot be put to sleep: it calls the clock's `sleep` for the time that
+  is left, and looks at the clock again when the call returns.
 - **Randomness.** `getrandom` and `uuid` refuse to build for the target
   until the embedder's crate picks a source: in a browser, add
   `getrandom = { version = "0.2", features = ["js"] }` and
   `uuid = { version = "1", features = ["js"] }` to its dependencies.
+
+The crate in `playground/` is such an embedder: the playground of
+silt-lang.com.
 
 ## Vm Lifecycle
 

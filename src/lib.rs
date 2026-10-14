@@ -62,3 +62,6 @@ pub mod watch;
 // Re-export the value and conversion types embedders use.
 pub use value::{FromValue, IntoValue, Value};
 pub use vm::{Buffer, Clock, HostIo, Output, SystemClock, Vm, VmError};
+
+/// The version of silt: what `silt --version` prints after the name.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

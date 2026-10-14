@@ -252,8 +252,9 @@ import io
 import list
 ```
 
-Each built-in module has a reference page under
-[`docs/stdlib/`](../stdlib/), and the LSP shows the same text: hover
+Each built-in module has a page in the
+[standard library reference](../stdlib/globals.md), and the LSP shows
+the same text: hover
 any qualified built-in name (`list.map`, `math.cos`, `Result`, …) in
 your editor. The built-in modules:
 

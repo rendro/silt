@@ -209,6 +209,36 @@ jobs:
       - name: Count a round of two loops
         run: bash .github/scripts/loop-guard/run.sh target/x86_64-unknown-linux-gnu/release/silt
 
+  playground:
+    # The playground of silt-lang.com: the library built for a browser
+    # (playground/), which no other job builds. Its own tests on this
+    # machine, then the release build of the module as release.yml
+    # packages it, run under Node as a page runs it: one thread and the
+    # page's clock, where the runtime takes paths that no other target
+    # takes. No cache, for the reason the loop guard gives.
+    name: Playground (wasm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@wasm-pack
+      - name: cargo fmt
+        run: cargo fmt --manifest-path playground/Cargo.toml -- --check
+      - name: cargo clippy (wasm32)
+        run: cargo clippy --manifest-path playground/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+      - name: cargo test
+        run: cargo test --manifest-path playground/Cargo.toml
+      - name: Build the module
+        run: bash playground/build.sh
+      - name: Run it under Node
+        run: node playground/tests/wasm.mjs playground/pkg
+
   test-macos:
     name: Test macOS (${{ matrix.partition }})
     runs-on: macos-latest

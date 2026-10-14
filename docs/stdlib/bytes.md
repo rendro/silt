@@ -1,7 +1,7 @@
 ---
 title: "bytes"
 section: "Standard Library"
-order: 16
+order: 18
 ---
 
 # bytes

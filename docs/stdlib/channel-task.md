@@ -1,7 +1,7 @@
 ---
 title: "channel / task"
 section: "Standard Library"
-order: 12
+order: 13
 ---
 
 # channel

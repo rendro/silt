@@ -72,9 +72,40 @@ jobs:
           name: silt-${{ matrix.target }}
           path: silt-${{ github.ref_name }}-${{ matrix.target }}.*
 
+  playground:
+    # The playground of silt-lang.com (playground/): the wasm module and
+    # its JavaScript, which the site's build takes from the release.
+    name: Build the playground
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@wasm-pack
+
+      - name: Build
+        run: bash playground/build.sh
+
+      - name: Run it under Node
+        run: node playground/tests/wasm.mjs playground/pkg
+
+      - name: Package
+        run: tar czf silt-${{ github.ref_name }}-playground.tar.gz -C playground/pkg .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: silt-playground
+          path: silt-${{ github.ref_name }}-playground.tar.gz
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, playground]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
