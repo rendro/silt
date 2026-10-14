@@ -601,7 +601,7 @@ fn full_pipe() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
     let flags = unsafe { libc::fcntl(full.as_raw_fd(), libc::F_GETFL) };
     let set = |flags: libc::c_int| unsafe { libc::fcntl(full.as_raw_fd(), libc::F_SETFL, flags) };
     assert_eq!(set(flags | libc::O_NONBLOCK), 0, "the pipe does not block");
-    let byte = [b'.'];
+    let byte = *b".";
     while unsafe { libc::write(full.as_raw_fd(), byte.as_ptr().cast(), 1) } == 1 {}
     assert_eq!(set(flags), 0, "the pipe blocks again");
     (unread, full)

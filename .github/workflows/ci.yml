@@ -51,8 +51,9 @@ jobs:
       - name: cargo check --benches
         run: cargo check --benches --all-features
 
+      # The tests and benches too: a lint in them reddens no other job.
       - name: cargo clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --all-features --all-targets -- -D warnings
 
       - name: cargo fmt
         run: cargo fmt -- --check
