@@ -182,7 +182,8 @@ fn complete_offers_keywords_builtins_and_what_the_text_declares() {
 
 #[test]
 fn tokens_are_the_lexers_with_utf16_offsets() {
-    let source = "-- é😀\nlet s = \"a{1}b\" {- c -}\nfn f(x: Int) { x |> g }\n";
+    let source =
+        "-- é😀\nlet s = \"a{1}b\" {- c -}\nfn f(x: Int) { x |> g }\nlet r = Ok(println(Shape))\n";
     let utf16: Vec<u16> = source.encode_utf16().collect();
     let flat = tokens(source);
     assert_eq!(flat.len() % 3, 0);
@@ -202,6 +203,7 @@ fn tokens_are_the_lexers_with_utf16_offsets() {
         ("}b\"", "string"),
         ("{- c -}", "comment"),
         ("fn", "keyword"),
+        ("f", "function"),
         ("(", "punctuation"),
         (":", "punctuation"),
         ("Int", "type"),
@@ -209,6 +211,15 @@ fn tokens_are_the_lexers_with_utf16_offsets() {
         ("{", "punctuation"),
         ("|>", "operator"),
         ("}", "punctuation"),
+        ("let", "keyword"),
+        ("=", "punctuation"),
+        ("Ok", "constructor"),
+        ("(", "punctuation"),
+        ("println", "builtin"),
+        ("(", "punctuation"),
+        ("Shape", "type"),
+        (")", "punctuation"),
+        (")", "punctuation"),
     ];
     let got: Vec<(&str, &str)> = got
         .iter()

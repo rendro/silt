@@ -210,6 +210,7 @@ await test('check, format, complete and tokens answer', (mod) => {
   }
   assert.deepEqual(texts, [
     ['fn', 'keyword'],
+    ['main', 'function'],
     ['(', 'punctuation'],
     [')', 'punctuation'],
     ['{', 'punctuation'],

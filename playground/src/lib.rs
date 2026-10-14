@@ -10,8 +10,9 @@
 //! offset handed out counts UTF-16 code units, as a JavaScript string
 //! and a browser's editor count.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -394,13 +395,17 @@ pub fn complete(source: &str) -> Vec<Completion> {
 
 // ── Tokens ────────────────────────────────────────────────────────────
 
-/// The kinds of token [`tokens`] tells apart, by their number.
+/// The kinds of token [`tokens`] tells apart, by their number. They are
+/// the kinds the editors' grammars colour (`editors/`).
 pub const TOKEN_KINDS: &[&str] = &[
     "keyword",
     "string",
     "number",
     "literal",
     "type",
+    "constructor",
+    "builtin",
+    "function",
     "operator",
     "punctuation",
     "comment",
@@ -411,12 +416,36 @@ const STRING: u32 = 1;
 const NUMBER: u32 = 2;
 const LITERAL: u32 = 3;
 const TYPE: u32 = 4;
-const OPERATOR: u32 = 5;
-const PUNCTUATION: u32 = 6;
-const COMMENT: u32 = 7;
+const CONSTRUCTOR: u32 = 5;
+const BUILTIN: u32 = 6;
+const FUNCTION: u32 = 7;
+const OPERATOR: u32 = 8;
+const PUNCTUATION: u32 = 9;
+const COMMENT: u32 = 10;
 
-/// The kind of `token`, for the tokens that are coloured: a name that
-/// starts in lower case, text that is no token and the end are not.
+/// The kind of the name `name`, if it is coloured: the name a `fn`
+/// declares (`declared`), a variant silt declares (`Ok`, `Monday`), a
+/// function that needs no import (`println`), or a capitalised name: a
+/// type, a trait or a variant.
+fn name_kind(name: &str, declared: bool) -> Option<u32> {
+    static CONSTRUCTORS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    let constructors =
+        CONSTRUCTORS.get_or_init(|| module::all_builtin_constructor_names().collect());
+    if declared {
+        Some(FUNCTION)
+    } else if constructors.contains(name) {
+        Some(CONSTRUCTOR)
+    } else if module::builtin_free_function_names().contains(&name) {
+        Some(BUILTIN)
+    } else if name.starts_with(|c: char| c.is_uppercase()) {
+        Some(TYPE)
+    } else {
+        None
+    }
+}
+
+/// The kind of `token`, for the tokens that are coloured whatever
+/// stands around them; a name is [`name_kind`]'s.
 fn kind_of(token: &Token) -> Option<u32> {
     Some(match token {
         Token::Let
@@ -441,11 +470,6 @@ fn kind_of(token: &Token) -> Option<u32> {
         | Token::StringStart(_)
         | Token::StringMiddle(_)
         | Token::StringEnd(_) => STRING,
-        // A type, a trait or a variant.
-        Token::Ident(name) => match resolve(*name).starts_with(|c: char| c.is_uppercase()) {
-            true => TYPE,
-            false => return None,
-        },
         Token::Plus
         | Token::Minus
         | Token::Star
@@ -480,7 +504,8 @@ fn kind_of(token: &Token) -> Option<u32> {
         | Token::ColonColon
         | Token::Dot
         | Token::Eq => PUNCTUATION,
-        Token::Error | Token::Eof => return None,
+        // Text that is no token, and the end.
+        Token::Ident(_) | Token::Error | Token::Eof => return None,
     })
 }
 
@@ -504,12 +529,19 @@ fn string_part(source: &str, tok: &Tok) -> Span {
 pub fn tokens(source: &str) -> Vec<u32> {
     let file = SourceMap::new().add(SourceName::Overlay(PathBuf::from(FILE)), source.into());
     let lexed = Lexer::new(file, source).tokenize();
-    let mut spans: Vec<(Span, u32)> = lexed
-        .tokens
-        .iter()
-        .filter_map(|tok| Some((string_part(source, tok), kind_of(&tok.kind)?)))
-        .chain(lexed.comments.iter().map(|c| (c.span, COMMENT)))
-        .collect();
+    let mut spans: Vec<(Span, u32)> = Vec::new();
+    let mut after_fn = false;
+    for tok in &lexed.tokens {
+        let kind = match &tok.kind {
+            Token::Ident(name) => name_kind(&resolve(*name), after_fn),
+            token => kind_of(token),
+        };
+        after_fn = tok.kind == Token::Fn;
+        if let Some(kind) = kind {
+            spans.push((string_part(source, tok), kind));
+        }
+    }
+    spans.extend(lexed.comments.iter().map(|c| (c.span, COMMENT)));
     spans.sort_by_key(|(span, _)| span.start);
     let mut offsets = Utf16::new(source);
     let mut out = Vec::with_capacity(spans.len() * 3);

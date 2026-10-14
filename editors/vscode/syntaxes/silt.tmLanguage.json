@@ -16,6 +16,7 @@
     { "include": "#function-def" },
     { "include": "#type-def" },
     { "include": "#trait-def" },
+    { "include": "#type-names" },
     { "include": "#operators" },
     { "include": "#collection-prefix" },
     { "include": "#identifiers" }
@@ -151,6 +152,10 @@
         "1": { "name": "keyword.control.silt" },
         "2": { "name": "entity.name.type.trait.silt" }
       }
+    },
+    "type-names": {
+      "name": "entity.name.type.silt",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "operators": {
       "patterns": [

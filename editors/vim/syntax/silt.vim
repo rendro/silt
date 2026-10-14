@@ -110,6 +110,8 @@ syntax match siltOperator ">"
 syntax match siltFnDef "\<fn\s\+\zs\w\+"
 
 " ── Type definitions ────────────────────────────────────────────────
+" A capitalised name: a type, a trait or a variant.
+syntax match siltTypeName "\<[A-Z]\w*\>"
 syntax match siltTypeDef "\<type\s\+\zs\w\+"
 syntax match siltTraitDef "\<trait\s\+\zs\w\+"
 
@@ -137,6 +139,7 @@ highlight default link siltFloat        Float
 highlight default link siltOperator     Operator
 highlight default link siltFnDef        Function
 highlight default link siltTypeDef      Type
+highlight default link siltTypeName     Type
 highlight default link siltTraitDef     Type
 highlight default link siltCollectionPrefix Delimiter
 
