@@ -131,6 +131,18 @@ impl Timer {
         Some(self.io.real_wait(deadline.saturating_sub(self.now())))
     }
 
+    /// Let the time up to the earliest deadline pass, on the calling
+    /// thread: [`Clock::sleep`](crate::Clock::sleep) for what is left of
+    /// it. What a target without threads does where a thread would be
+    /// put to sleep until then. A clock whose `sleep` returns early is
+    /// asked again by the caller's next round.
+    #[cfg(target_arch = "wasm32")]
+    pub fn pass_to_next_deadline(&self) {
+        if let Some(deadline) = self.next_deadline() {
+            self.io.sleep(deadline.saturating_sub(self.now()));
+        }
+    }
+
     /// Carry out every entry whose deadline the clock has reached, and
     /// give their number. If the clock has panicked
     /// (`HostIo::clock_failure`) its time no longer passes, and every

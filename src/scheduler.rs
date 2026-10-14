@@ -1707,6 +1707,19 @@ impl Inner {
             if let Some(resumed) = state.resumed.take() {
                 return resumed;
             }
+            // A target without threads cannot put this thread to sleep,
+            // and has no other that would wake it: nothing happens
+            // before the next deadline, and the clock lets the time up
+            // to it pass.
+            #[cfg(target_arch = "wasm32")]
+            if next.is_some() {
+                drop(state);
+                timer.pass_to_next_deadline();
+                if timer.fire_due(&self.parking) > 0 {
+                    self.check_all();
+                }
+                continue;
+            }
             if !state.poked {
                 match next {
                     None => park.wake.wait(&mut state),
