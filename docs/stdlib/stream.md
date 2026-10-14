@@ -1,7 +1,7 @@
 ---
 title: "stream"
 section: "Standard Library"
-order: 18
+order: 21
 ---
 
 # stream

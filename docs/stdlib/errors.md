@@ -1,7 +1,7 @@
 ---
 title: "stdlib errors"
 section: "Standard Library"
-order: 20
+order: 24
 ---
 
 # Stdlib typed errors

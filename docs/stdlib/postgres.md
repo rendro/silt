@@ -1,7 +1,7 @@
 ---
 title: "postgres"
 section: "Standard Library"
-order: 19
+order: 23
 ---
 
 # postgres (opt-in feature)

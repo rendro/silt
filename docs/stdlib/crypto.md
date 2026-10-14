@@ -1,7 +1,7 @@
 ---
 title: "crypto"
 section: "Standard Library"
-order: 17
+order: 19
 ---
 
 # crypto
