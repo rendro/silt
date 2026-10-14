@@ -26,7 +26,7 @@ pub struct UpdateOptions {
 
 pub fn run_update(opts: UpdateOptions) -> Result<(), String> {
     let target = detect_target()?;
-    let current = env!("CARGO_PKG_VERSION");
+    let current = crate::VERSION;
 
     eprintln!("  Current version: {current}");
     eprintln!("  Target: {target}");
