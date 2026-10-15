@@ -21,6 +21,12 @@
 //! type and their fields are equal, and records of one type are in the
 //! order of their fields as the type declares them. An anonymous record
 //! is not a declared one of the same fields.
+//!
+//! A closure is of its function: two closures are equal if they run
+//! one `Function` and their captures are equal, so a task's own copy of
+//! a closure is the closure. Closures of one function are in the order
+//! of their captures; of two functions, in the order of where the
+//! functions are.
 
 use std::cmp::Ordering;
 use std::collections::{btree_map, btree_set};
@@ -81,6 +87,7 @@ fn has_parts(value: &Value) -> bool {
             | Value::Set(_)
             | Value::Record(_)
             | Value::Variant(_)
+            | Value::VmClosure(_)
     )
 }
 
@@ -119,10 +126,11 @@ fn cmp_other_heads(a: &Value, b: &Value) -> Ordering {
         (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
         (Value::TcpListener(a), Value::TcpListener(b)) => a.id.cmp(&b.id),
         (Value::TcpStream(a), Value::TcpStream(b)) => a.id.cmp(&b.id),
-        // A closure: where it is. (Two closures of one function with
-        // different captures are two.)
+        // A closure: which function it runs (two copies of one closure
+        // run the one `Function`), then its captures, which are its
+        // parts.
         (Value::VmClosure(a), Value::VmClosure(b)) => {
-            (Arc::as_ptr(a) as usize).cmp(&(Arc::as_ptr(b) as usize))
+            (Arc::as_ptr(&a.function) as usize).cmp(&(Arc::as_ptr(&b.function) as usize))
         }
         (Value::BuiltinFn(a), Value::BuiltinFn(b)) => a.cmp(b),
         (Value::HostFn(a), Value::HostFn(b)) => a.name.cmp(&b.name),
@@ -160,7 +168,8 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         // adds nothing to them.)
         Value::Record(_) => {}
         // (No function has a hash: the VM refuses a value that holds
-        // one before it asks.)
+        // one before it asks. A closure's captures are its parts, and
+        // the closures equal to it run its function.)
         Value::VmClosure(_) => {}
         Value::Bool(b) => b.hash(state),
         Value::Int(n) => n.hash(state),
@@ -254,8 +263,8 @@ fn first_of<'a, const N: usize>(slices: &mut [&'a [Value]; N]) -> Among<&'a Valu
 /// (Small, as the walk moves these about for every value with parts:
 /// what is left of a map and of a set is kept apart.)
 enum Parts<'a, const N: usize> {
-    /// The items of tuples, the fields of variants, the elements that
-    /// lists hold: those left.
+    /// The items of tuples, the fields of variants, the captures of
+    /// closures, the elements that lists hold: those left.
     Values([&'a [Value]; N]),
     /// The fields of records, in the order the type of each declares
     /// them; the type of the first names them.
@@ -379,8 +388,8 @@ trait Visit<const N: usize> {
 }
 
 /// The parts of values that keep them in one run: the items of
-/// tuples, the fields of variants and of records, the elements that
-/// lists hold.
+/// tuples, the fields of variants and of records, the captures of
+/// closures, the elements that lists hold.
 enum Runs<'a, const N: usize> {
     /// The parts of each value, and for records the type that names
     /// them.
@@ -403,12 +412,13 @@ fn runs<'a, const N: usize, V: Visit<N>>(
     // from their heads. One that is not has no parts here.)
     let mut runs: [&'a [Value]; N] = [&[]; N];
     match values[0] {
-        Value::Tuple(_) | Value::Variant(_) => {
+        Value::Tuple(_) | Value::Variant(_) | Value::VmClosure(_) => {
             let mut lens = [0; N];
             for ((run, len), value) in runs.iter_mut().zip(&mut lens).zip(values) {
                 *run = match value {
                     Value::Tuple(items) => items,
                     Value::Variant(variant) => variant.fields(),
+                    Value::VmClosure(closure) => &closure.upvalues,
                     _ => &[],
                 };
                 *len = run.len();

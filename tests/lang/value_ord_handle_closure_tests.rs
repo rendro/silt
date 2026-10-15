@@ -88,21 +88,21 @@ fn mk_closure(name: &str) -> Value {
     }))
 }
 
-/// Two distinct `VmClosure` values (different `Arc` allocations, even if
-/// names happen to collide) must not be considered equal by `Ord`.
+/// Closures of two functions (even if the names collide) must not be
+/// considered equal by `Ord`.
 #[test]
 fn ord_vmclosure_distinct_arcs_not_equal() {
     let c1 = mk_closure("f");
     let c2 = mk_closure("g");
     assert_ne!(c1.cmp(&c2), Ordering::Equal);
-    // Even with identical names, distinct Arc allocations must remain distinct.
+    // Even with identical names, two functions must remain distinct.
     let c3 = mk_closure("f");
     let c4 = mk_closure("f");
     assert_ne!(c3.cmp(&c4), Ordering::Equal);
 }
 
-/// A `BTreeSet` of closures with identical names (but distinct `Arc`
-/// allocations) must retain all of them.
+/// A `BTreeSet` of closures of functions with identical names (but
+/// three functions) must retain all of them.
 #[test]
 fn btreeset_of_distinct_closures_retains_all() {
     let mut s = BTreeSet::new();
@@ -112,13 +112,12 @@ fn btreeset_of_distinct_closures_retains_all() {
     assert_eq!(
         s.len(),
         3,
-        "distinct VmClosure Arc allocations must not be deduplicated"
+        "closures of distinct functions must not be deduplicated"
     );
 }
 
-/// A shared (cloned) `Arc<VmClosure>` compares Equal to itself (it is
-/// the same Arc), which is the expected identity behavior for a single
-/// closure value.
+/// A shared (cloned) `Arc<VmClosure>` compares Equal to itself (it
+/// runs the same function with the same captures).
 #[test]
 fn ord_vmclosure_same_arc_equal() {
     let f = Arc::new(VmClosure {

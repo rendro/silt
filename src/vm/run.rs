@@ -23,7 +23,7 @@ use crate::runtime::sync::Wait;
 /// The checker rejects `==` on a value that is, or holds, a function
 /// (`Equal` is decided by structure, for a concrete operand and through
 /// a bound alike): this is the backstop at the execution site, where
-/// `PartialEq for Value` would answer with `Arc::ptr_eq` on closures and
+/// `PartialEq for Value` would answer by function and captures on closures and
 /// name-equality on builtins (src/value/key.rs). The recursion is
 /// `Value::contains_fn` (src/value/mod.rs). Channel / Handle /
 /// TcpListener / TcpStream are deliberately NOT rejected: they are
