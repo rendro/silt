@@ -231,6 +231,62 @@ fn the_vm_of_a_task_finds_the_slots_of_a_later_program() {
     assert_eq!(task.global(3), Some(&Value::Int(4)));
 }
 
+/// A VM reads a copy of its own of a closure in a global slot: made
+/// the first time it reads the slot, equal to the slot's closure, and
+/// read from then on; the VM of a task makes a copy of its own. A slot
+/// that is set again (a VM runs a second program) holds another
+/// closure, which is copied in turn.
+#[test]
+fn a_vm_reads_its_own_copy_of_a_global_closure() {
+    fn closure(name: &str, captured: i64) -> Arc<VmClosure> {
+        Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit(name.into(), 0)),
+            upvalues: vec![Value::Int(captured)],
+        })
+    }
+    /// What `GetGlobal` of slot 0 pushes.
+    fn read(vm: &mut Vm) -> Arc<VmClosure> {
+        let script = make_function(|e| {
+            e.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        match vm.run(script) {
+            Ok(Value::VmClosure(closure)) => closure,
+            other => panic!("not a closure: {other:?}"),
+        }
+    }
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
+    let shared = closure("f", 1);
+    assert!(vm.set_global(0, Value::VmClosure(shared.clone())));
+
+    let own = read(&mut vm);
+    assert!(!Arc::ptr_eq(&own, &shared));
+    assert!(Arc::ptr_eq(&own.function, &shared.function));
+    assert_eq!(
+        Value::VmClosure(own.clone()),
+        Value::VmClosure(shared.clone())
+    );
+    assert!(Arc::ptr_eq(&read(&mut vm), &own));
+
+    let mut task = vm.spawn_child();
+    let task_own = read(&mut task);
+    assert!(!Arc::ptr_eq(&task_own, &own) && !Arc::ptr_eq(&task_own, &shared));
+    assert!(Arc::ptr_eq(&read(&mut task), &task_own));
+
+    // Set again: the VM reads a copy of the new closure, the task goes
+    // on with the slots it has.
+    let other = closure("g", 2);
+    assert!(vm.set_global(0, Value::VmClosure(other.clone())));
+    let own_other = read(&mut vm);
+    assert!(Arc::ptr_eq(&own_other.function, &other.function));
+    assert_eq!(own_other.upvalues, [Value::Int(2)]);
+    assert!(Arc::ptr_eq(&read(&mut task), &task_own));
+    // The copy of the closure that was there is let go of.
+    drop((own, task_own, task));
+    assert_eq!(Arc::strong_count(&shared), 1);
+}
+
 #[test]
 fn test_locals() {
     let script = make_function(|e| {

@@ -448,6 +448,51 @@ task.join(worker)
     );
 }
 
+/// A task calls a copy of its own of a top-level function. When a
+/// later entry defines the function again, the task that had copied
+/// the old one calls the new one wherever the code it runs names it:
+/// in a closure of the later entry, and as a value of it.
+#[test]
+fn a_task_calls_a_function_defined_again_after_it_copied_the_old_one() {
+    let (output, errors) = repl(
+        "import task
+import channel
+let jobs = channel.new(8)
+let outs = channel.new(8)
+fn f() -> Int { 1 }
+fn work(left) {
+  match left {
+    0 -> ()
+    _ -> match channel.receive(jobs) {
+      channel.Message(job) -> {
+        channel.send(outs, job())
+        work(left - 1)
+      }
+      _ -> ()
+    }
+  }
+}
+let worker = task.spawn { -> work(4) }
+channel.send(jobs, { -> f() })
+channel.receive(outs)
+fn f() -> Int { 2 }
+channel.send(jobs, { -> f() })
+channel.receive(outs)
+channel.send(jobs, f)
+channel.receive(outs)
+fn f() -> Int { 3 }
+channel.send(jobs, { -> f() * 10 })
+channel.receive(outs)
+task.join(worker)
+",
+    );
+    assert_eq!(
+        output, "Message(1)\nMessage(2)\nMessage(2)\nMessage(30)\n",
+        "{errors}"
+    );
+    assert_eq!(errors, "");
+}
+
 /// A session only ever adds to what its tasks can find: a second impl
 /// of a trait for a type is refused in a later entry as it is in one
 /// file, so a method that a task has found once is the method for

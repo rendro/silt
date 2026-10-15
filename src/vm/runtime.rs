@@ -1004,6 +1004,73 @@ impl View {
     }
 }
 
+/// The VM's own copies of the closures it has read from the global
+/// slots (top-level functions, impl methods), by slot.
+///
+/// A closure in a global slot is one allocation for every VM of the
+/// program, and each call of it counts a reference to it up and down:
+/// tasks on several cores that call one function would each take the
+/// cache line of that count from the others, every call. So a VM calls
+/// a copy of its own, made the first time it reads the slot: the same
+/// `Function`, the same captures, and so the same value
+/// (src/value/key.rs).
+///
+/// With each copy is kept the closure it was copied from, and a copy is
+/// used only for that one: a slot that is set again (an embedder runs
+/// another program on the VM, see [`Vm::set_global`]) holds another
+/// closure, which is copied in turn. (The closure kept also keeps its
+/// address from being that of another.)
+#[derive(Default)]
+pub(crate) struct OwnClosures(Vec<Option<(Arc<VmClosure>, Arc<VmClosure>)>>);
+
+impl OwnClosures {
+    /// This VM's copy of `shared`, the closure in the global slot
+    /// `slot`.
+    #[inline(always)]
+    pub(crate) fn of(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
+        if let Some(Some((copied, own))) = self.0.get(usize::from(slot))
+            && Arc::ptr_eq(copied, shared)
+        {
+            return own.clone();
+        }
+        self.copy(slot, shared)
+    }
+
+    /// The value `value` of the global slot `slot` as this VM uses it:
+    /// its copy if it is a closure.
+    pub(crate) fn value(&mut self, slot: u16, value: Value) -> Value {
+        match value {
+            Value::VmClosure(shared) => Value::VmClosure(self.of(slot, &shared)),
+            value => value,
+        }
+    }
+
+    /// Copy `shared`, the closure in the global slot `slot`, for this
+    /// VM, in place of any copy the slot had.
+    #[cold]
+    #[inline(never)]
+    fn copy(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
+        let at = usize::from(slot);
+        if self.0.len() <= at {
+            self.0.resize(at + 1, None);
+        }
+        let own = Arc::new(VmClosure {
+            function: shared.function.clone(),
+            upvalues: shared.upvalues.clone(),
+        });
+        self.0[at] = Some((shared.clone(), own.clone()));
+        own
+    }
+
+    /// Let go of the copy of the closure that was in the global slot
+    /// `slot`, which is set again.
+    pub(crate) fn forget(&mut self, slot: u16) {
+        if let Some(copy) = self.0.get_mut(usize::from(slot)) {
+            *copy = None;
+        }
+    }
+}
+
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {

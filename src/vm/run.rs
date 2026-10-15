@@ -658,13 +658,21 @@ impl Vm {
                     let top = self.stack.len() - 1;
                     set_copy!(self.stack, base + slot, self.stack[top]);
                 }
-                Instr::GetGlobal { slot } => match self.global(slot) {
+                Instr::GetGlobal { slot } => match self.view.global(slot) {
+                    // (A closure: the VM's own copy of it.)
+                    Some(Value::VmClosure(shared)) => {
+                        let own = self.own.of(slot, shared);
+                        push_closure(&mut self.stack, own);
+                    }
                     Some(value) => push_copy!(self.stack, *value),
                     // (Not set in this VM's slots: see the function.)
                     None => {
                         let newest = &self.runtime.newest;
                         match (self.view).global_of_newest(&mut self.view_count, newest, slot) {
-                            Ok(value) => self.stack.push(value),
+                            Ok(value) => {
+                                let value = self.own.value(slot, value);
+                                self.stack.push(value);
+                            }
                             Err(error) => fail!(error),
                         }
                     }
@@ -1511,12 +1519,14 @@ impl Vm {
             found => found,
         };
         // (A method that is a closure, which a written method is, is
-        // taken by its pointer, as `Call` takes one: the value in the
-        // global's slot is not cloned and moved.)
-        if let Some(func) = found.and_then(|slot| self.global(slot)) {
+        // taken by its pointer, as `Call` takes one: the VM's own copy
+        // of the closure in the global's slot is not cloned and moved.)
+        if let Some(slot) = found
+            && let Some(func) = self.view.global(slot)
+        {
             match sort(func) {
-                Sort::Closure(closure) => {
-                    let closure = closure.clone();
+                Sort::Closure(shared) => {
+                    let closure = self.own.of(slot, shared);
                     // In tail position the method takes the current
                     // frame over, as a tail-called function does.
                     if tail {
