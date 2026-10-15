@@ -287,6 +287,50 @@ fn a_vm_reads_its_own_copy_of_a_global_closure() {
     assert_eq!(Arc::strong_count(&shared), 1);
 }
 
+/// A VM's copies take places as many as the slots it has read, not as
+/// the highest of them; each slot gives the copy it has, whatever the
+/// slots it shares places with; a slot that holds another closure, or
+/// whose copy was let go of, is copied anew.
+#[test]
+fn the_copies_of_a_vm_are_as_many_as_the_slots_it_read() {
+    fn closure(captured: i64) -> Arc<VmClosure> {
+        Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".into(), 0)),
+            upvalues: vec![Value::Int(captured)],
+        })
+    }
+    let mut own = runtime::OwnClosures::default();
+    assert_eq!(own.places(), 0);
+    // Slots far apart, and slots that share a place in a small table.
+    let slots: Vec<u16> = (0..40).map(|i| i * 1601).chain([8, 16, 24, 32]).collect();
+    let shared: Vec<Arc<VmClosure>> = (0..slots.len()).map(|i| closure(i as i64)).collect();
+    let copies: Vec<Arc<VmClosure>> = (slots.iter().zip(&shared))
+        .map(|(&slot, shared)| own.of(slot, shared))
+        .collect();
+    assert!(own.places() <= 4 * slots.len(), "{} places", own.places());
+    for ((&slot, shared), copy) in slots.iter().zip(&shared).zip(&copies) {
+        assert!(!Arc::ptr_eq(copy, shared));
+        assert_eq!(copy.upvalues, shared.upvalues);
+        assert!(Arc::ptr_eq(&own.of(slot, shared), copy));
+    }
+    // Another closure in a slot: a copy of it, and the others stay.
+    let other = closure(-1);
+    let copy = own.of(slots[3], &other);
+    assert_eq!(copy.upvalues, [Value::Int(-1)]);
+    assert!(Arc::ptr_eq(&own.of(slots[3], &other), &copy));
+    // A copy let go of: the slot is copied anew, the others stay.
+    own.forget(slots[5]);
+    assert!(!Arc::ptr_eq(&own.of(slots[5], &shared[5]), &copies[5]));
+    for (i, ((&slot, shared), copy)) in slots.iter().zip(&shared).zip(&copies).enumerate() {
+        if i != 3 && i != 5 {
+            assert!(Arc::ptr_eq(&own.of(slot, shared), copy), "slot {slot}");
+        }
+    }
+    // The table holds the closures it copied and no more.
+    drop(own);
+    assert!(shared.iter().all(|shared| Arc::strong_count(shared) == 1));
+}
+
 #[test]
 fn test_locals() {
     let script = make_function(|e| {

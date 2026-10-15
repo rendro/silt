@@ -1020,18 +1020,45 @@ impl View {
 /// another program on the VM, see [`Vm::set_global`]) holds another
 /// closure, which is copied in turn. (The closure kept also keeps its
 /// address from being that of another.)
+///
+/// The copies are in a table of their own size, not one of the
+/// program's slots: a task that calls one function of a program of
+/// thousands holds one copy. The copy of the slot `s` is at the place
+/// `s` modulo the number of places, or at the first place after it
+/// that is free or has it; at most half of the places are taken.
 #[derive(Default)]
-pub(crate) struct OwnClosures(Vec<Option<(Arc<VmClosure>, Arc<VmClosure>)>>);
+pub(crate) struct OwnClosures {
+    /// A power of two of places, or none.
+    places: Vec<Option<Copied>>,
+    /// How many places are taken.
+    taken: usize,
+}
+
+/// The copy of the closure of a global slot.
+struct Copied {
+    slot: u16,
+    /// The closure in the slot when it was copied.
+    shared: Arc<VmClosure>,
+    own: Arc<VmClosure>,
+}
 
 impl OwnClosures {
     /// This VM's copy of `shared`, the closure in the global slot
     /// `slot`.
     #[inline(always)]
     pub(crate) fn of(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
-        if let Some(Some((copied, own))) = self.0.get(usize::from(slot))
-            && Arc::ptr_eq(copied, shared)
-        {
-            return own.clone();
+        // (With no places, the mask is all ones and the first look
+        // finds none.)
+        let mask = self.places.len().wrapping_sub(1);
+        let mut at = usize::from(slot) & mask;
+        while let Some(Some(copied)) = self.places.get(at) {
+            if copied.slot == slot {
+                if Arc::ptr_eq(&copied.shared, shared) {
+                    return copied.own.clone();
+                }
+                break;
+            }
+            at = (at + 1) & mask;
         }
         self.copy(slot, shared)
     }
@@ -1050,23 +1077,60 @@ impl OwnClosures {
     #[cold]
     #[inline(never)]
     fn copy(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
-        let at = usize::from(slot);
-        if self.0.len() <= at {
-            self.0.resize(at + 1, None);
-        }
         let own = Arc::new(VmClosure {
             function: shared.function.clone(),
             upvalues: shared.upvalues.clone(),
         });
-        self.0[at] = Some((shared.clone(), own.clone()));
+        self.forget(slot);
+        if 2 * (self.taken + 1) > self.places.len() {
+            let places = (2 * self.places.len()).max(8);
+            let copies = std::mem::replace(&mut self.places, (0..places).map(|_| None).collect());
+            copies
+                .into_iter()
+                .flatten()
+                .for_each(|copied| self.put(copied));
+        }
+        self.put(Copied {
+            slot,
+            shared: shared.clone(),
+            own: own.clone(),
+        });
+        self.taken += 1;
         own
     }
 
+    /// Put `copied` at its place, in a table with a free place and no
+    /// copy of its slot.
+    fn put(&mut self, copied: Copied) {
+        let mask = self.places.len() - 1;
+        let mut at = usize::from(copied.slot) & mask;
+        while self.places[at].is_some() {
+            at = (at + 1) & mask;
+        }
+        self.places[at] = Some(copied);
+    }
+
+    /// How many places the table has.
+    #[cfg(test)]
+    pub(crate) fn places(&self) -> usize {
+        self.places.len()
+    }
+
     /// Let go of the copy of the closure that was in the global slot
-    /// `slot`, which is set again.
+    /// `slot`, if there is one: the slot is set again. (Seldom: the
+    /// copies are put in their places again without it.)
     pub(crate) fn forget(&mut self, slot: u16) {
-        if let Some(copy) = self.0.get_mut(usize::from(slot)) {
-            *copy = None;
+        let had = |copied: &Option<Copied>| matches!(copied, Some(copied) if copied.slot == slot);
+        if !self.places.iter().any(had) {
+            return;
+        }
+        let places = self.places.len();
+        let copies = std::mem::replace(&mut self.places, (0..places).map(|_| None).collect());
+        for copied in copies.into_iter().flatten() {
+            match copied.slot == slot {
+                true => self.taken -= 1,
+                false => self.put(copied),
+            }
         }
     }
 }
