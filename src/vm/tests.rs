@@ -4597,7 +4597,16 @@ mod pushes_that_make_room {
             });
             let mut vm = Vm::new(crate::HostIo::process());
             vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
-            all_are(vm.run(script).unwrap(), &sample);
+            let pushed = vm.run(script).unwrap();
+            match &sample {
+                // A closure: the VM's own copy of it, one copy each time.
+                Value::VmClosure(shared) => {
+                    let own = vm.own.of(0, shared);
+                    assert!(!Arc::ptr_eq(&own, shared));
+                    all_are(pushed, &Value::VmClosure(own));
+                }
+                _ => all_are(pushed, &sample),
+            }
         }
     }
 
