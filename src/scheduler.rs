@@ -2830,4 +2830,152 @@ fn main() {
         assert!(matches!(result, Ok(Value::Int(300000))), "got {result:?}");
     }
 
+    /// As many workers as `Scheduler::ensure_workers` starts.
+    fn workers() -> usize {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(2)
+    }
+
+    /// Wait until nothing holds the runtime any more: every worker and
+    /// the timer's thread have ended, and every task is dropped. A
+    /// worker that ran a task on for ever would hold it for ever.
+    fn wait_for_the_end(inner: std::sync::Weak<super::Inner>) {
+        while inner.strong_count() > 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// A task that computes and never waits keeps its worker while no
+    /// other task is queued (`Inner::keeps_on`). It looks after every
+    /// slice: a task spawned while every worker computes runs, and here
+    /// it is the one that ends their work.
+    #[test]
+    fn a_task_that_computes_does_not_hold_back_one_spawned_after_it() {
+        let (result, out, _) = run(&format!(
+            r#"
+import channel
+import list
+import task
+
+fn busy(stop) {{
+  match channel.try_receive(stop) {{
+    channel.Closed -> ()
+    _ -> busy(stop)
+  }}
+}}
+
+fn main() {{
+  let stop = channel.new(1)
+  let busy_ones = loop i = 0, acc = [] {{
+    match i == {workers} {{
+      true -> acc
+      false -> loop(i + 1, [task.spawn {{ -> busy(stop) }}, ..acc])
+    }}
+  }}
+  let last = task.spawn {{ -> channel.close(stop) }}
+  task.join(last)
+  list.each(busy_ones) {{ t -> task.join(t) }}
+  println("all ended")
+}}
+"#,
+            workers = workers()
+        ));
+        assert_eq!(result.map_err(|e| e.message), Ok(Value::Unit));
+        out.at("all ended");
+    }
+
+    /// A cancel ends a task that computes alone, on a worker it keeps:
+    /// the program's receive is then a deadlock, which it is not while
+    /// the task lives.
+    #[test]
+    fn a_cancel_ends_a_lone_task_that_never_waits() {
+        let (result, _, _) = run(r#"
+import channel
+import task
+import time
+
+fn forever(n) {
+  forever(n + 1)
+}
+
+fn main() {
+  let computes = task.spawn { -> forever(0) }
+  time.sleep(time.ms(5))
+  task.cancel(computes)
+  channel.receive(channel.new(0))
+}
+"#);
+        assert_deadlock(result, "channel receive with no counterparty");
+    }
+
+    /// The same for the end of a `task.deadline`.
+    #[test]
+    fn a_deadline_ends_a_lone_task_that_never_waits() {
+        let (result, out, _) = run(r#"
+import channel
+import task
+import time
+
+fn forever(n) {
+  forever(n + 1)
+}
+
+fn main() {
+  match task.deadline(time.ms(5), { -> forever(0) }) {
+    Ok(_) -> println("returned")
+    Err(_) -> println("over")
+  }
+  channel.receive(channel.new(0))
+}
+"#);
+        assert_deadlock(result, "channel receive with no counterparty");
+        out.at("over");
+    }
+
+    const COMPUTES_ALONE: &str = r#"
+import task
+import time
+
+fn forever(n) {
+  forever(n + 1)
+}
+
+fn main() {
+  let _computes = task.spawn { -> forever(0) }
+  let sleeps = task.spawn { -> time.sleep(time.ms(5)) }
+  task.join(sleeps)
+}
+"#;
+
+    /// The scheduler shuts down while a worker keeps a task that
+    /// computes: the worker stops it and ends.
+    #[test]
+    fn a_shutdown_stops_a_task_that_keeps_its_worker() {
+        let program = crate::session::testing::compile_str(COMPUTES_ALONE).expect("compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert_eq!(result.map_err(|e| e.message), Ok(Value::Unit));
+        let inner = Arc::downgrade(&vm.scheduler().inner);
+        drop(vm);
+        wait_for_the_end(inner);
+    }
+
+    /// A thread of the runtime panics while a worker keeps a task that
+    /// computes: the worker stops it and ends.
+    #[test]
+    fn a_panic_of_the_runtime_stops_a_task_that_keeps_its_worker() {
+        let program = crate::session::testing::compile_str(COMPUTES_ALONE).expect("compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        // The second task, as its sleep ends.
+        vm.scheduler().panic_for_test(super::PanicAt::Task(1));
+        let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = vm.run_program(&program);
+        }));
+        assert!(joined.is_err(), "the join gives the panic");
+        let inner = Arc::downgrade(&vm.scheduler().inner);
+        drop(vm);
+        wait_for_the_end(inner);
+    }
 }
