@@ -1432,19 +1432,19 @@ impl<'a> Compiler<'a> {
                 let closure_val = Value::VmClosure(vm_closure);
                 let fi = self.add_constant(closure_val, span)?;
 
-                if upvalue_descs.is_empty() {
-                    // No upvalues: just push the constant directly.
-                    self.emit(Asm::Constant { k: fi }, span)?;
-                } else {
-                    // Has upvalues: emit MakeClosure with descriptors.
-                    self.emit(
-                        Asm::MakeClosure {
-                            f: fi,
-                            captures: &upvalue_descs,
-                        },
-                        span,
-                    )?;
-                }
+                // A closure is made each time the lambda is evaluated,
+                // one that captures nothing too: then it is the
+                // evaluating task's own, and the tasks that evaluate
+                // one lambda (and call what they made, once for each
+                // element of a list) do not all count references to
+                // one constant.
+                self.emit(
+                    Asm::MakeClosure {
+                        f: fi,
+                        captures: &upvalue_descs,
+                    },
+                    span,
+                )?;
             }
 
             ExprKind::Tuple(elems) => {
@@ -3315,13 +3315,16 @@ mod tests {
     fn test_compile_lambda() {
         let fns = compile("fn main() { let f = { x -> x + 1 }\n f(5) }");
         let main = find_fn(&fns, "main");
-        // Lambda is compiled as a VmClosure constant
+        // The lambda's function is a constant, and a closure of it is
+        // made where the lambda is evaluated, though it captures
+        // nothing.
         assert!(
             main.chunk()
                 .constants()
                 .iter()
                 .any(|c| matches!(c, Value::VmClosure(_)))
         );
+        assert!(has_op(main.chunk(), Op::MakeClosure));
     }
 
     #[test]
