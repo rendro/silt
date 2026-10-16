@@ -203,6 +203,7 @@ impl List {
     }
 
     /// The element at `index`, counted from 0.
+    #[inline]
     pub fn get(&self, index: usize) -> Option<Value> {
         match &self.0 {
             Stored::Items { buf, start, len } => buf[*start..*start + *len].get(index).cloned(),
@@ -935,11 +936,18 @@ enum IntoIterOf {
         next: usize,
         end: usize,
     },
-    /// The elements of `long` from `next` up to, not including, `end`,
+    /// The elements of a long list kept side by side from `next` up
+    /// to, not including, `end`: read as those of a buffer are.
+    Side {
+        long: Long,
+        next: usize,
+        end: usize,
+    },
+    /// The elements of a tree from `next` up to, not including, `end`,
     /// after those of the leaf at hand that are left (`leaf`, the last
     /// first): the elements of a leaf of a tree are taken out of it
     /// together.
-    Long {
+    Tree {
         long: Long,
         next: usize,
         end: usize,
@@ -962,7 +970,20 @@ impl Iterator for IntoIter {
                 *next += 1;
                 Some(item)
             }
-            IntoIterOf::Long {
+            IntoIterOf::Side { long, next, end } => {
+                if next == end {
+                    return None;
+                }
+                // (A list kept side by side stays so: the other arm is
+                // never taken.)
+                let item = match &**long {
+                    LongItems::Side { items, .. } => items[*next].clone(),
+                    LongItems::Tree(tree) => tree[*next].clone(),
+                };
+                *next += 1;
+                Some(item)
+            }
+            IntoIterOf::Tree {
                 long,
                 next,
                 end,
@@ -978,7 +999,8 @@ impl Iterator for IntoIter {
     fn size_hint(&self) -> (usize, Option<usize>) {
         let left = match &self.0 {
             IntoIterOf::Items { next, end, .. } => end - next,
-            IntoIterOf::Long {
+            IntoIterOf::Side { next, end, .. } => end - next,
+            IntoIterOf::Tree {
                 next, end, leaf, ..
             } => leaf.len() + (end - next),
             IntoIterOf::Ints(ints) => ints.left,
@@ -1027,11 +1049,18 @@ impl IntoIterator for List {
                 next: start,
                 end: start + len,
             },
-            Stored::Other(Other::Long { long, start, len }) => IntoIterOf::Long {
-                long,
-                next: start,
-                end: start + len,
-                leaf: Vec::new(),
+            Stored::Other(Other::Long { long, start, len }) => match &*long {
+                LongItems::Side { .. } => IntoIterOf::Side {
+                    long,
+                    next: start,
+                    end: start + len,
+                },
+                LongItems::Tree(_) => IntoIterOf::Tree {
+                    long,
+                    next: start,
+                    end: start + len,
+                    leaf: Vec::new(),
+                },
             },
             Stored::Other(Other::Ints { lo, .. }) => IntoIterOf::Ints(IntsLeft {
                 next: lo,
