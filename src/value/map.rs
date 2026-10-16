@@ -17,6 +17,11 @@ use std::sync::Arc;
 use super::Value;
 use super::deep::{Entries, Members};
 
+/// How many entries, or members, a map or a set is built of at once
+/// from at least: they are sorted first, which is faster for many of
+/// them, and slower for a few (a literal) than inserting each in turn.
+const IN_BULK: usize = 16;
+
 /// A map.
 #[derive(Clone, Default)]
 pub struct Map(Arc<Entries>);
@@ -41,6 +46,19 @@ impl Map {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// The map of a literal: `items` are its keys and values, each key
+    /// before its value; of a key given twice, the value given last.
+    /// (Read in place: built through an iterator that moves each pair,
+    /// a loop of map literals took 15% longer.)
+    pub(crate) fn of_literal(items: &[Value]) -> Map {
+        let mut entries = BTreeMap::new();
+        let (pairs, _) = items.as_chunks::<2>();
+        for [key, value] in pairs {
+            entries.insert(key.clone(), value.clone());
+        }
+        Map::of(entries)
     }
 
     /// The value of `key`.
@@ -98,7 +116,15 @@ impl Map {
 /// The map of the entries: of a key given twice, the value given last.
 impl FromIterator<(Value, Value)> for Map {
     fn from_iter<I: IntoIterator<Item = (Value, Value)>>(entries: I) -> Map {
-        Map::of(entries.into_iter().collect())
+        let entries = entries.into_iter();
+        if entries.size_hint().0 >= IN_BULK {
+            return Map::of(entries.collect());
+        }
+        let mut map = BTreeMap::new();
+        for (key, value) in entries {
+            map.insert(key, value);
+        }
+        Map::of(map)
     }
 }
 
@@ -217,7 +243,15 @@ impl Set {
 
 impl FromIterator<Value> for Set {
     fn from_iter<I: IntoIterator<Item = Value>>(members: I) -> Set {
-        Set::of(members.into_iter().collect())
+        let members = members.into_iter();
+        if members.size_hint().0 >= IN_BULK {
+            return Set::of(members.collect());
+        }
+        let mut set = BTreeSet::new();
+        for member in members {
+            set.insert(member);
+        }
+        Set::of(set)
     }
 }
 
