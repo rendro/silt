@@ -44,9 +44,8 @@ fuzz_target!(|data: &[u8]| {
 
     // 4. Analyse and compile as every front door does. Ill-typed
     //    inputs are the typechecker target's domain: a program with an
-    //    error is not compiled. A compile error is fine (the
-    //    "string interpolation has N segments; limited to 255" guard);
-    //    a panic is not.
+    //    error is not compiled. A compile error is fine (the "too many
+    //    segments of a string interpolation" limit); a panic is not.
     let Ok(program) = silt::session::testing::compile_decls_str(s) else {
         return;
     };

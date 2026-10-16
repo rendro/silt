@@ -189,33 +189,37 @@ impl<T: Packed> Operands<T> {
 
 /// The segments of a string interpolation, as an instruction carries
 /// them: in the order of the string, each a literal or the next of the
-/// values on the stack.
+/// values on the stack. (The counts are kept as encoded, so that an
+/// [`Instr`] is no larger than with any other operand.)
 #[derive(Debug, Clone, Copy)]
 pub struct Segments {
-    list: Operands<Segment>,
-    values: usize,
+    at: usize,
+    count: u8,
+    values: u8,
 }
 
 impl Segments {
     /// The number of segments.
     pub fn len(&self) -> usize {
-        self.list.len()
+        usize::from(self.count)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.count == 0
     }
 
     /// The number of segments that are values on the stack, as the
     /// instruction says: the verifier checks it against the segments.
     pub fn values(&self) -> usize {
-        self.values
+        usize::from(self.values)
     }
 
     /// The segments, read from `code`: the code the instruction was
     /// decoded from.
     pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = Segment> + Clone + 'c {
-        self.list.iter(code)
+        code[self.at..self.at + self.len() * Segment::SIZE]
+            .chunks_exact(Segment::SIZE)
+            .map(Segment::unpack)
     }
 }
 
@@ -343,10 +347,14 @@ impl Reader<'_> {
 
     #[inline(always)]
     fn segments(&mut self) -> Option<Segments> {
-        let count = usize::from(self.u8()?);
-        let values = usize::from(self.u8()?);
-        let list = self.items(count)?;
-        Some(Segments { list, values })
+        let count = self.u8()?;
+        let values = self.u8()?;
+        let list = self.items::<Segment>(usize::from(count))?;
+        Some(Segments {
+            at: list.at,
+            count,
+            values,
+        })
     }
 }
 
@@ -1043,6 +1051,16 @@ mod tests {
                 None => assert!(usize::from(byte) >= Op::ALL.len()),
             }
         }
+    }
+
+    /// The VM decodes an `Instr` for every instruction it runs: it stays
+    /// three words, a list operand's two and one for the rest.
+    #[test]
+    fn a_decoded_instruction_is_three_words() {
+        assert_eq!(
+            std::mem::size_of::<Instr>(),
+            3 * std::mem::size_of::<usize>()
+        );
     }
 
     #[test]

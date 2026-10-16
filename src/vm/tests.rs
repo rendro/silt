@@ -6523,6 +6523,24 @@ mod interpolation {
             .unwrap();
         });
         assert_eq!(result, "abcab");
+        // A literal at the last constant the pool holds: both bytes of
+        // its index are read.
+        let result = run_script(|e| {
+            for n in 0..65535 {
+                e.constant(Value::Int(n), span()).unwrap();
+            }
+            let last = e.constant(Value::String("last".into()), span()).unwrap();
+            assert_eq!(last.index(), 65535);
+            let segments = [Segment::Literal(last), Segment::Literal(last)];
+            e.emit(
+                Asm::Interpolate {
+                    segments: &segments,
+                },
+                span(),
+            )
+            .unwrap();
+        });
+        assert_eq!(result, "lastlast");
         let result = run_script(|e| {
             e.emit(Asm::Interpolate { segments: &[] }, span()).unwrap();
         });
