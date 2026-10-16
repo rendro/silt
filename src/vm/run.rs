@@ -1464,8 +1464,7 @@ impl Vm {
         let frame = self.frame_mut();
         let caller = std::mem::replace(&mut frame.closure, closure);
         let caller_ip = std::mem::replace(&mut frame.ip, 0);
-        self.tco_elided
-            .log(depth, caller.function.clone(), caller_ip);
+        self.tco_elided.log(depth, &caller.function, caller_ip);
     }
 
     /// The global slot of the method of the impl of the trait

@@ -3434,6 +3434,92 @@ fn main() {
     }
 
     #[test]
+    fn in_a_tail_call_after_more_than_the_log_keeps() {
+        // Two functions in turn, a cycle that divides the log's size:
+        // however many tail calls there were, the latest 32 callers,
+        // the latest first.
+        for n in [34, 50, 100] {
+            let source = format!(
+                "\
+fn ping(n: Int) -> Int {{
+  match n <= 0 {{
+    true -> 1 / n
+    false -> pong(n - 1)
+  }}
+}}
+fn pong(n: Int) -> Int {{
+  ping(n - 1)
+}}
+fn main() {{
+  println(ping({n}))
+}}
+"
+            );
+            let kept = "pong 8:3; ping 4:14; ".repeat(16);
+            assert_eq!(
+                stops(&source),
+                format!("division by zero at 3:13; ping 3:13; {kept}main 11:11; <script> 10:1")
+            );
+        }
+        // Three functions in turn, a cycle that does not divide it.
+        for n in [11, 16, 17, 100] {
+            let source = format!(
+                "\
+fn a(n: Int) -> Int {{
+  match n <= 0 {{
+    true -> 1 / n
+    false -> b(n - 1)
+  }}
+}}
+fn b(n: Int) -> Int {{
+  c(n)
+}}
+fn c(n: Int) -> Int {{
+  a(n)
+}}
+fn main() {{
+  println(a({n}))
+}}
+"
+            );
+            let kept = "c 11:3; b 8:3; a 4:14; ".repeat(10) + "c 11:3; b 8:3";
+            assert_eq!(
+                stops(&source),
+                format!("division by zero at 3:13; a 3:13; {kept}; main 14:11; <script> 13:1")
+            );
+        }
+        // Three frames that have each made more tail calls than the
+        // log keeps: each frame's latest 32 callers come after it.
+        let source = "\
+fn inner(n: Int) -> Int {
+  match n {
+    0 -> 1 / n
+    _ -> inner(n - 1)
+  }
+}
+fn mid(n: Int) -> Int {
+  match n {
+    0 -> 1 + inner(40)
+    _ -> mid(n - 1)
+  }
+}
+fn outer(n: Int) -> Int {
+  match n {
+    0 -> 1 + mid(50)
+    _ -> outer(n - 1)
+  }
+}
+fn main() {
+  println(outer(60))
+}
+";
+        assert_eq!(
+            stops(source),
+            "division by zero at 3:10; inner 3:10; inner 4:10 (32 times); mid 9:14; mid 10:10 (32 times); outer 15:14; outer 16:10 (32 times); main 20:11; <script> 19:1"
+        );
+    }
+
+    #[test]
     fn a_panic_and_an_error_of_a_builtin() {
         let source = "\
 fn boom(n: Int) -> Int {
@@ -3889,9 +3975,9 @@ mod tail_calls {
         let (f, g) = (function("f"), function("g"));
         let mut log = TailCalls::default();
         assert!(log.is_empty());
-        log.log(3, f.clone(), 10);
-        log.log(3, g.clone(), 20);
-        log.log(3, f.clone(), 30);
+        log.log(3, &f, 10);
+        log.log(3, &g, 20);
+        log.log(3, &f, 30);
         assert!(!log.is_empty());
         assert_eq!(entries(&log), ["3 f 30", "3 g 20", "3 f 10"]);
 
@@ -3901,7 +3987,7 @@ mod tail_calls {
             let mut log = TailCalls::default();
             let made = TCO_ELIDED_CAP + extra;
             for ip in 0..made {
-                log.log(0, f.clone(), ip);
+                log.log(0, &f, ip);
             }
             let latest: Vec<String> = (made - TCO_ELIDED_CAP..made)
                 .rev()
@@ -3912,16 +3998,87 @@ mod tail_calls {
     }
 
     #[test]
+    fn a_cycle_of_functions_keeps_the_latest_callers_of_the_cycle() {
+        // A frame whose tail calls go through a cycle of `len`
+        // functions, some lengths dividing the log's size and some
+        // not: after each tail call the log holds the latest callers,
+        // as a list of them all would.
+        let names = ["f", "g", "h", "i", "j"];
+        let functions: Vec<Arc<Function>> = names.into_iter().map(function).collect();
+        for len in 1..=names.len() {
+            let mut log = TailCalls::default();
+            let mut all = Vec::new();
+            for ip in 0..3 * TCO_ELIDED_CAP + 7 {
+                log.log(2, &functions[ip % len], ip);
+                all.push(format!("2 {} {ip}", names[ip % len]));
+                let latest: Vec<String> = all.iter().rev().take(TCO_ELIDED_CAP).cloned().collect();
+                assert_eq!(entries(&log), latest, "a cycle of {len}, after {ip}");
+            }
+        }
+        // The logs are gone: the functions are held by the test alone.
+        for f in &functions {
+            assert_eq!(Arc::strong_count(f), 1);
+        }
+    }
+
+    #[test]
+    fn a_full_log_leaves_the_count_of_a_function_that_calls_itself_alone() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Once a frame has made as many tail calls as the log keeps, a
+        // function that calls itself, or a cycle of functions whose
+        // length divides the log's size, takes the place of its own
+        // entry: the function's count, which every task running it
+        // shares, stays as it is. Another thread reads the count all
+        // along, so a clone and a drop between two reads would show.
+        let (f, g) = (function("f"), function("g"));
+        for cycle in [vec![&f], vec![&f, &g]] {
+            let mut log = TailCalls::default();
+            for ip in 0..TCO_ELIDED_CAP {
+                log.log(0, cycle[ip % cycle.len()], ip);
+            }
+            let held = 1 + TCO_ELIDED_CAP / cycle.len();
+            assert_eq!(Arc::strong_count(&f), held);
+            let done = AtomicBool::new(false);
+            let seen = std::thread::scope(|scope| {
+                let reader = scope.spawn(|| {
+                    let mut seen = Vec::new();
+                    for _ in 0..1_000_000 {
+                        let count = Arc::strong_count(&f);
+                        if !seen.contains(&count) {
+                            seen.push(count);
+                        }
+                    }
+                    done.store(true, Ordering::Relaxed);
+                    seen
+                });
+                let mut ip = TCO_ELIDED_CAP;
+                while !done.load(Ordering::Relaxed) {
+                    log.log(0, cycle[ip % cycle.len()], ip);
+                    ip += 1;
+                }
+                reader.join().expect("the reader ends")
+            });
+            assert_eq!(seen, [held], "a cycle of {}", cycle.len());
+            assert_eq!(Arc::strong_count(&f), held);
+            // The entries are the latest tail calls all the same.
+            assert_eq!(entries(&log).len(), TCO_ELIDED_CAP);
+        }
+        assert_eq!(Arc::strong_count(&f), 1);
+        assert_eq!(Arc::strong_count(&g), 1);
+    }
+
+    #[test]
     fn each_frame_has_its_own_and_they_go_with_it() {
         let (f, g, h) = (function("f"), function("g"), function("h"));
         let mut log = TailCalls::default();
-        log.log(1, f.clone(), 1);
-        log.log(1, f.clone(), 2);
+        log.log(1, &f, 1);
+        log.log(1, &f, 2);
         // A frame above makes more than the log keeps.
         for ip in 0..TCO_ELIDED_CAP + 3 {
-            log.log(4, g.clone(), ip);
+            log.log(4, &g, ip);
         }
-        log.log(6, h.clone(), 7);
+        log.log(6, &h, 7);
         let all = entries(&log);
         assert_eq!(all.len(), 2 + TCO_ELIDED_CAP + 1);
         assert_eq!(all[0], "6 h 7");
@@ -3932,7 +4089,7 @@ mod tail_calls {
         // The frames at 5 and above go; the one at 4 goes on.
         log.prune(5);
         assert_eq!(entries(&log).len(), 2 + TCO_ELIDED_CAP);
-        log.log(4, h.clone(), 99);
+        log.log(4, &h, 99);
         assert_eq!(
             entries(&log)[..2],
             ["4 h 99".to_string(), format!("4 g {}", TCO_ELIDED_CAP + 2)]
@@ -3942,7 +4099,7 @@ mod tail_calls {
         log.prune(4);
         assert_eq!(entries(&log), ["1 f 2", "1 f 1"]);
         // A new frame at the depth of one that is gone starts anew.
-        log.log(4, g.clone(), 5);
+        log.log(4, &g, 5);
         assert_eq!(entries(&log), ["4 g 5", "1 f 2", "1 f 1"]);
         log.prune(0);
         assert!(log.is_empty());
