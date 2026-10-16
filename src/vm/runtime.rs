@@ -34,7 +34,10 @@ pub(crate) const TCO_ELIDED_CAP: usize = 32;
 ///
 /// A frame's entries go when the frame does ([`TailCalls::prune`]): the
 /// log is in the order of the frames, and the frame on top is the one
-/// that logs. An entry costs no allocation.
+/// that logs. An entry costs no allocation, and once a frame has made as
+/// many tail calls as the log keeps, an entry that takes the place of
+/// one of the same function does not change the function's count
+/// ([`TailCalls::log`]).
 ///
 /// Lock: `callback_frame_capture__tail_call_chain_keeps_callers` and
 /// `callback_frame_capture__tail_call_ring_buffer_caps_chain`
@@ -68,7 +71,15 @@ impl TailCalls {
 
     /// The frame at `depth`, the one on top, makes a tail call: it was
     /// running `function` and had come to `ip`.
-    pub(crate) fn log(&mut self, depth: usize, function: Arc<Function>, ip: usize) {
+    ///
+    /// The function is cloned only for a new entry, or for one that
+    /// takes the place of another function's. When the oldest entry,
+    /// the one the new one takes the place of, is of the same function,
+    /// as in a function that calls itself or a cycle of functions whose
+    /// length divides [`TCO_ELIDED_CAP`], only its `ip` is written: the
+    /// function's count, which every task running it shares, is not
+    /// touched.
+    pub(crate) fn log(&mut self, depth: usize, function: &Arc<Function>, ip: usize) {
         // The frame's record is off the end while its callers change.
         let made = match self.entries.last() {
             Some(&TailCall::Frame { depth: top, made }) if top == depth => {
@@ -77,12 +88,15 @@ impl TailCalls {
             }
             _ => 0,
         };
-        let caller = TailCall::Caller(function, ip);
         if made < TCO_ELIDED_CAP {
-            self.entries.push(caller);
+            self.entries
+                .push(TailCall::Caller(Arc::clone(function), ip));
         } else {
             let start = self.entries.len() - TCO_ELIDED_CAP;
-            self.entries[start + made % TCO_ELIDED_CAP] = caller;
+            match &mut self.entries[start + made % TCO_ELIDED_CAP] {
+                TailCall::Caller(held, held_ip) if Arc::ptr_eq(held, function) => *held_ip = ip,
+                oldest => *oldest = TailCall::Caller(Arc::clone(function), ip),
+            }
         }
         self.entries.push(TailCall::Frame {
             depth,
