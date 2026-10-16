@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
-use crate::bytecode::{Chunk, Instr, Op, VmClosure, decode};
+use crate::bytecode::{Chunk, Instr, Op, Segment, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
 use crate::value::{Float, List, Record, Value};
@@ -629,10 +629,17 @@ impl Vm {
                         }
                     }
                 }
-                Instr::StringConcat { count } => {
-                    let start = self.stack.len() - count;
-                    // Pre-calculate total capacity to avoid reallocations
+                Instr::Interpolate { segments } => {
+                    let start = self.stack.len() - segments.values();
+                    // The length of the result, so that it is allocated
+                    // once. A literal is read in place: its count is not
+                    // touched, which tasks running the same code share.
                     let mut total_len = 0;
+                    for segment in segments.iter(code) {
+                        if let Segment::Literal(k) = segment {
+                            total_len += chunk.string(k).len();
+                        }
+                    }
                     for i in start..self.stack.len() {
                         if let Value::String(ref s) = self.stack[i] {
                             total_len += s.len();
@@ -645,9 +652,16 @@ impl Vm {
                         }
                     }
                     let mut result = String::with_capacity(total_len);
-                    for i in start..self.stack.len() {
-                        if let Value::String(ref s) = self.stack[i] {
-                            result.push_str(s);
+                    let mut next = start;
+                    for segment in segments.iter(code) {
+                        match segment {
+                            Segment::Literal(k) => result.push_str(chunk.string(k)),
+                            Segment::Value => {
+                                if let Value::String(ref s) = self.stack[next] {
+                                    result.push_str(s);
+                                }
+                                next += 1;
+                            }
                         }
                     }
                     self.stack.truncate(start);

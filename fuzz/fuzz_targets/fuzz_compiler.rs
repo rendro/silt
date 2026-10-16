@@ -6,7 +6,7 @@ use silt::parser::Parser;
 
 // Compiler-stage fuzz target (the stage between the typechecker and
 // the VM). The round-92 string-interpolation bug — >255 segments
-// overflowed the u8 `Op::StringConcat` operand, panicking in debug and
+// overflowed the u8 count of its instruction, panicking in debug and
 // silently emitting wrong bytecode in release — lived exactly here and
 // was invisible to every earlier target (lexer/parser/formatter/
 // roundtrip/typechecker all stop before bytecode emission).

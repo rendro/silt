@@ -1,6 +1,6 @@
 use super::*;
 use crate::builtins::registry::{Body, Row, registry};
-use crate::bytecode::{Asm, Emitter, Function};
+use crate::bytecode::{Asm, Emitter, Function, Segment};
 use crate::source::Span;
 use crate::typeinfo::bv;
 
@@ -348,15 +348,20 @@ fn test_locals() {
 }
 
 #[test]
-fn test_string_concat() {
+fn test_interpolate() {
     let script = make_function(|e| {
         let a = e.constant(Value::String("hello".into()), span()).unwrap();
         let b = e.constant(Value::String(" ".into()), span()).unwrap();
         let c = e.constant(Value::String("world".into()), span()).unwrap();
-        e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
-        e.emit(Asm::Constant { k: c }, span()).unwrap();
-        e.emit(Asm::StringConcat { count: 3 }, span()).unwrap();
+        let segments = [Segment::Literal(a), Segment::Value, Segment::Literal(c)];
+        e.emit(
+            Asm::Interpolate {
+                segments: &segments,
+            },
+            span(),
+        )
+        .unwrap();
         e.emit(Asm::Return, span()).unwrap();
     });
     let mut vm = Vm::new(crate::HostIo::process());
@@ -4124,7 +4129,14 @@ mod type_confusion {
             |e| {
                 push(e, string("a"));
                 push(e, Value::Int(1));
-                e.emit(Asm::StringConcat { count: 2 }, span()).unwrap();
+                let segments = [Segment::Value, Segment::Value];
+                e.emit(
+                    Asm::Interpolate {
+                        segments: &segments,
+                    },
+                    span(),
+                )
+                .unwrap();
             },
         );
     }
@@ -6441,5 +6453,230 @@ mod slide_in_place {
             assert_eq!(ended(&log), expected, "the top owns something: {owns}");
             assert!(vm.stack.is_empty());
         }
+    }
+}
+
+/// String interpolation: a literal segment is read where it is, in the
+/// constants of the code, and the values come off the stack in order.
+mod interpolation {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::value::{HostFn, HostShape};
+
+    fn text(value: Value) -> String {
+        match value {
+            Value::String(s) => s.to_string(),
+            other => panic!("a String, not {other:?}"),
+        }
+    }
+
+    /// Run the emitted script, which leaves a String.
+    fn run_script(build: impl FnOnce(&mut Emitter)) -> String {
+        let script = make_function(|e| {
+            build(e);
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        text(Vm::new(crate::HostIo::process()).run(script).unwrap())
+    }
+
+    #[test]
+    fn literals_first_last_between_and_none() {
+        let result = run_vm(
+            r#"
+                fn main() {
+                    let x = 7
+                    let y = "b"
+                    let first = "v{x}"
+                    let last = "{x}v"
+                    let alone = "{x}"
+                    let between = "a{x}b{y}c"
+                    let adjacent = "{x}{y}{x}"
+                    let unicode = "é{y}✓{x}ß"
+                    "{first}|{last}|{alone}|{between}|{adjacent}|{unicode}"
+                }
+            "#,
+        );
+        assert_eq!(text(result), "v7|7v|7|a7bbc|7b7|éb✓7ß");
+    }
+
+    /// The parser makes no interpolation of literals only, nor an empty
+    /// literal segment; the instruction takes them all the same.
+    #[test]
+    fn literals_only_and_no_segment() {
+        let result = run_script(|e| {
+            let a = e.constant(Value::String("ab".into()), span()).unwrap();
+            let empty = e.constant(Value::String("".into()), span()).unwrap();
+            let c = e.constant(Value::String("c".into()), span()).unwrap();
+            let segments = [
+                Segment::Literal(a),
+                Segment::Literal(empty),
+                Segment::Literal(c),
+                Segment::Literal(a),
+            ];
+            e.emit(
+                Asm::Interpolate {
+                    segments: &segments,
+                },
+                span(),
+            )
+            .unwrap();
+        });
+        assert_eq!(result, "abcab");
+        let result = run_script(|e| {
+            e.emit(Asm::Interpolate { segments: &[] }, span()).unwrap();
+        });
+        assert_eq!(result, "");
+    }
+
+    /// The values come off the stack in order, below what the
+    /// instruction does not take.
+    #[test]
+    fn values_come_off_the_stack_in_order() {
+        let script = make_function(|e| {
+            let s = |e: &mut Emitter, text: &str| {
+                let k = e.constant(Value::String(text.into()), span()).unwrap();
+                e.emit(Asm::Constant { k }, span()).unwrap();
+                k
+            };
+            s(e, "under");
+            s(e, "1");
+            let dash = s(e, "-");
+            s(e, "2");
+            let segments = [
+                Segment::Value,
+                Segment::Literal(dash),
+                Segment::Value,
+                Segment::Value,
+            ];
+            e.emit(
+                Asm::Interpolate {
+                    segments: &segments,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::MakeTuple { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let result = Vm::new(crate::HostIo::process()).run(script).unwrap();
+        let Value::Tuple(pair) = result else {
+            panic!("a tuple, not {result:?}")
+        };
+        assert_eq!(text(pair[0].clone()), "under");
+        assert_eq!(text(pair[1].clone()), "1--2");
+    }
+
+    /// 255 segments, the most an interpolation has (one more is a
+    /// compile error, tests/golden/lang/limits/round92_*).
+    #[test]
+    fn the_most_segments_an_interpolation_has() {
+        let mut interpolation = String::from("{x}");
+        let mut expected = String::from("7");
+        for k in 0..127 {
+            interpolation.push_str(&format!("<{k}>{{x}}"));
+            expected.push_str(&format!("<{k}>7"));
+        }
+        let source = format!("fn main() {{\n  let x = 7\n  \"{interpolation}\"\n}}\n");
+        assert_eq!(text(run_vm(&source)), expected);
+    }
+
+    /// A Display impl written in silt runs as a frame between the
+    /// segments; the values and literals around it are not disturbed.
+    #[test]
+    fn a_display_impl_runs_between_the_segments() {
+        let result = run_vm(
+            r#"
+                type Celsius {
+                    c: Float,
+                }
+
+                trait Display for Celsius {
+                    fn display(self) -> String {
+                        "{self.c}°C"
+                    }
+                }
+
+                fn main() {
+                    let t = Celsius { c: 20.5 }
+                    let n = 3
+                    "t={t}, n={n}, again {t}!"
+                }
+            "#,
+        );
+        assert_eq!(text(result), "t=20.5°C, n=3, again 20.5°C!");
+    }
+
+    #[test]
+    fn interpolations_in_tasks() {
+        let result = run_vm(
+            r#"
+                import list
+                import task
+
+                fn main() {
+                    let tasks = list.map([1, 2, 3, 4]) { i ->
+                        task.spawn({ ->
+                            list.fold(1..50, "") { acc, k -> "{acc}v{k * i};" }
+                        })
+                    }
+                    let results = list.map(tasks) { t -> task.join(t) }
+                    list.fold(results, "") { acc, r -> "{acc}[{r}]" }
+                }
+            "#,
+        );
+        let mut expected = String::new();
+        for i in 1..=4 {
+            expected.push('[');
+            for k in 1..=50 {
+                expected.push_str(&format!("v{};", k * i));
+            }
+            expected.push(']');
+        }
+        assert_eq!(text(result), expected);
+    }
+
+    /// An interpolation reads its literals where they are: the count of
+    /// a literal's `Arc<str>`, which every task running the code would
+    /// share, is not touched, not even while a value of the
+    /// interpolation is being made, or after.
+    #[test]
+    fn an_interpolation_does_not_count_its_literals() {
+        let literal: Arc<str> = "spin".into();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let probe = {
+            let (literal, seen) = (literal.clone(), seen.clone());
+            Value::HostFn(Arc::new(HostFn {
+                name: "probe".to_string(),
+                call: Arc::new(move |_| {
+                    seen.lock().unwrap().push(Arc::strong_count(&literal));
+                    Ok(Value::String("x".into()))
+                }),
+                returns: HostShape::Any,
+            }))
+        };
+        let script = make_function(|e| {
+            let k = e.constant(Value::String(literal.clone()), span()).unwrap();
+            let p = e.constant(probe, span()).unwrap();
+            e.emit(Asm::Constant { k: p }, span()).unwrap();
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            let segments = [Segment::Literal(k), Segment::Value, Segment::Literal(k)];
+            e.emit(
+                Asm::Interpolate {
+                    segments: &segments,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::Constant { k: p }, span()).unwrap();
+            e.emit(Asm::Call { argc: 0 }, span()).unwrap();
+            e.emit(Asm::Pop, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let before = Arc::strong_count(&literal);
+        let result = Vm::new(crate::HostIo::process()).run(script).unwrap();
+        assert_eq!(text(result), "spinxspin");
+        // While the value was made, and after the instruction ran.
+        assert_eq!(*seen.lock().unwrap(), [before, before]);
     }
 }

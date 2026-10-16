@@ -39,8 +39,10 @@
 //! | `Rel` | `i32` distance from the next instruction, forward or back | [`Label`] | target offset | an instruction starts there |
 //! | `Strs` | `u8` count, then `u16` each | `&[Const]` | [`Operands<Const>`] | each a string in the pool |
 //! | `Captures` | `u8` count, then `u8 is_local, u8 index` each | `&[UpvalueDesc]` | [`Operands<UpvalueDesc>`] | each names a slot below the height or an upvalue of the function |
+//! | `Segments` | `u8` count, `u8` count of values, then `u8 is_literal, u16 constant` each | `&[Segment]` | [`Segments`] | each literal a string in the pool; as many values as the count of values says |
 //!
-//! A narrowed operand (`U8`, `U16`, `Upvalue`, `Strs`, `Captures`)
+//! A narrowed operand (`U8`, `U16`, `Upvalue`, `Strs`, `Captures`,
+//! `Segments`)
 //! carries, in parentheses, what a program has too many of when the
 //! operand does not fit. That is the text of the compile error, and the
 //! only one for the limit: the compiler does not check sizes itself.
@@ -58,7 +60,7 @@
 
 use std::marker::PhantomData;
 
-use super::{Const, Label, UpvalueDesc};
+use super::{Const, Label, Segment, UpvalueDesc};
 use crate::builtins::registry::BuiltinId;
 
 // ── What a row is made of ──────────────────────────────────────────
@@ -117,6 +119,7 @@ pub enum Operand {
     Target(usize),
     Strs(Operands<Const>),
     Captures(Operands<UpvalueDesc>),
+    Segments(Segments),
 }
 
 /// A list operand of a decoded instruction: where its items are in the
@@ -128,22 +131,36 @@ pub struct Operands<T> {
     item: PhantomData<T>,
 }
 
-/// An item of a list operand: two bytes of the code.
+/// An item of a list operand: `SIZE` bytes of the code.
 pub trait Packed: Copy {
-    fn unpack(bytes: [u8; 2]) -> Self;
+    const SIZE: usize;
+    /// The item `bytes` encode: `SIZE` of them.
+    fn unpack(bytes: &[u8]) -> Self;
 }
 
 impl Packed for Const {
-    fn unpack(bytes: [u8; 2]) -> Self {
-        Const(u16::from_le_bytes(bytes))
+    const SIZE: usize = 2;
+    fn unpack(bytes: &[u8]) -> Self {
+        Const(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 }
 
 impl Packed for UpvalueDesc {
-    fn unpack([is_local, index]: [u8; 2]) -> Self {
+    const SIZE: usize = 2;
+    fn unpack(bytes: &[u8]) -> Self {
         UpvalueDesc {
-            is_local: is_local != 0,
-            index: usize::from(index),
+            is_local: bytes[0] != 0,
+            index: usize::from(bytes[1]),
+        }
+    }
+}
+
+impl Packed for Segment {
+    const SIZE: usize = 3;
+    fn unpack(bytes: &[u8]) -> Self {
+        match bytes[0] != 0 {
+            true => Segment::Literal(Const(u16::from_le_bytes([bytes[1], bytes[2]]))),
+            false => Segment::Value,
         }
     }
 }
@@ -164,8 +181,55 @@ impl<T: Packed> Operands<T> {
     where
         T: 'c,
     {
-        let (items, _) = code[self.at..self.at + self.count * 2].as_chunks::<2>();
-        items.iter().map(|bytes| T::unpack(*bytes))
+        code[self.at..self.at + self.count * T::SIZE]
+            .chunks_exact(T::SIZE)
+            .map(T::unpack)
+    }
+}
+
+/// The segments of a string interpolation, as an instruction carries
+/// them: in the order of the string, each a literal or the next of the
+/// values on the stack.
+#[derive(Debug, Clone, Copy)]
+pub struct Segments {
+    list: Operands<Segment>,
+    values: usize,
+}
+
+impl Segments {
+    /// The number of segments.
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
+    /// The number of segments that are values on the stack, as the
+    /// instruction says: the verifier checks it against the segments.
+    pub fn values(&self) -> usize {
+        self.values
+    }
+
+    /// The segments, read from `code`: the code the instruction was
+    /// decoded from.
+    pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = Segment> + Clone + 'c {
+        self.list.iter(code)
+    }
+}
+
+/// The number of segments that are values, of the segments the
+/// compiler hands the emitter.
+trait Values {
+    fn values(&self) -> usize;
+}
+
+impl Values for &[Segment] {
+    fn values(&self) -> usize {
+        self.iter()
+            .filter(|segment| matches!(segment, Segment::Value))
+            .count()
     }
 }
 
@@ -263,13 +327,26 @@ impl Reader<'_> {
     #[inline(always)]
     fn list<T: Packed>(&mut self) -> Option<Operands<T>> {
         let count = usize::from(self.u8()?);
+        self.items(count)
+    }
+
+    #[inline(always)]
+    fn items<T: Packed>(&mut self, count: usize) -> Option<Operands<T>> {
         let at = self.at;
-        self.at = at + count * 2;
+        self.at = at + count * T::SIZE;
         (self.at <= self.code.len()).then_some(Operands {
             at,
             count,
             item: PhantomData,
         })
+    }
+
+    #[inline(always)]
+    fn segments(&mut self) -> Option<Segments> {
+        let count = usize::from(self.u8()?);
+        let values = usize::from(self.u8()?);
+        let list = self.items(count)?;
+        Some(Segments { list, values })
     }
 }
 
@@ -337,6 +414,9 @@ macro_rules! asm_ty {
     (Captures, $lt:lifetime) => {
         &$lt[UpvalueDesc]
     };
+    (Segments, $lt:lifetime) => {
+        &$lt[Segment]
+    };
 }
 
 /// The type of an operand of the kind in [`Instr`].
@@ -361,6 +441,7 @@ macro_rules! instr_ty {
     (Rel) => { usize };
     (Strs) => { Operands<Const> };
     (Captures) => { Operands<UpvalueDesc> };
+    (Segments) => { Segments };
 }
 
 /// Write the operand `$v` of the kind to the writer `$w`.
@@ -438,6 +519,24 @@ macro_rules! encode_operand {
             )?);
         }
     }};
+    // (The count of values is at most the count of segments, which
+    // fits.)
+    (Segments, $v:expr, $what:expr, $w:expr) => {{
+        $w.u8(narrow_u8($v.len(), $what)?);
+        $w.u8(narrow_u8($v.values(), $what)?);
+        for segment in $v {
+            match *segment {
+                Segment::Value => {
+                    $w.u8(0);
+                    $w.u16(0);
+                }
+                Segment::Literal(k) => {
+                    $w.u8(1);
+                    $w.u16(k.0);
+                }
+            }
+        }
+    }};
 }
 
 /// Read an operand of the kind from the reader `$r`.
@@ -502,6 +601,9 @@ macro_rules! decode_operand {
     (Captures, $r:expr) => {
         $r.list::<UpvalueDesc>()?
     };
+    (Segments, $r:expr) => {
+        $r.segments()?
+    };
 }
 
 /// The decoded operand `$v` of the kind, for the verifier.
@@ -565,6 +667,9 @@ macro_rules! checked_operand {
     };
     (Captures, $v:expr) => {
         Operand::Captures($v)
+    };
+    (Segments, $v:expr) => {
+        Operand::Segments($v)
     };
 }
 
@@ -766,8 +871,11 @@ ops! {
     Not => pops 1, pushes 1;
 
     // ── String interpolation ───────────────────────────────────
-    /// Concatenate the top `count` strings into one String.
-    StringConcat { count: U8("segments of a string interpolation") } => pops count, pushes 1;
+    /// The String of the segments, in their order: a literal segment
+    /// is the string constant, read where it is (its count is not
+    /// touched); a value segment is the next of the strings on the
+    /// stack, which it takes off.
+    Interpolate { segments: Segments("segments of a string interpolation") } => pops segments.values(), pushes 1;
     /// Convert TOS to its Display string.
     DisplayValue => pops 1, pushes 1;
 

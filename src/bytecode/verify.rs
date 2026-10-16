@@ -45,7 +45,7 @@ use crate::builtins::registry::{BuiltinId, Row, registry};
 use crate::value::Value;
 
 use super::ops::{ConstKind, Effect, Flow, Instr, Operand, decode};
-use super::{Const, Function};
+use super::{Const, Function, Segment};
 
 /// Why a function's code is malformed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,6 +321,24 @@ fn check(
                     _ => Ok(()),
                 }
             }),
+            Operand::Segments(segments) => {
+                let values = segments
+                    .iter(chunk.code())
+                    .filter(|segment| *segment == Segment::Value)
+                    .count();
+                match values == segments.values() {
+                    true => segments
+                        .iter(chunk.code())
+                        .try_for_each(|segment| match segment {
+                            Segment::Literal(k) => constant(k, ConstKind::Str),
+                            Segment::Value => Ok(()),
+                        }),
+                    false => Err(format!(
+                        "`{op}` says {} of its segments are values, and {values} are",
+                        segments.values()
+                    )),
+                }
+            }
         };
         if wrong.is_none() {
             wrong = result.err();
@@ -799,6 +817,51 @@ mod tests {
         assert_eq!(
             rejected_fn(call("test.assert_eq", 3)),
             "at offset 3: `CallBuiltin` calls test.assert_eq with 3 arguments, and it takes 2"
+        );
+    }
+
+    #[test]
+    fn bad_18_interpolation_whose_segments_do_not_agree() {
+        let interpolate = |values: u8, segments: &[[u8; 3]]| {
+            let mut code = vec![op(Op::Unit), op(Op::Unit)];
+            code.extend([op(Op::Interpolate), segments.len() as u8, values]);
+            code.extend(segments.iter().flatten());
+            code.push(op(Op::Return));
+            code
+        };
+        let (literal, value) = ([1, 0, 0], [0, 0, 0]);
+        let hi = || vec![Value::String("hi".into())];
+        verify(&Function::unverified(
+            0,
+            0,
+            interpolate(2, &[literal, value, literal, value]),
+            hi(),
+        ))
+        .unwrap();
+        // A count of values that is not the count of value segments.
+        assert_eq!(
+            rejected(interpolate(1, &[value, value]), hi()),
+            "at offset 2: `Interpolate` says 1 of its segments are values, and 2 are"
+        );
+        assert_eq!(
+            rejected(interpolate(2, &[literal, value]), hi()),
+            "at offset 2: `Interpolate` says 2 of its segments are values, and 1 are"
+        );
+        // More values than the frame holds.
+        assert_eq!(
+            rejected(interpolate(3, &[value, value, value]), hi()),
+            "at offset 2: `Interpolate` takes 3 values off a frame of 2"
+        );
+        // A literal that is no string.
+        assert_eq!(
+            rejected(interpolate(0, &[literal]), vec![Value::Int(7)]),
+            "at offset 2: `Interpolate` names constant 0 as Str, and it is 7"
+        );
+        // Segments cut off by the end of the code.
+        let code = vec![op(Op::Interpolate), 2, 0, 1, 0, 0, 1, 0];
+        assert_eq!(
+            rejected(code, hi()),
+            "at offset 0: no instruction is encoded here"
         );
     }
 
