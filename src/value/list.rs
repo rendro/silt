@@ -312,11 +312,12 @@ impl List {
     /// of a list of a million would keep the million). A part of a
     /// tree gets a tree of its own made of the parts of the tree it
     /// shares with it, in steps that grow with the logarithm of the
-    /// length; a part of a buffer, or a part of a tree short enough to
-    /// be kept in a buffer, is copied. A walk down a list by its rest
-    /// copies a third of a list in a buffer in all (a quarter of it once
-    /// it is that short, a quarter of that, and so on), and of a list
-    /// in a tree the elements of a buffer's length.
+    /// length; a part of a list kept side by side (in a buffer, or a
+    /// long one made in one go), or a part of a tree short enough to be
+    /// kept in a buffer, is copied. A walk down a list by its rest
+    /// copies a third of a list kept side by side in all (a quarter of
+    /// it once it is that short, a quarter of that, and so on), and of
+    /// a list in a tree the elements of a buffer's length.
     pub fn slice(&self, from: usize, to: usize) -> List {
         let to = to.min(self.len());
         let from = from.min(to);
