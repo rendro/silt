@@ -205,6 +205,18 @@ impl Value {
     /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by
     /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
     pub fn contains_fn(&self) -> bool {
+        // A value without parts answers by itself, before the worklist
+        // is made: `==` on two Ints, Floats, Bools or Strings allocates
+        // nothing.
+        match self {
+            Value::List(_)
+            | Value::Tuple(_)
+            | Value::Variant(_)
+            | Value::Set(_)
+            | Value::Map(_)
+            | Value::Record(_) => {}
+            other => return other.is_fn(),
+        }
         // A worklist, not recursion: values nest as deep as a program
         // builds them.
         let mut pending = vec![self];
