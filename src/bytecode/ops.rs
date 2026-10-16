@@ -177,7 +177,7 @@ impl<T: Packed> Operands<T> {
 
     /// The items, read from `code`: the code the instruction was decoded
     /// from.
-    pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = T> + Clone + 'c
+    pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = T> + Clone + use<'c, T>
     where
         T: 'c,
     {
@@ -217,9 +217,12 @@ impl Segments {
     /// The segments, read from `code`: the code the instruction was
     /// decoded from.
     pub fn iter<'c>(&self, code: &'c [u8]) -> impl Iterator<Item = Segment> + Clone + 'c {
-        code[self.at..self.at + self.len() * Segment::SIZE]
-            .chunks_exact(Segment::SIZE)
-            .map(Segment::unpack)
+        let list: Operands<Segment> = Operands {
+            at: self.at,
+            count: self.len(),
+            item: PhantomData,
+        };
+        list.iter(code)
     }
 }
 
