@@ -1777,3 +1777,121 @@ fn a_list_in_order_and_without_its_repeats() {
     assert_eq!(long.unique().len(), long.len());
     assert_eq!(long.unique().get(41), Some(Value::Int(42)));
 }
+
+/// A list's key, its text and the walks of the run time read the
+/// elements it holds as runs of them side by side in memory
+/// (`List::runs`): one run while a list is held whole in one buffer,
+/// several where a list is stored in pieces. Where the runs end is
+/// nothing these show. Lists whose runs end in different places (one
+/// run against three), nested in each other, near the top of a value
+/// and below where the walk takes a stack of its own, are equal,
+/// ordered, hashed and written as their twins of one run each are.
+#[test]
+fn where_a_list_s_runs_end_is_nothing_a_value_shows() {
+    use super::list::cut::runs_at_most;
+    // `value` with each list in it a part of a buffer with `off`
+    // elements before it: its runs end at other places than those of
+    // a list in a buffer of its own.
+    fn moved(value: &Value, off: usize) -> Value {
+        match value {
+            Value::List(list) if list.range_ends().is_none() => {
+                let items: Vec<Value> = list.iter().map(|item| moved(&item, off)).collect();
+                let len = items.len();
+                let buf = std::iter::repeat_n(Value::Unit, off).chain(items);
+                let part = List::from(buf.collect::<Vec<_>>()).slice(off, off + len);
+                if len > 0 {
+                    assert_eq!(part.buffer().map(|(n, _)| n), Some(off + len));
+                }
+                Value::List(part)
+            }
+            other => other.clone(),
+        }
+    }
+    let runs = |list: &Value| -> Vec<usize> {
+        let Value::List(list) = list else {
+            panic!("no list: {list:?}")
+        };
+        list.runs().map(<[Value]>::len).collect()
+    };
+    let four = Value::list((0..4).map(Value::Int).collect());
+    assert_eq!(runs(&four), [4]);
+    runs_at_most(2, || {
+        assert_eq!(runs(&four), [2, 2]);
+        assert_eq!(runs(&moved(&four, 1)), [1, 2, 1]);
+        assert_eq!(runs(&moved(&four, 2)), [2, 2]);
+        assert_eq!(runs(&moved(&four, 3)), [1, 2, 1]);
+    });
+    runs_at_most(3, || assert_eq!(runs(&moved(&four, 2)), [1, 3]));
+
+    // Every list of up to three of these, and three lists that hold no
+    // element.
+    let alphabet = [
+        Value::Int(0),
+        Value::Int(1),
+        Value::list(vec![Value::Int(0)]),
+        Value::VariantConstructor(bv::SOME.into()),
+    ];
+    let mut lists = vec![Vec::new()];
+    let mut longer = vec![Vec::new()];
+    for _ in 0..3 {
+        longer = longer
+            .iter()
+            .flat_map(|list: &Vec<Value>| {
+                alphabet.iter().map(move |item| {
+                    let mut list = list.clone();
+                    list.push(item.clone());
+                    list
+                })
+            })
+            .collect();
+        lists.extend(longer.iter().cloned());
+    }
+    let mut values: Vec<Value> = lists.into_iter().map(Value::list).collect();
+    for (lo, hi) in [(0, 1), (0, 2), (1, 3)] {
+        values.push(Value::List(List::ints(lo, hi).expect("a short range")));
+    }
+    assert_eq!(values.len(), 85 + 3);
+
+    // What a value shows, and of two which comes first.
+    let shown = |a: &Value, b: &Value| {
+        (
+            a == b,
+            a.cmp(b),
+            hash_of(a),
+            hash_of(b),
+            format!("{a} {a:?} {b} {b:?}"),
+            a.contains_fn(),
+            a.writable().is_ok(),
+        )
+    };
+    // Where the runs end, and how far into its buffer each list of the
+    // two begins.
+    let cuts = [(1, 0, 1), (2, 0, 1), (2, 3, 0), (3, 1, 2), (5, 0, 3)];
+    let near = super::key::NEAR;
+    // A list of three around `inner`, `levels` deep.
+    let deep = |inner: &Value, levels: usize| {
+        (0..levels).fold(inner.clone(), |inner, _| {
+            Value::list(vec![Value::Int(7), inner, Value::Int(8)])
+        })
+    };
+    let mut compared = 0;
+    for (at, a) in values.iter().enumerate() {
+        for (bt, b) in values.iter().enumerate() {
+            let mut pairs = vec![(a.clone(), b.clone())];
+            // (Below `NEAR` for a sample of the pairs.)
+            if (at * values.len() + bt).is_multiple_of(23) {
+                pairs.push((deep(a, near + 2), deep(b, near + 2)));
+            }
+            for (a, b) in pairs {
+                let expected = shown(&a, &b);
+                for (most, a_off, b_off) in cuts {
+                    let (a, b) = (moved(&a, a_off), moved(&b, b_off));
+                    let got = runs_at_most(most, || shown(&a, &b));
+                    assert_eq!(got, expected, "{a:?} and {b:?}, runs of {most}");
+                    compared += 1;
+                }
+            }
+        }
+    }
+    assert!(compared > 88 * 88 * cuts.len());
+}

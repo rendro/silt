@@ -77,6 +77,10 @@ pub enum Value {
     Unit,
 }
 
+// A value is 40 bytes: the instruction loop is written, and checked by
+// the loop guard in CI (.github/scripts/loop-guard), for that size.
+const _: () = assert!(std::mem::size_of::<Value>() == 40);
+
 impl Value {
     /// The list of `items`.
     pub fn list(items: Vec<Value>) -> Value {
@@ -223,10 +227,11 @@ impl Value {
         while let Some(value) = pending.pop() {
             match value {
                 value if value.is_fn() => return true,
+                // (A list that holds no element holds no function, and
+                // has no run.)
                 Value::List(items) => {
-                    // (A list that holds no element holds no function.)
-                    if let list::Elements::Items(items) = items.elements() {
-                        pending.extend(items);
+                    for run in items.runs() {
+                        pending.extend(run);
                     }
                 }
                 Value::Tuple(items) => pending.extend(items.iter()),

@@ -35,7 +35,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::ControlFlow::{self, Break, Continue};
 use std::sync::Arc;
 
-use super::list::Elements;
+use super::list;
 use super::{List, Value};
 use crate::typeinfo::TypeInfo;
 
@@ -264,8 +264,12 @@ fn first_of<'a, const N: usize>(slices: &mut [&'a [Value]; N]) -> Among<&'a Valu
 /// what is left of a map and of a set is kept apart.)
 enum Parts<'a, const N: usize> {
     /// The items of tuples, the fields of variants, the captures of
-    /// closures, the elements that lists hold: those left.
+    /// closures, the elements that lists hold in one run each: those
+    /// left.
     Values([&'a [Value]; N]),
+    /// The elements that lists hold in more runs than one: what is
+    /// left of the run of each, and the runs after it.
+    Elements(Box<([&'a [Value]; N], [list::Runs<'a>; N])>),
     /// The fields of records, in the order the type of each declares
     /// them; the type of the first names them.
     Fields(&'a TypeInfo, [&'a [Value]; N]),
@@ -317,6 +321,11 @@ impl<'a, const N: usize> Parts<'a, N> {
     fn next(&mut self) -> Among<&'a Value, N> {
         match self {
             Parts::Values(values) | Parts::Fields(_, values) => first_of(values),
+            Parts::Elements(lists) => {
+                let (runs, more) = &mut **lists;
+                next_runs(runs, more);
+                first_of(runs)
+            }
             Parts::Entries(entries, values) => match values.take() {
                 Some(values) => Among::All(values),
                 None => match next_of(entries) {
@@ -347,6 +356,10 @@ impl<'a, const N: usize> Parts<'a, N> {
         match self {
             Parts::Values(values) | Parts::Fields(_, values) => {
                 values.iter().all(|values| values.is_empty())
+            }
+            Parts::Elements(lists) => {
+                let (runs, more) = &**lists;
+                runs.iter().all(|run| run.is_empty()) && more.iter().all(list::Runs::is_done)
             }
             Parts::Entries(entries, values) => {
                 values.is_none() && entries.iter().all(|entries| entries.len() == 0)
@@ -387,13 +400,16 @@ trait Visit<const N: usize> {
     fn uneven(&mut self, ended: [bool; N]) -> ControlFlow<Self::Stop>;
 }
 
-/// The parts of values that keep them in one run: the items of
-/// tuples, the fields of variants and of records, the captures of
-/// closures, the elements that lists hold.
+/// The parts of values that keep them in runs: the items of tuples,
+/// the fields of variants and of records, the captures of closures,
+/// the elements that lists hold.
 enum Runs<'a, const N: usize> {
-    /// The parts of each value, and for records the type that names
-    /// them.
+    /// The parts of each value, in one run, and for records the type
+    /// that names them.
     Of(Option<&'a TypeInfo>, [&'a [Value]; N]),
+    /// The elements of lists, in runs of them ([`List::runs`]) that
+    /// may end in different places in each list.
+    Elements([list::Runs<'a>; N]),
     /// Lists that are answered for without their elements.
     Done,
     /// Maps or sets: their parts are in no run.
@@ -401,7 +417,7 @@ enum Runs<'a, const N: usize> {
 }
 
 /// The parts of `values`, whose heads are visited and of one kind with
-/// parts, if the values keep them in one run; with the step of the
+/// parts, if the values keep them in runs; with the step of the
 /// visitor that comes before the parts.
 #[inline(always)]
 fn runs<'a, const N: usize, V: Visit<N>>(
@@ -444,12 +460,7 @@ fn runs<'a, const N: usize, V: Visit<N>>(
             if !visit.lists(lists)? {
                 return Continue(Runs::Done);
             }
-            for (run, list) in runs.iter_mut().zip(lists) {
-                if let Elements::Items(held) = list.elements() {
-                    *run = held;
-                }
-            }
-            Continue(Runs::Of(None, runs))
+            Continue(Runs::Elements(lists.map(List::runs)))
         }
         _ => Continue(Runs::Not),
     }
@@ -493,6 +504,7 @@ fn through<const N: usize, V: Visit<N>>(
 ) -> ControlFlow<V::Stop> {
     let (names, mut runs) = match runs(values, visit)? {
         Runs::Of(names, runs) => (names, runs),
+        Runs::Elements(more) => return through_elements(more, visit, depth),
         Runs::Done => return Continue(()),
         Runs::Not => return through_many(values, visit, depth),
     };
@@ -507,6 +519,53 @@ fn through<const N: usize, V: Visit<N>>(
             Among::All(next) => part(next, visit, depth)?,
             Among::None => return Continue(()),
             Among::Some(ended) => return visit.uneven(ended),
+        }
+    }
+}
+
+/// The next run of each list whose run so far is all visited, where
+/// one is left: after it, a run of `runs` is empty only if its list
+/// has no element left.
+#[inline]
+fn next_runs<'a, const N: usize>(runs: &mut [&'a [Value]; N], more: &mut [list::Runs<'a>; N]) {
+    for (run, more) in runs.iter_mut().zip(more) {
+        if run.is_empty()
+            && let Some(next) = more.next()
+        {
+            *run = next;
+        }
+    }
+}
+
+/// [`through`] for lists, whose elements are in runs that may end in
+/// different places in each list (`more`): as many elements of each as
+/// the shortest run left has, side by side, and then the next runs of
+/// those that are all visited.
+fn through_elements<'a, const N: usize, V: Visit<N>>(
+    mut more: [list::Runs<'a>; N],
+    visit: &mut V,
+    depth: usize,
+) -> ControlFlow<V::Stop> {
+    let mut runs: [&'a [Value]; N] = [&[]; N];
+    loop {
+        next_runs(&mut runs, &mut more);
+        let mut ended = [false; N];
+        let mut step = usize::MAX;
+        for (run, ended) in runs.iter().zip(&mut ended) {
+            *ended = run.is_empty();
+            step = step.min(run.len());
+        }
+        if step == 0 {
+            return match ended.contains(&false) {
+                true => visit.uneven(ended),
+                false => Continue(()),
+            };
+        }
+        for at in 0..step {
+            part(runs.map(|run| &run[at]), visit, depth)?;
+        }
+        for run in &mut runs {
+            *run = &run[step..];
         }
     }
 }
@@ -601,6 +660,16 @@ fn parts<'a, const N: usize, V: Visit<N>>(
     Continue(match runs(values, visit)? {
         Runs::Of(Some(ty), runs) => Some(Parts::Fields(ty, runs)),
         Runs::Of(None, runs) => Some(Parts::Values(runs)),
+        Runs::Elements(mut more) => {
+            let mut runs = [&[][..]; N];
+            next_runs(&mut runs, &mut more);
+            // (Lists of one run each are walked as the items of
+            // tuples are, and nothing is boxed.)
+            match more.iter().all(list::Runs::is_done) {
+                true => Some(Parts::Values(runs)),
+                false => Some(Parts::Elements(Box::new((runs, more)))),
+            }
+        }
         Runs::Done => None,
         Runs::Not => {
             let (lens, parts) = Parts::of_many(values);
@@ -657,33 +726,29 @@ fn through_far<'a, const N: usize, V: Visit<N>>(
 
 // ── The three visitors ─────────────────────────────────────────────
 
-/// The order of a list that holds the elements `items` and the list
+/// The order of a list that holds its elements, `held`, and the list
 /// of the Ints from `lo` to `hi`: element by element, and a list that
 /// ends first is the lesser.
-fn cmp_items_ints(items: &[Value], lo: i64, hi: i64) -> Ordering {
-    for (item, n) in items.iter().zip(lo..=hi) {
+fn cmp_held_ints(held: &List, lo: i64, hi: i64) -> Ordering {
+    for (item, n) in held.runs().flatten().zip(lo..=hi) {
         let ordering = item.cmp(&Value::Int(n));
         if ordering.is_ne() {
             return ordering;
         }
     }
-    (items.len() as u64).cmp(&(hi.abs_diff(lo) + 1))
+    (held.len() as u64).cmp(&(hi.abs_diff(lo) + 1))
 }
 
 /// The order of two lists of which one at least holds no element;
 /// `None` if both hold theirs.
 fn cmp_without_elements(a: &List, b: &List) -> Option<Ordering> {
-    match (a.elements(), b.elements()) {
-        (Elements::Items(_), Elements::Items(_)) => None,
+    match (a.range_ends(), b.range_ends()) {
+        (None, None) => None,
         // Of two runs of Ints the one that begins lower is the
         // lesser, and of two that begin alike the shorter.
-        (Elements::Ints(a_lo, a_hi), Elements::Ints(b_lo, b_hi)) => {
-            Some(a_lo.cmp(&b_lo).then(a_hi.cmp(&b_hi)))
-        }
-        (Elements::Items(items), Elements::Ints(lo, hi)) => Some(cmp_items_ints(items, lo, hi)),
-        (Elements::Ints(lo, hi), Elements::Items(items)) => {
-            Some(cmp_items_ints(items, lo, hi).reverse())
-        }
+        (Some((a_lo, a_hi)), Some((b_lo, b_hi))) => Some(a_lo.cmp(&b_lo).then(a_hi.cmp(&b_hi))),
+        (None, Some((lo, hi))) => Some(cmp_held_ints(a, lo, hi)),
+        (Some((lo, hi)), None) => Some(cmp_held_ints(b, lo, hi).reverse()),
     }
 }
 

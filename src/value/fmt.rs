@@ -15,7 +15,7 @@
 use std::collections::{btree_map, btree_set};
 use std::fmt;
 
-use super::list::Elements;
+use super::list::Runs;
 use super::{List, Record, TooLong, Value};
 use crate::typeinfo::{FieldType, ty};
 
@@ -41,8 +41,8 @@ impl Value {
             match value {
                 Value::List(items) => {
                     items.writable()?;
-                    if let Elements::Items(items) = items.elements() {
-                        pending.extend(items);
+                    for run in items.runs() {
+                        pending.extend(run);
                     }
                 }
                 Value::Tuple(items) => pending.extend(items.iter()),
@@ -143,9 +143,11 @@ struct Open<'a> {
 /// The parts of a value yet to be written, in the order they are
 /// written in.
 enum Parts<'a> {
-    /// The items of a tuple, the fields of a variant, the elements a
-    /// list holds.
+    /// The items of a tuple, the fields of a variant.
     Values(std::slice::Iter<'a, Value>),
+    /// The elements a list holds: what is left of a run of them, and
+    /// the runs after it.
+    Elements(std::slice::Iter<'a, Value>, Runs<'a>),
     /// The fields of a record, in the order its type declares them
     /// (an anonymous record's in name order), each after its name.
     Fields(
@@ -174,6 +176,12 @@ impl<'a> Parts<'a> {
     fn next(&mut self) -> Option<Part<'a>> {
         match self {
             Parts::Values(values) => values.next().map(Part::Value),
+            Parts::Elements(run, more) => loop {
+                if let Some(value) = run.next() {
+                    return Some(Part::Value(value));
+                }
+                *run = more.next()?.iter();
+            },
             Parts::Fields(names, values) => {
                 let value = values.next()?;
                 let (name, _) = names.next()?;
@@ -265,12 +273,12 @@ fn begin<'a>(
             }
             .map(|()| None);
         }
-        Value::List(xs) => match xs.elements() {
-            Elements::Items(items) => {
+        Value::List(xs) => match xs.range_ends() {
+            None => {
                 f.write_str("[")?;
-                (Parts::Values(items.iter()), "]")
+                (Parts::Elements([].iter(), xs.runs()), "]")
             }
-            Elements::Ints(lo, hi) => return write_ints(f, xs, lo, hi).map(|()| None),
+            Some((lo, hi)) => return write_ints(f, xs, lo, hi).map(|()| None),
         },
         Value::Tuple(items) => {
             f.write_str("(")?;

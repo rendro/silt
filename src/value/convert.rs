@@ -1,7 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::list::Elements;
 use super::{Float, Value};
 use crate::typeinfo::bv;
 use crate::vm::VmError;
@@ -53,9 +52,9 @@ impl HostShape {
             | (HostShape::String, Value::String(_))
             | (HostShape::Bytes, Value::Bytes(_))
             | (HostShape::Unit, Value::Unit) => true,
-            (HostShape::List(item), Value::List(items)) => match items.elements() {
-                Elements::Items(items) => items.iter().all(|v| item.admits(v)),
-                Elements::Ints(lo, _) => item.admits(&Value::Int(lo)),
+            (HostShape::List(item), Value::List(items)) => match items.range_ends() {
+                None => items.runs().flatten().all(|v| item.admits(v)),
+                Some((lo, _)) => item.admits(&Value::Int(lo)),
             },
             (HostShape::Set(item), Value::Set(items)) => items.iter().all(|v| item.admits(v)),
             (HostShape::Map(k, v), Value::Map(entries)) => entries
