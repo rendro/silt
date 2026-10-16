@@ -582,10 +582,9 @@ pub(crate) mod list {
             xs.last()
         }
 
-        fn reverse(xs: List) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            items.reverse();
-            Ok(items)
+        fn reverse(xs: List) -> Result<Value, VmError> {
+            xs.writable()?;
+            Ok(Value::List(xs.iter().rev().collect()))
         }
 
         fn sort(xs: List) -> Result<Value, VmError> {
@@ -621,16 +620,12 @@ pub(crate) mod list {
             })
         }
 
-        fn append(xs: List, elem: &Value) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            items.push(elem.clone());
-            Ok(items)
+        fn append(xs: List, elem: &Value) -> Result<Value, VmError> {
+            Ok(Value::List(xs.push_back(elem.clone())?))
         }
 
-        fn prepend(xs: List, elem: &Value) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            items.insert(0, elem.clone());
-            Ok(items)
+        fn prepend(xs: List, elem: &Value) -> Result<Value, VmError> {
+            Ok(Value::List(xs.push_front(elem.clone())?))
         }
 
         fn concat(xs: List, ys: List) -> Result<Value, VmError> {
@@ -644,12 +639,10 @@ pub(crate) mod list {
         }
 
         fn set(xs: List, index: i64, value: &Value) -> Result<Option<Value>, VmError> {
-            let Some(index) = usize::try_from(index).ok().filter(|at| *at < xs.len()) else {
+            let Ok(index) = usize::try_from(index) else {
                 return Ok(None);
             };
-            let mut items = xs.to_vec()?;
-            items[index] = value.clone();
-            Ok(Some(Value::list(items)))
+            Ok(xs.set(index, value.clone())?.map(Value::List))
         }
 
         fn take(xs: List, n: i64) -> Result<Value, VmError> {
@@ -685,12 +678,10 @@ pub(crate) mod list {
         }
 
         fn remove_at(xs: List, index: i64) -> Result<Option<Value>, VmError> {
-            let Some(index) = usize::try_from(index).ok().filter(|at| *at < xs.len()) else {
+            let Ok(index) = usize::try_from(index) else {
                 return Ok(None);
             };
-            let mut items = xs.to_vec()?;
-            items.remove(index);
-            Ok(Some(Value::list(items)))
+            Ok(xs.remove_at(index)?.map(Value::List))
         }
 
         fn sum(xs: List) -> Result<i64, VmError> {
@@ -735,26 +726,19 @@ pub(crate) mod list {
             crate::builtins::numeric::checked_float(total, || "list.product_float overflow".into())
         }
 
-        fn intersperse(xs: List, sep: &Value) -> Result<Vec<Value>, VmError> {
-            let items = xs.to_vec()?;
-            if items.len() <= 1 {
-                return Ok(items);
-            }
+        fn intersperse(xs: List, sep: &Value) -> Result<Value, VmError> {
+            xs.writable()?;
             // Result length = 2*N - 1
-            let out_len = items.len() * 2 - 1;
+            let out_len = xs.len().saturating_mul(2).saturating_sub(1);
             if out_len > MAX_RANGE_MATERIALIZE {
                 return Err(VmError::new(format!(
                     "list.intersperse: result length {out_len} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
                 )));
             }
-            let mut result = Vec::with_capacity(out_len);
-            for (at, item) in items.into_iter().enumerate() {
-                if at > 0 {
-                    result.push(sep.clone());
-                }
-                result.push(item);
-            }
-            Ok(result)
+            let mut items = xs.iter();
+            let first = items.next();
+            let rest = items.flat_map(|item| [sep.clone(), item]);
+            Ok(Value::List(first.into_iter().chain(rest).collect()))
         }
     }
 }

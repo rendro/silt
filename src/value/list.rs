@@ -255,6 +255,44 @@ impl List {
         })
     }
 
+    /// The list of `value` and then the elements.
+    pub fn push_front(&self, value: Value) -> Result<List, TooLong> {
+        self.writable()?;
+        let mut items = Vec::with_capacity(self.len() + 1);
+        items.push(value);
+        items.extend(self.iter());
+        Ok(List::from(items))
+    }
+
+    /// The list of the elements and then `value`.
+    pub fn push_back(&self, value: Value) -> Result<List, TooLong> {
+        let mut items = self.to_vec()?;
+        items.push(value);
+        Ok(List::from(items))
+    }
+
+    /// The list with `value` in place of the element at `index`;
+    /// `None` if the list has no element there.
+    pub fn set(&self, index: usize, value: Value) -> Result<Option<List>, TooLong> {
+        if index >= self.len() {
+            return Ok(None);
+        }
+        let mut items = self.to_vec()?;
+        items[index] = value;
+        Ok(Some(List::from(items)))
+    }
+
+    /// The list without the element at `index`; `None` if the list has
+    /// no element there.
+    pub fn remove_at(&self, index: usize) -> Result<Option<List>, TooLong> {
+        if index >= self.len() {
+            return Ok(None);
+        }
+        let mut items = self.to_vec()?;
+        items.remove(index);
+        Ok(Some(List::from(items)))
+    }
+
     /// Whether the elements may be written out one by one ([`List::to_vec`],
     /// the text of the list): a list that holds its elements always, one
     /// that holds none (`a..b`) up to 10,000,000 of them.

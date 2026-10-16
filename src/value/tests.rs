@@ -1470,6 +1470,56 @@ fn two_lists_as_one_list() {
     assert!(long.concat(&List::new()).is_err());
 }
 
+/// A list with an element more at either end, with one element in
+/// place of another, or without one: a new list, however the list is
+/// stored and whether it is a part of another, and the list stays as
+/// it was. An index past the end is no element; a list that holds no
+/// element is made one that holds them if they are few enough.
+#[test]
+fn a_list_updated_is_a_new_list() {
+    let n = Value::Int;
+    for xs in both().into_iter().chain(both().map(|xs| xs.slice(2, 10))) {
+        let mut want = elements(&xs);
+        let first = want[0].clone();
+        let pushed = xs.push_front(n(-1)).expect("few elements");
+        want.insert(0, n(-1));
+        assert_eq!(elements(&pushed), want);
+        want.remove(0);
+        let pushed = xs.push_back(n(-1)).expect("few elements");
+        want.push(n(-1));
+        assert_eq!(elements(&pushed), want);
+        want.pop();
+        let len = want.len();
+        for at in [0, 3, len - 1] {
+            let set = xs
+                .set(at, n(-1))
+                .expect("few elements")
+                .expect("in the list");
+            let mut changed = want.clone();
+            changed[at] = n(-1);
+            assert_eq!(elements(&set), changed);
+            let removed = xs.remove_at(at).expect("few elements").expect("in it");
+            let mut changed = want.clone();
+            changed.remove(at);
+            assert_eq!(elements(&removed), changed);
+        }
+        assert!(xs.set(len, n(-1)).expect("no error").is_none());
+        assert!(xs.remove_at(len).expect("no error").is_none());
+        assert_eq!(elements(&xs), want);
+        assert_eq!(xs.first(), Some(first));
+    }
+    let long = ints(1, MAX_RANGE_MATERIALIZE as i64 + 1);
+    assert!(long.push_front(n(0)).is_err());
+    assert!(long.push_back(n(0)).is_err());
+    assert!(long.set(0, n(0)).is_err());
+    assert!(long.remove_at(0).is_err());
+    assert!(
+        long.set(long.len(), n(0))
+            .expect("no element there")
+            .is_none()
+    );
+}
+
 /// A part of a list shares the list's buffer if it is a quarter of the
 /// buffer or more, and has a buffer of its own if it is less: a list
 /// keeps at most four times its own elements from being freed.
