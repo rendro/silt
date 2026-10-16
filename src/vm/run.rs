@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
-use crate::bytecode::{Chunk, Instr, Op, Segment, VmClosure, decode};
+use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
 use crate::value::{Float, List, Record, Value};
@@ -298,6 +298,51 @@ fn pop_done(stack: &mut Vec<Value>) {
     }
 }
 
+/// `Interpolate`: put the String of `segments` in place of the values
+/// of the segments on top of `stack`. A lone segment that is a String
+/// is the String itself: nothing is copied. Otherwise the string is
+/// written in `text`, the VM's buffer, and copied once into the String
+/// it is. A literal is read in place: its count is not touched, which
+/// tasks running the same code share. `Err` names the slot of a value
+/// that is none of those `DisplayValue` leaves (`write_plain`).
+///
+/// A call, not a part of the loop: the loop's code is kept to what it
+/// was, which the speed of every program hangs on.
+#[inline(never)]
+fn interpolate(
+    stack: &mut Vec<Value>,
+    text: &mut String,
+    segments: Segments,
+    code: &[u8],
+    chunk: &Chunk,
+) -> Result<(), usize> {
+    let start = stack.len() - segments.values();
+    if segments.len() == 1 && segments.values() == 1 && matches!(stack[start], Value::String(_)) {
+        return Ok(());
+    }
+    let mut buffer = std::mem::take(text);
+    buffer.clear();
+    let mut next = start;
+    for segment in segments.iter(code) {
+        match segment {
+            Segment::Literal(k) => buffer.push_str(chunk.string(k)),
+            Segment::Value => {
+                if !write_plain(&mut buffer, &stack[next]) {
+                    return Err(next);
+                }
+                next += 1;
+            }
+        }
+    }
+    stack.truncate(start);
+    stack.push(Value::String(buffer.as_str().into()));
+    // (A buffer an outsized string grew is not kept.)
+    if buffer.capacity() <= KEPT_TEXT {
+        *text = buffer;
+    }
+    Ok(())
+}
+
 /// The most bytes of the buffer `Interpolate` writes in that a VM
 /// keeps for the next one ([`Vm`]'s `text`).
 const KEPT_TEXT: usize = 4096;
@@ -580,15 +625,14 @@ impl Vm {
                 // A String, an Int, a Float or a Bool stays as it is:
                 // `Interpolate` writes it where it goes (`write_plain`,
                 // src/vm/show.rs). Any other value is made its text.
+                // (Put back, not left with a `continue`: one cost `fib`
+                // a fifth more instructions, measured 2026-10-16.)
                 Instr::DisplayValue => {
-                    if matches!(
-                        peek(&self.stack),
-                        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_)
-                    ) {
-                        continue;
-                    }
                     let val = pop(&mut self.stack);
                     match &val {
+                        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_) => {
+                            self.stack.push(val)
+                        }
                         // Mirror the typechecker's string-interpolation Display
                         // gate (inference.rs ~2654): the typechecker's
                         // `type_name_for_impl` reduces a *concrete* operand to a
@@ -643,47 +687,13 @@ impl Vm {
                     }
                 }
                 Instr::Interpolate { segments } => {
-                    let start = self.stack.len() - segments.values();
-                    // A lone `"{s}"` of a String is that String: nothing
-                    // is copied.
-                    if segments.len() == 1
-                        && segments.values() == 1
-                        && matches!(self.stack[start], Value::String(_))
-                    {
-                        continue;
-                    }
-                    // The string is written in the VM's buffer, and
-                    // copied once into the String it is. A literal is
-                    // read in place: its count is not touched, which
-                    // tasks running the same code share.
-                    let mut text = std::mem::take(&mut self.text);
-                    text.clear();
-                    let mut next = start;
-                    let mut written = true;
-                    for segment in segments.iter(code) {
-                        match segment {
-                            Segment::Literal(k) => text.push_str(chunk.string(k)),
-                            Segment::Value => {
-                                written = write_plain(&mut text, &self.stack[next]);
-                                if !written {
-                                    break;
-                                }
-                                next += 1;
-                            }
-                        }
-                    }
-                    if !written {
+                    let written = interpolate(&mut self.stack, &mut self.text, segments, code, chunk);
+                    if let Err(at) = written {
                         fail!(VmError::type_confusion(format!(
                             "string interpolation requires string values, got {} \
                              — call `.to_string()` or `.display()` on the value first",
-                            self.user_facing_type_name(&self.stack[next])
+                            self.user_facing_type_name(&self.stack[at])
                         )));
-                    }
-                    self.stack.truncate(start);
-                    self.stack.push(Value::String(text.as_str().into()));
-                    // (A buffer an outsized string grew is not kept.)
-                    if text.capacity() <= KEPT_TEXT {
-                        self.text = text;
                     }
                 }
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
