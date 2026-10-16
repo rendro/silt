@@ -45,9 +45,9 @@ pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
 
 /// The most elements a list a change makes keeps side by side in a
 /// buffer; a longer one keeps them in a tree. A list made from one kept
-/// in a tree goes
-/// back to a buffer only when it has half as many, so that a list that
-/// grows and shrinks around the length does not cross it each time.
+/// in a tree goes back to a buffer only when it has half as many, so
+/// that a list that grows and shrinks around the length does not cross
+/// it each time.
 ///
 /// A change to a list in a buffer copies the buffer: at most this many
 /// elements, a cost that does not grow with the list.
@@ -56,12 +56,35 @@ pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
 /// 64, interleaved, median of five): lists of 40, 64, 96 and 200
 /// elements built by `list.append`, `[x, ..xs]` and `list.set` and read
 /// by `[x, ..rest]` and `list.get` took the same time with each, within
-/// 5% and in no order. Memory decided (peak RSS per list of 100,000):
-/// a tree takes a leaf of 64 elements however few it holds, 2,709 B,
-/// where a buffer of 20 takes 834 B, of 33 1,345 B and of 64 2,591 B.
-/// With 16 a list of 20 took three times what it took before; with 64
-/// no list up to 64 elements takes more than its buffer.
+/// 5% and in no order. Memory decided: a tree has a fixed part of about
+/// 8 KB however few elements it holds, so with 16 a list of 20 would
+/// take 2.6 KB where its buffer takes 0.8 KB. Bytes per list a change
+/// made, peak RSS over 20,000 lists (a list made in one go is kept side
+/// by side, and takes what a buffer takes, at every length):
+///
+/// | elements | in a buffer | in a tree |
+/// |---|---|---|
+/// | 20 | 831 | — |
+/// | 64 | 2,590 | — |
+/// | 65 | 2,614 | 10,584 |
+/// | 128 | 5,144 | 10,584 |
+/// | 256 | 10,269 | 13,192 |
+/// | 512 | 20,506 | 25,768 |
+/// | 1,000 | 40,042 | 46,641 |
+///
+/// (The buffer column past 64 is what a buffer of that length takes:
+/// a list made in one go, or one on main.) The trees of 65 to some 500
+/// elements take two to four times a buffer, past 1,000 some 1.2
+/// times; a size that kept them under 1.3 times everywhere would be
+/// 2,048, with changes of every list up to that copying it whole.
 pub(super) const FLAT_MOST: usize = 64;
+
+/// The most elements of a short list that [`List::concat`] puts into
+/// the tree of a long one one by one; a longer one is made a tree and
+/// the two are joined. (imbl 7, probes/imbl_threshold.rs: joining a
+/// tree of 128 to another took 3.5 us, putting an element in 0.2 us:
+/// the two cost alike at about 16 elements.)
+const PUSHED_MOST: usize = 16;
 
 /// A list.
 #[derive(Clone)]
@@ -371,10 +394,10 @@ impl List {
     /// list that holds them: a list that holds none may have too many
     /// for that.
     ///
-    /// Of two lists of which one is short (no longer than a list kept
-    /// in a buffer) the elements of the short one are put into the tree
-    /// of the other one by one: `[x, ..xs]` costs what an element more at the
-    /// front does. Two long ones are joined tree to tree.
+    /// Of two lists of which one is short (16 elements at most) the
+    /// elements of the short one are put into the tree of the
+    /// other one by one: `[x, ..xs]` costs what an element more at the
+    /// front does. Two longer ones are joined tree to tree.
     pub fn concat(&self, other: &List) -> Result<List, TooLong> {
         self.writable()?;
         other.writable()?;
@@ -392,14 +415,14 @@ impl List {
             other.write_into(&mut items);
             return Ok(List::from(items));
         }
-        let tree = if self.len() <= FLAT_MOST {
+        let tree = if self.len() <= PUSHED_MOST {
             let mut tree = other.to_tree();
             copied(self.len());
             for item in self.iter().rev() {
                 tree.push_front(item);
             }
             tree
-        } else if other.len() <= FLAT_MOST {
+        } else if other.len() <= PUSHED_MOST {
             let mut tree = self.to_tree();
             copied(other.len());
             tree.extend(other.iter());
