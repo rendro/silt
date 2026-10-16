@@ -90,13 +90,6 @@ fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
     }
 }
 
-/// The entries of a map as items.
-fn entries(m: Map) -> Vec<Value> {
-    m.iter()
-        .map(|(k, v)| Value::tuple(vec![k.clone(), v.clone()]))
-        .collect()
-}
-
 fn keep_result(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     out.push(result);
     next()
@@ -749,7 +742,7 @@ pub(crate) mod map {
         fn filter(m: Map, f: &Value) -> Step {
             iterate(
                 "map.filter",
-                super::entries(m),
+                m.clone(),
                 f.clone(),
                 Vec::new(),
                 key_and_value,
@@ -769,7 +762,7 @@ pub(crate) mod map {
         fn map(m: Map, f: &Value) -> Step {
             iterate(
                 "map.map",
-                super::entries(m),
+                m.clone(),
                 f.clone(),
                 Vec::new(),
                 key_and_value,
@@ -787,7 +780,7 @@ pub(crate) mod map {
         }
 
         fn each(m: Map, f: &Value) -> Step {
-            iterate("map.each", super::entries(m), f.clone(), (), key_and_value, ignore, unit)
+            iterate("map.each", m.clone(), f.clone(), (), key_and_value, ignore, unit)
         }
 
         fn update(m: Map, key: &Value, default: &Value, f: &Value) -> Result<Step, VmError> {
@@ -837,8 +830,9 @@ pub(crate) mod map {
             Value::Map(m1.merge(m2))
         }
 
-        fn entries(m: Map) -> Vec<Value> {
-            super::entries(m)
+        fn entries(m: Map) -> Value {
+            let entries = m.iter();
+            Value::List(entries.map(|(k, v)| Value::tuple(vec![k.clone(), v.clone()])).collect())
         }
 
         fn from_entries(entries: List) -> Result<Value, VmError> {
@@ -869,11 +863,6 @@ pub(crate) mod map {
 pub(crate) mod set {
     use super::*;
 
-    /// The elements of a set as items.
-    fn elements(s: Set) -> Vec<Value> {
-        s.iter().cloned().collect()
-    }
-
     /// The operations on two sets walk both anyway, so both are
     /// gated: that catches sets with functions in them that an ungated
     /// producer built (a `set.map` callback that returns closures).
@@ -883,13 +872,13 @@ pub(crate) mod set {
 
     builtins! {
         fn map(s: Set, f: &Value) -> Step {
-            iterate("set.map", elements(s), f.clone(), Vec::new(), item_arg, keep_result, as_set)
+            iterate("set.map", s.clone(), f.clone(), Vec::new(), item_arg, keep_result, as_set)
         }
 
         fn filter(s: Set, f: &Value) -> Step {
             iterate(
                 "set.filter",
-                elements(s),
+                s.clone(),
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -899,13 +888,13 @@ pub(crate) mod set {
         }
 
         fn each(s: Set, f: &Value) -> Step {
-            iterate("set.each", elements(s), f.clone(), (), item_arg, ignore, unit)
+            iterate("set.each", s.clone(), f.clone(), (), item_arg, ignore, unit)
         }
 
         fn fold(s: Set, init: &Value, f: &Value) -> Step {
             iterate(
                 "set.fold",
-                elements(s),
+                s.clone(),
                 f.clone(),
                 init.clone(),
                 acc_and_item,
@@ -926,8 +915,8 @@ pub(crate) mod set {
             Ok(Value::set(xs))
         }
 
-        fn to_list(s: Set) -> Vec<Value> {
-            elements(s)
+        fn to_list(s: Set) -> Value {
+            Value::List(s.iter().cloned().collect())
         }
 
         // Only the probe is gated (the lookup stays O(log n)): the
