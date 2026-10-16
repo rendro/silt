@@ -132,6 +132,9 @@ pub struct Vm {
     /// slots and tables, not a copy of them: a task starts with nothing
     /// to copy, however many definitions the program has.
     pub(crate) view: runtime::View,
+    /// This VM's own copies of the closures of the global slots it has
+    /// read: what it calls in their place ([`runtime::OwnClosures`]).
+    pub(crate) own: runtime::OwnClosures,
 
     // ── Concurrency state ────────────────────────────────────────
     next_channel_id: Arc<AtomicU64>,
@@ -306,6 +309,7 @@ impl Vm {
             stack: Vec::new(),
             builtin_args: Vec::new(),
             view: Default::default(),
+            own: Default::default(),
             view_count: 0,
             settled: Default::default(),
             next_channel_id: Arc::new(AtomicU64::new(0)),
@@ -605,8 +609,7 @@ impl Vm {
 
     /// Set the global slot `slot`. `false` if the VM has no such slot.
     pub(crate) fn set_global(&mut self, slot: u16, value: Value) -> bool {
-        let slot = usize::from(slot);
-        let Some(unset) = self.view.slots.get(slot) else {
+        let Some(unset) = self.view.slots.get(usize::from(slot)) else {
             return false;
         };
         // A slot is set once in the life of a program, and every VM of
@@ -620,6 +623,7 @@ impl Vm {
         // and none is given out twice; `slots_set_again` counts.)
         if let Err(value) = unset.set(value) {
             count_set_again();
+            self.own.forget(slot);
             let again = OnceLock::from(value);
             let runtime = self.runtime.clone();
             let mut newest = runtime.newest.view.lock();
@@ -627,10 +631,10 @@ impl Vm {
             // no task holding them, they are set again where they are.)
             newest.slots = Arc::from([]);
             match Arc::get_mut(&mut self.view.slots) {
-                Some(slots) => slots[slot] = again,
+                Some(slots) => slots[usize::from(slot)] = again,
                 None => {
                     let mut slots: Vec<OnceLock<Value>> = self.view.slots.iter().cloned().collect();
-                    slots[slot] = again;
+                    slots[usize::from(slot)] = again;
                     self.view.slots = slots.into();
                 }
             }
@@ -652,6 +656,7 @@ impl Vm {
             stack: Vec::new(),
             builtin_args: Vec::new(),
             view: self.view_of_a_task(),
+            own: Default::default(),
             view_count: self.view_count,
             settled: self.settled.clone(),
             next_channel_id: self.next_channel_id.clone(),

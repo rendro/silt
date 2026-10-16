@@ -1004,6 +1004,137 @@ impl View {
     }
 }
 
+/// The VM's own copies of the closures it has read from the global
+/// slots (top-level functions, impl methods), by slot.
+///
+/// A closure in a global slot is one allocation for every VM of the
+/// program, and each call of it counts a reference to it up and down:
+/// tasks on several cores that call one function would each take the
+/// cache line of that count from the others, every call. So a VM calls
+/// a copy of its own, made the first time it reads the slot: the same
+/// `Function`, the same captures, and so the same value
+/// (src/value/key.rs).
+///
+/// With each copy is kept the closure it was copied from, and a copy is
+/// used only for that one: a slot that is set again (an embedder runs
+/// another program on the VM, see [`Vm::set_global`]) holds another
+/// closure, which is copied in turn. (The closure kept also keeps its
+/// address from being that of another.)
+///
+/// The copies are in a table of their own size, not one of the
+/// program's slots: a task that calls one function of a program of
+/// thousands holds one copy. The copy of the slot `s` is at the place
+/// `s` modulo the number of places, or at the first place after it
+/// that is free or has it; at most half of the places are taken.
+#[derive(Default)]
+pub(crate) struct OwnClosures {
+    /// A power of two of places, or none.
+    places: Vec<Option<Copied>>,
+    /// How many places are taken.
+    taken: usize,
+}
+
+/// The copy of the closure of a global slot.
+struct Copied {
+    slot: u16,
+    /// The closure in the slot when it was copied.
+    shared: Arc<VmClosure>,
+    own: Arc<VmClosure>,
+}
+
+impl OwnClosures {
+    /// This VM's copy of `shared`, the closure in the global slot
+    /// `slot`.
+    #[inline(always)]
+    pub(crate) fn of(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
+        // (With no places, the mask is all ones and the first look
+        // finds none.)
+        let mask = self.places.len().wrapping_sub(1);
+        let mut at = usize::from(slot) & mask;
+        while let Some(Some(copied)) = self.places.get(at) {
+            if copied.slot == slot {
+                if Arc::ptr_eq(&copied.shared, shared) {
+                    return copied.own.clone();
+                }
+                break;
+            }
+            at = (at + 1) & mask;
+        }
+        self.copy(slot, shared)
+    }
+
+    /// The value `value` of the global slot `slot` as this VM uses it:
+    /// its copy if it is a closure.
+    pub(crate) fn value(&mut self, slot: u16, value: Value) -> Value {
+        match value {
+            Value::VmClosure(shared) => Value::VmClosure(self.of(slot, &shared)),
+            value => value,
+        }
+    }
+
+    /// Copy `shared`, the closure in the global slot `slot`, for this
+    /// VM, in place of any copy the slot had.
+    #[cold]
+    #[inline(never)]
+    fn copy(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
+        let own = Arc::new(VmClosure {
+            function: shared.function.clone(),
+            upvalues: shared.upvalues.clone(),
+        });
+        self.forget(slot);
+        if 2 * (self.taken + 1) > self.places.len() {
+            let places = (2 * self.places.len()).max(8);
+            let copies = std::mem::replace(&mut self.places, (0..places).map(|_| None).collect());
+            copies
+                .into_iter()
+                .flatten()
+                .for_each(|copied| self.put(copied));
+        }
+        self.put(Copied {
+            slot,
+            shared: shared.clone(),
+            own: own.clone(),
+        });
+        self.taken += 1;
+        own
+    }
+
+    /// Put `copied` at its place, in a table with a free place and no
+    /// copy of its slot.
+    fn put(&mut self, copied: Copied) {
+        let mask = self.places.len() - 1;
+        let mut at = usize::from(copied.slot) & mask;
+        while self.places[at].is_some() {
+            at = (at + 1) & mask;
+        }
+        self.places[at] = Some(copied);
+    }
+
+    /// How many places the table has.
+    #[cfg(test)]
+    pub(crate) fn places(&self) -> usize {
+        self.places.len()
+    }
+
+    /// Let go of the copy of the closure that was in the global slot
+    /// `slot`, if there is one: the slot is set again. (Seldom: the
+    /// copies are put in their places again without it.)
+    pub(crate) fn forget(&mut self, slot: u16) {
+        let had = |copied: &Option<Copied>| matches!(copied, Some(copied) if copied.slot == slot);
+        if !self.places.iter().any(had) {
+            return;
+        }
+        let places = self.places.len();
+        let copies = std::mem::replace(&mut self.places, (0..places).map(|_| None).collect());
+        for copied in copies.into_iter().flatten() {
+            match copied.slot == slot {
+                true => self.taken -= 1,
+                false => self.put(copied),
+            }
+        }
+    }
+}
+
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {

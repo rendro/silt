@@ -150,9 +150,9 @@ fn other_ordering(a: &Value, b: &Value) -> Result<Ordering, VmError> {
 ///
 /// The checker rejects ordering a value that holds a function
 /// (`Compare` is decided by structure): this is the backstop at the
-/// execution site. Without it `Value::cmp` would order `VmClosure`
-/// leaves by `Arc::as_ptr` (src/value/key.rs), a result that depends
-/// on heap allocation order.
+/// execution site. Without it `Value::cmp` would order the `VmClosure`
+/// leaves of two functions by where the functions are (src/value/key.rs),
+/// a result that depends on heap allocation order.
 fn ordering_with_fn_gate(a: &Value, b: &Value) -> Result<Ordering, VmError> {
     if a.contains_fn() || b.contains_fn() {
         return Err(VmError::type_confusion(

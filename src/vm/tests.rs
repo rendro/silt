@@ -231,6 +231,106 @@ fn the_vm_of_a_task_finds_the_slots_of_a_later_program() {
     assert_eq!(task.global(3), Some(&Value::Int(4)));
 }
 
+/// A VM reads a copy of its own of a closure in a global slot: made
+/// the first time it reads the slot, equal to the slot's closure, and
+/// read from then on; the VM of a task makes a copy of its own. A slot
+/// that is set again (a VM runs a second program) holds another
+/// closure, which is copied in turn.
+#[test]
+fn a_vm_reads_its_own_copy_of_a_global_closure() {
+    fn closure(name: &str, captured: i64) -> Arc<VmClosure> {
+        Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit(name.into(), 0)),
+            upvalues: vec![Value::Int(captured)],
+        })
+    }
+    /// What `GetGlobal` of slot 0 pushes.
+    fn read(vm: &mut Vm) -> Arc<VmClosure> {
+        let script = make_function(|e| {
+            e.emit(Asm::GetGlobal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        match vm.run(script) {
+            Ok(Value::VmClosure(closure)) => closure,
+            other => panic!("not a closure: {other:?}"),
+        }
+    }
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
+    let shared = closure("f", 1);
+    assert!(vm.set_global(0, Value::VmClosure(shared.clone())));
+
+    let own = read(&mut vm);
+    assert!(!Arc::ptr_eq(&own, &shared));
+    assert!(Arc::ptr_eq(&own.function, &shared.function));
+    assert_eq!(
+        Value::VmClosure(own.clone()),
+        Value::VmClosure(shared.clone())
+    );
+    assert!(Arc::ptr_eq(&read(&mut vm), &own));
+
+    let mut task = vm.spawn_child();
+    let task_own = read(&mut task);
+    assert!(!Arc::ptr_eq(&task_own, &own) && !Arc::ptr_eq(&task_own, &shared));
+    assert!(Arc::ptr_eq(&read(&mut task), &task_own));
+
+    // Set again: the VM reads a copy of the new closure, the task goes
+    // on with the slots it has.
+    let other = closure("g", 2);
+    assert!(vm.set_global(0, Value::VmClosure(other.clone())));
+    let own_other = read(&mut vm);
+    assert!(Arc::ptr_eq(&own_other.function, &other.function));
+    assert_eq!(own_other.upvalues, [Value::Int(2)]);
+    assert!(Arc::ptr_eq(&read(&mut task), &task_own));
+    // The copy of the closure that was there is let go of.
+    drop((own, task_own, task));
+    assert_eq!(Arc::strong_count(&shared), 1);
+}
+
+/// A VM's copies take places as many as the slots it has read, not as
+/// the highest of them; each slot gives the copy it has, whatever the
+/// slots it shares places with; a slot that holds another closure, or
+/// whose copy was let go of, is copied anew.
+#[test]
+fn the_copies_of_a_vm_are_as_many_as_the_slots_it_read() {
+    fn closure(captured: i64) -> Arc<VmClosure> {
+        Arc::new(VmClosure {
+            function: Arc::new(Function::returning_unit("f".into(), 0)),
+            upvalues: vec![Value::Int(captured)],
+        })
+    }
+    let mut own = runtime::OwnClosures::default();
+    assert_eq!(own.places(), 0);
+    // Slots far apart, and slots that share a place in a small table.
+    let slots: Vec<u16> = (0..40).map(|i| i * 1601).chain([8, 16, 24, 32]).collect();
+    let shared: Vec<Arc<VmClosure>> = (0..slots.len()).map(|i| closure(i as i64)).collect();
+    let copies: Vec<Arc<VmClosure>> = (slots.iter().zip(&shared))
+        .map(|(&slot, shared)| own.of(slot, shared))
+        .collect();
+    assert!(own.places() <= 4 * slots.len(), "{} places", own.places());
+    for ((&slot, shared), copy) in slots.iter().zip(&shared).zip(&copies) {
+        assert!(!Arc::ptr_eq(copy, shared));
+        assert_eq!(copy.upvalues, shared.upvalues);
+        assert!(Arc::ptr_eq(&own.of(slot, shared), copy));
+    }
+    // Another closure in a slot: a copy of it, and the others stay.
+    let other = closure(-1);
+    let copy = own.of(slots[3], &other);
+    assert_eq!(copy.upvalues, [Value::Int(-1)]);
+    assert!(Arc::ptr_eq(&own.of(slots[3], &other), &copy));
+    // A copy let go of: the slot is copied anew, the others stay.
+    own.forget(slots[5]);
+    assert!(!Arc::ptr_eq(&own.of(slots[5], &shared[5]), &copies[5]));
+    for (i, ((&slot, shared), copy)) in slots.iter().zip(&shared).zip(&copies).enumerate() {
+        if i != 3 && i != 5 {
+            assert!(Arc::ptr_eq(&own.of(slot, shared), copy), "slot {slot}");
+        }
+    }
+    // The table holds the closures it copied and no more.
+    drop(own);
+    assert!(shared.iter().all(|shared| Arc::strong_count(shared) == 1));
+}
+
 #[test]
 fn test_locals() {
     let script = make_function(|e| {
@@ -4541,7 +4641,16 @@ mod pushes_that_make_room {
             });
             let mut vm = Vm::new(crate::HostIo::process());
             vm.view.slots = Arc::from([std::sync::OnceLock::new()]);
-            all_are(vm.run(script).unwrap(), &sample);
+            let pushed = vm.run(script).unwrap();
+            match &sample {
+                // A closure: the VM's own copy of it, one copy each time.
+                Value::VmClosure(shared) => {
+                    let own = vm.own.of(0, shared);
+                    assert!(!Arc::ptr_eq(&own, shared));
+                    all_are(pushed, &Value::VmClosure(own));
+                }
+                _ => all_are(pushed, &sample),
+            }
         }
     }
 

@@ -7,7 +7,8 @@
 //!
 //! The fix mirrors the `Ord` arms into `PartialEq`:
 //!   - `Handle(a) == Handle(b)` iff `a.id == b.id`
-//!   - `VmClosure(a) == VmClosure(b)` iff `Arc::ptr_eq(a, b)`
+//!   - `VmClosure(a) == VmClosure(b)` iff they run one `Function`
+//!     and their captures are equal
 //!   - `BuiltinFn(a) == BuiltinFn(b)` iff `a == b` (by name)
 //!   - `VariantConstructor(na, aa) == VariantConstructor(nb, ab)`
 //!     iff `na == nb && aa == ab`
@@ -66,7 +67,7 @@ fn mk_closure(name: &str) -> Arc<VmClosure> {
     })
 }
 
-/// Same Arc → equal (ptr_eq).
+/// Same Arc → equal.
 #[test]
 fn partial_eq_vmclosure_same_arc() {
     let arc = mk_closure("f");
@@ -77,8 +78,8 @@ fn partial_eq_vmclosure_same_arc() {
     assert_eq!(a, a.clone());
 }
 
-/// Different Arc allocations → not equal (even same name), matching
-/// `impl Ord`'s identity-based semantics.
+/// Closures of two functions → not equal (even same name), matching
+/// `impl Ord`.
 #[test]
 fn partial_eq_vmclosure_distinct_arcs_not_equal() {
     let a = Value::VmClosure(mk_closure("f"));

@@ -589,21 +589,22 @@ pub(crate) mod list {
         }
 
         fn sort(xs: List) -> Result<Value, VmError> {
-            // Fn elements would sort by Arc pointer address (ASLR-
-            // nondeterministic) — reject like the operator gates do.
+            // Fn elements of two functions would sort by the functions'
+            // addresses (ASLR-nondeterministic) — reject like the
+            // operator gates do.
             ensure_no_fn_in("list.sort", "Compare", xs)?;
             Ok(Value::List(xs.sorted()))
         }
 
         fn unique(xs: List) -> Result<Value, VmError> {
-            // Fn elements would dedup by identity (Arc pointer / builtin
-            // name) instead of erroring like `f == g` does.
+            // Fn elements would dedup by identity (function and captures
+            // / builtin name) instead of erroring like `f == g` does.
             ensure_no_fn_in("list.unique", "Equal", xs)?;
             Ok(Value::List(xs.unique()))
         }
 
         fn contains(xs: List, elem: &Value) -> Result<bool, VmError> {
-            // Fn membership would silently answer via Arc identity
+            // Fn membership would silently answer by function identity
             // (`list.contains([f], g)` -> false) instead of erroring.
             ensure_no_fn_in("list.contains", "Equal", xs)?;
             ensure_no_fn("list.contains", "Equal", [elem])?;
@@ -670,7 +671,7 @@ pub(crate) mod list {
         }
 
         fn index_of(xs: List, target: &Value) -> Result<Option<Value>, VmError> {
-            // Fn search would silently answer via Arc identity
+            // Fn search would silently answer by function identity
             // (`list.index_of([f, g], g)` -> Some(1)) instead of erroring.
             ensure_no_fn_in("list.index_of", "Equal", xs)?;
             ensure_no_fn("list.index_of", "Equal", [target])?;
@@ -811,7 +812,7 @@ pub(crate) mod map {
             // Runtime Fn gate on the KEY only — same rationale as the
             // `map.from_entries` gate (its signature has no bound, so a
             // Fn key typechecks and both the `m.get` probe and the
-            // `insert` below would compare it by Arc pointer address).
+            // `insert` below would order it by its function's address).
             // The default and the callback result are map VALUES and
             // stay ungated.
             ensure_no_fn("map.update", "Hash", [key])?;
@@ -879,7 +880,7 @@ pub(crate) mod map {
                 // Runtime Fn gate on the KEY only (values are never
                 // compared): `map.from_entries` has no `where` bound
                 // that rules a function out as a key, and such keys
-                // would be ordered by Arc pointer address —
+                // would be ordered by their functions' addresses —
                 // ASLR-nondeterministic entry order. The trait name
                 // matches the static map-key contract.
                 ensure_no_fn("map.from_entries", "Hash", [&key])?;
@@ -945,7 +946,7 @@ pub(crate) mod set {
 
         fn from_list(xs: List) -> Result<BTreeSet<Value>, VmError> {
             xs.writable()?;
-            // A set of Fn values is BTree-ordered by Arc pointer address —
+            // A set of Fn values is BTree-ordered by the functions' addresses —
             // ASLR-nondeterministic iteration order. Reject at construction.
             ensure_no_fn_in("set.from_list", "Compare", xs)?;
             Ok(xs.iter().collect())

@@ -20,8 +20,9 @@ use crate::bytecode::Globals;
 use crate::value::{Shown, Value};
 
 /// The parts of a value that written `Display` impls show, each with
-/// its type's `display`, in the order the formatter comes to them.
-type Parts = Vec<(Value, Value)>;
+/// its type's `display` and the global slot of it, in the order the
+/// formatter comes to them.
+type Parts = Vec<(Value, u16, Value)>;
 
 /// What is done with the text of a value once it is shown.
 type Then = Box<dyn FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send>;
@@ -58,9 +59,12 @@ impl Native for Showing {
                 }
             }
         }
-        if let Some((part, display)) = self.parts.get(self.texts.len()) {
+        if let Some((part, slot, display)) = self.parts.get(self.texts.len()) {
             self.calling = true;
-            return Ok(vm.call(display.clone(), [part.clone()]));
+            // (The VM's own copy of the impl's closure, as a call of
+            // the impl's method would take.)
+            let display = vm.own.value(*slot, display.clone());
+            return Ok(vm.call(display, [part.clone()]));
         }
         let next = Cell::new(0);
         let texts = &self.texts;
@@ -90,19 +94,24 @@ fn written_slot(table: &Globals, value: &Value) -> Option<u16> {
 }
 
 impl Vm {
-    /// The `display` the program wrote for the type of `value`.
+    /// The `display` the program wrote for the type of `value`, and its
+    /// global slot.
     ///
     /// An impl of `Display` is written in the module that declares its
     /// type, and a module's functions are set before any of its code
     /// runs, so a value of the type is never there before the impl is:
     /// an impl that is not set yet is a bug of silt, and said so, not
     /// taken for a type without one.
-    fn written_display(&self, table: &Globals, value: &Value) -> Result<Option<Value>, VmError> {
+    fn written_display(
+        &self,
+        table: &Globals,
+        value: &Value,
+    ) -> Result<Option<(u16, Value)>, VmError> {
         let Some(slot) = written_slot(table, value) else {
             return Ok(None);
         };
         match self.global(slot).cloned() {
-            Some(display) => Ok(Some(display)),
+            Some(display) => Ok(Some((slot, display))),
             None => Err(VmError::type_confusion(format!(
                 "the `display` written for '{}' is called before it is set",
                 self.user_facing_type_name(value)
@@ -124,8 +133,8 @@ impl Vm {
         let unset: RefCell<Option<VmError>> = RefCell::new(None);
         let unwritten = Cell::new(false);
         let text = Shown(value, &|part, _| {
-            let display = match self.written_display(table, part) {
-                Ok(Some(display)) => display,
+            let (slot, display) = match self.written_display(table, part) {
+                Ok(Some(written)) => written,
                 Ok(None) => {
                     unwritten.set(true);
                     return None;
@@ -135,7 +144,7 @@ impl Vm {
                     return None;
                 }
             };
-            parts.borrow_mut().push((part.clone(), display));
+            parts.borrow_mut().push((part.clone(), slot, display));
             Some(Ok(()))
         })
         .to_string();

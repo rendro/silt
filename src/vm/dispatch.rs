@@ -168,7 +168,7 @@ impl Vm {
                 // wrapper (`fn eq(a: x, b: x) -> Bool { a.equal(b) }`)
                 // can launder such values past the typechecker's
                 // concrete-operand gate, and `PartialEq for Value` would
-                // silently answer with `Arc::ptr_eq` identity.
+                // silently answer by function and captures.
                 if receiver.contains_fn() || extra_args[0].contains_fn() {
                     return Some(Err(VmError::new(
                         "type 'Fn' does not implement Equal".into(),
@@ -187,8 +187,9 @@ impl Vm {
                 // Execution-site backstop mirroring `ordering_with_fn_gate`
                 // (src/vm/arithmetic.rs): reject operands that are, or
                 // transitively contain, a function-shaped leaf before any
-                // arm can defer to `Value::cmp`, which orders closures by
-                // `Arc::as_ptr` — an ASLR-nondeterministic result for a
+                // arm can defer to `Value::cmp`, which orders closures of
+                // two functions by the functions' addresses — an
+                // ASLR-nondeterministic result for a
                 // polymorphic `fn cmp(a: x, b: x) -> Int { a.compare(b) }`
                 // laundering a container of functions past the typechecker.
                 if receiver.contains_fn() || other.contains_fn() {
