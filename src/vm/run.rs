@@ -344,8 +344,9 @@ fn interpolate(
 }
 
 /// The most bytes of the buffer `Interpolate` writes in that a VM
-/// keeps for the next one ([`Vm`]'s `text`).
-const KEPT_TEXT: usize = 4096;
+/// keeps for the next one ([`Vm`]'s `text`). Small: a program can have
+/// a hundred thousand VMs, each holding its buffer while it lives.
+const KEPT_TEXT: usize = 256;
 
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
