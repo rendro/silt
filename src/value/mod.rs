@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
@@ -13,6 +12,7 @@ mod float;
 mod fmt;
 mod key;
 mod list;
+mod map;
 mod obj;
 mod tuple;
 
@@ -21,11 +21,11 @@ mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub(crate) use deep::drop_held;
-pub use deep::{Entries, Members};
 pub use float::Float;
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
 pub use obj::{Record, Variant};
 pub use tuple::Tuple;
 
@@ -36,8 +36,8 @@ pub enum Value {
     Bool(bool),
     String(Arc<str>),
     List(List),
-    Map(Arc<Entries>),
-    Set(Arc<Members>),
+    Map(Map),
+    Set(Set),
     Tuple(Tuple),
     Record(Record),
     Variant(Variant),
@@ -100,14 +100,15 @@ impl Value {
         Value::Tuple(Tuple::from(items))
     }
 
-    /// The map of `entries`.
-    pub fn map(entries: BTreeMap<Value, Value>) -> Value {
-        Value::Map(Arc::new(Entries::from(entries)))
+    /// The map of `entries`: of a key given twice, the value given
+    /// last.
+    pub fn map(entries: impl IntoIterator<Item = (Value, Value)>) -> Value {
+        Value::Map(entries.into_iter().collect())
     }
 
     /// The set of `members`.
-    pub fn set(members: BTreeSet<Value>) -> Value {
-        Value::Set(Arc::new(Members::from(members)))
+    pub fn set(members: impl IntoIterator<Item = Value>) -> Value {
+        Value::Set(members.into_iter().collect())
     }
 
     /// The record of the type `ty` with the fields `fields`, in the

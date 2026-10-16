@@ -623,7 +623,7 @@ fn a_record_is_of_its_type() {
         [&anon, &car, &person],
         [&car, &anon, &person],
     ] {
-        let members: BTreeSet<Value> = order.into_iter().cloned().collect();
+        let members: std::collections::BTreeSet<Value> = order.into_iter().cloned().collect();
         assert_eq!(members.len(), 3);
         let hashed: std::collections::HashSet<Value> = order.into_iter().cloned().collect();
         assert_eq!(hashed.len(), 3);
@@ -657,7 +657,7 @@ fn records_are_ordered_and_hashed_in_declaration_order() {
 
     // `Response` declares `status` before `body`: the status decides.
     let response = |status, body: &str| {
-        let headers = Value::map(BTreeMap::new());
+        let headers = Value::map([]);
         let body = Value::Bytes(Arc::new(body.as_bytes().to_vec()));
         Value::builtin_record(
             ty::RESPONSE,
@@ -696,10 +696,10 @@ fn values_of_every_kind_have_one_key() {
         Value::list(vec![Value::Int(2)]),
         Value::tuple(vec![Value::Int(1), Value::Int(2)]),
         Value::tuple(vec![Value::Int(1), Value::Int(3)]),
-        Value::map(BTreeMap::from([(Value::Int(1), Value::Int(1))])),
-        Value::map(BTreeMap::from([(Value::Int(1), Value::Int(2))])),
-        Value::set(BTreeSet::from([Value::Int(1)])),
-        Value::set(BTreeSet::from([Value::Int(1), Value::Int(2)])),
+        Value::map([(Value::Int(1), Value::Int(1))]),
+        Value::map([(Value::Int(1), Value::Int(2))]),
+        Value::set([Value::Int(1)]),
+        Value::set([Value::Int(1), Value::Int(2)]),
         Value::anon_record([("x", Value::Int(1))]),
         Value::variant(bv::OK, vec![Value::Int(1)]),
         Value::variant(bv::OK, vec![Value::Int(2)]),
@@ -853,23 +853,20 @@ fn the_key_is_the_same_where_the_walk_changes_its_stack() {
         // list is hashed by its ends.)
         &|inner, pre, post| Value::list(vec![Value::Int(10 + pre), inner, Value::Int(20 + post)]),
         &|inner, pre, post| {
-            Value::map(BTreeMap::from([
+            Value::map([
                 (Value::Int(1), Value::Int(pre)),
                 (Value::Int(2), inner),
                 (Value::Int(3), Value::Int(post)),
-            ]))
+            ])
         },
         &|inner, pre, post| {
-            Value::map(BTreeMap::from([
-                (Value::Int(pre), Value::Int(0)),
-                (inner, Value::Int(post)),
-            ]))
+            Value::map([(Value::Int(pre), Value::Int(0)), (inner, Value::Int(post))])
         },
         // (An Int is the first member of a set, before one that has
         // parts, and a variant the last, after a set.)
         &|inner, pre, post| {
             let after = Value::variant(last.clone(), vec![Value::Int(post)]);
-            Value::set(BTreeSet::from([Value::Int(pre), inner, after]))
+            Value::set([Value::Int(pre), inner, after])
         },
         &|inner, pre, post| {
             Value::variant(w.clone(), vec![Value::Int(pre), inner, Value::Int(post)])
@@ -1164,24 +1161,21 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         // A key that is a string is in quotes however the map is
         // written; a key that has parts is written like any value.
         (
-            Value::map(BTreeMap::from([
+            Value::map([
                 (text("k"), text("v")),
                 (text("l"), Value::list(vec![Value::Int(1)])),
-            ])),
+            ]),
             "#{\"k\": v, \"l\": [1]}",
             "#{\"k\": \"v\", \"l\": [1]}",
         ),
         (
-            Value::map(BTreeMap::from([(
-                Value::tuple(vec![Value::Int(1), text("a")]),
-                Value::Int(2),
-            )])),
+            Value::map([(Value::tuple(vec![Value::Int(1), text("a")]), Value::Int(2))]),
             "#{(1, a): 2}",
             "#{(1, \"a\"): 2}",
         ),
-        (Value::map(BTreeMap::new()), "#{}", "#{}"),
+        (Value::map([]), "#{}", "#{}"),
         (
-            Value::set(BTreeSet::from([text("b"), text("a")])),
+            Value::set([text("b"), text("a")]),
             "#[a, b]",
             "#[\"a\", \"b\"]",
         ),
@@ -1326,9 +1320,9 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
         },
         &|n, rest| Value::tuple(vec![Value::Int(n), rest]),
         // A map, of which the next level is a value, or a key; a set.
-        &|n, rest| Value::map(BTreeMap::from([(Value::Int(n), rest)])),
-        &|n, rest| Value::map(BTreeMap::from([(rest, Value::Int(n))])),
-        &|_, rest| Value::set(BTreeSet::from([rest])),
+        &|n, rest| Value::map([(Value::Int(n), rest)]),
+        &|n, rest| Value::map([(rest, Value::Int(n))]),
+        &|_, rest| Value::set([rest]),
         // A closure that has captured the next level.
         &|_, rest| {
             Value::VmClosure(Arc::new(VmClosure {
@@ -1352,7 +1346,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
         &|n, rest| match n % 4 {
             0 => Value::list(vec![rest]),
             1 => Value::tuple(vec![rest, Value::Int(n)]),
-            2 => Value::set(BTreeSet::from([rest])),
+            2 => Value::set([rest]),
             _ => Value::variant(bv::SOME, vec![rest]),
         },
     ];
@@ -1371,10 +1365,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
 
 #[test]
 fn display_set() {
-    let mut s = BTreeSet::new();
-    s.insert(Value::Int(1));
-    s.insert(Value::Int(2));
-    let set = Value::set(s);
+    let set = Value::set([Value::Int(1), Value::Int(2)]);
     assert_eq!(format!("{}", set), "#[1, 2]");
 }
 

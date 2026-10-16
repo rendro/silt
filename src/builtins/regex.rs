@@ -240,7 +240,7 @@ builtins! {
                 let m = caps.name(name)?;
                 Some((string(name), string(m.as_str())))
             });
-            option(Some(Value::map(named.collect())))
+            option(Some(Value::map(named)))
         })
     }
 }

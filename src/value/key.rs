@@ -29,14 +29,13 @@
 //! functions are.
 
 use std::cmp::Ordering;
-use std::collections::{btree_map, btree_set};
 use std::convert::Infallible;
 use std::hash::{Hash, Hasher};
 use std::ops::ControlFlow::{self, Break, Continue};
 use std::sync::Arc;
 
 use super::list;
-use super::{List, Value};
+use super::{List, MapIter, SetIter, Value};
 use crate::typeinfo::TypeInfo;
 
 // ── A value's head and its parts ───────────────────────────────────
@@ -276,12 +275,9 @@ enum Parts<'a, const N: usize> {
     /// The entries of maps in key order, the keys of an entry and then
     /// its values: the entries left, and the values of the keys last
     /// given.
-    Entries(
-        [Box<btree_map::Iter<'a, Value, Value>>; N],
-        Option<[&'a Value; N]>,
-    ),
+    Entries([Box<MapIter<'a>>; N], Option<[&'a Value; N]>),
     /// The members of sets, in order.
-    Members([Box<btree_set::Iter<'a, Value>>; N]),
+    Members([Box<SetIter<'a>>; N]),
 }
 
 impl<'a, const N: usize> Parts<'a, N> {

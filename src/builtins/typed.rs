@@ -15,13 +15,12 @@
 //! errors a correct program can meet (an overflow, an index out of
 //! bounds).
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::runtime::handle::{TaskHandle, TcpListenerHandle, TcpStreamHandle};
 use crate::runtime::sync::Channel;
 use crate::typeinfo::{FieldType, TypeInfo, bv};
-use crate::value::{Entries, Members, Value};
+use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
 /// What a typed call gives: what the body did, or `None` if the
@@ -158,10 +157,10 @@ impl<'a> Arg<'a> for &'a Arc<TcpListenerHandle> {
 }
 
 /// A `Map` argument.
-pub(crate) type Map<'a> = &'a Arc<Entries>;
+pub(crate) type Map<'a> = &'a crate::value::Map;
 
 /// A `Set` argument.
-pub(crate) type Set<'a> = &'a Arc<Members>;
+pub(crate) type Set<'a> = &'a crate::value::Set;
 
 /// The error of a body that finds, in what it was given for the
 /// parameter `param`, a value that the parameter's type does not have:
@@ -176,7 +175,7 @@ pub(crate) fn unsound(name: &str, param: &str) -> VmError {
 }
 
 /// A `Map`.
-impl<'a> Arg<'a> for &'a Arc<Entries> {
+impl<'a> Arg<'a> for &'a crate::value::Map {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::Map(map) => Some(map),
@@ -186,7 +185,7 @@ impl<'a> Arg<'a> for &'a Arc<Entries> {
 }
 
 /// A `Set`.
-impl<'a> Arg<'a> for &'a Arc<Members> {
+impl<'a> Arg<'a> for &'a crate::value::Set {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
             Value::Set(set) => Some(set),
@@ -299,20 +298,6 @@ impl Ret for Vec<Value> {
 impl Ret for Vec<u8> {
     fn ret(self) -> Result<Step, VmError> {
         Ok(Step::Done(Value::Bytes(Arc::new(self))))
-    }
-}
-
-/// A `Map`.
-impl Ret for BTreeMap<Value, Value> {
-    fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::map(self)))
-    }
-}
-
-/// A `Set`.
-impl Ret for BTreeSet<Value> {
-    fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::set(self)))
     }
 }
 

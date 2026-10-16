@@ -1,7 +1,6 @@
 //! Main execution loop and opcode dispatch.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
@@ -841,23 +840,17 @@ impl Vm {
                     self.stack.push(Value::List(elements));
                 }
                 Instr::MakeMap { pairs } => {
-                    let total = pairs * 2;
-                    let start = self.stack.len() - total;
-                    let mut map = BTreeMap::new();
-                    for i in (start..self.stack.len()).step_by(2) {
-                        map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
-                    }
-                    self.stack.truncate(start);
-                    self.stack.push(Value::map(map));
+                    let start = self.stack.len() - pairs * 2;
+                    let map = {
+                        let mut items = self.stack.drain(start..);
+                        Value::map(std::iter::from_fn(|| Some((items.next()?, items.next()?))))
+                    };
+                    self.stack.push(map);
                 }
                 Instr::MakeSet { count } => {
                     let start = self.stack.len() - count;
-                    let mut set = BTreeSet::new();
-                    for i in start..self.stack.len() {
-                        set.insert(self.stack[i].clone());
-                    }
-                    self.stack.truncate(start);
-                    self.stack.push(Value::set(set));
+                    let set = Value::set(self.stack.drain(start..));
+                    self.stack.push(set);
                 }
                 Instr::MakeRecord { ty, fields } => {
                     let start = self.stack.len() - fields.len();

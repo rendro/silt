@@ -12,11 +12,10 @@
 //! it has begun and not yet closed: a value nested a million levels
 //! deep is written like any other.
 
-use std::collections::{btree_map, btree_set};
 use std::fmt;
 
 use super::list::Runs;
-use super::{List, Record, TooLong, Value};
+use super::{List, MapIter, Record, SetIter, TooLong, Value};
 use crate::typeinfo::{FieldType, ty};
 
 impl Value {
@@ -156,9 +155,9 @@ enum Parts<'a> {
     ),
     /// The entries of a map, a key and then its value: the entries
     /// left, and the value of the key last written.
-    Entries(btree_map::Iter<'a, Value, Value>, Option<&'a Value>),
+    Entries(MapIter<'a>, Option<&'a Value>),
     /// The members of a set.
-    Members(btree_set::Iter<'a, Value>),
+    Members(SetIter<'a>),
 }
 
 /// A part of a value, as the formatter comes to it.

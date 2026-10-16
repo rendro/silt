@@ -213,7 +213,7 @@ impl FromIterator<Value> for Buf {
 /// The entries of a map: a `BTreeMap` whose keys and values are
 /// dropped on no native stack however deep they nest.
 #[derive(Default)]
-pub struct Entries {
+pub(super) struct Entries {
     entries: BTreeMap<Value, Value>,
     _leave: Leave,
 }
@@ -221,7 +221,7 @@ pub struct Entries {
 /// The members of a set: a `BTreeSet` whose members are dropped on no
 /// native stack however deep they nest.
 #[derive(Default)]
-pub struct Members {
+pub(super) struct Members {
     members: BTreeSet<Value>,
     _leave: Leave,
 }
