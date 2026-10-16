@@ -1,6 +1,5 @@
 //! The `json.*` builtin functions and the typed decoding `toml.*` shares.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -403,12 +402,10 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
             FieldType::Record(ty.id)
         }
     };
-    let mut map = BTreeMap::new();
+    let mut map = Vec::with_capacity(obj.len());
     for (key, json_val) in obj {
         match json_to_typed_value(vm, json_val, &field_type) {
-            Ok(val) => {
-                map.insert(Value::String(key.clone().into()), val);
-            }
+            Ok(val) => map.push((Value::String(key.clone().into()), val)),
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
     }
@@ -484,10 +481,10 @@ fn json_to_typed_value(
         },
         FieldType::Map(inner) => match json {
             serde_json::Value::Object(obj) => {
-                let mut map = BTreeMap::new();
+                let mut map = Vec::with_capacity(obj.len());
                 for (key, item) in obj {
                     let val = json_to_typed_value(vm, item, inner)?;
-                    map.insert(Value::String(key.clone().into()), val);
+                    map.push((Value::String(key.clone().into()), val));
                 }
                 Ok(Value::map(map))
             }

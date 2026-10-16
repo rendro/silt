@@ -4,7 +4,7 @@
 
 use std::ops::ControlFlow;
 
-use crate::value::{IntoIter, List, Value};
+use crate::value::{IntoIter, List, Map, MapIntoIter, Set, SetIntoIter, Value};
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
@@ -26,14 +26,60 @@ pub(crate) fn stop(value: Value) -> Flow {
 /// What puts the arguments of the call for an item on the stack.
 pub(crate) type Args<S> = fn(&S, &Value, &mut Vec<Value>);
 
+/// The items of an iteration ([`iterate`]): the elements of a list,
+/// the entries of a map, each the item `(key, value)`, or the members
+/// of a set, in order.
+pub(crate) enum Items {
+    List(IntoIter),
+    Map(MapIntoIter),
+    Set(SetIntoIter),
+}
+
+impl Iterator for Items {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        match self {
+            Items::List(elements) => elements.next(),
+            Items::Map(entries) => entries
+                .next()
+                .map(|(key, value)| Value::tuple(vec![key, value])),
+            Items::Set(members) => members.next(),
+        }
+    }
+}
+
+impl From<List> for Items {
+    fn from(list: List) -> Items {
+        Items::List(list.into_iter())
+    }
+}
+
+impl From<Vec<Value>> for Items {
+    fn from(items: Vec<Value>) -> Items {
+        Items::from(List::from(items))
+    }
+}
+
+impl From<Map> for Items {
+    fn from(map: Map) -> Items {
+        Items::Map(map.into_iter())
+    }
+}
+
+impl From<Set> for Items {
+    fn from(set: Set) -> Items {
+        Items::Set(set.into_iter())
+    }
+}
+
 /// A builtin that calls `callback` for each of `items` in turn, with a
 /// state `S` of its own (`list.map`: the results so far).
 struct Iterate<S> {
     name: &'static str,
     /// The items no call was made for yet. They are taken one by one
-    /// from the list as it is: no item is copied before its call, so a
-    /// builtin that stops at the first item has read one.
-    items: IntoIter,
+    /// from the collection as it is.
+    items: Items,
     /// The item of the call that is running.
     current: Option<Value>,
     callback: Value,
@@ -71,7 +117,7 @@ impl<S: Send> Native for Iterate<S> {
 /// with no items, the builtin's value is `finish(state)`.
 pub(crate) fn iterate<S: Send + 'static>(
     name: &'static str,
-    items: impl Into<List>,
+    items: impl Into<Items>,
     callback: Value,
     state: S,
     args: Args<S>,
@@ -80,7 +126,7 @@ pub(crate) fn iterate<S: Send + 'static>(
 ) -> Step {
     Step::Run(Box::new(Iterate {
         name,
-        items: items.into().into_iter(),
+        items: items.into(),
         current: None,
         callback,
         state,

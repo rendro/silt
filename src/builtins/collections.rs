@@ -1,6 +1,6 @@
 //! Collection builtin functions (`list.*`, `map.*`, `set.*`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
@@ -90,13 +90,6 @@ fn key_and_value<S>(_: &S, entry: &Value, stack: &mut Vec<Value>) {
     }
 }
 
-/// The entries of a map as items.
-fn entries(m: &BTreeMap<Value, Value>) -> Vec<Value> {
-    m.iter()
-        .map(|(k, v)| Value::tuple(vec![k.clone(), v.clone()]))
-        .collect()
-}
-
 fn keep_result(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     out.push(result);
     next()
@@ -140,10 +133,10 @@ fn as_list(out: &mut Vec<Value>) -> Result<Value, VmError> {
 }
 
 fn as_set(out: &mut Vec<Value>) -> Result<Value, VmError> {
-    Ok(Value::set(std::mem::take(out).into_iter().collect()))
+    Ok(Value::set(std::mem::take(out)))
 }
 
-fn as_map(out: &mut BTreeMap<Value, Value>) -> Result<Value, VmError> {
+fn as_map(out: &mut Vec<(Value, Value)>) -> Result<Value, VmError> {
     Ok(Value::map(std::mem::take(out)))
 }
 
@@ -477,9 +470,7 @@ pub(crate) mod list {
                 },
                 |groups| {
                     let groups = std::mem::take(groups).into_iter();
-                    Ok(Value::map(
-                        groups.map(|(k, v)| (k, Value::list(v))).collect(),
-                    ))
+                    Ok(Value::map(groups.map(|(k, v)| (k, Value::list(v)))))
                 },
             ))
         }
@@ -582,10 +573,9 @@ pub(crate) mod list {
             xs.last()
         }
 
-        fn reverse(xs: List) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            items.reverse();
-            Ok(items)
+        fn reverse(xs: List) -> Result<Value, VmError> {
+            xs.writable()?;
+            Ok(Value::List(xs.iter().rev().collect()))
         }
 
         fn sort(xs: List) -> Result<Value, VmError> {
@@ -621,16 +611,12 @@ pub(crate) mod list {
             })
         }
 
-        fn append(xs: List, elem: &Value) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            items.push(elem.clone());
-            Ok(items)
+        fn append(xs: List, elem: &Value) -> Result<Value, VmError> {
+            Ok(Value::List(xs.push_back(elem.clone())?))
         }
 
-        fn prepend(xs: List, elem: &Value) -> Result<Vec<Value>, VmError> {
-            let mut items = xs.to_vec()?;
-            items.insert(0, elem.clone());
-            Ok(items)
+        fn prepend(xs: List, elem: &Value) -> Result<Value, VmError> {
+            Ok(Value::List(xs.push_front(elem.clone())?))
         }
 
         fn concat(xs: List, ys: List) -> Result<Value, VmError> {
@@ -644,12 +630,10 @@ pub(crate) mod list {
         }
 
         fn set(xs: List, index: i64, value: &Value) -> Result<Option<Value>, VmError> {
-            let Some(index) = usize::try_from(index).ok().filter(|at| *at < xs.len()) else {
+            let Ok(index) = usize::try_from(index) else {
                 return Ok(None);
             };
-            let mut items = xs.to_vec()?;
-            items[index] = value.clone();
-            Ok(Some(Value::list(items)))
+            Ok(xs.set(index, value.clone())?.map(Value::List))
         }
 
         fn take(xs: List, n: i64) -> Result<Value, VmError> {
@@ -685,12 +669,10 @@ pub(crate) mod list {
         }
 
         fn remove_at(xs: List, index: i64) -> Result<Option<Value>, VmError> {
-            let Some(index) = usize::try_from(index).ok().filter(|at| *at < xs.len()) else {
+            let Ok(index) = usize::try_from(index) else {
                 return Ok(None);
             };
-            let mut items = xs.to_vec()?;
-            items.remove(index);
-            Ok(Some(Value::list(items)))
+            Ok(xs.remove_at(index)?.map(Value::List))
         }
 
         fn sum(xs: List) -> Result<i64, VmError> {
@@ -735,26 +717,19 @@ pub(crate) mod list {
             crate::builtins::numeric::checked_float(total, || "list.product_float overflow".into())
         }
 
-        fn intersperse(xs: List, sep: &Value) -> Result<Vec<Value>, VmError> {
-            let items = xs.to_vec()?;
-            if items.len() <= 1 {
-                return Ok(items);
-            }
+        fn intersperse(xs: List, sep: &Value) -> Result<Value, VmError> {
+            xs.writable()?;
             // Result length = 2*N - 1
-            let out_len = items.len() * 2 - 1;
+            let out_len = xs.len().saturating_mul(2).saturating_sub(1);
             if out_len > MAX_RANGE_MATERIALIZE {
                 return Err(VmError::new(format!(
                     "list.intersperse: result length {out_len} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
                 )));
             }
-            let mut result = Vec::with_capacity(out_len);
-            for (at, item) in items.into_iter().enumerate() {
-                if at > 0 {
-                    result.push(sep.clone());
-                }
-                result.push(item);
-            }
-            Ok(result)
+            let mut items = xs.iter();
+            let first = items.next();
+            let rest = items.flat_map(|item| [sep.clone(), item]);
+            Ok(Value::List(first.into_iter().chain(rest).collect()))
         }
     }
 }
@@ -767,16 +742,16 @@ pub(crate) mod map {
         fn filter(m: Map, f: &Value) -> Step {
             iterate(
                 "map.filter",
-                super::entries(m),
+                m.clone(),
                 f.clone(),
-                BTreeMap::new(),
+                Vec::new(),
                 key_and_value,
                 |kept, entry, keep| {
                     if truthy(&keep)
                         && let Value::Tuple(pair) = entry
                         && let [k, v] = &pair[..]
                     {
-                        kept.insert(k.clone(), v.clone());
+                        kept.push((k.clone(), v.clone()));
                     }
                     next()
                 },
@@ -787,9 +762,9 @@ pub(crate) mod map {
         fn map(m: Map, f: &Value) -> Step {
             iterate(
                 "map.map",
-                super::entries(m),
+                m.clone(),
                 f.clone(),
-                BTreeMap::new(),
+                Vec::new(),
                 key_and_value,
                 |out, _, result| {
                     let pair = match &result {
@@ -797,7 +772,7 @@ pub(crate) mod map {
                         _ => None,
                     };
                     let [k, v] = pair.ok_or_else(|| unsound("map.map", "f"))?.clone();
-                    out.insert(k, v);
+                    out.push((k, v));
                     next()
                 },
                 as_map,
@@ -805,7 +780,7 @@ pub(crate) mod map {
         }
 
         fn each(m: Map, f: &Value) -> Step {
-            iterate("map.each", super::entries(m), f.clone(), (), key_and_value, ignore, unit)
+            iterate("map.each", m.clone(), f.clone(), (), key_and_value, ignore, unit)
         }
 
         fn update(m: Map, key: &Value, default: &Value, f: &Value) -> Result<Step, VmError> {
@@ -819,9 +794,7 @@ pub(crate) mod map {
             let current = m.get(key).unwrap_or(default).clone();
             let (m, key) = (m.clone(), key.clone());
             Ok(call_then("map.update", f.clone(), current, move |new_val| {
-                let mut new_map = (**m).clone();
-                new_map.insert(key, new_val);
-                Ok(Value::map(new_map))
+                Ok(Value::Map(m.insert(key, new_val)))
             }))
         }
 
@@ -829,16 +802,12 @@ pub(crate) mod map {
             m.get(k).cloned()
         }
 
-        fn set(m: Map, k: &Value, v: &Value) -> BTreeMap<Value, Value> {
-            let mut new_map = (***m).clone();
-            new_map.insert(k.clone(), v.clone());
-            new_map
+        fn set(m: Map, k: &Value, v: &Value) -> Value {
+            Value::Map(m.insert(k.clone(), v.clone()))
         }
 
-        fn delete(m: Map, key: &Value) -> BTreeMap<Value, Value> {
-            let mut new_map = (***m).clone();
-            new_map.remove(key);
-            new_map
+        fn delete(m: Map, key: &Value) -> Value {
+            Value::Map(m.remove(key))
         }
 
         fn contains(m: Map, key: &Value) -> bool {
@@ -857,18 +826,17 @@ pub(crate) mod map {
             m.len() as i64
         }
 
-        fn merge(m1: Map, m2: Map) -> BTreeMap<Value, Value> {
-            let mut result = (***m1).clone();
-            result.extend(m2.iter().map(|(k, v)| (k.clone(), v.clone())));
-            result
+        fn merge(m1: Map, m2: Map) -> Value {
+            Value::Map(m1.merge(m2))
         }
 
-        fn entries(m: Map) -> Vec<Value> {
-            super::entries(m)
+        fn entries(m: Map) -> Value {
+            let entries = m.iter();
+            Value::List(entries.map(|(k, v)| Value::tuple(vec![k.clone(), v.clone()])).collect())
         }
 
-        fn from_entries(entries: List) -> Result<BTreeMap<Value, Value>, VmError> {
-            let mut result = BTreeMap::new();
+        fn from_entries(entries: List) -> Result<Value, VmError> {
+            let mut result = Vec::with_capacity(entries.len());
             for entry in entries.iter() {
                 let pair = match &entry {
                     Value::Tuple(pair) => <&[Value; 2]>::try_from(&pair[..]).ok(),
@@ -884,9 +852,9 @@ pub(crate) mod map {
                 // ASLR-nondeterministic entry order. The trait name
                 // matches the static map-key contract.
                 ensure_no_fn("map.from_entries", "Hash", [&key])?;
-                result.insert(key, value);
+                result.push((key, value));
             }
-            Ok(result)
+            Ok(Value::map(result))
         }
     }
 }
@@ -894,11 +862,6 @@ pub(crate) mod map {
 /// `set.*`
 pub(crate) mod set {
     use super::*;
-
-    /// The elements of a set as items.
-    fn elements(s: Set) -> Vec<Value> {
-        s.iter().cloned().collect()
-    }
 
     /// The operations on two sets walk both anyway, so both are
     /// gated: that catches sets with functions in them that an ungated
@@ -909,13 +872,13 @@ pub(crate) mod set {
 
     builtins! {
         fn map(s: Set, f: &Value) -> Step {
-            iterate("set.map", elements(s), f.clone(), Vec::new(), item_arg, keep_result, as_set)
+            iterate("set.map", s.clone(), f.clone(), Vec::new(), item_arg, keep_result, as_set)
         }
 
         fn filter(s: Set, f: &Value) -> Step {
             iterate(
                 "set.filter",
-                elements(s),
+                s.clone(),
                 f.clone(),
                 Vec::new(),
                 item_arg,
@@ -925,13 +888,13 @@ pub(crate) mod set {
         }
 
         fn each(s: Set, f: &Value) -> Step {
-            iterate("set.each", elements(s), f.clone(), (), item_arg, ignore, unit)
+            iterate("set.each", s.clone(), f.clone(), (), item_arg, ignore, unit)
         }
 
         fn fold(s: Set, init: &Value, f: &Value) -> Step {
             iterate(
                 "set.fold",
-                elements(s),
+                s.clone(),
                 f.clone(),
                 init.clone(),
                 acc_and_item,
@@ -940,20 +903,20 @@ pub(crate) mod set {
             )
         }
 
-        fn new() -> BTreeSet<Value> {
-            BTreeSet::new()
+        fn new() -> Value {
+            Value::Set(crate::value::Set::new())
         }
 
-        fn from_list(xs: List) -> Result<BTreeSet<Value>, VmError> {
+        fn from_list(xs: List) -> Result<Value, VmError> {
             xs.writable()?;
-            // A set of Fn values is BTree-ordered by the functions' addresses —
+            // A set of Fn values is ordered by the functions' addresses —
             // ASLR-nondeterministic iteration order. Reject at construction.
             ensure_no_fn_in("set.from_list", "Compare", xs)?;
-            Ok(xs.iter().collect())
+            Ok(Value::set(xs))
         }
 
-        fn to_list(s: Set) -> Vec<Value> {
-            elements(s)
+        fn to_list(s: Set) -> Value {
+            Value::List(s.iter().cloned().collect())
         }
 
         // Only the probe is gated (the lookup stays O(log n)): the
@@ -965,37 +928,33 @@ pub(crate) mod set {
             Ok(s.contains(elem))
         }
 
-        fn insert(s: Set, elem: &Value) -> Result<BTreeSet<Value>, VmError> {
+        fn insert(s: Set, elem: &Value) -> Result<Value, VmError> {
             ensure_no_fn("set.insert", "Compare", [elem])?;
-            let mut new_set = (***s).clone();
-            new_set.insert(elem.clone());
-            Ok(new_set)
+            Ok(Value::Set(s.insert(elem.clone())))
         }
 
-        fn remove(s: Set, elem: &Value) -> Result<BTreeSet<Value>, VmError> {
+        fn remove(s: Set, elem: &Value) -> Result<Value, VmError> {
             ensure_no_fn("set.remove", "Compare", [elem])?;
-            let mut new_set = (***s).clone();
-            new_set.remove(elem);
-            Ok(new_set)
+            Ok(Value::Set(s.remove(elem)))
         }
 
         fn length(s: Set) -> i64 {
             s.len() as i64
         }
 
-        fn union(a: Set, b: Set) -> Result<BTreeSet<Value>, VmError> {
+        fn union(a: Set, b: Set) -> Result<Value, VmError> {
             both_without_fn("set.union", a, b)?;
-            Ok(a.union(b).cloned().collect())
+            Ok(Value::Set(a.union(b)))
         }
 
-        fn intersection(a: Set, b: Set) -> Result<BTreeSet<Value>, VmError> {
+        fn intersection(a: Set, b: Set) -> Result<Value, VmError> {
             both_without_fn("set.intersection", a, b)?;
-            Ok(a.intersection(b).cloned().collect())
+            Ok(Value::Set(a.intersection(b)))
         }
 
-        fn difference(a: Set, b: Set) -> Result<BTreeSet<Value>, VmError> {
+        fn difference(a: Set, b: Set) -> Result<Value, VmError> {
             both_without_fn("set.difference", a, b)?;
-            Ok(a.difference(b).cloned().collect())
+            Ok(Value::Set(a.difference(b)))
         }
 
         fn is_subset(a: Set, b: Set) -> Result<bool, VmError> {
@@ -1003,9 +962,9 @@ pub(crate) mod set {
             Ok(a.is_subset(b))
         }
 
-        fn symmetric_difference(a: Set, b: Set) -> Result<BTreeSet<Value>, VmError> {
+        fn symmetric_difference(a: Set, b: Set) -> Result<Value, VmError> {
             both_without_fn("set.symmetric_difference", a, b)?;
-            Ok(a.symmetric_difference(b).cloned().collect())
+            Ok(Value::Set(a.symmetric_difference(b)))
         }
     }
 }

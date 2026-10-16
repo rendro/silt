@@ -4176,8 +4176,6 @@ mod tail_calls {
 // code no compiler emits for a checked program: well-formed, built with
 // the emitter, and wrong about a value.
 mod type_confusion {
-    use std::collections::BTreeMap;
-
     use super::error_places::{span, stopped};
     use super::*;
     use crate::bytecode::VmClosure;
@@ -4563,7 +4561,7 @@ mod type_confusion {
             e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });
         confused("map has no key 'k'", |e| {
-            push(e, Value::map(BTreeMap::new()));
+            push(e, Value::map([]));
             let k = name(e, "k");
             e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
         });
@@ -5705,8 +5703,6 @@ mod calls_and_returns {
 /// `Some` copy the part where it goes: over the value on top, or above
 /// it.
 mod parts_in_place {
-    use std::collections::BTreeMap;
-
     use super::seen_drops::{ended, left_by, probe};
     use super::*;
     use crate::bytecode::{Const, VmClosure};
@@ -5842,10 +5838,10 @@ mod parts_in_place {
             above(&part, variant, |e| {
                 e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
             });
-            let map = Value::map(BTreeMap::from([
+            let map = Value::map([
                 (Value::String("j".into()), Value::Int(5)),
                 (Value::String("k".into()), part.clone()),
-            ]));
+            ]);
             above(&part, map, |e| {
                 let k = name(e, "k");
                 e.emit(Asm::DestructMapValue { key: k }, span()).unwrap();
@@ -5890,10 +5886,10 @@ mod parts_in_place {
     }
 
     fn map_of(parts: &[Value]) -> Value {
-        Value::map(BTreeMap::from([
+        Value::map([
             (Value::String("j".into()), parts[0].clone()),
             (Value::String("k".into()), parts[1].clone()),
-        ]))
+        ])
     }
 
     /// The probes that ended, in order, when the script has run: probe
@@ -6368,8 +6364,6 @@ mod methods_in_place {
 /// pattern's test pushes its Bool above the value it tests: each is
 /// built where it goes.
 mod results_in_place {
-    use std::collections::BTreeMap;
-
     use super::seen_drops::{ended, left_by, probe};
     use super::*;
 
@@ -6479,7 +6473,7 @@ mod results_in_place {
         let anon = Value::TypeDescriptor(fields.ty().clone());
         let pair = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
         let triple = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
-        let map = Value::map(BTreeMap::from([(string("k"), Value::Int(1))]));
+        let map = Value::map([(string("k"), Value::Int(1))]);
         vec![
             (
                 Asm::TestTag {
@@ -6524,7 +6518,7 @@ mod results_in_place {
                     key: constant(string("k")),
                 },
                 map,
-                Value::map(BTreeMap::new()),
+                Value::map([]),
             ),
         ]
     }

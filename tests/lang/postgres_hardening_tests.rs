@@ -20,11 +20,6 @@
 //! `read_max_pool_size_for_tests`, `redact_pg_message`).
 
 #![cfg(feature = "postgres")]
-// `Value` has interior-mutable variants (Channel, etc.) but the tests
-// here only put String / Int into BTreeMap keys, which are pure data.
-#![allow(clippy::mutable_key_type)]
-
-use std::collections::BTreeMap;
 
 use silt::builtins::postgres::{
     EffectiveSslMode, read_max_pool_size_for_tests, redact_pg_message,
@@ -83,15 +78,15 @@ fn explicit_sslmode_values_are_honoured() {
 // ── LOW-1: postgres.connect_with exposes max_pool_size ─────────────
 
 fn empty_map_value() -> Value {
-    Value::map(BTreeMap::new())
+    Value::map([])
 }
 
 fn map_with(pairs: &[(&str, Value)]) -> Value {
-    let mut m = BTreeMap::new();
-    for (k, v) in pairs {
-        m.insert(Value::String((*k).into()), v.clone());
-    }
-    Value::map(m)
+    Value::map(
+        pairs
+            .iter()
+            .map(|(k, v)| (Value::String((*k).into()), v.clone())),
+    )
 }
 
 /// `connect_with(url, #{})` accepts the empty opts bag — i.e. the

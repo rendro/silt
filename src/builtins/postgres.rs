@@ -843,12 +843,10 @@ fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
 // ── Row -> silt Map(String, Value) ─────────────────────────────────
 
 fn row_to_map(row: &postgres::Row) -> Value {
-    let mut map: BTreeMap<Value, Value> = BTreeMap::new();
-    for (idx, col) in row.columns().iter().enumerate() {
-        let key = Value::String(col.name().into());
-        map.insert(key, pg_cell_to_value(row, idx));
-    }
-    Value::map(map)
+    let columns = row.columns().iter().enumerate();
+    Value::map(
+        columns.map(|(idx, col)| (Value::String(col.name().into()), pg_cell_to_value(row, idx))),
+    )
 }
 
 fn make_query_result(rows: Vec<Value>) -> Value {

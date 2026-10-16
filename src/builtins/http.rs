@@ -47,13 +47,13 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 // ── HTTP dispatch ───────────────────────────────────────────────────
 
 #[cfg(feature = "http")]
-fn make_http_response(status: u16, headers: BTreeMap<Value, Value>, body: Vec<u8>) -> Value {
+fn make_http_response(status: u16, headers: crate::value::Map, body: Vec<u8>) -> Value {
     Value::builtin_record(
         ty::RESPONSE,
         [
             ("status", Value::Int(status as i64)),
             ("body", Value::Bytes(Arc::new(body))),
-            ("headers", Value::map(headers)),
+            ("headers", Value::Map(headers)),
         ],
     )
 }
@@ -63,7 +63,7 @@ fn make_http_request_value(
     method: BuiltinVariant,
     path: &str,
     query: &str,
-    headers: BTreeMap<Value, Value>,
+    headers: crate::value::Map,
     body: Vec<u8>,
 ) -> Value {
     Value::builtin_record(
@@ -72,7 +72,7 @@ fn make_http_request_value(
             ("method", Value::variant(method, vec![])),
             ("path", Value::String(path.into())),
             ("query", Value::String(query.into())),
-            ("headers", Value::map(headers)),
+            ("headers", Value::Map(headers)),
             ("body", Value::Bytes(Arc::new(body))),
         ],
     )
@@ -140,12 +140,14 @@ fn ureq_response_to_value(
     let status = response.status().as_u16();
     // The names are in lower case, as the names of a request's
     // headers are (`http::HeaderName` holds them so).
-    let mut headers = BTreeMap::new();
-    for (name, value) in response.headers().iter() {
-        if let Ok(v) = value.to_str() {
-            headers.insert(Value::String(name.as_str().into()), Value::String(v.into()));
-        }
-    }
+    let headers = response.headers().iter().filter_map(|(name, value)| {
+        let value = value.to_str().ok()?;
+        Some((
+            Value::String(name.as_str().into()),
+            Value::String(value.into()),
+        ))
+    });
+    let headers = headers.collect();
     // An answer to `HEAD`, and one whose status says so, has no body,
     // whatever its headers say of one (they describe what a `GET`
     // would get): nothing is read, and so nothing is unpacked that is
@@ -679,13 +681,13 @@ impl Got {
         // A header's name is in lower case, however the client wrote
         // it: a name is not case-sensitive, and a lookup has one
         // spelling to ask for. (Of a header sent twice the last stays.)
-        let mut headers = BTreeMap::new();
-        for (name, value) in request.headers {
-            headers.insert(
+        let headers = request.headers.into_iter().map(|(name, value)| {
+            (
                 Value::String(name.to_ascii_lowercase().into()),
                 Value::String(value.into()),
-            );
-        }
+            )
+        });
+        let headers = headers.collect();
         // The body is the bytes that arrived.
         Got::Request(
             make_http_request_value(method, path, query, headers, request.body),
@@ -1537,7 +1539,7 @@ builtins! {
             out.entry(Value::String(key.into())).or_default().push(Value::String(val.into()));
         }
         let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
-        Value::variant(bv::OK, vec![Value::map(pairs.collect())])
+        Value::variant(bv::OK, vec![Value::map(pairs)])
     }
 }
 
@@ -1551,7 +1553,7 @@ mod http_response_tests {
             [
                 ("status", Value::Int(status)),
                 ("body", Value::Bytes(Arc::new(Vec::new()))),
-                ("headers", Value::map(BTreeMap::new())),
+                ("headers", Value::Map(crate::value::Map::new())),
             ],
         )
     }
@@ -1563,7 +1565,7 @@ mod http_response_tests {
     fn the_records_of_the_module_have_their_types_fields() {
         let headers = || {
             let name = Value::String("accept".into());
-            BTreeMap::from([(name, Value::String("*/*".into()))])
+            crate::value::Map::from_iter([(name, Value::String("*/*".into()))])
         };
         let response = make_http_response(204, headers(), vec![0, 0xff, b'd']);
         assert_eq!(

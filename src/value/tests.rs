@@ -623,7 +623,7 @@ fn a_record_is_of_its_type() {
         [&anon, &car, &person],
         [&car, &anon, &person],
     ] {
-        let members: BTreeSet<Value> = order.into_iter().cloned().collect();
+        let members: std::collections::BTreeSet<Value> = order.into_iter().cloned().collect();
         assert_eq!(members.len(), 3);
         let hashed: std::collections::HashSet<Value> = order.into_iter().cloned().collect();
         assert_eq!(hashed.len(), 3);
@@ -657,7 +657,7 @@ fn records_are_ordered_and_hashed_in_declaration_order() {
 
     // `Response` declares `status` before `body`: the status decides.
     let response = |status, body: &str| {
-        let headers = Value::map(BTreeMap::new());
+        let headers = Value::map([]);
         let body = Value::Bytes(Arc::new(body.as_bytes().to_vec()));
         Value::builtin_record(
             ty::RESPONSE,
@@ -696,10 +696,10 @@ fn values_of_every_kind_have_one_key() {
         Value::list(vec![Value::Int(2)]),
         Value::tuple(vec![Value::Int(1), Value::Int(2)]),
         Value::tuple(vec![Value::Int(1), Value::Int(3)]),
-        Value::map(BTreeMap::from([(Value::Int(1), Value::Int(1))])),
-        Value::map(BTreeMap::from([(Value::Int(1), Value::Int(2))])),
-        Value::set(BTreeSet::from([Value::Int(1)])),
-        Value::set(BTreeSet::from([Value::Int(1), Value::Int(2)])),
+        Value::map([(Value::Int(1), Value::Int(1))]),
+        Value::map([(Value::Int(1), Value::Int(2))]),
+        Value::set([Value::Int(1)]),
+        Value::set([Value::Int(1), Value::Int(2)]),
         Value::anon_record([("x", Value::Int(1))]),
         Value::variant(bv::OK, vec![Value::Int(1)]),
         Value::variant(bv::OK, vec![Value::Int(2)]),
@@ -853,23 +853,20 @@ fn the_key_is_the_same_where_the_walk_changes_its_stack() {
         // list is hashed by its ends.)
         &|inner, pre, post| Value::list(vec![Value::Int(10 + pre), inner, Value::Int(20 + post)]),
         &|inner, pre, post| {
-            Value::map(BTreeMap::from([
+            Value::map([
                 (Value::Int(1), Value::Int(pre)),
                 (Value::Int(2), inner),
                 (Value::Int(3), Value::Int(post)),
-            ]))
+            ])
         },
         &|inner, pre, post| {
-            Value::map(BTreeMap::from([
-                (Value::Int(pre), Value::Int(0)),
-                (inner, Value::Int(post)),
-            ]))
+            Value::map([(Value::Int(pre), Value::Int(0)), (inner, Value::Int(post))])
         },
         // (An Int is the first member of a set, before one that has
         // parts, and a variant the last, after a set.)
         &|inner, pre, post| {
             let after = Value::variant(last.clone(), vec![Value::Int(post)]);
-            Value::set(BTreeSet::from([Value::Int(pre), inner, after]))
+            Value::set([Value::Int(pre), inner, after])
         },
         &|inner, pre, post| {
             Value::variant(w.clone(), vec![Value::Int(pre), inner, Value::Int(post)])
@@ -1164,24 +1161,21 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         // A key that is a string is in quotes however the map is
         // written; a key that has parts is written like any value.
         (
-            Value::map(BTreeMap::from([
+            Value::map([
                 (text("k"), text("v")),
                 (text("l"), Value::list(vec![Value::Int(1)])),
-            ])),
+            ]),
             "#{\"k\": v, \"l\": [1]}",
             "#{\"k\": \"v\", \"l\": [1]}",
         ),
         (
-            Value::map(BTreeMap::from([(
-                Value::tuple(vec![Value::Int(1), text("a")]),
-                Value::Int(2),
-            )])),
+            Value::map([(Value::tuple(vec![Value::Int(1), text("a")]), Value::Int(2))]),
             "#{(1, a): 2}",
             "#{(1, \"a\"): 2}",
         ),
-        (Value::map(BTreeMap::new()), "#{}", "#{}"),
+        (Value::map([]), "#{}", "#{}"),
         (
-            Value::set(BTreeSet::from([text("b"), text("a")])),
+            Value::set([text("b"), text("a")]),
             "#[a, b]",
             "#[\"a\", \"b\"]",
         ),
@@ -1326,9 +1320,9 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
         },
         &|n, rest| Value::tuple(vec![Value::Int(n), rest]),
         // A map, of which the next level is a value, or a key; a set.
-        &|n, rest| Value::map(BTreeMap::from([(Value::Int(n), rest)])),
-        &|n, rest| Value::map(BTreeMap::from([(rest, Value::Int(n))])),
-        &|_, rest| Value::set(BTreeSet::from([rest])),
+        &|n, rest| Value::map([(Value::Int(n), rest)]),
+        &|n, rest| Value::map([(rest, Value::Int(n))]),
+        &|_, rest| Value::set([rest]),
         // A closure that has captured the next level.
         &|_, rest| {
             Value::VmClosure(Arc::new(VmClosure {
@@ -1352,7 +1346,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
         &|n, rest| match n % 4 {
             0 => Value::list(vec![rest]),
             1 => Value::tuple(vec![rest, Value::Int(n)]),
-            2 => Value::set(BTreeSet::from([rest])),
+            2 => Value::set([rest]),
             _ => Value::variant(bv::SOME, vec![rest]),
         },
     ];
@@ -1371,10 +1365,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
 
 #[test]
 fn display_set() {
-    let mut s = BTreeSet::new();
-    s.insert(Value::Int(1));
-    s.insert(Value::Int(2));
-    let set = Value::set(s);
+    let set = Value::set([Value::Int(1), Value::Int(2)]);
     assert_eq!(format!("{}", set), "#[1, 2]");
 }
 
@@ -1468,6 +1459,56 @@ fn two_lists_as_one_list() {
     assert!(long.concat(&short).is_err());
     assert!(short.concat(&long).is_err());
     assert!(long.concat(&List::new()).is_err());
+}
+
+/// A list with an element more at either end, with one element in
+/// place of another, or without one: a new list, however the list is
+/// stored and whether it is a part of another, and the list stays as
+/// it was. An index past the end is no element; a list that holds no
+/// element is made one that holds them if they are few enough.
+#[test]
+fn a_list_updated_is_a_new_list() {
+    let n = Value::Int;
+    for xs in both().into_iter().chain(both().map(|xs| xs.slice(2, 10))) {
+        let mut want = elements(&xs);
+        let first = want[0].clone();
+        let pushed = xs.push_front(n(-1)).expect("few elements");
+        want.insert(0, n(-1));
+        assert_eq!(elements(&pushed), want);
+        want.remove(0);
+        let pushed = xs.push_back(n(-1)).expect("few elements");
+        want.push(n(-1));
+        assert_eq!(elements(&pushed), want);
+        want.pop();
+        let len = want.len();
+        for at in [0, 3, len - 1] {
+            let set = xs
+                .set(at, n(-1))
+                .expect("few elements")
+                .expect("in the list");
+            let mut changed = want.clone();
+            changed[at] = n(-1);
+            assert_eq!(elements(&set), changed);
+            let removed = xs.remove_at(at).expect("few elements").expect("in it");
+            let mut changed = want.clone();
+            changed.remove(at);
+            assert_eq!(elements(&removed), changed);
+        }
+        assert!(xs.set(len, n(-1)).expect("no error").is_none());
+        assert!(xs.remove_at(len).expect("no error").is_none());
+        assert_eq!(elements(&xs), want);
+        assert_eq!(xs.first(), Some(first));
+    }
+    let long = ints(1, MAX_RANGE_MATERIALIZE as i64 + 1);
+    assert!(long.push_front(n(0)).is_err());
+    assert!(long.push_back(n(0)).is_err());
+    assert!(long.set(0, n(0)).is_err());
+    assert!(long.remove_at(0).is_err());
+    assert!(
+        long.set(long.len(), n(0))
+            .expect("no element there")
+            .is_none()
+    );
 }
 
 /// A part of a list shares the list's buffer if it is a quarter of the
@@ -1776,4 +1817,122 @@ fn a_list_in_order_and_without_its_repeats() {
     assert_eq!(long.sorted().last(), Some(Value::Int(i64::MAX)));
     assert_eq!(long.unique().len(), long.len());
     assert_eq!(long.unique().get(41), Some(Value::Int(42)));
+}
+
+/// A list's key, its text and the walks of the run time read the
+/// elements it holds as runs of them side by side in memory
+/// (`List::runs`): one run while a list is held whole in one buffer,
+/// several where a list is stored in pieces. Where the runs end is
+/// nothing these show. Lists whose runs end in different places (one
+/// run against three), nested in each other, near the top of a value
+/// and below where the walk takes a stack of its own, are equal,
+/// ordered, hashed and written as their twins of one run each are.
+#[test]
+fn where_a_list_s_runs_end_is_nothing_a_value_shows() {
+    use super::list::cut::runs_at_most;
+    // `value` with each list in it a part of a buffer with `off`
+    // elements before it: its runs end at other places than those of
+    // a list in a buffer of its own.
+    fn moved(value: &Value, off: usize) -> Value {
+        match value {
+            Value::List(list) if list.range_ends().is_none() => {
+                let items: Vec<Value> = list.iter().map(|item| moved(&item, off)).collect();
+                let len = items.len();
+                let buf = std::iter::repeat_n(Value::Unit, off).chain(items);
+                let part = List::from(buf.collect::<Vec<_>>()).slice(off, off + len);
+                if len > 0 {
+                    assert_eq!(part.buffer().map(|(n, _)| n), Some(off + len));
+                }
+                Value::List(part)
+            }
+            other => other.clone(),
+        }
+    }
+    let runs = |list: &Value| -> Vec<usize> {
+        let Value::List(list) = list else {
+            panic!("no list: {list:?}")
+        };
+        list.runs().map(<[Value]>::len).collect()
+    };
+    let four = Value::list((0..4).map(Value::Int).collect());
+    assert_eq!(runs(&four), [4]);
+    runs_at_most(2, || {
+        assert_eq!(runs(&four), [2, 2]);
+        assert_eq!(runs(&moved(&four, 1)), [1, 2, 1]);
+        assert_eq!(runs(&moved(&four, 2)), [2, 2]);
+        assert_eq!(runs(&moved(&four, 3)), [1, 2, 1]);
+    });
+    runs_at_most(3, || assert_eq!(runs(&moved(&four, 2)), [1, 3]));
+
+    // Every list of up to three of these, and three lists that hold no
+    // element.
+    let alphabet = [
+        Value::Int(0),
+        Value::Int(1),
+        Value::list(vec![Value::Int(0)]),
+        Value::VariantConstructor(bv::SOME.into()),
+    ];
+    let mut lists = vec![Vec::new()];
+    let mut longer = vec![Vec::new()];
+    for _ in 0..3 {
+        longer = longer
+            .iter()
+            .flat_map(|list: &Vec<Value>| {
+                alphabet.iter().map(move |item| {
+                    let mut list = list.clone();
+                    list.push(item.clone());
+                    list
+                })
+            })
+            .collect();
+        lists.extend(longer.iter().cloned());
+    }
+    let mut values: Vec<Value> = lists.into_iter().map(Value::list).collect();
+    for (lo, hi) in [(0, 1), (0, 2), (1, 3)] {
+        values.push(Value::List(List::ints(lo, hi).expect("a short range")));
+    }
+    assert_eq!(values.len(), 85 + 3);
+
+    // What a value shows, and of two which comes first.
+    let shown = |a: &Value, b: &Value| {
+        (
+            a == b,
+            a.cmp(b),
+            hash_of(a),
+            hash_of(b),
+            format!("{a} {a:?} {b} {b:?}"),
+            a.contains_fn(),
+            a.writable().is_ok(),
+        )
+    };
+    // Where the runs end, and how far into its buffer each list of the
+    // two begins.
+    let cuts = [(1, 0, 1), (2, 0, 1), (2, 3, 0), (3, 1, 2), (5, 0, 3)];
+    let near = super::key::NEAR;
+    // A list of three around `inner`, `levels` deep.
+    let deep = |inner: &Value, levels: usize| {
+        (0..levels).fold(inner.clone(), |inner, _| {
+            Value::list(vec![Value::Int(7), inner, Value::Int(8)])
+        })
+    };
+    let mut compared = 0;
+    for (at, a) in values.iter().enumerate() {
+        for (bt, b) in values.iter().enumerate() {
+            let mut pairs = vec![(a.clone(), b.clone())];
+            // (Below `NEAR` for a sample of the pairs.)
+            if (at * values.len() + bt).is_multiple_of(23) {
+                pairs.push((deep(a, near + 2), deep(b, near + 2)));
+            }
+            for (a, b) in pairs {
+                let expected = shown(&a, &b);
+                for (most, a_off, b_off) in cuts {
+                    let (a, b) = (moved(&a, a_off), moved(&b, b_off));
+                    let got = runs_at_most(most, || shown(&a, &b));
+                    assert_eq!(got, expected, "{a:?} and {b:?}, runs of {most}");
+                    compared += 1;
+                }
+            }
+        }
+    }
+    assert!(compared > 88 * 88 * cuts.len());
 }

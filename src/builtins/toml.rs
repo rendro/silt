@@ -39,7 +39,6 @@
 //! - Integer overflow: TOML integers are `i64` per spec, which matches silt's
 //!   `Int` exactly; no demotion risk.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -423,12 +422,10 @@ fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Valu
             FieldType::Record(ty.id)
         }
     };
-    let mut map = BTreeMap::new();
-    for (_key, val) in table.iter() {
+    let mut map = Vec::with_capacity(table.len());
+    for (key, val) in table.iter() {
         match toml_to_typed_value(vm, val, &field_type) {
-            Ok(v) => {
-                map.insert(Value::String(_key.clone().into()), v);
-            }
+            Ok(v) => map.push((Value::String(key.clone().into()), v)),
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
     }
@@ -499,10 +496,10 @@ fn toml_to_typed_value(
         }
         FieldType::Map(inner) => match tv {
             ::toml::Value::Table(table) => {
-                let mut map = BTreeMap::new();
+                let mut map = Vec::with_capacity(table.len());
                 for (key, item) in table.iter() {
                     let val = toml_to_typed_value(vm, item, inner)?;
-                    map.insert(Value::String(key.clone().into()), val);
+                    map.push((Value::String(key.clone().into()), val));
                 }
                 Ok(Value::map(map))
             }
@@ -701,7 +698,7 @@ mod tests {
                     (0..levels)
                         .rev()
                         .fold(Value::Int(1), |inner, level| match level % 2 {
-                            0 => Value::map(BTreeMap::from([(Value::String("k".into()), inner)])),
+                            0 => Value::map([(Value::String("k".into()), inner)]),
                             _ => Value::list(vec![inner]),
                         })
                 };
