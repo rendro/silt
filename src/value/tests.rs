@@ -1514,16 +1514,22 @@ fn a_list_updated_is_a_new_list() {
 /// A part of a list shares the list's storage, and copies no element,
 /// if it is a quarter of the storage or more, and has storage of its
 /// own if it is less: a list keeps at most four times its own elements
-/// from being freed. A short list keeps its elements in a buffer and a
-/// long one in a tree; a part of a tree that gets storage of its own
-/// gets a tree made of the parts it shares with it, and no element is
-/// copied for it either, unless it is short enough for a buffer.
+/// from being freed. A short list keeps its elements in a buffer, a
+/// long one made in one go side by side, a long one a change made in a
+/// tree; a part of a tree that gets storage of its own gets a tree made
+/// of the parts it shares with it, and no element is copied for it,
+/// unless it is short enough for a buffer. Other parts are copied.
 #[test]
 fn a_short_part_of_a_list_does_not_keep_the_list() {
     use super::list::FLAT_MOST;
-    for n in [FLAT_MOST, 1000] {
-        let big = made(0..n as i64);
-        assert_eq!(big.in_tree(), n > FLAT_MOST);
+    for (n, kept) in [(FLAT_MOST, "buffer"), (1000, "side"), (1000, "tree")] {
+        let big = match kept {
+            "tree" => made(0..n as i64 - 1)
+                .push_back(Value::Int(n as i64 - 1))
+                .expect("few elements"),
+            _ => made(0..n as i64),
+        };
+        assert_eq!(big.kept_as(), kept);
         let (len, at) = big.buffer().expect("a list that holds its elements");
         assert_eq!(len, n);
         let quarter = n.div_ceil(4);
@@ -1543,9 +1549,9 @@ fn a_short_part_of_a_list_does_not_keep_the_list() {
             assert_eq!(held, to - from, "{from}..{to}");
             assert_ne!(apart, at);
             assert_eq!(elements(&part), elements(&made(from as i64..to as i64)));
-            match part.in_tree() {
-                true => assert_eq!(copied, 0, "{from}..{to}"),
-                false => assert_eq!(copied, (to - from) as u64, "{from}..{to}"),
+            match part.kept_as() {
+                "tree" => assert_eq!(copied, 0, "{from}..{to}"),
+                _ => assert_eq!(copied, (to - from) as u64, "{from}..{to}"),
             }
         }
         // A part of a part is measured against the storage, not the
@@ -1564,14 +1570,27 @@ fn a_short_part_of_a_list_does_not_keep_the_list() {
 /// few of its elements, whatever its length: each rest is the same
 /// storage until it is less than a quarter of it. A list in a buffer
 /// copies a third of itself in all (a quarter of it once it is that
-/// short, a quarter of that, and so on); a list in a tree takes a
-/// tree of its own a quarter of the length each time, copying nothing,
-/// and copies only once it is short enough for a buffer.
+/// short, a quarter of that, and so on), and so does a long list made
+/// in one go; a list in a tree takes a tree of its own a quarter of the
+/// length each time, copying nothing, and copies only once it is short
+/// enough for a buffer.
 #[test]
 fn a_walk_down_a_list_copies_few_of_its_elements() {
     use super::list::FLAT_MOST;
-    for n in [FLAT_MOST, 1_000, 64_000] {
-        let mut rest = made(0..n as i64);
+    for (n, kept) in [
+        (FLAT_MOST, "buffer"),
+        (1_000, "side"),
+        (64_000, "side"),
+        (1_000, "tree"),
+        (64_000, "tree"),
+    ] {
+        let mut rest = match kept {
+            "tree" => made(0..n as i64 - 1)
+                .push_back(Value::Int(n as i64 - 1))
+                .expect("few elements"),
+            _ => made(0..n as i64),
+        };
+        assert_eq!(rest.kept_as(), kept);
         let mut buffer = rest.buffer();
         let mut storages = 0;
         let copied = copies_of(|| {
@@ -1583,11 +1602,11 @@ fn a_walk_down_a_list_copies_few_of_its_elements() {
                 buffer = rest.buffer();
             }
         });
-        let most = match n > FLAT_MOST {
+        let most = match kept {
             // At most the elements of a buffer a tree crosses back to,
             // and a third of that.
-            true => FLAT_MOST / 2 + FLAT_MOST / 6,
-            false => n / 3,
+            "tree" => FLAT_MOST / 2 + FLAT_MOST / 6,
+            _ => n / 3,
         };
         assert!(
             copied as usize <= most,
@@ -1991,7 +2010,8 @@ fn copies_of(f: impl FnOnce()) -> u64 {
 /// (`list.concat`), one taken out (`list.remove_at`). Each old list
 /// is kept until the new one is made, as a fold keeps it. (Copying
 /// the whole list at each step, as a list kept in one buffer must,
-/// copies 50,000,000 elements for 10,000 of them.)
+/// copies 50,000,000 elements for 10,000 of them.) So do `n` changes
+/// of one long list made in one go, each from the list as it was.
 #[test]
 fn a_list_changed_an_element_at_a_time_copies_n_log_n_elements() {
     // The most elements copied per element and per doubling of the
@@ -2058,6 +2078,43 @@ fn a_list_changed_an_element_at_a_time_copies_n_log_n_elements() {
             copied <= bound,
             "list.remove_at of {n}: {copied} copied, at most {bound}"
         );
+        // `n` changes of one long list made in one go, and of a part of
+        // it, each made from the list as it was (`list.set(board, i, x)`
+        // for every `i`): its tree is made once, by the first.
+        type Change = fn(&List, usize) -> List;
+        let changes: [(&str, Change); 5] = [
+            ("list.set", |xs, i| {
+                let set = xs.set(i % xs.len(), Value::Int(-1));
+                set.expect("few elements").expect("an element there")
+            }),
+            ("list.append", |xs, i| {
+                xs.push_back(Value::Int(i as i64)).expect("few elements")
+            }),
+            ("list.prepend", |xs, i| {
+                xs.push_front(Value::Int(i as i64)).expect("few elements")
+            }),
+            ("list.remove_at", |xs, i| {
+                let removed = xs.remove_at(i % xs.len());
+                removed.expect("few elements").expect("an element there")
+            }),
+            ("[x, ..xs]", |xs, i| {
+                made([i as i64]).concat(xs).expect("few elements")
+            }),
+        ];
+        for (name, change) in changes {
+            for base in [made(0..n as i64), made(0..n as i64).slice(1, n)] {
+                let copied = copies_of(|| {
+                    for i in 0..n {
+                        let changed = change(&base, i);
+                        assert_eq!(changed.kept_as(), "tree", "{name}");
+                    }
+                });
+                assert!(
+                    copied <= bound,
+                    "{name} of one list of {n}, {n} times: {copied} copied, at most {bound}"
+                );
+            }
+        }
     }
 }
 
@@ -2194,9 +2251,10 @@ fn the_list_is_its_model(list: &List, model: &[Value], before: &List, before_mod
 
     if let Some((held, _)) = list.buffer() {
         assert!(held < 4 * len.max(1) + 4, "{held} kept for {len}");
-        match list.in_tree() {
-            true => assert!(held > FLAT_MOST / 2, "a tree of {held}"),
-            false => assert!(held <= FLAT_MOST, "a buffer of {held}"),
+        match list.kept_as() {
+            "tree" => assert!(held > FLAT_MOST / 2, "a tree of {held}"),
+            "side" => assert!(held > FLAT_MOST, "a long list of {held}"),
+            _ => assert!(held <= FLAT_MOST, "a buffer of {held}"),
         }
     }
 }
@@ -2282,12 +2340,13 @@ proptest::proptest! {
     }
 }
 
-/// A value nested 10,000 levels deep through lists kept in trees is
+/// A value nested 10,000 levels deep through long lists is
 /// dropped like any other, as one nested through any other holder is
 /// (`a_value_nested_through_any_holder_is_dropped_without_the_native_stack`):
 /// a tree far inside is put aside and dropped by the outermost
-/// (src/value/deep.rs). A level is a list too long for a buffer, a
-/// part of one, or one made by an element more. (Each was dropped once
+/// (src/value/deep.rs). A level is a long list made in one go, one
+/// whose tree a change has made and kept, a part of a list in a tree,
+/// or one made by an element more. (Each was dropped once
 /// a level on the native stack, and a thread of a test overflowed its
 /// stack at a few thousand levels; a level of a tree costs kilobytes,
 /// so the depth that a program's thread overflows at would take
@@ -2302,8 +2361,14 @@ fn a_value_nested_through_lists_kept_in_trees_is_dropped_without_the_native_stac
         items[at] = rest;
         List::from(items)
     };
-    let shapes: [&dyn Fn(i64, Value) -> Value; 3] = [
+    let shapes: [&dyn Fn(i64, Value) -> Value; 4] = [
         &|n, rest| Value::List(long(n, rest)),
+        &|n, rest| {
+            let list = long(n, rest);
+            let changed = list.set(0, Value::Unit).expect("few elements");
+            assert_eq!(changed.map(|changed| changed.kept_as()), Some("tree"));
+            Value::List(list)
+        },
         &|n, rest| {
             let list = long(n, Value::Int(n))
                 .push_front(rest)
@@ -2323,7 +2388,7 @@ fn a_value_nested_through_lists_kept_in_trees_is_dropped_without_the_native_stac
         let Value::List(top) = &value else {
             panic!("a list")
         };
-        assert!(top.in_tree());
+        assert_ne!(top.kept_as(), "buffer");
         let again = value.clone();
         drop(value);
         drop(again);

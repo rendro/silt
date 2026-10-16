@@ -4,12 +4,16 @@
 //! tail of a list, or any part of it that is a quarter of the storage
 //! or more, is a list of the same storage, and taking it copies no
 //! element ([`List::slice`]). A short list keeps its elements side by
-//! side in a buffer of their own; a long one keeps them in a tree (the
-//! RRB vector of the crate `imbl`), and a list made from it by one
-//! change (an element more at either end, one in place of another, one
-//! taken out, a short list joined to it) shares all of the tree but a
-//! path from its root with it: the change costs steps that grow with
-//! the logarithm of the length, not with the length ([`FLAT_MOST`]).
+//! side in a buffer of their own, and so does a long one made in one
+//! go (by `list.map`, a literal, a decoder), which is read as fast. A
+//! long list a change made keeps them in a tree (the RRB vector of the
+//! crate `imbl`), and a list made from it by one change (an element
+//! more at either end, one in place of another, one taken out, a short
+//! list joined to it) shares all of the tree but a path from its root
+//! with it: the change costs steps that grow with the logarithm of the
+//! length, not with the length ([`FLAT_MOST`]). The first change of a
+//! long list made in one go makes the tree of its elements, once, and
+//! keeps it with them for the next.
 //! The list a range expression `a..b` makes holds its two ends and no
 //! element at all. A clone is a count.
 //!
@@ -27,19 +31,21 @@
 //! a list that holds none by its two ends ([`List::range_ends`]).
 
 use super::Value;
-use super::deep::{Buf, Tree};
+use super::deep::{Buf, Long, LongItems};
 use imbl::Vector;
 use imbl::shared_ptr::DefaultSharedPtr;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// The most elements a list that holds none (`a..b`) may have when it
 /// is made a list that holds them: reversed, written out, encoded.
 /// Prevents exhausting memory with `(1..1_000_000_000) |> list.reverse`.
 pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
 
-/// The most elements a list keeps side by side in a buffer; a longer
-/// one keeps them in a tree. A list made from one kept in a tree goes
+/// The most elements a list a change makes keeps side by side in a
+/// buffer; a longer one keeps them in a tree. A list made from one kept
+/// in a tree goes
 /// back to a buffer only when it has half as many, so that a list that
 /// grows and shrinks around the length does not cross it each time.
 ///
@@ -72,14 +78,15 @@ enum Stored {
 /// A list kept otherwise than in a buffer. (Apart from [`Stored::Items`]
 /// so that a list stays 32 bytes, and a value 40 with a tag of its own:
 /// the pointer of a buffer is never null, and the null one says a list
-/// is one of these; and the pointer of a tree, the one of a list that
-/// holds none.)
+/// is one of these; and the pointer of a long list's elements, the one
+/// of a list that holds none.)
 #[derive(Clone)]
 enum Other {
-    /// `len` elements of `tree` from `start`: a list of more than
-    /// [`FLAT_MOST`].
-    Tree {
-        tree: Tree,
+    /// `len` elements of `long` from `start`: a list of more than
+    /// [`FLAT_MOST`], kept side by side if it was made in one go, and in
+    /// a tree if a change made it.
+    Long {
+        long: Long,
         start: usize,
         len: usize,
     },
@@ -100,6 +107,16 @@ const _: () = assert!(std::mem::size_of::<Option<List>>() > std::mem::size_of::<
 /// (All the Ints there are, from the least to the greatest, are one
 /// more than that where a `usize` has 64 bits.)
 const MAX_LEN: u64 = usize::MAX as u64;
+
+/// Where a list's elements are.
+enum Kept<'a> {
+    /// Side by side, and where in their storage they begin.
+    Side(&'a [Value], usize),
+    /// The `len` elements of a tree from `start`.
+    Tree(&'a Vector<Value>, usize, usize),
+    /// The Ints from this one on: the list holds none.
+    Ints(i64),
+}
 
 /// A list's elements as they are stored.
 enum Elements<'a> {
@@ -176,7 +193,7 @@ impl List {
 
     pub fn len(&self) -> usize {
         match &self.0 {
-            Stored::Items { len, .. } | Stored::Other(Other::Tree { len, .. }) => *len,
+            Stored::Items { len, .. } | Stored::Other(Other::Long { len, .. }) => *len,
             Stored::Other(Other::Ints { lo, hi }) => hi.abs_diff(*lo) as usize + 1,
         }
     }
@@ -189,8 +206,11 @@ impl List {
     pub fn get(&self, index: usize) -> Option<Value> {
         match &self.0 {
             Stored::Items { buf, start, len } => buf[*start..*start + *len].get(index).cloned(),
-            Stored::Other(Other::Tree { tree, start, len }) => {
-                (index < *len).then(|| tree[start + index].clone())
+            Stored::Other(Other::Long { long, start, len }) => {
+                (index < *len).then(|| match &**long {
+                    LongItems::Side { items, .. } => items[start + index].clone(),
+                    LongItems::Tree(tree) => tree[start + index].clone(),
+                })
             }
             Stored::Other(Other::Ints { lo, .. }) => {
                 (index < self.len()).then(|| Value::Int(nth(*lo, index)))
@@ -208,16 +228,35 @@ impl List {
 
     /// The elements in order.
     pub fn iter(&self) -> Iter<'_> {
-        Iter(match &self.0 {
-            Stored::Items { buf, start, len } => IterOf::Items(buf[*start..*start + *len].iter()),
-            Stored::Other(Other::Tree { tree, start, len }) => {
-                IterOf::Tree(tree.focus().narrow(*start..*start + *len).into_iter())
+        self.iter_part(0, self.len())
+    }
+
+    /// The elements from `from` up to, not including, `to`, which are
+    /// in the list, in order.
+    fn iter_part(&self, from: usize, to: usize) -> Iter<'_> {
+        Iter(match self.kept() {
+            Kept::Side(items, _) => IterOf::Items(items[from..to].iter()),
+            Kept::Tree(tree, start, _) => {
+                IterOf::Tree(tree.focus().narrow(start + from..start + to).into_iter())
             }
-            Stored::Other(Other::Ints { lo, .. }) => IterOf::Ints(IntsLeft {
-                next: *lo,
-                left: self.len(),
+            Kept::Ints(lo) => IterOf::Ints(IntsLeft {
+                next: nth(lo, from),
+                left: to - from,
             }),
         })
+    }
+
+    /// Where the elements are.
+    #[inline]
+    fn kept(&self) -> Kept<'_> {
+        match &self.0 {
+            Stored::Items { buf, start, len } => Kept::Side(&buf[*start..*start + *len], *start),
+            Stored::Other(Other::Long { long, start, len }) => match &**long {
+                LongItems::Side { items, .. } => Kept::Side(&items[*start..*start + *len], *start),
+                LongItems::Tree(tree) => Kept::Tree(tree, *start, *len),
+            },
+            Stored::Other(Other::Ints { lo, .. }) => Kept::Ints(*lo),
+        }
     }
 
     /// The elements the list holds, in order, as runs of them that are
@@ -226,25 +265,25 @@ impl List {
     /// and the next begins is nothing a list shows: two equal lists
     /// may have their runs end in different places.
     pub(super) fn runs(&self) -> Runs<'_> {
-        match &self.0 {
-            Stored::Items { buf, start, len } => Runs {
-                left: &buf[*start..*start + *len],
+        match self.kept() {
+            Kept::Side(items, _start) => Runs {
+                left: items,
                 leaves: None,
                 #[cfg(test)]
-                at: *start,
+                at: _start,
             },
-            Stored::Other(Other::Tree { tree, start, len }) => Runs {
+            Kept::Tree(tree, start, len) => Runs {
                 left: &[],
                 leaves: Some(Leaves {
                     leaves: tree.leaves(),
                     passed: 0,
-                    skip: *start,
-                    left: *len,
+                    skip: start,
+                    left: len,
                 }),
                 #[cfg(test)]
                 at: 0,
             },
-            Stored::Other(Other::Ints { .. }) => Runs {
+            Kept::Ints(..) => Runs {
                 left: &[],
                 leaves: None,
                 #[cfg(test)]
@@ -259,7 +298,7 @@ impl List {
     pub(super) fn range_ends(&self) -> Option<(i64, i64)> {
         match self.0 {
             Stored::Other(Other::Ints { lo, hi }) => Some((lo, hi)),
-            Stored::Items { .. } | Stored::Other(Other::Tree { .. }) => None,
+            Stored::Items { .. } | Stored::Other(Other::Long { .. }) => None,
         }
     }
 
@@ -294,14 +333,19 @@ impl List {
                 start: start + from,
                 len,
             },
-            Stored::Other(Other::Tree { tree, start, .. }) if len < tree.len() / 4 => {
-                return match self.flat_for(len) {
-                    true => self.slice_in(from, to),
-                    false => List::of_tree(part_of(tree, start + from, len)),
+            Stored::Other(Other::Long { long, start, .. }) if len < long.len() / 4 => {
+                return match (self.flat_for(len), &**long) {
+                    (true, _) => List::flat(self.iter_part(from, to).collect()),
+                    (false, LongItems::Side { items, .. }) => {
+                        List::from(items[start + from..start + to].to_vec())
+                    }
+                    (false, LongItems::Tree(tree)) => {
+                        List::of_tree(part_of(tree, start + from, len))
+                    }
                 };
             }
-            Stored::Other(Other::Tree { tree, start, .. }) => Stored::Other(Other::Tree {
-                tree: tree.clone(),
+            Stored::Other(Other::Long { long, start, .. }) => Stored::Other(Other::Long {
+                long: long.clone(),
                 start: start + from,
                 len,
             }),
@@ -569,7 +613,7 @@ impl List {
     fn elements(&self) -> Elements<'_> {
         match self.0 {
             Stored::Other(Other::Ints { lo, hi }) => Elements::Ints(lo, hi),
-            Stored::Items { .. } | Stored::Other(Other::Tree { .. }) => Elements::Held(self.runs()),
+            Stored::Items { .. } | Stored::Other(Other::Long { .. }) => Elements::Held(self.runs()),
         }
     }
 
@@ -577,7 +621,7 @@ impl List {
     fn write_into(&self, items: &mut Vec<Value>) {
         match self.0 {
             Stored::Other(Other::Ints { lo, hi }) => items.extend((lo..=hi).map(Value::Int)),
-            Stored::Items { .. } | Stored::Other(Other::Tree { .. }) => {
+            Stored::Items { .. } | Stored::Other(Other::Long { .. }) => {
                 for run in self.runs() {
                     items.extend_from_slice(run);
                 }
@@ -599,26 +643,24 @@ impl List {
     /// The list of the elements of `tree`.
     fn of_tree(tree: Vector<Value>) -> List {
         let len = tree.len();
-        List(Stored::Other(Other::Tree {
-            tree: Tree::from(tree),
+        List(Stored::Other(Other::Long {
+            long: Long::from(LongItems::Tree(tree)),
             start: 0,
             len,
         }))
-    }
-
-    /// The elements from `from` up to `to`, which are in the list, kept
-    /// side by side in a buffer.
-    fn slice_in(&self, from: usize, to: usize) -> List {
-        List::flat(self.iter().skip(from).take(to - from).collect())
     }
 
     /// Whether a list of `len` elements made from this one keeps them
     /// side by side in a buffer: up to [`FLAT_MOST`] of them, and if
     /// this one keeps its own in a tree, up to half as many.
     fn flat_for(&self, len: usize) -> bool {
-        match self.0 {
-            Stored::Other(Other::Tree { .. }) => len <= FLAT_MOST / 2,
-            Stored::Items { .. } | Stored::Other(Other::Ints { .. }) => len <= FLAT_MOST,
+        match &self.0 {
+            Stored::Other(Other::Long { long, .. }) if matches!(**long, LongItems::Tree(_)) => {
+                len <= FLAT_MOST / 2
+            }
+            Stored::Items { .. } | Stored::Other(Other::Long { .. } | Other::Ints { .. }) => {
+                len <= FLAT_MOST
+            }
         }
     }
 
@@ -627,7 +669,18 @@ impl List {
     /// is, which shares all of it but its edges with it.
     fn to_tree(&self) -> Vector<Value> {
         match &self.0 {
-            Stored::Other(Other::Tree { tree, start, len }) => part_of(tree, *start, *len),
+            Stored::Other(Other::Long { long, start, len }) => match &**long {
+                LongItems::Tree(tree) => part_of(tree, *start, *len),
+                // (The tree of a list made in one go is made once, and
+                // the next change starts from it too.)
+                LongItems::Side { items, tree } => {
+                    let tree = tree.get_or_init(|| {
+                        copied(items.len());
+                        items.iter().cloned().collect()
+                    });
+                    part_of(tree, *start, *len)
+                }
+            },
             Stored::Items { .. } | Stored::Other(Other::Ints { .. }) => {
                 copied(self.len());
                 self.iter().collect()
@@ -642,11 +695,20 @@ impl List {
         List::flat(items)
     }
 
-    /// Whether the list is a part of a tree: what the tests of how a
-    /// list is kept ask.
+    /// How the list keeps its elements: in a buffer (`"buffer"`), side
+    /// by side as a long list made in one go (`"side"`), in a tree
+    /// (`"tree"`), or none (`"ints"`). What the tests of how a list is
+    /// kept ask.
     #[cfg(test)]
-    pub(super) fn in_tree(&self) -> bool {
-        matches!(self.0, Stored::Other(Other::Tree { .. }))
+    pub(super) fn kept_as(&self) -> &'static str {
+        match &self.0 {
+            Stored::Items { .. } => "buffer",
+            Stored::Other(Other::Long { long, .. }) => match **long {
+                LongItems::Side { .. } => "side",
+                LongItems::Tree(_) => "tree",
+            },
+            Stored::Other(Other::Ints { .. }) => "ints",
+        }
     }
 
     /// The number of elements of the storage the list is a part of, and
@@ -655,8 +717,8 @@ impl List {
     pub(super) fn buffer(&self) -> Option<(usize, *const ())> {
         match &self.0 {
             Stored::Items { buf, .. } => Some((buf.len(), buf.as_ptr().cast())),
-            Stored::Other(Other::Tree { tree, .. }) => {
-                Some((tree.len(), (&**tree as *const Vector<Value>).cast()))
+            Stored::Other(Other::Long { long, .. }) => {
+                Some((long.len(), (&**long as *const LongItems).cast()))
             }
             Stored::Other(Other::Ints { .. }) => None,
         }
@@ -745,7 +807,16 @@ impl From<Vec<Value>> for List {
             return List::flat(items);
         }
         copied(items.len());
-        List::of_tree(Vector::from_iter(items))
+        let len = items.len();
+        let long = LongItems::Side {
+            items: items.into_boxed_slice(),
+            tree: OnceLock::new(),
+        };
+        List(Stored::Other(Other::Long {
+            long: Long::from(long),
+            start: 0,
+            len,
+        }))
     }
 }
 
@@ -839,12 +910,12 @@ enum IntoIterOf {
         next: usize,
         end: usize,
     },
-    /// The elements of `tree` from `next` up to, not including, `end`,
+    /// The elements of `long` from `next` up to, not including, `end`,
     /// after those of the leaf at hand that are left (`leaf`, the last
-    /// first): the elements of a leaf are taken out of the tree
+    /// first): the elements of a leaf of a tree are taken out of it
     /// together.
-    Tree {
-        tree: Tree,
+    Long {
+        long: Long,
         next: usize,
         end: usize,
         leaf: Vec<Value>,
@@ -865,8 +936,8 @@ impl Iterator for IntoIter {
                 *next += 1;
                 Some(item)
             }
-            IntoIterOf::Tree {
-                tree,
+            IntoIterOf::Long {
+                long,
                 next,
                 end,
                 leaf,
@@ -877,6 +948,14 @@ impl Iterator for IntoIter {
                 if next == end {
                     return None;
                 }
+                let tree = match &**long {
+                    LongItems::Side { items, .. } => {
+                        let item = items[*next].clone();
+                        *next += 1;
+                        return Some(item);
+                    }
+                    LongItems::Tree(tree) => tree,
+                };
                 let mut focus = tree.focus();
                 let (at, items) = focus.chunk_at(*next);
                 let upto = at.end.min(*end);
@@ -896,7 +975,7 @@ impl Iterator for IntoIter {
     fn size_hint(&self) -> (usize, Option<usize>) {
         let left = match &self.0 {
             IntoIterOf::Items { next, end, .. } => end - next,
-            IntoIterOf::Tree {
+            IntoIterOf::Long {
                 next, end, leaf, ..
             } => leaf.len() + (end - next),
             IntoIterOf::Ints(ints) => ints.left,
@@ -917,8 +996,8 @@ impl IntoIterator for List {
                 next: start,
                 end: start + len,
             },
-            Stored::Other(Other::Tree { tree, start, len }) => IntoIterOf::Tree {
-                tree,
+            Stored::Other(Other::Long { long, start, len }) => IntoIterOf::Long {
+                long,
                 next: start,
                 end: start + len,
                 leaf: Vec::new(),
