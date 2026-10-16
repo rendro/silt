@@ -21,7 +21,9 @@ use crate::ast::{
 };
 use crate::bytecode::emit::limit_diagnostic;
 use crate::bytecode::ops::Limit;
-use crate::bytecode::{Asm, Const, Emitter, Function, Globals, Label, UpvalueDesc, VmClosure};
+use crate::bytecode::{
+    Asm, Const, Emitter, Function, Globals, Label, Segment, UpvalueDesc, VmClosure,
+};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::layers::Layers;
@@ -1372,20 +1374,29 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::StringInterp(parts) => {
-                // Every part stays on the stack until `StringConcat`.
+                // The string of every expression stays on the stack
+                // until `Interpolate`; a literal part is a constant it
+                // reads where it is.
+                let mut segments = Vec::with_capacity(parts.len());
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
-                            let idx = self.add_constant(Value::String(s.clone().into()), span)?;
-                            self.emit(Asm::Constant { k: idx }, span)?;
+                            let k = self.add_constant(Value::String(s.clone().into()), span)?;
+                            segments.push(Segment::Literal(k));
                         }
                         StringPart::Expr(e) => {
                             self.compile_expr(e)?;
                             self.emit(Asm::DisplayValue, span)?;
+                            segments.push(Segment::Value);
                         }
                     }
                 }
-                self.emit(Asm::StringConcat { count: parts.len() }, span)?;
+                self.emit(
+                    Asm::Interpolate {
+                        segments: &segments,
+                    },
+                    span,
+                )?;
             }
 
             ExprKind::Return(maybe_expr) => {
@@ -3391,8 +3402,10 @@ fn make_adder(n) {
     fn test_compile_string_interp() {
         let fns = compile(r#"fn greet(name) { "hello {name}" }"#);
         let f = find_fn(&fns, "greet");
-        assert!(has_op(f.chunk(), Op::StringConcat));
+        assert!(has_op(f.chunk(), Op::Interpolate));
         assert!(has_op(f.chunk(), Op::DisplayValue));
+        // The literal is read in place: no instruction pushes it.
+        assert!(!has_op(f.chunk(), Op::Constant));
     }
 
     // ── Record compilation ─────────────────────────────────────────

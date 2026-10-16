@@ -23,7 +23,7 @@ pub mod ops;
 pub mod verify;
 
 pub use emit::Emitter;
-pub use ops::{Asm, Instr, Op, Operands, decode};
+pub use ops::{Asm, Instr, Op, Operands, Segments, decode};
 pub use verify::{VerifyError, verify};
 
 /// A dedup key for simple constant types.  Using a dedicated enum avoids
@@ -384,6 +384,15 @@ pub struct UpvalueDesc {
     pub is_local: bool,
     /// The slot index (local slot or parent upvalue index).
     pub index: usize,
+}
+
+/// A segment of a string interpolation, as `Interpolate` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Segment {
+    /// The next of the values on the stack: an expression's string.
+    Value,
+    /// The string constant, a literal part of the string.
+    Literal(Const),
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────

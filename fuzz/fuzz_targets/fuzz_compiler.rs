@@ -6,7 +6,7 @@ use silt::parser::Parser;
 
 // Compiler-stage fuzz target (the stage between the typechecker and
 // the VM). The round-92 string-interpolation bug — >255 segments
-// overflowed the u8 `Op::StringConcat` operand, panicking in debug and
+// overflowed the u8 count of its instruction, panicking in debug and
 // silently emitting wrong bytecode in release — lived exactly here and
 // was invisible to every earlier target (lexer/parser/formatter/
 // roundtrip/typechecker all stop before bytecode emission).
@@ -44,9 +44,8 @@ fuzz_target!(|data: &[u8]| {
 
     // 4. Analyse and compile as every front door does. Ill-typed
     //    inputs are the typechecker target's domain: a program with an
-    //    error is not compiled. A compile error is fine (the
-    //    "string interpolation has N segments; limited to 255" guard);
-    //    a panic is not.
+    //    error is not compiled. A compile error is fine (the "too many
+    //    segments of a string interpolation" limit); a panic is not.
     let Ok(program) = silt::session::testing::compile_decls_str(s) else {
         return;
     };

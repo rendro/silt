@@ -4,7 +4,7 @@
 
 use std::fmt::Write;
 
-use crate::bytecode::{Chunk, Const, Function, Globals, Instr, decode};
+use crate::bytecode::{Chunk, Const, Function, Globals, Instr, Segment, decode};
 use crate::value::Value;
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -103,8 +103,7 @@ fn disassemble_instruction(
         | Instr::Panic => format!("{offset:04}  {name}"),
 
         // ── A count, an index or a slot ───────────────────────
-        Instr::StringConcat { count: n }
-        | Instr::GetUpvalue { index: n }
+        Instr::GetUpvalue { index: n }
         | Instr::Call { argc: n }
         | Instr::TailCall { argc: n }
         | Instr::MakeTuple { count: n }
@@ -186,6 +185,24 @@ fn disassemble_instruction(
             for capture in captures.iter(code) {
                 let locality = if capture.is_local { "local" } else { "upvalue" };
                 write!(line, "\n      |  {locality} {}", capture.index).unwrap();
+            }
+            line
+        }
+
+        // ── Interpolate: the segments, in their order ─────────
+        Instr::Interpolate { segments } => {
+            let mut line = with_number(segments.len());
+            for segment in segments.iter(code) {
+                match segment {
+                    Segment::Literal(k) => write!(
+                        line,
+                        "\n      |  literal {:<5} ; {}",
+                        k.index(),
+                        constant_comment(chunk, k)
+                    )
+                    .unwrap(),
+                    Segment::Value => line.push_str("\n      |  value"),
+                }
             }
             line
         }
@@ -375,6 +392,29 @@ mod tests {
             output.contains("== inner (arity=0, upvalues=2) =="),
             "{output}"
         );
+    }
+
+    #[test]
+    fn test_interpolate() {
+        let output = disassembly(1, 0, |e| {
+            let v = e.constant(Value::String("v".into()), span()).unwrap();
+            let end = e.constant(Value::String("!".into()), span()).unwrap();
+            let segments = [Segment::Literal(v), Segment::Value, Segment::Literal(end)];
+            e.emit(
+                Asm::Interpolate {
+                    segments: &segments,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let expected = "0000  Interpolate          3\n      \
+                        |  literal 0     ; \"v\"\n      \
+                        |  value\n      \
+                        |  literal 1     ; \"!\"\n\
+                        0012  Return";
+        assert!(output.contains(expected), "{output}");
     }
 
     #[test]
