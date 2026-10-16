@@ -808,8 +808,14 @@ impl From<Vec<Value>> for List {
         }
         copied(items.len());
         let len = items.len();
+        // (Moved to storage of their exact size, as a buffer is made: a
+        // vector that grew past them shrunk in place made the memory
+        // the next list of the length takes come from the system each
+        // time, ten times the page faults of `list.map` of 10,000.)
+        let mut exact = Vec::with_capacity(len);
+        exact.extend(items);
         let long = LongItems::Side {
-            items: items.into_boxed_slice(),
+            items: exact.into_boxed_slice(),
             tree: OnceLock::new(),
         };
         List(Stored::Other(Other::Long {
@@ -926,6 +932,7 @@ enum IntoIterOf {
 impl Iterator for IntoIter {
     type Item = Value;
 
+    #[inline]
     fn next(&mut self) -> Option<Value> {
         match &mut self.0 {
             IntoIterOf::Items { buf, next, end } => {
@@ -941,33 +948,10 @@ impl Iterator for IntoIter {
                 next,
                 end,
                 leaf,
-            } => {
-                if let Some(item) = leaf.pop() {
-                    return Some(item);
-                }
-                if next == end {
-                    return None;
-                }
-                let tree = match &**long {
-                    LongItems::Side { items, .. } => {
-                        let item = items[*next].clone();
-                        *next += 1;
-                        return Some(item);
-                    }
-                    LongItems::Tree(tree) => tree,
-                };
-                let mut focus = tree.focus();
-                let (at, items) = focus.chunk_at(*next);
-                let upto = at.end.min(*end);
-                leaf.extend(
-                    items[*next - at.start..upto - at.start]
-                        .iter()
-                        .rev()
-                        .cloned(),
-                );
-                *next = upto;
-                leaf.pop()
-            }
+            } => match leaf.pop() {
+                Some(item) => Some(item),
+                None => next_of_long(long, next, *end, leaf),
+            },
             IntoIterOf::Ints(ints) => ints.next(),
         }
     }
@@ -982,6 +966,34 @@ impl Iterator for IntoIter {
         };
         (left, Some(left))
     }
+}
+
+/// The element of `long` at `next`, if it is before `end`, with those
+/// of its leaf after it put into `leaf`, the last first, if `long` is a
+/// tree; `next` is moved past them.
+fn next_of_long(long: &Long, next: &mut usize, end: usize, leaf: &mut Vec<Value>) -> Option<Value> {
+    if *next == end {
+        return None;
+    }
+    let tree = match &**long {
+        LongItems::Side { items, .. } => {
+            let item = items[*next].clone();
+            *next += 1;
+            return Some(item);
+        }
+        LongItems::Tree(tree) => tree,
+    };
+    let mut focus = tree.focus();
+    let (at, items) = focus.chunk_at(*next);
+    let upto = at.end.min(end);
+    leaf.extend(
+        items[*next - at.start..upto - at.start]
+            .iter()
+            .rev()
+            .cloned(),
+    );
+    *next = upto;
+    leaf.pop()
 }
 
 impl IntoIterator for List {
