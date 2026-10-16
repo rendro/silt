@@ -342,6 +342,27 @@ fn interpolate(
     Ok(())
 }
 
+/// `MakeMap`: put the map of the `pairs` keys and values on top of
+/// `stack`, each key before its value, in place of them.
+///
+/// A call, not a part of the loop, as `interpolate` is.
+#[inline(never)]
+fn make_map(stack: &mut Vec<Value>, pairs: usize) {
+    let start = stack.len() - pairs * 2;
+    let map = Value::Map(crate::value::Map::of_literal(&stack[start..]));
+    stack.truncate(start);
+    stack.push(map);
+}
+
+/// `MakeSet`: put the set of the `count` values on top of `stack` in
+/// place of them.
+#[inline(never)]
+fn make_set(stack: &mut Vec<Value>, count: usize) {
+    let start = stack.len() - count;
+    let set = Value::set(stack.drain(start..));
+    stack.push(set);
+}
+
 /// The most bytes of the buffer `Interpolate` writes in that a VM
 /// keeps for the next one ([`Vm`]'s `text`). Small: a program can have
 /// a hundred thousand VMs, each holding its buffer while it lives.
@@ -839,19 +860,8 @@ impl Vm {
                     let elements = self.stack.drain(start..).collect();
                     self.stack.push(Value::List(elements));
                 }
-                Instr::MakeMap { pairs } => {
-                    let start = self.stack.len() - pairs * 2;
-                    let map = {
-                        let mut items = self.stack.drain(start..);
-                        Value::map(std::iter::from_fn(|| Some((items.next()?, items.next()?))))
-                    };
-                    self.stack.push(map);
-                }
-                Instr::MakeSet { count } => {
-                    let start = self.stack.len() - count;
-                    let set = Value::set(self.stack.drain(start..));
-                    self.stack.push(set);
-                }
+                Instr::MakeMap { pairs } => make_map(&mut self.stack, pairs),
+                Instr::MakeSet { count } => make_set(&mut self.stack, count),
                 Instr::MakeRecord { ty, fields } => {
                     let start = self.stack.len() - fields.len();
                     let values: Vec<Value> = self.stack.drain(start..).collect();
