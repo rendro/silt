@@ -17,14 +17,17 @@
 //! the handle of a task that has ended (`runtime::handle::TaskHandle`)
 //! take what they hold out of themselves and drop it through
 //! [`drop_held`]. The elements that lists and tuples share ([`Buf`]),
-//! the entries of a map and the members of a set ([`Entries`],
-//! [`Members`]) stay where they are: their holder is counted in where
-//! its `drop` starts, and counted out by its last field.
+//! the tree of a long list ([`Tree`]), the entries of a map and the
+//! members of a set ([`Entries`], [`Members`]) stay where they are:
+//! their holder is counted in where its `drop` starts, and counted out
+//! by its last field.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::Arc;
+
+use imbl::Vector;
 
 use super::Value;
 
@@ -49,6 +52,7 @@ pub(crate) enum Held {
     Value(Value),
     Values(Box<[Value]>),
     Shared(Arc<[Value]>),
+    Tree(Arc<Vector<Value>>),
     Entries(BTreeMap<Value, Value>),
     Members(BTreeSet<Value>),
 }
@@ -205,6 +209,45 @@ impl FromIterator<Value> for Buf {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> Buf {
         Buf {
             items: items.into_iter().collect(),
+            _leave: Leave,
+        }
+    }
+}
+
+/// The elements of a long list, in a tree that lists share ([`Buf`]
+/// holds those of a short one): the tree, and the parts of it that
+/// later versions of the list share with it, are dropped on no native
+/// stack however deep the elements nest.
+///
+/// (As for a `Buf`: the tree is dropped after `drop`, and the second
+/// field counts its holder out.)
+#[derive(Clone)]
+pub(super) struct Tree {
+    tree: Arc<Vector<Value>>,
+    _leave: Leave,
+}
+
+impl Drop for Tree {
+    #[inline]
+    fn drop(&mut self) {
+        if enter() {
+            put_aside(Held::Tree(std::mem::take(&mut self.tree)));
+        }
+    }
+}
+
+impl Deref for Tree {
+    type Target = Vector<Value>;
+
+    fn deref(&self) -> &Vector<Value> {
+        &self.tree
+    }
+}
+
+impl From<Vector<Value>> for Tree {
+    fn from(tree: Vector<Value>) -> Tree {
+        Tree {
+            tree: Arc::new(tree),
             _leave: Leave,
         }
     }

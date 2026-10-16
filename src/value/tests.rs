@@ -1936,3 +1936,312 @@ fn where_a_list_s_runs_end_is_nothing_a_value_shows() {
     }
     assert!(compared > 88 * 88 * cuts.len());
 }
+
+// ── Lists kept in trees ────────────────────────────────────────
+
+/// How many elements `f` copies, or moves, into storage it makes for
+/// lists ([`super::list::copies`]).
+fn copies_of(f: impl FnOnce()) -> u64 {
+    let before = super::list::copies::count();
+    f();
+    super::list::copies::count() - before
+}
+
+/// A list built, or changed, one element at a time copies a number of
+/// elements that grows like `n * log2(n)` at most, not like `n * n`:
+/// an element more at the front (`[x, ..xs]`, which is a list of one
+/// joined to the list), at the back (`list.append`), one in place of
+/// another (`list.set`), a short list joined at either end
+/// (`list.concat`), one taken out (`list.remove_at`). Each old list
+/// is kept until the new one is made, as a fold keeps it. (Copying
+/// the whole list at each step, as a list kept in one buffer must,
+/// copies 50,000,000 elements for 10,000 of them.)
+#[test]
+fn a_list_changed_an_element_at_a_time_copies_n_log_n_elements() {
+    // The most elements copied per element and per doubling of the
+    // length.
+    const C: f64 = 2.0;
+    type Step = fn(&List, i64) -> List;
+    let steps: [(&str, Step); 6] = [
+        ("[x, ..xs]", |xs, i| {
+            made([i]).concat(xs).expect("few enough elements")
+        }),
+        ("list.append", |xs, i| {
+            xs.push_back(Value::Int(i)).expect("few enough elements")
+        }),
+        ("list.prepend", |xs, i| {
+            xs.push_front(Value::Int(i)).expect("few enough elements")
+        }),
+        ("list.concat(xs, short)", |xs, i| {
+            xs.concat(&made([i, i])).expect("few enough elements")
+        }),
+        ("list.concat(short, xs)", |xs, i| {
+            made([i, i]).concat(xs).expect("few enough elements")
+        }),
+        ("[..xs, x]", |xs, i| {
+            xs.concat(&made([i])).expect("few enough elements")
+        }),
+    ];
+    for n in [10_000usize, 20_000] {
+        let bound = (C * n as f64 * (n as f64).log2()) as u64;
+        for (name, step) in steps {
+            let mut list = List::new();
+            let copied = copies_of(|| {
+                for i in 0..n as i64 {
+                    let next = step(&list, i);
+                    list = next;
+                }
+            });
+            assert!(list.len() >= n, "{name}");
+            assert!(
+                copied <= bound,
+                "{name} of {n}: {copied} copied, at most {bound}"
+            );
+        }
+        let all = made(0..n as i64);
+        let mut list = all.clone();
+        let copied = copies_of(|| {
+            for i in 0..n {
+                let next = list.set(i, Value::Int(-1)).expect("few elements");
+                list = next.expect("an element there");
+            }
+        });
+        assert!(
+            copied <= bound,
+            "list.set of {n}: {copied} copied, at most {bound}"
+        );
+        assert!(list.iter().all(|item| item == Value::Int(-1)));
+        let mut list = all.clone();
+        let copied = copies_of(|| {
+            while !list.is_empty() {
+                let next = list.remove_at(list.len() / 2).expect("few elements");
+                list = next.expect("an element there");
+            }
+        });
+        assert!(
+            copied <= bound,
+            "list.remove_at of {n}: {copied} copied, at most {bound}"
+        );
+    }
+}
+
+/// A list the model test makes: the Ints from `from` (each one more
+/// than the one before, or not, as `ascending` says), `len` of them,
+/// held, or (`ints`) a list that holds none where they ascend.
+#[derive(Debug, Clone)]
+struct Made {
+    from: i64,
+    len: usize,
+    ascending: bool,
+    ints: bool,
+}
+
+impl Made {
+    fn items(&self) -> Vec<Value> {
+        (0..self.len as i64)
+            .map(|i| match self.ascending {
+                true => Value::Int(self.from + i),
+                false => Value::Int((self.from + i * 7).rem_euclid(13)),
+            })
+            .collect()
+    }
+
+    fn list(&self) -> List {
+        match self.ints && self.ascending && self.len > 0 {
+            true => ints(self.from, self.from + self.len as i64 - 1),
+            false => List::from(self.items()),
+        }
+    }
+}
+
+/// A change the model test makes to its list.
+#[derive(Debug, Clone)]
+enum Change {
+    PushFront(i64),
+    PushBack(i64),
+    /// At an index, counted modulo one more than the length.
+    Set(usize, i64),
+    RemoveAt(usize),
+    /// A part, its bounds counted modulo one more than the length.
+    Slice(usize, usize),
+    Rest,
+    Append(Made),
+    Prepend(Made),
+    Start(Made),
+}
+
+fn made_strategy() -> impl proptest::strategy::Strategy<Value = Made> {
+    use proptest::prelude::*;
+    let len = prop_oneof![0usize..40, 0usize..200, 0usize..1500];
+    (-5i64..60, len, any::<bool>(), any::<bool>()).prop_map(|(from, len, ascending, ints)| Made {
+        from,
+        len,
+        ascending,
+        ints,
+    })
+}
+
+fn change_strategy() -> impl proptest::strategy::Strategy<Value = Change> {
+    use proptest::prelude::*;
+    let n = -3i64..40;
+    prop_oneof![
+        3 => n.clone().prop_map(Change::PushFront),
+        3 => n.clone().prop_map(Change::PushBack),
+        2 => (any::<usize>(), n).prop_map(|(at, x)| Change::Set(at, x)),
+        2 => any::<usize>().prop_map(Change::RemoveAt),
+        2 => (any::<usize>(), any::<usize>()).prop_map(|(a, b)| Change::Slice(a, b)),
+        3 => Just(Change::Rest),
+        1 => made_strategy().prop_map(Change::Append),
+        1 => made_strategy().prop_map(Change::Prepend),
+        1 => made_strategy().prop_map(Change::Start),
+    ]
+}
+
+/// The list `list`, whose elements are `model`, is the list of its
+/// elements whatever it is stored in: its elements read in every way
+/// there is, and it is equal to, ordered with, hashed and written as
+/// a list of the same elements held in one buffer is; it is ordered
+/// with `before` as `model` is with `before_model`; and it keeps at
+/// most four times its own elements from being freed.
+fn the_list_is_its_model(list: &List, model: &[Value], before: &List, before_model: &[Value]) {
+    use super::list::FLAT_MOST;
+    let len = model.len();
+    assert_eq!(list.len(), len);
+    assert_eq!(list.is_empty(), model.is_empty());
+    assert_eq!(list.iter().collect::<Vec<_>>(), model);
+    assert!(list.iter().rev().eq(model.iter().rev().cloned()));
+    assert_eq!(list.iter().len(), len);
+    assert_eq!(list.clone().into_iter().collect::<Vec<_>>(), model);
+    assert_eq!(list.to_vec().expect("few elements"), model);
+    match list.range_ends() {
+        Some((lo, hi)) => assert!(model.iter().cloned().eq((lo..=hi).map(Value::Int))),
+        None => assert!(list.runs().flatten().eq(model.iter())),
+    }
+    for at in [0, len / 3, len / 2, len.saturating_sub(1), len] {
+        assert_eq!(list.get(at), model.get(at).cloned(), "element {at}");
+    }
+    assert_eq!(list.first(), model.first().cloned());
+    assert_eq!(list.last(), model.last().cloned());
+    for x in [-1, 0, 7, 12, 39] {
+        let x = Value::Int(x);
+        assert_eq!(list.position(&x), model.iter().position(|item| *item == x));
+    }
+    let sum = model.iter().map(|item| match item {
+        Value::Int(n) => *n,
+        _ => unreachable!(),
+    });
+    match list.sum_ints() {
+        IntTotal::Total(total) => assert_eq!(total, sum.sum::<i64>()),
+        _ => panic!("the sum of a few small Ints"),
+    }
+    let mut sorted = model.to_vec();
+    sorted.sort();
+    assert_eq!(elements(&list.sorted()), sorted);
+    let mut seen = std::collections::BTreeSet::new();
+    let unique: Vec<Value> = model.iter().filter(|x| seen.insert(*x)).cloned().collect();
+    assert_eq!(elements(&list.unique()), unique);
+
+    let (value, twin) = (
+        Value::List(list.clone()),
+        Value::List(List::held_flat(model.to_vec())),
+    );
+    assert!(value == twin);
+    assert_eq!(value.cmp(&twin), Ordering::Equal);
+    assert_eq!(hash_of(&value), hash_of(&twin));
+    assert_eq!(format!("{value} {value:?}"), format!("{twin} {twin:?}"));
+    let before_value = Value::List(before.clone());
+    assert_eq!(value.cmp(&before_value), model.cmp(before_model));
+    assert_eq!(value == before_value, model == before_model);
+    if model == before_model {
+        assert_eq!(hash_of(&value), hash_of(&before_value));
+    }
+
+    if let Some((held, _)) = list.buffer() {
+        assert!(held < 4 * len.max(1) + 4, "{held} kept for {len}");
+        match list.in_tree() {
+            true => assert!(held > FLAT_MOST / 2, "a tree of {held}"),
+            false => assert!(held <= FLAT_MOST, "a buffer of {held}"),
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(400))]
+
+    /// Every change a list can be made, in any order, from lists of
+    /// every kind and length (in a buffer, in a tree, at either side of
+    /// the length between and in the gap where a list stays what it
+    /// was, a list that holds none), to parts of lists and to parts of
+    /// parts: the list made is the list of the elements a `Vec` that is
+    /// changed alike holds ([`the_list_is_its_model`]).
+    #[test]
+    fn a_list_is_the_list_of_its_elements_however_it_is_kept(
+        start in made_strategy(),
+        changes in proptest::collection::vec(change_strategy(), 1..40),
+    ) {
+        let mut list = start.list();
+        let mut model = start.items();
+        the_list_is_its_model(&list, &model, &list, &model);
+        for change in changes {
+            let len = model.len();
+            let (next, next_model) = match change {
+                Change::PushFront(x) => {
+                    let mut model = model.clone();
+                    model.insert(0, Value::Int(x));
+                    (list.push_front(Value::Int(x)).expect("few elements"), model)
+                }
+                Change::PushBack(x) => {
+                    let mut model = model.clone();
+                    model.push(Value::Int(x));
+                    (list.push_back(Value::Int(x)).expect("few elements"), model)
+                }
+                Change::Set(at, x) => {
+                    let at = at % (len + 1);
+                    let set = list.set(at, Value::Int(x)).expect("few elements");
+                    let mut model = model.clone();
+                    match model.get_mut(at) {
+                        Some(item) => *item = Value::Int(x),
+                        None => assert!(set.is_none()),
+                    }
+                    (set.unwrap_or_else(|| list.clone()), model)
+                }
+                Change::RemoveAt(at) => {
+                    let at = at % (len + 1);
+                    let removed = list.remove_at(at).expect("few elements");
+                    let mut model = model.clone();
+                    match at < len {
+                        true => {
+                            model.remove(at);
+                        }
+                        false => assert!(removed.is_none()),
+                    }
+                    (removed.unwrap_or_else(|| list.clone()), model)
+                }
+                Change::Slice(a, b) => {
+                    let (a, b) = (a % (len + 1), b % (len + 1));
+                    let part = model[a.min(b)..b.max(a)].to_vec();
+                    (list.slice(a.min(b), b.max(a)), part)
+                }
+                Change::Rest => {
+                    let part = model.get(1..).unwrap_or_default().to_vec();
+                    (list.slice(1, len), part)
+                }
+                Change::Append(other) => {
+                    let mut model = model.clone();
+                    model.extend(other.items());
+                    (list.concat(&other.list()).expect("few elements"), model)
+                }
+                Change::Prepend(other) => {
+                    let mut items = other.items();
+                    items.extend(model.iter().cloned());
+                    (other.list().concat(&list).expect("few elements"), items)
+                }
+                Change::Start(other) => (other.list(), other.items()),
+            };
+            the_list_is_its_model(&next, &next_model, &list, &model);
+            // (The list changed is as it was.)
+            the_list_is_its_model(&list, &model, &next, &next_model);
+            (list, model) = (next, next_model);
+        }
+    }
+}

@@ -24,6 +24,8 @@ pub(crate) use deep::drop_held;
 pub use float::Float;
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
+#[cfg(feature = "test-hooks")]
+pub use list::copies as list_copies;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
 pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
 pub use obj::{Record, Variant};
