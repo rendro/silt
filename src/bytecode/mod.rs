@@ -389,7 +389,8 @@ pub struct UpvalueDesc {
 /// A segment of a string interpolation, as `Interpolate` names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Segment {
-    /// The next of the values on the stack: an expression's string.
+    /// The next of the values on the stack: an expression's value, as
+    /// `DisplayValue` left it.
     Value,
     /// The string constant, a literal part of the string.
     Literal(Const),

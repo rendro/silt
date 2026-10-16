@@ -369,17 +369,72 @@ fn test_interpolate() {
     assert_eq!(result, Value::String("hello world".into()));
 }
 
+/// `DisplayValue` leaves a String, an Int, a Float and a Bool as they
+/// are, for `Interpolate` to write, and makes any other value its text.
 #[test]
 fn test_display_value() {
-    let script = make_function(|e| {
-        let val = e.constant(Value::Int(42), span()).unwrap();
-        e.emit(Asm::Constant { k: val }, span()).unwrap();
-        e.emit(Asm::DisplayValue, span()).unwrap();
-        e.emit(Asm::Return, span()).unwrap();
-    });
-    let mut vm = Vm::new(crate::HostIo::process());
-    let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::String("42".into()));
+    let shown = |value: Value| {
+        let script = make_function(|e| {
+            let val = e.constant(value, span()).unwrap();
+            e.emit(Asm::Constant { k: val }, span()).unwrap();
+            e.emit(Asm::DisplayValue, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        Vm::new(crate::HostIo::process()).run(script).unwrap()
+    };
+    for plain in [
+        Value::Int(42),
+        float(-0.0),
+        Value::Bool(true),
+        Value::String("s".into()),
+    ] {
+        assert_eq!(shown(plain.clone()), plain);
+    }
+    let list = Value::list(vec![Value::Int(1), Value::Int(2)]);
+    assert_eq!(shown(list), Value::String("[1, 2]".into()));
+}
+
+/// Each kind `Interpolate` writes itself, written as `println` writes
+/// it; and a lone segment that is a String is that String, not
+/// a copy of it.
+#[test]
+fn test_interpolate_writes_plain_values() {
+    let interpolated = |values: Vec<Value>| {
+        let script = make_function(|e| {
+            let dash = e.constant(Value::String("-".into()), span()).unwrap();
+            let mut segments = vec![];
+            for value in values {
+                let k = e.constant(value, span()).unwrap();
+                e.emit(Asm::Constant { k }, span()).unwrap();
+                segments.extend([Segment::Value, Segment::Literal(dash)]);
+            }
+            segments.pop();
+            e.emit(
+                Asm::Interpolate {
+                    segments: &segments,
+                },
+                span(),
+            )
+            .unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        Vm::new(crate::HostIo::process()).run(script).unwrap()
+    };
+    let values = vec![
+        Value::Int(i64::MIN),
+        float(-0.0),
+        float(1e20),
+        float(1e-7),
+        Value::Bool(false),
+        Value::String("s".into()),
+    ];
+    let expected = "-9223372036854775808-0.0-100000000000000000000.0-0.0000001-false-s";
+    assert_eq!(interpolated(values), Value::String(expected.into()));
+    let alone: Arc<str> = "alone".into();
+    let Value::String(result) = interpolated(vec![Value::String(alone.clone())]) else {
+        panic!("a String")
+    };
+    assert!(Arc::ptr_eq(&result, &alone), "a lone String is copied");
 }
 
 #[test]
@@ -4125,10 +4180,10 @@ mod type_confusion {
     #[test]
     fn interpolation_of_a_part_that_is_no_string() {
         confused(
-            "string interpolation requires string values, got Int",
+            "string interpolation requires string values, got List",
             |e| {
                 push(e, string("a"));
-                push(e, Value::Int(1));
+                push(e, Value::list(vec![Value::Int(1)]));
                 let segments = [Segment::Value, Segment::Value];
                 e.emit(
                     Asm::Interpolate {

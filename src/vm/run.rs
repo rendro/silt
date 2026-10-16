@@ -13,6 +13,7 @@ use crate::value::{Float, List, Record, Value};
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
+use super::show::write_plain;
 use super::{Vm, VmError};
 use crate::runtime::sync::Wait;
 
@@ -297,6 +298,10 @@ fn pop_done(stack: &mut Vec<Value>) {
     }
 }
 
+/// The most bytes of the buffer `Interpolate` writes in that a VM
+/// keeps for the next one ([`Vm`]'s `text`).
+const KEPT_TEXT: usize = 4096;
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -572,10 +577,18 @@ impl Vm {
                         }
                     }
                 }
+                // A String, an Int, a Float or a Bool stays as it is:
+                // `Interpolate` writes it where it goes (`write_plain`,
+                // src/vm/show.rs). Any other value is made its text.
                 Instr::DisplayValue => {
+                    if matches!(
+                        peek(&self.stack),
+                        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_)
+                    ) {
+                        continue;
+                    }
                     let val = pop(&mut self.stack);
                     match &val {
-                        Value::String(_) => self.stack.push(val),
                         // Mirror the typechecker's string-interpolation Display
                         // gate (inference.rs ~2654): the typechecker's
                         // `type_name_for_impl` reduces a *concrete* operand to a
@@ -631,41 +644,47 @@ impl Vm {
                 }
                 Instr::Interpolate { segments } => {
                     let start = self.stack.len() - segments.values();
-                    // The length of the result, so that it is allocated
-                    // once. A literal is read in place: its count is not
-                    // touched, which tasks running the same code share.
-                    let mut total_len = 0;
-                    for segment in segments.iter(code) {
-                        if let Segment::Literal(k) = segment {
-                            total_len += chunk.string(k).len();
-                        }
+                    // A lone `"{s}"` of a String is that String: nothing
+                    // is copied.
+                    if segments.len() == 1
+                        && segments.values() == 1
+                        && matches!(self.stack[start], Value::String(_))
+                    {
+                        continue;
                     }
-                    for i in start..self.stack.len() {
-                        if let Value::String(ref s) = self.stack[i] {
-                            total_len += s.len();
-                        } else {
-                            fail!(VmError::type_confusion(format!(
-                                "string interpolation requires string values, got {} \
-                                 — call `.to_string()` or `.display()` on the value first",
-                                self.user_facing_type_name(&self.stack[i])
-                            )));
-                        }
-                    }
-                    let mut result = String::with_capacity(total_len);
+                    // The string is written in the VM's buffer, and
+                    // copied once into the String it is. A literal is
+                    // read in place: its count is not touched, which
+                    // tasks running the same code share.
+                    let mut text = std::mem::take(&mut self.text);
+                    text.clear();
                     let mut next = start;
+                    let mut written = true;
                     for segment in segments.iter(code) {
                         match segment {
-                            Segment::Literal(k) => result.push_str(chunk.string(k)),
+                            Segment::Literal(k) => text.push_str(chunk.string(k)),
                             Segment::Value => {
-                                if let Value::String(ref s) = self.stack[next] {
-                                    result.push_str(s);
+                                written = write_plain(&mut text, &self.stack[next]);
+                                if !written {
+                                    break;
                                 }
                                 next += 1;
                             }
                         }
                     }
+                    if !written {
+                        fail!(VmError::type_confusion(format!(
+                            "string interpolation requires string values, got {} \
+                             — call `.to_string()` or `.display()` on the value first",
+                            self.user_facing_type_name(&self.stack[next])
+                        )));
+                    }
                     self.stack.truncate(start);
-                    self.stack.push(Value::String(result.into()));
+                    self.stack.push(Value::String(text.as_str().into()));
+                    // (A buffer an outsized string grew is not kept.)
+                    if text.capacity() <= KEPT_TEXT {
+                        self.text = text;
+                    }
                 }
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {

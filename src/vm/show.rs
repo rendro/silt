@@ -11,6 +11,7 @@
 //! frame.
 
 use std::cell::{Cell, RefCell};
+use std::fmt::Write as _;
 
 use std::sync::Arc;
 
@@ -18,6 +19,28 @@ use super::runtime::{Native, Step};
 use super::{Vm, VmError};
 use crate::bytecode::Globals;
 use crate::value::{Shown, Value};
+
+/// Write the text of `value` to `out` if it is a String, an Int, a
+/// Float or a Bool: values no written `Display` impl shows, and whose
+/// text needs no walk. `false`, and nothing written, for any other.
+///
+/// The one place these four are written: [`Vm::display_value`] and
+/// `Interpolate` (src/vm/run.rs), which writes them straight into the
+/// string it builds, so that `DisplayValue` leaves them as they are.
+pub(crate) fn write_plain(out: &mut String, value: &Value) -> bool {
+    match value {
+        Value::String(s) => out.push_str(s),
+        Value::Int(n) => {
+            let _ = write!(out, "{n}");
+        }
+        Value::Float(f) => {
+            let _ = write!(out, "{f}");
+        }
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        _ => return false,
+    }
+    true
+}
 
 /// The parts of a value that written `Display` impls show, each with
 /// its type's `display` and the global slot of it, in the order the

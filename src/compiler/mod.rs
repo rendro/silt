@@ -1374,9 +1374,10 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::StringInterp(parts) => {
-                // The string of every expression stays on the stack
-                // until `Interpolate`; a literal part is a constant it
-                // reads where it is.
+                // The value of every expression, or its text
+                // (`DisplayValue`), stays on the stack until
+                // `Interpolate`; a literal part is a constant it reads
+                // where it is.
                 let mut segments = Vec::with_capacity(parts.len());
                 for part in parts {
                     match part {

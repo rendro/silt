@@ -1,0 +1,32 @@
+-- Each part of an interpolation is written as `println` writes the
+-- value: an Int, a Float, a Bool and a String as they are, any other
+-- value by its Display, a written impl as a call between the parts. A
+-- lone `"{s}"` of a String is that String. The same in a task.
+import task
+
+type Celsius { degrees: Float }
+
+trait Display for Celsius {
+  fn display(self) -> String {
+    "{self.degrees} C"
+  }
+}
+
+fn line(n: Int, x: Float, b: Bool, s: String) -> String {
+  "n={n} x={x} b={b} s={s} t={Celsius { degrees: x }} l={[Celsius { degrees: 1.0 }]}!"
+}
+
+fn main() {
+  println(line(42, 0.5, true, "a"))
+  println(line(-9223372036854775807 - 1, -0.0, false, ""))
+  println("{0.1 + 0.2} {1.0e20} {1.0e-7} {1.5e300} {-2.0} {100.0}")
+  println("{12}")
+  println("{-0.0}")
+  println("{false}")
+  let s = "alone"
+  println("{s}")
+  println("[{s}]{s}")
+  println("{(1, "two")} {Some(3)} {[1, 2]} {()}")
+  let h = task.spawn({ -> "{line(7, 2.25, true, "in a task")} {s}" })
+  println(task.join(h))
+}
