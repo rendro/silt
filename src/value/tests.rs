@@ -2394,3 +2394,52 @@ fn a_value_nested_through_lists_kept_in_trees_is_dropped_without_the_native_stac
         drop(again);
     }
 }
+
+/// A change of a long list that holds no element (`0..n`) writes its
+/// elements out side by side, with the change, as a list made in one go
+/// keeps them: building a tree of them element by element took twelve
+/// times as long, and `n` changes of one range cost what writing it
+/// out `n` times costs. The next change of the list made starts from a
+/// tree made once, so a chain of changes from a range copies about as
+/// many elements as one from any other list. A short range changed is
+/// a buffer.
+#[test]
+fn a_changed_range_is_written_out_side_by_side() {
+    let n = 10_000usize;
+    let bound = (2.0 * n as f64 * (n as f64).log2()) as u64;
+    let range = ints(0, n as i64 - 1);
+    let x = Value::Int(-1);
+    let changes = [
+        (
+            "list.set",
+            range.set(5, x.clone()).expect("few").expect("there"),
+        ),
+        ("list.append", range.push_back(x.clone()).expect("few")),
+        ("list.prepend", range.push_front(x.clone()).expect("few")),
+        (
+            "list.remove_at",
+            range.remove_at(5).expect("few").expect("there"),
+        ),
+        ("[x, ..xs]", made([-1]).concat(&range).expect("few")),
+        ("[..xs, x]", range.concat(&made([-1])).expect("few")),
+    ];
+    for (name, changed) in changes {
+        assert_eq!(changed.kept_as(), "side", "{name}");
+        let mut list = changed;
+        let copied = copies_of(|| {
+            for i in 0..n {
+                let at = i % list.len();
+                let next = list.set(at, Value::Int(i as i64)).expect("few elements");
+                list = next.expect("an element there");
+            }
+        });
+        assert_eq!(list.kept_as(), "tree", "{name}");
+        assert!(
+            copied <= bound,
+            "{name}, then {n} changes: {copied} copied, at most {bound}"
+        );
+    }
+    let short = ints(0, 9).push_back(x).expect("few elements");
+    assert_eq!(short.kept_as(), "buffer");
+    assert_eq!(elements(&short).len(), 11);
+}

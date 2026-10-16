@@ -384,11 +384,12 @@ impl List {
             return Ok(other.clone());
         }
         let len = self.len() + other.len();
-        if self.flat_for(len) && other.flat_for(len) {
+        if (self.flat_for(len) && other.flat_for(len)) || self.written_out() || other.written_out()
+        {
             let mut items = Vec::with_capacity(len);
             self.write_into(&mut items);
             other.write_into(&mut items);
-            return Ok(List::flat(items));
+            return Ok(List::from(items));
         }
         let tree = if self.len() <= FLAT_MOST {
             let mut tree = other.to_tree();
@@ -414,11 +415,11 @@ impl List {
     pub fn push_front(&self, value: Value) -> Result<List, TooLong> {
         self.writable()?;
         let len = self.len() + 1;
-        if self.flat_for(len) {
+        if self.flat_for(len) || self.written_out() {
             let mut items = Vec::with_capacity(len);
             items.push(value);
             self.write_into(&mut items);
-            return Ok(List::flat(items));
+            return Ok(List::from(items));
         }
         let mut tree = self.to_tree();
         copied(1);
@@ -430,11 +431,11 @@ impl List {
     pub fn push_back(&self, value: Value) -> Result<List, TooLong> {
         self.writable()?;
         let len = self.len() + 1;
-        if self.flat_for(len) {
+        if self.flat_for(len) || self.written_out() {
             let mut items = Vec::with_capacity(len);
             self.write_into(&mut items);
             items.push(value);
-            return Ok(List::flat(items));
+            return Ok(List::from(items));
         }
         let mut tree = self.to_tree();
         copied(1);
@@ -449,10 +450,10 @@ impl List {
             return Ok(None);
         }
         self.writable()?;
-        if self.flat_for(self.len()) {
+        if self.flat_for(self.len()) || self.written_out() {
             let mut items = self.to_vec()?;
             items[index] = value;
-            return Ok(Some(List::flat(items)));
+            return Ok(Some(List::from(items)));
         }
         let mut tree = self.to_tree();
         copied(1);
@@ -467,10 +468,10 @@ impl List {
             return Ok(None);
         }
         self.writable()?;
-        if self.flat_for(self.len() - 1) {
+        if self.flat_for(self.len() - 1) || self.written_out() {
             let mut items = self.to_vec()?;
             items.remove(index);
-            return Ok(Some(List::flat(items)));
+            return Ok(Some(List::from(items)));
         }
         let mut tree = self.to_tree();
         tree.remove(index);
@@ -651,6 +652,16 @@ impl List {
         }))
     }
 
+    /// Whether a list a change makes of this one writes its elements out
+    /// side by side, with the change, however many they are: a list that
+    /// holds none (`a..b`) has no tree to share, and one built element
+    /// by element costs twelve times what writing them out does. (The
+    /// list made keeps them as a list made in one go does, and its own
+    /// first change makes its tree.)
+    fn written_out(&self) -> bool {
+        matches!(self.0, Stored::Other(Other::Ints { .. }))
+    }
+
     /// Whether a list of `len` elements made from this one keeps them
     /// side by side in a buffer: up to [`FLAT_MOST`] of them, and if
     /// this one keeps its own in a tree, up to half as many.
@@ -809,14 +820,21 @@ impl From<Vec<Value>> for List {
         }
         copied(items.len());
         let len = items.len();
-        // (Moved to storage of their exact size, as a buffer is made: a
-        // vector that grew past them shrunk in place made the memory
-        // the next list of the length takes come from the system each
-        // time, ten times the page faults of `list.map` of 10,000.)
-        let mut exact = Vec::with_capacity(len);
-        exact.extend(items);
+        // (A vector of their exact size is kept; one that grew past them
+        // is moved to storage of their exact size, as a buffer is made:
+        // shrunk in place, it made the memory the next list of the
+        // length takes come from the system each time, ten times the
+        // page faults of `list.map` of 10,000.)
+        let items = match items.capacity() == len {
+            true => items,
+            false => {
+                let mut exact = Vec::with_capacity(len);
+                exact.extend(items);
+                exact
+            }
+        };
         let long = LongItems::Side {
-            items: exact.into_boxed_slice(),
+            items: items.into_boxed_slice(),
             tree: OnceLock::new(),
         };
         List(Stored::Other(Other::Long {
