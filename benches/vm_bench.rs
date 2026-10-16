@@ -42,6 +42,17 @@ fn bench(name: &str, source: &str) -> Duration {
     per_iter
 }
 
+/// The program of benches/collections.silt that `kind` names, run on
+/// `n` elements.
+fn collections_program(kind: &str, n: usize) -> String {
+    let source = include_str!("collections.silt");
+    let body = source
+        .split("\nfn main()")
+        .next()
+        .expect("benches/collections.silt has a main");
+    format!("{body}\nfn main() {{\n  {kind}({n})\n}}\n")
+}
+
 fn bench_compile(name: &str, source: &str) -> Duration {
     // Warmup
     for _ in 0..3 {
@@ -418,6 +429,28 @@ fn main() {
 }
     "#,
     );
+
+    println!();
+
+    // ── Collections built by updates ────────────────────────────────
+    // Each row builds a collection of 2,000 elements one update at a
+    // time, the old version still held: what a fold or a loop does.
+    // The read rows walk 10,000 elements. benches/collections.silt
+    // runs the same programs at any size, one process per run.
+    println!("── Collections built by updates ───────────────────────────────");
+
+    for (name, kind, n) in [
+        ("collections: prepend 2K", "prepend", 2_000),
+        ("collections: list.append 2K", "append", 2_000),
+        ("collections: list.set 2K", "listset", 2_000),
+        ("collections: map.set 2K", "mapset", 2_000),
+        ("collections: set.insert 2K", "setins", 2_000),
+        ("collections: walk by rest 10K", "walk", 10_000),
+        ("collections: list.get 10K", "getall", 10_000),
+        ("collections: map.get 10K", "mapget", 10_000),
+    ] {
+        bench(name, &collections_program(kind, n));
+    }
 
     println!();
 

@@ -1,0 +1,128 @@
+-- Collections built by updates, and read back.
+--
+-- Each function builds or reads a collection of `n` elements; main
+-- runs the one its arguments name:
+--
+--   silt run benches/collections.silt -- mapset 40000
+--
+-- benches/vm_bench.rs runs the same functions in its collection rows.
+-- The build rows keep the old version alive while they make the new
+-- one, as a fold or a loop does.
+
+import int
+import io
+import list
+import map
+import set
+
+fn prepend(n) {
+  loop i = 0, acc = [] {
+    match i == n {
+      true -> list.length(acc)
+      false -> loop(i + 1, [i, ..acc])
+    }
+  }
+}
+
+fn append(n) {
+  loop i = 0, acc = [] {
+    match i == n {
+      true -> list.length(acc)
+      false -> loop(i + 1, list.append(acc, i))
+    }
+  }
+}
+
+fn mapset(n) {
+  loop i = 0, acc = #{} {
+    match i == n {
+      true -> map.length(acc)
+      false -> loop(i + 1, map.set(acc, i, i))
+    }
+  }
+}
+
+fn setins(n) {
+  loop i = 0, acc = set.new() {
+    match i == n {
+      true -> set.length(acc)
+      false -> loop(i + 1, set.insert(acc, i))
+    }
+  }
+}
+
+fn listset(n) {
+  let xs = 0..n - 1 |> list.map { x -> x }
+  loop i = 0, acc = xs {
+    match i == n {
+      true -> list.length(acc)
+      false -> match list.set(acc, i, 0) {
+        Some(next) -> loop(i + 1, next)
+        None -> 0
+      }
+    }
+  }
+}
+
+fn walk(n) {
+  let xs = 0..n - 1 |> list.map { x -> x }
+  loop rest = xs, acc = 0 {
+    match rest {
+      [x, ..more] -> loop(more, acc + x)
+      [] -> acc
+    }
+  }
+}
+
+fn getall(n) {
+  let xs = 0..n - 1 |> list.map { x -> x }
+  loop i = 0, acc = 0 {
+    match i == n {
+      true -> acc
+      false -> match list.get(xs, i) {
+        Some(x) -> loop(i + 1, acc + x)
+        None -> 0
+      }
+    }
+  }
+}
+
+fn mapget(n) {
+  let m = 0..n - 1 |> list.map { x -> (x, x) } |> map.from_entries
+  loop i = 0, acc = 0 {
+    match i == n {
+      true -> acc
+      false -> match map.get(m, i) {
+        Some(x) -> loop(i + 1, acc + x)
+        None -> 0
+      }
+    }
+  }
+}
+
+fn main() {
+  let args = io.args()
+  let kind = match list.get(args, 0) {
+    Some(k) -> k
+    None -> "prepend"
+  }
+  let n = match list.get(args, 1) {
+    Some(s) -> match int.parse(s) {
+      Ok(v) -> v
+      Err(_) -> 1000
+    }
+    None -> 1000
+  }
+  let r = match kind {
+    "prepend" -> prepend(n)
+    "append" -> append(n)
+    "mapset" -> mapset(n)
+    "setins" -> setins(n)
+    "listset" -> listset(n)
+    "walk" -> walk(n)
+    "getall" -> getall(n)
+    "mapget" -> mapget(n)
+    _ -> 0
+  }
+  println(r)
+}
