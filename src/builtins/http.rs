@@ -1553,7 +1553,7 @@ mod http_response_tests {
             [
                 ("status", Value::Int(status)),
                 ("body", Value::Bytes(Arc::new(Vec::new()))),
-                ("headers", Value::Map(Default::default())),
+                ("headers", Value::Map(crate::value::Map::new())),
             ],
         )
     }
