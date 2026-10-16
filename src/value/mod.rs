@@ -77,8 +77,10 @@ pub enum Value {
     Unit,
 }
 
-// A value is 40 bytes: the instruction loop is written, and checked by
-// the loop guard in CI (.github/scripts/loop-guard), for that size.
+// A value is 40 bytes where pointers are 64 bits: the instruction loop
+// is written, and checked by the loop guard in CI
+// (.github/scripts/loop-guard), for that size.
+#[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<Value>() == 40);
 
 impl Value {
