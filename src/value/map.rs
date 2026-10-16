@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, btree_map, btree_set};
 use std::sync::Arc;
 
 use super::Value;
-use super::deep::{Entries, Members};
+use super::deep::Kept;
 
 /// How many entries, or members, a map or a set is built of at once
 /// from at least: they are sorted first, which is faster for many of
@@ -24,11 +24,11 @@ const IN_BULK: usize = 16;
 
 /// A map.
 #[derive(Clone, Default)]
-pub struct Map(Arc<Entries>);
+pub struct Map(Arc<Kept<BTreeMap<Value, Value>>>);
 
 /// A set.
 #[derive(Clone, Default)]
-pub struct Set(Arc<Members>);
+pub struct Set(Arc<Kept<BTreeSet<Value>>>);
 
 impl Map {
     /// The map of no entries.
@@ -37,7 +37,7 @@ impl Map {
     }
 
     fn of(entries: BTreeMap<Value, Value>) -> Map {
-        Map(Arc::new(Entries::from(entries)))
+        Map(Arc::new(Kept::from(entries)))
     }
 
     pub fn len(&self) -> usize {
@@ -181,7 +181,7 @@ impl Set {
     }
 
     fn of(members: BTreeSet<Value>) -> Set {
-        Set(Arc::new(Members::from(members)))
+        Set(Arc::new(Kept::from(members)))
     }
 
     pub fn len(&self) -> usize {
