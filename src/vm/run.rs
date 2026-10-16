@@ -687,7 +687,8 @@ impl Vm {
                     }
                 }
                 Instr::Interpolate { segments } => {
-                    let written = interpolate(&mut self.stack, &mut self.text, segments, code, chunk);
+                    let written =
+                        interpolate(&mut self.stack, &mut self.text, segments, code, chunk);
                     if let Err(at) = written {
                         fail!(VmError::type_confusion(format!(
                             "string interpolation requires string values, got {} \
