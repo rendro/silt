@@ -1511,57 +1511,93 @@ fn a_list_updated_is_a_new_list() {
     );
 }
 
-/// A part of a list shares the list's buffer if it is a quarter of the
-/// buffer or more, and has a buffer of its own if it is less: a list
-/// keeps at most four times its own elements from being freed.
+/// A part of a list shares the list's storage, and copies no element,
+/// if it is a quarter of the storage or more, and has storage of its
+/// own if it is less: a list keeps at most four times its own elements
+/// from being freed. A short list keeps its elements in a buffer and a
+/// long one in a tree; a part of a tree that gets storage of its own
+/// gets a tree made of the parts it shares with it, and no element is
+/// copied for it either, unless it is short enough for a buffer.
 #[test]
 fn a_short_part_of_a_list_does_not_keep_the_list() {
-    let big = made(0..1000);
-    let (len, at) = big.buffer().expect("a list that holds its elements");
-    assert_eq!(len, 1000);
+    use super::list::FLAT_MOST;
+    for n in [FLAT_MOST, 1000] {
+        let big = made(0..n as i64);
+        assert_eq!(big.in_tree(), n > FLAT_MOST);
+        let (len, at) = big.buffer().expect("a list that holds its elements");
+        assert_eq!(len, n);
+        let quarter = n.div_ceil(4);
 
-    // The rest after the first element, and any part of a quarter or
-    // more, is a part of the same buffer.
-    for part in [big.slice(1, 1000), big.slice(0, 250), big.slice(750, 1000)] {
-        assert_eq!(part.buffer(), Some((1000, at)));
+        // The rest after the first element, and any part of a quarter
+        // or more, is a part of the same storage.
+        for (from, to) in [(1, n), (0, quarter), (n - quarter, n)] {
+            let mut part = List::new();
+            assert_eq!(copies_of(|| part = big.slice(from, to)), 0, "{from}..{to}");
+            assert_eq!(part.buffer(), Some((n, at)), "{from}..{to}");
+        }
+        // A shorter part holds its own elements and no others.
+        for (from, to) in [(0, 1), (n - 1, n), (3, 3 + quarter - 1), (0, quarter - 1)] {
+            let mut part = List::new();
+            let copied = copies_of(|| part = big.slice(from, to));
+            let (held, apart) = part.buffer().expect("a list that holds its elements");
+            assert_eq!(held, to - from, "{from}..{to}");
+            assert_ne!(apart, at);
+            assert_eq!(elements(&part), elements(&made(from as i64..to as i64)));
+            match part.in_tree() {
+                true => assert_eq!(copied, 0, "{from}..{to}"),
+                false => assert_eq!(copied, (to - from) as u64, "{from}..{to}"),
+            }
+        }
+        // A part of a part is measured against the storage, not the
+        // part.
+        let half = big.slice(n / 2, n);
+        let rest = half.slice(1, quarter + 1);
+        assert_eq!(rest.buffer(), Some((n, at)));
+        let rest = half.slice(1, quarter);
+        assert_eq!(rest.buffer().map(|(held, _)| held), Some(quarter - 1));
     }
-    // A shorter part holds its own elements and no others.
-    for (from, to) in [(0, 1), (999, 1000), (300, 549), (0, 249)] {
-        let part = big.slice(from, to);
-        let (held, apart) = part.buffer().expect("a list that holds its elements");
-        assert_eq!(held, to - from, "{from}..{to}");
-        assert_ne!(apart, at);
-        assert_eq!(elements(&part), elements(&made(from as i64..to as i64)));
-    }
-    // A part of a part is measured against the buffer, not the part.
-    let rest = big.slice(500, 1000).slice(100, 400);
-    assert_eq!(rest.buffer(), Some((1000, at)));
-    let rest = big.slice(500, 1000).slice(100, 349);
-    assert_eq!(rest.buffer().map(|(held, _)| held), Some(249));
-    // A list that holds no element has no buffer to keep.
+    // A list that holds no element has no storage to keep.
     assert_eq!(ints(0, 999).slice(3, 4).buffer(), None);
 }
 
-/// A walk down a list by its rest (`[h, ..t]`, `list.tail`) copies a
-/// third of the list in all, whatever its length: each rest is the
-/// same buffer until it is less than a quarter of it.
+/// A walk down a list by its rest (`[h, ..t]`, `list.tail`) copies
+/// few of its elements, whatever its length: each rest is the same
+/// storage until it is less than a quarter of it. A list in a buffer
+/// copies a third of itself in all (a quarter of it once it is that
+/// short, a quarter of that, and so on); a list in a tree takes a
+/// tree of its own a quarter of the length each time, copying nothing,
+/// and copies only once it is short enough for a buffer.
 #[test]
-fn a_walk_down_a_list_copies_a_third_of_it() {
-    for n in [1_000usize, 64_000] {
+fn a_walk_down_a_list_copies_few_of_its_elements() {
+    use super::list::FLAT_MOST;
+    for n in [FLAT_MOST, 1_000, 64_000] {
         let mut rest = made(0..n as i64);
         let mut buffer = rest.buffer();
-        let (mut copied, mut buffers) = (0, 0);
-        while !rest.is_empty() {
-            rest = rest.slice(1, rest.len());
-            if rest.buffer() != buffer && !rest.is_empty() {
-                copied += rest.len();
-                buffers += 1;
+        let mut storages = 0;
+        let copied = copies_of(|| {
+            while !rest.is_empty() {
+                rest = rest.slice(1, rest.len());
+                if rest.buffer() != buffer && !rest.is_empty() {
+                    storages += 1;
+                }
+                buffer = rest.buffer();
             }
-            buffer = rest.buffer();
-        }
-        assert!(copied <= n / 3, "{copied} elements copied in a walk of {n}");
-        assert!(copied >= n / 4, "{copied} elements copied in a walk of {n}");
-        assert!(buffers <= 10, "{buffers} buffers in a walk of {n}");
+        });
+        let most = match n > FLAT_MOST {
+            // At most the elements of a buffer a tree crosses back to,
+            // and a third of that.
+            true => FLAT_MOST / 2 + FLAT_MOST / 6,
+            false => n / 3,
+        };
+        assert!(
+            copied as usize <= most,
+            "{copied} elements copied in a walk of {n}"
+        );
+        assert!(
+            copied as usize >= FLAT_MOST / 8,
+            "{copied} elements copied in a walk of {n}"
+        );
+        assert!(storages <= 10, "{storages} storages in a walk of {n}");
     }
 }
 
@@ -2243,5 +2279,53 @@ proptest::proptest! {
             the_list_is_its_model(&list, &model, &next, &next_model);
             (list, model) = (next, next_model);
         }
+    }
+}
+
+/// A value nested 10,000 levels deep through lists kept in trees is
+/// dropped like any other, as one nested through any other holder is
+/// (`a_value_nested_through_any_holder_is_dropped_without_the_native_stack`):
+/// a tree far inside is put aside and dropped by the outermost
+/// (src/value/deep.rs). A level is a list too long for a buffer, a
+/// part of one, or one made by an element more. (Each was dropped once
+/// a level on the native stack, and a thread of a test overflowed its
+/// stack at a few thousand levels; a level of a tree costs kilobytes,
+/// so the depth that a program's thread overflows at would take
+/// gigabytes to reach.)
+#[test]
+fn a_value_nested_through_lists_kept_in_trees_is_dropped_without_the_native_stack() {
+    use super::list::FLAT_MOST;
+    const DEPTH: i64 = 10_000;
+    let long = |n: i64, rest: Value| -> List {
+        let mut items: Vec<Value> = (0..FLAT_MOST as i64 + 6).map(Value::Int).collect();
+        let at = n as usize % items.len();
+        items[at] = rest;
+        List::from(items)
+    };
+    let shapes: [&dyn Fn(i64, Value) -> Value; 3] = [
+        &|n, rest| Value::List(long(n, rest)),
+        &|n, rest| {
+            let list = long(n, Value::Int(n))
+                .push_front(rest)
+                .expect("few elements");
+            Value::List(list.slice(0, FLAT_MOST + 3))
+        },
+        &|n, rest| {
+            Value::List(
+                long(n, Value::Int(n))
+                    .push_back(rest)
+                    .expect("few elements"),
+            )
+        },
+    ];
+    for wrap in shapes {
+        let value = (0..DEPTH).fold(Value::Int(7), |rest, n| wrap(n, rest));
+        let Value::List(top) = &value else {
+            panic!("a list")
+        };
+        assert!(top.in_tree());
+        let again = value.clone();
+        drop(value);
+        drop(again);
     }
 }

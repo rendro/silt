@@ -45,7 +45,17 @@ pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
 ///
 /// A change to a list in a buffer copies the buffer: at most this many
 /// elements, a cost that does not grow with the list.
-pub(super) const FLAT_MOST: usize = 32;
+///
+/// Measured 2026-10-16 through the VM (release builds with 16, 32 and
+/// 64, interleaved, median of five): lists of 40, 64, 96 and 200
+/// elements built by `list.append`, `[x, ..xs]` and `list.set` and read
+/// by `[x, ..rest]` and `list.get` took the same time with each, within
+/// 5% and in no order. Memory decided (peak RSS per list of 100,000):
+/// a tree takes a leaf of 64 elements however few it holds, 2,709 B,
+/// where a buffer of 20 takes 834 B, of 33 1,345 B and of 64 2,591 B.
+/// With 16 a list of 20 took three times what it took before; with 64
+/// no list up to 64 elements takes more than its buffer.
+pub(super) const FLAT_MOST: usize = 64;
 
 /// A list.
 #[derive(Clone)]
