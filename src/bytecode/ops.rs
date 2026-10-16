@@ -884,10 +884,14 @@ ops! {
     // ── String interpolation ───────────────────────────────────
     /// The String of the segments, in their order: a literal segment
     /// is the string constant, read where it is (its count is not
-    /// touched); a value segment is the next of the strings on the
-    /// stack, which it takes off.
+    /// touched); a value segment is the text of the next of the values
+    /// on the stack, which it takes off: a String, an Int, a Float or a
+    /// Bool, as `DisplayValue` left it. A lone segment that is a String
+    /// is the String itself.
     Interpolate { segments: Segments("segments of a string interpolation") } => pops segments.values(), pushes 1;
-    /// Convert TOS to its Display string.
+    /// Make TOS a segment of `Interpolate`: a String, an Int, a Float
+    /// or a Bool stays as it is, any other value becomes its Display
+    /// string.
     DisplayValue => pops 1, pushes 1;
 
     // ── Variables ──────────────────────────────────────────────

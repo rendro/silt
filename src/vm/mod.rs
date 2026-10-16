@@ -12,6 +12,10 @@ mod run;
 mod runtime;
 mod show;
 
+use std::fmt::Write as _;
+
+use show::write_plain;
+
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message};
@@ -186,6 +190,10 @@ pub struct Vm {
     /// from then on ([`Vm::takes_nothing_new`]). `None` for a VM whose
     /// task has no deadline.
     pub(crate) over: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Where `Interpolate` writes the string it makes (src/vm/run.rs),
+    /// kept from one to the next: the string itself is then the one
+    /// allocation an interpolation makes.
+    text: String,
 }
 
 /// How many steps the program's own thread runs before it looks
@@ -320,6 +328,7 @@ impl Vm {
             deadline: None,
             late: None,
             over: None,
+            text: String::new(),
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -667,6 +676,7 @@ impl Vm {
             deadline: None,
             late: None,
             over: None,
+            text: String::new(),
             regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
@@ -843,11 +853,13 @@ impl Vm {
     pub(crate) fn display_value(&self, val: &Value) -> String {
         match val {
             Value::String(s) => s.to_string(),
-            Value::Int(n) => n.to_string(),
-            Value::Bool(true) => "true".to_string(),
-            Value::Bool(false) => "false".to_string(),
-            Value::Float(f) => f.to_string(),
-            _ => format!("{val}"),
+            _ => {
+                let mut text = String::new();
+                if !write_plain(&mut text, val) {
+                    let _ = write!(text, "{val}");
+                }
+                text
+            }
         }
     }
 

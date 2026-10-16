@@ -25,6 +25,17 @@ impl Value {
     /// (`println`, interpolation, `io.inspect`) asks this first, and
     /// the error is the program's.
     pub fn writable(&self) -> Result<(), TooLong> {
+        // A value without parts is writable, and is answered before
+        // the worklist is made: showing an Int allocates no worklist.
+        match self {
+            Value::List(_)
+            | Value::Tuple(_)
+            | Value::Variant(_)
+            | Value::Set(_)
+            | Value::Map(_)
+            | Value::Record(_) => {}
+            _ => return Ok(()),
+        }
         let mut pending = vec![self];
         while let Some(value) = pending.pop() {
             match value {

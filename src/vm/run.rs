@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
-use crate::bytecode::{Chunk, Instr, Op, Segment, VmClosure, decode};
+use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
 use crate::value::{Float, List, Record, Value};
@@ -13,6 +13,7 @@ use crate::value::{Float, List, Record, Value};
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
 use super::runtime::{Frame, Step};
+use super::show::write_plain;
 use super::{Vm, VmError};
 use crate::runtime::sync::Wait;
 
@@ -297,6 +298,56 @@ fn pop_done(stack: &mut Vec<Value>) {
     }
 }
 
+/// `Interpolate`: put the String of `segments` in place of the values
+/// of the segments on top of `stack`. A lone segment that is a String
+/// is the String itself: nothing is copied. Otherwise the string is
+/// written in `text`, the VM's buffer, and copied once into the String
+/// it is. A literal is read in place: its count is not touched, which
+/// tasks running the same code share. `Err` names the slot of a value
+/// that is none of those `DisplayValue` leaves (`write_plain`).
+///
+/// A call, not a part of the loop: the loop's code is kept to what it
+/// was, which the speed of every program hangs on.
+#[inline(never)]
+fn interpolate(
+    stack: &mut Vec<Value>,
+    text: &mut String,
+    segments: Segments,
+    code: &[u8],
+    chunk: &Chunk,
+) -> Result<(), usize> {
+    let start = stack.len() - segments.values();
+    if segments.len() == 1 && segments.values() == 1 && matches!(stack[start], Value::String(_)) {
+        return Ok(());
+    }
+    let mut buffer = std::mem::take(text);
+    buffer.clear();
+    let mut next = start;
+    for segment in segments.iter(code) {
+        match segment {
+            Segment::Literal(k) => buffer.push_str(chunk.string(k)),
+            Segment::Value => {
+                if !write_plain(&mut buffer, &stack[next]) {
+                    return Err(next);
+                }
+                next += 1;
+            }
+        }
+    }
+    stack.truncate(start);
+    stack.push(Value::String(buffer.as_str().into()));
+    // (A buffer an outsized string grew is not kept.)
+    if buffer.capacity() <= KEPT_TEXT {
+        *text = buffer;
+    }
+    Ok(())
+}
+
+/// The most bytes of the buffer `Interpolate` writes in that a VM
+/// keeps for the next one ([`Vm`]'s `text`). Small: a program can have
+/// a hundred thousand VMs, each holding its buffer while it lives.
+const KEPT_TEXT: usize = 256;
+
 #[inline(always)]
 fn pop(stack: &mut Vec<Value>) -> Value {
     stack.pop().expect("verified code pops a value it pushed")
@@ -572,10 +623,17 @@ impl Vm {
                         }
                     }
                 }
+                // A String, an Int, a Float or a Bool stays as it is:
+                // `Interpolate` writes it where it goes (`write_plain`,
+                // src/vm/show.rs). Any other value is made its text.
+                // (Put back, not left with a `continue`: one cost `fib`
+                // a fifth more instructions, measured 2026-10-16.)
                 Instr::DisplayValue => {
                     let val = pop(&mut self.stack);
                     match &val {
-                        Value::String(_) => self.stack.push(val),
+                        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_) => {
+                            self.stack.push(val)
+                        }
                         // Mirror the typechecker's string-interpolation Display
                         // gate (inference.rs ~2654): the typechecker's
                         // `type_name_for_impl` reduces a *concrete* operand to a
@@ -630,42 +688,15 @@ impl Vm {
                     }
                 }
                 Instr::Interpolate { segments } => {
-                    let start = self.stack.len() - segments.values();
-                    // The length of the result, so that it is allocated
-                    // once. A literal is read in place: its count is not
-                    // touched, which tasks running the same code share.
-                    let mut total_len = 0;
-                    for segment in segments.iter(code) {
-                        if let Segment::Literal(k) = segment {
-                            total_len += chunk.string(k).len();
-                        }
+                    let written =
+                        interpolate(&mut self.stack, &mut self.text, segments, code, chunk);
+                    if let Err(at) = written {
+                        fail!(VmError::type_confusion(format!(
+                            "string interpolation requires string values, got {} \
+                             — call `.to_string()` or `.display()` on the value first",
+                            self.user_facing_type_name(&self.stack[at])
+                        )));
                     }
-                    for i in start..self.stack.len() {
-                        if let Value::String(ref s) = self.stack[i] {
-                            total_len += s.len();
-                        } else {
-                            fail!(VmError::type_confusion(format!(
-                                "string interpolation requires string values, got {} \
-                                 — call `.to_string()` or `.display()` on the value first",
-                                self.user_facing_type_name(&self.stack[i])
-                            )));
-                        }
-                    }
-                    let mut result = String::with_capacity(total_len);
-                    let mut next = start;
-                    for segment in segments.iter(code) {
-                        match segment {
-                            Segment::Literal(k) => result.push_str(chunk.string(k)),
-                            Segment::Value => {
-                                if let Value::String(ref s) = self.stack[next] {
-                                    result.push_str(s);
-                                }
-                                next += 1;
-                            }
-                        }
-                    }
-                    self.stack.truncate(start);
-                    self.stack.push(Value::String(result.into()));
                 }
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
                 Instr::SetLocal { slot } => {
