@@ -174,6 +174,35 @@ fn a_map_or_a_set_changed_an_entry_at_a_time_copies_n_log_n_entries() {
     assert!(over.is_empty(), "{over:#?}");
 }
 
+/// A large map, or set, made in one go keeps its entries side by side
+/// as they were made, and its first change makes the tree of them: once.
+/// `n` changes of one such map, each made from it as it was (what a
+/// program that keeps a decoded JSON object and makes one changed copy
+/// of it at a time does), copy its entries into a tree once, and one
+/// entry each after that.
+#[test]
+fn a_map_or_a_set_made_in_one_go_makes_its_tree_once() {
+    let n = 10_000usize;
+    let most = (2 * n) as u64;
+    let map: Map = (0..n as i64).map(|i| (int(i), int(i))).collect();
+    let set: Set = (0..n as i64).map(int).collect();
+    assert_eq!((map.kept_as(), set.kept_as()), ("side", "side"));
+    let copied = copies_of(|| {
+        for i in 0..n as i64 {
+            let changes = [
+                map.insert(int(i), int(-1)),
+                map.insert(int(-1 - i), int(-1)),
+                map.remove(&int(i)),
+            ];
+            assert!(changes.iter().all(|map| map.kept_as() == "tree"));
+            let changes = [set.insert(int(-1 - i)), set.remove(&int(i))];
+            assert!(changes.iter().all(|set| set.kept_as() == "tree"));
+        }
+    });
+    assert!(copied <= 5 * most, "{copied} copied, at most {}", 5 * most);
+    assert_eq!((map.kept_as(), set.kept_as()), ("side", "side"));
+}
+
 // ── The model: every operation against std's BTreeMap and BTreeSet ─
 
 /// A map, or a set, the model tests make in one go: of these keys, in
@@ -262,6 +291,15 @@ fn run_key(k: i64, i: usize) -> i64 {
     (k + 7 * i as i64) % (3 * FLAT_MOST as i64)
 }
 
+/// A way to keep a map, or a set, other than `kind`: the twin of one
+/// kept as `kind` is kept so.
+fn other_kind(kind: &str) -> &'static str {
+    match kind {
+        "tree" => "flat",
+        _ => "tree",
+    }
+}
+
 /// The map `map`, whose entries are `model`'s, is the map of its
 /// entries whatever it is kept in: it reads as `model`, and it is equal
 /// to, ordered with, hashed and written as the map of the same entries
@@ -281,14 +319,15 @@ fn the_map_is_its_model(map: &Map, model: &BTreeMap<Value, Value>, before: &Map)
         assert_eq!(map.get(&key(k)), model.get(&key(k)), "key {k}");
         assert_eq!(map.contains_key(&key(k)), model.contains_key(&key(k)));
     }
-    match map.is_tree() {
-        true => assert!(map.len() > FLAT_MOST / 2, "a tree of {}", map.len()),
-        false => assert!(map.len() <= FLAT_MOST, "{} side by side", map.len()),
+    let len = map.len();
+    match map.kept_as() {
+        "tree" => assert!(len > FLAT_MOST / 2, "a tree of {len}"),
+        "side" => assert!(len > FLAT_MOST, "{len} made in one go"),
+        _ => assert!(len <= FLAT_MOST, "{len} side by side"),
     }
 
     let entries: Vec<(Value, Value)> = model.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let twin = Map::kept_as(entries, map.is_tree());
-    assert_ne!(twin.is_tree(), map.is_tree());
+    let twin = Map::stored(entries, other_kind(map.kept_as()));
     let (value, twin) = (Value::Map(map.clone()), Value::Map(twin));
     assert!(value == twin);
     assert_eq!(value.cmp(&twin), Ordering::Equal);
@@ -296,7 +335,7 @@ fn the_map_is_its_model(map: &Map, model: &BTreeMap<Value, Value>, before: &Map)
     assert_eq!(format!("{value} {value:?}"), format!("{twin} {twin:?}"));
 
     let before_entries = before.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let before_twin = Value::Map(Map::kept_as(before_entries, !before.is_tree()));
+    let before_twin = Value::Map(Map::stored(before_entries, other_kind(before.kept_as())));
     let before = Value::Map(before.clone());
     assert_eq!(value.cmp(&before), twin.cmp(&before_twin));
     assert_eq!(value == before, twin == before_twin);
@@ -314,26 +353,27 @@ fn the_set_is_its_model(set: &Set, model: &BTreeSet<Value>, before: &Set) {
     for k in -1..3 * FLAT_MOST as i64 + 1 {
         assert_eq!(set.contains(&key(k)), model.contains(&key(k)), "member {k}");
     }
-    match set.is_tree() {
-        true => assert!(set.len() > FLAT_MOST / 2, "a tree of {}", set.len()),
-        false => assert!(set.len() <= FLAT_MOST, "{} side by side", set.len()),
+    let len = set.len();
+    match set.kept_as() {
+        "tree" => assert!(len > FLAT_MOST / 2, "a tree of {len}"),
+        "side" => assert!(len > FLAT_MOST, "{len} made in one go"),
+        _ => assert!(len <= FLAT_MOST, "{len} side by side"),
     }
 
     if let Some(holds) = set.holds_fn_known() {
         assert_eq!(holds, model.iter().any(Value::contains_fn));
     }
     assert!(!set.holds_fn());
-    let twin = Set::kept_as(model.iter().cloned().collect(), set.is_tree());
-    assert_ne!(twin.is_tree(), set.is_tree());
+    let twin = Set::stored(model.iter().cloned().collect(), other_kind(set.kept_as()));
     let (value, twin) = (Value::Set(set.clone()), Value::Set(twin));
     assert!(value == twin);
     assert_eq!(value.cmp(&twin), Ordering::Equal);
     assert_eq!(hash_of(&value), hash_of(&twin));
     assert_eq!(format!("{value} {value:?}"), format!("{twin} {twin:?}"));
 
-    let before_twin = Value::Set(Set::kept_as(
+    let before_twin = Value::Set(Set::stored(
         before.iter().cloned().collect(),
-        !before.is_tree(),
+        other_kind(before.kept_as()),
     ));
     let before = Value::Set(before.clone());
     assert_eq!(value.cmp(&before), twin.cmp(&before_twin));
