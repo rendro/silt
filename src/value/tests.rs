@@ -2018,7 +2018,7 @@ fn a_list_changed_an_element_at_a_time_copies_n_log_n_elements() {
     // length.
     const C: f64 = 2.0;
     type Step = fn(&List, i64) -> List;
-    let steps: [(&str, Step); 6] = [
+    let steps: [(&str, Step); 8] = [
         ("[x, ..xs]", |xs, i| {
             made([i]).concat(xs).expect("few enough elements")
         }),
@@ -2036,6 +2036,12 @@ fn a_list_changed_an_element_at_a_time_copies_n_log_n_elements() {
         }),
         ("[..xs, x]", |xs, i| {
             xs.concat(&made([i])).expect("few enough elements")
+        }),
+        ("list.concat(xs, i..i + 1)", |xs, i| {
+            xs.concat(&ints(i, i + 1)).expect("few enough elements")
+        }),
+        ("list.concat(i..i + 1, xs)", |xs, i| {
+            ints(i, i + 1).concat(xs).expect("few enough elements")
         }),
     ];
     for n in [10_000usize, 20_000] {

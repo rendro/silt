@@ -408,7 +408,15 @@ impl List {
             return Ok(other.clone());
         }
         let len = self.len() + other.len();
-        if (self.flat_for(len) && other.flat_for(len)) || self.written_out() || other.written_out()
+        // (A range joined to a list that keeps no tree is written out
+        // with it; a short range joined to a long list is put into its
+        // tree as any short list is, and a long one made a tree and
+        // joined: writing out the long list would copy it at each
+        // `list.concat(acc, i..j)`.)
+        let written_out = |range: &List, rest: &List| range.written_out() && !rest.in_long();
+        if (self.flat_for(len) && other.flat_for(len))
+            || written_out(self, other)
+            || written_out(other, self)
         {
             let mut items = Vec::with_capacity(len);
             self.write_into(&mut items);
@@ -684,6 +692,12 @@ impl List {
     /// first change makes its tree.)
     fn written_out(&self) -> bool {
         matches!(self.0, Stored::Other(Other::Ints { .. }))
+    }
+
+    /// Whether the list is a part of a long list's elements, side by
+    /// side or in a tree.
+    fn in_long(&self) -> bool {
+        matches!(self.0, Stored::Other(Other::Long { .. }))
     }
 
     /// Whether a list of `len` elements made from this one keeps them
