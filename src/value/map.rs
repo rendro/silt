@@ -14,7 +14,10 @@
 //! decoded JSON object, what `map.filter` keeps) keeps its entries side
 //! by side too, as they were made, and the tree is made of them when
 //! the first change is: once, as the next change starts from it too.
-//! A set is kept in the same three ways.
+//! What `map.merge` makes of two small maps is made in one go as well,
+//! side by side however many entries it has, and so is what the
+//! operations on two small sets make. A set is kept in the same three
+//! ways.
 //!
 //! How a map and a set are stored is this file's own. The rest of silt
 //! has their sizes, their lookups, their entries and members in order
@@ -101,7 +104,8 @@ pub(crate) enum Entries {
     /// Side by side, in key order: at most [`FLAT_MOST`].
     Flat(Box<[(Value, Value)]>),
     /// Side by side, in key order, more than [`FLAT_MOST`]: a map made
-    /// in one go; and the tree its first change made of them.
+    /// in one go, or merged of two small ones; and the tree its first
+    /// change made of them.
     Side {
         entries: Box<[(Value, Value)]>,
         tree: OnceLock<OrdMap<Value, Value>>,
@@ -115,7 +119,8 @@ pub(crate) enum Members {
     /// Side by side, in order: at most [`FLAT_MOST`].
     Flat(Box<[Value]>),
     /// Side by side, in order, more than [`FLAT_MOST`]: a set made in
-    /// one go; and the tree its first change made of them.
+    /// one go, or by an operation on two small ones; and the tree its
+    /// first change made of them.
     Side {
         members: Box<[Value]>,
         tree: OnceLock<OrdSet<Value>>,
