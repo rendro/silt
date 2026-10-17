@@ -2500,7 +2500,7 @@ fn test_scheduler_channel_communication() {
             }
             "#,
     );
-    assert_eq!(result, Value::variant(bv::MESSAGE, vec![Value::Int(99)]));
+    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(99)]));
 }
 
 #[test]
@@ -3633,8 +3633,8 @@ import channel
 import task
 fn wait(ch: Channel(Int)) -> Int {
   match channel.receive(ch) {
-    channel.Message(n) -> n
-    _ -> 0
+    Some(n) -> n
+    None -> 0
   }
 }
 fn main() {

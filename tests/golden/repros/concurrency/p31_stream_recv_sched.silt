@@ -14,8 +14,8 @@ fn main() {
     }
   }
   match channel.select([channel.Recv(s)]) {
-    (_, channel.Message(v)) -> println("got {v}")
-    (_, channel.Closed) -> println("closed")
+    channel.Received(_, Some(v)) -> println("got {v}")
+    channel.Received(_, None) -> println("closed")
     _ -> println("other")
   }
 }

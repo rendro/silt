@@ -121,7 +121,7 @@ fn main() {
   its output *with that failure*. The next stage fails with it in turn,
   and the sink at the end raises it: `stream.collect` does not return the
   values that came before the failure. `channel.each` on a stream raises
-  it too; a plain `channel.receive` sees `Closed`.
+  it too; a plain `channel.receive` sees `None`.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
   further (`take`, `take_while`, `first`, a failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So

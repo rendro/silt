@@ -16,7 +16,7 @@ fn main() {
   }
   channel.send(jobs, 6)
   match channel.select([channel.Recv(results), channel.Recv(channel.timeout(time.ms(60000)))]) {
-    (_, channel.Message(v)) -> println("got {v}")
+    channel.Received(_, Some(v)) -> println("got {v}")
     _ -> println("timed out")
   }
 }

@@ -6,8 +6,8 @@ fn one_round(i) {
   let ch = channel.new(1)
   let a = task.spawn(fn() {
     match channel.receive(ch) {
-      channel.Message(v) -> v
-      _ -> 0 - 1
+      Some(v) -> v
+      None -> 0 - 1
     }
   })
   let b = task.spawn(fn() { channel.send(ch, i) })

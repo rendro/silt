@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: missing variant Empty
+-- stderr-not-contains: Sent
+-- `channel.try_receive` and `channel.receive_timeout` give
+-- `ChannelResult(a)`: `Message(value)`, `Empty` or `Closed`, and nothing
+-- else. A match that leaves out `Empty` is told only of `Empty`.
+import channel
+
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  match channel.try_receive(ch) {
+    channel.Message(v) -> println("got {v}")
+    channel.Closed -> println("closed")
+  }
+}

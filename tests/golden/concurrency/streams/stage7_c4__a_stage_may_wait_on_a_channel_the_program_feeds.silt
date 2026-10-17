@@ -10,8 +10,8 @@ fn main() {
   let gate = channel.new(0)
   let opened = stream.from_list([1, 2, 3]) |> stream.map({ x ->
     match channel.receive(gate) {
-      channel.Message(key) -> x * key
-      _ -> 0
+      Some(key) -> x * key
+      None -> 0
     }
   })
   channel.send(gate, 10)

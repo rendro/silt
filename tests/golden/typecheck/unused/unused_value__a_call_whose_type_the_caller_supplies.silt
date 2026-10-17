@@ -53,8 +53,8 @@ fn peek(xs) {
 
 fn take(ch: Channel(a)) -> a {
   match channel.receive(ch) {
-    Message(v) -> v
-    _ -> panic("closed")
+    Some(v) -> v
+    None -> panic("closed")
   }
 }
 

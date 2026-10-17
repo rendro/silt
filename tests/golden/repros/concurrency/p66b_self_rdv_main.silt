@@ -4,9 +4,9 @@ import channel
 fn main() {
   let ch = channel.new(0)
   match channel.select([channel.Recv(ch), channel.Send(ch, 7)]) {
-    (_, channel.Sent) -> println("Sent (to whom?)")
-    (_, channel.Message(v)) -> println("Message {v}")
-    (_, channel.Closed) -> println("Closed")
+    channel.Sent(_) -> println("Sent (to whom?)")
+    channel.Received(_, Some(v)) -> println("Message {v}")
+    channel.Received(_, None) -> println("Closed")
     _ -> println("other")
   }
   println("leftover in channel: {channel.try_receive(ch)}")

@@ -247,17 +247,18 @@ pub(super) fn modules() -> Vec<Module> {
             name: "channel",
             page: "channel-task.md",
             types: "\
-                pub type ChannelResult(a) { Message(a), Closed, Sent, Empty }\n\
+                pub type ChannelResult(a) { Message(a), Empty, Closed }\n\
                 pub type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }\n\
+                pub type Selected(a) { Received(Channel(a), Option(a)), Sent(Channel(a)) }\n\
             ",
-            derives: [("ChannelOp", &[])],
+            derives: [("ChannelOp", &[]), ("Selected", &["Equal"])],
             rows: [
                 f("fn close(ch: Channel(a)) -> ()", "Close the channel", concurrency::channel::close),
                 f("fn each(ch: Channel(a), f: Fn(a) -> ()) -> ()", "Call a function with each message until the channel closes", concurrency::channel::each),
                 f("fn new(capacity: Int) -> Channel(a)", "Create a channel (0 = rendezvous, N = buffered)", concurrency::channel::new),
-                f("fn receive(ch: Channel(a)) -> ChannelResult(a)", "Blocking receive", concurrency::channel::receive),
+                f("fn receive(ch: Channel(a)) -> Option(a)", "Blocking receive: `None` once the channel is closed and empty", concurrency::channel::receive),
                 f("fn receive_timeout(ch: Channel(a), dur: Duration) -> ChannelResult(a)", "Receive, waiting no longer than a duration", concurrency::channel::receive_timeout),
-                f("fn select(ops: List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))", "Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`)", concurrency::channel::select),
+                f("fn select(ops: List(ChannelOp(a))) -> Selected(a)", "Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`)", concurrency::channel::select),
                 f("fn send(ch: Channel(a), value: a) -> ()", "Blocking send", concurrency::channel::send),
                 f("fn timeout(dur: Duration) -> Channel(a)", "Create a channel that closes after a duration", concurrency::channel::timeout),
                 f("fn try_receive(ch: Channel(a)) -> ChannelResult(a)", "Non-blocking receive", concurrency::channel::try_receive),

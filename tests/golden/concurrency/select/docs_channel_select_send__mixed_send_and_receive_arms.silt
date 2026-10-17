@@ -7,8 +7,8 @@ fn main() {
     let inp = channel.new(1)
     channel.send(inp, 7)
     let r = match channel.select([channel.Send(out, 99), channel.Recv(inp)]) {
-        (^out, channel.Sent) -> 1
-        (^inp, channel.Message(v)) -> v
+        channel.Sent(^out) -> 1
+        channel.Received(^inp, Some(v)) -> v
         _ -> -1
     }
     println("{r}")

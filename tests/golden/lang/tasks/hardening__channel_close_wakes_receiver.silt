@@ -8,7 +8,7 @@ fn main() {
   let r = channel.receive(ch)
   task.join(sender)
   println(match r {
-    channel.Closed -> "closed"
-    _ -> "unexpected"
+    None -> "closed"
+    Some(_) -> "unexpected"
   })
 }

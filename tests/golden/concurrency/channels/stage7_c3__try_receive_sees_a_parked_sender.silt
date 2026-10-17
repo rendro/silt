@@ -16,7 +16,6 @@ fn main() {
     match channel.try_receive(ch) {
       channel.Message(v) -> "Message({v})"
       channel.Closed -> "Closed"
-      channel.Sent -> "Sent"
       channel.Empty -> match tries {
         0 -> "Empty"
         _ -> {

@@ -13,13 +13,13 @@ fn main() {
   }
   -- Consumer receives until the channel is closed
   let consumer = task.spawn { ->
-    when let channel.Message(msg1) = channel.receive(ch) else {
+    when let Some(msg1) = channel.receive(ch) else {
       return
     }
-    when let channel.Message(msg2) = channel.receive(ch) else {
+    when let Some(msg2) = channel.receive(ch) else {
       return
     }
-    when let channel.Message(msg3) = channel.receive(ch) else {
+    when let Some(msg3) = channel.receive(ch) else {
       return
     }
     println("{msg1} {msg2} {msg3}")
@@ -31,13 +31,13 @@ fn main() {
   let workers = [1, 2, 3] |> list.map { id -> task.spawn { -> channel.send(results, id * 10) } }
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
-  when let channel.Message(r1) = channel.receive(results) else {
+  when let Some(r1) = channel.receive(results) else {
     return
   }
-  when let channel.Message(r2) = channel.receive(results) else {
+  when let Some(r2) = channel.receive(results) else {
     return
   }
-  when let channel.Message(r3) = channel.receive(results) else {
+  when let Some(r3) = channel.receive(results) else {
     return
   }
   println("Worker results: {r1}, {r2}, {r3}")
@@ -46,11 +46,11 @@ fn main() {
   let normal = channel.new(5)
   channel.send(normal, "background task done")
   channel.send(urgent, "alert!")
-  -- channel.select returns (channel, Message(value) | Closed); ^pin identifies which channel
+  -- channel.select returns Received(channel, Some(value) or None) or Sent(channel); ^pin identifies which channel
   match channel.select([channel.Recv(urgent), channel.Recv(normal)]) {
-    (^urgent, channel.Message(msg)) -> println("Urgent: {msg}")
-    (^normal, channel.Message(msg)) -> println("Normal: {msg}")
-    (_, channel.Closed) -> println("Channel closed")
+    channel.Received(^urgent, Some(msg)) -> println("Urgent: {msg}")
+    channel.Received(^normal, Some(msg)) -> println("Normal: {msg}")
+    channel.Received(_, None) -> println("Channel closed")
     _ -> println("No message")
   }
 }

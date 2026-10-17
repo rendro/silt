@@ -365,6 +365,7 @@ pub mod ty {
     pub const ENCODING_ERROR: TypeId = TypeId(DefId(35));
     pub const UUID_ERROR: TypeId = TypeId(DefId(36));
     pub const TASK_ERROR: TypeId = TypeId(DefId(37));
+    pub const SELECTED: TypeId = TypeId(DefId(38));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -383,11 +384,12 @@ pub mod bv {
     pub const STOP: BuiltinVariant = BuiltinVariant::new(ty::STEP, 0);
     pub const CONTINUE: BuiltinVariant = BuiltinVariant::new(ty::STEP, 1);
     pub const MESSAGE: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 0);
-    pub const CLOSED: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 1);
-    pub const SENT: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 2);
-    pub const EMPTY: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 3);
+    pub const EMPTY: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 1);
+    pub const CLOSED: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_RESULT, 2);
     pub const RECV: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 0);
     pub const SEND: BuiltinVariant = BuiltinVariant::new(ty::CHANNEL_OP, 1);
+    pub const RECEIVED: BuiltinVariant = BuiltinVariant::new(ty::SELECTED, 0);
+    pub const SENT: BuiltinVariant = BuiltinVariant::new(ty::SELECTED, 1);
     pub const MONDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 0);
     pub const TUESDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 1);
     pub const WEDNESDAY: BuiltinVariant = BuiltinVariant::new(ty::WEEKDAY, 2);
@@ -525,6 +527,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "EncodingError",
     "UuidError",
     "TaskError",
+    "Selected",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -794,11 +797,12 @@ mod tests {
             (bv::STOP, "Stop"),
             (bv::CONTINUE, "Continue"),
             (bv::MESSAGE, "Message"),
-            (bv::CLOSED, "Closed"),
-            (bv::SENT, "Sent"),
             (bv::EMPTY, "Empty"),
+            (bv::CLOSED, "Closed"),
             (bv::RECV, "Recv"),
             (bv::SEND, "Send"),
+            (bv::RECEIVED, "Received"),
+            (bv::SENT, "Sent"),
             (bv::MONDAY, "Monday"),
             (bv::TUESDAY, "Tuesday"),
             (bv::WEDNESDAY, "Wednesday"),

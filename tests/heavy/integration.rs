@@ -160,8 +160,8 @@ fn main() {
   })
   let result = channel.receive(done)
   match result {
-    channel.Message(v) -> v
-    _ -> "failed"
+    Some(v) -> v
+    None -> "failed"
   }
 }
 "#;
@@ -810,8 +810,8 @@ fn main() {
   })
 
   match channel.receive(result_ch) {
-    channel.Message(body) -> body
-    _ -> "the channel closed"
+    Some(body) -> body
+    None -> "the channel closed"
   }
 }
 "#;

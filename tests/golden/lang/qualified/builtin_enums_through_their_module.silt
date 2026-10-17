@@ -34,7 +34,7 @@ fn io_message(e: io.IoError) -> String {
 fn main() {
   let ch = channel.new(1)
   channel.send(ch, 5)
-  match channel.receive(ch) {
+  match channel.try_receive(ch) {
     channel.Message(v) -> println(v)
     channel.ChannelResult.Closed -> println("closed")
     _ -> println("other")
@@ -42,7 +42,7 @@ fn main() {
   println(channel.Message(3))
   channel.send(ch, 6)
   match channel.select([channel.Recv(ch), channel.ChannelOp.Recv(ch)]) {
-    (_, channel.Message(v)) -> println(v)
+    channel.Received(_, Some(v)) -> println(v)
     _ -> println("other")
   }
   println(day_name(time.Monday))

@@ -1,2 +1,2 @@
 outer called with a function and 1 results
-(x, [Message(2), Message(3)])
+(x, [Some(2), Some(3)])

@@ -27,8 +27,8 @@ trait Display for Asked {
     let never = channel.new(0)
     let _ = task.spawn({ -> channel.receive(never) })
     match channel.receive(ch) {
-      channel.Message(text) -> text
-      _ -> "nothing"
+      Some(text) -> text
+      None -> "nothing"
     }
   }
 }

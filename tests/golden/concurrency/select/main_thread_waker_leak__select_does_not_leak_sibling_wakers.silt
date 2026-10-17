@@ -14,7 +14,7 @@ fn main() {
   }
 
   match channel.select([channel.Recv(a), channel.Recv(b)]) {
-    (_, channel.Message(_)) -> {
+    channel.Received(_, Some(_)) -> {
       task.join(feeder)
       let probe = task.spawn { ->
         channel.try_send(b, 999)

@@ -535,7 +535,7 @@ fn main() {
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
     assert_eq!(run(source, io), Ok(Value::Unit));
-    assert_eq!(out.contents(), "Closed\nEmpty\nEmpty\n");
+    assert_eq!(out.contents(), "None\nEmpty\nEmpty\n");
     assert!(clock.passed() >= Duration::from_secs(3 * 3600));
 }
 
@@ -561,7 +561,7 @@ fn main() {
 
     clock.advance(Duration::from_millis(20));
     assert_eq!(ran.join().unwrap(), Ok(Value::Unit));
-    assert_eq!(out.contents(), "waiting\nClosed\n");
+    assert_eq!(out.contents(), "waiting\nNone\n");
 }
 
 /// The deadline of `task.deadline` is a reading of the clock: once the

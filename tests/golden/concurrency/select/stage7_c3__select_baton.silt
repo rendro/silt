@@ -9,7 +9,7 @@ import task
 
 fn runner(inbox, outbox, stop, goal) {
   match channel.select([channel.Recv(stop), channel.Recv(inbox)]) {
-    (_, channel.Message(n)) -> match n >= 1000 {
+    channel.Received(_, Some(n)) -> match n >= 1000 {
       true -> channel.send(goal, n)
       false -> {
         channel.send(outbox, n + 1)

@@ -17,20 +17,16 @@ fn main() {
     match left {
       0 -> acc
       _ -> match channel.receive(ch) {
-        channel.Message(v) -> loop(left - 1, acc + v)
-        channel.Closed -> acc
-        channel.Empty -> acc
-        channel.Sent -> acc
+        Some(v) -> loop(left - 1, acc + v)
+        None -> acc
       }
     }
   }
   channel.close(ch)
   let after = loop acc = 0 {
     match channel.receive(ch) {
-      channel.Message(v) -> loop(acc + v)
-      channel.Closed -> acc
-      channel.Empty -> acc
-      channel.Sent -> acc
+      Some(v) -> loop(acc + v)
+      None -> acc
     }
   }
   senders |> list.each { h -> task.cancel(h) }

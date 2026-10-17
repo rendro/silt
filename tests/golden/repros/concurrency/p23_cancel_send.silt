@@ -19,7 +19,7 @@ fn main() {
   -- is the channel still usable? a fresh sender/receiver pair
   let h2 = task.spawn(fn() { channel.send(ch, 7) })
   task.join(h2)
-  match channel.receive(ch) { channel.Message(v) -> println("fresh got {v}")  _ -> println("other") }
+  match channel.receive(ch) { Some(v) -> println("fresh got {v}")  _ -> println("other") }
   -- join cancelled
   task.join(h)
 }

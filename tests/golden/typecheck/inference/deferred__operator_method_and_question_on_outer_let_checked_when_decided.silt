@@ -12,8 +12,8 @@ trait Loud for Int { fn loud(self) -> String { "int!" } }
 let ch = channel.new(4)
 fn get() {
   match channel.receive(ch) {
-    channel.Message(m) -> m
-    _ -> panic("closed")
+    Some(m) -> m
+    None -> panic("closed")
   }
 }
 fn dbl() {

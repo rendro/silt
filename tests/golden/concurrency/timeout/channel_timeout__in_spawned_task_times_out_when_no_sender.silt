@@ -11,7 +11,6 @@ fn main() {
       channel.Message(_) -> "got value"
       channel.Empty -> "timed out"
       channel.Closed -> "closed"
-      channel.Sent -> "sent"
     }
   })
   println(task.join(h))

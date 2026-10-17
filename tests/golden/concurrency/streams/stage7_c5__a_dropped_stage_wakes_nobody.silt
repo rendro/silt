@@ -12,8 +12,8 @@ import task
 fn gated(gate) {
   stream.from_list([1, 2, 3]) |> stream.map { x ->
     match channel.receive(gate) {
-      channel.Message(k) -> x * k
-      _ -> 0
+      Some(k) -> x * k
+      None -> 0
     }
   }
 }

@@ -12,7 +12,7 @@ fn main() {
   channel.send(a, 1)
   channel.send(b, "hello")
   match channel.receive(ch) {
-    channel.Message(v) -> println(v)
-    _ -> ()
+    Some(v) -> println(v)
+    None -> ()
   }
 }

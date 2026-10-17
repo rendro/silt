@@ -6,13 +6,13 @@ fn main() {
   let hch = channel.new(1)
   let h = task.spawn(fn() {
     match channel.receive(hch) {
-      channel.Message(me) -> {
+      Some(me) -> {
         println("task: joining myself")
         task.join(me)
         println("task: join-self returned")
         1
       }
-      _ -> 0
+      None -> 0
     }
   })
   channel.send(hch, h)

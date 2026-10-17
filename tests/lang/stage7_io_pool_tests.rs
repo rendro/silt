@@ -398,7 +398,7 @@ fn round(listener, port, started, n, served) {
       task.cancel(given_up)
       let next = acceptor(listener, started, accepted)
       let _ = channel.receive(started)
-      when let channel.Message(conn) = channel.receive(accepted) else { panic("no connection") }
+      when let Some(conn) = channel.receive(accepted) else { panic("no connection") }
       when let Ok(byte) = tcp.read_exact(conn, 1) else { panic("the server cannot read") }
       when let Ok(_) = tcp.write(conn, byte) else { panic("the server cannot write") }
       let got = task.join(client)

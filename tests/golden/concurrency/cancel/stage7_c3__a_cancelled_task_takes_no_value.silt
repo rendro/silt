@@ -39,13 +39,11 @@ fn main() {
     spin(100000)
     loop {
       match channel.receive(buf) {
-        channel.Message(v) -> {
+        Some(v) -> {
           channel.send(taken, v)
           loop()
         }
-        channel.Closed -> ()
-        channel.Empty -> ()
-        channel.Sent -> ()
+        None -> ()
       }
     }
   }

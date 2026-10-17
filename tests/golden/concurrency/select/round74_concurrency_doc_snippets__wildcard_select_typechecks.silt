@@ -8,8 +8,8 @@ fn main() {
   let ch1 = channel.new(1)
   let ch2 = channel.new(1)
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-    (_, channel.Message(val)) -> println("got {val} from somewhere")
-    (_, channel.Closed)       -> println("all done")
+    channel.Received(_, Some(val)) -> println("got {val} from somewhere")
+    channel.Received(_, None)       -> println("all done")
     _                 -> ()
   }
 }

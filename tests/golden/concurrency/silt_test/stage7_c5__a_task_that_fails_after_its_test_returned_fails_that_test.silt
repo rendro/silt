@@ -31,7 +31,7 @@ fn test_b_is_not_charged() {
 fn test_c_does_not_wait_for_what_others_left() {
   let ch = channel.new(0)
   let h = task.spawn({ -> channel.send(ch, 5) })
-  when let channel.Message(v) = channel.receive(ch) else { panic("closed") }
+  when let Some(v) = channel.receive(ch) else { panic("closed") }
   task.join(h)
   test.assert_eq(v, 5)
 }

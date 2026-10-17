@@ -567,7 +567,7 @@ fn main() {{
   let _ = task.spawn {{ -> channel.send(log, "the other task") }}
   let before = loop served = 0 {{
     match channel.receive(log) {{
-      channel.Message("served") -> loop(served + 1)
+      Some("served") -> loop(served + 1)
       _ -> served
     }}
   }}

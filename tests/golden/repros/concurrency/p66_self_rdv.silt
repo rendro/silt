@@ -8,9 +8,9 @@ fn main() {
   -- There is no second party, so neither arm can ever complete.
   let h = task.spawn(fn() {
     match channel.select([channel.Recv(ch), channel.Send(ch, 7)]) {
-      (_, channel.Sent) -> "Sent (to whom?)"
-      (_, channel.Message(v)) -> "Message {v}"
-      (_, channel.Closed) -> "Closed"
+      channel.Sent(_) -> "Sent (to whom?)"
+      channel.Received(_, Some(v)) -> "Message {v}"
+      channel.Received(_, None) -> "Closed"
       _ -> "other"
     }
   })

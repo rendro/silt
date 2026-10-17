@@ -14,7 +14,7 @@ fn main() {
   }
 
   match channel.receive(ch) {
-    channel.Message(v) -> {
+    Some(v) -> {
       task.join(sender)
       let probe = task.spawn { ->
         channel.try_send(ch, 999)
@@ -25,6 +25,6 @@ fn main() {
         false -> println("ok:{v}")
       }
     }
-    _ -> println("FAIL:unexpected_close_or_empty")
+    None -> println("FAIL:unexpected_close_or_empty")
   }
 }

@@ -4,11 +4,11 @@ let ch = channel.new(3)
 fn drain(unused) {
   loop {
     match channel.receive(ch) {
-      channel.Message(v) -> {
+      Some(v) -> {
         println("got {v}")
         loop()
       }
-      _ -> println("done")
+      None -> println("done")
     }
   }
 }

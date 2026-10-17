@@ -506,8 +506,8 @@ fn main() {{
   http.serve(bound("{port_path}")) {{ req ->
     match req.path {{
       "/wait" -> match channel.receive(mailbox) {{
-        channel.Message(text) -> http.Response {{ status: 200, body: bytes.from_string(text), headers: #{{}} }}
-        _ -> http.Response {{ status: 500, body: bytes.from_string("closed"), headers: #{{}} }}
+        Some(text) -> http.Response {{ status: 200, body: bytes.from_string(text), headers: #{{}} }}
+        None -> http.Response {{ status: 500, body: bytes.from_string("closed"), headers: #{{}} }}
       }}
       _ -> {{
         channel.send(mailbox, "released")

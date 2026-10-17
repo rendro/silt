@@ -9,7 +9,7 @@ import channel
 fn main() {
   let ch = channel.new(0)
   match channel.select([channel.Recv(ch)]) {
-    (_, channel.Message(_)) -> println("unreachable")
+    channel.Received(_, Some(_)) -> println("unreachable")
     _ -> println("unreachable")
   }
 }

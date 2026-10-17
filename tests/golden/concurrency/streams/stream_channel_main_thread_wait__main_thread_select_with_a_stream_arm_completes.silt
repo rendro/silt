@@ -14,13 +14,13 @@ fn main() {
     x
   }
   match channel.select([channel.Recv(idle), channel.Recv(out)]) {
-    (_, channel.Message(v)) -> println("first {v}")
-    (_, channel.Closed) -> println("closed")
+    channel.Received(_, Some(v)) -> println("first {v}")
+    channel.Received(_, None) -> println("closed")
     _ -> println("other")
   }
   match channel.select([channel.Recv(out), channel.Recv(idle)]) {
-    (_, channel.Message(v)) -> println("second {v}")
-    (_, channel.Closed) -> println("closed")
+    channel.Received(_, Some(v)) -> println("second {v}")
+    channel.Received(_, None) -> println("closed")
     _ -> println("other")
   }
 }

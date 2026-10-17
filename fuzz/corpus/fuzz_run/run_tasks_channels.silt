@@ -11,8 +11,8 @@ fn main() {
   })
   let total = loop acc = 0 {
     match channel.receive(ch) {
-      channel.Message(n) -> loop(acc + n)
-      _ -> acc
+      Some(n) -> loop(acc + n)
+      None -> acc
     }
   }
   println(total)

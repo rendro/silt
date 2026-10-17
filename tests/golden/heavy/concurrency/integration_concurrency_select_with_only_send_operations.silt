@@ -7,7 +7,7 @@ fn program() {
   let ch2 = channel.new(1)
 
   match channel.select([channel.Send(ch1, "a"), channel.Send(ch2, "b")]) {
-    (_, channel.Sent) -> "sent_ok"
+    channel.Sent(_) -> "sent_ok"
     _ -> "unexpected"
   }
 }

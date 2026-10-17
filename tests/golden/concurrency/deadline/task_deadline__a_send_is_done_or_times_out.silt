@@ -14,8 +14,8 @@ fn main() {
     loop n = 0, sum = 0 {
       time.sleep(time.ms(3))
       match channel.receive(ch) {
-        channel.Message(v) -> loop(n + 1, sum + v)
-        _ -> (n, sum)
+        Some(v) -> loop(n + 1, sum + v)
+        None -> (n, sum)
       }
     }
   }

@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: non-exhaustive match: missing variant Sent
+-- stderr-not-contains: Empty
+-- A select match is told of the variants `channel.select` can give and
+-- of no other.
+import channel
+
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  match channel.select([channel.Recv(ch)]) {
+    channel.Received(_, Some(v)) -> println("got {v}")
+    channel.Received(_, None) -> println("closed")
+  }
+}

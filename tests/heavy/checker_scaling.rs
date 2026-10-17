@@ -148,9 +148,9 @@ fn checking_4000_functions_takes_about_twice_as_long_as_2000() {
 /// What the statement-call modules start with: `take` returns what the
 /// channel carries, so `take(ch)` as a statement is a call whose type
 /// waits for the channel's.
-const TAKE: &str = "import channel\nimport channel.{ Message }\n\n\
+const TAKE: &str = "import channel\n\n\
     fn take(c: Channel(a)) -> a {\n  match channel.receive(c) {\n    \
-    Message(v) -> v\n    _ -> panic(\"closed\")\n  }\n}\n\n";
+    Some(v) -> v\n    None -> panic(\"closed\")\n  }\n}\n\n";
 
 /// A top-level channel and `n` functions that each have the statement
 /// `call`. With `take(ch)` every one of the calls waits, until the end

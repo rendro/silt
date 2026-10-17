@@ -188,8 +188,8 @@ import task
 fn relay(from, to) {
   loop {
     match channel.receive(from) {
-      channel.Message(n) -> channel.send(to, n + 1)
-      _ -> ()
+      Some(n) -> channel.send(to, n + 1)
+      None -> ()
     }
     loop()
   }
@@ -250,7 +250,7 @@ fn a_deadline_ends_its_function_at_every_slice() {
     let program = |door: &str, dur: &str| {
         format!(
             "import channel\nimport list\nimport stream\nimport task\nimport time\n\n\
-             fn recv(ch) {{\n  match channel.receive(ch) {{\n    channel.Message(v) -> v\n    _ -> 0\n  }}\n}}\n\n\
+             fn recv(ch) {{\n  match channel.receive(ch) {{\n    Some(v) -> v\n    _ -> 0\n  }}\n}}\n\n\
              fn count(n, acc) {{\n  match n {{\n    0 -> acc\n    _ -> count(n - 1, acc + 1)\n  }}\n}}\n\n\
              fn main() {{\n  let never: Channel(Int) = channel.new(0)\n  \
              match task.deadline({dur}, {{ -> {door} }}) {{\n    \
@@ -324,8 +324,8 @@ fn main() {
   }
   let r = loop got = 0, sum = 0 {
     match task.deadline(time.ms(2), { -> channel.receive(ch) }) {
-      Ok(channel.Message(v)) -> loop(got + 1, sum + v)
-      Ok(_) -> (got, sum)
+      Ok(Some(v)) -> loop(got + 1, sum + v)
+      Ok(None) -> (got, sum)
       Err(_) -> loop(got, sum)
     }
   }
@@ -343,8 +343,8 @@ fn main() {
     loop n = 0, sum = 0 {
       time.sleep(time.ms(2))
       match channel.receive(ch) {
-        channel.Message(v) -> loop(n + 1, sum + v)
-        _ -> (n, sum)
+        Some(v) -> loop(n + 1, sum + v)
+        None -> (n, sum)
       }
     }
   }
@@ -373,7 +373,7 @@ fn round(dur, before) {
     channel.receive(ch)
   })
   match (out, channel.try_receive(ch)) {
-    (Ok(channel.Message(7)), channel.Empty) -> 0
+    (Ok(Some(7)), channel.Empty) -> 0
     (Err(_), channel.Message(7)) -> 0
     _ -> 1
   }
@@ -426,7 +426,7 @@ fn main() {
 fn pass(out, never, v) {
   let sent = task.deadline(time.ms(2), { ->
     match channel.select([channel.Send(out, v), channel.Recv(never)]) {
-      (_, channel.Sent) -> true
+      channel.Sent(_) -> true
       _ -> false
     }
   })
@@ -456,19 +456,20 @@ fn main() {
     loop n = 0, sum = 0 {
       time.sleep(time.ms(2))
       match channel.receive(out) {
-        channel.Message(v) -> loop(n + 1, sum + v)
-        _ -> (n, sum)
+        Some(v) -> loop(n + 1, sum + v)
+        None -> (n, sum)
       }
     }
   }
   loop {
     let got = task.deadline(time.ms(2), { ->
       match channel.select([channel.Recv(a), channel.Recv(never)]) {
-        (_, r) -> r
+        channel.Received(_, value) -> value
+        channel.Sent(_) -> None
       }
     })
     match got {
-      Ok(channel.Message(v)) -> {
+      Ok(Some(v)) -> {
         pass(out, never, v)
         loop()
       }
@@ -503,8 +504,8 @@ fn main() {
       task.deadline(time.hours(1), { -> channel.receive(ch) })
     })
     match out {
-      Ok(Ok(channel.Message(v))) -> loop(got + 1, sum + v, inner)
-      Ok(Ok(_)) -> (got, sum, inner)
+      Ok(Ok(Some(v))) -> loop(got + 1, sum + v, inner)
+      Ok(Ok(None)) -> (got, sum, inner)
       Ok(Err(_)) -> loop(got, sum, inner + 1)
       Err(_) -> loop(got, sum, inner)
     }
@@ -887,14 +888,14 @@ fn round(i, capacity) {
   let sender = task.spawn { ->
     time.sleep(time.ms(1))
     match channel.select([channel.Send(ch, i), channel.Recv(channel.timeout(time.ms(3)))]) {
-      (_, channel.Sent) -> true
+      channel.Sent(_) -> true
       _ -> false
     }
   }
   let receiver = task.spawn { ->
     match channel.receive(ch) {
-      channel.Message(v) -> channel.send(seen, v)
-      _ -> ()
+      Some(v) -> channel.send(seen, v)
+      None -> ()
     }
   }
   time.sleep(time.ms(1))
@@ -902,7 +903,7 @@ fn round(i, capacity) {
   match task.join(sender) {
     false -> true
     true -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
-      (_, channel.Message(^i)) -> true
+      channel.Received(_, Some(^i)) -> true
       _ -> false
     }
   }
@@ -926,14 +927,14 @@ fn round(i) {
   let sent: Channel(Int) = channel.new(1)
   let sender = task.spawn { ->
     match channel.select([channel.Send(ch, i)]) {
-      (_, channel.Sent) -> channel.send(sent, i)
+      channel.Sent(_) -> channel.send(sent, i)
       _ -> ()
     }
   }
   let receiver = task.spawn { ->
     time.sleep(time.ms(1))
     match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(3)))]) {
-      (_, channel.Message(v)) -> v
+      channel.Received(_, Some(v)) -> v
       _ -> -1
     }
   }
@@ -945,7 +946,7 @@ fn round(i) {
       _ -> false
     }
     v -> match channel.receive(sent) {
-      channel.Message(^v) -> true
+      Some(^v) -> true
       _ -> false
     }
   }
@@ -964,8 +965,8 @@ fn main() {
     // cancelled task that comes to the select with the number there
     // takes it, as its `receive` does, and passes it on.
     let select = receive.replace(
-        "match channel.receive(ch) {\n      channel.Message(v) -> channel.send(seen, v)",
-        "match channel.select([channel.Recv(ch)]) {\n      (_, channel.Message(v)) -> channel.send(seen, v)",
+        "match channel.receive(ch) {\n      Some(v) -> channel.send(seen, v)\n      None -> ()",
+        "match channel.select([channel.Recv(ch)]) {\n      channel.Received(_, Some(v)) -> channel.send(seen, v)\n      _ -> ()",
     );
     assert_ne!(select, receive);
     let programs = [
@@ -1063,8 +1064,8 @@ fn main() {{
   let t = task.spawn {{ ->
     let _ = channel.receive(timed_out)
     match channel.receive(own) {{
-      channel.Message(me) -> task.cancel(me)
-      _ -> ()
+      Some(me) -> task.cancel(me)
+      None -> ()
     }}
     channel.send(said, 0)
     let _ = {take}
@@ -1086,7 +1087,7 @@ fn main() {{
             let shown = result.map(|value| value.to_string());
             assert_eq!(
                 (shown, output.as_str()),
-                (Ok("Message(5)".to_string()), ""),
+                (Ok("Some(5)".to_string()), ""),
                 "{what} at slice {slice:?}"
             );
         }
@@ -1142,8 +1143,8 @@ fn main() {{
         let said = channel.new(1)
         let t = task.spawn {{ ->
           match channel.receive(own) {{
-            channel.Message(me) -> task.cancel(me)
-            _ -> ()
+            Some(me) -> task.cancel(me)
+            None -> ()
           }}
           channel.send(said, 0)
           let _ = {start}
@@ -1153,7 +1154,7 @@ fn main() {{
         let _ = channel.receive(said)
         time.sleep(time.ms(1))
         match channel.receive(ch) {{
-          channel.Message(5) -> loop(i + 1)
+          Some(5) -> loop(i + 1)
           _ -> -1
         }}
       }}
@@ -1228,7 +1229,7 @@ fn missing(input, out, n) {
     match found >= n {
       true -> found - n
       false -> match channel.select([channel.Recv(input), channel.Recv(out)]) {
-        (_, channel.Message(_)) -> loop(found + 1)
+        channel.Received(_, Some(_)) -> loop(found + 1)
         _ -> n - found
       }
     }
@@ -1249,11 +1250,11 @@ fn each_worker(input, out, steps) {
 fn receive_worker(input, out, steps) {
   loop {
     match channel.receive(input) {
-      channel.Message(v) -> {
+      Some(v) -> {
         channel.send(out, work(v, steps))
         loop()
       }
-      _ -> ()
+      None -> ()
     }
   }
 }
@@ -1292,8 +1293,8 @@ fn by_itself(worker, items, steps) {
         fill(input, items)
         let t = task.spawn { ->
           match channel.receive(own) {
-            channel.Message(me) -> task.cancel(me)
-            _ -> ()
+            Some(me) -> task.cancel(me)
+            None -> ()
           }
           fill(sink, k)
           worker(input, out, steps)
@@ -1376,7 +1377,7 @@ fn main() {
     }
   }
   let t = task.spawn { ->
-    when let channel.Message(me) = channel.receive(own) else { panic("no handle") }
+    when let Some(me) = channel.receive(own) else { panic("no handle") }
     channel.each(input) { v ->
       match v == 3 {
         true -> task.cancel(me)
@@ -1389,13 +1390,13 @@ fn main() {
   -- The four items come, however long that takes.
   let put_out = loop got = [] {
     match channel.receive(out) {
-      channel.Message(3) -> [..got, 3]
-      channel.Message(v) -> loop([..got, v])
-      _ -> got
+      Some(3) -> [..got, 3]
+      Some(v) -> loop([..got, v])
+      None -> got
     }
   }
   -- The worker took no fifth: the next item is still the input's.
-  when let channel.Message(next) = channel.receive(input) else { panic("no item") }
+  when let Some(next) = channel.receive(input) else { panic("no item") }
   "put out {put_out}, the input's next {next}, {count(input)} more"
 }
 "#;
@@ -1429,7 +1430,7 @@ fn main() {
         let ok = loop ok = true {
           match channel.try_receive(sent) {
             channel.Message(i) -> match channel.receive(out) {
-              channel.Message(^i) -> loop(ok)
+              Some(^i) -> loop(ok)
               _ -> loop(false)
             }
             _ -> ok
@@ -1481,8 +1482,8 @@ fn main() {{
   let own: Channel(task.Handle(())) = channel.new(1)
   let t = task.spawn {{ ->
     match channel.receive(own) {{
-      channel.Message(me) -> task.cancel(me)
-      _ -> ()
+      Some(me) -> task.cancel(me)
+      None -> ()
     }}
     println("cancelled")
     let _ = io.write_file("{path}", "written by a cancelled task")
@@ -1521,8 +1522,8 @@ fn main() {
   let said = channel.new(1)
   let t = task.spawn { ->
     match channel.receive(own) {
-      channel.Message(me) -> task.cancel(me)
-      _ -> ()
+      Some(me) -> task.cancel(me)
+      None -> ()
     }
     channel.send(said, 0)
     let _ = tcp.accept(listener)

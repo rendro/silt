@@ -15,7 +15,7 @@ fn main() {
     Some(last_ch) -> {
       let a = task.spawn(fn() {
         match channel.select(ops) {
-          (_, channel.Message(v)) -> "A got {v}"
+          channel.Received(_, Some(v)) -> "A got {v}"
           _ -> "A other"
         }
       })

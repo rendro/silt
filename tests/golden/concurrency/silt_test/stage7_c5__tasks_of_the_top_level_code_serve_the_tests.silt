@@ -20,7 +20,7 @@ let server = task.spawn({ ->
 
 fn ask(n) {
   channel.send(requests, n)
-  when let channel.Message(v) = channel.receive(replies) else { panic("closed") }
+  when let Some(v) = channel.receive(replies) else { panic("closed") }
   v
 }
 

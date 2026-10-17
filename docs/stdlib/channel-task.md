@@ -16,9 +16,9 @@ communication between tasks spawned with `task.spawn`.
 | `close` | `(Channel(a)) -> ()` | Close the channel |
 | `each` | `(Channel(a), Fn(a) -> ()) -> ()` | Call a function with each message until the channel closes |
 | `new` | `(Int) -> Channel(a)` | Create a channel (0 = rendezvous, N = buffered) |
-| `receive` | `(Channel(a)) -> ChannelResult(a)` | Blocking receive |
+| `receive` | `(Channel(a)) -> Option(a)` | Blocking receive: `None` once the channel is closed and empty |
 | `receive_timeout` | `(Channel(a), Duration) -> ChannelResult(a)` | Receive, waiting no longer than a duration |
-| `select` | `(List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`) |
+| `select` | `(List(ChannelOp(a))) -> Selected(a)` | Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`) |
 | `send` | `(Channel(a), a) -> ()` | Blocking send |
 | `timeout` | `(Duration) -> Channel(a)` | Create a channel that closes after a duration |
 | `try_receive` | `(Channel(a)) -> ChannelResult(a)` | Non-blocking receive |
@@ -31,8 +31,9 @@ communication between tasks spawned with `task.spawn`.
 channel.close(ch: Channel(a)) -> ()
 ```
 
-Closes the channel. Subsequent sends will fail. Receivers will see `Closed`
-after all buffered messages are consumed.
+Closes the channel. Subsequent sends will fail. Once all buffered messages
+are consumed, `channel.receive` gives `None` (and `channel.try_receive`
+`Closed`).
 
 ```silt
 import channel
@@ -98,11 +99,11 @@ fn main() {
 ## `channel.receive`
 
 ```
-channel.receive(ch: Channel(a)) -> ChannelResult(a)
+channel.receive(ch: Channel(a)) -> Option(a)
 ```
 
-Receives a value from the channel. Returns `Message(value)` when a value is
-available, or `Closed` when the channel is closed and empty. Parks the task
+Receives a value from the channel. Returns `Some(value)` when a value is
+available, or `None` when the channel is closed and empty. Parks the task
 while waiting, allowing other tasks to run on the same thread.
 
 ```silt
@@ -112,9 +113,8 @@ fn main() {
   let ch = channel.new(1)
   channel.send(ch, 42)
   match channel.receive(ch) {
-    channel.Message(v) -> println(v)
-    channel.Closed -> println("done")
-    _ -> ()
+    Some(v) -> println(v)
+    None -> println("done")
   }
 }
 ```
@@ -158,7 +158,7 @@ fn main() {
   match channel.receive_timeout(ch, time.ms(500)) {
     channel.Message(v) -> println(v) -- 42
     channel.Empty -> println("timed out")
-    _ -> println("channel closed")
+    channel.Closed -> println("channel closed")
   }
 }
 ```
@@ -167,7 +167,7 @@ fn main() {
 ## `channel.select`
 
 ```
-channel.select(ops: List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))
+channel.select(ops: List(ChannelOp(a))) -> Selected(a)
 ```
 
 Waits until one of the operations in `ops` can make progress. Every element
@@ -178,12 +178,12 @@ is a `ChannelOp(a)` value built with one of two constructors:
 - `Send(ch, value)` — a **send** arm that becomes ready when `ch` has buffer
   capacity or a rendezvous receiver parked on it.
 
-The call returns a 2-tuple of `(channel, result)` identifying the arm that
-won and the outcome:
+The call returns a `Selected(a)`, which names the channel of the arm that
+completed and the outcome:
 
-- `(ch, Message(val))` — a `Recv` arm completed with `val`.
-- `(ch, Closed)` — a `Recv` arm's channel is closed and drained.
-- `(ch, Sent)` — a `Send` arm completed (the value was handed off).
+- `channel.Received(ch, Some(val))` — a `Recv` arm completed with `val`.
+- `channel.Received(ch, None)` — a `Recv` arm's channel is closed and drained.
+- `channel.Sent(ch)` — a `Send` arm completed (the value was handed off).
 
 A send on a closed channel is a runtime error (`send on closed channel N`),
 as in `channel.send` and `channel.try_send`: a select with a `Send` arm on a
@@ -203,8 +203,8 @@ fn main() {
   let ch2 = channel.new(1)
   let _ = task.spawn { -> channel.send(ch2, "hello") }
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-    (^ch2, channel.Message(val)) -> println(val) -- hello
-    (_, channel.Closed) -> println("closed")
+    channel.Received(^ch2, Some(val)) -> println(val) -- hello
+    channel.Received(_, None) -> println("closed")
     _ -> ()
   }
 }
@@ -220,8 +220,8 @@ fn main() {
   let outbox = channel.new(1)
   channel.send(inbox, 7)
   match channel.select([channel.Recv(inbox), channel.Send(outbox, 99)]) {
-    (^inbox, channel.Message(v)) -> println(v)
-    (^outbox, channel.Sent) -> println("sent")
+    channel.Received(^inbox, Some(v)) -> println(v)
+    channel.Sent(^outbox) -> println("sent")
     _ -> ()
   }
 }
@@ -269,8 +269,8 @@ fn main() {
   let ch = channel.new(10)
   let timer = channel.timeout(time.ms(1000)) -- closes after 1 second
   match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
-    (^ch, channel.Message(val)) -> println("got: {val}")
-    (^timer, channel.Closed) -> println("timed out")
+    channel.Received(^ch, Some(val)) -> println("got: {val}")
+    channel.Received(^timer, None) -> println("timed out")
     _ -> ()
   }
 }
@@ -297,7 +297,6 @@ fn main() {
     channel.Message(v) -> println(v)
     channel.Empty -> println("nothing yet")
     channel.Closed -> println("done")
-    _ -> ()
   }
 }
 ```

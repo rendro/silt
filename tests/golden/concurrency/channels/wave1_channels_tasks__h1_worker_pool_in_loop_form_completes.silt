@@ -14,8 +14,8 @@ fn collect(ch, n, acc) {
     0 -> acc
     _ -> {
       match channel.receive(ch) {
-        channel.Message(v) -> collect(ch, n - 1, acc + v)
-        _ -> acc
+        Some(v) -> collect(ch, n - 1, acc + v)
+        None -> acc
       }
     }
   }
@@ -29,11 +29,11 @@ fn main() {
     task.spawn({ ->
       loop _ = () {
         match channel.receive(jobs) {
-          channel.Message(n) -> {
+          Some(n) -> {
             channel.send(results, n * 2)
             loop(())
           }
-          _ -> ()
+          None -> ()
         }
       }
     })

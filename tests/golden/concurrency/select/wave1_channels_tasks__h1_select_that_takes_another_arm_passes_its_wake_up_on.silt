@@ -16,16 +16,16 @@ fn main() {
   let b = channel.new(4)
   let r1 = task.spawn({ ->
     match channel.select([channel.Recv(a), channel.Recv(b)]) {
-      (^a, channel.Message(_)) -> "a"
-      (^b, channel.Message(_)) -> "b"
+      channel.Received(^a, Some(_)) -> "a"
+      channel.Received(^b, Some(_)) -> "b"
       _ -> "other"
     }
   })
   time.sleep(time.ms(50))
   let r2 = task.spawn({ ->
     match channel.receive(a) {
-      channel.Message(v) -> v
-      _ -> 0 - 1
+      Some(v) -> v
+      None -> 0 - 1
     }
   })
   time.sleep(time.ms(50))

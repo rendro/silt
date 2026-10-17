@@ -35,7 +35,8 @@ fn main() {
   println("tries to receive, a value is there: {tried}")
   let selected = task.deadline(time.ms(0), { ->
     match channel.select([channel.Recv(empty), channel.Recv(full)]) {
-      (_, r) -> r
+      channel.Received(_, value) -> value
+      channel.Sent(_) -> None
     }
   })
   println("selects, a value is there: {selected}")

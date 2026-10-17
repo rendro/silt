@@ -1,1 +1,1 @@
-before=100 after<=4: true closed: Closed
+before=100 after<=4: true closed: None

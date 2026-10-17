@@ -141,8 +141,8 @@ pub fn builtin_error_enum_variants_with_arity()
 }
 
 /// The `(variant_name, arity)` listing of every other builtin enum:
-/// `Result`, `Option`, `Step`, `ChannelResult`, `ChannelOp`, `Weekday`,
-/// `Method`.
+/// `Result`, `Option`, `Step`, `ChannelResult`, `ChannelOp`, `Selected`,
+/// `Weekday`, `Method`.
 pub fn builtin_prelude_enum_variants_with_arity()
 -> &'static [(&'static str, &'static [(&'static str, usize)])] {
     static ENUMS: OnceLock<Vec<(&'static str, &'static [(&'static str, usize)])>> = OnceLock::new();

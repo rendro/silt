@@ -14,8 +14,8 @@ fn main() {
       match (inp, out) {
         (Some(a), Some(b)) -> {
           match channel.receive(a) {
-            channel.Message(v) -> channel.send(b, v + 1)
-            _ -> ()
+            Some(v) -> channel.send(b, v + 1)
+            None -> ()
           }
         }
         _ -> ()
@@ -26,8 +26,8 @@ fn main() {
     (Some(first), Some(last)) -> {
       let feeder = task.spawn(fn() { channel.send(first, 0) })
       match channel.receive(last) {
-        channel.Message(v) -> println("token after ring: {v}")
-        _ -> println("other")
+        Some(v) -> println("token after ring: {v}")
+        None -> println("other")
       }
     }
     _ -> println("bad")

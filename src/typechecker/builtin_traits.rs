@@ -270,7 +270,8 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Each type the builtin registry declares derives what the registry
     // says: all four traits, unless it names fewer (`Option` and
     // `Result`, generic wrappers: no `Compare`; `http.Response` holds a
-    // `Map`: no `Compare`; `channel.ChannelOp` holds a channel: none).
+    // `Map`: no `Compare`; `channel.ChannelOp` holds a channel: none;
+    // `channel.Selected` holds one too: `Equal` only, as a channel).
     // The stamps of a module's error enum add `Equal`/`Compare`/`Hash`
     // to the `Error` and `Display` the builtin environment entered for
     // it (insert is idempotent).

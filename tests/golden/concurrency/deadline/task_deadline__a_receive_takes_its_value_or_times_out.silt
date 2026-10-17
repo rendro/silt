@@ -25,8 +25,8 @@ fn main() {
   }
   let r = loop got = 0, sum = 0 {
     match task.deadline(time.ms(3), { -> channel.receive(ch) }) {
-      Ok(channel.Message(v)) -> loop(got + 1, sum + v)
-      Ok(_) -> (got, sum)
+      Ok(Some(v)) -> loop(got + 1, sum + v)
+      Ok(None) -> (got, sum)
       Err(_) -> loop(got, sum)
     }
   }

@@ -136,12 +136,11 @@ state variable and recur with `loop(...)` from inside the body:
 ```silt
 loop _ = () {
   match channel.receive(ch) {
-    channel.Message(val) -> {
+    Some(val) -> {
       process(val)
       loop(()) -- re-enter to keep going
     }
-    channel.Closed -> () -- fall through; loop returns
-    _ -> loop(())
+    None -> () -- fall through; loop returns
   }
 }
 ```
@@ -152,12 +151,11 @@ for "infinite loop" semantics, a recursive `fn` is often clearer:
 ```silt
 fn drain(ch) {
   match channel.receive(ch) {
-    channel.Message(val) -> {
+    Some(val) -> {
       process(val)
       drain(ch)
     }
-    channel.Closed -> ()
-    _ -> drain(ch)
+    None -> ()
   }
 }
 ```

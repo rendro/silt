@@ -8,7 +8,7 @@ import channel
 fn main() {
   let ch = channel.new(0)
   match channel.receive(ch) {
-    channel.Message(_) -> println("unreachable")
-    _ -> println("unreachable")
+    Some(_) -> println("unreachable")
+    None -> println("unreachable")
   }
 }

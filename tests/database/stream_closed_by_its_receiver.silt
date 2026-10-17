@@ -22,8 +22,8 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
   match postgres.stream(pool, sql, []) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
-        channel.Message(Ok(_)) -> loop(n + 1)
-        channel.Message(Err(e)) -> {
+        Some(Ok(_)) -> loop(n + 1)
+        Some(Err(e)) -> {
           println("count: {e.message()}")
           -1
         }
@@ -44,8 +44,8 @@ fn main() {
         Ok(rows) -> {
           println(
             match channel.receive(rows) {
-              channel.Message(Ok(row)) -> "the first row has the columns {map.keys(row)}"
-              channel.Message(Err(e)) -> e.message()
+              Some(Ok(row)) -> "the first row has the columns {map.keys(row)}"
+              Some(Err(e)) -> e.message()
               _ -> "no row"
             },
           )
