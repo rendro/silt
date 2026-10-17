@@ -24,7 +24,7 @@ syntax keyword siltType IoError JsonError TomlError IntError FloatError HttpErro
 
 " ── Builtins ────────────────────────────────────────────────────────
 syntax keyword siltBuiltin print println panic
-syntax keyword siltConstructor Ok Err Some None Stop Continue Message Closed Empty Sent Recv Send
+syntax keyword siltConstructor Ok Err Some None Stop Continue Message Empty Closed Recv Send Received Sent
 syntax keyword siltConstructor Monday Tuesday Wednesday Thursday Friday Saturday Sunday
 syntax keyword siltConstructor GET POST PUT PATCH DELETE HEAD OPTIONS
 syntax keyword siltConstructor NotFound PermissionDenied AlreadyExists InvalidInput Interrupted UnexpectedEof WriteZero Other

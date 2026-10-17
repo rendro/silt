@@ -7,7 +7,7 @@ fn program() {
 
   let result = channel.select([channel.Recv(ch)])
   match result {
-    (_, channel.Message(val)) -> val
+    channel.Received(_, Some(val)) -> val
     _ -> 0
   }
 }

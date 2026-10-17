@@ -11,8 +11,8 @@ import time
 
 fn recv(ch) {
   match channel.receive(ch) {
-    channel.Message(v) -> v
-    _ -> 0 - 1
+    Some(v) -> v
+    None -> 0 - 1
   }
 }
 

@@ -10,12 +10,11 @@ fn main() {
   channel.close(ch)
   loop _ = () {
     match channel.receive(ch) {
-      channel.Message(val) -> {
+      Some(val) -> {
         println(val)
         loop(())
       }
-      channel.Closed -> ()
-      _ -> loop(())
+      None -> ()
     }
   }
 }

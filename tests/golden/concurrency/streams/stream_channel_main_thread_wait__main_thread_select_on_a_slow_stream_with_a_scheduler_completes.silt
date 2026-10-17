@@ -17,8 +17,8 @@ fn main() {
     x * 10
   }
   match channel.select([channel.Recv(out)]) {
-    (_, channel.Message(v)) -> println("got {v}")
-    (_, channel.Closed) -> println("closed")
+    channel.Received(_, Some(v)) -> println("got {v}")
+    channel.Received(_, None) -> println("closed")
     _ -> println("other")
   }
   -- The rest is not wanted: without this the program would go on

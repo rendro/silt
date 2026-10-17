@@ -8,7 +8,7 @@ fn main() {
   let ch = channel.new(1)
   channel.close(ch)
   match channel.select([channel.Send(ch, 42)]) {
-    (_, channel.Sent) -> println("sent")
+    channel.Sent(_) -> println("sent")
     _ -> println("other")
   }
 }

@@ -28,6 +28,15 @@ fn message(value: Value) -> Value {
     Value::variant(bv::MESSAGE, vec![value])
 }
 
+/// What `channel.receive` and a `Recv` arm of `channel.select` give:
+/// `Some(value)`, or `None` once the channel is closed and empty.
+fn received(value: Option<Value>) -> Value {
+    match value {
+        Some(value) => Value::variant(bv::SOME, vec![value]),
+        None => Value::variant(bv::NONE, vec![]),
+    }
+}
+
 fn closed() -> Value {
     Value::variant(bv::CLOSED, vec![])
 }
@@ -117,15 +126,15 @@ pub(crate) mod channel {
                 return vm.end_here("channel.receive");
             }
             match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => return Step::Done(message(value)),
-                TryReceive::Closed(_) => return Step::Done(closed()),
+                TryReceive::Value(value) => return Step::Done(received(Some(value))),
+                TryReceive::Closed(_) => return Step::Done(received(None)),
                 TryReceive::Empty => {}
             }
             let wait = Wait::new(vec![Arm::Recv(ch.clone())]);
             vm.park("channel.receive", wait, |_, fired| {
                 Ok(Step::Done(match fired {
-                    Fired::Arm(_, Outcome::Received(value)) => message(value),
-                    _ => closed(),
+                    Fired::Arm(_, Outcome::Received(value)) => received(Some(value)),
+                    _ => received(None),
                 }))
             })
         }
@@ -190,19 +199,20 @@ pub(crate) mod channel {
                     ));
                 };
                 let (channel, sends) = &channels[arm];
-                let outcome = match outcome {
-                    Outcome::Received(value) => message(value),
-                    Outcome::Sent => Value::variant(bv::SENT, vec![]),
+                let ch = Value::Channel(channel.clone());
+                Ok(Step::Done(match outcome {
+                    Outcome::Received(value) => {
+                        Value::variant(bv::RECEIVED, vec![ch, received(Some(value))])
+                    }
+                    Outcome::Sent => Value::variant(bv::SENT, vec![ch]),
                     // The channel was closed while the arm waited to send.
                     Outcome::Closed(_) if *sends => {
                         return Err(closed_channel_send_err(channel.id()));
                     }
-                    Outcome::Closed(_) | Outcome::Done => closed(),
-                };
-                Ok(Step::Done(Value::tuple(vec![
-                    Value::Channel(channel.clone()),
-                    outcome,
-                ])))
+                    Outcome::Closed(_) | Outcome::Done => {
+                        Value::variant(bv::RECEIVED, vec![ch, received(None)])
+                    }
+                }))
             }))
         }
 

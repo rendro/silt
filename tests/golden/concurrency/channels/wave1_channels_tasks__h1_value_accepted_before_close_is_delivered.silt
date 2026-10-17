@@ -1,10 +1,10 @@
 -- repeat: 10
 -- stderr-not-contains: deadlock on main thread
 -- A producer notes each send that the channel accepted, a consumer
--- counts the values it received until `Closed`, and the main thread
+-- counts the values it received until `None`, and the main thread
 -- closes the channel in the middle. Every accepted value must arrive.
 -- Without the fix a send can be accepted after the consumer has seen
--- `Closed`; that is rare (about one run in ten loses a value).
+-- `None`; that is rare (about one run in ten loses a value).
 --
 -- The close ends the producer: its next send is a runtime error, which
 -- the cancel dismisses. What it sent before is what it noted in `acks`
@@ -22,8 +22,8 @@ fn spin(n) {
 
 fn consume(ch, n) {
   match channel.receive(ch) {
-    channel.Message(_) -> consume(ch, n + 1)
-    _ -> n
+    Some(_) -> consume(ch, n + 1)
+    None -> n
   }
 }
 

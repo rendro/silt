@@ -20,8 +20,8 @@ fn main() {
     channel.send(returned, 2)
   })
   let (first, other) = match channel.select([channel.Recv(a), channel.Recv(b)]) {
-    (_, channel.Message(1)) -> (1, b)
-    (_, channel.Message(2)) -> (2, a)
+    channel.Received(_, Some(1)) -> (1, b)
+    channel.Received(_, Some(2)) -> (2, a)
     _ -> panic("the select received nothing")
   }
   let one = channel.receive(returned)
@@ -31,8 +31,8 @@ fn main() {
   let two = channel.receive(returned)
   task.join(ha)
   task.join(hb)
-  println(one == channel.Message(first))
+  println(one == Some(first))
   println(none)
-  println(second == channel.Message(3 - first))
-  println(two == channel.Message(3 - first))
+  println(second == Some(3 - first))
+  println(two == Some(3 - first))
 }

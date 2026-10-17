@@ -2672,7 +2672,7 @@ fn main() {
   }
   task.join(sender)
   match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(5)))]) {
-    (_, channel.Closed) -> println("the timeout channel closed")
+    channel.Received(_, None) -> println("the timeout channel closed")
     _ -> println("something else")
   }
   println("main returns")
@@ -2827,7 +2827,7 @@ fn spin(n, acc) {
 fn main() {
   let ch = channel.new(0)
   let _sends = task.spawn({ -> channel.send(ch, spin(300000, 0)) })
-  when let channel.Message(n) = channel.receive(ch) else { panic("closed") }
+  when let Some(n) = channel.receive(ch) else { panic("closed") }
   n
 }
 "#);

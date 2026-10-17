@@ -13,5 +13,5 @@ fn main() {
   println(Message(3))
   let ch = channel.new(1)
   channel.send(ch, 7)
-  println(first(channel.receive(ch)))
+  println(first(channel.try_receive(ch)))
 }

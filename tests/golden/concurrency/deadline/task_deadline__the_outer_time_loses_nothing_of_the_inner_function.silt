@@ -29,8 +29,8 @@ fn main() {
       task.deadline(time.hours(1), { -> channel.receive(ch) })
     })
     match out {
-      Ok(Ok(channel.Message(v))) -> loop(got + 1, sum + v, inner_timeouts)
-      Ok(Ok(_)) -> (got, sum, inner_timeouts)
+      Ok(Ok(Some(v))) -> loop(got + 1, sum + v, inner_timeouts)
+      Ok(Ok(None)) -> (got, sum, inner_timeouts)
       Ok(Err(_)) -> loop(got, sum, inner_timeouts + 1)
       Err(_) -> loop(got, sum, inner_timeouts)
     }

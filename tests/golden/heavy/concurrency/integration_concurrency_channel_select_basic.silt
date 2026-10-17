@@ -7,7 +7,7 @@ fn program() {
   channel.send(ch2, "from ch2")
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-    (^ch2, channel.Message(msg)) -> msg
+    channel.Received(^ch2, Some(msg)) -> msg
     _ -> "unexpected"
   }
 }

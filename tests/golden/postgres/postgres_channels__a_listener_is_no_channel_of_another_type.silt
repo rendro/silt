@@ -15,7 +15,7 @@ fn total(pool: postgres.PgPool) -> Int {
     Ok(ch) -> {
       let typed: Channel(Cents) = ch
       match channel.receive(typed) {
-        channel.Message(Cents(n)) -> n
+        Some(Cents(n)) -> n
         _ -> 0
       }
     }

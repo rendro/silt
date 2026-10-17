@@ -10,8 +10,8 @@ fn program() {
   let timer = channel.timeout(time.ms(50))
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2), channel.Recv(ch3), channel.Recv(timer)]) {
-    (_, channel.Closed) -> "timeout_won"
-    (_, channel.Message(_)) -> "got_data"
+    channel.Received(_, None) -> "timeout_won"
+    channel.Received(_, Some(_)) -> "got_data"
     _ -> "other"
   }
 }

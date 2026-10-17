@@ -17,7 +17,7 @@ fn one_round() {
   let done = channel.new(4)
   let r = task.spawn(fn() {
     match channel.select([channel.Recv(a), channel.Recv(b)]) {
-      (_, channel.Message(v)) -> v
+      channel.Received(_, Some(v)) -> v
       _ -> 0
     }
   })

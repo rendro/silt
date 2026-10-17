@@ -361,8 +361,8 @@ fn fan_in(senders) {{
     match left {{
       0 -> acc
       _ -> match channel.receive(ch) {{
-        channel.Message(v) -> loop(left - 1, acc + v)
-        _ -> acc
+        Some(v) -> loop(left - 1, acc + v)
+        None -> acc
       }}
     }}
   }}
@@ -515,8 +515,8 @@ import task
     task.spawn({{ ->
       let _ = channel.send(running, i)
       match channel.receive(never) {{
-        channel.Message(n) -> n + g0(i)
-        _ -> 0
+        Some(n) -> n + g0(i)
+        None -> 0
       }}
     }})
   }}

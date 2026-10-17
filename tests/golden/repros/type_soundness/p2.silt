@@ -10,7 +10,7 @@ fn main() {
   let ch = mk()
   channel.send(ch, 1)
   match channel.receive(ch) {
-    channel.Message(a) -> println(a + 1)
-    _ -> ()
+    Some(a) -> println(a + 1)
+    None -> ()
   }
 }

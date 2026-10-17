@@ -10,8 +10,8 @@ fn main() {
   -- one receiver, takes exactly ONE message from either a or b, then exits
   let r = task.spawn(fn() {
     match channel.select([channel.Recv(a), channel.Recv(b)]) {
-      (^a, channel.Message(v)) -> "r took a:{v}"
-      (^b, channel.Message(v)) -> "r took b:{v}"
+      channel.Received(^a, Some(v)) -> "r took a:{v}"
+      channel.Received(^b, Some(v)) -> "r took b:{v}"
       _ -> "r other"
     }
   })

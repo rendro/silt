@@ -22,8 +22,8 @@ fn main() {
   let workers = list.map(1..64) { _ -> task.spawn { -> busy(done) } }
   let idle = task.spawn { -> channel.send(done, "the idle task") }
   match channel.receive(done) {
-    channel.Message(first) -> println("first to end: {first}")
-    _ -> println("nothing ended")
+    Some(first) -> println("first to end: {first}")
+    None -> println("nothing ended")
   }
   list.each(workers, task.cancel)
   task.join(idle)

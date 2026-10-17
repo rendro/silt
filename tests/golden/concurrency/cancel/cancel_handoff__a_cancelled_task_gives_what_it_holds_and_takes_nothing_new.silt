@@ -23,15 +23,15 @@ fn main() {
     let helper = task.spawn { -> 7 }
     let _ = task.join(helper)
     match channel.receive(own) {
-      channel.Message(me) -> task.cancel(me)
-      _ -> ()
+      Some(me) -> task.cancel(me)
+      None -> ()
     }
     println("cancelled, and still running")
     channel.send(given, 1)
     println("a send into room: done")
     println("a try_send into room: {channel.try_send(given, 2)}")
     let how = match channel.select([channel.Recv(full), channel.Send(given, 3)]) {
-      (_, channel.Sent) -> "sent"
+      channel.Sent(_) -> "sent"
       _ -> "something else"
     }
     println("a select with a value to receive and room to send: {how}")
@@ -44,9 +44,9 @@ fn main() {
   channel.send(own, t)
   let got = loop got = [] {
     match channel.receive(given) {
-      channel.Message(4) -> got
-      channel.Message(v) -> loop([..got, v])
-      _ -> got
+      Some(4) -> got
+      Some(v) -> loop([..got, v])
+      None -> got
     }
   }
   -- A task that took the value after all would have done so by now.

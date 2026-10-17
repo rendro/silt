@@ -8,7 +8,7 @@ fn main() {
   let soon = channel.timeout(time.ms(20))
   let far = channel.timeout(time.hours(1))
   match channel.select([channel.Recv(far), channel.Recv(soon)]) {
-    (^soon, channel.Closed) -> println("the short one closed")
+    channel.Received(^soon, None) -> println("the short one closed")
     _ -> println("something else")
   }
   println(channel.receive(channel.timeout(time.nanos(1))))

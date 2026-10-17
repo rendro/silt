@@ -12,9 +12,8 @@ fn program() {
   channel.send(ch3, 30)
 
   -- Select should pick one of the three
-  let (_, msg) = channel.select([channel.Recv(ch1), channel.Recv(ch2), channel.Recv(ch3)])
-  match msg {
-    channel.Message(val) -> val > 0
+  match channel.select([channel.Recv(ch1), channel.Recv(ch2), channel.Recv(ch3)]) {
+    channel.Received(_, Some(val)) -> val > 0
     _ -> false
   }
 }

@@ -12,8 +12,8 @@ fn program() {
   task.join(p)
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-    (^ch1, channel.Message(msg)) -> msg
-    (^ch2, channel.Message(msg)) -> msg
+    channel.Received(^ch1, Some(msg)) -> msg
+    channel.Received(^ch2, Some(msg)) -> msg
     _ -> "none"
   }
 }

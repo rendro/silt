@@ -39,10 +39,9 @@ fn main() {
       true -> acc
       _ -> {
         match channel.select([channel.Recv(a), channel.Recv(b), channel.Recv(c), channel.Recv(d)]) {
-          (_, channel.Message(v)) -> loop(collected + 1, acc + v)
-          (_, channel.Closed) -> acc
-          (_, channel.Empty) -> acc
-          (_, channel.Sent) -> acc
+          channel.Received(_, Some(v)) -> loop(collected + 1, acc + v)
+          channel.Received(_, None) -> acc
+          channel.Sent(_) -> acc
         }
       }
     }

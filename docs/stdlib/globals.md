@@ -44,8 +44,8 @@ fn main() {
   let ch = channel.new(1)
   channel.send(ch, 1)
   match channel.receive(ch) {
-    channel.Message(v) -> println(v)
-    _ -> println("no value")
+    Some(v) -> println(v)
+    None -> println("no value")
   }
   println(list.fold_until([1, 2, 3], 0) { acc, x -> Stop(acc + x) })
 }
@@ -58,7 +58,8 @@ fn main() {
 | `channel.Message` | `(a) -> channel.ChannelResult(a)` | Wraps a received channel value |
 | `channel.Closed` | `channel.ChannelResult(a)` | Channel is closed |
 | `channel.Empty` | `channel.ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
-| `channel.Sent` | `channel.ChannelResult(a)` | Result variant for a completed `channel.select` send arm |
+| `channel.Received` | `(Channel(a), Option(a)) -> channel.Selected(a)` | What a completed `channel.select` receive arm gives |
+| `channel.Sent` | `(Channel(a)) -> channel.Selected(a)` | What a completed `channel.select` send arm gives |
 | `channel.Recv` | `(Channel(a)) -> channel.ChannelOp(a)` | Build a receive arm for `channel.select` |
 | `channel.Send` | `(Channel(a), a) -> channel.ChannelOp(a)` | Build a send arm for `channel.select` |
 | `time.Monday`..`time.Sunday` | `time.Weekday` | Day-of-week constructors |
@@ -235,8 +236,9 @@ channel.Message(value: a) -> channel.ChannelResult(a)
 ```
 
 A variant of `channel`: write `channel.Message(v)`, or
-`import channel.{ Message }`. Wraps a value received from a channel. Returned by `channel.receive` and
-`channel.try_receive` when a value is available.
+`import channel.{ Message }`. Wraps a value received from a channel. Returned by
+`channel.try_receive` and `channel.receive_timeout` when a value is available
+(`channel.receive` gives `Some(value)`).
 
 ```silt
 import channel
@@ -244,7 +246,7 @@ import channel
 fn main() {
   let ch = channel.new(1)
   channel.send(ch, 42)
-  when let channel.Message(v) = channel.receive(ch) else {
+  when let channel.Message(v) = channel.try_receive(ch) else {
     return
   }
   println(v) -- 42
@@ -260,8 +262,9 @@ channel.Closed : channel.ChannelResult(a)
 
 A variant of `channel`: write `channel.Closed`.
 
-Indicates the channel has been closed. Returned by `channel.receive` and
-`channel.try_receive` when no more messages will arrive.
+Indicates the channel has been closed and is empty. Returned by
+`channel.try_receive` and `channel.receive_timeout` when no more messages will
+arrive (`channel.receive` gives `None`).
 
 
 ## `channel.Empty`
@@ -272,24 +275,34 @@ channel.Empty : channel.ChannelResult(a)
 
 A variant of `channel`: write `channel.Empty`.
 
-Indicates the channel buffer is currently empty but not closed. Only returned by
-`channel.try_receive` (the non-blocking variant).
+Indicates the channel buffer is currently empty but not closed. Returned by
+`channel.try_receive`, and by `channel.receive_timeout` when nothing came in
+time.
+
+
+## `channel.Received`
+
+```
+channel.Received(ch: Channel(a), value: Option(a)) -> channel.Selected(a)
+```
+
+A variant of `channel`: write `channel.Received(ch, v)`. What
+`channel.select` gives when an arm built with `channel.Recv(ch)` completes:
+`channel.Received(ch, Some(value))` for a value, `channel.Received(ch, None)`
+when `ch` is closed and empty. See `channel.select` in
+[channel / task](./channel-task.md).
 
 
 ## `channel.Sent`
 
 ```
-channel.Sent : channel.ChannelResult(a)
+channel.Sent(ch: Channel(a)) -> channel.Selected(a)
 ```
 
-A variant of `channel`: write `channel.Sent`. Indicates a successful send
-operation inside `channel.select`. When a select arm is built with
-`channel.Send(ch, value)` (a `channel.ChannelOp(a)` value), the matching
-tuple result is `(ch, channel.Sent)` once that send completes.
-`channel.Recv(ch)` arms still produce `channel.Message(v)` /
-`channel.Closed`; `Sent` is the send-side counterpart to `Message`. See
-`channel.select` in [channel / task](./channel-task.md) for the mixed
-send/receive form.
+A variant of `channel`: write `channel.Sent(ch)`. What `channel.select` gives
+when an arm built with `channel.Send(ch, value)` completes: the value was
+handed off. See `channel.select` in [channel / task](./channel-task.md) for
+the mixed send/receive form.
 
 
 ## `channel.Recv`

@@ -5,25 +5,23 @@ fn main() {
   let ch = channel.new(1)
   let t = channel.timeout(time.ms(0))
   match channel.select([channel.Recv(ch), channel.Recv(t)]) {
-    (^t, channel.Closed) -> println("timeout fired")
-    (^ch, _) -> println("ch?")
+    channel.Received(^t, None) -> println("timeout fired")
+    channel.Received(^ch, _) -> println("ch?")
     _ -> println("other")
   }
   match channel.receive_timeout(ch, time.ms(0)) {
     channel.Message(v) -> println("ok")
     channel.Empty -> println("receive_timeout 0 -> Empty")
     channel.Closed -> println("closed")
-    channel.Sent -> println("sent")
   }
   match channel.receive_timeout(ch, time.ms(30)) {
     channel.Message(v) -> println("ok")
     channel.Empty -> println("receive_timeout 30ms -> Empty")
     channel.Closed -> println("closed")
-    channel.Sent -> println("sent")
   }
   -- receive directly on a timeout channel
   match channel.receive(channel.timeout(time.ms(20))) {
-    channel.Closed -> println("timeout channel receive -> Closed")
-    _ -> println("other")
+    None -> println("timeout channel receive -> None")
+    Some(_) -> println("other")
   }
 }

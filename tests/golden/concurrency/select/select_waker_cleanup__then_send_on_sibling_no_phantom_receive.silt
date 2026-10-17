@@ -12,7 +12,7 @@ fn main() {
   -- Receiver 1 selects over a and b; expects to resolve via a.
   let r1 = task.spawn { ->
     match channel.select([channel.Recv(a), channel.Recv(b)]) {
-      (_, channel.Message(_)) -> "got_one"
+      channel.Received(_, Some(_)) -> "got_one"
       _ -> "other"
     }
   }
@@ -34,7 +34,7 @@ fn main() {
   let v2 = task.join(r2)
 
   match v2 {
-    channel.Message(_) -> println("ok:{v1}")
-    _ -> println("fail:{v1}")
+    Some(_) -> println("ok:{v1}")
+    None -> println("fail:{v1}")
   }
 }

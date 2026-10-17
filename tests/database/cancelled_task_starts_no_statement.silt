@@ -33,8 +33,8 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
   match postgres.stream(pool, sql, []) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
-        channel.Message(Ok(_)) -> loop(n + 1)
-        channel.Message(Err(e)) -> {
+        Some(Ok(_)) -> loop(n + 1)
+        Some(Err(e)) -> {
           println("count: {e.message()}")
           -1
         }
@@ -65,8 +65,8 @@ fn main() {
           [],
         )
         match channel.receive(own) {
-          channel.Message(me) -> task.cancel(me)
-          _ -> ()
+          Some(me) -> task.cancel(me)
+          None -> ()
         }
         channel.send(said, "cancelled, and still running")
         match postgres.stream(
@@ -87,14 +87,14 @@ fn main() {
       channel.send(own, t)
       println(channel.receive(said))
       match channel.receive(streams) {
-        channel.Message(rows) -> {
+        Some(rows) -> {
           println("postgres.stream gave the task a channel")
           let _ = task.spawn { ->
             channel.each(rows) { _ -> println("the stream's channel gave something") }
             println("the stream's channel was closed")
           }
         }
-        _ -> println("postgres.stream gave the task no channel")
+        None -> println("postgres.stream gave the task no channel")
       }
       let before = count(
         pool,

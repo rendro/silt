@@ -10,7 +10,7 @@ fn main() {
   channel.send(ch, 7)
   let late = channel.timeout(time.ms(60000))
   match channel.select([channel.Recv(ch), channel.Recv(late)]) {
-    (_, channel.Message(v)) -> println("got {v}")
+    channel.Received(_, Some(v)) -> println("got {v}")
     _ -> println("the timer won")
   }
 }

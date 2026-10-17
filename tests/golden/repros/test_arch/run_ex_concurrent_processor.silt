@@ -91,7 +91,7 @@ fn main() {
       true -> (successes, failures)
       _ -> {
         match channel.select([channel.Recv(results_1), channel.Recv(results_2)]) {
-          (_, channel.Message(result)) -> {
+          channel.Received(_, Some(result)) -> {
             let (worker_id, outcome) = result
             match outcome {
               Ok(info) -> {
@@ -107,7 +107,7 @@ fn main() {
               }
             }
           }
-          (_, channel.Closed) -> {
+          channel.Received(_, None) -> {
             println("All result channels closed unexpectedly")
             (successes, failures)
           }

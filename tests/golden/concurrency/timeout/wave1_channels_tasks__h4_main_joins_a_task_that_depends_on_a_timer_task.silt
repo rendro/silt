@@ -15,8 +15,8 @@ fn main() {
   })
   let relay = task.spawn({ ->
     match channel.receive(x) {
-      channel.Message(v) -> v * 2
-      _ -> 0 - 1
+      Some(v) -> v * 2
+      None -> 0 - 1
     }
   })
   let got = task.join(relay)

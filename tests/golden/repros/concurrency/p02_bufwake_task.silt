@@ -9,8 +9,8 @@ fn recv_n(ch, n) {
     0 -> ()
     _ -> {
       match channel.receive(ch) {
-        channel.Message(v) -> println("got {v}")
-        _ -> println("other")
+        Some(v) -> println("got {v}")
+        None -> println("other")
       }
       recv_n(ch, n - 1)
     }

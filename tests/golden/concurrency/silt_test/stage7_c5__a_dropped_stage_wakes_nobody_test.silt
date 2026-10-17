@@ -26,8 +26,8 @@ fn test_a_leaves_a_pipeline_that_waits() {
   let gate = channel.new(0)
   let s = stream.from_list([1, 2, 3]) |> stream.map { x ->
     match channel.receive(gate) {
-      channel.Message(k) -> x * k
-      _ -> 0
+      Some(k) -> x * k
+      None -> 0
     }
   }
   let _h = task.spawn { ->

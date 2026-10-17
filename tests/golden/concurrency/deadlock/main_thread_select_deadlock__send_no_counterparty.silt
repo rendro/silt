@@ -8,7 +8,7 @@ import channel
 fn main() {
   let ch = channel.new(0)
   match channel.select([channel.Send(ch, 42)]) {
-    (_, channel.Sent) -> println("unreachable")
+    channel.Sent(_) -> println("unreachable")
     _ -> println("unreachable")
   }
 }

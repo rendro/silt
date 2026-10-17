@@ -7,8 +7,8 @@ fn program() {
   let timer = channel.timeout(time.ms(0))
   let result = channel.receive(timer)
   match result {
-    channel.Closed -> "closed"
-    _ -> "unexpected"
+    None -> "closed"
+    Some(_) -> "unexpected"
   }
 }
 

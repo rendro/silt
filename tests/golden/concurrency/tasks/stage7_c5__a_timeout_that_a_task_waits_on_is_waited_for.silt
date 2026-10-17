@@ -12,7 +12,7 @@ fn main() {
   println("main returns")
   let _waits = task.spawn { ->
     match channel.select([channel.Recv(never), channel.Recv(channel.timeout(time.ms(30)))]) {
-      (_, channel.Closed) -> println("timed out")
+      channel.Received(_, None) -> println("timed out")
       _ -> println("something else")
     }
   }

@@ -2,7 +2,7 @@
 -- stderr-contains: error[runtime]: send on closed channel 1
 -- A select with a `Send` arm on a closed channel is the error of a send
 -- on it, whatever its other arms could do. A `Recv` arm on a closed
--- channel is what it was: `Closed`, a value.
+-- channel is what it was: `None`, a value.
 import channel
 
 fn main() {
@@ -11,12 +11,14 @@ fn main() {
   channel.send(ready, 7)
   channel.close(closed)
   match channel.select([channel.Recv(closed)]) {
-    (_, outcome) -> println("a Recv arm on the closed channel: {outcome}")
+    channel.Received(_, value) -> println("a Recv arm on the closed channel: {value}")
+    channel.Sent(_) -> println("a Recv arm on the closed channel: sent")
   }
   match channel.select([channel.Recv(closed), channel.Send(ready, 8)]) {
-    (_, outcome) -> println("a Send arm on an open channel that is full, beside it: {outcome}")
+    channel.Received(_, value) -> println("a Send arm on an open channel that is full, beside it: {value}")
+    channel.Sent(_) -> println("a Send arm on an open channel that is full, beside it: sent")
   }
   match channel.select([channel.Recv(ready), channel.Send(closed, 9)]) {
-    (_, outcome) -> println("not reached: {outcome}")
+    _ -> println("not reached")
   }
 }

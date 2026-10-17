@@ -246,8 +246,8 @@ Works in any pattern position. Common with `channel.select`:
 
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-  (^ch1, channel.Message(msg)) -> handle_first(msg)
-  (^ch2, channel.Message(msg)) -> handle_second(msg)
+  channel.Received(^ch1, Some(msg)) -> handle_first(msg)
+  channel.Received(^ch2, Some(msg)) -> handle_second(msg)
   _ -> panic("unexpected")
 }
 ```

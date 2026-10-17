@@ -8,8 +8,8 @@ fn program() {
   channel.send(ch2, "from ch2")
 
   match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-    (^ch1, channel.Message(msg)) -> "got from ch1"
-    (^ch2, channel.Message(msg)) -> msg
+    channel.Received(^ch1, Some(msg)) -> "got from ch1"
+    channel.Received(^ch2, Some(msg)) -> msg
     _ -> "none"
   }
 }

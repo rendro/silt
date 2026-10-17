@@ -24,14 +24,14 @@ fn round(i, capacity) {
   let sender = task.spawn { ->
     time.sleep(time.ms(1))
     match channel.select([channel.Send(ch, i), channel.Recv(channel.timeout(time.ms(3)))]) {
-      (_, channel.Sent) -> true
+      channel.Sent(_) -> true
       _ -> false
     }
   }
   let receiver = task.spawn { ->
     match channel.receive(ch) {
-      channel.Message(v) -> channel.send(seen, v)
-      _ -> ()
+      Some(v) -> channel.send(seen, v)
+      None -> ()
     }
   }
   time.sleep(time.ms(1))
@@ -39,7 +39,7 @@ fn round(i, capacity) {
   match task.join(sender) {
     false -> 0
     true -> match channel.select([channel.Recv(seen), channel.Recv(ch)]) {
-      (_, channel.Message(^i)) -> 1
+      channel.Received(_, Some(^i)) -> 1
       _ -> panic("round {i}: another value than the one that was sent")
     }
   }

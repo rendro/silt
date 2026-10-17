@@ -1,0 +1,23 @@
+-- cmd: run
+-- `channel.select` gives `Selected(a)`: `Received(channel, Some(value))`,
+-- `Received(channel, None)` once that channel is closed and empty, or
+-- `Sent(channel)` for a `Send` arm. Those three cover a match.
+import channel
+
+fn describe(s: channel.Selected(Int)) -> String {
+  match s {
+    channel.Received(_, Some(v)) -> "received {v}"
+    channel.Received(_, None) -> "closed"
+    channel.Sent(_) -> "sent"
+  }
+}
+
+fn main() {
+  let inbox = channel.new(1)
+  let outbox = channel.new(1)
+  channel.send(inbox, 7)
+  println(describe(channel.select([channel.Recv(inbox)])))
+  println(describe(channel.select([channel.Send(outbox, 8)])))
+  channel.close(inbox)
+  println(describe(channel.select([channel.Recv(inbox)])))
+}

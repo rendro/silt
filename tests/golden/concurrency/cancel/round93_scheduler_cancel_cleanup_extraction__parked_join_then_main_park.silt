@@ -16,8 +16,8 @@ fn main() {
   let ch = channel.new(0)
   let feeder = task.spawn({ -> channel.send(ch, 42) })
   let got = match channel.receive(ch) {
-    channel.Message(v) -> v
-    _ -> 0
+    Some(v) -> v
+    None -> 0
   }
   let _ = task.join(feeder)
   println("{got}")

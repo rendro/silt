@@ -40,7 +40,7 @@ fn main() {
   let lines = stream.tcp_lines(conn)
   channel.close(lines)
   channel.send(gone, ())
-  when let channel.Message(said) = channel.receive(seen) else {
+  when let Some(said) = channel.receive(seen) else {
     panic("the peer said nothing")
   }
   println(said)

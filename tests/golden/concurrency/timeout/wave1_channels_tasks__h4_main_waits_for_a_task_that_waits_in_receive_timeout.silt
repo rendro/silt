@@ -14,13 +14,12 @@ fn main() {
       channel.Message(_) -> "value"
       channel.Empty -> "timed out"
       channel.Closed -> "closed"
-      channel.Sent -> "sent"
     }
     channel.send(x, waited)
   })
   match channel.receive(x) {
-    channel.Message(v) -> println("main got: {v}")
-    _ -> println("main got no message")
+    Some(v) -> println("main got: {v}")
+    None -> println("main got no message")
   }
   task.join(h)
 }

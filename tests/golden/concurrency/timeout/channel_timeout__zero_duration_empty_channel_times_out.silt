@@ -7,7 +7,6 @@ fn main() {
     channel.Message(_) -> "ok"
     channel.Empty -> "timeout"
     channel.Closed -> "closed"
-    channel.Sent -> "sent"
   }
   println(r)
 }

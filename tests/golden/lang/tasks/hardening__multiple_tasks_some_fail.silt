@@ -16,12 +16,12 @@ fn main() {
   task.join(good2)
 
   let a = match channel.receive(ch) {
-    channel.Message(v) -> v
-    _ -> 0
+    Some(v) -> v
+    None -> 0
   }
   let b = match channel.receive(ch) {
-    channel.Message(v) -> v
-    _ -> 0
+    Some(v) -> v
+    None -> 0
   }
   println(a + b)
 }

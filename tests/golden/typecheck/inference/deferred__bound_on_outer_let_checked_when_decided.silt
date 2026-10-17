@@ -11,8 +11,8 @@ fn shout(x: a) -> String where a: Loud { x.loud() }
 let ch = channel.new(4)
 fn drain() {
   match channel.receive(ch) {
-    channel.Message(m) -> shout(m)
-    _ -> "closed"
+    Some(m) -> shout(m)
+    None -> "closed"
   }
 }
 fn main() {

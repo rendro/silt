@@ -15,8 +15,8 @@ trait Named {
 
 fn next(ch: Channel(a)) -> a where a: Named {
   match channel.receive(ch) {
-    Message(v) -> v
-    _ -> panic("closed")
+    Some(v) -> v
+    None -> panic("closed")
   }
 }
 

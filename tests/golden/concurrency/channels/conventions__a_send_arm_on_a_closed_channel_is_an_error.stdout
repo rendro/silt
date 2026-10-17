@@ -1,2 +1,2 @@
-a Recv arm on the closed channel: Closed
-a Send arm on an open channel that is full, beside it: Closed
+a Recv arm on the closed channel: None
+a Send arm on an open channel that is full, beside it: None

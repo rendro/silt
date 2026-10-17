@@ -13,8 +13,8 @@ fn main() {
           channel.send(ch, 7)
         })
         let v = match channel.receive(ch) {
-          channel.Message(v) -> v
-          _ -> -1
+          Some(v) -> v
+          None -> -1
         }
         task.join(producer)
         match v == 7 {

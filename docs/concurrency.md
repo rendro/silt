@@ -107,27 +107,17 @@ Returns `Unit`.
 ### Receiving: `channel.receive(ch)`
 
 ```silt
-when let channel.Message(msg) = channel.receive(ch) else {
+when let Some(msg) = channel.receive(ch) else {
   return
 }
 ```
 
-`channel.receive` takes one value from the channel's buffer. Its result type
-is the shared `ChannelResult(a)` enum, which has four variants:
+`channel.receive` takes one value from the channel's buffer. It returns an
+`Option(a)`:
 
-- `Message(value)` -- a value was available.
-- `Closed` -- the channel is closed and the buffer is empty. No more values
+- `Some(value)` -- a value was available.
+- `None` -- the channel is closed and the buffer is empty. No more values
   will ever arrive.
-- `Empty` -- never produced by blocking `channel.receive` (it parks instead),
-  but listed here because the variant is part of the same enum and the
-  exhaustiveness checker still requires every arm. Returned by
-  `channel.try_receive`.
-- `Sent` -- never produced by `channel.receive` either; it confirms a
-  completed `Send(...)` arm in `channel.select`. Listed here for the same
-  exhaustiveness reason.
-
-Any `match` over `ChannelResult` must cover all four variants (or use a
-catch-all arm).
 
 If the buffer is empty but the channel is still open, the current task is
 parked until a value arrives. The OS thread is not blocked -- it runs other
@@ -150,8 +140,9 @@ Signals that no more values will be sent on this channel. After closing:
   channel. A send that was waiting when the channel was closed fails the
   same way. So a channel is closed by the side that sends on it, or after
   the senders are done.
-- **Receives** drain any remaining buffered values as `Message(value)`. Once
-  the buffer is empty, `channel.receive` returns `Closed`.
+- **Receives** drain any remaining buffered values. Once the buffer is
+  empty, `channel.receive` returns `None` (and `channel.try_receive`
+  `Closed`).
 
 Returns `Unit`.
 
@@ -179,16 +170,12 @@ println(channel.try_receive(ch)) -- Message(42)
 println(channel.try_receive(ch)) -- Empty
 ```
 
-Attempts to receive without blocking. Returns a `ChannelResult(a)`. The
-variants `try_receive` can produce in practice are:
+Attempts to receive without blocking. Returns a `ChannelResult(a)`, which
+has three variants:
 
 - `Message(value)` -- a value was available.
 - `Empty` -- no data yet, but the channel is still open.
 - `Closed` -- no data and the channel is closed.
-
-The fourth `ChannelResult` variant, `Sent`, is reserved for `channel.select`
-and is never returned by `try_receive`, but the exhaustiveness checker still
-requires every `match` to cover it (or use a catch-all arm).
 
 This lets you distinguish "nothing right now" from "nothing ever again."
 
@@ -245,7 +232,7 @@ let _ = task.spawn { ->
 }
 
 -- this blocks until the spawned task calls channel.send
-when let channel.Message(msg) = channel.receive(ch) else {
+when let Some(msg) = channel.receive(ch) else {
   return
 }
 println(msg) -- hello
@@ -262,15 +249,15 @@ let ch = channel.new(10)
 let timer = channel.timeout(time.ms(5000)) -- closes after 5 seconds
 
 match channel.select([channel.Recv(ch), channel.Recv(timer)]) {
-  (^ch, channel.Message(val)) -> println("got: {val}")
-  (^timer, channel.Closed) -> println("timed out after 5s")
+  channel.Received(^ch, Some(val)) -> println("got: {val}")
+  channel.Received(^timer, None) -> println("timed out after 5s")
   _ -> ()
 }
 ```
 
 The timeout channel carries no values -- it simply closes when the duration
 elapses. Receiving from it will block until closure, at which point it
-returns `Closed`. For the common case of a *single* receive with a deadline,
+returns `None`. For the common case of a *single* receive with a deadline,
 prefer `channel.receive_timeout` (next section) -- it does the same race in one
 call.
 
@@ -288,11 +275,11 @@ let _ = task.spawn { -> channel.send(ch, 42) }
 match channel.receive_timeout(ch, time.ms(500)) {
   channel.Message(val) -> println("got: {val}")
   channel.Empty -> println("timed out")
-  _ -> println("channel closed")
+  channel.Closed -> println("channel closed")
 }
 ```
 
-Like the other receive builtins, it returns a `ChannelResult(a)`:
+Like `channel.try_receive`, it returns a `ChannelResult(a)`:
 
 - `Message(val)` -- a value was delivered within `dur`.
 - `Empty` -- `dur` elapsed with no value and no close: what
@@ -344,7 +331,7 @@ let h = task.spawn { ->
 }
 
 task.join(h)
-when let channel.Message(val) = channel.receive(ch) else {
+when let Some(val) = channel.receive(ch) else {
   return
 } -- val = 20
 ```
@@ -745,8 +732,8 @@ Signature: `task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, task.TaskErr
 ### `channel.select(ops)`
 
 `channel.select` lets a task wait on multiple channel operations at once. It
-takes a list of `ChannelOp(a)` values and returns a tuple of `(channel, status)`
-for whichever operation can make progress first. Each op is built with one of
+takes a list of `ChannelOp(a)` values and returns a `Selected(a)` for
+whichever operation can make progress first. Each op is built with one of
 two constructors:
 
 - `Recv(ch)` — a receive arm that becomes ready when `ch` has data, has a
@@ -756,20 +743,21 @@ two constructors:
 
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-  (^ch1, channel.Message(val)) -> handle_input(val)
-  (^ch2, channel.Message(val)) -> handle_other(val)
-  (_, channel.Closed) -> println("all done")
+  channel.Received(^ch1, Some(val)) -> handle_input(val)
+  channel.Received(^ch2, Some(val)) -> handle_other(val)
+  channel.Received(_, None) -> println("all done")
   _ -> ()
 }
 ```
 
-The return value is a 2-tuple:
+The return value is one of:
 
-- **First element:** the channel that produced the result.
-- **Second element:** one of:
-  - `Message(value)` — a `Recv` arm received `value`.
-  - `Closed` — a `Recv` arm's channel is closed and drained.
-  - `Sent` — a `Send` arm completed (value was handed off).
+- `Received(channel, Some(value))` — a `Recv` arm received `value`.
+- `Received(channel, None)` — a `Recv` arm's channel is closed and drained.
+- `Sent(channel)` — a `Send` arm completed (the value was handed off).
+
+The channel in it is the one of the arm that completed. A received value is
+an `Option`, as the result of `channel.receive` is.
 
 ### The pin operator `^`
 
@@ -785,9 +773,9 @@ channel.send(urgent, "alert!")
 channel.send(normal, "status ok")
 
 match channel.select([channel.Recv(urgent), channel.Recv(normal)]) {
-  (^urgent, channel.Message(msg)) -> println("URGENT: {msg}")
-  (^normal, channel.Message(msg)) -> println("normal: {msg}")
-  (_, channel.Closed) -> println("all closed")
+  channel.Received(^urgent, Some(msg)) -> println("URGENT: {msg}")
+  channel.Received(^normal, Some(msg)) -> println("normal: {msg}")
+  channel.Received(_, None) -> println("all closed")
   _ -> println("no message")
 }
 ```
@@ -802,8 +790,8 @@ You do not always care which channel fired. Use `_` to match any channel:
 
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-  (_, channel.Message(val)) -> println("got {val} from somewhere")
-  (_, channel.Closed) -> println("all done")
+  channel.Received(_, Some(val)) -> println("got {val} from somewhere")
+  channel.Received(_, None) -> println("all done")
   _ -> ()
 }
 ```
@@ -816,8 +804,8 @@ channel itself:
 
 ```silt
 match channel.select([channel.Recv(ch1), channel.Recv(ch2)]) {
-  (_source, channel.Message(val)) -> println("got {val}")
-  (_, channel.Closed) -> println("all done")
+  channel.Received(_source, Some(val)) -> println("got {val}")
+  channel.Received(_, None) -> println("all done")
   _ -> ()
 }
 ```
@@ -833,7 +821,8 @@ If no branch is ready, the task is parked on all of them at once. Whoever
 makes one possible (a sender, a receiver, a close) completes that branch for
 the select, and only that one: a select performs exactly one of its
 operations. A closed channel is ready for a `Recv`: that branch gives
-`(channel, Closed)`. A `Send` on a closed channel is no branch at all: a
+`channel.Received(channel, None)`. A `Send` on a closed channel is no branch
+at all: a
 select that has one is the runtime error of a send on a closed channel,
 whatever its other branches could do, and so is one whose channel is
 closed while it waits to send.
@@ -1019,15 +1008,15 @@ fn main() {
   -- without a `loop(...)` recursion runs its body only once.
   loop _ = () {
     match channel.select([channel.Recv(alerts), channel.Recv(logs)]) {
-      (^alerts, channel.Message(msg)) -> {
+      channel.Received(^alerts, Some(msg)) -> {
         println("alert: {msg}")
         loop(())
       }
-      (^logs, channel.Message(msg)) -> {
+      channel.Received(^logs, Some(msg)) -> {
         println("log: {msg}")
         loop(())
       }
-      (_, channel.Closed) -> {
+      channel.Received(_, None) -> {
         println("a channel closed")
         return ()
       }
@@ -1045,8 +1034,8 @@ empty. `select` itself gives you fairness, not ordering.
 ### Graceful shutdown via channel.close
 
 Use `channel.close` to signal that a pipeline stage is done. Downstream stages
-detect closure via `channel.each` (which terminates) or by matching `Closed`
-on `channel.receive`.
+detect closure via `channel.each` (which terminates) or by matching `None`
+from `channel.receive`.
 
 ```silt
 import channel
@@ -1071,7 +1060,7 @@ fn main() {
 
   -- Wait for the worker to finish
   task.join(worker)
-  when let channel.Message(status) = channel.receive(done) else {
+  when let Some(status) = channel.receive(done) else {
     return
   }
   println(status)
@@ -1103,13 +1092,13 @@ fn main() {
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
 
-  when let channel.Message(r1) = channel.receive(results) else {
+  when let Some(r1) = channel.receive(results) else {
     return
   }
-  when let channel.Message(r2) = channel.receive(results) else {
+  when let Some(r2) = channel.receive(results) else {
     return
   }
-  when let channel.Message(r3) = channel.receive(results) else {
+  when let Some(r3) = channel.receive(results) else {
     return
   }
   println("results: {r1}, {r2}, {r3}")
@@ -1134,7 +1123,6 @@ fn drain(ch) {
     }
     channel.Empty -> println("no more data (channel still open)")
     channel.Closed -> println("channel closed, all done")
-    _ -> ()
   }
 }
 
@@ -1198,7 +1186,7 @@ fn supervise(jobs, outcomes, outstanding, remaining_restarts) {
   when outstanding > 0 else {
     return
   }
-  when let channel.Message((id, outcome)) = channel.receive(outcomes) else {
+  when let Some((id, outcome)) = channel.receive(outcomes) else {
     return
   }
   match outcome {
@@ -1477,12 +1465,12 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 |---|---|---|
 | Create channel | `channel.new(0)` / `channel.new(n)` | `Channel` |
 | Send (blocking) | `channel.send(ch, val)` | `Unit` |
-| Receive (blocking) | `channel.receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)` or `channel.Closed` in practice; `channel.Empty`/`channel.Sent` are unreachable here but still required by exhaustiveness |
+| Receive (blocking) | `channel.receive(ch)` | `Option(a)` -- `Some(val)`, or `None` once the channel is closed and empty |
 | Close | `channel.close(ch)` | `Unit` |
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
-| Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` in practice; `channel.Sent` is unreachable here but still required by exhaustiveness |
+| Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
-| Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `(channel, channel.Message(val))`, `(channel, channel.Closed)`, `(channel, channel.Sent)` |
+| Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `channel.Selected(a)` -- `channel.Received(channel, Some(val))`, `channel.Received(channel, None)`, or `channel.Sent(channel)` |
 | Timeout channel | `channel.timeout(dur)` | `Channel` (closes after the `Duration`) |
 | Receive with timeout | `channel.receive_timeout(ch, dur)` | `channel.Message(val)`, `channel.Empty` (nothing came in time), or `channel.Closed`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn({ -> ... })` | `task.Handle(a)` |

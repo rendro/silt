@@ -57,7 +57,14 @@ fn a_registry_type_derives_what_its_declaration_says() {
     fewer.sort();
     assert_eq!(
         fewer,
-        ["ChannelOp", "Option", "Request", "Response", "Result"]
+        [
+            "ChannelOp",
+            "Option",
+            "Request",
+            "Response",
+            "Result",
+            "Selected"
+        ]
     );
 }
 

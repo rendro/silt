@@ -10,7 +10,6 @@ fn outcome(r: channel.ChannelResult(Int)) -> String {
     channel.Message(v) -> "message {v}"
     channel.Empty -> "empty"
     channel.Closed -> "closed"
-    channel.Sent -> "sent"
   }
 }
 

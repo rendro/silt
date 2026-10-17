@@ -16,7 +16,7 @@ fn round(dur, before) {
     channel.receive(ch)
   })
   match (out, channel.try_receive(ch)) {
-    (Ok(channel.Message(7)), channel.Empty) -> 0
+    (Ok(Some(7)), channel.Empty) -> 0
     (Err(_), channel.Message(7)) -> 0
     _ -> 1
   }

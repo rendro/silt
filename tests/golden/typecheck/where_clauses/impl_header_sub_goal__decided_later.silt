@@ -21,10 +21,10 @@ fn main() {
   let ch = channel.new(2)
   channel.send(ch, [])
   match channel.receive(ch) {
-    channel.Message(m) -> {
+    Some(m) -> {
       println(hello(Box(Box(m))))
       println(m == ["s"])
     }
-    _ -> ()
+    None -> ()
   }
 }

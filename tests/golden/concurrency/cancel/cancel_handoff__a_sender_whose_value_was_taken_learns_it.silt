@@ -24,14 +24,14 @@ fn round(i) {
   let sent: Channel(Int) = channel.new(1)
   let sender = task.spawn { ->
     match channel.select([channel.Send(ch, i)]) {
-      (_, channel.Sent) -> channel.send(sent, i)
+      channel.Sent(_) -> channel.send(sent, i)
       _ -> ()
     }
   }
   let receiver = task.spawn { ->
     time.sleep(time.ms(1))
     match channel.select([channel.Recv(ch), channel.Recv(channel.timeout(time.ms(3)))]) {
-      (_, channel.Message(v)) -> v
+      channel.Received(_, Some(v)) -> v
       _ -> -1
     }
   }
@@ -43,7 +43,7 @@ fn round(i) {
       _ -> panic("round {i}: a record of a number that nobody received")
     }
     v -> match channel.receive(sent) {
-      channel.Message(^v) -> 1
+      Some(^v) -> 1
       _ -> panic("round {i}: another record than of the number that was received")
     }
   }

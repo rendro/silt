@@ -142,8 +142,8 @@ fn session(workers: Workers, earlier: &str, later: &str, job: &str) -> String {
         _ => {
             "fn work() {
   match channel.receive(jobs) {
-    channel.Message(job) -> channel.send(outs, job())
-    _ -> ()
+    Some(job) -> channel.send(outs, job())
+    None -> ()
   }
 }"
         }
@@ -183,7 +183,7 @@ fn assert_tasks_see(earlier: &str, later: &str, job: &str, expected: &str) {
         let (output, errors) = repl_beside(&[], &input, slice);
         assert_eq!(
             output,
-            format!("Message({expected})\n").repeat(workers.count()),
+            format!("Some({expected})\n").repeat(workers.count()),
             "{workers:?} {slice:?}\n{input}\nstderr:\n{errors}"
         );
         assert_eq!(errors, "", "{workers:?} {slice:?}\n{input}");
@@ -317,11 +317,11 @@ fn work(left) {{
   match left {{
     0 -> ()
     _ -> match channel.receive(jobs) {{
-      channel.Message(job) -> {{
+      Some(job) -> {{
         channel.send(outs, job())
         work(left - 1)
       }}
-      _ -> ()
+      None -> ()
     }}
   }}
 }}
@@ -352,8 +352,8 @@ task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
         assert_eq!(errors, "", "{slice:?}\n{output}");
         let answers: Vec<&str> = output.lines().collect();
         let (swept, rest) = answers.split_at(rounds.clone().count());
-        let in_time = "Message(Ok(fn int))";
-        let ended = "Message(Err(the function was ended by its deadline))";
+        let in_time = "Some(Ok(fn int))";
+        let ended = "Some(Err(the function was ended by its deadline))";
         // In time first, ended from some amount of work on, and
         // nothing else.
         let first_ended = (swept.iter().position(|answer| *answer == ended))
@@ -380,8 +380,8 @@ let values = channel.new(8)
 let outs = channel.new(8)
 fn show() {
   match channel.receive(values) {
-    channel.Message(v) -> channel.send(outs, \"shown: {v}\")
-    _ -> ()
+    Some(v) -> channel.send(outs, \"shown: {v}\")
+    None -> ()
   }
 }
 let shower = task.spawn { -> show() }
@@ -394,7 +394,7 @@ task.join(shower)
     );
     assert_eq!(
         (output.as_str(), errors.as_str()),
-        ("Message(shown: [Q!])\n", "")
+        ("Some(shown: [Q!])\n", "")
     );
 }
 
@@ -414,11 +414,11 @@ fn work(left) {
   match left {
     0 -> ()
     _ -> match channel.receive(jobs) {
-      channel.Message(job) -> {
+      Some(job) -> {
         channel.send(outs, job())
         work(left - 1)
       }
-      _ -> ()
+      None -> ()
     }
   }
 }
@@ -435,7 +435,7 @@ channel.receive(outs)
 task.join(worker)
 ",
     );
-    assert_eq!(output, "Message(1)\nMessage(11)\nMessage(22)\n", "{errors}");
+    assert_eq!(output, "Some(1)\nSome(11)\nSome(22)\n", "{errors}");
     let errors: Vec<&str> = (errors.lines())
         .filter(|line| line.starts_with("error"))
         .collect();
@@ -464,11 +464,11 @@ fn work(left) {
   match left {
     0 -> ()
     _ -> match channel.receive(jobs) {
-      channel.Message(job) -> {
+      Some(job) -> {
         channel.send(outs, job())
         work(left - 1)
       }
-      _ -> ()
+      None -> ()
     }
   }
 }
@@ -486,10 +486,7 @@ channel.receive(outs)
 task.join(worker)
 ",
     );
-    assert_eq!(
-        output, "Message(1)\nMessage(2)\nMessage(2)\nMessage(30)\n",
-        "{errors}"
-    );
+    assert_eq!(output, "Some(1)\nSome(2)\nSome(2)\nSome(30)\n", "{errors}");
     assert_eq!(errors, "");
 }
 
@@ -511,11 +508,11 @@ fn work(left) {
   match left {
     0 -> ()
     _ -> match channel.receive(jobs) {
-      channel.Message(job) -> {
+      Some(job) -> {
         channel.send(outs, job())
         work(left - 1)
       }
-      _ -> ()
+      None -> ()
     }
   }
 }
@@ -529,10 +526,7 @@ channel.receive(outs)
 task.join(worker)
 ",
     );
-    assert_eq!(
-        output, "Message(first)\nfirst\nMessage(first)\n",
-        "{errors}"
-    );
+    assert_eq!(output, "Some(first)\nfirst\nSome(first)\n", "{errors}");
     let errors: Vec<&str> = (errors.lines())
         .filter(|line| line.starts_with("error"))
         .collect();
@@ -616,9 +610,9 @@ task.join(task.spawn {{ -> \"{{late.stamp}} {{late.tag()}}\" }})
     )
 }
 
-const IMPORTED_TWICE: &str = "Message(poke)
+const IMPORTED_TWICE: &str = "Some(poke)
 two two tag-two [tag-two]
-Message(two two tag-two [tag-two])
+Some(two two tag-two [tag-two])
 two tag-two
 ";
 
@@ -642,11 +636,11 @@ fn a_task_reads_what_an_import_that_failed_once_defines() {
   match left {
     0 -> ()
     _ -> match channel.receive(jobs) {
-      channel.Message(job) -> {
+      Some(job) -> {
         channel.send(outs, job())
         work(left - 1)
       }
-      _ -> ()
+      None -> ()
     }
   }
 }";
@@ -726,8 +720,8 @@ fn a_session_sets_no_slot_twice() {
         "import task\nimport channel\nimport env",
         "let jobs = channel.new(8)\nlet outs = channel.new(8)",
         "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { v.n() }",
-        "fn work() {\n  match channel.receive(jobs) {\n    channel.Message(job) -> {\n      \
-         channel.send(outs, job())\n      work()\n    }\n    _ -> ()\n  }\n}",
+        "fn work() {\n  match channel.receive(jobs) {\n    Some(job) -> {\n      \
+         channel.send(outs, job())\n      work()\n    }\n    None -> ()\n  }\n}",
         "let worker = task.spawn { -> work() }",
     ] {
         assert_eq!(run(entry), ok("()"), "{entry}");
@@ -754,7 +748,7 @@ fn a_session_sets_no_slot_twice() {
         run("channel.send(jobs, { -> \"{5.n()} {call(5)}\" })"),
         ok("()")
     );
-    assert_eq!(run("channel.receive(outs)"), ok("Message(second second)"));
+    assert_eq!(run("channel.receive(outs)"), ok("Some(second second)"));
     // A module whose import fails once, and a redefinition of each kind.
     assert_eq!(run("env.set(\"X2_SLOTS_STAMP\", \"one\")"), ok("()"));
     assert_eq!(run("import late"), failed("panic: not ready"));
@@ -767,7 +761,7 @@ fn a_session_sets_no_slot_twice() {
         run("channel.send(jobs, { -> \"{late.stamp} {late.tag()}\" })"),
         ok("()")
     );
-    assert_eq!(run("channel.receive(outs)"), ok("Message(two tag-two)"));
+    assert_eq!(run("channel.receive(outs)"), ok("Some(two tag-two)"));
     for entry in [
         "let stamp = \"again\"",
         "fn call(v: a) -> String where a: N { \"again {v.n()}\" }",

@@ -457,12 +457,19 @@ mod genp {
 
 // ── Emitter: Program -> silt source ─────────────────────────────────
 
-fn emit_match_channel_result(indent: &str, _suffix: &str) -> String {
+fn emit_match_receive(indent: &str) -> String {
+    format!(
+        "{i}    Some(_v) -> ()\n\
+         {i}    None -> ()\n",
+        i = indent
+    )
+}
+
+fn emit_match_channel_result(indent: &str) -> String {
     format!(
         "{i}    channel.Message(_v) -> ()\n\
          {i}    channel.Empty -> ()\n\
-         {i}    channel.Closed -> ()\n\
-         {i}    channel.Sent -> ()\n",
+         {i}    channel.Closed -> ()\n",
         i = indent
     )
 }
@@ -481,14 +488,14 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
         genp::Op::Receive { ch } => {
             let mut s = String::new();
             s.push_str(&format!("{indent}match channel.receive(ch{ch}) {{\n"));
-            s.push_str(&emit_match_channel_result(indent, ""));
+            s.push_str(&emit_match_receive(indent));
             s.push_str(&format!("{indent}}}\n"));
             s
         }
         genp::Op::TryReceive { ch } => {
             let mut s = String::new();
             s.push_str(&format!("{indent}match channel.try_receive(ch{ch}) {{\n"));
-            s.push_str(&emit_match_channel_result(indent, ""));
+            s.push_str(&emit_match_channel_result(indent));
             s.push_str(&format!("{indent}}}\n"));
             s
         }
@@ -500,10 +507,11 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
                 .join(", ");
             let mut s = String::new();
             s.push_str(&format!("{indent}match channel.select([{list}]) {{\n"));
-            s.push_str(&format!("{indent}    (_, channel.Message(_v)) -> ()\n"));
-            s.push_str(&format!("{indent}    (_, channel.Empty) -> ()\n"));
-            s.push_str(&format!("{indent}    (_, channel.Closed) -> ()\n"));
-            s.push_str(&format!("{indent}    (_, channel.Sent) -> ()\n"));
+            s.push_str(&format!(
+                "{indent}    channel.Received(_, Some(_v)) -> ()\n"
+            ));
+            s.push_str(&format!("{indent}    channel.Received(_, None) -> ()\n"));
+            s.push_str(&format!("{indent}    channel.Sent(_) -> ()\n"));
             s.push_str(&format!("{indent}}}\n"));
             s
         }
@@ -586,10 +594,9 @@ fn emit_program(p: &genp::Program) -> String {
          \x20     true -> c\n\
          \x20     _ -> {{\n\
          \x20       match channel.select([channel.Recv(done), channel.Recv(timer)]) {{\n\
-         \x20         (_, channel.Message(_v)) -> loop(c + 1)\n\
-         \x20         (_, channel.Closed) -> c\n\
-         \x20         (_, channel.Empty) -> c\n\
-         \x20         (_, channel.Sent) -> c\n\
+         \x20         channel.Received(_, Some(_v)) -> loop(c + 1)\n\
+         \x20         channel.Received(_, None) -> c\n\
+         \x20         channel.Sent(_) -> c\n\
          \x20       }}\n\
          \x20     }}\n\
          \x20   }}\n\
@@ -761,7 +768,6 @@ fn main() {
     channel.Message(v) -> println("c_ran={v}")
     channel.Empty -> println("c_did_not_run")
     channel.Closed -> println("tick_closed")
-    channel.Sent -> println("tick_sent")
   }
 }
 "#;

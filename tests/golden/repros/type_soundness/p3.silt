@@ -8,11 +8,11 @@ fn main() {
   channel.send(ch, 1)
   channel.send(ch, "hello")
   match channel.receive(ch) {
-    channel.Message(a) -> println(a + 1)
-    _ -> ()
+    Some(a) -> println(a + 1)
+    None -> ()
   }
   match channel.receive(ch) {
-    channel.Message(a) -> println(a + 1)
-    _ -> ()
+    Some(a) -> println(a + 1)
+    None -> ()
   }
 }

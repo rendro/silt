@@ -1,0 +1,19 @@
+-- cmd: run
+-- `channel.receive` gives `Option(a)`: `Some(value)`, or `None` once the
+-- channel is closed and empty. A match needs those two arms and no more.
+import channel
+
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, 1)
+  channel.close(ch)
+  loop {
+    match channel.receive(ch) {
+      Some(v) -> {
+        println("got {v}")
+        loop()
+      }
+      None -> println("closed")
+    }
+  }
+}

@@ -15,8 +15,8 @@ fn program() {
   channel.send(inbox, "hello")
 
   let outcome = match channel.select([channel.Recv(inbox), channel.Send(outbox, "world")]) {
-    (_, channel.Message(val)) -> val
-    (_, channel.Sent) -> "sent"
+    channel.Received(_, Some(val)) -> val
+    channel.Sent(_) -> "sent"
     _ -> "other"
   }
   outcome == "hello" || outcome == "sent"

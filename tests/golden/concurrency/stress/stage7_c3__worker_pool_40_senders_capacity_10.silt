@@ -20,10 +20,8 @@ fn main() {
     match left {
       0 -> acc
       _ -> match channel.receive(results) {
-        channel.Message(v) -> loop(left - 1, acc + v)
-        channel.Closed -> acc
-        channel.Empty -> acc
-        channel.Sent -> acc
+        Some(v) -> loop(left - 1, acc + v)
+        None -> acc
       }
     }
   }

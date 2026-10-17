@@ -37,7 +37,7 @@ fn main() {
     panic("cannot connect")
   }
   println(stream.tcp_lines(conn) |> stream.first)
-  when let channel.Message(said) = channel.receive(seen) else {
+  when let Some(said) = channel.receive(seen) else {
     panic("the peer said nothing")
   }
   println(said)

@@ -13,7 +13,7 @@ import time
 fn pass(out, never, v) {
   let sent = task.deadline(time.ms(3), { ->
     match channel.select([channel.Send(out, v), channel.Recv(never)]) {
-      (_, channel.Sent) -> true
+      channel.Sent(_) -> true
       _ -> false
     }
   })
@@ -50,19 +50,20 @@ fn main() {
     loop n = 0, sum = 0 {
       time.sleep(time.ms(3))
       match channel.receive(out) {
-        channel.Message(v) -> loop(n + 1, sum + v)
-        _ -> (n, sum)
+        Some(v) -> loop(n + 1, sum + v)
+        None -> (n, sum)
       }
     }
   }
   loop {
     let got = task.deadline(time.ms(3), { ->
       match channel.select([channel.Recv(a), channel.Recv(b)]) {
-        (_, r) -> r
+        channel.Received(_, value) -> value
+        channel.Sent(_) -> None
       }
     })
     match got {
-      Ok(channel.Message(v)) -> {
+      Ok(Some(v)) -> {
         pass(out, never, v)
         loop()
       }

@@ -8,8 +8,8 @@ fn program() {
 
   -- empty_ch has nothing to receive, but send_ch has room
   match channel.select([channel.Recv(empty_ch), channel.Send(send_ch, 99)]) {
-    (_, channel.Sent) -> "sent_first"
-    (_, channel.Message(_)) -> "received"
+    channel.Sent(_) -> "sent_first"
+    channel.Received(_, Some(_)) -> "received"
     _ -> "other"
   }
 }
