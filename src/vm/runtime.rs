@@ -279,6 +279,15 @@ impl Vm {
         self.cancelled.as_ref().is_some_and(set) || self.over.as_ref().is_some_and(set)
     }
 
+    /// The flags that [`Vm::takes_nothing_new`] reads, for an
+    /// operation on the I/O pool that takes something there, after the
+    /// task has started it and before the task waits for it: an
+    /// accept (`runtime::handle::GiveUp`).
+    #[cfg(feature = "tcp")]
+    pub(crate) fn nothing_new_flags(&self) -> Vec<Arc<std::sync::atomic::AtomicBool>> {
+        self.cancelled.iter().chain(&self.over).cloned().collect()
+    }
+
     /// The wait that ends a task which takes nothing new
     /// ([`Vm::takes_nothing_new`]) where it is: a wait with no arm,
     /// which such a task is refused, as it is refused every wait that

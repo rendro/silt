@@ -18,11 +18,10 @@
 
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use super::common::{READ_AT_ONCE, ok};
 use super::typed::{self, Bytes, builtins};
-use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{Accepted, GiveUp, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
@@ -71,7 +70,6 @@ mod tls {
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
     use rustls::server::WebPkiClientVerifier;
@@ -80,8 +78,8 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        Accepted, Doing, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, VmError, err,
-        served, tcp_io_err, tcp_timeout_err,
+        Accepted, Doing, GiveUp, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, Vm,
+        VmError, err, served, tcp_io_err, tcp_timeout_err,
     };
     use crate::builtins::typed::{self, Bytes, builtins};
     use crate::runtime::handle::ReadWrite;
@@ -121,7 +119,7 @@ mod tls {
             }
             let (listener, cert_pem, key_pem) = (listener.clone(), cert_pem.clone(), key_pem.clone());
             let next_id = vm.next_tcp_id();
-            let (giving_up, stop) = GivingUp::of(&listener);
+            let (giving_up, stop) = GivingUp::of(vm, &listener);
             vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
                 accepted(do_accept_tls(
                     &listener, &giving_up, &cert_pem, &key_pem, next_id,
@@ -150,7 +148,7 @@ mod tls {
             let (cert_pem, key_pem) = (cert_pem.clone(), key_pem.clone());
             let client_ca_pem = client_ca_pem.clone();
             let next_id = vm.next_tcp_id();
-            let (giving_up, stop) = GivingUp::of(&listener);
+            let (giving_up, stop) = GivingUp::of(vm, &listener);
             vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
                 accepted(do_accept_tls_mtls(
                     &listener,
@@ -309,22 +307,25 @@ mod tls {
     /// over.
     #[derive(Clone)]
     pub(super) struct GivingUp {
-        stopped: Arc<AtomicBool>,
+        give_up: GiveUp,
         /// The connection, while the handshake runs.
         handshaking: Arc<parking_lot::Mutex<Option<TcpStream>>>,
     }
 
     impl GivingUp {
-        fn of(listener: &Arc<TcpListenerHandle>) -> (GivingUp, impl FnOnce() + Send + 'static) {
+        fn of(
+            vm: &Vm,
+            listener: &Arc<TcpListenerHandle>,
+        ) -> (GivingUp, impl FnOnce() + Send + 'static) {
             let giving_up = GivingUp {
-                stopped: Arc::new(AtomicBool::new(false)),
+                give_up: GiveUp::of_task(vm.nothing_new_flags()),
                 handshaking: Arc::default(),
             };
             let (listener, mine) = (listener.clone(), giving_up.clone());
             (giving_up, move || {
                 // The flag first: an accept that returns now reads it
                 // under the lock below.
-                listener.stop(&mine.stopped);
+                listener.stop(&mine.give_up);
                 if let Some(socket) = mine.handshaking.lock().take() {
                     let _ = socket.shutdown(std::net::Shutdown::Both);
                 }
@@ -334,14 +335,14 @@ mod tls {
         /// The next connection of `listener`, noted as in its
         /// handshake; an error if the accept was given up.
         fn accepted(&self, listener: &TcpListenerHandle) -> Result<TcpStream, String> {
-            let sock = match listener.accept(&self.stopped, false) {
+            let sock = match listener.accept(&self.give_up, false) {
                 Ok(Accepted::Conn(sock)) => sock,
                 Ok(Accepted::GivenUp) => return Err("tcp accept: given up".into()),
                 Ok(Accepted::Served) => return Err(SERVED.into()),
                 Err(e) => return Err(format!("tcp accept: {e}")),
             };
             let mut handshaking = self.handshaking.lock();
-            if self.stopped.load(Ordering::SeqCst) {
+            if self.give_up.is_set() {
                 let _ = sock.shutdown(std::net::Shutdown::Both);
                 return Err("tcp accept: given up".into());
             }
@@ -488,13 +489,15 @@ fn err_closed() -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::TCP_CLOSED, vec![])])
 }
 
-/// The flag of an accept on `listener`, and what gives the accept up.
+/// What gives an accept of the task of `vm` on `listener` up, and
+/// what does when nobody waits for the accept any more.
 fn accept_stop(
+    vm: &Vm,
     listener: &Arc<TcpListenerHandle>,
-) -> (Arc<AtomicBool>, impl FnOnce() + Send + 'static) {
-    let stopped = Arc::new(AtomicBool::new(false));
-    let (listener, flag) = (listener.clone(), stopped.clone());
-    (stopped, move || listener.stop(&flag))
+) -> (GiveUp, impl FnOnce() + Send + 'static) {
+    let give_up = GiveUp::of_task(vm.nothing_new_flags());
+    let (listener, mine) = (listener.clone(), give_up.clone());
+    (give_up, move || listener.stop(&mine))
 }
 
 /// What an accept on a listener that an `http.serve` has to itself
@@ -521,15 +524,17 @@ pub(crate) fn accept_op(
     server: bool,
 ) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
-    let (stopped, stop) = accept_stop(listener);
+    let (give_up, stop) = accept_stop(vm, listener);
     let (accepting, listener) = (listener.clone(), listener.clone());
     vm.start_io(tcp_timeout_err, move || {
-        match accepting.accept(&stopped, server) {
+        match accepting.accept(&give_up, server) {
             Ok(Accepted::Conn(stream)) => Value::variant(
                 bv::OK,
                 vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
             ),
-            // Given up: nobody reads the value.
+            // Given up: nobody reads the value, or a task that was
+            // cancelled, or whose time is over, in the steps it has
+            // left.
             Ok(Accepted::GivenUp) => err_closed(),
             // A server took the listener while the accept waited.
             Ok(Accepted::Served) => err(SERVED),
