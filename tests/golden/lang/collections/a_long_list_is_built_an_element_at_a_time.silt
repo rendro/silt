@@ -1,0 +1,60 @@
+-- timeout: 60
+-- A list of 200,000 elements built an element at a time, by `[x, ..xs]`,
+-- `list.append` or `list.prepend`, and a list of 200,000 each element
+-- of which is put in place by `list.set`: each step makes a new list
+-- that shares all but a path of the tree of the list before it, and the
+-- list before stays as it was. (Each step copied the whole list, and
+-- each of these took hours.)
+import list
+
+fn by_prepend(n: Int) -> List(Int) {
+  loop i = 0, acc = [] {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, [i, ..acc])
+    }
+  }
+}
+
+fn by_append(n: Int) -> List(Int) {
+  loop i = 0, acc = [] {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, list.append(acc, i))
+    }
+  }
+}
+
+fn by_prepend_fn(n: Int) -> List(Int) {
+  loop i = 0, acc = [] {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, list.prepend(acc, i))
+    }
+  }
+}
+
+fn by_set(xs: List(Int)) -> List(Int) {
+  loop i = 0, acc = xs {
+    match list.set(acc, i, i * 2) {
+      Some(next) -> loop(i + 1, next)
+      None -> acc
+    }
+  }
+}
+
+fn show(name: String, xs: List(Int)) {
+  println("{name}: {list.length(xs)} {list.head(xs)} {list.get(xs, 1000)} {list.last(xs)} {list.sum(xs)}")
+}
+
+fn main() {
+  let n = 200000
+  let down = by_prepend(n)
+  show("[i, ..acc]", down)
+  show("list.append", by_append(n))
+  show("list.prepend", by_prepend_fn(n))
+  let doubled = by_set(down)
+  show("list.set", doubled)
+  -- The list each was made from is as it was.
+  show("[i, ..acc] again", down)
+}
