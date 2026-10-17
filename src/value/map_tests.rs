@@ -319,6 +319,10 @@ fn the_set_is_its_model(set: &Set, model: &BTreeSet<Value>, before: &Set) {
         false => assert!(set.len() <= FLAT_MOST, "{} side by side", set.len()),
     }
 
+    if let Some(holds) = set.holds_fn_known() {
+        assert_eq!(holds, model.iter().any(Value::contains_fn));
+    }
+    assert!(!set.holds_fn());
     let twin = Set::kept_as(model.iter().cloned().collect(), set.is_tree());
     assert_ne!(twin.is_tree(), set.is_tree());
     let (value, twin) = (Value::Set(set.clone()), Value::Set(twin));
@@ -499,4 +503,33 @@ proptest::proptest! {
             (set, model) = (next, next_model);
         }
     }
+}
+
+// ── The gate of the operations on two sets ─────────────────────────
+
+/// `set.union` of a set of 20,000 members and a set of one, a thousand
+/// times in a fold, walks the large set once to learn that it holds no
+/// function, not at each step: the answer is kept with the set and
+/// carried to the union. (Walking it at each step walks 20,000,000
+/// members.) The gate still answers as before: tests/golden/lang/
+/// collections/collection_builtin_fn_gate__*.
+#[test]
+fn a_fold_of_set_union_walks_the_set_it_grows_once() {
+    let program = crate::session::testing::compile_str(
+        r#"
+import list
+import set
+fn main() {
+  let big = set.from_list(list.map(1..20000) { x -> x })
+  let grown = list.fold(1..1000, big) { acc, i -> set.union(acc, set.from_list([0 - i])) }
+  set.length(grown)
+}
+"#,
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    let before = super::map::walks::count();
+    let result = crate::vm::Vm::new(crate::HostIo::process()).run_program(&program);
+    let walked = super::map::walks::count() - before;
+    assert_eq!(result.expect("it runs"), int(21_000));
+    assert!(walked < 25_000, "{walked} members walked");
 }

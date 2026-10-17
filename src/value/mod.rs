@@ -243,7 +243,11 @@ impl Value {
                 }
                 Value::Tuple(items) => pending.extend(items.iter()),
                 Value::Variant(variant) => pending.extend(variant.fields()),
-                Value::Set(items) => pending.extend(items.iter()),
+                Value::Set(items) => match items.holds_fn_known() {
+                    Some(true) => return true,
+                    Some(false) => {}
+                    None => pending.extend(items.iter()),
+                },
                 Value::Map(entries) => {
                     for (k, v) in entries.iter() {
                         pending.push(k);

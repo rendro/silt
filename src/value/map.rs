@@ -21,6 +21,7 @@
 use std::cmp::Ordering;
 use std::iter::Peekable;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering as Atomic};
 
 use imbl::shared_ptr::DefaultSharedPtr;
 use imbl::{OrdMap, OrdSet};
@@ -43,7 +44,43 @@ pub struct Map(Arc<Kept<Entries>>);
 
 /// A set.
 #[derive(Clone, Default)]
-pub struct Set(Arc<Kept<Members>>);
+pub struct Set(Arc<SetOf>);
+
+/// What a set holds: its members, and whether one of them is, or has
+/// in it, a function, once that is known.
+#[derive(Default)]
+struct SetOf {
+    members: Kept<Members>,
+    fns: AtomicU8,
+}
+
+/// Whether a set holds a function ([`Set::holds_fn`]): not known yet,
+/// no, yes. (What [`SetOf::fns`] holds.)
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fns {
+    Unknown = 0,
+    No = 1,
+    Yes = 2,
+}
+
+impl Fns {
+    /// Of a set that holds the members of two sets of these answers.
+    fn either(self, other: Fns) -> Fns {
+        match (self, other) {
+            (Fns::Yes, _) | (_, Fns::Yes) => Fns::Yes,
+            (Fns::No, Fns::No) => Fns::No,
+            _ => Fns::Unknown,
+        }
+    }
+
+    /// Of a set that holds some of the members of a set of this answer.
+    fn some_of(self) -> Fns {
+        match self {
+            Fns::No => Fns::No,
+            _ => Fns::Unknown,
+        }
+    }
+}
 
 /// The entries of a map as they are kept.
 pub(crate) enum Entries {
@@ -426,7 +463,61 @@ impl Set {
     }
 
     fn of(members: Members) -> Set {
-        Set(Arc::new(Kept::from(members)))
+        Set(Arc::new(SetOf {
+            members: Kept::from(members),
+            fns: AtomicU8::new(Fns::Unknown as u8),
+        }))
+    }
+
+    /// The set, whose answer to whether it holds a function is `fns`
+    /// if that is known.
+    fn knowing(self, fns: Fns) -> Set {
+        if fns != Fns::Unknown {
+            self.0.fns.store(fns as u8, Atomic::Relaxed);
+        }
+        self
+    }
+
+    /// Whether the set holds a function, if that is known.
+    fn fns(&self) -> Fns {
+        match self.0.fns.load(Atomic::Relaxed) {
+            1 => Fns::No,
+            2 => Fns::Yes,
+            _ => Fns::Unknown,
+        }
+    }
+
+    /// Whether a member of the set is, or has in it, a function
+    /// ([`Value::contains_fn`]): the gate of the operations on two sets.
+    ///
+    /// The answer is kept with the set once it is known, and the sets
+    /// made from it by an update carry it where it follows from theirs
+    /// (an update of a set that holds none, by a member that is no
+    /// function, holds none): a fold of `set.union` walks each set once,
+    /// not the one it grows at each step.
+    pub fn holds_fn(&self) -> bool {
+        match self.fns() {
+            Fns::Yes => true,
+            Fns::No => false,
+            Fns::Unknown => {
+                walked(self.len());
+                let holds = self.iter().any(Value::contains_fn);
+                let _ = self.clone().knowing(match holds {
+                    true => Fns::Yes,
+                    false => Fns::No,
+                });
+                holds
+            }
+        }
+    }
+
+    /// [`Set::holds_fn`] if it is known, without a walk.
+    pub(crate) fn holds_fn_known(&self) -> Option<bool> {
+        match self.fns() {
+            Fns::Yes => Some(true),
+            Fns::No => Some(false),
+            Fns::Unknown => None,
+        }
     }
 
     /// The set of `members`, which are in order, each once.
@@ -449,7 +540,7 @@ impl Set {
     }
 
     fn members(&self) -> &Members {
-        &self.0
+        &self.0.members
     }
 
     pub fn len(&self) -> usize {
@@ -480,6 +571,15 @@ impl Set {
 
     /// The set with `value` a member, whether it was or not.
     pub fn insert(&self, value: Value) -> Set {
+        let fns = match self.fns() {
+            Fns::Yes => Fns::Yes,
+            Fns::No if is_no_fn(&value) => Fns::No,
+            _ => Fns::Unknown,
+        };
+        self.inserted(value).knowing(fns)
+    }
+
+    fn inserted(&self, value: Value) -> Set {
         match self.members() {
             Members::Flat(members) => match find_member(members, &value) {
                 Ok(_) => self.clone(),
@@ -507,6 +607,10 @@ impl Set {
 
     /// The set without `value`.
     pub fn remove(&self, value: &Value) -> Set {
+        self.removed(value).knowing(self.fns().some_of())
+    }
+
+    fn removed(&self, value: &Value) -> Set {
         match self.members() {
             Members::Flat(members) => match find_member(members, value) {
                 Ok(at) => Set::of(Members::Flat(without_at(members, at).into_boxed_slice())),
@@ -538,6 +642,10 @@ impl Set {
     /// grows with the smaller one's size times the logarithm of the
     /// larger one's.
     pub fn union(&self, other: &Set) -> Set {
+        self.united(other).knowing(self.fns().either(other.fns()))
+    }
+
+    fn united(&self, other: &Set) -> Set {
         let (larger, smaller) = self.by_size(other);
         if smaller.is_empty() {
             return larger.clone();
@@ -576,9 +684,13 @@ impl Set {
     /// The smaller set is walked and each of its members looked up in
     /// the larger one.
     pub fn intersection(&self, other: &Set) -> Set {
+        let fns = match (self.fns(), other.fns()) {
+            (Fns::No, _) | (_, Fns::No) => Fns::No,
+            _ => Fns::Unknown,
+        };
         let (larger, smaller) = self.by_size(other);
         let both = smaller.iter().filter(|member| larger.contains(member));
-        Set::of_sorted(both.cloned().collect())
+        Set::of_sorted(both.cloned().collect()).knowing(fns)
     }
 
     /// The members of the set that `other` does not have.
@@ -586,6 +698,10 @@ impl Set {
     /// The smaller set is walked: the members of the set that `other`
     /// lacks are kept, or those of `other` are taken out of the set.
     pub fn difference(&self, other: &Set) -> Set {
+        self.differed(other).knowing(self.fns().some_of())
+    }
+
+    fn differed(&self, other: &Set) -> Set {
         let tree = match self.members() {
             Members::Tree(tree) if self.len() > other.len() => tree,
             _ => {
@@ -615,6 +731,11 @@ impl Set {
     /// Each member of the smaller set goes into the larger one, or out
     /// of it if it has it.
     pub fn symmetric_difference(&self, other: &Set) -> Set {
+        let fns = self.fns().either(other.fns()).some_of();
+        self.symmetric_differed(other).knowing(fns)
+    }
+
+    fn symmetric_differed(&self, other: &Set) -> Set {
         let (larger, smaller) = self.by_size(other);
         if smaller.is_empty() {
             return larger.clone();
@@ -734,6 +855,45 @@ impl IntoIterator for Set {
             Members::Flat(_) => SetIntoIterOf::Flat { set: self, at: 0 },
             Members::Tree(tree) => SetIntoIterOf::Tree(tree.clone().into_iter()),
         })
+    }
+}
+
+/// Whether `value` is known to be no function and to have none in it,
+/// without a walk: a value that is made of no values and is no
+/// function, or a set that is known to hold none.
+fn is_no_fn(value: &Value) -> bool {
+    match value {
+        Value::Set(set) => set.holds_fn_known() == Some(false),
+        Value::List(_) | Value::Tuple(_) | Value::Map(_) | Value::Record(_) | Value::Variant(_) => {
+            false
+        }
+        other => !other.is_fn(),
+    }
+}
+
+/// Count `n` members walked to learn whether a set holds a function.
+#[inline]
+fn walked(n: usize) {
+    #[cfg(test)]
+    walks::WALKED.set(walks::WALKED.get() + n as u64);
+    #[cfg(not(test))]
+    let _ = n;
+}
+
+/// How many members have been walked to learn whether a set holds a
+/// function ([`Set::holds_fn`]): what the test of the gate of the
+/// operations on two sets counts.
+#[cfg(test)]
+pub mod walks {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static WALKED: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The members walked on this thread so far.
+    pub fn count() -> u64 {
+        WALKED.get()
     }
 }
 

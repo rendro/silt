@@ -863,11 +863,16 @@ pub(crate) mod map {
 pub(crate) mod set {
     use super::*;
 
-    /// The operations on two sets walk both anyway, so both are
-    /// gated: that catches sets with functions in them that an ungated
-    /// producer built (a `set.map` callback that returns closures).
+    /// The operations on two sets are gated on both: that catches sets
+    /// with functions in them that an ungated producer built (a
+    /// `set.map` callback that returns closures). A set keeps the
+    /// answer once it is known ([`Set::holds_fn`]), so a fold of
+    /// `set.union` does not walk the set it grows at every step.
     fn both_without_fn(name: &str, a: Set, b: Set) -> Result<(), VmError> {
-        ensure_no_fn(name, "Compare", a.iter().chain(b.iter()))
+        match a.holds_fn() || b.holds_fn() {
+            true => Err(fn_gate(name, "Compare")),
+            false => Ok(()),
+        }
     }
 
     builtins! {
