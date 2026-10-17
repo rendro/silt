@@ -47,6 +47,16 @@ threads-required = 'num-test-threads'
 filter = 'test(fmt_property)'
 threads-required = 2
 
+# Two tests of the step budget (tests/oracle/limits.rs) count on a task
+# using its budget up while `main` sleeps or waits: with every core busy
+# beside them they failed in full oracle runs, and passed alone, on main
+# too. They run alone, as the timing tests do. (This override stands
+# before the oracle's: the first that matches a test decides a setting.)
+[[profile.default.overrides]]
+filter = 'binary(=oracle) & (test(=limits::the_budget_ends_the_tasks_of_a_program_too) | test(=limits::a_fault_of_the_program_is_not_the_budgets))'
+test-group = 'timing'
+threads-required = 'num-test-threads'
+
 # The differential oracle (tests/oracle) checks and runs its programs on
 # two threads, and a program with tasks starts the scheduler's workers.
 [[profile.default.overrides]]

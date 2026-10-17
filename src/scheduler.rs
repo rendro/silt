@@ -511,6 +511,7 @@ impl Scheduler {
     /// Returns an error if not a single worker thread could be started.
     /// If some but not all could be started, the scheduler runs with
     /// those.
+    #[cfg(not(target_arch = "wasm32"))]
     fn ensure_workers(&self) -> Result<(), String> {
         let mut guard = self.workers.lock();
         if guard.is_some() {
@@ -974,6 +975,7 @@ pub(crate) fn catch_as_error<R>(call: impl FnOnce() -> R + UnwindSafe) -> thread
 /// REPL's line editor holds while it reads a line). On the command's
 /// own thread the panic then reaches the top of the thread and ends
 /// the process there ([`exit_with_internal_error`]).
+#[cfg(feature = "repl")]
 pub(crate) fn unwinding<R>(call: impl FnOnce() -> R) -> R {
     struct Around(u32);
     impl Drop for Around {
@@ -1441,6 +1443,7 @@ impl Inner {
     /// program whose tasks wake each other, the next one comes within
     /// microseconds, and putting a thread to sleep and waking it costs
     /// more than that.
+    #[cfg(not(target_arch = "wasm32"))]
     fn next_task(&self) -> Option<Task> {
         /// How many workers look on at a time.
         const LOOKING: usize = 2;
@@ -2180,6 +2183,7 @@ impl Drop for Scheduler {
 /// A panic that escapes it, from a slice or from the scheduler's own
 /// code, ends the program ([`Inner::fail`]); the worker has stopped
 /// using the runtime when it says so, and ends.
+#[cfg(not(target_arch = "wasm32"))]
 fn worker_loop(inner: Arc<Inner>) {
     a_thread_of_the_runtime();
     let work = AssertUnwindSafe(|| {
