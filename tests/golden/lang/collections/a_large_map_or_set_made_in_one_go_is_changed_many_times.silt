@@ -1,0 +1,61 @@
+-- timeout: 60
+-- A map of 100,000 entries made in one go (`map.from_entries`, and what
+-- `map.filter` keeps of it), and a set of 100,000 members (`set.from_list`),
+-- each changed 100,000 times, every change made from the one made in
+-- one go: `map.set` of a key it has and of one it lacks, `map.delete`,
+-- `set.insert`, `set.remove`. The first change makes a tree of the
+-- entries and keeps it with the map; each change after it shares all
+-- but a path of that tree. The map made in one go stays as it was.
+-- (Each change copied the whole map, and each of these took hours.)
+import list
+import map
+import set
+
+fn changes_of_map(m: Map(Int, Int), n: Int) -> Int {
+  loop i = 0, total = 0 {
+    match i == n {
+      true -> total
+      false -> {
+        let changed = map.set(m, i, 0 - 1)
+        let added = map.set(m, 0 - i - 1, i)
+        let deleted = map.delete(m, i)
+        let got = match map.get(changed, i) {
+          Some(v) -> v
+          None -> 0
+        }
+        loop(i + 1, total + map.length(added) - map.length(deleted) + got)
+      }
+    }
+  }
+}
+
+fn changes_of_set(s: Set(Int), n: Int) -> Int {
+  loop i = 0, total = 0 {
+    match i == n {
+      true -> total
+      false -> {
+        let inserted = set.insert(s, 0 - i - 1)
+        let removed = set.remove(s, i)
+        loop(i + 1, total + set.length(inserted) - set.length(removed))
+      }
+    }
+  }
+}
+
+fn show_map(name: String, m: Map(Int, Int)) {
+  let total = map.values(m) |> list.fold(0) { acc, v -> acc + v }
+  println("{name}: {map.length(m)} {map.get(m, 0)} {map.get(m, 1001)} {map.get(m, -5)} {total}")
+}
+
+fn main() {
+  let n = 100000
+  let m = map.from_entries(list.map(0..n - 1) { i -> (i, i * 2) })
+  println("map.from_entries: {changes_of_map(m, n)}")
+  let evens = map.filter(m) { k, _ -> k % 2 == 0 }
+  println("map.filter: {changes_of_map(evens, n)}")
+  show_map("map.from_entries again", m)
+  show_map("map.filter again", evens)
+  let s = set.from_list(0..n - 1)
+  println("set.from_list: {changes_of_set(s, n)}")
+  println("set.from_list again: {set.length(s)} {set.contains(s, 0)} {set.contains(s, -5)}")
+}

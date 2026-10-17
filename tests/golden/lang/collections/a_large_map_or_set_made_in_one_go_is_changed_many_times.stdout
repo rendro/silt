@@ -1,0 +1,6 @@
+map.from_entries: 100000
+map.filter: 50000
+map.from_entries again: 100000 Some(0) Some(2002) None 9999900000
+map.filter again: 50000 Some(0) None None 4999900000
+set.from_list: 200000
+set.from_list again: 100000 true false

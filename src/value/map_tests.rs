@@ -580,8 +580,9 @@ fn main() {
 /// trees is dropped like any other, as one nested through any other
 /// holder is: a tree far inside is put aside and dropped by the
 /// outermost (src/value/deep.rs). A level is a map or a set of more
-/// than [`FLAT_MOST`] made in one go, or made by a change, with the
-/// level further in as a value, a key or a member. (A level of a tree
+/// than [`FLAT_MOST`] made in one go (with the tree a change made of
+/// it, or not), or made by a change, with the level further in as a
+/// value, a key or a member. (A level of a tree
 /// costs kilobytes, so the depth at which the thread of a program
 /// would overflow its stack would take gigabytes to reach; a thread of
 /// a test overflows its stack at a few thousand levels.)
@@ -589,10 +590,16 @@ fn main() {
 fn a_value_nested_through_maps_and_sets_kept_in_trees_is_dropped_without_the_native_stack() {
     const DEPTH: i64 = 10_000;
     let others = |n: i64| (0..FLAT_MOST as i64 + 6).map(move |i| int(n * 1_000 + i));
-    let shapes: [&dyn Fn(i64, Value) -> Value; 4] = [
+    let shapes: [&dyn Fn(i64, Value) -> Value; 5] = [
         &|n, rest| {
             let map: Map = others(n).map(|k| (k, rest.clone())).collect();
-            assert!(map.is_tree());
+            assert_eq!(map.kept_as(), "side");
+            Value::Map(map)
+        },
+        &|n, rest| {
+            // (A map made in one go whose tree a change has made.)
+            let map: Map = others(n).map(|k| (k, rest.clone())).collect();
+            assert_eq!(map.insert(int(-1), int(0)).kept_as(), "tree");
             Value::Map(map)
         },
         &|n, rest| {
@@ -604,7 +611,7 @@ fn a_value_nested_through_maps_and_sets_kept_in_trees_is_dropped_without_the_nat
                 .map(|k| Value::tuple(vec![k, Value::Unit]))
                 .collect();
             let set = set.insert(Value::tuple(vec![int(-1), rest]));
-            assert!(set.is_tree());
+            assert_eq!(set.kept_as(), "tree");
             Value::Set(set)
         },
         &|n, rest| {
