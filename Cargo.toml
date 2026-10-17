@@ -81,6 +81,12 @@ webpki-roots = { version = "0.26", optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# The silt binary's global allocator (src/main.rs); `extended` gives
+# `mi_option_set`. Not for wasm32, where the playground keeps its own.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = { version = "0.1.52", default-features = false }
+libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
+
 # Windows-only: needed by `tcp.close` to call `CancelIoEx` on the inner
 # socket handle. Winsock's `shutdown(SD_BOTH)` does not cancel an
 # in-progress blocking `recv` on a sibling SOCKET handle (created via
