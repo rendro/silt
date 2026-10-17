@@ -30,6 +30,17 @@ filter = 'binary(=heavy) & (test(/^checker_scaling::/) | test(/^lexer_scaling::/
 test-group = 'timing'
 threads-required = 'num-test-threads'
 
+# The count of how many requests other connections are served before a
+# queued task runs (tests/lang/http_server_tests.rs) depends on how the
+# system shares the cores among the test processes too: run alone on a
+# 3-core macOS runner it stayed at 434-1,519 of the 2,560 it allows in
+# 80 runs, with mimalloc and without; beside the rest of its shard it
+# reached 2,726, 2,970 and 4,795. It runs alone, as the timing tests do.
+[[profile.default.overrides]]
+filter = 'test(=http_server_tests::a_connection_gives_way_after_a_few_requests)'
+test-group = 'timing'
+threads-required = 'num-test-threads'
+
 # The formatter's property runs (tests/frontend/fmt_property/mod.rs)
 # format thousands of inputs on two threads each.
 [[profile.default.overrides]]
