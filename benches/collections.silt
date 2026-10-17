@@ -100,6 +100,17 @@ fn mapget(n) {
   }
 }
 
+fn mapeach(n) {
+  let m = 0..n - 1 |> list.map { x -> (x, x) } |> map.from_entries
+  map.each(m) { k, v -> () }
+  map.length(m)
+}
+
+fn mapfilter(n) {
+  let m = 0..n - 1 |> list.map { x -> (x, x) } |> map.from_entries
+  map.length(map.filter(m) { k, v -> k % 3 != 0 })
+}
+
 fn main() {
   let args = io.args()
   let kind = match list.get(args, 0) {
@@ -122,6 +133,8 @@ fn main() {
     "walk" -> walk(n)
     "getall" -> getall(n)
     "mapget" -> mapget(n)
+    "mapeach" -> mapeach(n)
+    "mapfilter" -> mapfilter(n)
     _ -> 0
   }
   println(r)
