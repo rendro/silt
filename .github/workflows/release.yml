@@ -1,19 +1,102 @@
 name: Release
 
+# A release in one step: Actions -> Release -> "Run workflow" with the
+# version (or `gh workflow run release.yml -f version=0.17.1`). The
+# workflow checks that main is green and the version is new, writes the
+# version into Cargo.toml and Cargo.lock, commits it to main, tags it,
+# builds every target and the playground, makes the GitHub release, and
+# moves the website's silt submodule to the tag.
+#
+# Pushing a tag `vX.Y.Z` by hand still releases that tag as before
+# (no bump, no commit).
+
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to release, for example 0.17.1"
+        required: true
+        type: string
 
 permissions:
   contents: write
+  actions: read
+
+# Two releases never run at once.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  prepare:
+    name: Version and tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # A tag pushed by hand is released as it is.
+      - name: The pushed tag
+        if: github.event_name == 'push'
+        run: echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+
+      - name: Check the version and main
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$GITHUB_REF" = refs/heads/main ] || fail "Run the release from main, not $GITHUB_REF."
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "\"$VERSION\" is not a version like 0.17.1."
+          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          [ "$VERSION" != "$current" ] && [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n 1)" = "$VERSION" ] \
+            || fail "$VERSION is not higher than the current version $current."
+          [ -z "$(git ls-remote --tags origin "refs/tags/v$VERSION")" ] || fail "The tag v$VERSION exists already."
+          sha=$(git rev-parse HEAD)
+          ci=$(gh run list --workflow ci.yml --branch main --commit "$sha" --event push --limit 1 --json status,conclusion \
+            --jq '.[0] | "\(.status) \(.conclusion)"')
+          [ "$ci" = "completed success" ] \
+            || fail "CI on main ($sha) is \"${ci:-not run}\", not green: wait for it, or fix main first."
+          echo "Releasing $current -> $VERSION from $sha"
+
+      - name: Write the version, commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          # The package's own version: the first `version =` line of
+          # Cargo.toml, and silt's entry in Cargo.lock.
+          sed -i "0,/^version = \"$current\"$/s//version = \"$VERSION\"/" Cargo.toml
+          perl -0pi -e "s/name = \"silt\"\nversion = \"\Q$current\E\"/name = \"silt\"\nversion = \"$VERSION\"/" Cargo.lock
+          [ "$(git diff --numstat | wc -l)" = 2 ] || { git diff; echo "::error::The version was not written to exactly Cargo.toml and Cargo.lock."; exit 1; }
+          cargo metadata --locked --format-version 1 > /dev/null
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "Version $VERSION"
+          git tag "v$VERSION"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+          echo "tag=v$VERSION" >> "$GITHUB_ENV"
+
+      - name: Tag
+        id: tag
+        run: echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.target }}
+    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -22,10 +105,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+          # A native ARM runner: under `cross` this target took 11 minutes,
+          # every other one about 2.
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             archive: tar.gz
-            cross: true
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
@@ -35,27 +119,27 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
       - name: Build
-        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../silt-${{ github.ref_name }}-${{ matrix.target }}.tar.gz silt
+          tar czf ../../../silt-$TAG-${{ matrix.target }}.tar.gz silt
           cd ../../..
 
       - name: Package (windows)
@@ -63,22 +147,27 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../silt-${{ github.ref_name }}-${{ matrix.target }}.zip silt.exe
+          7z a ../../../silt-$TAG-${{ matrix.target }}.zip silt.exe
           cd ../../..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: silt-${{ matrix.target }}
-          path: silt-${{ github.ref_name }}-${{ matrix.target }}.*
+          path: silt-${{ needs.prepare.outputs.tag }}-${{ matrix.target }}.*
 
   playground:
     # The playground of silt-lang.com (playground/): the wasm module and
     # its JavaScript, which the site's build takes from the release.
     name: Build the playground
+    needs: prepare
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -95,20 +184,24 @@ jobs:
         run: node playground/tests/wasm.mjs playground/pkg
 
       - name: Package
-        run: tar czf silt-${{ github.ref_name }}-playground.tar.gz -C playground/pkg .
+        run: tar czf silt-$TAG-playground.tar.gz -C playground/pkg .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: silt-playground
-          path: silt-${{ github.ref_name }}-playground.tar.gz
+          path: silt-${{ needs.prepare.outputs.tag }}-playground.tar.gz
 
   release:
     name: Create Release
-    needs: [build, playground]
+    needs: [prepare, build, playground]
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -123,12 +216,48 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd artifacts
-          sha256sum silt-${{ github.ref_name }}-*.tar.gz silt-${{ github.ref_name }}-*.zip \
-            > silt-${{ github.ref_name }}-SHA256SUMS
-          cat silt-${{ github.ref_name }}-SHA256SUMS
+          sha256sum silt-$TAG-*.tar.gz silt-$TAG-*.zip > silt-$TAG-SHA256SUMS
+          cat silt-$TAG-SHA256SUMS
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
           generate_release_notes: true
           files: artifacts/*
+
+  website:
+    # silt-lang.com (rendro/silt-website) is built from the silt release
+    # its `silt/` submodule is pinned to; Vercel deploys each push.
+    name: Move the website to the release
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
+    steps:
+      - name: Without a token the website stays where it is
+        if: env.SITE_TOKEN == ''
+        run: echo "::warning::The secret SITE_TOKEN is not set, so the website still shows the previous release. Move its silt submodule to $TAG by hand."
+
+      - uses: actions/checkout@v6
+        if: env.SITE_TOKEN != ''
+        with:
+          repository: rendro/silt-website
+          token: ${{ secrets.SITE_TOKEN }}
+          path: site
+
+      - name: Move the submodule to the tag, commit and push
+        if: env.SITE_TOKEN != ''
+        working-directory: site
+        run: |
+          set -euo pipefail
+          git submodule update --init silt
+          git -C silt fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+          git -C silt checkout --quiet "$TAG"
+          git add silt
+          if git diff --cached --quiet; then echo "The website is at $TAG already."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qm "silt ${TAG#v}"
+          git push origin HEAD
