@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: cannot pipe into function taking 2 arguments
+-- stderr-contains: = help: `|>` passes only the first argument; write the others in a call: `|> add(...)`
+-- stderr-contains: cannot pipe into function taking 3 arguments
+-- stderr-contains: = help: `|>` passes only the first argument; write the others in a call: `|> list.fold(...)`
+-- stderr-contains: = help: `|>` passes only the first argument
+-- stderr-contains: cannot pipe into function taking 0 arguments
+-- stderr-not-contains: partial application
+-- silt has no partial application: piping into a function that takes
+-- more than the piped value says to write the other arguments in a
+-- call, named after the callee. A closure has no name to call it by,
+-- and a function of no arguments takes no piped value either.
+import list
+
+fn add(a: Int, b: Int) -> Int { a + b }
+
+fn zero() -> Int { 0 }
+
+fn main() {
+  let a = 1 |> add
+  let b = [1] |> list.fold
+  let c = 1 |> { x, y -> x + y }
+  let d = 1 |> zero
+  println("{a} {b} {c} {d}")
+}

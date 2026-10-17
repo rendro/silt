@@ -1315,7 +1315,7 @@ impl TypeChecker {
                 // has parameters, the piped value and the receiver of a
                 // method call among them.
                 if params.len() != args.len() + implicit_self {
-                    let message = match form {
+                    let (message, help) = match form {
                         CallForm::Call => {
                             // A method's receiver is not one of the
                             // arguments the call writes.
@@ -1326,23 +1326,44 @@ impl TypeChecker {
                                 (_, Some(name)) => format!("`{name}`"),
                                 _ => "function".to_string(),
                             };
-                            format!(
+                            let message = format!(
                                 "{what} expects {} {}, got {}",
                                 written_params,
                                 plural(written_params, "argument", "arguments"),
                                 args.len()
-                            )
+                            );
+                            (message, None)
                         }
                         // B6: `a |> f` supplies one argument; piping into
                         // a function that needs more without an explicit
-                        // call forgets the remaining ones.
-                        CallForm::BarePipe => format!(
-                            "cannot pipe into function taking {} {}; wrap in a call or use partial application",
-                            written_params,
-                            plural(written_params, "argument", "arguments")
-                        ),
+                        // call forgets the remaining ones. The others are
+                        // written in a call, which a name can take.
+                        CallForm::BarePipe => {
+                            let message = format!(
+                                "cannot pipe into function taking {} {}",
+                                written_params,
+                                plural(written_params, "argument", "arguments")
+                            );
+                            let name = match &callee.kind {
+                                ExprKind::Ident(name) => Some(name.to_string()),
+                                ExprKind::FieldAccess(module, name, _) => match &module.kind {
+                                    ExprKind::Ident(module) => Some(format!("{module}.{name}")),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            let help = match name {
+                                _ if written_params == 0 => None,
+                                Some(name) => Some(format!(
+                                    "`|>` passes only the first argument; write the others \
+                                     in a call: `|> {name}(...)`"
+                                )),
+                                None => Some("`|>` passes only the first argument".to_string()),
+                            };
+                            (message, help)
+                        }
                     };
-                    self.error(Code::ArityMismatch, message, span);
+                    self.error_help(Code::ArityMismatch, (message, help), span);
                 }
                 (**ret).clone()
             }

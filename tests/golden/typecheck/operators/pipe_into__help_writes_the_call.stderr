@@ -1,0 +1,26 @@
+error[type]: cannot pipe into function taking 2 arguments
+ --> pipe_into__help_writes_the_call.silt:21:11
+    |
+ 21 |   let a = 1 |> add
+    |           ^^^^^^^^ cannot pipe into function taking 2 arguments
+  = help: `|>` passes only the first argument; write the others in a call: `|> add(...)`
+
+error[type]: cannot pipe into function taking 3 arguments
+ --> pipe_into__help_writes_the_call.silt:22:11
+    |
+ 22 |   let b = [1] |> list.fold
+    |           ^^^^^^^^^^^^^^^^ cannot pipe into function taking 3 arguments
+  = help: `|>` passes only the first argument; write the others in a call: `|> list.fold(...)`
+
+error[type]: cannot pipe into function taking 2 arguments
+ --> pipe_into__help_writes_the_call.silt:23:11
+    |
+ 23 |   let c = 1 |> { x, y -> x + y }
+    |           ^^^^^^^^^^^^^^^^^^^^^^ cannot pipe into function taking 2 arguments
+  = help: `|>` passes only the first argument
+
+error[type]: cannot pipe into function taking 0 arguments
+ --> pipe_into__help_writes_the_call.silt:24:11
+    |
+ 24 |   let d = 1 |> zero
+    |           ^^^^^^^^^ cannot pipe into function taking 0 arguments
