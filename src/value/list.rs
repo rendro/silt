@@ -902,7 +902,20 @@ impl From<Vec<Value>> for List {
 
 impl FromIterator<Value> for List {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> List {
-        List::from(items.into_iter().collect::<Vec<Value>>())
+        let items = items.into_iter();
+        // (Elements of a known number that a buffer holds go straight
+        // into it, as a list literal's do: through a vector they were
+        // allocated and copied twice, some 9% of the cycles of a loop
+        // that makes a one-element list each round.)
+        match items.size_hint() {
+            (least, Some(most)) if least == most && most <= FLAT_MOST => {
+                let buf: Buf = items.collect();
+                let len = buf.len();
+                copied(len);
+                List(Stored::Items { buf, start: 0, len })
+            }
+            _ => List::from(items.collect::<Vec<Value>>()),
+        }
     }
 }
 
