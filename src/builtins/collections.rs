@@ -917,7 +917,7 @@ pub(crate) mod set {
             // A set of Fn values is ordered by the functions' addresses —
             // ASLR-nondeterministic iteration order. Reject at construction.
             ensure_no_fn_in("set.from_list", "Compare", xs)?;
-            Ok(Value::set(xs))
+            Ok(Value::Set(crate::value::Set::without_fn(xs)))
         }
 
         fn to_list(s: Set) -> Value {

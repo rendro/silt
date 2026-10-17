@@ -521,6 +521,12 @@ impl Set {
         }
     }
 
+    /// The set of `members`, none of which is, or has in it, a
+    /// function: a gate has walked them ([`Set::holds_fn`]).
+    pub fn without_fn(members: impl IntoIterator<Item = Value>) -> Set {
+        members.into_iter().collect::<Set>().knowing(Fns::No)
+    }
+
     /// [`Set::holds_fn`] if it is known, without a walk.
     pub(crate) fn holds_fn_known(&self) -> Option<bool> {
         match self.fns() {
