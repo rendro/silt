@@ -13,7 +13,7 @@
 //! Nothing at runtime ties these together: a rename on any one surface
 //! keeps `cargo test` green but 404s the next tagged release for the other
 //! two. These tests read all three files as text, extract each surface's
-//! template, normalize the placeholder syntax (`${{ github.ref_name }}`,
+//! template, normalize the placeholder syntax (`${{ github.ref_name }}`, `$TAG`,
 //! `${version}`, `{latest}` → `<V>`, etc.), and assert they encode the
 //! same template. They also assert every target triple in the release
 //! build matrix is constructible by both consumers' arch/os mappings.
@@ -38,8 +38,12 @@ fn read_repo_file(rel: &str) -> String {
 /// release.yml with GitHub Actions expressions collapsed to placeholders,
 /// so shell-ish tokenization on whitespace works on the packaging lines.
 fn release_yml_normalized() -> String {
+    // The tag being released (`v0.17.0`) is `needs.prepare.outputs.tag`,
+    // and `$TAG` in the jobs' shell steps.
     read_repo_file(".github/workflows/release.yml")
         .replace("${{ github.ref_name }}", "<V>")
+        .replace("${{ needs.prepare.outputs.tag }}", "<V>")
+        .replace("$TAG", "<V>")
         .replace("${{ matrix.target }}", "<T>")
 }
 
