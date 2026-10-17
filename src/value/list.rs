@@ -79,12 +79,29 @@ pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
 /// 2,048, with changes of every list up to that copying it whole.
 pub(super) const FLAT_MOST: usize = 64;
 
-/// The most elements of a short list that [`List::concat`] puts into
-/// the tree of a long one one by one; a longer one is made a tree and
-/// the two are joined. (imbl 7, probes/imbl_threshold.rs: joining a
-/// tree of 128 to another took 3.5 us, putting an element in 0.2 us:
-/// the two cost alike at about 16 elements.)
-const PUSHED_MOST: usize = 16;
+/// The most elements of the shorter of two lists that [`List::concat`]
+/// puts into the tree of the other one by one; past it the two are made
+/// trees and joined.
+///
+/// Measured 2026-10-17 through the VM (release builds that always put
+/// in, and always join; a fresh short list of `k` joined to a tree of
+/// `n` a thousand or two thousand times, median of three; microseconds
+/// per join, put in / joined):
+///
+/// | k | n = 1,000 | n = 100,000 | n = 1,000,000 |
+/// |---|---|---|---|
+/// | 16 | 0 / 16 | 0 / 29 | — |
+/// | 64 | 0 / 19 | 2 / 35 | 1 / 16 |
+/// | 256 | 11 / 24 | 11 / 46 | — |
+/// | 512 | 15 / 42 | 10 / 57 | 22 / 53 |
+/// | 1,024 | 70 / 58 | 33 / 86 | 30 / 55 |
+/// | 2,048 | — | 104 / 117 | 77 / 87 |
+///
+/// (A short list before the tree; after it, joining cost one and a
+/// half to three times as much, putting in about the same.) Joining
+/// a tree costs some 15 to 110 microseconds however short the list
+/// joined; putting an element in, some 30 nanoseconds.
+const PUSHED_MOST: usize = 1024;
 
 /// A list.
 #[derive(Clone)]
@@ -394,10 +411,10 @@ impl List {
     /// list that holds them: a list that holds none may have too many
     /// for that.
     ///
-    /// Of two lists of which one is short (16 elements at most) the
-    /// elements of the short one are put into the tree of the
-    /// other one by one: `[x, ..xs]` costs what an element more at the
-    /// front does. Two longer ones are joined tree to tree.
+    /// Of two lists of which one is short (1,024 elements at most) the
+    /// elements of the short one are put into the tree of the other
+    /// one by one: `[x, ..xs]` costs what an element more at the front
+    /// does. Two longer ones are joined tree to tree.
     pub fn concat(&self, other: &List) -> Result<List, TooLong> {
         self.writable()?;
         other.writable()?;
@@ -423,7 +440,7 @@ impl List {
             other.write_into(&mut items);
             return Ok(List::from(items));
         }
-        let tree = if self.len() <= PUSHED_MOST {
+        let tree = if self.len() <= PUSHED_MOST && self.len() <= other.len() {
             let mut tree = other.to_tree();
             copied(self.len());
             for item in self.iter().rev() {
