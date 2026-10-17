@@ -1,0 +1,26 @@
+-- timeout: 60
+-- A value nested 20,000 levels deep through lists of 70 elements, each
+-- the list a level further in, is dropped like any other. A list that
+-- long keeps its elements in a tree, which is dropped as a buffer is
+-- (a_deep_list_or_tuple_is_dropped.silt): a tree far inside is put
+-- aside and dropped by the outermost. (A level of a tree takes some
+-- kilobytes, and the depth at which the native stack of a program would
+-- overflow takes gigabytes: the unit test
+-- a_value_nested_through_lists_kept_in_trees_is_dropped_without_the_native_stack
+-- in src/value/tests.rs goes there on a test's small stack.)
+fn seventy(x: a) -> List(a) {
+  let ten = [x, x, x, x, x, x, x, x, x, x]
+  [..ten, ..ten, ..ten, ..ten, ..ten, ..ten, ..ten]
+}
+
+fn in_trees(x: a, n: Int) -> Int where a: Hash + Equal {
+  match n <= 0 {
+    true -> 0
+    false -> in_trees(seventy(x), n - 1)
+  }
+}
+
+fn main() {
+  println(in_trees(1, 20000))
+  println("a list of 70 in a list of 70, 20,000 deep, is dropped")
+}

@@ -1,0 +1,5 @@
+[i, ..acc]: 200000 Some(199999) Some(198999) Some(0) 19999900000
+list.append: 200000 Some(0) Some(1000) Some(199999) 19999900000
+list.prepend: 200000 Some(199999) Some(198999) Some(0) 19999900000
+list.set: 200000 Some(0) Some(2000) Some(399998) 39999800000
+[i, ..acc] again: 200000 Some(199999) Some(198999) Some(0) 19999900000

@@ -17,13 +17,16 @@
 //! the handle of a task that has ended (`runtime::handle::TaskHandle`)
 //! take what they hold out of themselves and drop it through
 //! [`drop_held`]. The elements that lists and tuples share ([`Buf`]),
-//! the entries of a map and the members of a set ([`Kept`]) stay where
-//! they are: their holder is counted in where its `drop` starts, and
-//! counted out by its last field.
+//! the elements of a long list ([`Long`]), the entries of a map and the
+//! members of a set ([`Kept`]) stay where they are: their holder is
+//! counted in where its `drop` starts, and counted out by its last
+//! field.
 
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+use imbl::Vector;
 
 use super::Value;
 use super::map::{Entries, Members};
@@ -49,6 +52,7 @@ pub(crate) enum Held {
     Value(Value),
     Values(Box<[Value]>),
     Shared(Arc<[Value]>),
+    Long(Arc<LongItems>),
     Entries(Entries),
     Members(Members),
 }
@@ -205,6 +209,74 @@ impl FromIterator<Value> for Buf {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> Buf {
         Buf {
             items: items.into_iter().collect(),
+            _leave: Leave,
+        }
+    }
+}
+
+/// The elements of a long list, which lists share ([`Buf`] holds those
+/// of a short one): they, and the parts of a tree that later versions
+/// of the list share with it, are dropped on no native stack however
+/// deep the elements nest.
+///
+/// (As for a `Buf`: the elements are dropped after `drop`, and the
+/// second field counts their holder out.)
+#[derive(Clone)]
+pub(super) struct Long {
+    long: Arc<LongItems>,
+    _leave: Leave,
+}
+
+/// How a long list keeps its elements.
+pub(crate) enum LongItems {
+    /// Side by side, as a list made in one go keeps them; and the tree
+    /// of them, once a change to the list was made, which the next
+    /// changes start from.
+    Side {
+        items: Box<[Value]>,
+        tree: OnceLock<Vector<Value>>,
+    },
+    /// In a tree, as a list a change made keeps them.
+    Tree(Vector<Value>),
+}
+
+impl LongItems {
+    /// How many elements there are.
+    pub(super) fn len(&self) -> usize {
+        match self {
+            LongItems::Side { items, .. } => items.len(),
+            LongItems::Tree(tree) => tree.len(),
+        }
+    }
+}
+
+impl Default for LongItems {
+    fn default() -> LongItems {
+        LongItems::Tree(Vector::new())
+    }
+}
+
+impl Drop for Long {
+    #[inline]
+    fn drop(&mut self) {
+        if enter() {
+            put_aside(Held::Long(std::mem::take(&mut self.long)));
+        }
+    }
+}
+
+impl Deref for Long {
+    type Target = LongItems;
+
+    fn deref(&self) -> &LongItems {
+        &self.long
+    }
+}
+
+impl From<LongItems> for Long {
+    fn from(long: LongItems) -> Long {
+        Long {
+            long: Arc::new(long),
             _leave: Leave,
         }
     }
