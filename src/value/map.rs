@@ -10,7 +10,11 @@
 //! the crate `imbl`), and a map made from it by one change shares all
 //! of the tree but a path from its root with it: the change costs
 //! steps that grow with the logarithm of the size, not with the size
-//! ([`FLAT_MOST`]). A set is kept in the same two ways.
+//! ([`FLAT_MOST`]). A large map made in one go (`map.from_entries`, a
+//! decoded JSON object, what `map.filter` keeps) keeps its entries side
+//! by side too, as they were made, and the tree is made of them when
+//! the first change is: once, as the next change starts from it too.
+//! A set is kept in the same three ways.
 //!
 //! How a map and a set are stored is this file's own. The rest of silt
 //! has their sizes, their lookups, their entries and members in order
@@ -20,8 +24,8 @@
 
 use std::cmp::Ordering;
 use std::iter::Peekable;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering as Atomic};
+use std::sync::{Arc, OnceLock};
 
 use imbl::shared_ptr::DefaultSharedPtr;
 use imbl::{OrdMap, OrdSet};
@@ -36,7 +40,17 @@ use super::deep::Kept;
 ///
 /// A change to a map kept side by side copies its entries: at most
 /// this many, a cost that does not grow with the map.
-pub(super) const FLAT_MOST: usize = 16;
+///
+/// Measured 2026-10-17 through the VM (one release build with 8, 16
+/// and 32, interleaved with main, median of three): map and set
+/// literals of 5 and 20 entries, `map.get`, `map.set` and `set.insert`
+/// on maps and sets of 5 to 20, JSON objects of 5 and 20 keys, and
+/// maps of 1,000 built by `map.set` took the same time with each,
+/// within the run's spread of 9%. Memory decided (peak RSS per map of
+/// 100,000 built by `map.set`): with 8 or 16 a map of 20 entries is a
+/// tree and takes 3,745 or 3,827 B, more than the 3,792 B a std
+/// BTreeMap took; with 32 it takes 1,696 B, and one of 32 2,656 B.
+pub(super) const FLAT_MOST: usize = 32;
 
 /// A map.
 #[derive(Clone, Default)]
@@ -86,6 +100,12 @@ impl Fns {
 pub(crate) enum Entries {
     /// Side by side, in key order: at most [`FLAT_MOST`].
     Flat(Box<[(Value, Value)]>),
+    /// Side by side, in key order, more than [`FLAT_MOST`]: a map made
+    /// in one go; and the tree its first change made of them.
+    Side {
+        entries: Box<[(Value, Value)]>,
+        tree: OnceLock<OrdMap<Value, Value>>,
+    },
     /// In a tree: more than half of [`FLAT_MOST`].
     Tree(OrdMap<Value, Value>),
 }
@@ -94,6 +114,12 @@ pub(crate) enum Entries {
 pub(crate) enum Members {
     /// Side by side, in order: at most [`FLAT_MOST`].
     Flat(Box<[Value]>),
+    /// Side by side, in order, more than [`FLAT_MOST`]: a set made in
+    /// one go; and the tree its first change made of them.
+    Side {
+        members: Box<[Value]>,
+        tree: OnceLock<OrdSet<Value>>,
+    },
     /// In a tree: more than half of [`FLAT_MOST`].
     Tree(OrdSet<Value>),
 }
@@ -151,12 +177,17 @@ impl Map {
         Map(Arc::new(Kept::from(entries)))
     }
 
-    /// The map of `entries`, which are in key order, each key once.
+    /// The map of `entries`, which are in key order, each key once,
+    /// made in one go.
     fn of_sorted(entries: Vec<(Value, Value)>) -> Map {
         copied(entries.len());
+        let entries = entries.into_boxed_slice();
         match entries.len() <= FLAT_MOST {
-            true => Map::of(Entries::Flat(entries.into_boxed_slice())),
-            false => Map::of(Entries::Tree(OrdMap::from_iter(entries))),
+            true => Map::of(Entries::Flat(entries)),
+            false => Map::of(Entries::Side {
+                entries,
+                tree: OnceLock::new(),
+            }),
         }
     }
 
@@ -175,10 +206,32 @@ impl Map {
         &self.0
     }
 
-    pub fn len(&self) -> usize {
+    /// The entries, if the map keeps them side by side.
+    fn side(&self) -> Option<&[(Value, Value)]> {
         match self.entries() {
-            Entries::Flat(entries) => entries.len(),
-            Entries::Tree(tree) => tree.len(),
+            Entries::Flat(entries) | Entries::Side { entries, .. } => Some(entries),
+            Entries::Tree(_) => None,
+        }
+    }
+
+    /// The tree of a map that is not small: the one it keeps its
+    /// entries in, or, for a map made in one go, the one made of them
+    /// at its first change.
+    fn tree(&self) -> Option<&OrdMap<Value, Value>> {
+        match self.entries() {
+            Entries::Flat(_) => None,
+            Entries::Side { entries, tree } => Some(tree.get_or_init(|| {
+                copied(entries.len());
+                OrdMap::from_iter(entries.iter().cloned())
+            })),
+            Entries::Tree(tree) => Some(tree),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self.side() {
+            Some(entries) => entries.len(),
+            None => self.tree().map_or(0, OrdMap::len),
         }
     }
 
@@ -216,9 +269,9 @@ impl Map {
 
     /// The value of `key`.
     pub fn get(&self, key: &Value) -> Option<&Value> {
-        match self.entries() {
-            Entries::Flat(entries) => find(entries, key).ok().map(|at| &entries[at].1),
-            Entries::Tree(tree) => tree.get(key),
+        match self.side() {
+            Some(entries) => find(entries, key).ok().map(|at| &entries[at].1),
+            None => self.tree().and_then(|tree| tree.get(key)),
         }
     }
 
@@ -228,9 +281,10 @@ impl Map {
 
     /// The entries, each a key and its value, in the order of the keys.
     pub fn iter(&self) -> MapIter<'_> {
-        MapIter(match self.entries() {
-            Entries::Flat(entries) => MapIterOf::Flat(entries.iter()),
-            Entries::Tree(tree) => MapIterOf::Tree(tree.iter()),
+        MapIter(match (self.side(), self.entries()) {
+            (Some(entries), _) => MapIterOf::Flat(entries.iter()),
+            (None, Entries::Tree(tree)) => MapIterOf::Tree(tree.iter()),
+            (None, _) => MapIterOf::Flat([].iter()),
         })
     }
 
@@ -266,8 +320,8 @@ impl Map {
                     Map::of(Entries::Tree(tree))
                 }
             },
-            Entries::Tree(tree) => {
-                let mut tree = tree.clone();
+            Entries::Side { .. } | Entries::Tree(_) => {
+                let mut tree = self.tree().cloned().unwrap_or_default();
                 copied(1);
                 tree.insert(key, value);
                 Map::of(Entries::Tree(tree))
@@ -282,9 +336,9 @@ impl Map {
                 Ok(at) => Map::of(Entries::Flat(without_at(entries, at).into_boxed_slice())),
                 Err(_) => self.clone(),
             },
-            Entries::Tree(tree) => match tree.contains_key(key) {
+            Entries::Side { .. } | Entries::Tree(_) => match self.contains_key(key) {
                 true => {
-                    let mut tree = tree.clone();
+                    let mut tree = self.tree().cloned().unwrap_or_default();
                     copied(1);
                     tree.remove(key);
                     Map::of_tree(tree)
@@ -311,7 +365,7 @@ impl Map {
             true => (self, other, true),
             false => (other, self, false),
         };
-        let Entries::Tree(tree) = larger.entries() else {
+        let Some(tree) = larger.tree() else {
             // Both are small: side by side, each key once.
             let mut made = Vec::with_capacity(self.len() + other.len());
             side_by_side(
@@ -422,9 +476,7 @@ impl Iterator for MapIntoIter {
     fn next(&mut self) -> Option<(Value, Value)> {
         match &mut self.0 {
             MapIntoIterOf::Flat { map, at } => {
-                let Entries::Flat(entries) = map.entries() else {
-                    return None;
-                };
+                let entries = map.side()?;
                 let entry = entries.get(*at)?.clone();
                 *at += 1;
                 Some(entry)
@@ -450,8 +502,8 @@ impl IntoIterator for Map {
 
     fn into_iter(self) -> MapIntoIter {
         MapIntoIter(match self.entries() {
-            Entries::Flat(_) => MapIntoIterOf::Flat { map: self, at: 0 },
             Entries::Tree(tree) => MapIntoIterOf::Tree(tree.clone().into_iter()),
+            _ => MapIntoIterOf::Flat { map: self, at: 0 },
         })
     }
 }
@@ -520,12 +572,17 @@ impl Set {
         }
     }
 
-    /// The set of `members`, which are in order, each once.
+    /// The set of `members`, which are in order, each once, made in
+    /// one go.
     fn of_sorted(members: Vec<Value>) -> Set {
         copied(members.len());
+        let members = members.into_boxed_slice();
         match members.len() <= FLAT_MOST {
-            true => Set::of(Members::Flat(members.into_boxed_slice())),
-            false => Set::of(Members::Tree(OrdSet::from_iter(members))),
+            true => Set::of(Members::Flat(members)),
+            false => Set::of(Members::Side {
+                members,
+                tree: OnceLock::new(),
+            }),
         }
     }
 
@@ -543,10 +600,32 @@ impl Set {
         &self.0.members
     }
 
-    pub fn len(&self) -> usize {
+    /// The members, if the set keeps them side by side.
+    fn side(&self) -> Option<&[Value]> {
         match self.members() {
-            Members::Flat(members) => members.len(),
-            Members::Tree(tree) => tree.len(),
+            Members::Flat(members) | Members::Side { members, .. } => Some(members),
+            Members::Tree(_) => None,
+        }
+    }
+
+    /// The tree of a set that is not small: the one it keeps its
+    /// members in, or, for a set made in one go, the one made of them
+    /// at its first change.
+    fn tree(&self) -> Option<&OrdSet<Value>> {
+        match self.members() {
+            Members::Flat(_) => None,
+            Members::Side { members, tree } => Some(tree.get_or_init(|| {
+                copied(members.len());
+                OrdSet::from_iter(members.iter().cloned())
+            })),
+            Members::Tree(tree) => Some(tree),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self.side() {
+            Some(members) => members.len(),
+            None => self.tree().map_or(0, OrdSet::len),
         }
     }
 
@@ -555,17 +634,18 @@ impl Set {
     }
 
     pub fn contains(&self, value: &Value) -> bool {
-        match self.members() {
-            Members::Flat(members) => find_member(members, value).is_ok(),
-            Members::Tree(tree) => tree.contains(value),
+        match self.side() {
+            Some(members) => find_member(members, value).is_ok(),
+            None => self.tree().is_some_and(|tree| tree.contains(value)),
         }
     }
 
     /// The members in order.
     pub fn iter(&self) -> SetIter<'_> {
-        SetIter(match self.members() {
-            Members::Flat(members) => SetIterOf::Flat(members.iter()),
-            Members::Tree(tree) => SetIterOf::Tree(tree.iter()),
+        SetIter(match (self.side(), self.members()) {
+            (Some(members), _) => SetIterOf::Flat(members.iter()),
+            (None, Members::Tree(tree)) => SetIterOf::Tree(tree.iter()),
+            (None, _) => SetIterOf::Flat([].iter()),
         })
     }
 
@@ -593,10 +673,10 @@ impl Set {
                     Set::of(Members::Tree(tree))
                 }
             },
-            Members::Tree(tree) => match tree.contains(&value) {
+            Members::Side { .. } | Members::Tree(_) => match self.contains(&value) {
                 true => self.clone(),
                 false => {
-                    let mut tree = tree.clone();
+                    let mut tree = self.tree().cloned().unwrap_or_default();
                     copied(1);
                     tree.insert(value);
                     Set::of(Members::Tree(tree))
@@ -616,9 +696,9 @@ impl Set {
                 Ok(at) => Set::of(Members::Flat(without_at(members, at).into_boxed_slice())),
                 Err(_) => self.clone(),
             },
-            Members::Tree(tree) => match tree.contains(value) {
+            Members::Side { .. } | Members::Tree(_) => match self.contains(value) {
                 true => {
-                    let mut tree = tree.clone();
+                    let mut tree = self.tree().cloned().unwrap_or_default();
                     copied(1);
                     tree.remove(value);
                     Set::of_tree(tree)
@@ -650,7 +730,7 @@ impl Set {
         if smaller.is_empty() {
             return larger.clone();
         }
-        let Members::Tree(tree) = larger.members() else {
+        let Some(tree) = larger.tree() else {
             // Both are small: side by side, each member once.
             let mut made = Vec::with_capacity(self.len() + other.len());
             side_by_side(
@@ -702,8 +782,8 @@ impl Set {
     }
 
     fn differed(&self, other: &Set) -> Set {
-        let tree = match self.members() {
-            Members::Tree(tree) if self.len() > other.len() => tree,
+        let tree = match self.tree() {
+            Some(tree) if self.len() > other.len() => tree,
             _ => {
                 let kept = self.iter().filter(|member| !other.contains(member));
                 let kept: Vec<Value> = kept.cloned().collect();
@@ -740,7 +820,7 @@ impl Set {
         if smaller.is_empty() {
             return larger.clone();
         }
-        let Members::Tree(tree) = larger.members() else {
+        let Some(tree) = larger.tree() else {
             // Both are small: side by side.
             let mut made = Vec::with_capacity(self.len() + other.len());
             side_by_side(
@@ -824,9 +904,7 @@ impl Iterator for SetIntoIter {
     fn next(&mut self) -> Option<Value> {
         match &mut self.0 {
             SetIntoIterOf::Flat { set, at } => {
-                let Members::Flat(members) = set.members() else {
-                    return None;
-                };
+                let members = set.side()?;
                 let member = members.get(*at)?.clone();
                 *at += 1;
                 Some(member)
@@ -852,8 +930,8 @@ impl IntoIterator for Set {
 
     fn into_iter(self) -> SetIntoIter {
         SetIntoIter(match self.members() {
-            Members::Flat(_) => SetIntoIterOf::Flat { set: self, at: 0 },
             Members::Tree(tree) => SetIntoIterOf::Tree(tree.clone().into_iter()),
+            _ => SetIntoIterOf::Flat { set: self, at: 0 },
         })
     }
 }
@@ -931,34 +1009,51 @@ pub mod copies {
 
 #[cfg(test)]
 impl Map {
-    /// The map of `entries`, in key order, each key once, kept side by
-    /// side however many there are (`flat`) or in a tree.
-    pub(super) fn kept_as(entries: Vec<(Value, Value)>, flat: bool) -> Map {
-        match flat {
-            true => Map::of(Entries::Flat(entries.into_boxed_slice())),
-            false => Map::of(Entries::Tree(OrdMap::from_iter(entries))),
+    /// The map of `entries`, in key order, each key once, kept as
+    /// `kind` says however many there are: `"flat"`, `"side"` (as one
+    /// made in one go) or `"tree"`.
+    pub(super) fn stored(entries: Vec<(Value, Value)>, kind: &str) -> Map {
+        match kind {
+            "flat" => Map::of(Entries::Flat(entries.into_boxed_slice())),
+            "side" => Map::of(Entries::Side {
+                entries: entries.into_boxed_slice(),
+                tree: OnceLock::new(),
+            }),
+            _ => Map::of(Entries::Tree(OrdMap::from_iter(entries))),
         }
     }
 
-    /// Whether the map keeps its entries in a tree.
-    pub(super) fn is_tree(&self) -> bool {
-        matches!(self.entries(), Entries::Tree(_))
+    /// How the map keeps its entries: `"flat"`, `"side"` or `"tree"`.
+    pub(super) fn kept_as(&self) -> &'static str {
+        match self.entries() {
+            Entries::Flat(_) => "flat",
+            Entries::Side { .. } => "side",
+            Entries::Tree(_) => "tree",
+        }
     }
 }
 
 #[cfg(test)]
 impl Set {
-    /// The set of `members`, in order, each once, kept side by side
-    /// however many there are (`flat`) or in a tree.
-    pub(super) fn kept_as(members: Vec<Value>, flat: bool) -> Set {
-        match flat {
-            true => Set::of(Members::Flat(members.into_boxed_slice())),
-            false => Set::of(Members::Tree(OrdSet::from_iter(members))),
+    /// The set of `members`, in order, each once, kept as `kind` says
+    /// ([`Map::stored`]).
+    pub(super) fn stored(members: Vec<Value>, kind: &str) -> Set {
+        match kind {
+            "flat" => Set::of(Members::Flat(members.into_boxed_slice())),
+            "side" => Set::of(Members::Side {
+                members: members.into_boxed_slice(),
+                tree: OnceLock::new(),
+            }),
+            _ => Set::of(Members::Tree(OrdSet::from_iter(members))),
         }
     }
 
-    /// Whether the set keeps its members in a tree.
-    pub(super) fn is_tree(&self) -> bool {
-        matches!(self.members(), Members::Tree(_))
+    /// How the set keeps its members ([`Map::kept_as`]).
+    pub(super) fn kept_as(&self) -> &'static str {
+        match self.members() {
+            Members::Flat(_) => "flat",
+            Members::Side { .. } => "side",
+            Members::Tree(_) => "tree",
+        }
     }
 }
