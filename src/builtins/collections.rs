@@ -904,12 +904,12 @@ pub(crate) mod set {
         }
 
         fn new() -> Value {
-            Value::Set(Default::default())
+            Value::Set(crate::value::Set::new())
         }
 
         fn from_list(xs: List) -> Result<Value, VmError> {
             xs.writable()?;
-            // A set of Fn values is BTree-ordered by the functions' addresses —
+            // A set of Fn values is ordered by the functions' addresses —
             // ASLR-nondeterministic iteration order. Reject at construction.
             ensure_no_fn_in("set.from_list", "Compare", xs)?;
             Ok(Value::set(xs))

@@ -917,7 +917,7 @@ mod tests {
     fn arguments_that_are_not_the_row_s_are_one_error() {
         let mut vm = Vm::new(crate::vm::HostIo::process());
         let abs = registry().row("int", "abs").expect("int.abs");
-        let map = Value::Map(Default::default());
+        let map = Value::Map(crate::value::Map::new());
         for (args, said) in [
             (
                 vec![map.clone()],
