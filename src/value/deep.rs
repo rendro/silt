@@ -22,11 +22,11 @@
 //! counted out by its last field.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
 use super::Value;
+use super::map::{Entries, Members};
 
 /// How many holders drop what they hold each inside the one before;
 /// what one further in holds is put aside.
@@ -49,8 +49,8 @@ pub(crate) enum Held {
     Value(Value),
     Values(Box<[Value]>),
     Shared(Arc<[Value]>),
-    Entries(BTreeMap<Value, Value>),
-    Members(BTreeSet<Value>),
+    Entries(Entries),
+    Members(Members),
 }
 
 impl From<Value> for Held {
@@ -77,14 +77,14 @@ impl From<Arc<[Value]>> for Held {
     }
 }
 
-impl From<BTreeMap<Value, Value>> for Held {
-    fn from(entries: BTreeMap<Value, Value>) -> Held {
+impl From<Entries> for Held {
+    fn from(entries: Entries) -> Held {
         Held::Entries(entries)
     }
 }
 
-impl From<BTreeSet<Value>> for Held {
-    fn from(members: BTreeSet<Value>) -> Held {
+impl From<Members> for Held {
+    fn from(members: Members) -> Held {
         Held::Members(members)
     }
 }

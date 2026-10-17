@@ -17,6 +17,8 @@ mod obj;
 mod tuple;
 
 #[cfg(test)]
+mod map_tests;
+#[cfg(test)]
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
@@ -25,6 +27,8 @@ pub use float::Float;
 pub use fmt::{Shown, Written};
 pub(crate) use list::MAX_RANGE_MATERIALIZE;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+#[cfg(feature = "test-hooks")]
+pub use map::copies as map_copies;
 pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
 pub use obj::{Record, Variant};
 pub use tuple::Tuple;
