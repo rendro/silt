@@ -1,0 +1,34 @@
+-- timeout: 60
+-- A value nested 20,000 levels deep through maps and sets of 40
+-- entries, each holding the level further in, is dropped like any
+-- other. A map that large keeps its entries in a tree, which is dropped
+-- as the entries of a small map are (a_deep_map_is_dropped.silt): a
+-- tree far inside is put aside and dropped by the outermost. (A level
+-- of a tree takes some kilobytes, and the depth at which the native
+-- stack of a program would overflow takes gigabytes: the unit test
+-- a_value_nested_through_maps_and_sets_kept_in_trees_is_dropped_without_the_native_stack
+-- in src/value/map_tests.rs goes there on a test's small stack.)
+import list
+import map
+import set
+
+fn in_maps(x: a, n: Int) -> Int where a: Hash + Equal {
+  match n <= 0 {
+    true -> 0
+    false -> in_maps(list.fold(1..40, #{}) { acc, k -> map.set(acc, k, x) }, n - 1)
+  }
+}
+
+fn in_sets(x: a, n: Int) -> Int where a: Hash + Equal {
+  match n <= 0 {
+    true -> 0
+    false -> in_sets(set.from_list(list.map(1..40) { k -> (k, x) }), n - 1)
+  }
+}
+
+fn main() {
+  println(in_maps(1, 20000))
+  println("a map of 40 in a map of 40, 20,000 deep, is dropped")
+  println(in_sets(1, 20000))
+  println("a set of 40 in a set of 40, 20,000 deep, is dropped")
+}

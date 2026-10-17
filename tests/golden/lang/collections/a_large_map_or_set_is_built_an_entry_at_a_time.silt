@@ -1,0 +1,100 @@
+-- timeout: 60
+-- A map of 200,000 entries built an entry at a time by `map.set`, and a
+-- set of 200,000 members by `set.insert`; each changed an entry at a
+-- time by `map.update` and `map.delete`, `set.remove`; and a small map
+-- merged into the large one, or a small set joined to it, 20,000
+-- times. Each step makes a new map that shares all but a path of the
+-- tree of the map before it, and the map before stays as it was.
+-- (Each step copied the whole map, and each of these took hours.)
+import list
+import map
+import set
+
+fn by_set(n: Int) -> Map(Int, Int) {
+  loop i = 0, acc = #{} {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, map.set(acc, i, i * 2))
+    }
+  }
+}
+
+fn by_update(m: Map(Int, Int), n: Int) -> Map(Int, Int) {
+  loop i = 0, acc = m {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, map.update(acc, i, 0) { v -> v + 1 })
+    }
+  }
+}
+
+fn by_delete(m: Map(Int, Int), n: Int) -> Map(Int, Int) {
+  loop i = 0, acc = m {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 2, map.delete(acc, i))
+    }
+  }
+}
+
+fn by_merge(m: Map(Int, Int), n: Int) -> Map(Int, Int) {
+  loop i = 0, acc = m {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, map.merge(acc, #{0 - i - 1: i, i: 0}))
+    }
+  }
+}
+
+fn by_insert(n: Int) -> Set(Int) {
+  loop i = 0, acc = set.new() {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, set.insert(acc, i))
+    }
+  }
+}
+
+fn by_remove(s: Set(Int), n: Int) -> Set(Int) {
+  loop i = 0, acc = s {
+    match i >= n {
+      true -> acc
+      false -> loop(i + 2, set.remove(acc, i))
+    }
+  }
+}
+
+fn by_union(s: Set(Int), n: Int) -> Set(Int) {
+  loop i = 0, acc = s {
+    match i == n {
+      true -> acc
+      false -> loop(i + 1, set.union(acc, set.from_list([0 - i - 1, i])))
+    }
+  }
+}
+
+fn show_map(name: String, m: Map(Int, Int)) {
+  let total = map.values(m) |> list.fold(0) { acc, v -> acc + v }
+  println("{name}: {map.length(m)} {map.get(m, 0)} {map.get(m, 1001)} {map.get(m, -5)} {total}")
+}
+
+fn show_set(name: String, s: Set(Int)) {
+  let total = set.fold(s, 0) { acc, x -> acc + x }
+  println("{name}: {set.length(s)} {set.contains(s, 0)} {set.contains(s, 1001)} {set.contains(s, -5)} {total}")
+}
+
+fn main() {
+  let n = 200000
+  let m = by_set(n)
+  show_map("map.set", m)
+  show_map("map.update", by_update(m, n))
+  show_map("map.delete", by_delete(m, n))
+  show_map("map.merge", by_merge(m, 20000))
+  -- The map each was made from is as it was.
+  show_map("map.set again", m)
+  let s = by_insert(n)
+  show_set("set.insert", s)
+  show_set("set.remove", by_remove(s, n))
+  show_set("set.union", by_union(s, 20000))
+  show_set("set.insert again", s)
+}

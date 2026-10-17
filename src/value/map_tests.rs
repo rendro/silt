@@ -533,3 +533,52 @@ fn main() {
     assert_eq!(result.expect("it runs"), int(21_000));
     assert!(walked < 25_000, "{walked} members walked");
 }
+
+// ── Deep values ────────────────────────────────────────────────────
+
+/// A value nested 10,000 levels deep through maps and sets kept in
+/// trees is dropped like any other, as one nested through any other
+/// holder is: a tree far inside is put aside and dropped by the
+/// outermost (src/value/deep.rs). A level is a map or a set of more
+/// than [`FLAT_MOST`] made in one go, or made by a change, with the
+/// level further in as a value, a key or a member. (A level of a tree
+/// costs kilobytes, so the depth at which the thread of a program
+/// would overflow its stack would take gigabytes to reach; a thread of
+/// a test overflows its stack at a few thousand levels.)
+#[test]
+fn a_value_nested_through_maps_and_sets_kept_in_trees_is_dropped_without_the_native_stack() {
+    const DEPTH: i64 = 10_000;
+    let others = |n: i64| (0..FLAT_MOST as i64 + 6).map(move |i| int(n * 1_000 + i));
+    let shapes: [&dyn Fn(i64, Value) -> Value; 4] = [
+        &|n, rest| {
+            let map: Map = others(n).map(|k| (k, rest.clone())).collect();
+            assert!(map.is_tree());
+            Value::Map(map)
+        },
+        &|n, rest| {
+            let map: Map = others(n).map(|k| (k.clone(), k)).collect();
+            Value::Map(map.insert(rest, int(n)))
+        },
+        &|n, rest| {
+            let set: Set = others(n)
+                .map(|k| Value::tuple(vec![k, Value::Unit]))
+                .collect();
+            let set = set.insert(Value::tuple(vec![int(-1), rest]));
+            assert!(set.is_tree());
+            Value::Set(set)
+        },
+        &|n, rest| {
+            let mut set = Set::new();
+            for k in others(n) {
+                set = set.insert(Value::tuple(vec![k, Value::Unit]));
+            }
+            Value::Set(set.insert(Value::tuple(vec![int(-1), rest])))
+        },
+    ];
+    for wrap in shapes {
+        let value = (0..DEPTH).fold(int(7), |rest, n| wrap(n, rest));
+        let again = value.clone();
+        drop(value);
+        drop(again);
+    }
+}

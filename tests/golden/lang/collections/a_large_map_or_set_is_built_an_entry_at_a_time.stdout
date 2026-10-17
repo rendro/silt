@@ -1,0 +1,9 @@
+map.set: 200000 Some(0) Some(2002) None 39999800000
+map.update: 200000 Some(1) Some(2003) None 40000000000
+map.delete: 100000 None Some(2002) None 20000000000
+map.merge: 220000 Some(0) Some(0) Some(4) 39799810000
+map.set again: 200000 Some(0) Some(2002) None 39999800000
+set.insert: 200000 true true false 19999900000
+set.remove: 100000 false true false 10000000000
+set.union: 220000 true true true 19799890000
+set.insert again: 200000 true true false 19999900000
