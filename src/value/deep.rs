@@ -18,18 +18,18 @@
 //! take what they hold out of themselves and drop it through
 //! [`drop_held`]. The elements that lists and tuples share ([`Buf`]),
 //! the elements of a long list ([`Long`]), the entries of a map and the
-//! members of a set ([`Entries`], [`Members`]) stay where they are:
-//! their holder is counted in where its `drop` starts, and counted out
-//! by its last field.
+//! members of a set ([`Kept`]) stay where they are: their holder is
+//! counted in where its `drop` starts, and counted out by its last
+//! field.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
 use imbl::Vector;
 
 use super::Value;
+use super::map::{Entries, Members};
 
 /// How many holders drop what they hold each inside the one before;
 /// what one further in holds is put aside.
@@ -53,8 +53,8 @@ pub(crate) enum Held {
     Values(Box<[Value]>),
     Shared(Arc<[Value]>),
     Long(Arc<LongItems>),
-    Entries(BTreeMap<Value, Value>),
-    Members(BTreeSet<Value>),
+    Entries(Entries),
+    Members(Members),
 }
 
 impl From<Value> for Held {
@@ -81,14 +81,14 @@ impl From<Arc<[Value]>> for Held {
     }
 }
 
-impl From<BTreeMap<Value, Value>> for Held {
-    fn from(entries: BTreeMap<Value, Value>) -> Held {
+impl From<Entries> for Held {
+    fn from(entries: Entries) -> Held {
         Held::Entries(entries)
     }
 }
 
-impl From<BTreeSet<Value>> for Held {
-    fn from(members: BTreeSet<Value>) -> Held {
+impl From<Members> for Held {
+    fn from(members: Members) -> Held {
         Held::Members(members)
     }
 }
@@ -282,71 +282,54 @@ impl From<LongItems> for Long {
     }
 }
 
-/// The entries of a map: a `BTreeMap` whose keys and values are
-/// dropped on no native stack however deep they nest.
+/// What a map or a set keeps ([`super::map`]): its entries, or its
+/// members, dropped on no native stack however deep they nest.
+///
+/// (As for a `Buf`: what is kept is dropped after `drop`, and the
+/// second field counts its holder out.)
 #[derive(Default)]
-pub(super) struct Entries {
-    entries: BTreeMap<Value, Value>,
+pub(super) struct Kept<T>
+where
+    T: Default,
+    Held: From<T>,
+{
+    kept: T,
     _leave: Leave,
 }
 
-/// The members of a set: a `BTreeSet` whose members are dropped on no
-/// native stack however deep they nest.
-#[derive(Default)]
-pub(super) struct Members {
-    members: BTreeSet<Value>,
-    _leave: Leave,
-}
-
-// (As for a `Buf`: the map, or the set, is dropped after `drop`, and
-// the second field counts its holder out.)
-impl Drop for Entries {
+impl<T> Drop for Kept<T>
+where
+    T: Default,
+    Held: From<T>,
+{
     #[inline]
     fn drop(&mut self) {
         if enter() {
-            put_aside(Held::Entries(std::mem::take(&mut self.entries)));
+            put_aside(Held::from(std::mem::take(&mut self.kept)));
         }
     }
 }
 
-impl Drop for Members {
-    #[inline]
-    fn drop(&mut self) {
-        if enter() {
-            put_aside(Held::Members(std::mem::take(&mut self.members)));
-        }
+impl<T> Deref for Kept<T>
+where
+    T: Default,
+    Held: From<T>,
+{
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.kept
     }
 }
 
-impl Deref for Entries {
-    type Target = BTreeMap<Value, Value>;
-
-    fn deref(&self) -> &BTreeMap<Value, Value> {
-        &self.entries
-    }
-}
-
-impl Deref for Members {
-    type Target = BTreeSet<Value>;
-
-    fn deref(&self) -> &BTreeSet<Value> {
-        &self.members
-    }
-}
-
-impl From<BTreeMap<Value, Value>> for Entries {
-    fn from(entries: BTreeMap<Value, Value>) -> Entries {
-        Entries {
-            entries,
-            _leave: Leave,
-        }
-    }
-}
-
-impl From<BTreeSet<Value>> for Members {
-    fn from(members: BTreeSet<Value>) -> Members {
-        Members {
-            members,
+impl<T> From<T> for Kept<T>
+where
+    T: Default,
+    Held: From<T>,
+{
+    fn from(kept: T) -> Kept<T> {
+        Kept {
+            kept,
             _leave: Leave,
         }
     }

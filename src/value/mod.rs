@@ -17,6 +17,8 @@ mod obj;
 mod tuple;
 
 #[cfg(test)]
+mod map_tests;
+#[cfg(test)]
 mod tests;
 
 pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
@@ -27,6 +29,8 @@ pub(crate) use list::MAX_RANGE_MATERIALIZE;
 #[cfg(feature = "test-hooks")]
 pub use list::copies as list_copies;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+#[cfg(feature = "test-hooks")]
+pub use map::copies as map_copies;
 pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};
 pub use obj::{Record, Variant};
 pub use tuple::Tuple;
@@ -241,7 +245,11 @@ impl Value {
                 }
                 Value::Tuple(items) => pending.extend(items.iter()),
                 Value::Variant(variant) => pending.extend(variant.fields()),
-                Value::Set(items) => pending.extend(items.iter()),
+                Value::Set(items) => match items.holds_fn_known() {
+                    Some(true) => return true,
+                    Some(false) => {}
+                    None => pending.extend(items.iter()),
+                },
                 Value::Map(entries) => {
                     for (k, v) in entries.iter() {
                         pending.push(k);

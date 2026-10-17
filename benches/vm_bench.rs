@@ -448,6 +448,8 @@ fn main() {
         ("collections: walk by rest 10K", "walk", 10_000),
         ("collections: list.get 10K", "getall", 10_000),
         ("collections: map.get 10K", "mapget", 10_000),
+        ("collections: map.each 10K", "mapeach", 10_000),
+        ("collections: map.filter 10K", "mapfilter", 10_000),
     ] {
         bench(name, &collections_program(kind, n));
     }
