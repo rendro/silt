@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]
+-- stderr-contains: silt has no `if`; a `match` without a scrutinee branches on conditions
+-- stderr-contains: help: write `match {`, then one `condition -> value` arm per line
+-- stderr-not-contains: undefined variable
+fn main() {
+  let n = 5
+  let s = if(n > 0)
+  println(s)
+}
