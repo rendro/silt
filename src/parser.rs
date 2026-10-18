@@ -698,11 +698,50 @@ impl<'src> Parser<'src> {
         if self.at(expected) {
             Ok(self.advance())
         } else {
-            Err(Diagnostic::error(
+            let d = Diagnostic::error(
                 Code::ExpectedToken,
                 self.span(),
                 format!("expected {expected}, found {}", self.peek()),
-            ))
+            );
+            Err(self.with_line_start_help(d))
+        }
+    }
+
+    /// Whether the token before the current one ends a value: a line
+    /// that starts behind it with an operator was meant to go on with
+    /// that value.
+    fn prev_ends_value(&self) -> bool {
+        self.pos > 0
+            && matches!(
+                self.tokens[self.pos - 1].kind,
+                Token::Ident(_)
+                    | Token::Int(_)
+                    | Token::Float(_)
+                    | Token::Bool(_)
+                    | Token::StringLit(_)
+                    | Token::StringEnd(_)
+                    | Token::RParen
+                    | Token::RBracket
+                    | Token::RBrace
+                    | Token::Question
+            )
+    }
+
+    /// `d` with the help for a `+`, `-` or `?` that starts a line behind
+    /// a value: none of them continues the line above.
+    fn with_line_start_help(&self, d: Diagnostic) -> Diagnostic {
+        if !self.nl_before() || !self.prev_ends_value() {
+            return d;
+        }
+        match self.peek() {
+            Token::Question => {
+                d.with_help("`?` does not cross a line break; put it at the end of the line above")
+            }
+            op @ (Token::Plus | Token::Minus) => d.with_help(format!(
+                "`+` and `-` continue an expression only at the end of a line; end the line \
+                 above with the `{op}`"
+            )),
+            _ => d,
         }
     }
 
@@ -810,7 +849,7 @@ impl<'src> Parser<'src> {
     /// The error for a comma-separated list that is not closed; see
     /// `comma_list`.
     fn unclosed_list_err(&self, what: &str, open: Span, close: &Token) -> Diagnostic {
-        Diagnostic::error(
+        let d = Diagnostic::error(
             Code::UnclosedDelimiter,
             self.span(),
             format!(
@@ -818,7 +857,8 @@ impl<'src> Parser<'src> {
                 self.peek()
             ),
         )
-        .with_label(open, format!("the {what} starts here"))
+        .with_label(open, format!("the {what} starts here"));
+        self.with_line_start_help(d)
     }
 
     /// True at a `fn` that starts a declaration (`fn name`), which no
@@ -3171,11 +3211,20 @@ impl<'src> Parser<'src> {
                         Self::DOUBLE_SLASH_HINT,
                     ));
                 }
-                Err(Diagnostic::error(
+                let d = Diagnostic::error(
                     Code::ExpectedExpression,
                     self.span(),
                     format!("expected expression, found {}", self.peek()),
-                ))
+                );
+                // A `+` that starts a statement: it was meant to go on
+                // with the line above, outside any bracket.
+                if self.at(&Token::Plus) && self.nl_before() && self.prev_ends_value() {
+                    return Err(d.with_help(
+                        "a line cannot start with `+`; to add to the line above, end that \
+                         line with the `+`",
+                    ));
+                }
+                Err(self.with_line_start_help(d))
             }
         }
     }

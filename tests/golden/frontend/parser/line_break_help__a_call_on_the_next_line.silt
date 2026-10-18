@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: this `Int` value is unused
+-- stderr-contains: help: a line that starts with `(` is a value of its own; to call the line above, put the `(` on that line
+-- A call's `(` does not cross a line break: `(a)` is a statement of its
+-- own, and `t` is the function.
+fn main() {
+  let a = 10
+  let f = { x -> x + 1 }
+  let t = f
+    (a)
+  println(t(1))
+}

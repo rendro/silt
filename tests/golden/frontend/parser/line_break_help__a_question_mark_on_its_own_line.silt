@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected ), found ?
+-- stderr-contains: help: `?` does not cross a line break; put it at the end of the line above
+-- `?` stays on the line of what it unwraps, inside brackets too.
+import int
+
+fn parse() -> Result(Int, String) {
+  let n = (
+    int.parse("1")
+    ?
+  )
+  Ok(n)
+}
+
+fn main() {
+  println(parse())
+}

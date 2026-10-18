@@ -2,6 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[parse]
 -- stderr-contains: expected expression, found ?
+-- stderr-contains: help: `?` does not cross a line break
 -- Postfix `?` does not cross newlines.
 fn main() {
   let n = maybe()

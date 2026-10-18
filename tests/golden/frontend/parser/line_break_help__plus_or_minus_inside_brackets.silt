@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected ), found -
+-- stderr-contains: help: `+` and `-` continue an expression only at the end of a line; end the line above with the `-`
+-- Inside brackets too, `+` and `-` continue an expression only at the
+-- end of a line.
+fn main() {
+  let a = 10
+  let t = (
+    a
+    - 3
+  )
+  println(t)
+}
