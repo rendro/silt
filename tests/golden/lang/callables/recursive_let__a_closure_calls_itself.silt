@@ -1,0 +1,71 @@
+-- A local `let f = { … }` is `f` inside its own closure: it can call
+-- itself, also where the result is still used, and with the values it
+-- captures.
+import int
+import list
+
+type Tree {
+  Leaf,
+  Node(Tree, Int, Tree),
+}
+
+fn make_counter(step: Int) -> Fn(Int) -> Int {
+  let go = { n ->
+    match n {
+      0 -> 0
+      _ -> step + go(n - 1)
+    }
+  }
+  go
+}
+
+fn main() {
+  let limit = 3
+  let visit = { t ->
+    match t {
+      Leaf -> 0
+      Node(l, v, r) -> visit(l) + int.min(v, limit) + visit(r)
+    }
+  }
+  println(visit(Node(Node(Leaf, 1, Leaf), 5, Node(Leaf, 2, Leaf))))
+
+  -- The closure is generalised after it is checked: one type inside
+  -- itself, any type where it is used.
+  let len = { xs ->
+    match xs {
+      [] -> 0
+      [_, ..rest] -> 1 + len(rest)
+    }
+  }
+  println(len([1, 2, 3]) + len(["a"]))
+
+  -- With an annotation.
+  let fact: Fn(Int) -> Int = { n ->
+    match n {
+      0 -> 1
+      _ -> n * fact(n - 1)
+    }
+  }
+  println(fact(10))
+
+  -- A closure inside it captures it.
+  let depth = { n ->
+    [n]
+      |> list.map { k ->
+        match k {
+          0 -> 0
+          _ -> depth(k - 1) + 1
+        }
+      }
+      |> list.sum
+  }
+  println(depth(5))
+
+  -- It leaves the function that made it.
+  let triple = make_counter(3)
+  println(triple(4))
+
+  -- A parameter of the name is the parameter.
+  let f = { f -> f + 1 }
+  println(f(1))
+}

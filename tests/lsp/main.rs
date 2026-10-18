@@ -32,6 +32,7 @@ mod lsp_tier2_tests;
 mod lsp_type_def_impl_tests;
 mod lsp_uri_encoding_tests;
 mod lsp_workspace_tests;
+mod recursive_let_lsp_tests;
 mod rename_sweep;
 mod rename_sweep_tests;
 mod round100_lsp_rename_record_shorthand_binder_tests;

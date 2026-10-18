@@ -324,6 +324,8 @@ pub fn resolve_module(
         builtins: &builtins,
         locals: Vec::new(),
         previous: HashMap::new(),
+        named_closures: Vec::new(),
+        bound_now: Vec::new(),
         diagnostics,
     };
     for decl in &mut program.decls {
@@ -896,7 +898,25 @@ struct Resolver<'a> {
     /// the initializer of a cell's `let` that binds them again is
     /// resolved (`let x = x + 1`).
     previous: HashMap<Symbol, Binding>,
+    /// The closures of `let f = { … }` being resolved, innermost last:
+    /// in each, `f` is the closure itself.
+    named_closures: Vec<NamedClosure>,
+    /// The names of the local `let`s whose value, not a closure, is
+    /// being resolved: a name there is not yet bound.
+    bound_now: Vec<Symbol>,
     diagnostics: Vec<Diagnostic>,
+}
+
+/// The closure of a local `let f = { … }`, whose own name is a local of
+/// the scope `scope` (an index of `Resolver::locals`), around it.
+struct NamedClosure {
+    name: Symbol,
+    /// The span of the name the `let` binds.
+    span: Span,
+    scope: usize,
+    /// Whether `f` meant something else where the `let` stands: then
+    /// the closure may not name itself, which would hide that meaning.
+    hides: bool,
 }
 
 impl Resolver<'_> {
@@ -1987,7 +2007,17 @@ impl Resolver<'_> {
                     if let Some(ty) = ty {
                         self.type_expr(ty);
                     }
-                    self.expr(value);
+                    match (&pattern.kind, &value.kind) {
+                        (PatternKind::Ident(name), ExprKind::Lambda { .. }) => {
+                            self.named_closure(*name, pattern.span, value);
+                        }
+                        (PatternKind::Ident(name), _) => {
+                            self.bound_now.push(*name);
+                            self.expr(value);
+                            self.bound_now.pop();
+                        }
+                        _ => self.expr(value),
+                    }
                     self.pattern(pattern);
                     self.bind_pattern_locals(pattern);
                 }
@@ -2145,10 +2175,33 @@ impl Resolver<'_> {
         }
     }
 
+    /// The closure of a local `let name = { … }`: in it, `name` is the
+    /// closure itself.
+    fn named_closure(&mut self, name: Symbol, span: Span, closure: &mut Expr) {
+        let hides = !matches!(
+            self.lookup_value(name),
+            None | Some(Found::Binding(Binding::Poisoned))
+        );
+        self.push();
+        self.bind_local(name);
+        self.named_closures.push(NamedClosure {
+            name,
+            span,
+            scope: self.locals.len() - 1,
+            hides,
+        });
+        self.expr(closure);
+        self.named_closures.pop();
+        self.pop();
+    }
+
     /// A name in a value position.
     fn ident(&mut self, name: Symbol, span: Span) -> Res {
         match self.lookup_value(name) {
-            Some(Found::Local) => Res::Local,
+            Some(Found::Local) => {
+                self.check_named_closure(name, span);
+                Res::Local
+            }
             // Modules and values are different namespaces: a bare name
             // where a module of the name is imported is the prelude's
             // value of that name when there is one (`import println`, then
@@ -2169,6 +2222,41 @@ impl Resolver<'_> {
                 Res::Error
             }
         }
+    }
+
+    /// A closure that names itself where its name meant something else
+    /// before its `let` is an error: a reader could not tell which of
+    /// the two is meant.
+    fn check_named_closure(&mut self, name: Symbol, span: Span) {
+        let Some(scope) = self.locals.iter().rposition(|s| s.contains(&name)) else {
+            return;
+        };
+        let Some(closure) = self
+            .named_closures
+            .iter()
+            .find(|c| c.scope == scope && c.name == name)
+        else {
+            return;
+        };
+        if !closure.hides {
+            return;
+        }
+        let bound = closure.span;
+        self.error(
+            Diagnostic::error(
+                Code::AmbiguousName,
+                span,
+                format!(
+                    "`{name}` here is the closure that `let {name}` binds, and also the \
+                     `{name}` in scope before that `let`"
+                ),
+            )
+            .with_label(bound, format!("the closure is bound to `{name}` here"))
+            .with_help(format!(
+                "a closure can call itself by the name its `let` gives it; rename the \
+                 closure or the earlier `{name}`"
+            )),
+        );
     }
 
     /// Report a value name that resolves to nothing.
@@ -2194,6 +2282,10 @@ impl Resolver<'_> {
         };
         let help = match foreign {
             Some(hint) => Some(hint.to_string()),
+            None if self.bound_now.contains(&name) => Some(format!(
+                "a `let` binds `{name}` only after its value, unless the value is a closure \
+                 written right there: `let {name} = {{ … {name}(…) … }}`"
+            )),
             None => {
                 let elsewhere = self.elsewhere(name);
                 if !elsewhere.is_empty() {

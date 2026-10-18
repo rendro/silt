@@ -135,10 +135,16 @@ fn collect_local_bindings_in_expr(
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
                         // The names are visible behind the value:
-                        // `let x = x + 1` uses the `x` before it.
+                        // `let x = x + 1` uses the `x` before it. A
+                        // closure is its own name inside it:
+                        // `let f = { n -> f(n - 1) }`.
+                        let visible = match (&pattern.kind, &value.kind) {
+                            (PatternKind::Ident(_), ExprKind::Lambda { .. }) => value.span.start,
+                            _ => value.span.end,
+                        };
                         collect_pattern_bindings(
                             pattern,
-                            value.span.end as usize,
+                            visible as usize,
                             value.ty.as_ref(),
                             scope_end,
                             bindings,

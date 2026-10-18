@@ -383,6 +383,46 @@ them away would move a comment, and inside a string it keeps as written.)
 **No nested named functions.** Use `let f = { x -> ... }` for local helpers.
 Named functions are always top-level, keeping scoping rules simple.
 
+**A local helper can call itself.** In `let f = { ... }`, where the value
+is a closure written right there, `f` inside the closure is the closure
+itself, as it is in a top-level `let`. The closure keeps the values it
+captures, so they need not be passed along on every call:
+
+```silt
+fn count_at_most(tree, limit) {
+  let visit = { t ->
+    match t {
+      Leaf -> 0
+      Node(left, v, right) -> visit(left) + int.min(v, limit) + visit(right)
+    }
+  }
+  visit(tree)
+}
+```
+
+Inside its own body the closure has one type; it is generalised after,
+as any `let` closure is. A call of itself in tail position reuses the
+frame, as a function's does.
+
+Only the closure the `let` binds is its own name: in
+`let f = memo({ n -> f(n - 1) })` the closure is handed to `memo`, and
+`f` is not bound yet. Two local closures cannot call each other; make them
+top-level functions.
+
+A closure may not call itself by a name that meant something else where
+its `let` stands, an earlier local, a function of the module or an
+imported name: which of the two is meant would not be clear, so it is an
+error, and one of them must be renamed. A closure that does not use its
+own name shadows as any `let` does:
+
+```silt
+fn rename_one() {
+  let f = { n -> n * 2 }
+  let f = { n -> f(n) + 1 } -- error: `f` here is the closure, and also the earlier `f`
+  let g = { n -> f(n) + 1 } -- OK: `f` is the earlier closure
+}
+```
+
 **Trailing closures:** when the last argument is a closure, write it outside
 the parentheses:
 

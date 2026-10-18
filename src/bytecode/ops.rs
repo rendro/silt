@@ -907,6 +907,10 @@ ops! {
     // ── Upvalues (closures) ────────────────────────────────────
     /// Push the captured upvalue.
     GetUpvalue { index: Upvalue("values a closure captures") } => pops 0, pushes 1;
+    /// Push the closure the frame runs: a closure that calls itself
+    /// by the name its `let` gives it (`let f = { … f(…) … }`) has
+    /// itself in a local.
+    GetClosure => pops 0, pushes 1;
 
     // ── Function calls ─────────────────────────────────────────
     /// Call the function under the top `argc` values with them.
