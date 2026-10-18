@@ -312,6 +312,6 @@ A match with so many interdependent patterns that the check cannot finish
 is an error too ("could not verify that the match is exhaustive"); a `_`
 arm settles it.
 
-**Trade-off: no `if`.** Simple boolean checks are more verbose (a `match
-debug { ... }` with a `true` arm and a `false` arm, each on its own line). In
-practice, guardless match and `when`-`else` cover most cases.
+**Trade-off: no `if`.** A two-way choice takes four lines (`match {`, two
+arms, `}`) where an `if` could take one. Longer choices and chains cost the
+same as with `if`/`else if`, and `when`-`else` covers the early exit.

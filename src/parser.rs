@@ -262,6 +262,14 @@ const MAX_DEPTH: usize = 128;
 /// both inside the reserve.
 const MAX_EXPR_OPERATIONS: usize = 2048;
 
+/// The error for an `if`, wherever one is met: silt branches on a
+/// condition with a `match` without a scrutinee, and the help shows its
+/// shape.
+pub(crate) const NO_IF: &str =
+    "silt has no `if`; a `match` without a scrutinee branches on conditions";
+pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
+     line, and last `_ -> value` for when no condition is true";
+
 /// The construct whose block follows a header expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeaderKind {
@@ -2485,7 +2493,11 @@ impl<'src> Parser<'src> {
         }) = self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
             && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
         {
-            return Diagnostic::error(Code::UnsupportedSyntax, *prev_span, hint);
+            return Self::with_no_if_help(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                *prev_span,
+                hint,
+            ));
         }
         Diagnostic::error(
             Code::MissingNewline,
@@ -2504,13 +2516,20 @@ impl<'src> Parser<'src> {
     /// equivalent. Used by the statement-level guard in `parse_stmt`.
     fn foreign_keyword_hint(text: &str) -> Option<&'static str> {
         match text {
-            "if" => Some(
-                "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
-            ),
+            "if" => Some(NO_IF),
             "while" | "for" => Some(
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
             ),
             _ => None,
+        }
+    }
+
+    /// The `if` hint comes with the shape of the `match` to write.
+    fn with_no_if_help(d: Diagnostic) -> Diagnostic {
+        if d.message == NO_IF {
+            d.with_help(NO_IF_HELP)
+        } else {
+            d
         }
     }
 
@@ -2566,7 +2585,11 @@ impl<'src> Parser<'src> {
                 // erroneous construct: an expression-start token (paren,
                 // ident, literal, unary, brace).
                 if Self::g1_next_starts_expression(&next) {
-                    return Err(Diagnostic::error(Code::UnsupportedSyntax, span, msg));
+                    return Err(Self::with_no_if_help(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        span,
+                        msg,
+                    )));
                 }
             }
 
@@ -2595,10 +2618,9 @@ impl<'src> Parser<'src> {
             return Err(Diagnostic::error(
                 Code::UnsupportedSyntax,
                 self.span(),
-                "'else' only follows a 'when' condition; silt has no 'if' keyword — \
-                          for a conditional value use 'match cond { ... }' with a 'true -> ...' and a \
-                          'false -> ...' arm",
-            ));
+                "`else` only follows a `when` condition; silt has no `if`",
+            )
+            .with_help(NO_IF_HELP));
         }
 
         match self.peek().clone() {

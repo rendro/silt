@@ -36,6 +36,7 @@ use crate::defs::{
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
+use crate::parser::{NO_IF, NO_IF_HELP};
 use crate::session::ModuleId;
 use crate::source::Span;
 
@@ -2262,14 +2263,15 @@ impl Resolver<'_> {
     /// Report a value name that resolves to nothing.
     fn unresolved_value(&mut self, name: Symbol, span: Span) {
         let name_str = resolve(name);
+        if name_str == "if" {
+            self.error(Diagnostic::error(Code::UnresolvedName, span, NO_IF).with_help(NO_IF_HELP));
+            return;
+        }
         let message = format!("undefined variable '{name_str}'");
         let foreign = match name_str.as_str() {
             "break" | "continue" => {
                 Some("silt has no 'break'/'continue' — return early or restructure the recursion")
             }
-            "if" => Some(
-                "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
-            ),
             "self" => Some(
                 "`self` is bound only as the first parameter of a trait method; name the \
                  value as a parameter instead",

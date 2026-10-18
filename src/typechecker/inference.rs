@@ -6,6 +6,7 @@
 use super::infer::pattern::*;
 use super::suggest::suggest_similar;
 use super::*;
+use crate::parser::{NO_IF, NO_IF_HELP};
 
 /// Where an expression stands relative to its enclosing `loop`, for the
 /// check that `loop(...)` is in tail position.
@@ -104,20 +105,13 @@ pub(super) fn format_undefined_variable_message(
     // hints used to live in the parser's G1 guard, but that fired on
     // any parenthesized reference and broke formatter roundtrip;
     // resolving them here keeps the UX while staying syntax-neutral.
+    if name_str == "if" {
+        return (NO_IF.to_string(), Some(NO_IF_HELP.to_string()));
+    }
     let foreign_keyword_hint = match name_str.as_str() {
         "break" | "continue" => {
             Some("silt has no 'break'/'continue' — return early or restructure the recursion")
         }
-        // F12 (round 67): mirror parser.rs G1 (parser.rs:2245-2255) for
-        // the expression-position case. The parser only catches these
-        // at statement position (and gates on a "looks like a mistake"
-        // lookahead); in expression position the parser parses `if` /
-        // `while` / `for` as bare identifiers and we land here with an
-        // "undefined variable" diagnostic. Wording is copied verbatim
-        // from parser.rs so both paths give the user identical advice.
-        "if" => Some(
-            "silt has no 'if' keyword — use 'match cond { ... }' with a 'true -> ...' and a 'false -> ...' arm",
-        ),
         "while" | "for" => Some(
             "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
         ),

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[parse]
+-- stderr-contains: `else` only follows a `when` condition; silt has no `if`
+-- stderr-contains: help: write `match {`, then one `condition -> value` arm per line
+fn main() {
+  let n = 5
+  match n > 0 {
+    true -> println("pos")
+    false -> println("neg")
+  }
+  else { println("neg") }
+}

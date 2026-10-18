@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[parse]
--- stderr-contains: silt has no 'if' keyword
--- stderr-contains: match cond
+-- stderr-contains: silt has no `if`; a `match` without a scrutinee branches on conditions
+-- stderr-contains: help: write `match {`, then one `condition -> value` arm per line, and last `_ -> value` for when no condition is true
 fn main() {
     let x: Bool = true
     let r = if x { 1 }
