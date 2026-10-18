@@ -1,0 +1,11 @@
+-- A `let` that does not name itself in its closure shadows as before,
+-- and a value that is not a closure sees the earlier name.
+fn main() {
+  let f = { n -> n * 2 }
+  let g = f
+  let f = { n -> g(n) + 1 }
+  println(f(10))
+  let x = 1
+  let x = x + 1
+  println(x)
+}

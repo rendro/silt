@@ -127,6 +127,9 @@ codes! {
     NotExported = "E0203", Resolve;
     /// A name of another module that is not `pub` there.
     PrivateItem = "E0204", Resolve;
+    /// A name in a closure that is both the closure, which its `let`
+    /// binds to the name, and what the name meant before that `let`.
+    AmbiguousName = "E0205", Resolve;
     // ── type ──
     TypeMismatch = "E0301", Type;
     UndefinedVariable = "E0302", Type;

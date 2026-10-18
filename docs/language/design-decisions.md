@@ -21,6 +21,9 @@ Heterogeneous maps would defeat the purpose of static typing.
 
 Named functions are top-level only. `let f = { x -> ... }` for local
 helpers. Keeps scoping simple -- no hoisting, no forward-reference confusion.
+A local closure can still call itself by the name its `let` gives it
+(`let f = { n -> ... f(n - 1) ... }`), as a top-level one can; nothing
+later than the `let` is visible in it.
 
 ## Pipe First-Argument Insertion
 

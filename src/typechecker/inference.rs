@@ -3098,12 +3098,23 @@ impl TypeChecker {
                 if is_value {
                     self.enter_level();
                 }
-                if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
+                // In `let f = { … }` the closure is `f` inside itself: of
+                // one type there, the closure's, which is generalised
+                // only after it is checked.
+                let mut val_ty = if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
                     (&pattern.kind, &value.kind)
                 {
                     self.frame_owner = Some(unused::FrameOwner::Local(*name));
-                }
-                let mut val_ty = self.infer_expr(value, env);
+                    let itself = self.fresh_var();
+                    env.push();
+                    env.define(*name, Scheme::mono(itself.clone()));
+                    let val_ty = self.infer_expr(value, env);
+                    env.pop();
+                    self.unify(&itself, &val_ty, value_span);
+                    val_ty
+                } else {
+                    self.infer_expr(value, env)
+                };
 
                 // The type variables the annotation introduces.
                 let mut own: Vec<RigidId> = Vec::new();

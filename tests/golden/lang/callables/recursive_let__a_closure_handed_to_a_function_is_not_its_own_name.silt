@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: undefined variable 'fib'
+-- stderr-contains: a `let` binds `fib` only after its value, unless the value is a closure written right there
+-- Only a closure written as the `let`'s value is its own name: one
+-- handed to a function is not.
+fn memo(g: Fn(Int) -> Int) -> Fn(Int) -> Int {
+  g
+}
+
+fn main() {
+  let fib = memo { n -> fib(n - 1) }
+  println(fib(3))
+}

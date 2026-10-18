@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `f` here is the closure that `let f` binds, and also the `f` in scope before that `let`
+-- stderr-contains: `sum` here is the closure that `let sum` binds, and also the `sum` in scope before that `let`
+-- stderr-contains: `get` here is the closure that `let get` binds, and also the `get` in scope before that `let`
+-- stderr-contains: the closure is bound to `f` here
+-- stderr-contains: rename the closure or the earlier `f`
+-- A closure may not call itself by a name that meant something else
+-- where its `let` stands: a local, a function of the module or an
+-- imported name. Which of the two is meant would not be clear.
+import map.{ get }
+
+fn sum(n: Int) -> Int {
+  n
+}
+
+fn main() {
+  let f = { n -> n * 2 }
+  let f = { n -> f(n) + 1 }
+  let sum = { n ->
+    match n {
+      0 -> 0
+      _ -> n + sum(n - 1)
+    }
+  }
+  let get = { n -> get(n) }
+  println(f(1) + sum(2))
+}

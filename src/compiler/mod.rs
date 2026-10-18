@@ -205,6 +205,69 @@ fn name_without_binding(span: Span, name: Symbol) -> Diagnostic {
     )
 }
 
+/// Whether `expr` reads the local `name`: the body of a closure that
+/// calls itself by the name its `let` gives it does. (A read of another
+/// local of the name, one bound in `expr`, counts too: it costs the
+/// closure a slot it does not use, not a wrong value.)
+fn reads_local(expr: &Expr, name: Symbol) -> bool {
+    let reads = |e: &Expr| reads_local(e, name);
+    match &expr.kind {
+        ExprKind::Ident(n) => *n == name && expr.res == Some(crate::defs::Res::Local),
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::Unit => false,
+        ExprKind::StringInterp(parts) => parts
+            .iter()
+            .any(|part| matches!(part, StringPart::Expr(e) if reads(e))),
+        ExprKind::List(elems) => elems.iter().any(|elem| match elem {
+            ListElem::Single(e) | ListElem::Spread(e) => reads(e),
+        }),
+        ExprKind::Map(entries) => entries.iter().any(|(k, v)| reads(k) || reads(v)),
+        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+            elems.iter().any(reads)
+        }
+        ExprKind::FieldAccess(e, ..)
+        | ExprKind::Unary(_, e)
+        | ExprKind::QuestionMark(e)
+        | ExprKind::Ascription(e, _) => reads(e),
+        ExprKind::Binary(a, _, b) | ExprKind::Pipe(a, b) | ExprKind::Range(a, b) => {
+            reads(a) || reads(b)
+        }
+        ExprKind::Call(callee, args) => reads(callee) || args.iter().any(reads),
+        ExprKind::Lambda { body, .. } => reads(body),
+        ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| reads(e)),
+        ExprKind::RecordUpdate { expr, fields } => {
+            reads(expr) || fields.iter().any(|(_, e)| reads(e))
+        }
+        ExprKind::AnonRecord { spread, fields } => {
+            spread.as_deref().is_some_and(reads) || fields.iter().any(|(_, e)| reads(e))
+        }
+        ExprKind::Match { expr, arms } => {
+            expr.as_deref().is_some_and(reads)
+                || arms
+                    .iter()
+                    .any(|arm| arm.guard.as_deref().is_some_and(reads) || reads(&arm.body))
+        }
+        ExprKind::Return(e) => e.as_deref().is_some_and(reads),
+        ExprKind::Block(stmts) => stmts.iter().any(|stmt| match stmt {
+            Stmt::Let { value, .. } => reads(value),
+            Stmt::When {
+                expr, else_body, ..
+            } => reads(expr) || reads(else_body),
+            Stmt::WhenBool {
+                condition,
+                else_body,
+            } => reads(condition) || reads(else_body),
+            Stmt::Expr(e) => reads(e),
+        }),
+        ExprKind::Loop { bindings, body } => {
+            bindings.iter().any(|(_, _, e)| reads(e)) || reads(body)
+        }
+    }
+}
+
 // ── Compiler ──────────────────────────────────────────────────────────
 
 /// A module of the program, as the session hands it to the compiler:
@@ -293,6 +356,9 @@ pub struct Compiler<'a> {
     /// The slot of each top-level function, `let` and host function of
     /// the modules compiled now, by module and name.
     own_slots: HashMap<(crate::session::ModuleId, Symbol), u16>,
+    /// The name a local `let` gives the closure compiled next, its
+    /// value.
+    closure_name: Option<Symbol>,
 }
 
 /// The names two or more types of the program's modules have (two
@@ -367,6 +433,7 @@ impl<'a> Compiler<'a> {
             types: RefCell::new(TypeTable::default()),
             globals: Globals::default(),
             own_slots: HashMap::new(),
+            closure_name: None,
         };
         compiler.own_slots = compiler.assign_slots(&mut globals)?;
         compiler.globals = globals;
@@ -974,6 +1041,11 @@ impl<'a> Compiler<'a> {
                 // dead-coding the binding (and the implicit Unit result).
                 // Only `Stmt::Expr` legitimately inherits tail position.
                 self.in_tail_position = false;
+                if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
+                    (&pattern.kind, &value.kind)
+                {
+                    self.closure_name = Some(*name);
+                }
                 self.compile_expr(value)?;
                 let span = value.span;
 
@@ -1416,6 +1488,7 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::Lambda { params, body, .. } => {
+                let own_name = self.closure_name.take();
                 // A closure is named after what it is written in, and
                 // so are the closures in it.
                 let name = match self.contexts.last() {
@@ -1428,6 +1501,20 @@ impl<'a> Compiler<'a> {
                 }
 
                 self.compile_params(params, span)?;
+
+                // A closure that calls itself by the name its `let`
+                // gives it has itself in a local of that name, unless a
+                // parameter takes the name.
+                if let Some(name) = own_name
+                    && reads_local(body, name)
+                    && !params
+                        .iter()
+                        .any(|p| Self::pattern_binding_names(&p.pattern).contains(&name))
+                {
+                    self.emit(Asm::GetClosure, span)?;
+                    let slot = self.add_local(name, span)?;
+                    self.emit(Asm::SetLocal { slot }, span)?;
+                }
 
                 // Compile the lambda body in tail position for TCO.
                 self.in_tail_position = true;
@@ -4202,5 +4289,25 @@ fn f(expected, actual) {
             &source[err.span.start as usize..err.span.end as usize],
             "helper"
         );
+    }
+
+    /// The closure of `fn f`'s one `let g = { … }`.
+    fn closure_in_f(input: &str) -> Function {
+        find_fn(&compile(input), "closure in f").clone()
+    }
+
+    /// A closure that calls itself by the name its `let` gives it takes
+    /// itself into a local of that name (`GetClosure`); one that does
+    /// not name itself, or whose parameter takes the name, does not.
+    #[test]
+    fn test_only_a_closure_that_names_itself_gets_itself() {
+        let named = closure_in_f(
+            "fn f() -> Int {\n  let g = { n ->\n    match n {\n      0 -> 0\n      _ -> g(n - 1)\n    }\n  }\n  g(3)\n}\n",
+        );
+        assert!(has_op(named.chunk(), Op::GetClosure));
+        let plain = closure_in_f("fn f() -> Int {\n  let g = { n -> n + 1 }\n  g(3)\n}\n");
+        assert!(!has_op(plain.chunk(), Op::GetClosure));
+        let param = closure_in_f("fn f() -> Int {\n  let g = { g -> g + 1 }\n  g(3)\n}\n");
+        assert!(!has_op(param.chunk(), Op::GetClosure));
     }
 }

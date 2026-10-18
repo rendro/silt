@@ -100,7 +100,8 @@ fn disassemble_instruction(
         | Instr::MakeRange
         | Instr::ListConcat
         | Instr::QuestionMark
-        | Instr::Panic => format!("{offset:04}  {name}"),
+        | Instr::Panic
+        | Instr::GetClosure => format!("{offset:04}  {name}"),
 
         // ── A count, an index or a slot ───────────────────────
         Instr::GetUpvalue { index: n }

@@ -753,6 +753,12 @@ impl Vm {
                     load!();
                 }
                 Instr::GetUpvalue { index } => push_copy!(self.stack, closure.upvalues[index]),
+                Instr::GetClosure => {
+                    let Some(Frame::Code(frame)) = self.frames.last() else {
+                        unreachable!("an instruction runs in a function's frame")
+                    };
+                    push_closure(&mut self.stack, frame.closure.clone());
+                }
                 Instr::Call { argc } => {
                     let func_slot = self.stack.len() - 1 - argc;
                     save!();

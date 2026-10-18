@@ -1020,7 +1020,7 @@ impl Compiler<'_> {
     }
 
     /// Collect the set of variable names bound by a pattern.
-    fn pattern_binding_names(pattern: &Pattern) -> std::collections::BTreeSet<Symbol> {
+    pub(super) fn pattern_binding_names(pattern: &Pattern) -> std::collections::BTreeSet<Symbol> {
         let mut names = std::collections::BTreeSet::new();
         Self::collect_binding_names(pattern, &mut names);
         names

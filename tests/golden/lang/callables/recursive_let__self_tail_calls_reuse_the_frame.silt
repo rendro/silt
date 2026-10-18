@@ -1,0 +1,11 @@
+-- A closure's tail call of itself runs in its own frame: a million of
+-- them take no more room than one.
+fn main() {
+  let count = { n, acc ->
+    match n {
+      0 -> acc
+      _ -> count(n - 1, acc + 1)
+    }
+  }
+  println(count(1000000, 0))
+}
