@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: 'time.Date' is not a value
+import json
+import time
+
+fn main() {
+  println(json.parse("1", json.Value))
+  println(json.parse("1", time.Date))
+}

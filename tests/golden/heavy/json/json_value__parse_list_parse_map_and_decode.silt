@@ -1,0 +1,19 @@
+-- json.parse_list, json.parse_map and json.decode take json.Value too, and
+-- json.decode takes the primitive types json.parse takes.
+import json
+
+fn as_type(v: json.Value, type a) -> Result(a, json.JsonError) {
+  json.decode(v, a)
+}
+
+fn main() {
+  println(json.parse_list("""[1, "a", null, [true]]""", json.Value))
+  println(json.parse_list("""{"a": 1}""", json.Value))
+  println(json.parse_map("""{"x": 1, "y": [true]}""", json.Value))
+  println(json.decode(json.Int(3), Int))
+  println(json.decode(json.Float(3.5), Int))
+  println(json.decode(json.String("s"), Bool))
+  println(json.decode(json.Array([json.Int(1)]), json.Value))
+  println(as_type(json.Float(0.5), Float))
+  println(as_type(json.Null, json.Value))
+}

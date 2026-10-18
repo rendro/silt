@@ -305,9 +305,11 @@ pub(super) fn modules() -> Vec<Module> {
             page: "json.md",
             types: "\
                 pub type JsonError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
+                pub type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }\n\
             ",
             error: "JsonError" => json::error_text,
             rows: [
+                f("fn decode(value: Value, type a) -> Result(a, JsonError)", "Decode a json.Value into a typed value", json::decode),
                 f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse),
                 f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse JSON array into record list", json::parse_list),
                 f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError)", "Parse JSON object into map", json::parse_map),
@@ -474,18 +476,18 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type PostgresError { Connect(String), Tls(String), AuthFailed(String), Query(String, String), TypeMismatch(String, String, String), NoSuchColumn(String), Closed, Timeout, TxnAborted, Other(String) }\n\
                 pub type Notification { channel: String, payload: String, pid: Int }\n\
             ",
-            opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("Value", 0)],
+            opaque: [("PgPool", 0), ("PgTx", 0), ("PgCursor", 0), ("QueryResult", 0), ("ExecResult", 0), ("PgValue", 0)],
             error: "PostgresError" => postgres::error_text,
             rows: [
                 f("fn connect(url: String) -> Result(PgPool, PostgresError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
                 f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PostgresError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
-                f("fn query(conn: a, sql: String, params: List(Value)) -> Result(QueryResult, PostgresError)", "Run a SELECT-style statement and materialize rows", postgres::query),
-                f("fn execute(conn: a, sql: String, params: List(Value)) -> Result(ExecResult, PostgresError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
+                f("fn query(conn: a, sql: String, params: List(PgValue)) -> Result(QueryResult, PostgresError)", "Run a SELECT-style statement and materialize rows", postgres::query),
+                f("fn execute(conn: a, sql: String, params: List(PgValue)) -> Result(ExecResult, PostgresError)", "Run an INSERT/UPDATE/DELETE and return affected-row count", postgres::execute),
                 f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
                 f("fn close(pool: PgPool) -> ()", "Drop the pool; future ops on it error", postgres::close),
-                f("fn stream(conn: a, sql: String, params: List(Value)) -> Result(Channel(Result(Map(String, Value), PostgresError)), PostgresError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
-                f("fn cursor(tx: PgTx, sql: String, params: List(Value), batch_size: Int) -> Result(PgCursor, PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor),
-                f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, Value)), PostgresError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
+                f("fn stream(conn: a, sql: String, params: List(PgValue)) -> Result(Channel(Result(Map(String, PgValue), PostgresError)), PostgresError)", "Stream rows through a bounded channel (backpressured)", postgres::stream),
+                f("fn cursor(tx: PgTx, sql: String, params: List(PgValue), batch_size: Int) -> Result(PgCursor, PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor),
+                f("fn cursor_next(cursor: PgCursor) -> Result(List(Map(String, PgValue)), PostgresError)", "Fetch the next batch of rows from a cursor", postgres::cursor_next),
                 f("fn cursor_close(cursor: PgCursor) -> Result((), PostgresError)", "Release a cursor and its underlying connection", postgres::cursor_close),
                 f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
                 f("fn notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)", "NOTIFY a channel with a payload", postgres::notify),

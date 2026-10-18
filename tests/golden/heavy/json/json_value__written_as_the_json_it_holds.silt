@@ -1,0 +1,22 @@
+-- json.stringify and json.pretty write a json.Value as the JSON it holds,
+-- wherever it is in the value.
+import json
+
+type Reply {
+  status: Int,
+  body: json.Value,
+}
+
+fn main() {
+  let body = json.Object(#{
+    "name": json.String("Ada"),
+    "age": json.Int(36),
+    "score": json.Float(2.5),
+    "admin": json.Bool(false),
+    "tags": json.Array([json.String("x"), json.Null]),
+  })
+  println(json.stringify(body))
+  println(json.stringify(Reply { status: 200, body: body }))
+  println(json.stringify([Some(json.Null), None]))
+  println(json.pretty(json.Array([json.Int(1), json.Object(#{})])))
+}

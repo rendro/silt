@@ -1,0 +1,5 @@
+Ok(resize to 3x4)
+Err(json missing field: height)
+Err(json type mismatch: expected object, got array)
+Ok(ignored quit)
+Err(json missing field: data)

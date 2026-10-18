@@ -20,7 +20,7 @@ cargo build --release --features postgres
 ```
 
 Pair the builtins below with a silt-side `pg.silt` package that
-declares the companion types (`PgPool`, `PgTx`, `PostgresError`, `Value`,
+declares the companion types (`PgPool`, `PgTx`, `PostgresError`, `PgValue`,
 `QueryResult`, `ExecResult`, and `PgCursor`). The
 built-in functions reference those types by name; the typechecker
 unifies them against whatever your `pg.silt` library defines.
@@ -31,13 +31,13 @@ unifies them against whatever your `pg.silt` library defines.
 |----------|-----------|-------------|
 | `connect` | `(String) -> Result(PgPool, PostgresError)` | Open a connection pool from a `postgresql://` URL (uses r2d2 defaults) |
 | `connect_with` | `(String, Map(String, Int)) -> Result(PgPool, PostgresError)` | Like `connect` with a tunable options bag (see [Connect options](#connect-options)) |
-| `query` | `(a, String, List(Value)) -> Result(QueryResult, PostgresError)` | Run a SELECT-style statement and materialize rows |
-| `execute` | `(a, String, List(Value)) -> Result(ExecResult, PostgresError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
+| `query` | `(a, String, List(PgValue)) -> Result(QueryResult, PostgresError)` | Run a SELECT-style statement and materialize rows |
+| `execute` | `(a, String, List(PgValue)) -> Result(ExecResult, PostgresError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
 | `transact` | `(PgPool, Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
 | `close` | `(PgPool) -> ()` | Drop the pool; future ops on it error |
-| `stream` | `(a, String, List(Value)) -> Result(Channel(Result(Map(String, Value), PostgresError)), PostgresError)` | Stream rows through a bounded channel (backpressured) |
-| `cursor` | `(PgTx, String, List(Value), Int) -> Result(PgCursor, PostgresError)` | Declare a server-side cursor with batch size |
-| `cursor_next` | `(PgCursor) -> Result(List(Map(String, Value)), PostgresError)` | Fetch the next batch of rows from a cursor |
+| `stream` | `(a, String, List(PgValue)) -> Result(Channel(Result(Map(String, PgValue), PostgresError)), PostgresError)` | Stream rows through a bounded channel (backpressured) |
+| `cursor` | `(PgTx, String, List(PgValue), Int) -> Result(PgCursor, PostgresError)` | Declare a server-side cursor with batch size |
+| `cursor_next` | `(PgCursor) -> Result(List(Map(String, PgValue)), PostgresError)` | Fetch the next batch of rows from a cursor |
 | `cursor_close` | `(PgCursor) -> Result((), PostgresError)` | Release a cursor and its underlying connection |
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
@@ -64,7 +64,7 @@ use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
 ## Streaming and cursors
 
 `postgres.stream` returns a bounded `Channel` whose elements are
-`Result(Map(String, Value), PostgresError)` rows. A background worker pumps
+`Result(Map(String, PgValue), PostgresError)` rows. A background worker pumps
 the cursor into the channel and closes it when the query completes
 (or on error). Slow consumers backpressure the server side via the
 channel capacity.
@@ -87,7 +87,7 @@ does not consume a slot from the regular query pool.
 ## Example
 
 ```text
--- Pair with a user-side `pg.silt` that declares the Value ADT
+-- Pair with a user-side `pg.silt` that declares the PgValue ADT
 -- (VInt/VStr/VBool/VFloat/VNull/VList), PgPool, PgTx, PostgresError,
 -- QueryResult, ExecResult, and PgCursor.
 import pg
@@ -120,7 +120,7 @@ fn main() {
 
 ## Notes
 
-- The `Value` parameter ADT (`VInt`, `VStr`, `VBool`, `VFloat`, `VNull`,
+- The `PgValue` parameter ADT (`VInt`, `VStr`, `VBool`, `VFloat`, `VNull`,
   `VList`) is declared in the user's `pg.silt`, not here — the builtin
   module references it by name only.
 - `uuid.v7` produces a time-ordered UUID suitable for use as a primary

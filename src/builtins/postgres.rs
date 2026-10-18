@@ -703,13 +703,13 @@ impl ToSql for NoneText {
 fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
     let Value::Variant(param) = v else {
         return Err(format!(
-            "postgres requires Value variant (VInt/VStr/...), got {}",
+            "postgres requires PgValue variant (VInt/VStr/...), got {}",
             v.kind()
         ));
     };
     if !param.of(ty::PG_VALUE) {
         return Err(format!(
-            "postgres requires Value variant (VInt/VStr/...), got {}",
+            "postgres requires PgValue variant (VInt/VStr/...), got {}",
             param.ty().name
         ));
     }
@@ -748,7 +748,7 @@ fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
             )),
         },
         other => Err(format!(
-            "postgres: unknown silt Value variant {other:?} as parameter"
+            "postgres: unknown silt PgValue variant {other:?} as parameter"
         )),
     }
 }

@@ -71,7 +71,7 @@ pub(super) fn builtin_env() -> Rc<BuiltinEnv> {
 
 /// The scheme of the builtin definition `def`: the one the builtin scope
 /// binds under its name (`println`, `list.map`, `Weekday.Monday`,
-/// `Option`).
+/// `Option`, `json.Value`).
 pub(super) fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
     let key = match def.kind {
         crate::defs::DefKind::Variant { ty, .. } => {
@@ -79,8 +79,8 @@ pub(super) fn builtin_scheme(def: &crate::defs::Def) -> Option<Scheme> {
             format!("{enum_name}.{}", def.name)
         }
         _ => match def.module.builtin_name() {
-            Some(module) if !def.is_type() => format!("{module}.{}", def.name),
-            _ => resolve(def.name),
+            Some(module) => format!("{module}.{}", def.name),
+            None => resolve(def.name),
         },
     };
     builtin_env().root.lookup(intern(&key)).cloned()
@@ -111,7 +111,7 @@ fn module_of(qualified: &str) -> &str {
 // ── What the builtin scope is made of ───────────────────────────────
 
 /// Bind the types that are values: the descriptors of the primitive and
-/// container types.
+/// container types, and of `json.Value`.
 fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // A primitive type written as a value is its descriptor, of the type
     // `TypeOf(T)`, not a value of the type: `Int * 2` does not check.
@@ -158,6 +158,16 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+    // `json.Value` written as a value is its descriptor, which the json
+    // decoders take as their type argument. No other type of a module
+    // is a value.
+    env.define(
+        intern("json.Value"),
+        Scheme::mono(Type::type_of(Type::Generic(
+            TypeRef::builtin("Value"),
+            Vec::new(),
+        ))),
+    );
 }
 
 /// Enter the builtin registry: the prelude's enums and functions and,

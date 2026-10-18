@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `Bad`: field `f` has type `Set(Int)`, which has no decoder
+-- stderr-contains: DateTime, json.Value, List(T)
+import json
+
+type Bad {
+  f: Set(Int),
+}
+
+fn main() {
+  println(json.parse("""{"f": 1}""", Bad))
+}
