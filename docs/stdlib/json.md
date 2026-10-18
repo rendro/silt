@@ -7,11 +7,14 @@ order: 10
 # json
 
 Parse JSON strings into typed silt values and serialize values to JSON.
+A document whose shape is not known in advance is read into a
+[`json.Value`](#jsonvalue).
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `decode` | `(Value, type a) -> Result(a, JsonError)` | Decode a json.Value into a typed value |
 | `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
 | `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse JSON array into record list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
@@ -37,20 +40,22 @@ See [stdlib errors](errors.md) for the shared `Error` trait.
 
 ## Decodable types
 
-The type argument of `json.parse`, `json.parse_list` and `json.parse_map`
-names the type to decode into:
+The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
+`json.decode` names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `json.parse` | `Int`, `Float`, `String`, `Bool`, or a record type |
-| `json.parse_list` | a record type |
-| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
+| `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
+| `json.parse_list` | `json.Value` or a record type |
+| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
+| `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
 
 The fields of a record type (and of every record type nested in it) may have
 these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `Date`, `Time`, `DateTime`
+- `json.Value`, which keeps that part of the document as it is
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - non-generic record types
@@ -93,6 +98,102 @@ The parsers stop sooner: `json.parse`, `json.parse_list` and
 127 levels deep, and give a `Syntax` error (`recursion limit exceeded`) for
 one nested deeper. A value written at more levels than that is valid JSON
 that silt itself does not read back.
+
+
+## `json.Value`
+
+```
+type Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(Value)),
+  Object(Map(String, Value)),
+}
+```
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+
+
+## `json.decode`
+
+```
+json.decode(value: Value, type a) -> Result(a, JsonError)
+```
+
+Decodes a `json.Value` into the type `a`, as `json.parse` decodes the
+same document as text, with the same errors.
+
+```silt
+import json
+
+type Event {
+  kind: String,
+  data: json.Value,
+}
+
+type Resize {
+  width: Int,
+  height: Int,
+}
+
+fn describe(text: String) -> Result(String, json.JsonError) {
+  let event = json.parse(text, Event)?
+  match event.kind {
+    "resize" -> {
+      let size = json.decode(event.data, Resize)?
+      Ok("resize to {size.width}x{size.height}")
+    }
+    _ -> Ok("ignored {event.kind}")
+  }
+}
+
+fn main() {
+  println(describe("""{"kind": "resize", "data": {"width": 3, "height": 4}}"""))
+  -- Ok(resize to 3x4)
+}
+```
 
 
 ## `json.parse`
@@ -158,7 +259,8 @@ fn main() -> Result(Unit, json.JsonError) {
 json.parse_list(s: String, type a) -> Result(List(a), JsonError)
 ```
 
-Parses a JSON array where each element is a record of type `a`.
+Parses a JSON array where each element is a record of type `a`, or, for
+`json.Value`, any value.
 
 ```silt
 import json
@@ -186,7 +288,7 @@ json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError)
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
-parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
+parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type).
 
 ```silt
 import json
@@ -229,7 +331,8 @@ json.stringify(value: a) -> String
 
 Serializes a value to a compact JSON string. A map is written as an
 object; a key of it that is no `String` is written as its shown text (so the
-`Float` key `1.0` reads `"1.0"`).
+`Float` key `1.0` reads `"1.0"`). A `json.Value` is written as the JSON it
+holds.
 
 `json.stringify` and `json.pretty` write the same values. A value JSON has no
 form for is a runtime error that names its kind, wherever in the value it is:

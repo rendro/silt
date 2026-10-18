@@ -62,8 +62,10 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
             }
             // A variant is named with its module, like a function: the
             // bare name is not one variant's (`Closed` is `channel`'s,
-            // `tcp`'s and `postgres`'s).
+            // `tcp`'s and `postgres`'s). So is a type with a section of
+            // its own (`json.Value`).
             for ty in &module.type_decls {
+                names.insert(format!("{}.{}", module.name, ty.name));
                 for (variant, _) in ty.variants() {
                     names.insert(format!("{}.{variant}", module.name));
                 }
@@ -82,7 +84,7 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
         // A variant without a section of its own shows what documents
         // its enum, under a line that says whose it is: the enum's
         // section of the errors page for a variant of the module's
-        // error enum, the module's page for any other.
+        // error enum, the enum's own section, or else the module's page.
         let error_sections = iter_sections(ERRORS_PAGE);
         for module in registry.enabled_modules() {
             for ty in &module.type_decls {
@@ -91,8 +93,10 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                     .find(|(keys, _)| {
                         module.error == Some(ty.name) && keys.iter().any(|k| k == ty.name)
                     })
-                    .map(|(_, body)| body.as_str());
-                let below = section.unwrap_or_else(|| strip_frontmatter(module.page));
+                    .map(|(_, body)| body.clone());
+                let below = section
+                    .or_else(|| docs.get(&format!("{}.{}", module.name, ty.name)).cloned())
+                    .unwrap_or_else(|| strip_frontmatter(module.page).to_string());
                 for (variant, _) in ty.variants() {
                     let name = format!("{}.{variant}", module.name);
                     docs.entry(name).or_insert_with(|| {

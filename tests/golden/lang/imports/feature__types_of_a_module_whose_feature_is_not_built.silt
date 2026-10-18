@@ -9,11 +9,11 @@ fn pool(p: PgPool, tx: PgTx, c: PgCursor) -> Int {
   1
 }
 
-fn rows(v: Value, q: QueryResult, e: ExecResult) -> Int {
+fn rows(v: PgValue, q: QueryResult, e: ExecResult) -> Int {
   2
 }
 
-type Holder { pool: PgPool, values: List(Value) }
+type Holder { pool: PgPool, values: List(PgValue) }
 
 fn main() {
   println(postgres.close(1))

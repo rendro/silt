@@ -521,6 +521,7 @@ fn toml_to_typed_value(
             _ => Err(mismatch("Tuple", toml_type_name(tv))),
         },
         FieldType::Unsupported(declared) => Err(TomlDecodeErr::Unsupported(declared.clone())),
+        FieldType::JsonValue => Err(TomlDecodeErr::Unsupported("json.Value".into())),
         FieldType::Date => match tv {
             ::toml::Value::Datetime(dt) => {
                 // Preferred path: TOML native date literal.

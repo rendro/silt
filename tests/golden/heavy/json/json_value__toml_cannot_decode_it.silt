@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `toml.parse` cannot decode `json.Value`, a type of the json decoders
+-- stderr-contains: help: decode into a record type
+import json
+import toml
+
+fn main() {
+  println(toml.parse("name = 'x'", json.Value))
+}

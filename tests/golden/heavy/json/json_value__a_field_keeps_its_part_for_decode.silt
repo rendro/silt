@@ -1,0 +1,32 @@
+-- A field of type json.Value keeps its part of the document; json.decode
+-- reads it once its shape is known, with json.parse's errors.
+import json
+
+type Event {
+  kind: String,
+  data: json.Value,
+}
+
+type Resize {
+  width: Int,
+  height: Int,
+}
+
+fn describe(text: String) -> Result(String, json.JsonError) {
+  let event = json.parse(text, Event)?
+  match event.kind {
+    "resize" -> {
+      let size = json.decode(event.data, Resize)?
+      Ok("resize to {size.width}x{size.height}")
+    }
+    _ -> Ok("ignored {event.kind}")
+  }
+}
+
+fn main() {
+  println(describe("""{"kind": "resize", "data": {"width": 3, "height": 4}}"""))
+  println(describe("""{"kind": "resize", "data": {"width": 3}}"""))
+  println(describe("""{"kind": "resize", "data": [3, 4]}"""))
+  println(describe("""{"kind": "quit", "data": null}"""))
+  println(describe("""{"kind": "quit"}"""))
+}

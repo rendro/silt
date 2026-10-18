@@ -424,15 +424,18 @@ const PUNCTUATION: u32 = 9;
 const COMMENT: u32 = 10;
 
 /// The kind of the name `name`, if it is coloured: the name a `fn`
-/// declares (`declared`), a variant silt declares (`Ok`, `Monday`), a
-/// function that needs no import (`println`), or a capitalised name: a
-/// type, a trait or a variant.
+/// declares (`declared`), a primitive type (`Int`, which `json.Int`
+/// also names), a variant silt declares (`Ok`, `Monday`), a function
+/// that needs no import (`println`), or a capitalised name: a type, a
+/// trait or a variant.
 fn name_kind(name: &str, declared: bool) -> Option<u32> {
     static CONSTRUCTORS: OnceLock<HashSet<&'static str>> = OnceLock::new();
     let constructors =
         CONSTRUCTORS.get_or_init(|| module::all_builtin_constructor_names().collect());
     if declared {
         Some(FUNCTION)
+    } else if module::BUILTIN_PRIMITIVE_NAMES.contains(&name) {
+        Some(TYPE)
     } else if constructors.contains(name) {
         Some(CONSTRUCTOR)
     } else if module::builtin_free_function_names().contains(&name) {

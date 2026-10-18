@@ -147,6 +147,9 @@ pub enum FieldType {
     Date,
     Time,
     DateTime,
+    /// `json.Value`: the document as it is. Only the json decoders
+    /// have it; to the toml decoders it is a type without a decoder.
+    JsonValue,
     /// A type without a decoder; carries the type as written in the
     /// record declaration.
     Unsupported(String),
@@ -366,6 +369,7 @@ pub mod ty {
     pub const UUID_ERROR: TypeId = TypeId(DefId(36));
     pub const TASK_ERROR: TypeId = TypeId(DefId(37));
     pub const SELECTED: TypeId = TypeId(DefId(38));
+    pub const JSON_VALUE: TypeId = TypeId(DefId(39));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -483,6 +487,13 @@ pub mod bv {
     pub const V_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 3);
     pub const V_NULL: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 4);
     pub const V_LIST: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 5);
+    pub const JSON_NULL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 0);
+    pub const JSON_BOOL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 1);
+    pub const JSON_INT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 2);
+    pub const JSON_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 3);
+    pub const JSON_STRING: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 4);
+    pub const JSON_ARRAY: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 5);
+    pub const JSON_OBJECT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 6);
     pub const MAP_ERROR: BuiltinVariant = BuiltinVariant::new(ty::MAP_ERROR, 0);
 }
 
@@ -509,7 +520,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "PgPool",
     "PgTx",
     "PgCursor",
-    "Value",
+    "PgValue",
     "Date",
     "Time",
     "DateTime",
@@ -528,6 +539,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "UuidError",
     "TaskError",
     "Selected",
+    "Value",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -539,7 +551,7 @@ const HANDLE_VARIANTS: &[(&str, &[(&str, usize)])] = &[
     ("PgTx", &[("PgTx", 1)]),
     ("PgCursor", &[("PgCursor", 1)]),
     (
-        "Value",
+        "PgValue",
         &[
             ("VInt", 1),
             ("VStr", 1),

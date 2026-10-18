@@ -7,7 +7,7 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
 use crate::defs::TypeId;
-use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
+use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
 use crate::vm::{Vm, VmError};
 
@@ -191,10 +191,11 @@ pub(crate) fn unsupported_kind(caller: &str, v: &Value) -> VmError {
 fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Value, VmError> {
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_json(caller, v, level + 1);
-    // `Some(x)` is written as `x` is, and is no level of its own.
+    // `Some(x)` is written as `x` is, and so is a `json.Value` as the
+    // JSON it holds (`json.Int(1)` as `1`); neither is a level of its own.
     let mut v = v;
     while let Value::Variant(variant) = v
-        && variant.is(bv::SOME)
+        && (variant.is(bv::SOME) || variant.of(ty::JSON_VALUE))
         && let [content] = variant.fields()
     {
         v = content;
@@ -230,7 +231,7 @@ fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Va
                     .collect();
             serde_json::Value::Object(obj?)
         }
-        Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => {
+        Value::Variant(variant) if variant.is(bv::NONE) || variant.is(bv::JSON_NULL) => {
             serde_json::Value::Null
         }
         Value::Variant(variant) => {
@@ -392,6 +393,7 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
     };
     let field_type = match value_type {
         Type::Primitive(field_type) => field_type,
+        Type::Named(ty) if ty.id == ty::JSON_VALUE => FieldType::JsonValue,
         Type::Named(ty) => {
             if decodable_record("json.parse_map", ty).is_err() {
                 return Ok(json_unknown_err(format!(
@@ -410,6 +412,39 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
         }
     }
     Ok(Value::variant(bv::OK, vec![Value::map(map)]))
+}
+
+/// The `json.Value` that holds the document `json`. A number is an
+/// `Int` when it is a whole number an `Int` can be, as for an `Int`
+/// field, and a `Float` otherwise.
+fn json_value(json: &serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::variant(bv::JSON_NULL, Vec::new()),
+        serde_json::Value::Bool(b) => Value::variant(bv::JSON_BOOL, vec![Value::Bool(*b)]),
+        serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64()) {
+            (Some(i), _) => Value::variant(bv::JSON_INT, vec![Value::Int(i)]),
+            (None, Some(f)) => match (whole(f), Float::new(f)) {
+                (Ok(i), _) => Value::variant(bv::JSON_INT, vec![Value::Int(i)]),
+                (Err(_), Some(f)) => Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)]),
+                // (A document has no NaN.)
+                (Err(_), None) => Value::variant(bv::JSON_NULL, Vec::new()),
+            },
+            (None, None) => Value::variant(bv::JSON_NULL, Vec::new()),
+        },
+        serde_json::Value::String(s) => {
+            Value::variant(bv::JSON_STRING, vec![Value::String(s.clone().into())])
+        }
+        serde_json::Value::Array(items) => Value::variant(
+            bv::JSON_ARRAY,
+            vec![Value::list(items.iter().map(json_value).collect())],
+        ),
+        serde_json::Value::Object(obj) => Value::variant(
+            bv::JSON_OBJECT,
+            vec![Value::map(obj.iter().map(|(key, item)| {
+                (Value::String(key.clone().into()), json_value(item))
+            }))],
+        ),
+    }
 }
 
 /// Decode a `serde_json::Value` into a silt `Value` of the expected
@@ -506,6 +541,7 @@ fn json_to_typed_value(
             _ => Err(mismatch("Tuple", json_type_name(json))),
         },
         FieldType::Unsupported(declared) => Err(JsonDecodeErr::Unsupported(declared.clone())),
+        FieldType::JsonValue => Ok(json_value(json)),
         FieldType::Date => match json {
             serde_json::Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map(make_date)
@@ -559,31 +595,59 @@ fn json_to_typed_value(
     }
 }
 
+/// The value of type `ty` that the document `parsed` is, for
+/// `json.parse` and `json.decode` (`caller`): `Ok` of it, or `Err` of
+/// the `JsonError` that says why there is none.
+fn decode_document(
+    vm: &mut Vm,
+    caller: &str,
+    parsed: Result<serde_json::Value, serde_json::Error>,
+    ty: Type,
+) -> Result<Value, VmError> {
+    let json = match parsed {
+        Ok(json) => json,
+        Err(e) => return Ok(json_result_err(&e)),
+    };
+    let field_type = match ty {
+        // A primitive type: a JSON scalar, decoded as it is.
+        Type::Primitive(field_type) => field_type,
+        Type::Named(ty) if ty.id == ty::JSON_VALUE => FieldType::JsonValue,
+        Type::Named(ty) => {
+            let fields = decodable_record(caller, ty)?;
+            return json_to_record(vm, ty, &fields, &json);
+        }
+    };
+    Ok(match json_to_typed_value(vm, &json, &field_type) {
+        Ok(val) => Value::variant(bv::OK, vec![val]),
+        Err(e) => decode_err_to_silt(e),
+    })
+}
+
 // ── The functions ───────────────────────────────────────────────────
 
 builtins! {
+    fn decode(vm, value: &Value, ty: Type) -> Result<Value, VmError> {
+        let json = value_to_json("json.decode", value, 0)?;
+        decode_document(vm, "json.decode", Ok(json), ty)
+    }
+
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let parsed = serde_json::from_str::<serde_json::Value>(s);
-        match ty {
-            // A primitive type: a JSON scalar, decoded as it is.
-            Type::Primitive(field_type) => Ok(match parsed {
-                Ok(json) => match json_to_typed_value(vm, &json, &field_type) {
-                    Ok(val) => Value::variant(bv::OK, vec![val]),
-                    Err(e) => decode_err_to_silt(e),
-                },
-                Err(e) => json_result_err(&e),
-            }),
-            Type::Named(ty) => {
-                let fields = decodable_record("json.parse", ty)?;
-                match parsed {
-                    Ok(json) => json_to_record(vm, ty, &fields, &json),
-                    Err(e) => Ok(json_result_err(&e)),
-                }
-            }
-        }
+        decode_document(vm, "json.parse", serde_json::from_str(s), ty)
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        if let Type::Named(ty) = ty
+            && ty.id == ty::JSON_VALUE
+        {
+            return Ok(match serde_json::from_str::<serde_json::Value>(s) {
+                Ok(serde_json::Value::Array(items)) => Value::variant(
+                    bv::OK,
+                    vec![Value::list(items.iter().map(json_value).collect())],
+                ),
+                Ok(json) => json_type_mismatch_err("array", json_type_name(&json)),
+                Err(e) => json_result_err(&e),
+            });
+        }
         let Type::Named(ty) = ty else {
             return Err(VmError::new(
                 "json.parse_list: type argument must be a record type".into(),

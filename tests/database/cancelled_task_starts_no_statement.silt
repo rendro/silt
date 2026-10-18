@@ -56,7 +56,7 @@ fn main() {
       let own: Channel(task.Handle(())) = channel.new(1)
       let said: Channel(String) = channel.new(1)
       let streams: Channel(
-        Channel(Result(Map(String, postgres.Value), postgres.PostgresError)),
+        Channel(Result(Map(String, postgres.PgValue), postgres.PostgresError)),
       ) = channel.new(1)
       let t = task.spawn { ->
         let _ = postgres.execute(

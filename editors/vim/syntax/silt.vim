@@ -11,6 +11,9 @@ syntax keyword siltKeyword as else fn import let loop match mod pub return trait
 syntax keyword siltBoolean true false
 
 " ── Primitive type names ────────────────────────────────────────────
+" The variants of json.Value. Int, Float, Bool and String are types as
+" well; the siltType line below is defined later, so it wins for them.
+syntax keyword siltConstructor Null Bool Int Float String Array Object
 " Sourced from src/types.rs `impl Display for Type` — these are the
 " names the compiler prints in diagnostics and the names accepted in
 " type-annotation position. Keep in sync with the lock test at

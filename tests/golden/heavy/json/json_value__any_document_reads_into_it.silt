@@ -1,0 +1,17 @@
+-- Any document reads into a json.Value: a whole number in Int's range is
+-- an Int, any other number a Float; an object's keys come out in order.
+import json
+
+fn main() {
+  let doc = """{"b": [1, 1.0, 1.5, 1e3, -0.0, 12345678901234567890, null, true, "s"], "a": {}}"""
+  match json.parse(doc, json.Value) {
+    Ok(v) -> {
+      println(v)
+      println(json.stringify(v))
+    }
+    Err(e) -> println(e.message())
+  }
+  println(json.parse("""{"k": 1, "k": 2}""", json.Value))
+  println(json.parse("7", json.Value))
+  println(json.parse("""{"x": 1""", json.Value))
+}
