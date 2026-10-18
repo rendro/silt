@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected ')' or ',' to continue function call argument list, found +
+-- stderr-contains: help: `+` and `-` continue an expression only at the end of a line; end the line above with the `+`
+fn main() {
+  let a = 10
+  println(
+    a
+    + 3
+  )
+}

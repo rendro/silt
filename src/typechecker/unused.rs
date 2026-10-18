@@ -349,6 +349,19 @@ impl TypeChecker {
         }
     }
 
+    /// Whether the value `stmt` ends with is a function: a line behind
+    /// it that starts with `(` was meant to call it.
+    fn gives_a_function(&self, stmt: &Stmt) -> bool {
+        let value = match stmt {
+            Stmt::Let { value, .. } | Stmt::Expr(value) => value,
+            Stmt::When { .. } | Stmt::WhenBool { .. } => return false,
+        };
+        value
+            .ty
+            .as_ref()
+            .is_some_and(|ty| matches!(self.apply(ty), Type::Fun(..)))
+    }
+
     /// The type of a statement as the rule reads it: an associated type
     /// of a known type is the type its impl binds (`<Printer as
     /// Sink>::Out` is `()` where the impl says `type Out = ()`).
@@ -441,6 +454,15 @@ impl TypeChecker {
                     d = d.with_help(
                         "the next line starts with `-`, so it is a statement of its own; to \
                          subtract it from this line, end this line with the `-`",
+                    );
+                } else if i > 0
+                    && (extent.start != e.span.start || matches!(e.kind, ExprKind::Tuple(_)))
+                    && self.gives_a_function(&rest[i - 1])
+                {
+                    // A call's `(` does not cross a line break either.
+                    d = d.with_help(
+                        "a line that starts with `(` is a value of its own; to call the line \
+                         above, put the `(` on that line",
                     );
                 }
                 found.push(d);

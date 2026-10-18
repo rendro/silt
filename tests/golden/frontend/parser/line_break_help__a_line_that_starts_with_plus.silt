@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected expression, found +
+-- stderr-contains: help: a line cannot start with `+`; to add to the line above, end that line with the `+`
+-- A `+` at the start of a line does not continue the line above, and
+-- silt has no unary `+`: the help says where the `+` goes.
+fn main() {
+  let a = 10
+  let t = a
+    + 3
+  println(t)
+}

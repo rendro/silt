@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: expected expression, found +
+-- stderr-not-contains: help:
+-- Behind a comma a `+` starts nothing that could continue: no help
+-- about line breaks.
+fn main() {
+  let a = 10
+  let xs = [
+    a,
+    + 3,
+  ]
+  println(xs)
+}
