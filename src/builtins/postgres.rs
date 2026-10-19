@@ -601,7 +601,11 @@ fn connect_error_value(e: &postgres::Error) -> Value {
     } else if timed_out {
         Value::variant(bv::PG_TIMEOUT, vec![])
     } else if text.starts_with("authentication error") {
-        // The server asked for a password that the URL does not give.
+        // The exchange of the login failed on this side: a method of
+        // the server's that the client does not have, channel binding
+        // the server did not use, a SCRAM answer that does not check
+        // out. (A password the server asks for and the URL does not
+        // give is an error of the configuration: `Connect`.)
         Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(text.into())])
     } else {
         pg_connect(text)
