@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use r2d2::Pool;
+use tokio_postgres::config::SslMode;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Config, NoTls, Notification};
 
@@ -816,7 +817,8 @@ fn pool_error_value(e: &r2d2::Error) -> Value {
 
 /// The `PostgresError` of a connect that failed: `AuthFailed` when the
 /// server refused the role or its password (SQLSTATE class `28`), `Tls`
-/// for the handshake, `Timeout` for a socket that got no answer in
+/// for the handshake, or a server without TLS where the mode requires
+/// it, `Timeout` for a socket that got no answer in
 /// time, and `Connect` for every other reason: a refused port, an
 /// unknown host, a database that does not exist, a URL that lacks
 /// something.
@@ -831,7 +833,10 @@ fn connect_error_value(e: &tokio_postgres::Error) -> Value {
     // The error's text names its kind only ("error connecting to
     // server"): the causes say what happened.
     let mut text = e.to_string();
-    let (mut timed_out, mut tls) = (false, false);
+    // (The text of a failed TLS handshake, of a server without TLS
+    // among others.)
+    let mut tls = text == "error performing TLS handshake";
+    let mut timed_out = false;
     let causes = std::iter::successors(std::error::Error::source(e), |cause| cause.source());
     for cause in causes {
         text = format!("{text}: {cause}");
@@ -1096,6 +1101,15 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
         Some(m) => m,
         None => EffectiveSslMode::VerifyFull,
     };
+    // A mode that requires TLS refuses a server without it: the
+    // crate's own default, `prefer`, would go on without TLS.
+    cfg.ssl_mode(match effective {
+        EffectiveSslMode::Disable => SslMode::Disable,
+        EffectiveSslMode::Prefer => SslMode::Prefer,
+        EffectiveSslMode::Require | EffectiveSslMode::VerifyCa | EffectiveSslMode::VerifyFull => {
+            SslMode::Require
+        }
+    });
 
     match open_pool(cfg, effective, ext.root_cert.as_deref(), limit, &opts) {
         Ok(pool) => {
@@ -2784,6 +2798,70 @@ mod tests {
         };
         assert!(most <= 2, "{most} attempts were open at once");
         assert!(taken >= 2, "the pool tried {taken} times");
+    }
+
+    /// A server without TLS: it answers the request for TLS with `N`.
+    /// What the client sends after that answer: `None` if it closed
+    /// the connection.
+    #[cfg(feature = "postgres-tls")]
+    fn without_tls(url: impl FnOnce(u16) -> String) -> (Value, Option<Vec<u8>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            // (A safety net: the client answers at once.)
+            let net = Some(Duration::from_secs(30));
+            stream.set_read_timeout(net).expect("timeout");
+            let mut request = [0; 8];
+            stream
+                .read_exact(&mut request)
+                .expect("the request for TLS");
+            assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47], "no request for TLS");
+            stream.write_all(b"N").expect("answer");
+            let mut after = [0; 512];
+            match stream.read(&mut after).expect("read") {
+                0 => None,
+                n => Some(after[..n].to_vec()),
+            }
+        });
+        let result = do_connect(url(port));
+        (result, server.join().expect("the server"))
+    }
+
+    /// A server without TLS is refused when sslmode requires TLS (the
+    /// default, verify-full, among them), before the client sends
+    /// anything more.
+    #[test]
+    #[cfg(feature = "postgres-tls")]
+    fn a_server_without_tls_is_refused_when_tls_is_required() {
+        for mode in [
+            "",
+            "?sslmode=require",
+            "?sslmode=verify-ca",
+            "?sslmode=verify-full",
+        ] {
+            let (result, after) =
+                without_tls(|port| format!("postgres://u:p@127.0.0.1:{port}/db{mode}"));
+            assert_eq!(
+                result.to_string(),
+                "Err(postgres TLS error: error performing TLS handshake: server does not support TLS)",
+                "{mode:?}"
+            );
+            assert_eq!(after, None, "{mode:?}: the client went on without TLS");
+        }
+    }
+
+    /// With sslmode=prefer the client goes on without TLS, as libpq's
+    /// `prefer` does: the next thing it sends is its startup message.
+    #[test]
+    #[cfg(feature = "postgres-tls")]
+    fn prefer_goes_on_without_tls() {
+        let (_, after) =
+            without_tls(|port| format!("postgres://u:p@127.0.0.1:{port}/db?sslmode=prefer"));
+        let after = after.expect("the client closed the connection");
+        // A startup message: its length, then protocol version 3.0.
+        assert_eq!(after.get(4..8), Some(&[0, 3, 0, 0][..]), "{after:?}");
     }
 
     /// The ids of cursors whose transaction ended are kept as runs; a

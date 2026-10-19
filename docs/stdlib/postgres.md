@@ -169,7 +169,8 @@ statement whose rows the program reads, `RETURNING` among them, is a
 once why one fails: `Connect(msg)` for a port where nothing listens, a
 host that is unknown or cannot be reached, or a database that does not
 exist; `AuthFailed(msg)` for a role or password the server refuses
-(SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake; `Timeout`
+(SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake, or a
+server without TLS when `sslmode` requires TLS; `Timeout`
 for a server that does not answer within 10 seconds, login included.
 A `connect_timeout=N` in the connection string (whole seconds, more than
 0; in a URL's query or in the `key=value` form, the last one standing)
@@ -385,6 +386,11 @@ plaintext on handshake failure. A silt program whose URL is just
 `postgres://user@host/db` now requires a valid, hostname-matching TLS
 cert — or an explicit opt-out via `?sslmode=disable`.
 
+Every mode that requires encryption (the default, `require`,
+`verify-ca`, `verify-full`) refuses a server without TLS: the connect
+is `Tls(msg)`, and nothing more is sent to the server. Only `prefer`
+goes on without encryption.
+
 If silt was built **without** the `postgres-tls` feature, a URL that
 defaults to `verify-full` (or any `require` / `verify-*`) returns a
 clear `Tls(msg)` at connect time rather than silently using
@@ -453,7 +459,7 @@ needed) are:
 | Variant | Fields | Raised for |
 | --- | --- | --- |
 | `Connect(msg)` | `String` | A connect that failed, URL parse, connect options, SQLSTATE class `08` |
-| `Tls(msg)` | `String` | TLS handshake / cert read / connector build |
+| `Tls(msg)` | `String` | TLS handshake / a server without TLS when `sslmode` requires TLS / cert read / connector build |
 | `AuthFailed(msg)` | `String` | SQLSTATE class `28`: a role or password the server refuses |
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
 | `TypeMismatch(col, expected, actual)` | `String, String, String` | A column whose type, or a cell whose value, does not fit its field (see [Rows](#rows)) |
