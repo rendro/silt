@@ -22,7 +22,7 @@ lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
 http = ["tcp", "dep:ureq", "dep:httparse"]
-postgres = ["dep:postgres", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator"]
+postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
 tcp-tls = ["tcp", "dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
@@ -59,7 +59,10 @@ toml_edit = "0.22"
 unicode-width = "0.2"
 ureq = { version = "3", optional = true }
 httparse = { version = "1", optional = true }
-postgres = { version = "0.19", optional = true }
+tokio-postgres = { version = "0.7", optional = true }
+# The runtime the postgres module's connections run on.
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "sync"] }
+futures-util = { version = "0.3", optional = true, default-features = false }
 postgres-protocol = { version = "0.6", optional = true }
 r2d2 = { version = "0.8", optional = true }
 base64 = "0.22"
