@@ -53,7 +53,9 @@ for a server that does not answer within 10 seconds, login included.
 A `connect_timeout=N` in the connection string (whole seconds, more than
 0; in a URL's query or in the `key=value` form, the last one standing)
 sets that time instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
-its other connections when it needs them, each bounded the same way. A
+its other connections when it needs them, each bounded the same way;
+while one of them waits past its time for a server that never answers,
+the pool tries no other. A
 statement that finds no free connection in the pool waits 30 seconds
 for one, and is then `Timeout`.
 

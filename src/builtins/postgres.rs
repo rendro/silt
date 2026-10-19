@@ -130,6 +130,7 @@ struct Manager {
     tls: Tls,
     /// How long a connect may take, login included.
     limit: Duration,
+    stalled: Stalled,
     /// The connection `connect` made itself, the first one the pool
     /// takes.
     first: Mutex<Option<postgres::Client>>,
@@ -143,7 +144,7 @@ impl r2d2::ManageConnection for Manager {
         let first = self.first.lock().unwrap_or_else(|e| e.into_inner()).take();
         let client = match first {
             Some(client) => client,
-            None => connect_within(&self.config, &self.tls, self.limit)?,
+            None => connect_within(&self.config, &self.tls, self.limit, &self.stalled)?,
         };
         Ok(Conn {
             canceller: Canceller {
@@ -1487,6 +1488,7 @@ fn open_pool(
         config: cfg,
         tls,
         limit,
+        stalled: Stalled::default(),
         first: Mutex::new(Some(first)),
     };
     let mut builder = Pool::builder();
@@ -1557,37 +1559,82 @@ fn connect_first(
     tls: Tls,
     limit: Duration,
 ) -> Result<(Tls, postgres::Client), Value> {
-    match connect_within(cfg, &tls, limit) {
+    match connect_within(cfg, &tls, limit, &Stalled::default()) {
         Ok(client) => Ok((tls, client)),
         Err(failure) => Err(failure.value()),
     }
 }
 
+/// The connect attempts of one pool that got no answer in time and
+/// whose threads still wait for one: while there is one, the pool
+/// starts no other (R10). So a server that takes connections and never
+/// answers costs a pool one thread, not one per attempt of the pool's.
+type Stalled = Arc<std::sync::atomic::AtomicUsize>;
+
 /// Connect once, and wait for it `limit` at most. The config bounds
 /// the connect of the socket, and nothing bounds what follows it (TLS,
 /// authentication), so the connect runs on a thread of its own. One
 /// that gets no answer in time goes on there until the server or the
-/// system ends it, and what it gets then is dropped.
+/// system ends it, and what it gets then is dropped; it counts in
+/// `stalled` until then, and while one does, this starts no thread and
+/// fails at once.
 fn connect_within(
     cfg: &postgres::Config,
     tls: &Tls,
     limit: Duration,
+    stalled: &Stalled,
 ) -> Result<postgres::Client, ConnectFailure> {
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc::RecvTimeoutError;
+    /// Where an attempt is, for its thread and its waiter.
+    #[derive(Default)]
+    struct Attempt {
+        done: bool,
+        /// The waiter went without the answer: the attempt counts in
+        /// `stalled` until it is done.
+        given_up: bool,
+    }
+    if stalled.load(Ordering::SeqCst) > 0 {
+        return Err(ConnectFailure::NoAnswer);
+    }
+    let attempt = Arc::new(Mutex::new(Attempt::default()));
     let (sent, answer) = std::sync::mpsc::channel();
-    let (config, attempt) = (cfg.clone(), tls.clone());
+    let (config, tls_of_attempt) = (cfg.clone(), tls.clone());
+    let (its, its_stalled) = (attempt.clone(), stalled.clone());
     let started = std::thread::Builder::new()
         .name("silt-pg-connect".into())
         .spawn(move || {
-            let connect = std::panic::AssertUnwindSafe(|| attempt.connect(&config));
-            let _ = sent.send(crate::scheduler::catch_as_error(connect));
+            let connect = std::panic::AssertUnwindSafe(|| tls_of_attempt.connect(&config));
+            let connected = crate::scheduler::catch_as_error(connect);
+            {
+                let mut its = its.lock().unwrap_or_else(|e| e.into_inner());
+                its.done = true;
+                if its.given_up {
+                    its_stalled.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            let _ = sent.send(connected);
         });
     if let Err(e) = started {
         return Err(ConnectFailure::Broke(format!(
             "postgres: cannot start a thread to connect: {e}"
         )));
     }
-    match answer.recv_timeout(limit) {
+    let answered = match answer.recv_timeout(limit) {
+        Err(RecvTimeoutError::Timeout) => {
+            let mut attempt = attempt.lock().unwrap_or_else(|e| e.into_inner());
+            if !attempt.done {
+                attempt.given_up = true;
+                stalled.fetch_add(1, Ordering::SeqCst);
+                return Err(ConnectFailure::NoAnswer);
+            }
+            // The answer came as the time ran out: it is on its way.
+            drop(attempt);
+            answer.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        }
+        answered => answered,
+    };
+    match answered {
         Ok(Ok(Ok(client))) => Ok(client),
         Ok(Ok(Err(e))) => Err(ConnectFailure::Failed(e)),
         Err(RecvTimeoutError::Timeout) => Err(ConnectFailure::NoAnswer),
@@ -2751,6 +2798,44 @@ mod tests {
             panic!("expected an error variant: {result:?}");
         };
         assert_eq!(error.name(), "Timeout", "{result:?}");
+    }
+
+    /// A pool's attempt that got no answer counts as stalled until its
+    /// thread is done; while it does, the next attempt starts no thread
+    /// and opens no connection (R10).
+    #[test]
+    fn a_stalled_attempt_holds_back_the_next() {
+        use std::net::TcpListener;
+        use std::sync::atomic::Ordering;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let cfg: postgres::Config = format!("postgres://u:p@127.0.0.1:{port}/db")
+            .parse()
+            .expect("config");
+        let stalled = Stalled::default();
+        let first = connect_within(&cfg, &Tls::Off, Duration::from_millis(200), &stalled);
+        assert!(
+            matches!(first, Err(ConnectFailure::NoAnswer)),
+            "{:?}",
+            first.err()
+        );
+        assert_eq!(stalled.load(Ordering::SeqCst), 1);
+        let held = listener.accept().expect("the first attempt's connection");
+        let second = connect_within(&cfg, &Tls::Off, Duration::from_millis(200), &stalled);
+        assert!(
+            matches!(second, Err(ConnectFailure::NoAnswer)),
+            "{:?}",
+            second.err()
+        );
+        // No second connection reached the listener.
+        listener.set_nonblocking(true).expect("nonblocking");
+        assert!(listener.accept().is_err(), "a second attempt connected");
+        // The server ends the first attempt's socket: its thread ends,
+        // and the pool may try again.
+        drop(held);
+        while stalled.load(Ordering::SeqCst) > 0 {
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// `connect_timeout=0` is refused before anything is sent.
