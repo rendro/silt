@@ -1,4 +1,6 @@
-the first row has the columns [g]
+the first row has the columns [pad, silt_database_stream_closed_mark]
 the pool answers beside the stream: 1 row
+sessions that run the stream's statement: 1
 closed by the receiver
+sessions that run it after the close: 0
 the pool answers after it: 1 row

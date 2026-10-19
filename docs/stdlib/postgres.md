@@ -42,13 +42,31 @@ unifies them against whatever your `pg.silt` library defines.
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
 
+## Connecting
+
+`postgres.connect` makes the pool's first connection itself and says at
+once why one fails: `Connect(msg)` for a port where nothing listens, a
+host that is unknown or cannot be reached, or a database that does not
+exist; `AuthFailed(msg)` for a role or password the server refuses
+(SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake; `Timeout`
+for a server that does not answer within 10 seconds, login included.
+A `connect_timeout=N` in the connection string (whole seconds, more than
+0; in a URL's query or in the `key=value` form, the last one standing)
+sets that time instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
+its other connections when it needs them, each bounded the same way;
+while one of them waits past its time for a server that never answers,
+the pool tries no other. A
+statement that finds no free connection in the pool waits 30 seconds
+for one, and is then `Timeout`.
+
 ## Cooperative I/O
 
-Every fallible op above cooperates with silt's task
-scheduler: when called from inside a `task.spawn`'d task, it submits
-the request to silt's I/O pool and yields the task slot until the
-response arrives. From silt's perspective the call looks synchronous.
-Called from the main task it runs synchronously on the calling thread.
+Every function above that talks to the server cooperates with silt's
+task scheduler: it hands its work to silt's I/O pool, and the task
+that called it waits for the answer while the program's other tasks go
+on, whether that task is one of `task.spawn`'s or `main`. From silt's
+perspective the call looks synchronous. `postgres.stream` returns its
+channel at once; a worker of its own feeds it.
 
 ## Transactions
 
@@ -61,6 +79,50 @@ enclosing pool would pick a different connection and miss the
 transaction entirely. Nested `postgres.transact` calls are rejected;
 use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
 
+A statement of the transaction that fails aborts it in the server:
+the transaction's later statements are `Err(TxnAborted)`, and if the
+callback returns `Ok(_)` all the same, `postgres.transact` answers
+`Err(TxnAborted)` and nothing is committed (unless a
+`ROLLBACK TO SAVEPOINT` brought the transaction back first).
+
+A `task.deadline` that passes, or a `task.cancel`, ends a task that
+waits for a statement at once, on the pool and inside a transaction
+alike. What becomes of the statement in the server differs:
+
+- On the pool, outside a transaction, the statement is left to finish;
+  its connection then goes back to the pool.
+- Inside `postgres.transact`, the server is asked to cancel the
+  statement. When the task that ends is the one that runs `transact`
+  (or the callback fails with an error of the program), the
+  transaction is rolled back. When the deadline or the cancel is one
+  the callback set around the statement itself, the statement fails
+  as any failed statement does: the transaction is aborted, its later
+  statements are `Err(TxnAborted)` at once, and so is
+  `postgres.transact`'s answer if the callback returns `Ok(_)`. The
+  same holds where `SILT_IO_TIMEOUT` ends the wait for a statement of
+  a transaction. This is for the statements a task waits for:
+  `postgres.query`, `postgres.execute`, `postgres.notify` and the
+  cursor functions (`cursor`, `cursor_next`, `cursor_close`). A
+  deadline or a cancel around `channel.receive` of a stream on the
+  transaction ends a wait on the channel, not on a statement: it
+  cancels and aborts nothing (a stream on a `PgTx` is never
+  cancelled; see below).
+  The connection goes back to the pool after the rollback; it is
+  closed instead if the rollback fails, or if a cancel request was sent
+  for it (a request that reaches the server late would cancel the
+  connection's next statement).
+
+Around the callback `postgres.transact` waits too, and a deadline or a
+cancel ends the task there at once as well. While it waits for a
+connection of the pool or for its `BEGIN`, the transaction is not
+begun, or is rolled back as soon as it is. While it waits for its
+`COMMIT` or `ROLLBACK`, that goes on and finishes in the server, and
+the task does not learn how it ended. `SILT_IO_TIMEOUT` (see the
+concurrency guide) ends the wait for a connection with its `BEGIN` and
+the wait for each statement with `Err(Timeout)`, but not the wait for
+`COMMIT` or `ROLLBACK`: an `Err` from `postgres.transact` never stands
+for a transaction that was committed.
+
 ## Streaming and cursors
 
 `postgres.stream` returns a bounded `Channel` whose elements are
@@ -68,6 +130,27 @@ use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
 the cursor into the channel and closes it when the query completes
 (or on error). Slow consumers backpressure the server side via the
 channel capacity.
+
+A receiver that has read enough closes the channel (`channel.close`),
+and the worker stops. On a pool, a stream that stops before its last
+row (closed, or dropped as the program ends) has its statement
+cancelled in the server, and its connection is closed rather than given
+back to the pool with rows unread. On a `PgTx` the connection is the
+transaction's: the rest of the rows is read and dropped before the
+transaction's next statement or its `COMMIT` (a cancel would abort the
+transaction).
+
+The worker counts as a task of the program. While it fetches rows the
+program does not end. When the program ends while the worker waits for
+room in the channel (nobody reads it, or its reader was cancelled), the
+worker is dropped there, as a task that waits to send is. A stream
+opened on a `PgTx` ends with the transaction: its channel is closed
+when the transaction commits or rolls back, and the rows it holds can
+still be received. While it is open it holds the transaction's
+connection: the transaction's other statements wait until its worker
+has sent the last row or has stopped. A stream on a `PgTx` whose
+reader is gone (cancelled, say) without closing the channel therefore
+holds the transaction until the transaction ends or the program does.
 
 `postgres.cursor` is the lower-level primitive: it `DECLARE`s a
 server-side cursor inside an open transaction and returns an opaque
@@ -154,7 +237,7 @@ cert — or an explicit opt-out via `?sslmode=disable`.
 
 If silt was built **without** the `postgres-tls` feature, a URL that
 defaults to `verify-full` (or any `require` / `verify-*`) returns a
-clear `ConnectionError` at connect time rather than silently using
+clear `Tls(msg)` at connect time rather than silently using
 plaintext.
 
 **`sslmode=require` remains encryption-only**: when you explicitly
@@ -173,8 +256,9 @@ concrete reason otherwise.
 ## Connect options
 
 `postgres.connect_with(url, opts)` accepts a `Map(String, Int)` options
-bag for tunables that don't belong in the URL. Unknown keys are
-silently ignored so new knobs can be added without a breaking change.
+bag for tunables that don't belong in the URL. A key that is no option
+below, or a value the option cannot have, is `Err(Connect(msg))`, and
+nothing is sent to the server.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -218,14 +302,14 @@ needed) are:
 
 | Variant | Fields | Raised for |
 | --- | --- | --- |
-| `Connect(msg)` | `String` | Pool checkout, URL parse, SQLSTATE class `08` |
+| `Connect(msg)` | `String` | A connect that failed, URL parse, connect options, SQLSTATE class `08` |
 | `Tls(msg)` | `String` | TLS handshake / cert read / connector build |
-| `AuthFailed(msg)` | `String` | SQLSTATE class `28` (invalid auth) |
+| `AuthFailed(msg)` | `String` | SQLSTATE class `28`: a role or password the server refuses |
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
 | `TypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
 | `NoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
-| `Closed` | — | Connection dropped mid-query |
-| `Timeout` | — | SQLSTATE `57014` or transport timeout |
+| `Closed` | — | Connection dropped, or a transaction used after it ended |
+| `Timeout` | — | SQLSTATE `57014`, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
 | `Other(msg)` | `String` | Catch-all for shapes we can't classify |
 

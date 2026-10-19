@@ -1,0 +1,120 @@
+-- A transaction's function sets a `task.deadline` around a statement
+-- of the transaction, and in a second transaction it cancels a task
+-- that runs one. The statement is cancelled in the server, as a
+-- statement that failed: the transaction is aborted, its next
+-- statement is `Err(TxnAborted)` at once, `postgres.transact` answers
+-- `Err(TxnAborted)` though the function returns `Ok`, and none of its
+-- rows is in the table.
+--
+-- The statements wait for an advisory lock that `main` holds in a
+-- transaction of its own; `main` sees that none waits any more while
+-- it still holds the lock. A statement that went on waiting would
+-- hold its transaction's connection, the next statement would wait
+-- for it, and the case would not end.
+import channel
+import env
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        Some(Ok(_)) -> loop(n + 1)
+        Some(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> e.message()
+  }
+}
+
+-- The statement that waits for `main`'s lock.
+fn locked() -> String {
+  "INSERT INTO silt_database_callback_deadline SELECT 'it got the lock' FROM pg_advisory_xact_lock(7305)"
+}
+
+fn waiting() -> String {
+  "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 7305 AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_callback_deadline", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_callback_deadline (said text)", [])
+      let held = postgres.transact(pool) { lock ->
+        let _ = postgres.query(lock, "SELECT pg_advisory_xact_lock(7305)", [])?
+        println("main holds the lock")
+        let timed = postgres.transact(pool) { tx ->
+          let _ = postgres.execute(
+            tx,
+            "INSERT INTO silt_database_callback_deadline VALUES ('first')",
+            [],
+          )?
+          let late = task.deadline(time.ms(200)) { -> postgres.execute(tx, locked(), []) }
+          println(
+            match late {
+              Ok(answer) -> "the statement: {said(answer)}"
+              Err(e) -> "task.deadline: {e.message()}"
+            },
+          )
+          println("the next statement: {said(postgres.execute(tx, "SELECT 1", []))}")
+          Ok(())
+        }
+        println("the transaction of the deadline: {said(timed)}")
+        let cancelled = postgres.transact(pool) { tx ->
+          let _ = postgres.execute(
+            tx,
+            "INSERT INTO silt_database_callback_deadline VALUES ('second')",
+            [],
+          )?
+          let t = task.spawn { -> postgres.execute(tx, locked(), []) }
+          -- Until the server shows the task's statement waiting.
+          loop seen = count(pool, waiting()) {
+            match seen == 1 {
+              true -> ()
+              false -> {
+                time.sleep(time.ms(5))
+                loop(count(pool, waiting()))
+              }
+            }
+          }
+          task.cancel(t)
+          println("the task is cancelled")
+          Ok(())
+        }
+        println("the transaction of the cancel: {said(cancelled)}")
+        println("statements that wait for the lock: {count(pool, waiting())}")
+        Ok(())
+      }
+      println("main's transaction: {said(held)}")
+      println("rows in the table: {count(pool, "SELECT 1 FROM silt_database_callback_deadline")}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_callback_deadline", [])
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

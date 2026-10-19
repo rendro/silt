@@ -1,0 +1,53 @@
+-- A task is cancelled about when a statement of its transaction ends,
+-- 300 times over, on a pool of one connection; after each cancel
+-- `main` runs a statement on the pool. The cancel request that is sent
+-- for the task's statement can reach the server after that statement
+-- has ended, and the server then cancels the next statement of the
+-- connection, whoever runs it. So a connection for which a cancel
+-- request was sent is closed, not given back to the pool: `main`'s
+-- statement runs on a new one, and is never cancelled.
+--
+-- The race is won or lost by timing: where connections went back to
+-- the pool, a handful of the 300 statements of `main` failed in every
+-- run tried (2 to 8 of them, in six runs).
+import env
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{ "max_pool_size": 1 }) {
+    Ok(pool) -> {
+      let failed = loop i = 0, failed = 0 {
+        match i < 300 {
+          true -> {
+            let t = task.spawn { ->
+              postgres.transact(pool) { tx ->
+                let _ = postgres.query(tx, "SELECT pg_sleep({i % 4}::float8 / 1000)", [])?
+                time.sleep(time.ms(i / 4 % 3))
+                postgres.query(tx, "SELECT pg_sleep({i / 2 % 3}::float8 / 1000)", [])
+              }
+            }
+            time.sleep(time.ms(1 + i % 5))
+            task.cancel(t)
+            match postgres.query(pool, "SELECT 1", []) {
+              Ok(_) -> loop(i + 1, failed)
+              Err(_) -> loop(i + 1, failed + 1)
+            }
+          }
+          false -> failed
+        }
+      }
+      println("rounds in which main's statement failed: {failed}")
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

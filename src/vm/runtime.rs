@@ -849,19 +849,28 @@ impl IoOp {
     /// goes without having taken it ([`IoOp::take`]), once the value
     /// is there, in whichever order the two come. For a value that
     /// must not be lost with a waiter that was cancelled just as it
-    /// came (an accepted connection).
-    #[cfg(feature = "tcp")]
+    /// came (an accepted connection, a transaction that has begun).
+    #[cfg(any(feature = "tcp", feature = "postgres"))]
     pub(crate) fn unheard_with(self, unheard: impl FnOnce(&Value) + Send + 'static) -> IoOp {
         *self.state.unheard.lock() = Some(Box::new(unheard));
         self
     }
 
-    /// Nobody waits for the operation, which counts as pending until
-    /// it ends, and its thread as the pool's: it feeds a channel that
-    /// the program reads.
+    /// Nobody waits for the operation, and it counts as pending no
+    /// longer; its thread stays the pool's. It feeds a channel that
+    /// the program reads, and counts as what it holds itself for that:
+    /// a task while it runs ([`Scheduler::enter`]), or something
+    /// outside the tasks that can end a wait ([`Scheduler::external`]).
+    /// The caller takes the one or the other before the operation is
+    /// submitted, so that there is no moment at which it counts as
+    /// nothing.
+    ///
+    /// [`Scheduler::enter`]: crate::scheduler::Scheduler::enter
+    /// [`Scheduler::external`]: crate::scheduler::Scheduler::external
     #[cfg(feature = "postgres")]
     pub(crate) fn detach(mut self) {
-        self.in_flight = Arc::default();
+        let pending = self.in_flight.lock().take();
+        drop(pending);
         self.state = OpState::new(Phase::Left);
     }
 }

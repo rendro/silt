@@ -1,0 +1,7 @@
+a cursor closed in it, again: another error: postgres: cursor 2 is not registered (closed or tx ended)
+the transaction: Ok
+a statement on it afterwards: Closed
+an execute: Closed
+a stream: Closed
+a cursor: Closed
+the next batch of a cursor left open: Closed

@@ -39,7 +39,8 @@ against a PostgreSQL server: each `<case>.silt` must exit with status 0,
 write nothing to stderr and write exactly `<case>.stdout`. The programs
 read the server's URL from `SILT_TEST_POSTGRES_URL`; the role it names
 must be allowed to create tables in the database, and needs nothing
-more. Each case drops the tables it makes.
+more. Each case drops the tables it makes. A case whose first lines
+are `-- env: NAME=value` runs with those variables set.
 
 ```
 SILT_TEST_POSTGRES_URL='postgres://silt_orm:silt_orm_dev@127.0.0.1/silt_orm_test?sslmode=disable' \
@@ -58,7 +59,7 @@ SKIPPED` to stderr and passes, so the whole suite above stays runnable
 on a machine without a server. `cargo nextest` shows those lines (its
 summary still counts the cases as passed). Plain `cargo test` hides the
 output of a test that passes: there a run without a server reads
-"7 passed" and says nothing more, and `cargo test --all-features --test
+"19 passed" and says nothing more, and `cargo test --all-features --test
 database -- --nocapture` shows the lines. In CI (`CI` is set) a case
 without the variable fails instead: the job that runs this suite starts
 the server, and a run that tested nothing must not be green. No other

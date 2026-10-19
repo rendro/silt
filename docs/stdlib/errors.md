@@ -121,14 +121,14 @@ its own (`float.Empty` is not `int.Empty`).
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Connect(String)` | message | tcp / DNS / pool checkout failure |
-| `Tls(String)` | message | TLS setup / handshake |
-| `AuthFailed(String)` | message | SQLSTATE class 28 |
+| `Connect(String)` | message | a connect that failed (refused port, unknown or unreachable host, missing database), URL parse, connect options, SQLSTATE class 08 |
+| `Tls(String)` | message | TLS handshake / cert read / connector build |
+| `AuthFailed(String)` | message | SQLSTATE class 28: a role or password the server refuses |
 | `Query(String, String)` | message, SQLSTATE | server-reported error |
 | `TypeMismatch(String, String, String)` | column, expected, actual | row decode |
 | `NoSuchColumn(String)` | column | row.get on missing column |
-| `Closed` | — | connection dropped mid-query |
-| `Timeout` | — | statement / pool timeout |
+| `Closed` | — | connection dropped, or a transaction used after it ended |
+| `Timeout` | — | SQLSTATE 57014, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE 25P02 — rollback required |
 | `Other(String)` | message | unclassified pg error |
 

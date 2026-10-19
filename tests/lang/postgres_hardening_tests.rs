@@ -22,7 +22,7 @@
 #![cfg(feature = "postgres")]
 
 use silt::builtins::postgres::{
-    EffectiveSslMode, read_max_pool_size_for_tests, redact_pg_message,
+    EffectiveSslMode, connect_limit_for_tests, read_max_pool_size_for_tests, redact_pg_message,
     resolve_effective_sslmode_for_tests,
 };
 use silt::value::Value;
@@ -137,16 +137,91 @@ fn connect_with_zero_max_pool_size_rejected() {
     );
 }
 
-/// Unknown keys in the opts map are silently ignored so future
-/// options can be added without a breaking change to existing callers.
+/// A key that is no option is an error, which names the key and the
+/// options there are: a misspelt option would otherwise do nothing.
 #[test]
-fn connect_with_unknown_keys_ignored() {
+fn connect_with_unknown_keys_rejected() {
     let opts = map_with(&[
         ("max_pool_size", Value::Int(15)),
-        ("future_option_we_do_not_know_yet", Value::Int(99)),
+        ("max_pool_sise", Value::Int(99)),
     ]);
-    let got = read_max_pool_size_for_tests(&opts).expect("a map");
-    assert_eq!(got, Ok(Some(15u32)));
+    let err = read_max_pool_size_for_tests(&opts)
+        .expect("a map")
+        .expect_err("unknown key rejected");
+    assert_eq!(
+        err,
+        "postgres.connect_with: unknown option `max_pool_sise`; the options are: max_pool_size",
+    );
+}
+
+/// A connect may take 10 s, or the `connect_timeout` (whole seconds)
+/// that the URL sets, which must be more than 0.
+#[test]
+fn connect_limit_is_the_urls_connect_timeout_or_10_s() {
+    use std::time::Duration;
+    let limit = |url: &str| connect_limit_for_tests(url);
+    assert_eq!(limit("postgres://u@h/db"), Ok(Duration::from_secs(10)));
+    assert_eq!(
+        limit("postgres://u@h/db?sslmode=disable"),
+        Ok(Duration::from_secs(10))
+    );
+    assert_eq!(
+        limit("postgres://u@h/db?sslmode=disable&connect_timeout=3"),
+        Ok(Duration::from_secs(3))
+    );
+    assert_eq!(
+        limit("postgres://u@h/db?connect_timeout=30&sslmode=disable"),
+        Ok(Duration::from_secs(30))
+    );
+    for zero in ["0", "-5"] {
+        assert_eq!(
+            limit(&format!("postgres://u@h/db?connect_timeout={zero}")),
+            Err("connect_timeout must be > 0".to_string()),
+            "connect_timeout={zero}",
+        );
+    }
+    // As the URL's parser reads it: percent-decoded, the last one
+    // standing, a `?` in the password no start of the options.
+    let refused = Err("connect_timeout must be > 0".to_string());
+    assert_eq!(limit("postgres://u@h/db?connect_timeout=%30"), refused);
+    assert_eq!(limit("postgres://u@h/db?connect_%74imeout=0"), refused);
+    assert_eq!(
+        limit("postgres://u@h/db?connect_timeout=2&connect_timeout=0"),
+        refused
+    );
+    assert_eq!(
+        limit("postgres://u@h/db?connect_timeout=0&connect_timeout=2"),
+        Ok(Duration::from_secs(2))
+    );
+    assert_eq!(
+        limit("postgres://u:a?b@h/db?connect_timeout=4"),
+        Ok(Duration::from_secs(4))
+    );
+}
+
+/// The same for the `key=value` form of a connection string.
+#[test]
+fn connect_limit_reads_the_key_value_form() {
+    use std::time::Duration;
+    let limit = |dsn: &str| connect_limit_for_tests(dsn);
+    let refused = Err("connect_timeout must be > 0".to_string());
+    assert_eq!(limit("host=h user=u"), Ok(Duration::from_secs(10)));
+    assert_eq!(
+        limit("host=h connect_timeout=3 user=u"),
+        Ok(Duration::from_secs(3))
+    );
+    assert_eq!(
+        limit("host=h connect_timeout = '7'"),
+        Ok(Duration::from_secs(7))
+    );
+    assert_eq!(limit("host=h connect_timeout=0"), refused);
+    assert_eq!(limit("connect_timeout='-1' host=h"), refused);
+    assert_eq!(limit("host=h connect_timeout=2 connect_timeout=0"), refused);
+    // A quoted value with a space and an escaped quote is one value.
+    assert_eq!(
+        limit("password='a b\\'c' connect_timeout=5"),
+        Ok(Duration::from_secs(5))
+    );
 }
 
 /// Options that are no `Map(String, Int)` are not the argument's kind:
