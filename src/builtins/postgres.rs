@@ -594,10 +594,7 @@ fn connect_error_value(e: &postgres::Error) -> Value {
         text = format!("{text}: {cause}");
         let io = cause.downcast_ref::<std::io::Error>();
         timed_out |= io.is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut);
-        #[cfg(feature = "postgres-tls")]
-        {
-            tls |= cause.downcast_ref::<native_tls::Error>().is_some();
-        }
+        tls |= is_tls_failure(cause);
     }
     if tls {
         pg_tls(text)
@@ -609,6 +606,18 @@ fn connect_error_value(e: &postgres::Error) -> Value {
     } else {
         pg_connect(text)
     }
+}
+
+/// Whether `cause` is a failure of TLS.
+#[cfg(feature = "postgres-tls")]
+fn is_tls_failure(cause: &(dyn std::error::Error + 'static)) -> bool {
+    cause.downcast_ref::<native_tls::Error>().is_some()
+}
+
+/// Whether `cause` is a failure of TLS: never, in a build without it.
+#[cfg(not(feature = "postgres-tls"))]
+fn is_tls_failure(_cause: &(dyn std::error::Error + 'static)) -> bool {
+    false
 }
 
 /// Whether `error` is the `PostgresError` `Timeout`.
@@ -1468,9 +1477,7 @@ fn first_connection(
 ) -> Result<(Tls, postgres::Client), Value> {
     let _ = root_cert_path; // unused without TLS
     match mode {
-        EffectiveSslMode::Disable | EffectiveSslMode::Prefer => {
-            connect_within(cfg, Tls::Off, limit)
-        }
+        EffectiveSslMode::Disable | EffectiveSslMode::Prefer => connect_first(cfg, Tls::Off, limit),
         EffectiveSslMode::Require | EffectiveSslMode::VerifyCa | EffectiveSslMode::VerifyFull => {
             Err(pg_tls(
                 "TLS required but silt was built without the postgres-tls feature \
