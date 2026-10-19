@@ -137,16 +137,21 @@ fn connect_with_zero_max_pool_size_rejected() {
     );
 }
 
-/// Unknown keys in the opts map are silently ignored so future
-/// options can be added without a breaking change to existing callers.
+/// A key that is no option is an error, which names the key and the
+/// options there are: a misspelt option would otherwise do nothing.
 #[test]
-fn connect_with_unknown_keys_ignored() {
+fn connect_with_unknown_keys_rejected() {
     let opts = map_with(&[
         ("max_pool_size", Value::Int(15)),
-        ("future_option_we_do_not_know_yet", Value::Int(99)),
+        ("max_pool_sise", Value::Int(99)),
     ]);
-    let got = read_max_pool_size_for_tests(&opts).expect("a map");
-    assert_eq!(got, Ok(Some(15u32)));
+    let err = read_max_pool_size_for_tests(&opts)
+        .expect("a map")
+        .expect_err("unknown key rejected");
+    assert_eq!(
+        err,
+        "postgres.connect_with: unknown option `max_pool_sise`; the options are: max_pool_size",
+    );
 }
 
 /// Options that are no `Map(String, Int)` are not the argument's kind:

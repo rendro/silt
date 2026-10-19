@@ -42,6 +42,19 @@ unifies them against whatever your `pg.silt` library defines.
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
 
+## Connecting
+
+`postgres.connect` makes the pool's first connection itself and says at
+once why one fails: `Connect(msg)` for a port where nothing listens, a
+host that is unknown or cannot be reached, or a database that does not
+exist; `AuthFailed(msg)` for a role or password the server refuses
+(SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake; `Timeout`
+for a server that does not answer within 10 seconds, or within the
+`connect_timeout` (in seconds) that the URL sets. The pool opens its
+other connections when it needs them, each bounded the same way. A
+statement that finds no free connection in the pool waits 30 seconds
+for one, and is then `Timeout`.
+
 ## Cooperative I/O
 
 Every fallible op above cooperates with silt's task
@@ -154,7 +167,7 @@ cert — or an explicit opt-out via `?sslmode=disable`.
 
 If silt was built **without** the `postgres-tls` feature, a URL that
 defaults to `verify-full` (or any `require` / `verify-*`) returns a
-clear `ConnectionError` at connect time rather than silently using
+clear `Tls(msg)` at connect time rather than silently using
 plaintext.
 
 **`sslmode=require` remains encryption-only**: when you explicitly
@@ -173,8 +186,9 @@ concrete reason otherwise.
 ## Connect options
 
 `postgres.connect_with(url, opts)` accepts a `Map(String, Int)` options
-bag for tunables that don't belong in the URL. Unknown keys are
-silently ignored so new knobs can be added without a breaking change.
+bag for tunables that don't belong in the URL. A key that is no option
+below, or a value the option cannot have, is `Err(Connect(msg))`, and
+nothing is sent to the server.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -218,14 +232,14 @@ needed) are:
 
 | Variant | Fields | Raised for |
 | --- | --- | --- |
-| `Connect(msg)` | `String` | Pool checkout, URL parse, SQLSTATE class `08` |
+| `Connect(msg)` | `String` | A connect that failed, URL parse, connect options, SQLSTATE class `08` |
 | `Tls(msg)` | `String` | TLS handshake / cert read / connector build |
-| `AuthFailed(msg)` | `String` | SQLSTATE class `28` (invalid auth) |
+| `AuthFailed(msg)` | `String` | SQLSTATE class `28`: a role or password the server refuses |
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
 | `TypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
 | `NoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
 | `Closed` | — | Connection dropped mid-query |
-| `Timeout` | — | SQLSTATE `57014` or transport timeout |
+| `Timeout` | — | SQLSTATE `57014`, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
 | `Other(msg)` | `String` | Catch-all for shapes we can't classify |
 

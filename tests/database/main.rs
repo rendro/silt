@@ -142,4 +142,5 @@ cases!(
     deadline_over_a_statement_in_flight,
     stream_closed_by_its_receiver,
     errors_of_statements,
+    connect_errors,
 );

@@ -1249,16 +1249,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "r2d2_postgres"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efd4b47636dbca581cd057e2f27a5d39be741ea4f85fd3c29e415c55f71c7595"
-dependencies = [
- "postgres",
- "r2d2",
-]
-
-[[package]]
 name = "radix_trie"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1693,7 +1683,6 @@ dependencies = [
  "postgres-native-tls",
  "proptest",
  "r2d2",
- "r2d2_postgres",
  "rcgen",
  "regex",
  "rustls",

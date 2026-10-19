@@ -1,0 +1,100 @@
+-- The errors of a connect that fails, each said at once: a port where
+-- nothing listens is `Connect`, a wrong password `AuthFailed`, a
+-- database that does not exist `Connect`, each with the reason. An
+-- option of `postgres.connect_with` that is none, or a value it cannot
+-- have, is `Connect` too, before anything is sent. (A server that does
+-- not answer is `Timeout` after 10 s: no case waits for that.)
+--
+-- The URLs are the suite's with one part changed. A connect that
+-- waited, as one that tried again until the pool's 30 s were over,
+-- would be `Timeout` here, and the case would print that.
+import env
+import postgres
+import string
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- The variant of a connect's error, and its message when `told`.
+fn said(answer: Result(postgres.PgPool, postgres.PostgresError), told: Bool) -> String {
+  match answer {
+    Ok(pool) -> {
+      postgres.close(pool)
+      "connected"
+    }
+    Err(e) -> {
+      let variant = match e {
+        postgres.Connect(_) -> "Connect"
+        postgres.AuthFailed(_) -> "AuthFailed"
+        postgres.Timeout -> "Timeout"
+        _ -> "another error"
+      }
+      match told {
+        true -> "{variant}: {e.message()}"
+        false -> variant
+      }
+    }
+  }
+}
+
+-- `url` with its password replaced.
+fn with_password(url: String, password: String) -> String {
+  match string.last_index_of(url, "@") {
+    Some(at) -> {
+      let before = string.slice(url, 0, at)
+      match string.last_index_of(before, ":") {
+        Some(colon) -> {
+          let host = string.slice(url, at, string.length(url))
+          "{string.slice(before, 0, colon)}:{password}{host}"
+        }
+        None -> url
+      }
+    }
+    None -> url
+  }
+}
+
+-- `url` with its database replaced.
+fn with_database(url: String, database: String) -> String {
+  let at = match string.last_index_of(url, "@") {
+    Some(at) -> at
+    None -> 0
+  }
+  let rest = string.slice(url, at, string.length(url))
+  match string.index_of(rest, "/") {
+    Some(slash) -> {
+      let query = match string.index_of(rest, "?") {
+        Some(q) -> string.slice(rest, q, string.length(rest))
+        None -> ""
+      }
+      "{string.slice(url, 0, at + slash + 1)}{database}{query}"
+    }
+    None -> url
+  }
+}
+
+fn main() {
+  println(
+    "a port where nothing listens: {said(postgres.connect("postgres://nobody:nothing@127.0.0.1:1/nothing?sslmode=disable"), false)}",
+  )
+  println(
+    "a wrong password: {said(postgres.connect(with_password(url(), "pg1_not_the_password")), true)}",
+  )
+  println(
+    "a database that does not exist: {said(postgres.connect(with_database(url(), "pg1_no_such_database")), true)}",
+  )
+  println("the suite's own URL: {said(postgres.connect(url()), true)}")
+  println(
+    "an option that is none: {said(postgres.connect_with(url(), #{ "max_pool_sise": 4 }), true)}",
+  )
+  println(
+    "a pool of no connections: {said(postgres.connect_with(url(), #{ "max_pool_size": 0 }), true)}",
+  )
+  println(
+    "an option that is one: {said(postgres.connect_with(url(), #{ "max_pool_size": 2 }), true)}",
+  )
+}

@@ -2,7 +2,7 @@
 //!
 //! Provides connection pooling, parameterised query/execute, and
 //! transaction support against a Postgres server. Modeled on the sync
-//! `postgres` crate + `r2d2_postgres` connection pool, mirroring the
+//! `postgres` crate + an `r2d2` connection pool, mirroring the
 //! pattern used by the `http` builtin (sync ureq + io_pool bridge).
 //!
 //! Pool handles are opaque to silt code: a `PgPool` variant with one
@@ -26,6 +26,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -33,7 +34,6 @@ use fallible_iterator::FallibleIterator;
 use postgres::NoTls;
 use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
 use r2d2::Pool;
-use r2d2_postgres::PostgresConnectionManager;
 
 use super::common::ok;
 use super::typed::{Arg, List, Map, Ret, builtins};
@@ -57,56 +57,85 @@ fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     Value::variant(bv::ERR, vec![error])
 }
 
-// ── TLS-capable pool/conn wrappers ──────────────────────────────────
+// ── The pool and its connections ────────────────────────────────────
 //
-// When the `postgres-tls` feature is enabled, both the plain-TCP
-// `NoTls` variant and the TLS `MakeTlsConnector` variant coexist —
-// `do_connect` picks one based on the parsed `sslmode`. Without the
-// feature, `PgPool`/`PinnedConn` collapse to single-variant enums
-// that are identical in behavior to the pre-TLS code.
+// The pool is r2d2's, with a manager of the module's own: it hands
+// out the connection that `connect` made first, and its connections
+// can be marked broken, so that the pool drops them instead of taking
+// them back.
 
-type PgPoolNoTls = Pool<PostgresConnectionManager<NoTls>>;
-type PinnedConnNoTls = r2d2::PooledConnection<PostgresConnectionManager<NoTls>>;
+/// How long connecting may take when the URL sets no
+/// `connect_timeout`: the first connection, which `connect` makes
+/// itself, and each one the pool opens later.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[cfg(feature = "postgres-tls")]
-type PgPoolTls = Pool<PostgresConnectionManager<postgres_native_tls::MakeTlsConnector>>;
-#[cfg(feature = "postgres-tls")]
-type PinnedConnTls =
-    r2d2::PooledConnection<PostgresConnectionManager<postgres_native_tls::MakeTlsConnector>>;
-
-enum PgPool {
-    NoTls(PgPoolNoTls),
+/// How a pool's connections are encrypted, once `sslmode` is read.
+#[derive(Clone)]
+enum Tls {
+    Off,
     #[cfg(feature = "postgres-tls")]
-    Tls(PgPoolTls),
+    On(postgres_native_tls::MakeTlsConnector),
 }
 
-impl PgPool {
-    fn get(&self) -> Result<PinnedConn, r2d2::Error> {
+impl Tls {
+    fn connect(&self, config: &postgres::Config) -> Result<postgres::Client, postgres::Error> {
         match self {
-            PgPool::NoTls(p) => p.get().map(PinnedConn::NoTls),
+            Tls::Off => config.connect(NoTls),
             #[cfg(feature = "postgres-tls")]
-            PgPool::Tls(p) => p.get().map(PinnedConn::Tls),
+            Tls::On(connector) => config.connect(connector.clone()),
         }
     }
 }
 
-enum PinnedConn {
-    NoTls(PinnedConnNoTls),
-    #[cfg(feature = "postgres-tls")]
-    Tls(PinnedConnTls),
+/// A connection of a pool.
+struct Conn {
+    client: postgres::Client,
+    /// It must not go back to the pool: a statement of it was left
+    /// with rows unread, or its transaction did not roll back.
+    broken: bool,
 }
 
-impl PinnedConn {
-    /// Access the underlying `postgres::Client` regardless of which
-    /// TLS mode was used to build the pool.
+impl Conn {
     fn client_mut(&mut self) -> &mut postgres::Client {
-        match self {
-            PinnedConn::NoTls(c) => c,
-            #[cfg(feature = "postgres-tls")]
-            PinnedConn::Tls(c) => c,
-        }
+        &mut self.client
     }
 }
+
+struct Manager {
+    config: postgres::Config,
+    tls: Tls,
+    /// The connection `connect` made itself, the first one the pool
+    /// takes.
+    first: Mutex<Option<postgres::Client>>,
+}
+
+impl r2d2::ManageConnection for Manager {
+    type Connection = Conn;
+    type Error = postgres::Error;
+
+    fn connect(&self) -> Result<Conn, postgres::Error> {
+        let first = self.first.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let client = match first {
+            Some(client) => client,
+            None => self.tls.connect(&self.config)?,
+        };
+        Ok(Conn {
+            client,
+            broken: false,
+        })
+    }
+
+    fn is_valid(&self, conn: &mut Conn) -> Result<(), postgres::Error> {
+        conn.client.simple_query("").map(|_| ())
+    }
+
+    fn has_broken(&self, conn: &mut Conn) -> bool {
+        conn.broken || conn.client.is_closed()
+    }
+}
+
+type PgPool = Pool<Manager>;
+type PinnedConn = r2d2::PooledConnection<Manager>;
 
 // ── Pool + tx handle side tables ────────────────────────────────────
 
@@ -409,10 +438,11 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
     }
 }
 
-/// Build a typed `PostgresError` variant from an `r2d2::Error` (pool checkout
-/// / build failure). r2d2 wraps the underlying postgres error inside —
-/// we classify on the Display text: a timeout while waiting for a slot
-/// maps to `Timeout`, anything else to `Connect`.
+/// Build a typed `PostgresError` variant from an `r2d2::Error`: a
+/// checkout that found no connection in the pool's 30 s. r2d2 wraps the
+/// underlying postgres error inside — we classify on the Display text:
+/// a timeout while waiting for a slot maps to `Timeout`, anything else
+/// to `Connect`.
 fn pool_error_value(e: &r2d2::Error) -> Value {
     let raw = format!("{e}");
     let lc = raw.to_ascii_lowercase();
@@ -421,6 +451,52 @@ fn pool_error_value(e: &r2d2::Error) -> Value {
     } else {
         pg_connect(raw)
     }
+}
+
+/// The `PostgresError` of a connect that failed: `AuthFailed` when the
+/// server refused the role or its password (SQLSTATE class `28`), `Tls`
+/// for the handshake, `Timeout` for a socket that got no answer in
+/// time, and `Connect` for every other reason: a refused port, an
+/// unknown host, a database that does not exist, a URL that lacks
+/// something.
+fn connect_error_value(e: &postgres::Error) -> Value {
+    if let Some(db) = e.as_db_error() {
+        let message = redact_pg_message(db.message());
+        return match db.code().code().starts_with("28") {
+            true => Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message.into())]),
+            false => pg_connect(message),
+        };
+    }
+    // The error's text names its kind only ("error connecting to
+    // server"): the causes say what happened.
+    let mut text = e.to_string();
+    let (mut timed_out, mut tls) = (false, false);
+    let causes = std::iter::successors(std::error::Error::source(e), |cause| cause.source());
+    for cause in causes {
+        text = format!("{text}: {cause}");
+        let io = cause.downcast_ref::<std::io::Error>();
+        timed_out |= io.is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut);
+        #[cfg(feature = "postgres-tls")]
+        {
+            tls |= cause.downcast_ref::<native_tls::Error>().is_some();
+        }
+    }
+    if tls {
+        pg_tls(text)
+    } else if timed_out {
+        Value::variant(bv::PG_TIMEOUT, vec![])
+    } else if text.starts_with("authentication error") {
+        // The server asked for a password that the URL does not give.
+        Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(text.into())])
+    } else {
+        pg_connect(text)
+    }
+}
+
+/// Whether `error` is the `PostgresError` `Timeout`.
+#[cfg(feature = "postgres-tls")]
+fn is_pg_timeout(error: &Value) -> bool {
+    matches!(error, Value::Variant(variant) if variant.is(bv::PG_TIMEOUT))
 }
 
 /// Ad-hoc `Other(msg)` for misuse errors (wrong variant shape, bad
@@ -1049,12 +1125,19 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
         }
     };
 
-    let cfg: postgres::Config = match stripped_url.parse() {
+    let mut cfg: postgres::Config = match stripped_url.parse() {
         Ok(cfg) => cfg,
         Err(e) => {
             return err(pg_connect(format!("postgres: invalid URL: {e}")));
         }
     };
+    // The URL's own `connect_timeout` (whole seconds; 0 sets none)
+    // takes the place of `CONNECT_TIMEOUT`.
+    let limit = cfg
+        .get_connect_timeout()
+        .copied()
+        .unwrap_or(CONNECT_TIMEOUT);
+    cfg.connect_timeout(limit);
 
     // Derive effective TLS mode.
     //
@@ -1080,7 +1163,7 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
         None => EffectiveSslMode::VerifyFull,
     };
 
-    match build_pool(cfg, effective, ext.root_cert.as_deref(), opts) {
+    match open_pool(cfg, effective, ext.root_cert.as_deref(), limit, &opts) {
         Ok(pool) => {
             let id = insert_pool(pool);
             ok(make_pool_handle(id))
@@ -1176,59 +1259,118 @@ fn extract_ssl_url_params(url: &str) -> Result<(String, SslUrlParams), String> {
     Ok((stripped, params))
 }
 
-/// Build a `PgPool` for the given config and effective SSL mode.
-/// Returns an already-wrapped silt error value on failure.
-fn build_pool(
+/// Open a pool for `cfg`, encrypted as `mode` says. Its first
+/// connection is made here, so that a connect that fails says why at
+/// once; the pool takes it, and opens the others itself, each when it
+/// can. The `PostgresError` of a connect that failed.
+fn open_pool(
     cfg: postgres::Config,
     mode: EffectiveSslMode,
     root_cert_path: Option<&str>,
-    opts: ConnectOpts,
-) -> Result<PgPool, Value> {
-    #[cfg(feature = "postgres-tls")]
-    {
-        match mode {
-            EffectiveSslMode::Disable => build_pool_notls(cfg, &opts),
-            EffectiveSslMode::Prefer => build_pool_prefer_tls(cfg, root_cert_path, &opts),
-            EffectiveSslMode::Require => build_pool_tls(cfg, root_cert_path, false, false, &opts),
-            EffectiveSslMode::VerifyCa => build_pool_tls(cfg, root_cert_path, true, false, &opts),
-            EffectiveSslMode::VerifyFull => build_pool_tls(cfg, root_cert_path, true, true, &opts),
-        }
-    }
-    #[cfg(not(feature = "postgres-tls"))]
-    {
-        let _ = root_cert_path; // unused without TLS
-        match mode {
-            EffectiveSslMode::Disable | EffectiveSslMode::Prefer => build_pool_notls(cfg, &opts),
-            EffectiveSslMode::Require
-            | EffectiveSslMode::VerifyCa
-            | EffectiveSslMode::VerifyFull => Err(pg_tls(
-                "TLS required but silt was built without the postgres-tls feature \
-                 (URL had no `sslmode=`, which now defaults to verify-full; \
-                 use `?sslmode=disable` to connect without TLS)",
-            )),
-        }
-    }
-}
-
-/// Apply `ConnectOpts` overrides to an `r2d2::Builder`. Centralised so
-/// every pool-construction path (TLS / NoTLS / prefer) picks up the
-/// same tunables.
-fn apply_pool_opts<M: r2d2::ManageConnection>(
-    mut builder: r2d2::Builder<M>,
+    limit: Duration,
     opts: &ConnectOpts,
-) -> r2d2::Builder<M> {
+) -> Result<PgPool, Value> {
+    let (tls, first) = first_connection(&cfg, mode, root_cert_path, limit)?;
+    let manager = Manager {
+        config: cfg,
+        tls,
+        first: Mutex::new(Some(first)),
+    };
+    let mut builder = Pool::builder();
     if let Some(n) = opts.max_pool_size {
         builder = builder.max_size(n);
     }
-    builder
+    Ok(builder.build_unchecked(manager))
 }
 
-fn build_pool_notls(cfg: postgres::Config, opts: &ConnectOpts) -> Result<PgPool, Value> {
-    let manager = PostgresConnectionManager::new(cfg, NoTls);
-    let pool = apply_pool_opts(Pool::builder(), opts)
-        .build(manager)
-        .map_err(|e| pool_error_value(&e))?;
-    Ok(PgPool::NoTls(pool))
+/// The first connection of a pool, and the encryption of the pool's
+/// connections.
+#[cfg(feature = "postgres-tls")]
+fn first_connection(
+    cfg: &postgres::Config,
+    mode: EffectiveSslMode,
+    root_cert_path: Option<&str>,
+    limit: Duration,
+) -> Result<(Tls, postgres::Client), Value> {
+    // `build_tls_connector` takes what is NOT checked: the
+    // certificate, the host name.
+    let tls = match mode {
+        EffectiveSslMode::Disable => Tls::Off,
+        // Opportunistic encryption, no authentication of the server
+        // (libpq's `prefer`): TLS, and a plain connection if that
+        // fails other than by getting no answer.
+        EffectiveSslMode::Prefer => match build_tls_connector(root_cert_path, true, true) {
+            Ok(connector) => match connect_within(cfg, Tls::On(connector), limit) {
+                Ok(done) => return Ok(done),
+                Err(error) if is_pg_timeout(&error) => return Err(error),
+                Err(_) => Tls::Off,
+            },
+            Err(_) => Tls::Off,
+        },
+        EffectiveSslMode::Require => Tls::On(build_tls_connector(root_cert_path, true, true)?),
+        EffectiveSslMode::VerifyCa => Tls::On(build_tls_connector(root_cert_path, false, true)?),
+        EffectiveSslMode::VerifyFull => Tls::On(build_tls_connector(root_cert_path, false, false)?),
+    };
+    connect_within(cfg, tls, limit)
+}
+
+/// The first connection of a pool, and the encryption of the pool's
+/// connections: none, in a build without TLS, which refuses a mode
+/// that asks for it.
+#[cfg(not(feature = "postgres-tls"))]
+fn first_connection(
+    cfg: &postgres::Config,
+    mode: EffectiveSslMode,
+    root_cert_path: Option<&str>,
+    limit: Duration,
+) -> Result<(Tls, postgres::Client), Value> {
+    let _ = root_cert_path; // unused without TLS
+    match mode {
+        EffectiveSslMode::Disable | EffectiveSslMode::Prefer => {
+            connect_within(cfg, Tls::Off, limit)
+        }
+        EffectiveSslMode::Require | EffectiveSslMode::VerifyCa | EffectiveSslMode::VerifyFull => {
+            Err(pg_tls(
+                "TLS required but silt was built without the postgres-tls feature \
+                 (URL had no `sslmode=`, which now defaults to verify-full; \
+                 use `?sslmode=disable` to connect without TLS)",
+            ))
+        }
+    }
+}
+
+/// Connect once, and wait for it `limit` at most. The config bounds
+/// the connect of the socket, and nothing bounds what follows it (TLS,
+/// authentication), so the connect runs on a thread of its own. One
+/// that gets no answer in time goes on there until the server or the
+/// system ends it, and what it gets then is dropped.
+fn connect_within(
+    cfg: &postgres::Config,
+    tls: Tls,
+    limit: Duration,
+) -> Result<(Tls, postgres::Client), Value> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let (sent, answer) = std::sync::mpsc::channel();
+    let (config, attempt) = (cfg.clone(), tls.clone());
+    let started = std::thread::Builder::new()
+        .name("silt-pg-connect".into())
+        .spawn(move || {
+            let connect = std::panic::AssertUnwindSafe(|| attempt.connect(&config));
+            let _ = sent.send(crate::scheduler::catch_as_error(connect));
+        });
+    if let Err(e) = started {
+        return Err(pg_connect(format!(
+            "postgres: cannot start a thread to connect: {e}"
+        )));
+    }
+    match answer.recv_timeout(limit) {
+        Ok(Ok(Ok(client))) => Ok((tls, client)),
+        Ok(Ok(Err(e))) => Err(connect_error_value(&e)),
+        Err(RecvTimeoutError::Timeout) => Err(Value::variant(bv::PG_TIMEOUT, vec![])),
+        Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => {
+            Err(pg_unknown("postgres: the connect panicked"))
+        }
+    }
 }
 
 #[cfg(feature = "postgres-tls")]
@@ -1255,59 +1397,6 @@ fn build_tls_connector(
         .build()
         .map_err(|e| pg_tls(format!("postgres: TLS setup failed: {e}")))?;
     Ok(postgres_native_tls::MakeTlsConnector::new(connector))
-}
-
-#[cfg(feature = "postgres-tls")]
-fn build_pool_tls(
-    cfg: postgres::Config,
-    root_cert_path: Option<&str>,
-    verify_ca: bool,
-    verify_hostname: bool,
-    opts: &ConnectOpts,
-) -> Result<PgPool, Value> {
-    // `danger_accept_invalid_certs` = skip CA validation. Invert the
-    // verify flags: verify_ca=true → accept_invalid_certs=false.
-    let accept_invalid_certs = !verify_ca;
-    let accept_invalid_hostnames = !verify_hostname;
-    let connector = build_tls_connector(
-        root_cert_path,
-        accept_invalid_certs,
-        accept_invalid_hostnames,
-    )?;
-    let manager = PostgresConnectionManager::new(cfg, connector);
-    let pool = apply_pool_opts(Pool::builder(), opts)
-        .build(manager)
-        .map_err(|e| pool_error_value(&e))?;
-    Ok(PgPool::Tls(pool))
-}
-
-/// `sslmode=prefer`: attempt TLS; on any TLS setup / handshake
-/// failure, fall back to plain TCP. `postgres-native-tls` itself
-/// doesn't implement this; we emulate by building the TLS pool and
-/// probing with a single `get()`. If that fails, rebuild as NoTls.
-#[cfg(feature = "postgres-tls")]
-fn build_pool_prefer_tls(
-    cfg: postgres::Config,
-    root_cert_path: Option<&str>,
-    opts: &ConnectOpts,
-) -> Result<PgPool, Value> {
-    // In "prefer" mode we don't validate the cert — the libpq docs say
-    // prefer is opportunistic encryption, not an authentication hop.
-    match build_tls_connector(root_cert_path, true, true) {
-        Ok(connector) => {
-            let manager = PostgresConnectionManager::new(cfg.clone(), connector);
-            match apply_pool_opts(Pool::builder(), opts).build(manager) {
-                Ok(pool) => {
-                    // Probe: does the server actually accept TLS? r2d2's
-                    // `build` already ran a test connection, so if we're
-                    // here the TLS handshake succeeded.
-                    Ok(PgPool::Tls(pool))
-                }
-                Err(_) => build_pool_notls(cfg, opts),
-            }
-        }
-        Err(_) => build_pool_notls(cfg, opts),
-    }
 }
 
 /// Run a query (SELECT-style). Accepts either a pool (fresh conn per
@@ -1643,8 +1732,6 @@ fn do_listen_worker(
     ch: Arc<Channel>,
     scheduler: Arc<Scheduler>,
 ) {
-    use std::time::Duration;
-
     let tick = Duration::from_millis(LISTEN_POLL_TICK_MS);
 
     'outer: loop {
@@ -1771,20 +1858,27 @@ pub fn read_max_pool_size_for_tests(opts: &Value) -> Option<Result<Option<u32>, 
     Some(parse_connect_opts(&opts).map(|parsed| parsed.max_pool_size))
 }
 
-/// The options of `connect_with` as the Rust `ConnectOpts` struct.
-/// Unknown keys are ignored so options-bag additions stay
-/// backwards-compatible.
+/// The options of `connect_with` as the Rust `ConnectOpts` struct, or
+/// what is wrong with them: a key that is no option, or a value that
+/// the option cannot have.
 fn parse_connect_opts(opts: &Opts) -> Result<ConnectOpts, String> {
     let mut out = ConnectOpts::default();
     for &(key, n) in &opts.0 {
-        if key == "max_pool_size" {
-            if n <= 0 {
+        match key {
+            "max_pool_size" => {
+                if n <= 0 {
+                    return Err(format!(
+                        "postgres.connect_with: max_pool_size must be > 0, got {n}"
+                    ));
+                }
+                // r2d2 takes u32. Clamp to avoid a silent wrap.
+                out.max_pool_size = Some(u32::try_from(n).unwrap_or(u32::MAX));
+            }
+            _ => {
                 return Err(format!(
-                    "postgres.connect_with: max_pool_size must be > 0, got {n}"
+                    "postgres.connect_with: unknown option `{key}`; the options are: max_pool_size"
                 ));
             }
-            // r2d2 takes u32. Clamp to avoid a silent wrap.
-            out.max_pool_size = Some(u32::try_from(n).unwrap_or(u32::MAX));
         }
     }
     Ok(out)
@@ -1797,7 +1891,7 @@ builtins! {
     }
 
     fn connect_with(vm, url: &str, opts: Opts) -> Started {
-        let opts = parse_connect_opts(&opts).map_err(other_error)?;
+        let opts = parse_connect_opts(&opts).map_err(pg_connect)?;
         let url = url.to_string();
         Ok(vm.io("postgres", pg_timeout_err, move || do_connect_with(url, opts)))
     }
