@@ -373,7 +373,10 @@ fn remove_tx(id: u64) -> Option<TxEntry> {
 // call `drain_cursors_for_tx(tx_id)` to remove all entries associated
 // with that tx. PG itself drops server-side cursors at tx end, so no
 // SQL CLOSE is required at that point — we only need to reap the
-// registry rows.
+// registry rows. Their ids are kept, as runs of ids (`ended`), so that
+// a `cursor_next` on one says that its transaction has ended, as every
+// use of an ended `PgTx` does, while one on a cursor the program closed
+// itself says that.
 
 #[derive(Clone)]
 struct CursorEntry {
@@ -386,6 +389,37 @@ struct CursorEntry {
 struct CursorRegistry {
     next_id: u64,
     cursors: BTreeMap<u64, CursorEntry>,
+    /// The ids of the cursors whose transaction has ended, as runs:
+    /// the first id of each, and its last.
+    ended: BTreeMap<u64, u64>,
+}
+
+impl CursorRegistry {
+    /// The cursor `id`'s transaction has ended.
+    fn end(&mut self, id: u64) {
+        let before = self.ended.range(..id).next_back().map(|(&f, &l)| (f, l));
+        let after = self.ended.get(&(id + 1)).copied();
+        let first = match before {
+            Some((first, last)) if last + 1 == id => first,
+            _ => id,
+        };
+        let last = match after {
+            Some(last) => {
+                self.ended.remove(&(id + 1));
+                last
+            }
+            None => id,
+        };
+        self.ended.insert(first, last);
+    }
+
+    /// Whether the cursor `id`'s transaction has ended.
+    fn has_ended(&self, id: u64) -> bool {
+        self.ended
+            .range(..=id)
+            .next_back()
+            .is_some_and(|(_, &last)| last >= id)
+    }
 }
 
 fn cursors() -> &'static Mutex<CursorRegistry> {
@@ -394,6 +428,7 @@ fn cursors() -> &'static Mutex<CursorRegistry> {
         Mutex::new(CursorRegistry {
             next_id: 1,
             cursors: BTreeMap::new(),
+            ended: BTreeMap::new(),
         })
     })
 }
@@ -438,7 +473,22 @@ fn remove_cursor(id: u64) -> Option<CursorEntry> {
 /// automatically at tx end, so we only reap local bookkeeping here.
 fn drain_cursors_for_tx(tx_id: u64) {
     let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
-    reg.cursors.retain(|_, entry| entry.tx_id != tx_id);
+    let of_tx: Vec<u64> = reg
+        .cursors
+        .iter()
+        .filter(|(_, entry)| entry.tx_id == tx_id)
+        .map(|(&id, _)| id)
+        .collect();
+    for id in of_tx {
+        reg.cursors.remove(&id);
+        reg.end(id);
+    }
+}
+
+/// Whether the cursor `id`'s transaction has ended.
+fn cursor_tx_ended(id: u64) -> bool {
+    let reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
+    reg.has_ended(id)
 }
 
 // ── The streams of a transaction ───────────────────────────────────
@@ -1984,6 +2034,7 @@ fn do_cursor_open(
 fn do_cursor_next(cursor_id: u64) -> Value {
     let entry = match lookup_cursor(cursor_id) {
         Some(e) => e,
+        None if cursor_tx_ended(cursor_id) => return err(tx_ended()),
         None => {
             return err(other_error(format!(
                 "postgres: cursor {cursor_id} is not registered (closed or tx ended)"
@@ -2923,6 +2974,25 @@ mod tests {
         while stalled.load(Ordering::SeqCst) > 0 {
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// The ids of cursors whose transaction ended are kept as runs; a
+    /// cursor the program closed itself is none of them.
+    #[test]
+    fn ended_cursors_are_kept_as_runs() {
+        let mut reg = CursorRegistry {
+            next_id: 1,
+            cursors: BTreeMap::new(),
+            ended: BTreeMap::new(),
+        };
+        for id in [3, 1, 2, 7, 5, 6] {
+            reg.end(id);
+        }
+        assert_eq!(reg.ended, BTreeMap::from([(1, 3), (5, 7)]));
+        let ended: Vec<u64> = (0..10).filter(|&id| reg.has_ended(id)).collect();
+        assert_eq!(ended, [1, 2, 3, 5, 6, 7]);
+        reg.end(4);
+        assert_eq!(reg.ended, BTreeMap::from([(1, 7)]));
     }
 
     /// `connect_timeout=0` is refused before anything is sent.

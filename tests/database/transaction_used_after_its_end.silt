@@ -1,7 +1,9 @@
 -- A transaction's `PgTx` that outlives `postgres.transact` (here it is
 -- handed out through a channel) is a transaction that has ended: a
--- statement on it, a stream and a cursor are each `Err(Closed)`, as on
--- a connection that is gone, and nothing runs in the server.
+-- statement on it, a stream, a cursor, and the next batch of a cursor
+-- opened in it are each `Err(Closed)`, as on a connection that is gone,
+-- and nothing runs in the server. A cursor the program closed itself
+-- says so instead.
 import channel
 import env
 import postgres
@@ -25,8 +27,14 @@ fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
       let out: Channel(postgres.PgTx) = channel.new(1)
+      let opened: Channel(postgres.PgCursor) = channel.new(2)
       let done = postgres.transact(pool) { tx ->
         channel.send(out, tx)
+        let left = postgres.cursor(tx, "SELECT g FROM generate_series(1, 5) AS g", [], 2)?
+        channel.send(opened, left)
+        let shut = postgres.cursor(tx, "SELECT 1", [], 2)?
+        let _ = postgres.cursor_close(shut)?
+        println("a cursor closed in it, again: {said(postgres.cursor_next(shut))}")
         postgres.query(tx, "SELECT 1", [])
       }
       println("the transaction: {said(done)}")
@@ -38,6 +46,12 @@ fn main() {
           println("a cursor: {said(postgres.cursor(tx, "SELECT 1", [], 10))}")
         }
         None -> println("no transaction came out")
+      }
+      match channel.receive(opened) {
+        Some(left) -> println(
+          "the next batch of a cursor left open: {said(postgres.cursor_next(left))}",
+        )
+        None -> println("no cursor came out")
       }
       postgres.close(pool)
     }
