@@ -267,6 +267,36 @@ pub(crate) fn value_to_json(
 
 // ── JSON helpers ────────────────────────────────────────────────────
 
+/// `s`, the text of a date or a datetime, as chrono reads it: a year of
+/// five or more digits, which silt writes without a sign
+/// (`12026-01-01`), takes the `+` that chrono's `%Y` wants of one.
+fn signed_year(s: &str) -> std::borrow::Cow<'_, str> {
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    match digits > 4 && s.as_bytes().get(digits) == Some(&b'-') {
+        true => format!("+{s}").into(),
+        false => s.into(),
+    }
+}
+
+/// The date that the text `s` of a document writes: `YYYY-MM-DD`, the
+/// year with more digits or a sign where it has them, as silt shows it
+/// (`12026-01-01`, `-001-01-01`). Shared by the JSON and TOML decoders.
+pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
+    NaiveDate::parse_from_str(&signed_year(s), "%Y-%m-%d")
+}
+
+/// The message of a decoder's error for `s`, the string of a date that
+/// is none, `why`.
+pub(crate) fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
+    format!("invalid date '{s}' (expected YYYY-MM-DD): {why}")
+}
+
+/// The message of a decoder's error for `s`, the string of a time of
+/// day that is none, `why`.
+pub(crate) fn invalid_time_message(s: &str, why: &str) -> std::string::String {
+    format!("invalid time '{s}' (expected HH:MM:SS): {why}")
+}
+
 /// The time of day that the text `s` of a document writes: `HH:MM:SS`,
 /// with a fraction of a second up to nanoseconds (`13:14:15.25`), or
 /// `HH:MM`. Else why it is none: a second 60 is a leap second, which is
@@ -284,10 +314,12 @@ pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, std::string::String> {
 /// The date and time that the text `s` of a document writes, in UTC
 /// where it has an offset: RFC 3339, the same with a space for the `T`,
 /// or without an offset; seconds with a fraction up to nanoseconds, or
-/// no seconds (`2024-03-09T07:30`). Else the message of the decoder's
-/// error: a second 60 is a leap second, which is refused. Shared by the
-/// JSON and TOML decoders.
+/// no seconds (`2024-03-09T07:30`); the year as in [`parse_date`]. Else
+/// the message of the decoder's error: a second 60 is a leap second,
+/// which is refused. Shared by the JSON and TOML decoders.
 pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::String> {
+    let signed = signed_year(s);
+    let read = &*signed;
     let offset = ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"].into_iter();
     let naive = [
         "%Y-%m-%dT%H:%M:%S%.f",
@@ -295,14 +327,14 @@ pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::Stri
         "%Y-%m-%dT%H:%M",
     ]
     .into_iter();
-    let read = chrono::DateTime::parse_from_rfc3339(s)
+    let dt = chrono::DateTime::parse_from_rfc3339(read)
         .ok()
         .into_iter()
-        .chain(offset.filter_map(|f| chrono::DateTime::parse_from_str(s, f).ok()))
+        .chain(offset.filter_map(|f| chrono::DateTime::parse_from_str(read, f).ok()))
         .map(|dt| dt.naive_utc())
-        .chain(naive.filter_map(|f| NaiveDateTime::parse_from_str(s, f).ok()))
+        .chain(naive.filter_map(|f| NaiveDateTime::parse_from_str(read, f).ok()))
         .next();
-    match read {
+    match dt {
         Some(dt) if is_leap_second(dt.time()) => Err(leap_datetime_message(s)),
         Some(dt) => Ok(dt),
         None => Err(format!("invalid datetime '{s}'")),
@@ -619,15 +651,15 @@ fn json_to_typed_value(
         FieldType::JsonValue => Ok(json_value(json)),
         FieldType::Bytes => Err(JsonDecodeErr::Unsupported("Bytes".into())),
         FieldType::Date => match json {
-            serde_json::Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            serde_json::Value::String(s) => parse_date(s)
                 .map(make_date)
-                .map_err(|e| unknown(format!("invalid date '{s}' (expected YYYY-MM-DD): {e}"))),
+                .map_err(|e| unknown(invalid_date_message(s, e))),
             _ => Err(mismatch("date string", json_type_name(json))),
         },
         FieldType::Time => match json {
             serde_json::Value::String(s) => parse_time(s)
                 .map(make_time)
-                .map_err(|e| unknown(format!("invalid time '{s}' (expected HH:MM:SS): {e}"))),
+                .map_err(|e| unknown(invalid_time_message(s, &e))),
             _ => Err(mismatch("time string", json_type_name(json))),
         },
         FieldType::DateTime => match json {
@@ -824,6 +856,15 @@ mod tests {
             Some("2026-10-19 13:14:00")
         );
         assert_eq!(datetime("2026-10-19").as_deref(), None);
+        // A year as silt shows it: five digits without a sign, or a sign.
+        let date = |s: &str| parse_date(s).map(|d| d.to_string()).ok();
+        assert_eq!(date("12026-01-02").as_deref(), Some("+12026-01-02"));
+        assert_eq!(date("-001-01-02").as_deref(), Some("-0001-01-02"));
+        assert_eq!(date("2026-1-2").as_deref(), Some("2026-01-02"));
+        assert_eq!(
+            datetime("12026-01-02T03:04").as_deref(),
+            Some("+12026-01-02 03:04:00")
+        );
     }
 
     /// A second 60, a leap second, is refused by both readers, at any

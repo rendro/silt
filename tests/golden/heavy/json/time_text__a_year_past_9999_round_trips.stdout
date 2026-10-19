@@ -1,0 +1,10 @@
+12026-03-01
+{"d":"12026-02-28","dt":"12026-02-28T12:00:00"}
+Ok(Moment {d: 12026-02-28, dt: 12026-02-28T12:00:00})
+true
+true
+d = "12026-02-28"
+dt = "12026-02-28T12:00:00"
+true
+Err(invalid date '12026-02-30' (expected YYYY-MM-DD): input is out of range)
+Ok(Moment {d: 2026-02-28, dt: 12026-02-28T11:00:00})

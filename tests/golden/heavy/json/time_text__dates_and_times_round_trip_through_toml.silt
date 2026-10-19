@@ -3,7 +3,8 @@
 -- second, and toml.parse reads them back into the same value: at the
 -- top level of a record, and nested in a list, a map, an Option, a
 -- tuple and a record. A date whose year no literal holds (one before
--- the year 0) is written as the text silt shows of it.
+-- the year 0; past 9999, see time_text__a_year_past_9999_round_trips)
+-- is written as the text silt shows of it.
 import time
 import toml
 

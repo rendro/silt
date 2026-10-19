@@ -1,0 +1,33 @@
+-- A date of a year past 9999 is shown without a sign (12026-01-01), and
+-- json and toml write it so; their decoders read such a year back, for
+-- a Date and a DateTime field, so it round-trips like any other date.
+-- (TOML's literal has four digits for the year: toml writes a string.)
+-- A year before 0 is shown with its sign and reads back too.
+import json
+import time
+import toml
+
+type Moment { d: time.Date, dt: time.DateTime }
+
+fn main() {
+  let far = time.Date { year: 12026, month: 2, day: 28 }
+  let past = time.Date { year: -12026, month: 2, day: 28 }
+  let noon = time.Time { hour: 12, minute: 0, second: 0, ns: 0 }
+  let m = Moment { d: far, dt: time.DateTime { date: far, time: noon } }
+  let p = Moment { d: past, dt: time.DateTime { date: past, time: noon } }
+  println(time.add_days(far, 1))
+  let text = json.stringify(m)
+  println(text)
+  println(json.parse(text, Moment))
+  println(json.parse(text, Moment) == Ok(m))
+  println(json.parse(json.stringify(p), Moment) == Ok(p))
+  match toml.stringify(m) {
+    Ok(text) -> {
+      print(text)
+      println(toml.parse(text, Moment) == Ok(m))
+    }
+    Err(e) -> println(e.message())
+  }
+  println(json.parse("""{"d": "12026-02-30", "dt": "12026-02-28T12:00:00"}""", Moment))
+  println(json.parse("""{"d": "2026-02-28", "dt": "12026-02-28T12:00:00+01:00"}""", Moment))
+}

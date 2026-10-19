@@ -50,8 +50,9 @@ use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 use super::json::{
-    decodable_record, ensure_encodable_depth, field_record_type, parse_datetime, parse_time,
-    unsupported_field_type_message, unsupported_kind, without_bytes,
+    decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
+    invalid_time_message, parse_date, parse_datetime, parse_time, unsupported_field_type_message,
+    unsupported_kind, without_bytes,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -542,13 +543,13 @@ fn toml_to_typed_value(
             ::toml::Value::Datetime(dt) => {
                 // Preferred path: TOML native date literal.
                 let s = dt.to_string();
-                NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                parse_date(&s)
                     .map(make_date)
                     .map_err(|e| unknown(format!("invalid date '{s}': {e}")))
             }
-            ::toml::Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            ::toml::Value::String(s) => parse_date(s)
                 .map(make_date)
-                .map_err(|e| unknown(format!("invalid date '{s}' (expected YYYY-MM-DD): {e}"))),
+                .map_err(|e| unknown(invalid_date_message(s, e))),
             _ => Err(mismatch("date", toml_type_name(tv))),
         },
         FieldType::Time => match tv {
@@ -560,7 +561,7 @@ fn toml_to_typed_value(
             }
             ::toml::Value::String(s) => parse_time(s)
                 .map(make_time)
-                .map_err(|e| unknown(format!("invalid time '{s}' (expected HH:MM:SS): {e}"))),
+                .map_err(|e| unknown(invalid_time_message(s, &e))),
             _ => Err(mismatch("time", toml_type_name(tv))),
         },
         FieldType::DateTime => match tv {
