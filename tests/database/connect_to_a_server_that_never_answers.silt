@@ -1,0 +1,50 @@
+-- A server that takes the connection and never answers: the connect is
+-- `Timeout` once the URL's `connect_timeout` is over, login included,
+-- and the attempt has ended then: the server finds its connection
+-- closed by the client. (An attempt that went on waiting would keep it
+-- open: the server's read would meet its deadline.)
+--
+-- The server is the program's own: a task that takes the connection
+-- and reads what comes, never answering.
+import bytes
+import postgres
+import task
+import tcp
+import time
+
+-- Read from `conn` until the client closes it.
+fn until_closed(conn: tcp.TcpStream) -> String {
+  loop {
+    match tcp.read(conn, 4096) {
+      Ok(got) -> match bytes.length(got) {
+        0 -> "the client closed the connection"
+        _ -> loop()
+      }
+      Err(e) -> "the read failed: {e.message()}"
+    }
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> tcp.accept(listener) }
+  let url = "postgres://nobody:nothing@127.0.0.1:{port}/nothing?sslmode=disable&connect_timeout=1"
+  match postgres.connect(url) {
+    Ok(pool) -> {
+      postgres.close(pool)
+      println("connect: connected")
+    }
+    Err(postgres.Timeout) -> println("connect: Timeout")
+    Err(e) -> println("connect: {e.message()}")
+  }
+  when let Ok(conn) = task.join(server) else {
+    panic("cannot accept")
+  }
+  match task.deadline(time.seconds(5), { -> until_closed(conn) }) {
+    Ok(said) -> println("the server: {said}")
+    Err(_) -> println("the server: the connection is still open at the deadline")
+  }
+}
