@@ -328,7 +328,6 @@ repros/typechecker_arch/t_anno_channelop.silt	holds	accept	TCA-8: `channel.Chann
 repros/typechecker_arch/t_anno_channelresult.silt	holds	accept	TCA-8: `channel.ChannelResult` in an annotation
 repros/typechecker_arch/t_anno_date.silt	holds	accept	TCA-8: `time.Date` in an annotation
 repros/typechecker_arch/t_anno_duration.silt	holds	accept	TCA-8: `time.Duration` in an annotation
-repros/typechecker_arch/t_anno_execresult.silt	holds	reject E0201	TCA-8: a bare `ExecResult` names nothing
 repros/typechecker_arch/t_anno_handle.silt	holds	reject E0201	TCA-8: a bare `Handle` names nothing
 repros/typechecker_arch/t_anno_instant.silt	holds	accept	TCA-8: `time.Instant` in an annotation
 repros/typechecker_arch/t_anno_ioerror.silt	holds	accept	TCA-8: `io.IoError` in an annotation
@@ -336,7 +335,6 @@ repros/typechecker_arch/t_anno_method.silt	holds	accept	TCA-8: `http.Method` in 
 repros/typechecker_arch/t_anno_pgcursor.silt	holds	reject E0201	TCA-8: a bare `PgCursor` names nothing
 repros/typechecker_arch/t_anno_pgpool.silt	holds	reject E0201	TCA-8: a bare `PgPool` names nothing
 repros/typechecker_arch/t_anno_pgtx.silt	holds	reject E0201	TCA-8: a bare `PgTx` names nothing
-repros/typechecker_arch/t_anno_queryresult.silt	holds	reject E0201	TCA-8: a bare `QueryResult` names nothing
 repros/typechecker_arch/t_anno_step.silt	holds	accept	TCA-8: `list.Step` in an annotation
 repros/typechecker_arch/t_anno_tcpstream.silt	holds	reject E0201	TCA-8: a bare `TcpStream` names nothing
 repros/typechecker_arch/t_anno_value.silt	holds	reject E0201	TCA-8: a bare `Value` names nothing

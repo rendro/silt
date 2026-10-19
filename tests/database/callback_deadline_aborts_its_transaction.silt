@@ -13,6 +13,7 @@
 -- for it, and the case would not end.
 import channel
 import env
+import json
 import postgres
 import task
 import time
@@ -26,7 +27,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -63,25 +64,25 @@ fn waiting() -> String {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_callback_deadline", [])
-      let _ = postgres.execute(pool, "CREATE TABLE silt_database_callback_deadline (said text)", [])
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_callback_deadline", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_callback_deadline (said text)", ())
       let held = postgres.transact(pool) { lock ->
-        let _ = postgres.query(lock, "SELECT pg_advisory_xact_lock(7305)", [])?
+        let _ = postgres.query(lock, "SELECT pg_advisory_xact_lock(7305)", (), json.Value)?
         println("main holds the lock")
         let timed = postgres.transact(pool) { tx ->
           let _ = postgres.execute(
             tx,
             "INSERT INTO silt_database_callback_deadline VALUES ('first')",
-            [],
+            (),
           )?
-          let late = task.deadline(time.ms(200)) { -> postgres.execute(tx, locked(), []) }
+          let late = task.deadline(time.ms(200)) { -> postgres.execute(tx, locked(), ()) }
           println(
             match late {
               Ok(answer) -> "the statement: {said(answer)}"
               Err(e) -> "task.deadline: {e.message()}"
             },
           )
-          println("the next statement: {said(postgres.execute(tx, "SELECT 1", []))}")
+          println("the next statement: {said(postgres.execute(tx, "SELECT 1", ()))}")
           Ok(())
         }
         println("the transaction of the deadline: {said(timed)}")
@@ -89,9 +90,9 @@ fn main() {
           let _ = postgres.execute(
             tx,
             "INSERT INTO silt_database_callback_deadline VALUES ('second')",
-            [],
+            (),
           )?
-          let t = task.spawn { -> postgres.execute(tx, locked(), []) }
+          let t = task.spawn { -> postgres.execute(tx, locked(), ()) }
           -- Until the server shows the task's statement waiting.
           loop seen = count(pool, waiting()) {
             match seen == 1 {
@@ -112,7 +113,7 @@ fn main() {
       }
       println("main's transaction: {said(held)}")
       println("rows in the table: {count(pool, "SELECT 1 FROM silt_database_callback_deadline")}")
-      let _ = postgres.execute(pool, "DROP TABLE silt_database_callback_deadline", [])
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_callback_deadline", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")

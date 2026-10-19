@@ -28,22 +28,24 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use fallible_iterator::FallibleIterator;
 use postgres::NoTls;
-use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
+use postgres::types::ToSql;
 use r2d2::Pool;
 
 use super::common::ok;
-use super::typed::{Arg, List, Map, Ret, builtins};
+use super::typed::{Arg, Map, Ret, Type, builtins};
 use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::runtime::sync::{Channel, Close};
 use crate::scheduler::IO_TIMEOUT;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{IoOp, Native, Step, Vm, VmError};
+use crate::vm::{IoOp, Native, Runtime, Step, Vm, VmError};
+
+mod rows;
+
+use rows::{Plan, RowType, TextParam, Unsendable};
 
 /// The error of a `postgres` function whose operation has no value
 /// of its own: `Timeout` when its deadline passed, `Other` with
@@ -384,6 +386,8 @@ struct CursorEntry {
     name: String,
     batch_size: u64,
     exhausted: bool,
+    /// How its rows are decoded.
+    plan: Arc<Plan>,
 }
 
 struct CursorRegistry {
@@ -433,7 +437,7 @@ fn cursors() -> &'static Mutex<CursorRegistry> {
     })
 }
 
-fn register_cursor(tx_id: u64, batch_size: u64) -> (u64, String) {
+fn register_cursor(tx_id: u64, batch_size: u64, plan: Arc<Plan>) -> (u64, String) {
     let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     let id = reg.next_id;
     reg.next_id = reg.next_id.wrapping_add(1);
@@ -445,6 +449,7 @@ fn register_cursor(tx_id: u64, batch_size: u64) -> (u64, String) {
             name: name.clone(),
             batch_size,
             exhausted: false,
+            plan,
         },
     );
     (id, name)
@@ -629,7 +634,7 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
             // 57014: query_canceled (statement_timeout fires with this).
             "57014" => Value::variant(bv::PG_TIMEOUT, vec![]),
             // 42703: undefined_column.
-            "42703" => Value::variant(bv::PG_NO_SUCH_COLUMN, vec![Value::String(message.into())]),
+            "42703" => rows::no_such_column(column_named(&message)),
             code if code.starts_with("28") => {
                 Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message.into())])
             }
@@ -646,7 +651,6 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         // more specific variant where we can; fall back to Other.
         let raw = format!("{e}");
         let lc = raw.to_ascii_lowercase();
-        let scrubbed = redact_pg_message(&raw);
         if lc.contains("timed out") || lc.contains("timeout") {
             Value::variant(bv::PG_TIMEOUT, vec![])
         } else if lc.contains("closed")
@@ -656,9 +660,30 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         {
             Value::variant(bv::PG_CLOSED, vec![])
         } else {
-            Value::variant(bv::PG_OTHER, vec![Value::String(scrubbed.into())])
+            // The error's text names its kind only ("error serializing
+            // parameter 0"): its cause says what happened.
+            let causes = std::iter::successors(std::error::Error::source(e), |c| c.source());
+            let text = causes.fold(raw, |text, cause| format!("{text}: {cause}"));
+            Value::variant(
+                bv::PG_OTHER,
+                vec![Value::String(redact_pg_message(&text).into())],
+            )
         }
     }
+}
+
+/// The column that the message of an `undefined_column` error names:
+/// `column "nope" does not exist`, `column t.nope does not exist`,
+/// `column "nope" of relation "t" does not exist`. The whole message
+/// if it names none.
+fn column_named(message: &str) -> &str {
+    let named = message
+        .strip_prefix("column ")
+        .and_then(|rest| match rest.strip_prefix('"') {
+            Some(quoted) => quoted.split_once('"').map(|(name, _)| name),
+            None => rest.split_once(' ').map(|(name, _)| name),
+        });
+    named.unwrap_or(message)
 }
 
 /// Build a typed `PostgresError` variant from an `r2d2::Error`: a
@@ -741,445 +766,6 @@ fn is_pg_timeout(error: &Value) -> bool {
 /// surface as a typed `PostgresError` because the signature says so.
 fn other_error(detail: impl Into<String>) -> Value {
     pg_unknown(detail)
-}
-
-// ── Value <-> SQL marshalling ───────────────────────────────────────
-
-/// Wrap a converted column value in the silt-side `Value` ADT
-/// (`VInt`/`VStr`/`VBool`/`VFloat`/`VNull`/`VList`).
-fn wrap_v_int(n: i64) -> Value {
-    Value::variant(bv::V_INT, vec![Value::Int(n)])
-}
-fn wrap_v_str(s: String) -> Value {
-    Value::variant(bv::V_STR, vec![Value::String(s.into())])
-}
-fn wrap_v_bool(b: bool) -> Value {
-    Value::variant(bv::V_BOOL, vec![Value::Bool(b)])
-}
-/// A silt `Float` is always finite, so a column holding `NaN` or
-/// `±Infinity` decodes like any other value that has no silt form.
-fn wrap_v_float(f: f64) -> Value {
-    match crate::value::Float::new(f) {
-        Some(f) => Value::variant(bv::V_FLOAT, vec![Value::Float(f)]),
-        None => wrap_v_str(format!("<decode error: non-finite float {f}>")),
-    }
-}
-fn wrap_v_null() -> Value {
-    Value::variant(bv::V_NULL, vec![])
-}
-fn wrap_v_list(xs: Vec<Value>) -> Value {
-    Value::variant(bv::V_LIST, vec![Value::list(xs)])
-}
-
-/// Convert a Postgres column cell to a silt-side wrapped `VXxx` `Value`.
-fn pg_cell_to_value(row: &postgres::Row, idx: usize) -> Value {
-    let col = &row.columns()[idx];
-    let ty = col.type_();
-
-    // Arrays: handle first via Kind::Array.
-    if let Kind::Array(elem_ty) = ty.kind() {
-        return convert_array(row, idx, elem_ty);
-    }
-
-    match *ty {
-        PgType::BOOL => match row.try_get::<_, Option<bool>>(idx) {
-            Ok(Some(b)) => wrap_v_bool(b),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::INT2 => match row.try_get::<_, Option<i16>>(idx) {
-            Ok(Some(n)) => wrap_v_int(n as i64),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::INT4 => match row.try_get::<_, Option<i32>>(idx) {
-            Ok(Some(n)) => wrap_v_int(n as i64),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::INT8 => match row.try_get::<_, Option<i64>>(idx) {
-            Ok(Some(n)) => wrap_v_int(n),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::FLOAT4 => match row.try_get::<_, Option<f32>>(idx) {
-            Ok(Some(f)) => wrap_v_float(f as f64),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::FLOAT8 => match row.try_get::<_, Option<f64>>(idx) {
-            Ok(Some(f)) => wrap_v_float(f),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::TEXT | PgType::VARCHAR | PgType::BPCHAR | PgType::NAME | PgType::CHAR => {
-            match row.try_get::<_, Option<String>>(idx) {
-                Ok(Some(s)) => wrap_v_str(s),
-                Ok(None) => wrap_v_null(),
-                Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-            }
-        }
-        PgType::UUID => {
-            // With the `with-uuid-1` feature enabled, the postgres crate
-            // decodes UUID columns directly into uuid::Uuid.
-            match row.try_get::<_, Option<uuid::Uuid>>(idx) {
-                Ok(Some(u)) => wrap_v_str(u.to_string()),
-                Ok(None) => wrap_v_null(),
-                Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-            }
-        }
-        PgType::JSON | PgType::JSONB => {
-            // Use serde_json::Value via the `with-serde_json-1` feature is not
-            // enabled; fetch as text via a cast-friendly path. The postgres
-            // crate accepts &str/String for JSON only on input. For output,
-            // request bytes and convert.
-            match row.try_get::<_, Option<&[u8]>>(idx) {
-                Ok(Some(bytes)) => {
-                    // JSONB binary format prefixes a version byte (1).
-                    if matches!(*ty, PgType::JSONB) && !bytes.is_empty() && bytes[0] == 1 {
-                        match std::str::from_utf8(&bytes[1..]) {
-                            Ok(s) => wrap_v_str(s.to_string()),
-                            Err(_) => wrap_v_str(BASE64.encode(&bytes[1..])),
-                        }
-                    } else {
-                        match std::str::from_utf8(bytes) {
-                            Ok(s) => wrap_v_str(s.to_string()),
-                            Err(_) => wrap_v_str(BASE64.encode(bytes)),
-                        }
-                    }
-                }
-                Ok(None) => wrap_v_null(),
-                Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-            }
-        }
-        PgType::NUMERIC => {
-            // The default postgres crate doesn't decode NUMERIC directly. Cast
-            // via text on the SQL side or use a feature (rust_decimal). We try
-            // a string-typed read first; on failure we render a placeholder.
-            match row.try_get::<_, Option<String>>(idx) {
-                Ok(Some(s)) => wrap_v_str(s),
-                Ok(None) => wrap_v_null(),
-                Err(_) => {
-                    wrap_v_str("<numeric: cast to text in SQL, e.g. select n::text>".to_string())
-                }
-            }
-        }
-        PgType::BYTEA => match row.try_get::<_, Option<Vec<u8>>>(idx) {
-            Ok(Some(bytes)) => wrap_v_str(BASE64.encode(&bytes)),
-            Ok(None) => wrap_v_null(),
-            Err(e) => wrap_v_str(format!("<decode error: {e}>")),
-        },
-        PgType::TIMESTAMP | PgType::TIMESTAMPTZ | PgType::DATE | PgType::TIME | PgType::TIMETZ => {
-            // The default postgres crate decodes these only with the
-            // `with-chrono-0_4` feature. Without it, the user must
-            // `to_char(...)` or `::text` cast in SQL. We attempt a String read
-            // and return a placeholder otherwise.
-            match row.try_get::<_, Option<String>>(idx) {
-                Ok(Some(s)) => wrap_v_str(s),
-                Ok(None) => wrap_v_null(),
-                Err(_) => {
-                    wrap_v_str("<timestamp: cast to text in SQL, e.g. select t::text>".to_string())
-                }
-            }
-        }
-        _ => {
-            // Unknown / unhandled type: try as raw bytes and base64-encode.
-            match row.try_get::<_, Option<&[u8]>>(idx) {
-                Ok(Some(bytes)) => match std::str::from_utf8(bytes) {
-                    Ok(s) => wrap_v_str(s.to_string()),
-                    Err(_) => wrap_v_str(BASE64.encode(bytes)),
-                },
-                Ok(None) => wrap_v_null(),
-                Err(e) => wrap_v_str(format!("<unsupported type {ty}: {e}>")),
-            }
-        }
-    }
-}
-
-fn convert_array(row: &postgres::Row, idx: usize, elem_ty: &PgType) -> Value {
-    macro_rules! arr {
-        ($t:ty, $wrap:expr) => {
-            match row.try_get::<_, Option<Vec<Option<$t>>>>(idx) {
-                Ok(Some(xs)) => {
-                    let out: Vec<Value> = xs
-                        .into_iter()
-                        .map(|opt| match opt {
-                            Some(v) => $wrap(v),
-                            None => wrap_v_null(),
-                        })
-                        .collect();
-                    wrap_v_list(out)
-                }
-                Ok(None) => wrap_v_null(),
-                Err(e) => wrap_v_str(format!("<array decode error: {e}>")),
-            }
-        };
-    }
-    match *elem_ty {
-        PgType::BOOL => arr!(bool, wrap_v_bool),
-        PgType::INT2 => arr!(i16, |n: i16| wrap_v_int(n as i64)),
-        PgType::INT4 => arr!(i32, |n: i32| wrap_v_int(n as i64)),
-        PgType::INT8 => arr!(i64, wrap_v_int),
-        PgType::FLOAT4 => arr!(f32, |f: f32| wrap_v_float(f as f64)),
-        PgType::FLOAT8 => arr!(f64, wrap_v_float),
-        PgType::TEXT | PgType::VARCHAR | PgType::BPCHAR | PgType::NAME | PgType::CHAR => {
-            arr!(String, wrap_v_str)
-        }
-        _ => {
-            // Fall back to TEXT[] best effort.
-            arr!(String, wrap_v_str)
-        }
-    }
-}
-
-// ── Param marshalling (silt VXxx -> postgres ToSql) ─────────────────
-
-/// Owned, type-erased SQL parameter. We need owned values that outlive
-/// the borrow handed to `postgres::Client::query`, so we collect them
-/// here, then take a `&[&dyn ToSql]` slice over the unwrapped ToSql
-/// references at the call site.
-enum SqlParam {
-    Null,
-    Bool(bool),
-    Int8(i64),
-    Float8(f64),
-    Text(MaybeUuidText),
-    BoolArr(Vec<Option<bool>>),
-    Int8Arr(Vec<Option<i64>>),
-    Float8Arr(Vec<Option<f64>>),
-    TextArr(Vec<Option<String>>),
-}
-
-impl SqlParam {
-    fn as_to_sql(&self) -> &(dyn ToSql + Sync) {
-        match self {
-            SqlParam::Null => &NoneText,
-            SqlParam::Bool(v) => v,
-            SqlParam::Int8(v) => v,
-            SqlParam::Float8(v) => v,
-            SqlParam::Text(v) => v,
-            SqlParam::BoolArr(v) => v,
-            SqlParam::Int8Arr(v) => v,
-            SqlParam::Float8Arr(v) => v,
-            SqlParam::TextArr(v) => v,
-        }
-    }
-}
-
-/// Wrapper around an owned String that binds as TEXT-like by default but
-/// also accepts UUID columns (parsing the string to a uuid::Uuid on the
-/// fly). This lets silt programs bind VStr ids straight into UUID columns
-/// without an extra param variant on the silt side.
-#[derive(Debug)]
-struct MaybeUuidText(String);
-
-impl ToSql for MaybeUuidText {
-    fn to_sql(
-        &self,
-        ty: &PgType,
-        out: &mut postgres::types::private::BytesMut,
-    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        if matches!(*ty, PgType::UUID) {
-            let parsed: uuid::Uuid = self.0.parse()?;
-            return parsed.to_sql(ty, out);
-        }
-        self.0.to_sql(ty, out)
-    }
-    fn accepts(ty: &PgType) -> bool {
-        matches!(*ty, PgType::UUID) || <String as ToSql>::accepts(ty)
-    }
-    postgres::types::to_sql_checked!();
-}
-
-/// Sentinel that binds as a typed `NULL` of TEXT. Postgres needs a type
-/// when binding NULL; TEXT is the safest default and will be implicitly
-/// coerced by the server in most contexts.
-#[derive(Debug)]
-struct NoneText;
-
-impl ToSql for NoneText {
-    fn to_sql(
-        &self,
-        _ty: &PgType,
-        _out: &mut postgres::types::private::BytesMut,
-    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        Ok(IsNull::Yes)
-    }
-    fn accepts(_ty: &PgType) -> bool {
-        true
-    }
-    postgres::types::to_sql_checked!();
-}
-
-/// Convert a silt-side wrapped `Value` ADT instance to an owned `SqlParam`.
-fn value_to_sql_param(v: &Value) -> Result<SqlParam, String> {
-    let Value::Variant(param) = v else {
-        return Err(format!(
-            "postgres requires PgValue variant (VInt/VStr/...), got {}",
-            v.kind()
-        ));
-    };
-    if !param.of(ty::PG_VALUE) {
-        return Err(format!(
-            "postgres requires PgValue variant (VInt/VStr/...), got {}",
-            param.ty().name
-        ));
-    }
-    match param.name() {
-        "VNull" => Ok(SqlParam::Null),
-        "VInt" => match param.fields().first() {
-            Some(Value::Int(n)) => Ok(SqlParam::Int8(*n)),
-            other => Err(format!("postgres: VInt payload must be Int, got {other:?}")),
-        },
-        "VStr" => match param.fields().first() {
-            Some(Value::String(s)) => Ok(SqlParam::Text(MaybeUuidText(s.to_string()))),
-            other => Err(format!(
-                "postgres: VStr payload must be String, got {other:?}"
-            )),
-        },
-        "VBool" => match param.fields().first() {
-            Some(Value::Bool(b)) => Ok(SqlParam::Bool(*b)),
-            other => Err(format!(
-                "postgres: VBool payload must be Bool, got {other:?}"
-            )),
-        },
-        "VFloat" => match param.fields().first() {
-            Some(Value::Float(f)) => Ok(SqlParam::Float8(f.get())),
-            // Some silt programs store integers in Float slots; coerce.
-            Some(Value::Int(n)) => Ok(SqlParam::Float8(*n as f64)),
-            other => Err(format!(
-                "postgres: VFloat payload must be Float, got {other:?}"
-            )),
-        },
-        "VList" => match param.fields().first() {
-            Some(Value::List(xs)) => {
-                list_to_array_param(&xs.to_vec().map_err(|too_long| too_long.to_string())?)
-            }
-            other => Err(format!(
-                "postgres: VList payload must be List, got {other:?}"
-            )),
-        },
-        other => Err(format!(
-            "postgres: unknown silt PgValue variant {other:?} as parameter"
-        )),
-    }
-}
-
-/// Convert a silt `List(Value)` into a typed Postgres array parameter.
-/// Element type is inferred from the first non-null element. Empty / all-null
-/// lists default to TEXT[].
-fn list_to_array_param(xs: &[Value]) -> Result<SqlParam, String> {
-    // Inspect the first non-null element to pick a type.
-    let mut elem_kind: Option<&str> = None;
-    for x in xs {
-        if let Value::Variant(variant) = x
-            && !variant.is(bv::V_NULL)
-        {
-            elem_kind = Some(variant.name());
-            break;
-        }
-    }
-    let kind = elem_kind.unwrap_or("VStr"); // empty / all null → TEXT[]
-    match kind {
-        "VBool" => {
-            let mut out: Vec<Option<bool>> = Vec::with_capacity(xs.len());
-            for x in xs {
-                match x {
-                    Value::Variant(variant) if variant.is(bv::V_BOOL) => {
-                        match variant.fields().first() {
-                            Some(Value::Bool(b)) => out.push(Some(*b)),
-                            _ => return Err("postgres: bad VBool in array".into()),
-                        }
-                    }
-                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
-                    _ => return Err("postgres: mixed-type array (expected Bool)".into()),
-                }
-            }
-            Ok(SqlParam::BoolArr(out))
-        }
-        "VInt" => {
-            let mut out: Vec<Option<i64>> = Vec::with_capacity(xs.len());
-            for x in xs {
-                match x {
-                    Value::Variant(variant) if variant.is(bv::V_INT) => {
-                        match variant.fields().first() {
-                            Some(Value::Int(n)) => out.push(Some(*n)),
-                            _ => return Err("postgres: bad VInt in array".into()),
-                        }
-                    }
-                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
-                    _ => return Err("postgres: mixed-type array (expected Int)".into()),
-                }
-            }
-            Ok(SqlParam::Int8Arr(out))
-        }
-        "VFloat" => {
-            let mut out: Vec<Option<f64>> = Vec::with_capacity(xs.len());
-            for x in xs {
-                match x {
-                    Value::Variant(variant) if variant.is(bv::V_FLOAT) => {
-                        match variant.fields().first() {
-                            Some(Value::Float(f)) => out.push(Some(f.get())),
-                            Some(Value::Int(n)) => out.push(Some(*n as f64)),
-                            _ => return Err("postgres: bad VFloat in array".into()),
-                        }
-                    }
-                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
-                    _ => return Err("postgres: mixed-type array (expected Float)".into()),
-                }
-            }
-            Ok(SqlParam::Float8Arr(out))
-        }
-        _ => {
-            // Default: TEXT[]
-            let mut out: Vec<Option<String>> = Vec::with_capacity(xs.len());
-            for x in xs {
-                match x {
-                    Value::Variant(variant) if variant.is(bv::V_STR) => {
-                        match variant.fields().first() {
-                            Some(Value::String(s)) => out.push(Some(s.to_string())),
-                            _ => return Err("postgres: bad VStr in array".into()),
-                        }
-                    }
-                    Value::Variant(variant) if variant.is(bv::V_NULL) => out.push(None),
-                    _ => {
-                        return Err("postgres: nested arrays / mixed types not supported".into());
-                    }
-                }
-            }
-            Ok(SqlParam::TextArr(out))
-        }
-    }
-}
-
-// ── Row -> silt Map(String, Value) ─────────────────────────────────
-
-fn row_to_map(row: &postgres::Row) -> Value {
-    let columns = row.columns().iter().enumerate();
-    Value::map(
-        columns.map(|(idx, col)| (Value::String(col.name().into()), pg_cell_to_value(row, idx))),
-    )
-}
-
-fn make_query_result(rows: Vec<Value>) -> Value {
-    let row_count = rows.len() as i64;
-    Value::builtin_record(
-        ty::QUERY_RESULT,
-        [
-            ("row_count", Value::Int(row_count)),
-            ("rows", Value::list(rows)),
-        ],
-    )
-}
-
-fn make_exec_result(affected: u64, returning: Vec<Value>) -> Value {
-    Value::builtin_record(
-        ty::EXEC_RESULT,
-        [
-            ("affected", Value::Int(affected as i64)),
-            ("returning", Value::list(returning)),
-        ],
-    )
 }
 
 // ── Handle helpers ──────────────────────────────────────────────────
@@ -1272,11 +858,17 @@ impl<'a> Arg<'a> for Opts<'a> {
     }
 }
 
-/// The parameters of a statement, or the `PostgresError` of a value that
-/// is none.
-fn sql_params(params: List) -> Result<Vec<SqlParam>, Value> {
-    let params = params.iter().map(|param| value_to_sql_param(&param));
-    params.collect::<Result<_, _>>().map_err(other_error)
+/// The parameters of a statement of `caller` (with where the encoder
+/// leaves why one could not be sent), and the type its rows are decoded
+/// into: the error of the program if `params` is no tuple or `ty` no
+/// type a row is decoded into.
+fn statement_args(
+    caller: &str,
+    params: &Value,
+    ty: Type,
+) -> Result<(Vec<TextParam>, Option<Unsendable>, RowType), VmError> {
+    let (params, unsendable) = rows::params(caller, params)?;
+    Ok((params, unsendable, RowType::of(caller, ty)?))
 }
 
 /// The `PostgresError` a function ends with before its operation starts: a
@@ -1803,92 +1395,75 @@ fn build_tls_connector(
     Ok(postgres_native_tls::MakeTlsConnector::new(connector))
 }
 
-/// Run a query (SELECT-style). Accepts either a pool (fresh conn per
-/// call) or a tx-pinned conn. The inner `Mutex<TxConn>` is held for
-/// the duration of this single query only — never across a VM yield.
-fn do_query(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
-    let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
-    match target {
-        ExecutorRef::Pool(pool) => {
-            let mut conn = match pool.get() {
-                Ok(c) => c,
-                Err(e) => return err(pool_error_value(&e)),
-            };
-            match conn.client_mut().query(&sql, &bind) {
-                Ok(rows) => {
-                    let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
-                    ok(make_query_result(mapped))
-                }
-                Err(e) => err(pg_error_to_variant(&e)),
-            }
-        }
-        ExecutorRef::Tx(cell) => {
-            let mut conn = match tx_conn(&cell) {
-                Ok(conn) => conn,
-                Err(e) => return err(e),
-            };
-            match conn.client_mut().query(&sql, &bind) {
-                Ok(rows) => {
-                    let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
-                    ok(make_query_result(mapped))
-                }
-                Err(e) => err(pg_error_to_variant(&e)),
-            }
-        }
-    }
+/// The parameters of a statement as `postgres` takes them.
+fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
+    params
+        .iter()
+        .map(|param| param as &(dyn ToSql + Sync))
+        .collect()
 }
 
-/// Run an INSERT/UPDATE/DELETE (with optional RETURNING). Dispatches
-/// to `query` or `execute` on the underlying conn based on a best-
-/// effort RETURNING-keyword scan.
-fn do_execute(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
-    let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
-
-    // Decide whether to call `execute` or `query` based on the presence of
-    // a RETURNING clause. We do a simple case-insensitive check; this is a
-    // best-effort heuristic and may misfire on SQL that mentions "returning"
-    // in a comment. For v1 it's good enough.
-    let has_returning = sql
-        .to_ascii_uppercase()
-        .split_whitespace()
-        .any(|tok| tok == "RETURNING");
-
-    fn run(
-        conn: &mut postgres::Client,
-        sql: &str,
-        bind: &[&(dyn ToSql + Sync)],
-        has_returning: bool,
-    ) -> Value {
-        if has_returning {
-            match conn.query(sql, bind) {
-                Ok(rows) => {
-                    let returning: Vec<Value> = rows.iter().map(row_to_map).collect();
-                    let affected = returning.len() as u64;
-                    ok(make_exec_result(affected, returning))
-                }
-                Err(e) => err(pg_error_to_variant(&e)),
-            }
-        } else {
-            match conn.execute(sql, bind) {
-                Ok(n) => ok(make_exec_result(n, Vec::new())),
-                Err(e) => err(pg_error_to_variant(&e)),
-            }
-        }
-    }
-
-    match target {
-        ExecutorRef::Pool(pool) => {
-            let mut conn = match pool.get() {
-                Ok(c) => c,
-                Err(e) => return err(pool_error_value(&e)),
-            };
-            run(conn.client_mut(), &sql, &bind, has_returning)
-        }
-        ExecutorRef::Tx(cell) => match tx_conn(&cell) {
-            Ok(mut conn) => run(conn.client_mut(), &sql, &bind, has_returning),
-            Err(e) => err(e),
+/// `f` on the client of `target`: a connection of the pool, or the
+/// transaction's. A transaction's `Mutex<TxConn>` is held while `f`
+/// runs, never across a VM yield. The value is `Ok` of `f`'s, or `Err`
+/// of the `PostgresError`.
+fn with_client(
+    target: ExecutorRef,
+    f: impl FnOnce(&mut postgres::Client) -> Result<Value, Value>,
+) -> Value {
+    let done = match target {
+        ExecutorRef::Pool(pool) => match pool.get() {
+            Ok(mut conn) => f(conn.client_mut()),
+            Err(e) => Err(pool_error_value(&e)),
         },
-    }
+        ExecutorRef::Tx(cell) => match tx_conn(&cell) {
+            Ok(mut conn) => f(conn.client_mut()),
+            Err(e) => Err(e),
+        },
+    };
+    done.map_or_else(err, ok)
+}
+
+/// The statement `sql` prepared, and the plan of its result's rows: the
+/// columns are checked against `row` before the statement runs.
+fn prepare(
+    client: &mut postgres::Client,
+    rt: &Runtime,
+    sql: &str,
+    row: &RowType,
+) -> Result<(postgres::Statement, Plan), Value> {
+    let statement = client.prepare(sql).map_err(|e| pg_error_to_variant(&e))?;
+    let plan = Plan::new(rt, row, statement.columns())?;
+    Ok((statement, plan))
+}
+
+/// Run a statement and decode its rows into `row`: on a pool (a
+/// connection of it for the statement) or in a transaction.
+fn do_query(
+    target: ExecutorRef,
+    sql: String,
+    params: Vec<TextParam>,
+    row: RowType,
+    rt: Arc<Runtime>,
+) -> Value {
+    let bind = binding(&params);
+    with_client(target, |client| {
+        let (statement, plan) = prepare(client, &rt, &sql, &row)?;
+        let rows = client
+            .query(&statement, &bind)
+            .map_err(|e| pg_error_to_variant(&e))?;
+        let rows = rows.iter().map(|r| plan.row(&rt, r));
+        Ok(Value::list(rows.collect::<Result<_, _>>()?))
+    })
+}
+
+/// Run a statement and give the number of rows it affected.
+fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>) -> Value {
+    let bind = binding(&params);
+    with_client(target, |client| match client.execute(sql.as_str(), &bind) {
+        Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+        Err(e) => Err(pg_error_to_variant(&e)),
+    })
 }
 
 // ── Streaming worker (postgres.stream) ─────────────────────────────
@@ -1921,7 +1496,8 @@ const STREAM_CHANNEL_CAPACITY: usize = 256;
 fn do_stream_worker(
     target: ExecutorRef,
     sql: String,
-    params: Vec<SqlParam>,
+    (params, unsendable): (Vec<TextParam>, Option<Unsendable>),
+    (row, rt): (RowType, Arc<Runtime>),
     ch: Arc<Channel>,
     scheduler: Arc<Scheduler>,
 ) {
@@ -1930,39 +1506,56 @@ fn do_stream_worker(
     if ch.is_closed() {
         return;
     }
-    let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
+    let bind = binding(&params);
 
     // Helper: send a single wrapped row or error; stop if the channel
     // was closed by the consumer. Returns `true` to keep going.
     let send_or_stop = |v: Value| -> bool { scheduler.send_wait(&ch, v) };
 
     // `false` when the stream stopped with rows of the statement unread.
-    let pump = |client: &mut postgres::Client, sql: &str, bind: &[&(dyn ToSql + Sync)]| match client
-        .query_raw(sql, bind.iter().copied())
-    {
-        Ok(mut iter) => loop {
-            if ch.is_closed() {
-                break false;
+    let pump = |client: &mut postgres::Client, sql: &str, bind: &[&(dyn ToSql + Sync)]| {
+        let (statement, plan) = match prepare(client, &rt, sql, &row) {
+            Ok(prepared) => prepared,
+            Err(e) => {
+                let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                return true;
             }
-            match iter.next() {
-                Ok(Some(row)) => {
-                    let wrapped = Value::variant(bv::OK, vec![row_to_map(&row)]);
-                    if !send_or_stop(wrapped) {
-                        break false;
+        };
+        match client.query_raw(&statement, bind.iter().copied()) {
+            Ok(mut iter) => loop {
+                if ch.is_closed() {
+                    break false;
+                }
+                match iter.next() {
+                    Ok(Some(found)) => match plan.row(&rt, &found) {
+                        Ok(value) => {
+                            if !send_or_stop(Value::variant(bv::OK, vec![value])) {
+                                break false;
+                            }
+                        }
+                        // A row that cannot be decoded ends the stream.
+                        Err(e) => {
+                            let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                            break false;
+                        }
+                    },
+                    Ok(None) => break true,
+                    Err(e) => {
+                        let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
+                        let _ = send_or_stop(wrapped);
+                        break true;
                     }
                 }
-                Ok(None) => break true,
-                Err(e) => {
-                    let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
-                    let _ = send_or_stop(wrapped);
-                    break true;
-                }
+            },
+            Err(e) => {
+                // A parameter the encoder could not send: no statement
+                // was sent, and the stream (which no task waits for)
+                // says why.
+                let why = unsendable.as_ref().and_then(Unsendable::take);
+                let error = why.map_or_else(|| pg_error_to_variant(&e), other_error);
+                let _ = send_or_stop(Value::variant(bv::ERR, vec![error]));
+                true
             }
-        },
-        Err(e) => {
-            let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
-            let _ = send_or_stop(wrapped);
-            true
         }
     };
 
@@ -1998,19 +1591,26 @@ fn do_stream_worker(
 
 // ── Cursor workers (postgres.cursor / .cursor_next / .cursor_close) ─
 
-/// Open a cursor: runs `DECLARE <name> CURSOR FOR <sql>` with bound
-/// params on the tx's pinned connection. Registry entry is inserted
-/// before DECLARE so a concurrent `drain_cursors_for_tx` sees us;
-/// if DECLARE fails we remove it again.
+/// Open a cursor: the query `sql` is prepared, and its columns checked
+/// against `row`; then `DECLARE <name> CURSOR FOR <sql>` runs with
+/// bound params on the tx's pinned connection. Registry entry is
+/// inserted before DECLARE so a concurrent `drain_cursors_for_tx` sees
+/// us; if DECLARE fails we remove it again.
 fn do_cursor_open(
     tx_id: u64,
     cell: Arc<Mutex<TxConn>>,
     sql: String,
-    params: Vec<SqlParam>,
+    params: Vec<TextParam>,
     batch_size: u64,
+    (row, rt): (RowType, Arc<Runtime>),
 ) -> Value {
-    let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
-    let (cursor_id, name) = register_cursor(tx_id, batch_size);
+    let bind = binding(&params);
+    let planned = tx_conn(&cell).and_then(|mut conn| prepare(conn.client_mut(), &rt, &sql, &row));
+    let plan = match planned {
+        Ok((_, plan)) => Arc::new(plan),
+        Err(e) => return err(e),
+    };
+    let (cursor_id, name) = register_cursor(tx_id, batch_size, plan);
     let declare_sql = format!("DECLARE {name} CURSOR FOR {sql}");
     let declared =
         tx_conn(&cell).map(|mut conn| conn.client_mut().execute(declare_sql.as_str(), &bind));
@@ -2031,7 +1631,7 @@ fn do_cursor_open(
 }
 
 /// Fetch the next batch from an open cursor. Empty list = exhausted.
-fn do_cursor_next(cursor_id: u64) -> Value {
+fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>) -> Value {
     let entry = match lookup_cursor(cursor_id) {
         Some(e) => e,
         None if cursor_tx_ended(cursor_id) => return err(tx_ended()),
@@ -2064,13 +1664,13 @@ fn do_cursor_next(cursor_id: u64) -> Value {
     };
     match conn.client_mut().query(fetch_sql.as_str(), &[]) {
         Ok(rows) => {
-            let n = rows.len();
-            let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
             drop(conn);
-            if (n as u64) < entry.batch_size {
+            if (rows.len() as u64) < entry.batch_size {
                 update_cursor_exhausted(cursor_id, true);
             }
-            ok(Value::list(mapped))
+            let rows = rows.iter().map(|row| entry.plan.row(&rt, row));
+            rows.collect::<Result<_, _>>()
+                .map_or_else(err, |rows| ok(Value::list(rows)))
         }
         Err(e) => err(pg_error_to_variant(&e)),
     }
@@ -2267,7 +1867,12 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
             }
         }
         ("TypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
-            format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}")
+            let text =
+                format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
+            match cast_mends(act) {
+                true => format!("{text}; cast it in SQL, for example {col}::text"),
+                false => text,
+            }
         }
         ("NoSuchColumn", [Value::String(col)]) => {
             format!("postgres: no such column `{col}`")
@@ -2278,6 +1883,17 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
+}
+
+/// Whether the message of a `TypeMismatch` whose actual part is
+/// `actual` says to cast the column in SQL: not for a NULL, which a
+/// cast leaves NULL, nor for what a `json` or `jsonb` column holds (the
+/// decoder builds those with the column's type at their head, or as the
+/// whole actual part when the plan refuses the column), as casting a
+/// document to text is rarely what mends it.
+fn cast_mends(actual: &str) -> bool {
+    let head = actual.split(':').next().unwrap_or(actual);
+    !(actual == "NULL" || matches!(head.trim_end_matches("[]"), "json" | "jsonb"))
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -2341,20 +1957,27 @@ builtins! {
         Ok(vm.io("postgres", pg_timeout_err, move || do_connect_with(url, opts)))
     }
 
-    fn query(vm, conn: &Value, sql: &str, params: List) -> Started {
+    fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Started {
+        let (params, unsendable, row) = match statement_args("postgres.query", params, ty) {
+            Ok(args) => args,
+            Err(e) => return Ok(Err(e)),
+        };
         let target = resolve_executor(conn)?;
-        let params = sql_params(params)?;
         let sql = sql.to_string();
         let tx = TxHandle::take(conn).and_then(tx_canceller);
-        Ok(statement(vm, tx, move || do_query(target, sql, params)))
+        let rt = vm.runtime.clone();
+        Ok(statement(vm, tx, unsendable, move || do_query(target, sql, params, row, rt)))
     }
 
-    fn execute(vm, conn: &Value, sql: &str, params: List) -> Started {
+    fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Started {
+        let (params, unsendable) = match rows::params("postgres.execute", params) {
+            Ok(params) => params,
+            Err(e) => return Ok(Err(e)),
+        };
         let target = resolve_executor(conn)?;
-        let params = sql_params(params)?;
         let sql = sql.to_string();
         let tx = TxHandle::take(conn).and_then(tx_canceller);
-        Ok(statement(vm, tx, move || do_execute(target, sql, params)))
+        Ok(statement(vm, tx, unsendable, move || do_execute(target, sql, params)))
     }
 
     // `postgres.transact(pool, callback)` — pins a single pooled
@@ -2417,9 +2040,12 @@ builtins! {
     // without parking the caller. Backpressure is via the channel's
     // bounded capacity; cancellation is via `channel.close` (checked
     // between rows).
-    fn stream(vm, conn: &Value, sql: &str, params: List) -> Result<Value, Failed> {
+    fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Result<Value, VmError>, Failed> {
+        let (params, unsendable, row) = match statement_args("postgres.stream", params, ty) {
+            Ok(args) => args,
+            Err(e) => return Ok(Err(e)),
+        };
         let target = resolve_executor(conn)?;
-        let params = sql_params(params)?;
 
         // Mint the channel up-front so we can hand the caller an owned
         // Arc while the worker holds its own clone.
@@ -2445,38 +2071,45 @@ builtins! {
         let sql = sql.to_string();
         let scheduler = vm.scheduler().clone();
         let starting = scheduler.external();
+        let decode = (row, vm.runtime.clone());
         let op = vm.start_io(pg_timeout_err, move || {
             let _running = scheduler.enter();
             drop(starting);
-            do_stream_worker(target, sql, params, worker_channel, scheduler.clone());
+            let params = (params, unsendable);
+            do_stream_worker(target, sql, params, decode, worker_channel, scheduler.clone());
             Value::Unit
         });
         op.detach();
 
-        Ok(ok(Value::Channel(channel)))
+        Ok(Ok(ok(Value::Channel(channel))))
     }
 
     // (A cursor lives inside a transaction: `tx` is a `PgTx`.)
-    fn cursor(vm, tx: TxHandle, sql: &str, params: List, batch_size: i64) -> Started {
+    fn cursor(vm, tx: TxHandle, sql: &str, params: &Value, batch_size: i64, ty: Type) -> Started {
+        let (params, unsendable, row) = match statement_args("postgres.cursor", params, ty) {
+            Ok(args) => args,
+            Err(e) => return Ok(Err(e)),
+        };
         let cell = tx.open()?;
         let Ok(batch_size @ 1..) = u64::try_from(batch_size) else {
             return Err(other_error("postgres.cursor: batch_size must be >= 1".to_string()).into());
         };
-        let params = sql_params(params)?;
         let sql = sql.to_string();
-        Ok(statement(vm, tx_canceller(tx), move || {
-            do_cursor_open(tx.0, cell, sql, params, batch_size)
+        let decode = (row, vm.runtime.clone());
+        Ok(statement(vm, tx_canceller(tx), unsendable, move || {
+            do_cursor_open(tx.0, cell, sql, params, batch_size, decode)
         }))
     }
 
     fn cursor_next(vm, cursor: CursorHandle) -> Result<Step, VmError> {
         let tx = lookup_cursor(cursor.0).and_then(|entry| tx_canceller(TxHandle(entry.tx_id)));
-        statement(vm, tx, move || do_cursor_next(cursor.0))
+        let rt = vm.runtime.clone();
+        statement(vm, tx, None, move || do_cursor_next(cursor.0, rt))
     }
 
     fn cursor_close(vm, cursor: CursorHandle) -> Result<Step, VmError> {
         let tx = lookup_cursor(cursor.0).and_then(|entry| tx_canceller(TxHandle(entry.tx_id)));
-        statement(vm, tx, move || do_cursor_close(cursor.0))
+        statement(vm, tx, None, move || do_cursor_close(cursor.0))
     }
 
     fn close(pool: PoolHandle) {
@@ -2556,7 +2189,7 @@ builtins! {
         let target = resolve_executor(conn)?;
         let (channel, payload) = (channel.to_string(), payload.to_string());
         let tx = TxHandle::take(conn).and_then(tx_canceller);
-        Ok(statement(vm, tx, move || do_notify(target, channel, payload)))
+        Ok(statement(vm, tx, None, move || do_notify(target, channel, payload)))
     }
 }
 
@@ -2575,9 +2208,13 @@ fn tx_canceller(tx: TxHandle) -> Option<Canceller> {
 /// counts as aborted from then on: its later statements are
 /// `Err(TxnAborted)` at once, and so is its COMMIT. A statement on the
 /// pool that nobody waits for finishes in the server.
+///
+/// A parameter the encoder could not send (`unsendable`) is the error of
+/// the program, not the statement's value; the statement was not sent.
 fn statement(
     vm: &mut Vm,
     tx: Option<Canceller>,
+    unsendable: Option<Unsendable>,
     f: impl FnOnce() -> Value + Send + 'static,
 ) -> Result<Step, VmError> {
     let op = vm.start_io(pg_timeout_err, f);
@@ -2596,7 +2233,15 @@ fn statement(
             })
         }
     };
-    vm.io_wait("postgres", pg_timeout_err, op)
+    vm.io_wait_then(
+        "postgres",
+        pg_timeout_err,
+        op,
+        move |value| match unsendable.and_then(|unsendable| unsendable.take()) {
+            Some(why) => Err(VmError::new(why)),
+            None => Ok(value),
+        },
+    )
 }
 
 /// The frame of `postgres.transact`.
@@ -2800,20 +2445,54 @@ fn end_tx(entry: Option<TxEntry>, returned: Value) -> Value {
 mod tests {
     use super::*;
 
-    /// The records the module builds have the fields of their types,
-    /// in the types' order (`Value::builtin_record` says so in a debug
-    /// build), and are shown under their names.
+    /// The record the module builds has the fields of its type, in the
+    /// type's order (`Value::builtin_record` says so in a debug build),
+    /// and is shown under its name.
     #[test]
-    fn the_records_of_the_module_have_their_types_fields() {
-        let rows = make_query_result(vec![Value::Int(1), Value::Int(2)]);
-        assert_eq!(rows.to_string(), "QueryResult {row_count: 2, rows: [1, 2]}");
-        let done = make_exec_result(3, vec![]);
-        assert_eq!(done.to_string(), "ExecResult {affected: 3, returning: []}");
+    fn the_record_of_the_module_has_its_type_s_fields() {
         let told = make_notification("jobs", "42", 7);
         assert_eq!(
             told.to_string(),
             "Notification {channel: jobs, payload: 42, pid: 7}"
         );
+    }
+
+    /// The column an `undefined_column` error names, as the server
+    /// words it.
+    /// The cast hint goes with every mismatch but a NULL and what a
+    /// json or jsonb column holds.
+    #[test]
+    fn the_cast_hint_is_for_all_but_null_and_documents() {
+        for mended in [
+            "float8",
+            "int4[] with 2 dimensions",
+            "NaN",
+            "-Infinity",
+            "MyType",
+            "24:00:00",
+        ] {
+            assert!(cast_mends(mended), "{mended}");
+        }
+        for not in [
+            "NULL",
+            "jsonb",
+            "json[]",
+            "jsonb: json type mismatch: expected Int, got string",
+            "jsonb[]: a value the server sent malformed",
+        ] {
+            assert!(!cast_mends(not), "{not}");
+        }
+    }
+
+    #[test]
+    fn the_column_of_an_undefined_column_error() {
+        assert_eq!(column_named(r#"column "nope" does not exist"#), "nope");
+        assert_eq!(column_named("column t.nope does not exist"), "t.nope");
+        assert_eq!(
+            column_named(r#"column "x" of relation "t" does not exist"#),
+            "x"
+        );
+        assert_eq!(column_named("something else"), "something else");
     }
 
     #[test]

@@ -1,0 +1,15 @@
+a stream of rows:
+  Ok(N {n: 1})
+  Ok(N {n: 2})
+  Ok(N {n: 3})
+  closed
+a stream whose third row has a NULL:
+  Ok(N {n: 1})
+  Ok(N {n: 2})
+  Err: postgres type mismatch on column `n`: expected Int, got NULL
+  closed
+  batch: [N {n: 1}, N {n: 2}]
+  batch: [N {n: 3}, N {n: 4}]
+  batch: [N {n: 5}]
+a cursor: Ok(3) batches
+a cursor that does not fit: postgres type mismatch on column `n`: expected String, got int4; cast it in SQL, for example n::text

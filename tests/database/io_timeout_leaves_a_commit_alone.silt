@@ -7,6 +7,7 @@
 -- of a row that is in the table.
 import channel
 import env
+import json
 import postgres
 
 fn url() -> String {
@@ -18,7 +19,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -46,26 +47,26 @@ fn said(answer: Result(a, postgres.PostgresError)) -> String {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_io_timeout", [])
-      let _ = postgres.execute(pool, "CREATE TABLE silt_database_io_timeout (said text)", [])
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_io_timeout", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_io_timeout (said text)", ())
       let _ = postgres.execute(
         pool,
         "CREATE OR REPLACE FUNCTION silt_database_io_timeout_slow() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(1.5); RETURN NULL; END $$ LANGUAGE plpgsql",
-        [],
+        (),
       )
       let _ = postgres.execute(
         pool,
         "CREATE CONSTRAINT TRIGGER silt_database_io_timeout_slow AFTER INSERT ON silt_database_io_timeout DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION silt_database_io_timeout_slow()",
-        [],
+        (),
       )
-      println("a statement of 1 s: {said(postgres.query(pool, "SELECT pg_sleep(1)", []))}")
+      println("a statement of 1 s: {said(postgres.query(pool, "SELECT pg_sleep(1)", (), json.Value))}")
       let done = postgres.transact(pool) { tx ->
-        postgres.execute(tx, "INSERT INTO silt_database_io_timeout VALUES ('committed')", [])
+        postgres.execute(tx, "INSERT INTO silt_database_io_timeout VALUES ('committed')", ())
       }
       println("a transaction whose COMMIT takes 1.5 s: {said(done)}")
       println("rows in the table: {count(pool, "SELECT said FROM silt_database_io_timeout")}")
-      let _ = postgres.execute(pool, "DROP TABLE silt_database_io_timeout", [])
-      let _ = postgres.execute(pool, "DROP FUNCTION silt_database_io_timeout_slow()", [])
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_io_timeout", ())
+      let _ = postgres.execute(pool, "DROP FUNCTION silt_database_io_timeout_slow()", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")

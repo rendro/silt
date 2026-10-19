@@ -1,0 +1,101 @@
+-- The rows of a result are decoded into the record type the call
+-- names, each field from the column of its name: every column type the
+-- module decodes, into the field types it fills, and the same row as a
+-- `json.Value`, a `json.Object` of its columns. A column that no field
+-- names (`extra`) is not read.
+import env
+import json
+import postgres
+import time
+
+type Meta { tags: List(String), level: Int }
+
+type Row {
+  b: Bool,
+  i2: Int,
+  i4: Int,
+  i8: Int,
+  i8f: Float,
+  f4: Float,
+  f8: Float,
+  exact: String,
+  near: Float,
+  t: String,
+  v: String,
+  c: String,
+  n: String,
+  q: String,
+  u: String,
+  mood: String,
+  dom: Int,
+  by: Bytes,
+  d: time.Date,
+  tm: time.Time,
+  ts: time.DateTime,
+  tz: time.DateTime,
+  j: Meta,
+  jb: json.Value,
+  js: String,
+  arr: List(Option(Int)),
+  grid: List(List(Int)),
+  empty: List(Int),
+  nul: Option(Int),
+  some: Option(String),
+}
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn row(db: postgres.PgPool) -> Result(Int, postgres.PostgresError) {
+  postgres.transact(db) { tx ->
+    let _ = postgres.execute(tx, "CREATE TYPE pg2_mood AS ENUM ('sad', 'happy')", ())?
+    let _ = postgres.execute(tx, "CREATE DOMAIN pg2_small AS int4 CHECK (VALUE < 100)", ())?
+    let sql = """
+      SELECT true AS b, 2::int2 AS i2, 4::int4 AS i4, 8::int8 AS i8, 9007199254740993::int8 AS i8f,
+        1.5::float4 AS f4, 2.5::float8 AS f8, 12.50::numeric AS exact, 0.1::numeric AS near,
+        't'::text AS t, 'v'::varchar AS v, 'c'::char(3) AS c, 'n'::name AS n, 'q'::"char" AS q,
+        '0198f2e0-0000-7000-8000-000000000001'::uuid AS u, 'happy'::pg2_mood AS mood,
+        7::pg2_small AS dom, '\x00ff'::bytea AS by, '2026-10-13'::date AS d,
+        '01:02:03.25'::time AS tm, '2026-10-13 01:02:03'::timestamp AS ts,
+        '2026-10-13 01:02:03+02'::timestamptz AS tz,
+        '{"tags": ["a", "b"], "level": 3}'::json AS j, '[1, "a", null, {"k": 2.5}]'::jsonb AS jb,
+        '"text"'::jsonb AS js, ARRAY[1, NULL, 3]::int4[] AS arr,
+        ARRAY[[1, 2], [3, 4]]::int8[] AS grid, ARRAY[]::int4[] AS empty, NULL::int4 AS nul,
+        'x' AS some, 'not read' AS extra
+    """
+    let rows = postgres.query(tx, sql, (), Row)?
+    match rows {
+      [r] -> {
+        println("b {r.b}, i2 {r.i2}, i4 {r.i4}, i8 {r.i8}, i8 as Float {r.i8f}")
+        println("f4 {r.f4}, f8 {r.f8}, numeric exact {r.exact}, numeric near {r.near}")
+        println("text {r.t}, varchar {r.v}, char(3) [{r.c}], name {r.n}, \"char\" {r.q}")
+        println("uuid {r.u}, enum {r.mood}, domain {r.dom}, bytea {r.by}")
+        println("date {r.d}, time {r.tm}, timestamp {r.ts}, timestamptz {r.tz}")
+        println("json {r.j}, jsonb {r.jb}, jsonb string {r.js}")
+        println("arrays {r.arr} {r.grid} {r.empty}, NULL {r.nul}, Some {r.some}")
+      }
+      _ -> println("rows: {rows}")
+    }
+    let objects = postgres.query(tx, sql, (), json.Value)?
+    println(json.stringify(objects))
+    let _ = postgres.execute(tx, "DROP DOMAIN pg2_small", ())?
+    postgres.execute(tx, "DROP TYPE pg2_mood", ())
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      match row(db) {
+        Ok(_) -> ()
+        Err(e) -> println("failed: {e.message()}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

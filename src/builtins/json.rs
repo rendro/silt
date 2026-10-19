@@ -9,7 +9,7 @@ use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
-use crate::vm::{Vm, VmError};
+use crate::vm::{Runtime, VmError};
 
 // ── Field types for JSON / TOML parsing ──────────────────────────────
 
@@ -188,7 +188,11 @@ pub(crate) fn unsupported_kind(caller: &str, v: &Value) -> VmError {
 /// JSON. A value JSON has no form for (a set, bytes, a function, the
 /// constructor of a variant among them, a channel, a handle) is an
 /// error, wherever in the value it is.
-fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Value, VmError> {
+pub(crate) fn value_to_json(
+    caller: &str,
+    v: &Value,
+    level: usize,
+) -> Result<serde_json::Value, VmError> {
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_json(caller, v, level + 1);
     // `Some(x)` is written as `x` is, and so is a `json.Value` as the
@@ -253,6 +257,36 @@ fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Va
 
 // ── JSON helpers ────────────────────────────────────────────────────
 
+/// The time of day that the text `s` of a document writes: `HH:MM:SS`,
+/// with a fraction of a second up to nanoseconds (`13:14:15.25`), or
+/// `HH:MM`. Shared by the JSON and TOML decoders.
+pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, chrono::ParseError> {
+    NaiveTime::parse_from_str(s, "%H:%M:%S%.f").or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+}
+
+/// The date and time that the text `s` of a document writes, in UTC
+/// where it has an offset: RFC 3339, the same with a space for the `T`,
+/// or without an offset; seconds with a fraction up to nanoseconds, or
+/// no seconds (`2024-03-09T07:30`). Shared by the JSON and TOML
+/// decoders.
+pub(crate) fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.naive_utc());
+    }
+    let offset = ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"].into_iter();
+    let naive = [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M",
+    ]
+    .into_iter();
+    offset
+        .filter_map(|f| chrono::DateTime::parse_from_str(s, f).ok())
+        .map(|dt| dt.naive_utc())
+        .chain(naive.filter_map(|f| NaiveDateTime::parse_from_str(s, f).ok()))
+        .next()
+}
+
 /// The record type `ty` a decoder builds, with its fields. `caller` is
 /// the builtin on whose behalf the type is looked up (`json.parse`,
 /// `toml.parse_list`, ...); it starts the error message. A builtin
@@ -270,13 +304,30 @@ pub(crate) fn decodable_record(
     }
 }
 
+/// `field_type` as silt writes it, a record type by its name.
+pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String {
+    field_type.shown(&|id| {
+        rt.type_info(id)
+            .map_or_else(Default::default, |info| info.name.clone())
+    })
+}
+
+/// The type a field of `field_type` is decoded as by a decoder of a
+/// format with no bytes (JSON, TOML): a type that holds `Bytes` has no
+/// decoder, whatever the document holds (an empty list too).
+pub(crate) fn without_bytes(rt: &Runtime, field_type: &FieldType) -> Option<FieldType> {
+    field_type
+        .holds_bytes()
+        .then(|| FieldType::Unsupported(shown(rt, field_type)))
+}
+
 /// The record type `id` a record field names, from the program's types.
 pub(crate) fn field_record_type(
-    vm: &Vm,
+    rt: &Runtime,
     caller: &str,
     id: TypeId,
 ) -> Result<Arc<TypeInfo>, VmError> {
-    vm.type_info(id)
+    rt.type_info(id)
         .ok_or_else(|| VmError::new(format!("{caller}: unknown record type")))
 }
 
@@ -320,7 +371,7 @@ fn decode_err_to_silt(e: JsonDecodeErr) -> Value {
 }
 
 fn json_to_record(
-    vm: &mut Vm,
+    rt: &Runtime,
     ty: &Arc<TypeInfo>,
     fields: &[(std::string::String, FieldType)],
     json: &serde_json::Value,
@@ -331,8 +382,10 @@ fn json_to_record(
     // (In the order the type declares them: the record's own.)
     let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
+        let unsupported = without_bytes(rt, field_type);
+        let field_type = unsupported.as_ref().unwrap_or(field_type);
         match obj.get(field_name) {
-            Some(json_val) => match json_to_typed_value(vm, json_val, field_type) {
+            Some(json_val) => match json_to_typed_value(rt, json_val, field_type) {
                 Ok(val) => record_fields.push(val),
                 Err(JsonDecodeErr::Unsupported(declared)) => {
                     return Ok(json_unknown_err(unsupported_field_type_message(
@@ -356,7 +409,7 @@ fn json_to_record(
 }
 
 fn json_to_record_list(
-    vm: &mut Vm,
+    rt: &Runtime,
     ty: &Arc<TypeInfo>,
     fields: &[(std::string::String, FieldType)],
     json: &serde_json::Value,
@@ -366,7 +419,7 @@ fn json_to_record_list(
     };
     let mut records = Vec::new();
     for item in arr.iter() {
-        let result = json_to_record(vm, ty, fields, item)?;
+        let result = json_to_record(rt, ty, fields, item)?;
         match result {
             Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
                 records.push(variant.fields()[0].clone());
@@ -387,7 +440,7 @@ fn json_to_record_list(
     Ok(Value::variant(bv::OK, vec![Value::list(records)]))
 }
 
-fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
+fn json_to_map(rt: &Runtime, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
     let serde_json::Value::Object(obj) = json else {
         return Ok(json_type_mismatch_err("object", json_type_name(json)));
     };
@@ -406,7 +459,7 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
     };
     let mut map = Vec::with_capacity(obj.len());
     for (key, json_val) in obj {
-        match json_to_typed_value(vm, json_val, &field_type) {
+        match json_to_typed_value(rt, json_val, &field_type) {
             Ok(val) => map.push((Value::String(key.clone().into()), val)),
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
@@ -417,7 +470,7 @@ fn json_to_map(vm: &mut Vm, value_type: Type, json: &serde_json::Value) -> Resul
 /// The `json.Value` that holds the document `json`. A number is an
 /// `Int` when it is a whole number an `Int` can be, as for an `Int`
 /// field, and a `Float` otherwise.
-fn json_value(json: &serde_json::Value) -> Value {
+pub(crate) fn json_value(json: &serde_json::Value) -> Value {
     match json {
         serde_json::Value::Null => Value::variant(bv::JSON_NULL, Vec::new()),
         serde_json::Value::Bool(b) => Value::variant(bv::JSON_BOOL, vec![Value::Bool(*b)]),
@@ -453,7 +506,7 @@ fn json_value(json: &serde_json::Value) -> Value {
 /// ready-built `JsonError` variant (not wrapped in `Err(..)`); the
 /// caller wraps it before returning to silt.
 fn json_to_typed_value(
-    vm: &mut Vm,
+    rt: &Runtime,
     json: &serde_json::Value,
     expected: &FieldType,
 ) -> Result<Value, JsonDecodeErr> {
@@ -501,7 +554,7 @@ fn json_to_typed_value(
             serde_json::Value::Array(arr) => {
                 let mut values = Vec::new();
                 for item in arr.iter() {
-                    values.push(json_to_typed_value(vm, item, inner)?);
+                    values.push(json_to_typed_value(rt, item, inner)?);
                 }
                 Ok(Value::list(values))
             }
@@ -510,7 +563,7 @@ fn json_to_typed_value(
         FieldType::Option(inner) => match json {
             serde_json::Value::Null => Ok(Value::variant(bv::NONE, Vec::new())),
             _ => {
-                let val = json_to_typed_value(vm, json, inner)?;
+                let val = json_to_typed_value(rt, json, inner)?;
                 Ok(Value::variant(bv::SOME, vec![val]))
             }
         },
@@ -518,7 +571,7 @@ fn json_to_typed_value(
             serde_json::Value::Object(obj) => {
                 let mut map = Vec::with_capacity(obj.len());
                 for (key, item) in obj {
-                    let val = json_to_typed_value(vm, item, inner)?;
+                    let val = json_to_typed_value(rt, item, inner)?;
                     map.push((Value::String(key.clone().into()), val));
                 }
                 Ok(Value::map(map))
@@ -529,7 +582,7 @@ fn json_to_typed_value(
             serde_json::Value::Array(arr) if arr.len() == elems.len() => {
                 let mut values = Vec::with_capacity(elems.len());
                 for (item, elem) in arr.iter().zip(elems) {
-                    values.push(json_to_typed_value(vm, item, elem)?);
+                    values.push(json_to_typed_value(rt, item, elem)?);
                 }
                 Ok(Value::tuple(values))
             }
@@ -542,6 +595,7 @@ fn json_to_typed_value(
         },
         FieldType::Unsupported(declared) => Err(JsonDecodeErr::Unsupported(declared.clone())),
         FieldType::JsonValue => Ok(json_value(json)),
+        FieldType::Bytes => Err(JsonDecodeErr::Unsupported("Bytes".into())),
         FieldType::Date => match json {
             serde_json::Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map(make_date)
@@ -549,36 +603,21 @@ fn json_to_typed_value(
             _ => Err(mismatch("date string", json_type_name(json))),
         },
         FieldType::Time => match json {
-            serde_json::Value::String(s) => NaiveTime::parse_from_str(s, "%H:%M:%S")
-                .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+            serde_json::Value::String(s) => parse_time(s)
                 .map(make_time)
                 .map_err(|e| unknown(format!("invalid time '{s}' (expected HH:MM:SS): {e}"))),
             _ => Err(mismatch("time string", json_type_name(json))),
         },
         FieldType::DateTime => match json {
-            serde_json::Value::String(s) => {
-                // Try timezone-aware formats first (RFC 3339 / ISO 8601 with offset),
-                // converting to UTC. Then fall back to naive formats.
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                    Ok(make_datetime(dt.naive_utc()))
-                } else if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%z") {
-                    Ok(make_datetime(dt.naive_utc()))
-                } else if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z") {
-                    Ok(make_datetime(dt.naive_utc()))
-                } else {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-                        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-                        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
-                        .map(make_datetime)
-                        .map_err(|_| unknown(format!("invalid datetime '{s}'")))
-                }
-            }
+            serde_json::Value::String(s) => parse_datetime(s)
+                .map(make_datetime)
+                .ok_or_else(|| unknown(format!("invalid datetime '{s}'"))),
             _ => Err(mismatch("datetime string", json_type_name(json))),
         },
         FieldType::Record(id) => {
-            let ty = field_record_type(vm, "json.parse", *id)?;
+            let ty = field_record_type(rt, "json.parse", *id)?;
             let fields = decodable_record("json.parse", &ty)?;
-            let result = json_to_record(vm, &ty, &fields, json)?;
+            let result = json_to_record(rt, &ty, &fields, json)?;
             match result {
                 Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
                     Ok(variant.fields()[0].clone())
@@ -595,11 +634,34 @@ fn json_to_typed_value(
     }
 }
 
+/// The value of the field type `expected` that the document `json` is,
+/// for a decoder of a format that holds JSON documents (postgres's
+/// `json` and `jsonb` columns): `Err` of what `JsonError`'s `message`
+/// says of why there is none.
+#[cfg(feature = "postgres")]
+pub(crate) fn decode_field(
+    rt: &Runtime,
+    json: &serde_json::Value,
+    expected: &FieldType,
+) -> Result<Value, std::string::String> {
+    json_to_typed_value(rt, json, expected).map_err(|e| {
+        let error = decode_err_to_silt(e);
+        let because = match &error {
+            Value::Variant(err) => match err.fields() {
+                [Value::Variant(why)] => error_text(why.name(), why.fields()),
+                _ => None,
+            },
+            _ => None,
+        };
+        because.unwrap_or_else(|| error.to_string())
+    })
+}
+
 /// The value of type `ty` that the document `parsed` is, for
 /// `json.parse` and `json.decode` (`caller`): `Ok` of it, or `Err` of
 /// the `JsonError` that says why there is none.
 fn decode_document(
-    vm: &mut Vm,
+    rt: &Runtime,
     caller: &str,
     parsed: Result<serde_json::Value, serde_json::Error>,
     ty: Type,
@@ -614,10 +676,10 @@ fn decode_document(
         Type::Named(ty) if ty.id == ty::JSON_VALUE => FieldType::JsonValue,
         Type::Named(ty) => {
             let fields = decodable_record(caller, ty)?;
-            return json_to_record(vm, ty, &fields, &json);
+            return json_to_record(rt, ty, &fields, &json);
         }
     };
-    Ok(match json_to_typed_value(vm, &json, &field_type) {
+    Ok(match json_to_typed_value(rt, &json, &field_type) {
         Ok(val) => Value::variant(bv::OK, vec![val]),
         Err(e) => decode_err_to_silt(e),
     })
@@ -628,11 +690,11 @@ fn decode_document(
 builtins! {
     fn decode(vm, value: &Value, ty: Type) -> Result<Value, VmError> {
         let json = value_to_json("json.decode", value, 0)?;
-        decode_document(vm, "json.decode", Ok(json), ty)
+        decode_document(&vm.runtime, "json.decode", Ok(json), ty)
     }
 
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        decode_document(vm, "json.parse", serde_json::from_str(s), ty)
+        decode_document(&vm.runtime, "json.parse", serde_json::from_str(s), ty)
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
@@ -655,14 +717,14 @@ builtins! {
         };
         let fields = decodable_record("json.parse_list", ty)?;
         match serde_json::from_str::<serde_json::Value>(s) {
-            Ok(json) => json_to_record_list(vm, ty, &fields, &json),
+            Ok(json) => json_to_record_list(&vm.runtime, ty, &fields, &json),
             Err(e) => Ok(json_result_err(&e)),
         }
     }
 
     fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
         match serde_json::from_str::<serde_json::Value>(s) {
-            Ok(json) => json_to_map(vm, value_type, &json),
+            Ok(json) => json_to_map(&vm.runtime, value_type, &json),
             Err(e) => Ok(json_result_err(&e)),
         }
     }
@@ -680,6 +742,69 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A field whose type holds `Bytes` has no decoder, whatever the
+    /// document holds there: an empty list, a `null` for an `Option`,
+    /// or a list of numbers.
+    #[test]
+    fn a_field_that_holds_bytes_is_never_decoded() {
+        use crate::defs::{DefId, TypeId};
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        for (field, text) in [
+            (FieldType::List(Box::new(FieldType::Bytes)), r#"{"b": []}"#),
+            (FieldType::List(Box::new(FieldType::Bytes)), r#"{"b": [1]}"#),
+            (
+                FieldType::Option(Box::new(FieldType::Bytes)),
+                r#"{"b": null}"#,
+            ),
+            (
+                FieldType::Tuple(vec![FieldType::Int, FieldType::Bytes]),
+                r#"{"b": [1, 2]}"#,
+            ),
+        ] {
+            let shown = shown(&vm.runtime, &field);
+            let fields = vec![("b".to_string(), field)];
+            let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
+            let json = serde_json::from_str(text).expect("a document");
+            let decoded = json_to_record(&vm.runtime, &ty, &fields, &json).expect("a value");
+            assert_eq!(
+                decoded.to_string(),
+                format!(
+                    "Err(cannot decode field `b` of `B`: a value of type {shown} cannot be decoded)"
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    /// A time and a datetime are read with a fraction of a second up to
+    /// nanoseconds, as silt shows them, and without one.
+    #[test]
+    fn times_are_read_with_a_fraction_of_a_second() {
+        let time = |s: &str| parse_time(s).map(|t| t.to_string()).ok();
+        assert_eq!(time("13:14:15.250000000").as_deref(), Some("13:14:15.250"));
+        assert_eq!(
+            time("13:14:15.123456789").as_deref(),
+            Some("13:14:15.123456789")
+        );
+        assert_eq!(time("13:14:15").as_deref(), Some("13:14:15"));
+        assert_eq!(time("13:14").as_deref(), Some("13:14:00"));
+        assert_eq!(time("13:14:15.").as_deref(), None);
+        let datetime = |s: &str| parse_datetime(s).map(|t| t.to_string());
+        assert_eq!(
+            datetime("2026-10-19T13:14:15.5").as_deref(),
+            Some("2026-10-19 13:14:15.500")
+        );
+        assert_eq!(
+            datetime("2026-10-19 13:14:15.5+02:00").as_deref(),
+            Some("2026-10-19 11:14:15.500")
+        );
+        assert_eq!(
+            datetime("2026-10-19T13:14").as_deref(),
+            Some("2026-10-19 13:14:00")
+        );
+        assert_eq!(datetime("2026-10-19").as_deref(), None);
+    }
 
     /// The deepest value the encoder writes, of the shape that makes
     /// the deepest document (a list in a variant: three levels of the

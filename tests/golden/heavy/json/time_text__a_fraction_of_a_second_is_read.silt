@@ -1,0 +1,24 @@
+-- json and toml read a time of day and a datetime written with a
+-- fraction of a second, up to nanoseconds: the text silt shows of one
+-- (`13:14:15.250000000`) reads back as the same value, and so does a
+-- shorter fraction. Without one, and without seconds, they read as
+-- before; an offset is turned into UTC.
+import json
+import time
+import toml
+
+type T { t: time.Time, d: time.DateTime }
+
+fn main() {
+  println(json.parse("""{"t": "13:14:15.25", "d": "2026-10-19T13:14:15.250000000"}""", T))
+  println(json.parse("""{"t": "13:14:15", "d": "2026-10-19 13:14:15"}""", T))
+  println(json.parse("""{"t": "13:14", "d": "2026-10-19T13:14"}""", T))
+  println(json.parse("""{"t": "13:14:15.123456789", "d": "2026-10-19T13:14:15.5+02:00"}""", T))
+  println(json.parse("""{"t": "25:00", "d": "x"}""", T))
+  println(toml.parse("t = \"13:14:15.25\"\nd = \"2026-10-19 13:14:15.250000000\"", T))
+  println(toml.parse("t = 13:14:15.25\nd = 2026-10-19T13:14:15.25Z", T))
+  println(toml.parse("t = 13:14:15\nd = 2026-10-19 13:14:15", T))
+  -- What silt shows of a time, read back.
+  let t = time.Time { hour: 7, minute: 30, second: 5, ns: 500000000 }
+  println(json.parse(json.stringify(#{"t": "{t}", "d": "2026-10-19T{t}"}), T))
+}

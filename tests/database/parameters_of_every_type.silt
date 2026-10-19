@@ -1,0 +1,79 @@
+-- The parameters of a statement are a tuple of plain values, each sent
+-- as text that the server reads as the type the statement needs at its
+-- place: an Int into an int4 and a numeric, a String into a date and a
+-- uuid, a Float into a float4, Bytes into a bytea, a record into a
+-- jsonb, `None` as NULL. A list goes as an array where the parameter is
+-- an array (`= ANY($1)`) and as JSON anywhere else; a `json.Value` as
+-- its JSON (`json.Null` is the JSON `null`, not NULL). A list of Bytes
+-- goes into a bytea[] (as JSON, which has no bytes, it cannot be sent:
+-- a_parameter_that_cannot_be_sent). A Float keeps its point, which no
+-- integer column takes.
+import bytes
+import env
+import json
+import postgres
+import time
+
+type Meta { tags: List(String), level: Int }
+
+type Out { v: String }
+
+type Ids { id: Int }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- The text of what the server made of the parameters `ps` of `sql`.
+fn show(db: postgres.PgPool, what: String, sql: String, ps: p) {
+  match postgres.query(db, sql, ps, Out) {
+    Ok(rows) -> println("{what}: {rows}")
+    Err(e) -> println("{what}: {e.message()}")
+  }
+}
+
+fn main() {
+  let pic = match bytes.from_hex("00ff10") {
+    Ok(b) -> b
+    Err(_) -> bytes.empty()
+  }
+  -- (`Some(d)` is sent as `d`.)
+  let day = match time.date(2026, 1, 2) {
+    Ok(d) -> Some(d)
+    Err(_) -> None
+  }
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      show(db, "Int into int4", "SELECT ($1::int4 + 1)::text AS v", (41,))
+      show(db, "Int into numeric", "SELECT ($1::numeric / 4)::text AS v", (10,))
+      show(db, "Int into int2 out of its range", "SELECT $1::int2::text AS v", (70000,))
+      show(db, "String into date", "SELECT ($1::date + 1)::text AS v", ("2026-01-31",))
+      show(db, "Date into date", "SELECT ($1::date + 1)::text AS v", (day,))
+      show(db, "String into uuid", "SELECT $1::uuid::text AS v", ("0198F2E0-0000-7000-8000-000000000001",))
+      show(db, "Float into float4", "SELECT ($1::float4 * 2)::text AS v", (1.25,))
+      show(db, "Float into int4", "SELECT $1::int4::text AS v", (2.0,))
+      show(db, "Bool into bool", "SELECT (NOT $1::bool)::text AS v", (true,))
+      show(db, "Bytes into bytea", "SELECT encode($1::bytea, 'hex') AS v", (pic,))
+      show(db, "a record into jsonb", "SELECT ($1::jsonb ->> 'level') AS v", (Meta { tags: ["a"], level: 3 },))
+      show(db, "a list into an array", "SELECT array_length($1::int4[], 1)::text AS v", ([1, 2, 3],))
+      show(db, "a list of text into an array", "SELECT ($1::text[])[2] AS v", (["a\"b", "c\\d,e"],))
+      show(db, "a list of lists into an array", "SELECT $1::int4[][]::text AS v", ([[1, 2], [3, 4]],))
+      show(db, "a list into jsonb", "SELECT jsonb_array_length($1::jsonb)::text AS v", ([1, 2, 3],))
+      show(db, "a list of Bytes into a bytea[]", "SELECT encode(($1::bytea[])[2], 'hex') AS v", ([pic, pic],))
+      show(db, "None", "SELECT coalesce($1::text, 'it was NULL') AS v", (None,))
+      show(db, "Some", "SELECT coalesce($1::text, 'it was NULL') AS v", (Some("it was given"),))
+      show(db, "json.Null", "SELECT jsonb_typeof($1::jsonb) AS v", (json.Null,))
+      show(db, "several", "SELECT concat_ws(' ', $1::int4, $2::text, $3::bool) AS v", (1, "two", false))
+      show(db, "none", "SELECT 'no parameters' AS v", ())
+      match postgres.query(db, "SELECT id FROM generate_series(1, 9) AS id WHERE id = ANY($1)", ([2, 5],), Ids) {
+        Ok(rows) -> println("= ANY($1): {rows}")
+        Err(e) -> println("= ANY($1): {e.message()}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

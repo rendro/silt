@@ -1208,6 +1208,18 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// The description of the program's type `id`, or of the builtin
+    /// type. (The table is the program's, not a VM's: the VM of a task
+    /// finds a type of a REPL entry later than its own. Its lock is
+    /// held for the lookup, not while anything is built of what is
+    /// found.)
+    pub(crate) fn type_info(
+        &self,
+        id: crate::defs::TypeId,
+    ) -> Option<Arc<crate::typeinfo::TypeInfo>> {
+        self.types.lock().get(id).cloned()
+    }
+
     /// End the threads that serve the program: the scheduler's workers
     /// and timer thread and the I/O workers. Called when
     /// the VM that was made for the program is dropped. Tasks that have

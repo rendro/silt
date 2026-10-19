@@ -1,0 +1,16 @@
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: postgres.query: a row decodes into a record type or json.Value, not Int; declare a record type with a field for each column
+-- In a function that takes the type of its rows as a type parameter,
+-- the compiler does not know the type, and `postgres.query` checks it
+-- where it runs, with the compiler's help (here before it looks at the
+-- connection, which is no pool).
+import postgres
+
+fn rows(db: a, type r) -> Result(List(r), postgres.PostgresError) {
+  postgres.query(db, "SELECT 1 AS n", (), r)
+}
+
+fn main() {
+  println(rows(0, Int))
+}

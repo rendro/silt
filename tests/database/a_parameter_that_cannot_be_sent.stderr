@@ -1,0 +1,5 @@
+error[runtime]: postgres.query: unsupported value kind Bytes
+ --> a_parameter_that_cannot_be_sent.silt:43:15
+    |
+ 43 |       let _ = postgres.query(db, "SELECT $1::jsonb::text AS v", ([pic],), Out)
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ postgres.query: unsupported value kind Bytes

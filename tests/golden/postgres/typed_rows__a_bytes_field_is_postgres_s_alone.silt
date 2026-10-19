@@ -1,0 +1,23 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `File`: field `data` has type `Bytes`, which has no decoder
+-- A `Bytes` field is filled from a `bytea` column: `postgres.query`
+-- takes the record, and `json.parse`, which has no bytes in a
+-- document, still refuses it (the error is the second call's).
+import json
+import postgres
+
+type File { name: String, data: Bytes }
+
+fn files(db: postgres.PgPool) -> Result(List(File), postgres.PostgresError) {
+  postgres.query(db, "SELECT name, data FROM files", (), File)
+}
+
+fn file(text: String) -> Result(File, json.JsonError) {
+  json.parse(text, File)
+}
+
+fn main() {
+  println(1)
+}

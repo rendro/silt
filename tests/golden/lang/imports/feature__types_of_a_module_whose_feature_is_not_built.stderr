@@ -19,40 +19,26 @@ error[type]: unknown type 'PgCursor'
    |                                 ^^^^^^^^ unknown type 'PgCursor'
   = help: `PgCursor` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
 
-error[type]: unknown type 'PgValue'
+error[type]: unknown type 'Notification'
  --> feature__types_of_a_module_whose_feature_is_not_built.silt:12:12
     |
- 12 | fn rows(v: PgValue, q: QueryResult, e: ExecResult) -> Int {
-    |            ^^^^^^^ unknown type 'PgValue'
-  = help: `PgValue` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
-
-error[type]: unknown type 'QueryResult'
- --> feature__types_of_a_module_whose_feature_is_not_built.silt:12:24
-    |
- 12 | fn rows(v: PgValue, q: QueryResult, e: ExecResult) -> Int {
-    |                        ^^^^^^^^^^^ unknown type 'QueryResult'
-  = help: `QueryResult` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
-
-error[type]: unknown type 'ExecResult'
- --> feature__types_of_a_module_whose_feature_is_not_built.silt:12:40
-    |
- 12 | fn rows(v: PgValue, q: QueryResult, e: ExecResult) -> Int {
-    |                                        ^^^^^^^^^^ unknown type 'ExecResult'
-  = help: `ExecResult` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+ 12 | fn rows(n: Notification) -> Int {
+    |            ^^^^^^^^^^^^ unknown type 'Notification'
+  = help: `Notification` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
 
 error[type]: unknown type 'PgPool'
  --> feature__types_of_a_module_whose_feature_is_not_built.silt:16:21
     |
- 16 | type Holder { pool: PgPool, values: List(PgValue) }
+ 16 | type Holder { pool: PgPool, txs: List(PgTx) }
     |                     ^^^^^^ unknown type 'PgPool'
   = help: `PgPool` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
 
-error[type]: unknown type 'PgValue'
- --> feature__types_of_a_module_whose_feature_is_not_built.silt:16:42
+error[type]: unknown type 'PgTx'
+ --> feature__types_of_a_module_whose_feature_is_not_built.silt:16:39
     |
- 16 | type Holder { pool: PgPool, values: List(PgValue) }
-    |                                          ^^^^^^^ unknown type 'PgValue'
-  = help: `PgValue` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
+ 16 | type Holder { pool: PgPool, txs: List(PgTx) }
+    |                                       ^^^^ unknown type 'PgTx'
+  = help: `PgTx` is in module `postgres`, which is not part of this build of silt: it needs the cargo feature `postgres`
 
 error[type]: module 'postgres' is not imported
  --> feature__types_of_a_module_whose_feature_is_not_built.silt:19:11

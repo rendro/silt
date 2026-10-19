@@ -292,10 +292,10 @@ The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and
 `channel.Closed`, `http.Request` and `http.GET`, `io.IoError` and
 `io.NotFound(path)`, `list.Stop(acc)`, `tcp.TcpStream`,
-`task.Handle(a)`, `postgres.PgPool` (and `PgTx`, `PgCursor`,
-`QueryResult`, `ExecResult`, `Value`). Two modules may have a variant of
-one name (`tcp.Timeout`, `http.Timeout`): the module says which. A
-selective import works for them too: `import channel.{ Message }`.
+`task.Handle(a)`, `postgres.PgPool` (and `PgTx`, `PgCursor(a)`). Two
+modules may have a variant of one name (`tcp.Timeout`,
+`http.Timeout`): the module says which. A selective import works for
+them too: `import channel.{ Message }`.
 
 The **prelude** needs no import: the primitive and container types (`Int`,
 `Float`, `Bool`, `String`, `Bytes`, `List`, `Map`, `Set`, `Channel`, ...),

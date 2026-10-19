@@ -8,8 +8,9 @@
 -- seconds.
 import channel
 import env
-import map
 import postgres
+
+type G { g: Int }
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -20,11 +21,11 @@ fn url() -> String {
 
 fn main() {
   match postgres.connect(url()) {
-    Ok(pool) -> match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", []) {
+    Ok(pool) -> match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", (), G) {
       Ok(rows) -> {
         println(
           match channel.receive(rows) {
-            Some(Ok(row)) -> "the first row has the columns {map.keys(row)}"
+            Some(Ok(row)) -> "the first row is {row}"
             Some(Err(e)) -> e.message()
             _ -> "no row"
           },

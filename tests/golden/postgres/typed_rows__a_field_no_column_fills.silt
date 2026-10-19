@@ -1,0 +1,19 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.cursor` cannot decode `Tagged`: field `tags` has type `Set(String)`, which has no decoder
+-- stderr-contains: Bool, Bytes, Date, Time, DateTime, json.Value
+-- A field of a type that no column fills is an error where the type is
+-- given to the decoder, as it is for `json.parse`; the help lists the
+-- field types postgres decodes.
+import postgres
+
+type Tagged { id: Int, tags: Set(String) }
+
+fn open(tx: postgres.PgTx) -> Result(postgres.PgCursor(Tagged), postgres.PostgresError) {
+  postgres.cursor(tx, "SELECT id, tags FROM items", (), 100, Tagged)
+}
+
+fn main() {
+  println(1)
+}

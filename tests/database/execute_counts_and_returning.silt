@@ -1,0 +1,61 @@
+-- `postgres.execute` gives the number of rows a statement affected (0
+-- for one that affects none, such as `CREATE TABLE`), whether or not it
+-- has a `RETURNING`; a statement whose rows the program reads, a
+-- `RETURNING` among them, is a `postgres.query`, its rows decoded into
+-- the record type it names.
+import env
+import postgres
+
+type Made { id: Int, name: String }
+
+type Count { n: Int }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn counts(db: postgres.PgPool) -> Result(List(Count), postgres.PostgresError) {
+  let _ = postgres.execute(db, "DROP TABLE IF EXISTS pg2_counts", ())?
+  let made = postgres.execute(db, "CREATE TABLE pg2_counts (id serial PRIMARY KEY, name text)", ())?
+  println("CREATE TABLE: {made}")
+  let inserted = postgres.execute(
+    db,
+    "INSERT INTO pg2_counts (name) VALUES ($1), ($2), ($3)",
+    ("a", "b", "c"),
+  )?
+  println("INSERT of 3 rows: {inserted}")
+  let returned = postgres.execute(db, "INSERT INTO pg2_counts (name) VALUES ($1) RETURNING id", ("d",))?
+  println("INSERT ... RETURNING through execute: {returned}")
+  let rows = postgres.query(
+    db,
+    "INSERT INTO pg2_counts (name) VALUES ($1), ($2) RETURNING id, name",
+    ("e", "f"),
+    Made,
+  )?
+  println("INSERT ... RETURNING through query: {rows}")
+  let updated = postgres.execute(db, "UPDATE pg2_counts SET name = upper(name) WHERE id > $1", (2,))?
+  println("UPDATE: {updated}")
+  let deleted = postgres.execute(db, "DELETE FROM pg2_counts WHERE id <= $1", (5,))?
+  println("DELETE: {deleted}")
+  let none = postgres.execute(db, "DELETE FROM pg2_counts WHERE id < 0", ())?
+  println("DELETE of nothing: {none}")
+  let left = postgres.query(db, "SELECT count(*) AS n FROM pg2_counts", (), Count)
+  let _ = postgres.execute(db, "DROP TABLE pg2_counts", ())?
+  left
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      match counts(db) {
+        Ok(left) -> println("left: {left}")
+        Err(e) -> println("failed: {e.message()}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

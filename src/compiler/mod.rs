@@ -41,16 +41,16 @@ mod patterns;
 // Each record and enum type a program builds values of is described to
 // the VM by a `TypeInfo` (see `crate::typeinfo`): its id, its name, its
 // variants or its fields. A record's fields carry their types as far as
-// `json.parse(text, T)` and `toml.parse(text, T)` need them to build a
-// value of `T`. Type aliases are replaced by their target. A type no
-// decoder exists for is `FieldType::Unsupported`, which makes the
-// decoders return `Err`; it is never mapped to some other type. A direct
-// `json.parse` / `toml.parse` call whose type argument names such a
-// record is rejected at compile time (see
+// `json.parse(text, T)`, `toml.parse(text, T)` and `postgres.query(db,
+// sql, params, T)` need them to build a value of `T`. Type aliases are
+// replaced by their target. A type no decoder exists for is
+// `FieldType::Unsupported`, which makes the decoders return `Err`; it is
+// never mapped to some other type. A direct call of a decoder whose type
+// argument names such a record is rejected at compile time (see
 // `Compiler::check_decode_target`).
 
-/// The builtin functions that decode text into a value of the type named
-/// by their last argument.
+/// The builtin functions that decode text, or the rows of a result, into
+/// a value of the type named by their last argument.
 const DECODING_BUILTINS: &[&str] = &[
     "json.decode",
     "json.parse",
@@ -59,26 +59,75 @@ const DECODING_BUILTINS: &[&str] = &[
     "toml.parse",
     "toml.parse_list",
     "toml.parse_map",
+    "postgres.query",
+    "postgres.stream",
+    "postgres.cursor",
 ];
 
-/// The field types the decoders support, as shown in compile errors.
-const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
-     Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
-     non-generic record types, and aliases of these";
+/// What to do with a type given to a postgres function to decode rows
+/// into that is no record type and no `json.Value`.
+pub(crate) const ROW_TYPE_HELP: &str = "declare a record type with a field for each column";
 
-/// The field types the json decoders support: those of every decoder,
-/// and `json.Value`.
-const JSON_DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
-     Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, \
-     non-generic record types, and aliases of these";
+/// The postgres functions that run a statement: their third argument is
+/// the statement's parameters, a tuple.
+const STATEMENT_BUILTINS: &[&str] = &[
+    "postgres.query",
+    "postgres.execute",
+    "postgres.stream",
+    "postgres.cursor",
+];
 
-/// Whether a field of the type `field_type` holds a `json.Value`.
-fn holds_json_value(field_type: &FieldType) -> bool {
-    match field_type {
-        FieldType::JsonValue => true,
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => holds_json_value(t),
-        FieldType::Tuple(ts) => ts.iter().any(holds_json_value),
-        _ => false,
+/// A family of decoding builtins: they decode the same field types.
+#[derive(Clone, Copy, PartialEq)]
+enum Decoder {
+    Json,
+    Toml,
+    /// The rows of a result: `postgres.query(db, sql, params, T)`.
+    Postgres,
+}
+
+impl Decoder {
+    /// The decoder of the decoding builtin `builtin_name`.
+    fn of(builtin_name: &str) -> Decoder {
+        match builtin_name.split_once('.').map(|(module, _)| module) {
+            Some("json") => Decoder::Json,
+            Some("postgres") => Decoder::Postgres,
+            _ => Decoder::Toml,
+        }
+    }
+
+    /// The field types it decodes, as shown in compile errors.
+    fn help(self) -> &'static str {
+        match self {
+            Decoder::Json => {
+                "decodable field types are Int, Float, String, \
+                 Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, \
+                 non-generic record types, and aliases of these"
+            }
+            Decoder::Toml => {
+                "decodable field types are Int, Float, String, \
+                 Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
+                 non-generic record types, and aliases of these"
+            }
+            Decoder::Postgres => {
+                "decodable field types are Int, Float, String, \
+                 Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), \
+                 tuples, non-generic record types, and aliases of these"
+            }
+        }
+    }
+
+    /// The part of `field_type` that this decoder, unlike another one,
+    /// has no decoder for: `json.Value` for toml, `Bytes` for json and
+    /// toml.
+    fn lacks(self, field_type: &FieldType) -> Option<&'static str> {
+        match field_type {
+            FieldType::JsonValue if self == Decoder::Toml => Some("json.Value"),
+            FieldType::Bytes if self != Decoder::Postgres => Some("Bytes"),
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => self.lacks(t),
+            FieldType::Tuple(ts) => ts.iter().find_map(|t| self.lacks(t)),
+            _ => None,
+        }
     }
 }
 
@@ -1965,6 +2014,7 @@ impl<'a> Compiler<'a> {
         } else if let Some(builtin_name) = self.builtin_module_function(callee) {
             // A builtin module's function: `list.map(...)`.
             self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+            self.check_statement_params(&builtin_name, args)?;
             self.compile_operands(args.iter().copied())?;
             let argc = args.len();
             let builtin = self.builtin_row(&builtin_name, span)?.id;
@@ -2006,6 +2056,7 @@ impl<'a> Compiler<'a> {
             // `json.parse(..)`.
             if let Some(builtin_name) = self.builtin_function(callee.res) {
                 self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+                self.check_statement_params(&builtin_name, args)?;
             }
             self.compile_operands(std::iter::once(callee).chain(args.iter().copied()))?;
             let argc = args.len();
@@ -2614,7 +2665,8 @@ impl<'a> Compiler<'a> {
     }
 
     /// A named type with no arguments as the decoders see it: Date, Time,
-    /// DateTime, or a non-generic record type of the program.
+    /// DateTime, json.Value, Bytes, or a non-generic record type of the
+    /// program.
     fn describe_named_type(
         &self,
         t: TypeRef,
@@ -2627,6 +2679,7 @@ impl<'a> Compiler<'a> {
             id if id == bt::TIME => Ok(FieldType::Time),
             id if id == bt::DATE_TIME => Ok(FieldType::DateTime),
             id if id == bt::JSON_VALUE => Ok(FieldType::JsonValue),
+            id if id == TypeRef::builtin("Bytes").id => Ok(FieldType::Bytes),
             // A non-generic record type of the program.
             id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
                 && self.units.defs.variants(id.0).is_empty()
@@ -2642,13 +2695,12 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The first field that cannot be decoded, in the record type
+    /// The first field that `decoder` cannot decode, in the record type
     /// `record` or in a record type nested in it. `None` if there is none.
-    /// A `json.Value` is decoded only by the json decoders (`json`).
     fn undecodable_field(
         &self,
         record: crate::defs::TypeId,
-        json: bool,
+        decoder: Decoder,
         seen: &mut HashSet<crate::defs::TypeId>,
     ) -> Option<UndecodableField> {
         if !seen.insert(record) {
@@ -2657,29 +2709,21 @@ impl<'a> Compiler<'a> {
         let def = *self.units.defs.get(record.0);
         for (field, ty) in self.record_fields(record) {
             let mut nested = Vec::new();
-            match self.describe_field_type(&ty, &mut nested) {
-                Err(part) => {
-                    return Some(UndecodableField {
-                        record: resolve(def.name),
-                        field: resolve(field),
-                        field_type: shown(&ty),
-                        part,
-                    });
-                }
-                Ok(field_type) if !json && holds_json_value(&field_type) => {
-                    return Some(UndecodableField {
-                        record: resolve(def.name),
-                        field: resolve(field),
-                        field_type: shown(&ty),
-                        part: "json.Value".to_string(),
-                    });
-                }
-                Ok(_) => {
-                    for nested_record in nested {
-                        if let Some(found) = self.undecodable_field(nested_record, json, seen) {
-                            return Some(found);
-                        }
-                    }
+            let lacking = match self.describe_field_type(&ty, &mut nested) {
+                Err(part) => Some(part),
+                Ok(field_type) => decoder.lacks(&field_type).map(str::to_string),
+            };
+            if let Some(part) = lacking {
+                return Some(UndecodableField {
+                    record: resolve(def.name),
+                    field: resolve(field),
+                    field_type: shown(&ty),
+                    part,
+                });
+            }
+            for nested_record in nested {
+                if let Some(found) = self.undecodable_field(nested_record, decoder, seen) {
+                    return Some(found);
                 }
             }
         }
@@ -2688,7 +2732,8 @@ impl<'a> Compiler<'a> {
 
     /// Check the type argument of a call of a decoding builtin
     /// (`json.parse(text, T)`, `toml.parse(text, T)` and their `_list` /
-    /// `_map` forms), as the resolver resolved it. If `T` is a record type
+    /// `_map` forms, `postgres.query(db, sql, params, T)` and the other
+    /// postgres functions that read rows), as the resolver resolved it. If `T` is a record type
     /// of the program, every field the decoder would have to fill must
     /// have a decoder; otherwise the call is a compile error that names
     /// the field and its type. An enum, a builtin container type, or a
@@ -2708,11 +2753,13 @@ impl<'a> Compiler<'a> {
         let Some(type_arg) = type_arg else {
             return Ok(());
         };
-        let json = builtin_name.starts_with("json.");
-        let decodable_types_help = if json {
-            JSON_DECODABLE_TYPES_HELP
-        } else {
-            DECODABLE_TYPES_HELP
+        let decoder = Decoder::of(builtin_name);
+        let decodable_types_help = decoder.help();
+        // What to decode into instead of a type that is no record. A row
+        // is decoded into a record of its columns.
+        let (record_help, generic_help) = match decoder {
+            Decoder::Postgres => (ROW_TYPE_HELP, ROW_TYPE_HELP),
+            _ => ("decode into a record type", decodable_types_help),
         };
         let type_name = match &type_arg.kind {
             ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => resolve(*name),
@@ -2732,7 +2779,7 @@ impl<'a> Compiler<'a> {
                         "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                     ),
                 )
-                .with_help("decode into a record type"));
+                .with_help(record_help));
             }
             if self
                 .type_declaration(def.span)
@@ -2746,9 +2793,9 @@ impl<'a> Compiler<'a> {
                          type, and a decoder builds a value of one type"
                     ),
                 )
-                .with_help(decodable_types_help));
+                .with_help(generic_help));
             }
-            let Some(found) = self.undecodable_field(ty.id, json, &mut HashSet::new()) else {
+            let Some(found) = self.undecodable_field(ty.id, decoder, &mut HashSet::new()) else {
                 return Ok(());
             };
             let owner = if found.record == resolve(def.name) {
@@ -2772,7 +2819,7 @@ impl<'a> Compiler<'a> {
             .with_help(decodable_types_help));
         }
         if ty.id == crate::typeinfo::ty::JSON_VALUE {
-            if json {
+            if decoder != Decoder::Toml {
                 return Ok(());
             }
             return Err(Diagnostic::error(
@@ -2790,7 +2837,7 @@ impl<'a> Compiler<'a> {
                     "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                 ),
             )
-            .with_help("decode into a record type"));
+            .with_help(record_help));
         }
         // Builtin types, by their declaration. `json.decode`,
         // `json.parse`, `json.parse_map` and `toml.parse_map` also decode
@@ -2804,21 +2851,61 @@ impl<'a> Compiler<'a> {
             "json.decode" | "json.parse" | "json.parse_map" | "toml.parse_map"
         );
         if is_container || (is_primitive && !decodes_primitives) {
-            let accepted = if decodes_primitives {
-                "Int, Float, String, Bool, or a record type"
-            } else {
-                "a record type"
+            let (accepted, help) = match (decoder, decodes_primitives) {
+                // A row is a record of its columns.
+                (Decoder::Postgres, _) => ("a record type or json.Value", ROW_TYPE_HELP),
+                (_, true) => (
+                    "Int, Float, String, Bool, or a record type",
+                    "declare a record type with a field of the type you want, and decode into the record",
+                ),
+                (_, false) => (
+                    "a record type",
+                    "declare a record type with a field of the type you want, and decode into the record",
+                ),
             };
             return Err(Diagnostic::error(
                 Code::InvalidConstruct,
                 span,
                 format!("`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"),
             )
-            .with_help(
-                "declare a record type with a field of the type you want, and decode into the record",
-            ));
+            .with_help(help));
         }
         Ok(())
+    }
+
+    /// Check the parameters of a call of a postgres function that runs a
+    /// statement (`postgres.query(db, sql, (id, name), T)`): a tuple, or
+    /// `()` for none. `(id)` is `id`, and the error says to write
+    /// `(id,)`. When the type is a variable (a parameter of a generic
+    /// function) the function checks it where it runs.
+    fn check_statement_params(&self, builtin_name: &str, args: &[&Expr]) -> Result<(), Diagnostic> {
+        if !STATEMENT_BUILTINS.contains(&builtin_name) {
+            return Ok(());
+        }
+        let Some(params) = args.get(2) else {
+            return Ok(());
+        };
+        let Some(ty) = &params.ty else {
+            return Ok(());
+        };
+        let ty = crate::types::canonical::canonicalize(self.resolver(), ty);
+        match ty {
+            Type::Tuple(_)
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Rigid(_)
+            | Type::Error
+            | Type::Never => Ok(()),
+            other => Err(Diagnostic::error(
+                Code::TypeMismatch,
+                params.span,
+                format!(
+                    "the parameters of `{builtin_name}` must be a tuple, got `{}`",
+                    shown(&other)
+                ),
+            )
+            .with_help("write (id,)")),
+        }
     }
 
     // ── Context & scope helpers ───────────────────────────────────

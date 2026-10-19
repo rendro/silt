@@ -41,15 +41,15 @@
 
 use std::sync::Arc;
 
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::NaiveDate;
 
 use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
-use crate::vm::{Vm, VmError};
+use crate::vm::{Runtime, VmError};
 
 use super::json::{
-    decodable_record, ensure_encodable_depth, field_record_type, unsupported_field_type_message,
-    unsupported_kind,
+    decodable_record, ensure_encodable_depth, field_record_type, parse_datetime, parse_time,
+    unsupported_field_type_message, unsupported_kind, without_bytes,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -340,7 +340,7 @@ fn decode_err_to_silt(e: TomlDecodeErr) -> Value {
 }
 
 fn toml_to_record(
-    vm: &mut Vm,
+    rt: &Runtime,
     ty: &Arc<TypeInfo>,
     fields: &[(String, FieldType)],
     tv: &::toml::Value,
@@ -351,8 +351,10 @@ fn toml_to_record(
     // (In the order the type declares them: the record's own.)
     let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
+        let unsupported = without_bytes(rt, field_type);
+        let field_type = unsupported.as_ref().unwrap_or(field_type);
         match table.get(field_name) {
-            Some(val) => match toml_to_typed_value(vm, val, field_type) {
+            Some(val) => match toml_to_typed_value(rt, val, field_type) {
                 Ok(v) => record_fields.push(v),
                 Err(TomlDecodeErr::Unsupported(declared)) => {
                     return Ok(toml_unknown_err(unsupported_field_type_message(
@@ -376,7 +378,7 @@ fn toml_to_record(
 }
 
 fn toml_to_record_list(
-    vm: &mut Vm,
+    rt: &Runtime,
     ty: &Arc<TypeInfo>,
     fields: &[(String, FieldType)],
     tv: &::toml::Value,
@@ -386,7 +388,7 @@ fn toml_to_record_list(
     };
     let mut records = Vec::new();
     for item in arr.iter() {
-        let result = toml_to_record(vm, ty, fields, item)?;
+        let result = toml_to_record(rt, ty, fields, item)?;
         match result {
             Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
                 records.push(variant.fields()[0].clone());
@@ -406,7 +408,7 @@ fn toml_to_record_list(
     Ok(Value::variant(bv::OK, vec![Value::list(records)]))
 }
 
-fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Value, VmError> {
+fn toml_to_map(rt: &Runtime, value_type: Type, tv: &::toml::Value) -> Result<Value, VmError> {
     let ::toml::Value::Table(table) = tv else {
         return Ok(toml_type_mismatch_err("table", toml_type_name(tv)));
     };
@@ -424,7 +426,7 @@ fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Valu
     };
     let mut map = Vec::with_capacity(table.len());
     for (key, val) in table.iter() {
-        match toml_to_typed_value(vm, val, &field_type) {
+        match toml_to_typed_value(rt, val, &field_type) {
             Ok(v) => map.push((Value::String(key.clone().into()), v)),
             Err(e) => return Ok(decode_err_to_silt(e)),
         }
@@ -433,7 +435,7 @@ fn toml_to_map(vm: &mut Vm, value_type: Type, tv: &::toml::Value) -> Result<Valu
 }
 
 fn toml_to_typed_value(
-    vm: &mut Vm,
+    rt: &Runtime,
     tv: &::toml::Value,
     expected: &FieldType,
 ) -> Result<Value, TomlDecodeErr> {
@@ -482,7 +484,7 @@ fn toml_to_typed_value(
             ::toml::Value::Array(arr) => {
                 let mut values = Vec::new();
                 for item in arr.iter() {
-                    values.push(toml_to_typed_value(vm, item, inner)?);
+                    values.push(toml_to_typed_value(rt, item, inner)?);
                 }
                 Ok(Value::list(values))
             }
@@ -491,14 +493,14 @@ fn toml_to_typed_value(
         FieldType::Option(inner) => {
             // TOML has no null. Non-present keys are handled by toml_to_record
             // via Option default; if the key *is* present, delegate to inner.
-            let val = toml_to_typed_value(vm, tv, inner)?;
+            let val = toml_to_typed_value(rt, tv, inner)?;
             Ok(Value::variant(bv::SOME, vec![val]))
         }
         FieldType::Map(inner) => match tv {
             ::toml::Value::Table(table) => {
                 let mut map = Vec::with_capacity(table.len());
                 for (key, item) in table.iter() {
-                    let val = toml_to_typed_value(vm, item, inner)?;
+                    let val = toml_to_typed_value(rt, item, inner)?;
                     map.push((Value::String(key.clone().into()), val));
                 }
                 Ok(Value::map(map))
@@ -509,7 +511,7 @@ fn toml_to_typed_value(
             ::toml::Value::Array(arr) if arr.len() == elems.len() => {
                 let mut values = Vec::with_capacity(elems.len());
                 for (item, elem) in arr.iter().zip(elems) {
-                    values.push(toml_to_typed_value(vm, item, elem)?);
+                    values.push(toml_to_typed_value(rt, item, elem)?);
                 }
                 Ok(Value::tuple(values))
             }
@@ -522,6 +524,7 @@ fn toml_to_typed_value(
         },
         FieldType::Unsupported(declared) => Err(TomlDecodeErr::Unsupported(declared.clone())),
         FieldType::JsonValue => Err(TomlDecodeErr::Unsupported("json.Value".into())),
+        FieldType::Bytes => Err(TomlDecodeErr::Unsupported("Bytes".into())),
         FieldType::Date => match tv {
             ::toml::Value::Datetime(dt) => {
                 // Preferred path: TOML native date literal.
@@ -538,49 +541,32 @@ fn toml_to_typed_value(
         FieldType::Time => match tv {
             ::toml::Value::Datetime(dt) => {
                 let s = dt.to_string();
-                NaiveTime::parse_from_str(&s, "%H:%M:%S")
-                    .or_else(|_| NaiveTime::parse_from_str(&s, "%H:%M"))
-                    .or_else(|_| NaiveTime::parse_from_str(&s, "%H:%M:%S%.f"))
+                parse_time(&s)
                     .map(make_time)
                     .map_err(|e| unknown(format!("invalid time '{s}': {e}")))
             }
-            ::toml::Value::String(s) => NaiveTime::parse_from_str(s, "%H:%M:%S")
-                .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+            ::toml::Value::String(s) => parse_time(s)
                 .map(make_time)
                 .map_err(|e| unknown(format!("invalid time '{s}' (expected HH:MM:SS): {e}"))),
             _ => Err(mismatch("time", toml_type_name(tv))),
         },
         FieldType::DateTime => match tv {
+            // (A TOML datetime literal as its text.)
             ::toml::Value::Datetime(dt) => {
                 let s = dt.to_string();
-                if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&s) {
-                    Ok(make_datetime(ts.naive_utc()))
-                } else if let Ok(ts) = chrono::DateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%z") {
-                    Ok(make_datetime(ts.naive_utc()))
-                } else {
-                    NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S")
-                        .or_else(|_| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S"))
-                        .or_else(|_| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f"))
-                        .map(make_datetime)
-                        .map_err(|_| unknown(format!("invalid datetime '{s}'")))
-                }
+                parse_datetime(&s)
+                    .map(make_datetime)
+                    .ok_or_else(|| unknown(format!("invalid datetime '{s}'")))
             }
-            ::toml::Value::String(s) => {
-                if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(s) {
-                    Ok(make_datetime(ts.naive_utc()))
-                } else {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-                        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-                        .map(make_datetime)
-                        .map_err(|_| unknown(format!("invalid datetime '{s}'")))
-                }
-            }
+            ::toml::Value::String(s) => parse_datetime(s)
+                .map(make_datetime)
+                .ok_or_else(|| unknown(format!("invalid datetime '{s}'"))),
             _ => Err(mismatch("datetime", toml_type_name(tv))),
         },
         FieldType::Record(id) => {
-            let ty = field_record_type(vm, "toml.parse", *id)?;
+            let ty = field_record_type(rt, "toml.parse", *id)?;
             let sub_fields = decodable_record("toml.parse", &ty)?;
-            let result = toml_to_record(vm, &ty, &sub_fields, tv)?;
+            let result = toml_to_record(rt, &ty, &sub_fields, tv)?;
             match result {
                 Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
                     Ok(variant.fields()[0].clone())
@@ -632,7 +618,7 @@ builtins! {
         let ty = record_type("parse", ty)?;
         let fields = decodable_record("toml.parse", ty)?;
         match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => toml_to_record(vm, ty, &fields, &tv),
+            Ok(tv) => toml_to_record(&vm.runtime, ty, &fields, &tv),
             Err(e) => Ok(toml_de_result_err(&e)),
         }
     }
@@ -659,12 +645,12 @@ builtins! {
                 table.len()
             )));
         };
-        toml_to_record_list(vm, ty, &fields, only)
+        toml_to_record_list(&vm.runtime, ty, &fields, only)
     }
 
     fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
         match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => toml_to_map(vm, value_type, &tv),
+            Ok(tv) => toml_to_map(&vm.runtime, value_type, &tv),
             Err(e) => Ok(toml_de_result_err(&e)),
         }
     }
@@ -681,6 +667,25 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A field whose type holds `Bytes` has no decoder, whatever the
+    /// document holds there, an empty array too.
+    #[test]
+    fn a_field_that_holds_bytes_is_never_decoded() {
+        use crate::defs::{DefId, TypeId};
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        let fields = vec![("b".to_string(), FieldType::List(Box::new(FieldType::Bytes)))];
+        let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
+        for text in ["b = []", "b = [1]"] {
+            let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
+            let decoded = toml_to_record(&vm.runtime, &ty, &fields, &doc).expect("a value");
+            assert_eq!(
+                decoded.to_string(),
+                "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",
+                "{text}"
+            );
+        }
+    }
     use crate::builtins::json::MAX_ENCODE_DEPTH;
 
     /// The deepest value the encoder writes (a map in a list in a map,

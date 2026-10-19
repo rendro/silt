@@ -214,8 +214,10 @@ stored as UTC:
 | Field type | Accepted formats | Example |
 |------------|-----------------|---------|
 | `Date` | `YYYY-MM-DD` | `"2024-03-15"` |
-| `Time` | `HH:MM:SS`, `HH:MM` | `"14:30:00"` |
-| `DateTime` | `YYYY-MM-DDTHH:MM:SS`, with optional `Z` or `±HH:MM` offset | `"2024-03-15T09:00:00+09:00"` |
+| `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `"14:30:00"`, `"14:30:00.25"` |
+| `DateTime` | `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second, with optional `Z` or `±HH:MM` offset | `"2024-03-15T09:00:00+09:00"` |
+
+A fractional second is read to the nanosecond; further digits are cut.
 
 ```silt
 import json

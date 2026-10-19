@@ -1,0 +1,4 @@
+into a bytea[]: [Out {v: 2}]
+a stream into jsonb: Other(postgres.stream: unsupported value kind Bytes)
+then: None
+a query into jsonb:

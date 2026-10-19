@@ -125,8 +125,8 @@ its own (`float.Empty` is not `int.Empty`).
 | `Tls(String)` | message | TLS handshake / cert read / connector build |
 | `AuthFailed(String)` | message | SQLSTATE class 28: a role or password the server refuses |
 | `Query(String, String)` | message, SQLSTATE | server-reported error |
-| `TypeMismatch(String, String, String)` | column, expected, actual | row decode |
-| `NoSuchColumn(String)` | column | row.get on missing column |
+| `TypeMismatch(String, String, String)` | column, expected, actual | a column whose type, or a cell whose value, does not fit the field it is decoded into |
+| `NoSuchColumn(String)` | column | a field with no column in the result; SQLSTATE 42703 |
 | `Closed` | — | connection dropped, or a transaction used after it ended |
 | `Timeout` | — | SQLSTATE 57014, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE 25P02 — rollback required |

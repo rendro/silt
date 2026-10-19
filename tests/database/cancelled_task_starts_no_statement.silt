@@ -18,6 +18,7 @@
 -- the counts are of a table that nothing writes to any more.
 import channel
 import env
+import json
 import postgres
 import task
 
@@ -30,7 +31,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -51,18 +52,18 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancelled", [])
-      let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancelled (who text)", [])
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancelled", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancelled (who text)", ())
       let own: Channel(task.Handle(())) = channel.new(1)
       let said: Channel(String) = channel.new(1)
       let streams: Channel(
-        Channel(Result(Map(String, postgres.PgValue), postgres.PostgresError)),
+        Channel(Result(json.Value, postgres.PostgresError)),
       ) = channel.new(1)
       let t = task.spawn { ->
         let _ = postgres.execute(
           pool,
           "INSERT INTO silt_database_cancelled VALUES ('before the cancel')",
-          [],
+          (),
         )
         match channel.receive(own) {
           Some(me) -> task.cancel(me)
@@ -72,7 +73,8 @@ fn main() {
         match postgres.stream(
           pool,
           "INSERT INTO silt_database_cancelled VALUES ('a stream after the cancel') RETURNING who",
-          [],
+          (),
+          json.Value,
         ) {
           Ok(rows) -> channel.send(streams, rows)
           Err(e) -> println("postgres.stream: {e.message()}")
@@ -80,7 +82,7 @@ fn main() {
         let _ = postgres.execute(
           pool,
           "INSERT INTO silt_database_cancelled VALUES ('a statement after the cancel')",
-          [],
+          (),
         )
         println("the task went on after postgres.execute")
       }
@@ -103,7 +105,7 @@ fn main() {
       let all = count(pool, "SELECT 1 FROM silt_database_cancelled")
       println("rows from before the cancel: {before}")
       println("rows in the table: {all}")
-      let _ = postgres.execute(pool, "DROP TABLE silt_database_cancelled", [])
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_cancelled", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")
