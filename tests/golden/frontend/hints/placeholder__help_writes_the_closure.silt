@@ -16,7 +16,8 @@ fn calls() {
   let x = 5
   let hidden = combine(x, _, [x] |> list.length)
   let unnamed = { a, b, c -> a + b + c }(1, _, 3)
-  (one, two, hidden, unnamed)
+  let negative = combine(-1, _, -2)
+  (one, two, hidden, unnamed, negative)
 }
 
 fn pipes() {

@@ -977,6 +977,11 @@ fn shown_arg(e: &Expr) -> String {
                 false => "...".to_string(),
             }
         }
+        ExprKind::Unary(UnaryOp::Neg, n)
+            if matches!(n.kind, ExprKind::Int(_) | ExprKind::Float(_)) =>
+        {
+            format!("-{}", shown_arg(n))
+        }
         ExprKind::Bool(b) => b.to_string(),
         ExprKind::StringLit(s) if short(s) => format!("\"{s}\""),
         ExprKind::Unit => "()".to_string(),
