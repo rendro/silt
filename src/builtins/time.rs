@@ -73,7 +73,7 @@ fn invalid_format_err(why: String) -> Value {
 }
 
 /// Build `Err(OutOfRange(msg))` for explicit range rejections from
-/// `time.date` / `time.time`.
+/// `time.date` / `time.time`, and for a leap second `time.parse` reads.
 fn time_out_of_range_err(msg: String) -> Value {
     Value::variant(
         bv::ERR,
@@ -94,6 +94,23 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
+}
+
+/// Why a reader of a time from text (`time.parse`, the JSON and TOML
+/// decoders) refuses one at second 60, a leap second, which no `Time`
+/// holds. (chrono reads it, at any minute, as second 59 with a second
+/// more of nanoseconds.)
+pub(crate) const LEAP_SECOND: &str = "a leap second (second 60) is not read";
+
+/// Whether `t`, a time read from text, is a leap second.
+pub(crate) fn is_leap_second(t: NaiveTime) -> bool {
+    t.nanosecond() >= 1_000_000_000
+}
+
+/// The message of a reader's error for the text `s` of a datetime that
+/// is a leap second.
+pub(crate) fn leap_datetime_message(s: &str) -> String {
+    format!("invalid datetime '{s}': {LEAP_SECOND}")
 }
 
 // ── Time helpers ────────────────────────────────────────────────────
@@ -619,6 +636,9 @@ builtins! {
             return invalid_format_err(why);
         }
         match NaiveDateTime::parse_from_str(s, pattern) {
+            Ok(datetime) if is_leap_second(datetime.time()) => {
+                time_out_of_range_err(leap_datetime_message(s))
+            }
             Ok(datetime) => ok(make_datetime(datetime)),
             Err(e) => time_parse_err(e),
         }

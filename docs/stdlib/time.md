@@ -300,7 +300,10 @@ pattern without a time of day (`"%Y-%m-%d"`: use `time.parse_date`),
 without a date, with a 12-hour clock and no `%p`, or an empty one. That
 is decided from the pattern alone. A text that does not match a pattern
 that could give a `DateTime` is `Err(ParseFormat(msg))`, and one that
-matches with a field that is no such day or time `Err(OutOfRange(msg))`.
+matches with a field that is no such day or time `Err(OutOfRange(msg))`. A
+second 60, a leap second, is one:
+`time.parse("2016-12-31 23:59:60", "%Y-%m-%d %H:%M:%S")` is
+`Err(OutOfRange("invalid datetime '2016-12-31 23:59:60': a leap second (second 60) is not read"))`.
 
 ```silt
 import time

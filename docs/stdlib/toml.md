@@ -117,7 +117,10 @@ that `json.parse` accepts for each of those field types:
 | `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `07:32:00` or `"07:32:00.5"` |
 | `DateTime` | RFC 3339 / ISO 8601 (`YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second), with optional `Z` or `±HH:MM` offset | `1979-05-27T07:32:00Z` |
 
-A fractional second is read to the nanosecond; further digits are cut.
+A fractional second is read to the nanosecond; further digits are cut. A
+second 60, a leap second (a string or a literal), is no time silt holds: it is refused with an
+`Other` that names the text, such as
+`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
 
 ```silt
 import toml

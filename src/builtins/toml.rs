@@ -565,15 +565,10 @@ fn toml_to_typed_value(
         },
         FieldType::DateTime => match tv {
             // (A TOML datetime literal as its text.)
-            ::toml::Value::Datetime(dt) => {
-                let s = dt.to_string();
-                parse_datetime(&s)
-                    .map(make_datetime)
-                    .ok_or_else(|| unknown(format!("invalid datetime '{s}'")))
-            }
-            ::toml::Value::String(s) => parse_datetime(s)
+            ::toml::Value::Datetime(dt) => parse_datetime(&dt.to_string())
                 .map(make_datetime)
-                .ok_or_else(|| unknown(format!("invalid datetime '{s}'"))),
+                .map_err(unknown),
+            ::toml::Value::String(s) => parse_datetime(s).map(make_datetime).map_err(unknown),
             _ => Err(mismatch("datetime", toml_type_name(tv))),
         },
         FieldType::Record(id) => {

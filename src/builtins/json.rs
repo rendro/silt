@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-use super::time::{make_date, make_datetime, make_time};
+use super::time::{
+    LEAP_SECOND, is_leap_second, leap_datetime_message, make_date, make_datetime, make_time,
+};
 use super::typed::{Type, builtins};
 use crate::defs::TypeId;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
@@ -267,20 +269,25 @@ pub(crate) fn value_to_json(
 
 /// The time of day that the text `s` of a document writes: `HH:MM:SS`,
 /// with a fraction of a second up to nanoseconds (`13:14:15.25`), or
-/// `HH:MM`. Shared by the JSON and TOML decoders.
-pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, chrono::ParseError> {
-    NaiveTime::parse_from_str(s, "%H:%M:%S%.f").or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+/// `HH:MM`. Else why it is none: a second 60 is a leap second, which is
+/// refused. Shared by the JSON and TOML decoders.
+pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, std::string::String> {
+    let t = NaiveTime::parse_from_str(s, "%H:%M:%S%.f")
+        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+        .map_err(|e| e.to_string())?;
+    match is_leap_second(t) {
+        true => Err(LEAP_SECOND.into()),
+        false => Ok(t),
+    }
 }
 
 /// The date and time that the text `s` of a document writes, in UTC
 /// where it has an offset: RFC 3339, the same with a space for the `T`,
 /// or without an offset; seconds with a fraction up to nanoseconds, or
-/// no seconds (`2024-03-09T07:30`). Shared by the JSON and TOML
-/// decoders.
-pub(crate) fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return Some(dt.naive_utc());
-    }
+/// no seconds (`2024-03-09T07:30`). Else the message of the decoder's
+/// error: a second 60 is a leap second, which is refused. Shared by the
+/// JSON and TOML decoders.
+pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::String> {
     let offset = ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"].into_iter();
     let naive = [
         "%Y-%m-%dT%H:%M:%S%.f",
@@ -288,11 +295,18 @@ pub(crate) fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
         "%Y-%m-%dT%H:%M",
     ]
     .into_iter();
-    offset
-        .filter_map(|f| chrono::DateTime::parse_from_str(s, f).ok())
+    let read = chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .into_iter()
+        .chain(offset.filter_map(|f| chrono::DateTime::parse_from_str(s, f).ok()))
         .map(|dt| dt.naive_utc())
         .chain(naive.filter_map(|f| NaiveDateTime::parse_from_str(s, f).ok()))
-        .next()
+        .next();
+    match read {
+        Some(dt) if is_leap_second(dt.time()) => Err(leap_datetime_message(s)),
+        Some(dt) => Ok(dt),
+        None => Err(format!("invalid datetime '{s}'")),
+    }
 }
 
 /// The record type `ty` a decoder builds, with its fields. `caller` is
@@ -617,9 +631,7 @@ fn json_to_typed_value(
             _ => Err(mismatch("time string", json_type_name(json))),
         },
         FieldType::DateTime => match json {
-            serde_json::Value::String(s) => parse_datetime(s)
-                .map(make_datetime)
-                .ok_or_else(|| unknown(format!("invalid datetime '{s}'"))),
+            serde_json::Value::String(s) => parse_datetime(s).map(make_datetime).map_err(unknown),
             _ => Err(mismatch("datetime string", json_type_name(json))),
         },
         FieldType::Record(id) => {
@@ -798,7 +810,7 @@ mod tests {
         assert_eq!(time("13:14:15").as_deref(), Some("13:14:15"));
         assert_eq!(time("13:14").as_deref(), Some("13:14:00"));
         assert_eq!(time("13:14:15.").as_deref(), None);
-        let datetime = |s: &str| parse_datetime(s).map(|t| t.to_string());
+        let datetime = |s: &str| parse_datetime(s).map(|t| t.to_string()).ok();
         assert_eq!(
             datetime("2026-10-19T13:14:15.5").as_deref(),
             Some("2026-10-19 13:14:15.500")
@@ -812,6 +824,24 @@ mod tests {
             Some("2026-10-19 13:14:00")
         );
         assert_eq!(datetime("2026-10-19").as_deref(), None);
+    }
+
+    /// A second 60, a leap second, is refused by both readers, at any
+    /// minute, with a fraction and with an offset; second 59 is read.
+    #[test]
+    fn a_leap_second_is_refused() {
+        assert_eq!(parse_time("23:59:60"), Err(LEAP_SECOND.to_string()));
+        assert_eq!(parse_time("12:30:60.5"), Err(LEAP_SECOND.to_string()));
+        assert!(parse_time("23:59:59.999999999").is_ok());
+        for s in [
+            "2016-12-31T23:59:60",
+            "2016-12-31 23:59:60.5",
+            "2016-12-31T23:59:60Z",
+            "2017-01-01T00:59:60+01:00",
+        ] {
+            assert_eq!(parse_datetime(s), Err(leap_datetime_message(s)), "{s}");
+        }
+        assert!(parse_datetime("2016-12-31T23:59:59").is_ok());
     }
 
     /// The deepest value the encoder writes, of the shape that makes
