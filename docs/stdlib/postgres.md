@@ -94,7 +94,11 @@ cancel ends the task there at once as well. While it waits for a
 connection of the pool or for its `BEGIN`, the transaction is not
 begun, or is rolled back as soon as it is. While it waits for its
 `COMMIT` or `ROLLBACK`, that goes on and finishes in the server, and
-the task does not learn how it ended.
+the task does not learn how it ended. `SILT_IO_TIMEOUT` (see the
+concurrency guide) ends the wait for a connection with its `BEGIN` and
+the wait for each statement with `Err(Timeout)`, but not the wait for
+`COMMIT` or `ROLLBACK`: an `Err` from `postgres.transact` never stands
+for a transaction that was committed.
 
 ## Streaming and cursors
 

@@ -10,6 +10,9 @@
 //! instead: there the job that runs this suite starts the server and
 //! sets the variable, and a run that tested nothing must not be green.
 //! `tests/README.md` says how to run the suite.
+//!
+//! A case whose first lines are `-- env: NAME=value` runs with those
+//! variables set.
 
 #![cfg(feature = "postgres")]
 
@@ -57,8 +60,16 @@ fn case(name: &str) {
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
     std::fs::copy(cases_dir().join(&file), scratch.join(&file)).expect("copy the program");
 
+    let source = std::fs::read_to_string(cases_dir().join(&file)).expect("read the program");
+    let vars: Vec<(&str, &str)> = source
+        .lines()
+        .map_while(|line| line.strip_prefix("-- env: "))
+        .map(|var| var.split_once('=').expect("`-- env: NAME=value`"))
+        .collect();
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .args(["run", &file])
+        .envs(vars)
         .current_dir(&scratch)
         .env("NO_COLOR", "1")
         .env_remove("FORCE_COLOR")
@@ -150,4 +161,5 @@ cases!(
     deadline_over_a_statement_in_a_transaction,
     deadline_while_waiting_for_a_connection,
     cancel_request_reaches_no_other_statement,
+    io_timeout_leaves_a_commit_alone,
 );

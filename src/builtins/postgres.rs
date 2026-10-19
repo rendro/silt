@@ -2419,7 +2419,11 @@ impl Native for Transact {
                     .runtime
                     .io_pool
                     .submit(pg_timeout_err, move || end_tx(entry, input));
-                let wait = io_wait(vm, &op);
+                // Not ended at `SILT_IO_TIMEOUT`: an `Err` must never
+                // stand for a transaction that was committed. (A
+                // deadline or a cancel does end it; the task then
+                // learns nothing.)
+                let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
                 self.stage = Stage::End(op);
                 Ok(Step::Park(wait))
             }

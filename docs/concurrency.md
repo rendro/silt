@@ -1310,6 +1310,10 @@ timeout variant instead of its normal value:
 - `io.*` and `fs.*` surface `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
 - `tcp.*` surfaces `Err(Timeout)`.
 - `http.*` surfaces `Err(Timeout)`.
+- `postgres.*` surfaces `Err(Timeout)`: a connect, each statement, and
+  in `postgres.transact` the wait for a connection with its `BEGIN`.
+  The wait for its `COMMIT` or `ROLLBACK` has no such end, so that an
+  `Err` never stands for a transaction that was committed.
 
 The timeout is *invisible* at the language surface — no new syntax, no
 colored functions — because every I/O builtin already returns `Result` with
