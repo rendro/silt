@@ -37,11 +37,13 @@ use r2d2::Pool;
 
 use super::common::ok;
 use super::typed::{Arg, List, Map, Ret, builtins};
+use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::runtime::sync::{Channel, Close};
+use crate::scheduler::IO_TIMEOUT;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{Native, Step, Vm, VmError};
+use crate::vm::{IoOp, Native, Step, Vm, VmError};
 
 /// The error of a `postgres` function whose operation has no value
 /// of its own: `Timeout` when its deadline passed, `Other` with
@@ -2141,33 +2143,48 @@ builtins! {
     //
     // Lifecycle
     // ---------
-    // 1. The call: check out a conn from the pool,
-    //    run `BEGIN`, register the conn in the tx registry, mint a `PgTx`
-    //    handle. The builtin goes on as a frame ([`Transact`]) that calls
-    //    the callback with the handle.
+    // 1. On the I/O pool: check out a conn from the pool, run `BEGIN`,
+    //    register the conn in the tx registry, mint a `PgTx` handle. The
+    //    builtin goes on as a frame ([`Transact`]) that waits for that
+    //    and calls the callback with the handle.
     //
-    // 2. Completion, when the callback has returned:
+    // 2. Completion, when the callback has returned, on the I/O pool:
     //    - `Ok(_)` → `COMMIT` on the pinned conn.
     //    - `Err(_)` → `ROLLBACK`.
     //    - a non-Result value → `COMMIT`, wrap as `Ok`.
     //
     //    An error of the program inside the callback drops the frame,
-    //    which rolls back.
+    //    which rolls back, as a deadline or a cancel does
+    //    ([`abandon_tx`]).
     //
     //    The pinned conn is dropped after commit/rollback, returning it
     //    to the pool. COMMIT errors are surfaced as the function's Err;
     //    the callback's return value is discarded in that edge case.
     //
+    // Nothing of it waits on the task's thread, so a deadline or a
+    // cancel ends the task in each of the three waits.
+    //
     // There is no nested transaction: a `PgTx` is no `PgPool`. `SAVEPOINT`
     // by hand does it.
-    fn transact(pool: PoolHandle, f: &Value) -> Result<Step, Failed> {
+    fn transact(vm, pool: PoolHandle, f: &Value) -> Result<Step, Failed> {
         let pool = pool.open()?;
-        let mut conn = pool.get().map_err(|e| pool_error_value(&e))?;
-        conn.client_mut()
-            .batch_execute("BEGIN")
-            .map_err(|e| pg_error_to_variant(&e))?;
+        let runtime = vm.runtime.clone();
+        let op = vm
+            .start_io(pg_timeout_err, move || begin_tx(&pool))
+            // The task went before it had its transaction: nobody ends
+            // it but this.
+            .unheard_with(move |began| {
+                if let Value::Variant(began) = began
+                    && began.is(bv::OK)
+                    && let [handle] = began.fields()
+                    && let Some(tx) = TxHandle::take(handle)
+                {
+                    abandon_tx(&runtime, tx.0);
+                }
+            });
         Ok(Step::Run(Box::new(Transact {
-            tx_id: Some(insert_tx(conn)),
+            wait: Some(io_wait(vm, &op)),
+            stage: Stage::Begin(op),
             callback: Some(f.clone()),
         })))
     }
@@ -2321,13 +2338,40 @@ builtins! {
     }
 }
 
-/// A transaction whose callback is running.
+/// The frame of `postgres.transact`.
 struct Transact {
-    /// The registered transaction, until it is committed or rolled
-    /// back.
-    tx_id: Option<u64>,
+    /// The wait the frame parks on next.
+    wait: Option<Wait>,
+    stage: Stage,
     /// The callback, until it is called.
     callback: Option<Value>,
+}
+
+/// Where a transaction is.
+enum Stage {
+    /// A connection is checked out of the pool, and `BEGIN` runs on it.
+    Begin(IoOp),
+    /// The callback runs, in the transaction of this id.
+    Body(u64),
+    /// `COMMIT` or `ROLLBACK` runs.
+    End(IoOp),
+    Ended,
+}
+
+/// The wait of the frame of `transact` for `op`, until
+/// `SILT_IO_TIMEOUT` if that is set.
+fn io_wait(vm: &Vm, op: &IoOp) -> Wait {
+    Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(vm.scheduler().io_deadline())
+}
+
+/// The value of `op`, which the wait that has ended was for: the
+/// typed `Timeout` if the wait ended at `SILT_IO_TIMEOUT`.
+fn waited_for(vm: &mut Vm, op: &IoOp) -> Result<Value, VmError> {
+    let value = match vm.woken()? {
+        Fired::Arm(..) => op.take(),
+        _ => None,
+    };
+    Ok(value.unwrap_or_else(|| pg_timeout_err(crate::vm::IoFailure::Timeout(IO_TIMEOUT))))
 }
 
 impl Native for Transact {
@@ -2336,38 +2380,99 @@ impl Native for Transact {
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        let Some(tx_id) = self.tx_id else {
-            return Ok(Step::Done(input));
-        };
-        if let Some(callee) = self.callback.take() {
-            return Ok(vm.call(callee, [make_tx_handle(tx_id)]));
+        if let Some(wait) = self.wait.take() {
+            return Ok(Step::Park(wait));
         }
-        self.tx_id = None;
-        Ok(Step::Done(end_tx(tx_id, input, vm.scheduler().wake())))
+        match std::mem::replace(&mut self.stage, Stage::Ended) {
+            Stage::Begin(op) => {
+                let began = waited_for(vm, &op)?;
+                // Not taken, a value that came after the wait's end is
+                // the `unheard` of `transact`'s.
+                drop(op);
+                let handle = match &began {
+                    Value::Variant(variant) if variant.is(bv::OK) => variant.fields().first(),
+                    _ => None,
+                };
+                let (Some(handle), Some(callee)) = (handle, self.callback.take()) else {
+                    return Ok(Step::Done(began));
+                };
+                let Some(tx) = TxHandle::take(handle) else {
+                    return Ok(Step::Done(began));
+                };
+                self.stage = Stage::Body(tx.0);
+                Ok(vm.call(callee, [handle.clone()]))
+            }
+            Stage::Body(tx_id) => {
+                // The callback has returned `input`. The end is not
+                // withheld from a task that takes nothing new: the
+                // callback's answer stands, though the task may not
+                // be there to take the value.
+                let entry = take_tx(tx_id, vm.scheduler().wake());
+                let op = vm
+                    .runtime
+                    .io_pool
+                    .submit(pg_timeout_err, move || end_tx(entry, input));
+                let wait = io_wait(vm, &op);
+                self.stage = Stage::End(op);
+                Ok(Step::Park(wait))
+            }
+            Stage::End(op) => Ok(Step::Done(waited_for(vm, &op)?)),
+            Stage::Ended => Ok(Step::Done(input)),
+        }
     }
 
-    /// The task goes without the transaction's end: it was cancelled,
-    /// or its deadline passed, while the callback ran (a statement of
-    /// it may be running), or the callback failed with an error of the
-    /// program. The transaction is rolled back on the I/O pool, never
-    /// here.
+    /// The task goes without the transaction's answer: it was
+    /// cancelled, or its deadline passed, or the callback failed with
+    /// an error of the program. Nothing here waits: the thread that
+    /// drops the task may be any.
     fn abandon(&mut self, vm: &mut Vm) {
-        if let Some(tx_id) = self.tx_id.take() {
-            abandon_tx(vm, tx_id);
+        match std::mem::replace(&mut self.stage, Stage::Ended) {
+            // The operation does not start, or ends the transaction it
+            // began itself (`transact`'s `unheard`).
+            Stage::Begin(op) => drop(op),
+            // A statement of the callback may be running.
+            Stage::Body(tx_id) => abandon_tx(&vm.runtime, tx_id),
+            // COMMIT or ROLLBACK goes on, and finishes in the server.
+            Stage::End(op) => op.detach(),
+            Stage::Ended => {}
         }
     }
 }
 
-/// End the transaction `tx_id` that nobody ends: close its streams,
-/// and hand the rest to the I/O pool (`roll_back_abandoned`). Nothing
-/// here waits: the thread that drops the task may be any.
-fn abandon_tx(vm: &Vm, tx_id: u64) {
-    close_tx_streams(tx_id, vm.scheduler().wake());
+/// On the I/O pool: a connection of `pool`, and `BEGIN` on it. The
+/// value is `Ok(PgTx)` of the transaction, or `Err` of what failed.
+fn begin_tx(pool: &PgPool) -> Value {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(e) => return err(pool_error_value(&e)),
+    };
+    if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
+        return err(pg_error_to_variant(&e));
+    }
+    ok(make_tx_handle(insert_tx(conn)))
+}
+
+/// Take the transaction `tx_id` out of the registry, for its end: its
+/// streams are closed and its cursors reaped first.
+fn take_tx(tx_id: u64, wake: &dyn crate::runtime::sync::Wake) -> Option<TxEntry> {
+    close_tx_streams(tx_id, wake);
+    // Any cursors opened inside the tx are about to become invalid —
+    // PG drops server-side cursors at tx end, so we only need to reap
+    // the local registry entries. Do this before running COMMIT /
+    // ROLLBACK so a subsequent `cursor_next` with the same id sees a
+    // clean "not registered" error rather than racing with the reap.
     drain_cursors_for_tx(tx_id);
-    let Some(entry) = remove_tx(tx_id) else {
+    remove_tx(tx_id)
+}
+
+/// End the transaction `tx_id` that nobody ends: take it out of the
+/// registry, and hand the rest to the I/O pool
+/// (`roll_back_abandoned`). Nothing here waits.
+fn abandon_tx(runtime: &crate::vm::Runtime, tx_id: u64) {
+    let Some(entry) = take_tx(tx_id, runtime.scheduler.wake()) else {
         return;
     };
-    let op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
+    let op = runtime.io_pool.submit(pg_timeout_err, move || {
         roll_back_abandoned(entry);
         Value::Unit
     });
@@ -2394,18 +2499,11 @@ fn roll_back_abandoned(entry: TxEntry) {
     }
 }
 
-/// End the transaction `tx_id` whose callback has returned `returned`:
-/// close its streams, and commit or roll back as `returned` says. The
-/// value is `postgres.transact`'s.
-fn end_tx(tx_id: u64, returned: Value, wake: &dyn crate::runtime::sync::Wake) -> Value {
-    close_tx_streams(tx_id, wake);
-    // Any cursors opened inside the tx are about to become invalid —
-    // PG drops server-side cursors at tx end, so we only need to reap
-    // the local registry entries. Do this before running COMMIT /
-    // ROLLBACK so a subsequent `cursor_next` with the same id sees a
-    // clean "not registered" error rather than racing with the reap.
-    drain_cursors_for_tx(tx_id);
-    let Some(entry) = remove_tx(tx_id) else {
+/// On the I/O pool: end the transaction `entry` whose callback has
+/// returned `returned`, committing or rolling back as `returned` says.
+/// The value is `postgres.transact`'s.
+fn end_tx(entry: Option<TxEntry>, returned: Value) -> Value {
+    let Some(entry) = entry else {
         // Shouldn't happen — the registry entry was valid on entry
         // and nothing else removes it. If it does, surface the
         // callback's result as-is and skip commit/rollback.

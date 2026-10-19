@@ -87,6 +87,13 @@ alike. What becomes of the statement in the server differs:
   fails. The same happens when the callback fails with an error of the
   program.
 
+Around the callback `postgres.transact` waits too, and a deadline or a
+cancel ends the task there at once as well. While it waits for a
+connection of the pool or for its `BEGIN`, the transaction is not
+begun, or is rolled back as soon as it is. While it waits for its
+`COMMIT` or `ROLLBACK`, that goes on and finishes in the server, and
+the task does not learn how it ended.
+
 ## Streaming and cursors
 
 `postgres.stream` returns a bounded `Channel` whose elements are

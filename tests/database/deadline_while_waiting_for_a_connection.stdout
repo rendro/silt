@@ -1,0 +1,3 @@
+main holds the pool's one connection
+task.deadline: the function was ended by its deadline
+main's transaction: Ok

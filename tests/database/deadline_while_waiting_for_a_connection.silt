@@ -1,0 +1,49 @@
+-- A function waits in `postgres.transact` for a connection of a pool
+-- whose one connection `main` holds in a transaction of its own. Its
+-- `task.deadline` passes, and `task.deadline` answers
+-- `Err(Timeout)` at once. The connection is not taken from `main`:
+-- `main`'s transaction goes on, and commits.
+--
+-- The wait for a connection is the pool's, 30 seconds: a function that
+-- could not be ended there would answer after them, with the pool's
+-- `Timeout` as its own value.
+import env
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{ "max_pool_size": 1 }) {
+    Ok(pool) -> {
+      let done = postgres.transact(pool) { tx ->
+        println("main holds the pool's one connection")
+        let late = task.deadline(time.ms(200)) { ->
+          postgres.transact(pool) { _ -> Ok("a transaction of its own") }
+        }
+        println(
+          match late {
+            Ok(Ok(said)) -> "the function ended with {said}"
+            Ok(Err(e)) -> "the function ended with {e.message()}"
+            Err(e) -> "task.deadline: {e.message()}"
+          },
+        )
+        postgres.query(tx, "SELECT 1", [])
+      }
+      println(
+        match done {
+          Ok(_) -> "main's transaction: Ok"
+          Err(e) -> "main's transaction: {e.message()}"
+        },
+      )
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

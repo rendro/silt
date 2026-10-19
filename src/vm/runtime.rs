@@ -849,8 +849,8 @@ impl IoOp {
     /// goes without having taken it ([`IoOp::take`]), once the value
     /// is there, in whichever order the two come. For a value that
     /// must not be lost with a waiter that was cancelled just as it
-    /// came (an accepted connection).
-    #[cfg(feature = "tcp")]
+    /// came (an accepted connection, a transaction that has begun).
+    #[cfg(any(feature = "tcp", feature = "postgres"))]
     pub(crate) fn unheard_with(self, unheard: impl FnOnce(&Value) + Send + 'static) -> IoOp {
         *self.state.unheard.lock() = Some(Box::new(unheard));
         self
