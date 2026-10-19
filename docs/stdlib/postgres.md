@@ -100,7 +100,13 @@ alike. What becomes of the statement in the server differs:
   statements are `Err(TxnAborted)` at once, and so is
   `postgres.transact`'s answer if the callback returns `Ok(_)`. The
   same holds where `SILT_IO_TIMEOUT` ends the wait for a statement of
-  a transaction.
+  a transaction. This is for the statements a task waits for:
+  `postgres.query`, `postgres.execute`, `postgres.notify` and the
+  cursor functions (`cursor`, `cursor_next`, `cursor_close`). A
+  deadline or a cancel around `channel.receive` of a stream on the
+  transaction ends a wait on the channel, not on a statement: it
+  cancels and aborts nothing (a stream on a `PgTx` is never
+  cancelled; see below).
   The connection goes back to the pool after the rollback; it is
   closed instead if the rollback fails, or if a cancel request was sent
   for it (a request that reaches the server late would cancel the
