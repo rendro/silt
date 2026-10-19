@@ -887,6 +887,109 @@ fn written(segments: &[Symbol]) -> String {
         .join(".")
 }
 
+/// The help for a `_` written as a value outside a call's arguments.
+const PLACEHOLDER_VALUE_HELP: &str = "`_` matches anything in a pattern; it is not a value";
+
+/// Whether `e` is a `_` written as a value.
+pub(super) fn is_placeholder(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::Ident(name) if resolve(name) == "_")
+}
+
+/// The help for a call with `_` among its arguments, `piped` when the
+/// call is the right side of `|>`: the closure that takes the value in
+/// the place of the `_`, written with the callee and the arguments that
+/// are a name or a short literal (others are `...`). The closure's
+/// parameters are names that `in_scope` says name nothing, so that none
+/// hides what an argument uses. After `|>` the closure takes the piped
+/// value; a `_` that is the first argument there is what `|>` already
+/// does.
+fn placeholder_help(
+    callee: &Expr,
+    args: &[Expr],
+    piped: bool,
+    in_scope: impl Fn(&str) -> bool,
+) -> String {
+    const NONE: &str = "silt has no placeholder arguments; write a closure";
+    let Some(callee) = shown_path(callee) else {
+        return NONE.to_string();
+    };
+    let holes = args.iter().filter(|a| is_placeholder(a)).count();
+    if piped && holes > 1 {
+        return NONE.to_string();
+    }
+    if piped && args.first().is_some_and(is_placeholder) {
+        let rest: Vec<String> = args[1..].iter().map(shown_arg).collect();
+        let call = match rest.is_empty() {
+            true => callee,
+            false => format!("{callee}({})", rest.join(", ")),
+        };
+        return format!("`|>` passes the value as the first argument: write `|> {call}`");
+    }
+    let shown: Vec<String> = args.iter().map(shown_arg).collect();
+    let params: Vec<String> = ["x", "y", "z", "a", "b", "c"]
+        .into_iter()
+        .map(str::to_string)
+        .chain((1..).map(|n| format!("x{n}")))
+        .filter(|name| !in_scope(name))
+        .take(holes)
+        .collect();
+    let mut fill = params.iter();
+    let written: Vec<&str> = args
+        .iter()
+        .zip(&shown)
+        .map(|(a, shown)| match is_placeholder(a) {
+            true => fill.next().map_or("", String::as_str),
+            false => shown.as_str(),
+        })
+        .collect();
+    let closure = format!(
+        "{{ {} -> {callee}({}) }}",
+        params.join(", "),
+        written.join(", ")
+    );
+    match piped {
+        true => format!("{NONE}: `|> {closure}`"),
+        false => format!("{NONE}: `{closure}`"),
+    }
+}
+
+/// `f`, `list.map`, `a.b.c` as written, for a name or a field access of
+/// names.
+fn shown_path(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(name) if !is_placeholder(e) => Some(resolve(*name)),
+        ExprKind::FieldAccess(base, field, _) => Some(format!("{}.{field}", shown_path(base)?)),
+        _ => None,
+    }
+}
+
+/// An argument as the help shows it: as written when it is a name, a
+/// field of one or a short literal; `{ ... }` for a closure, `...` for
+/// anything else.
+fn shown_arg(e: &Expr) -> String {
+    let short = |s: &str| s.len() <= 20 && !s.contains(['"', '\\', '{', '\n']);
+    match &e.kind {
+        ExprKind::Int(n) => n.to_string(),
+        ExprKind::Float(f) => {
+            let written = format!("{f:?}");
+            match f.is_finite() && !written.contains('e') {
+                true => written,
+                false => "...".to_string(),
+            }
+        }
+        ExprKind::Unary(UnaryOp::Neg, n)
+            if matches!(n.kind, ExprKind::Int(_) | ExprKind::Float(_)) =>
+        {
+            format!("-{}", shown_arg(n))
+        }
+        ExprKind::Bool(b) => b.to_string(),
+        ExprKind::StringLit(s) if short(s) => format!("\"{s}\""),
+        ExprKind::Unit => "()".to_string(),
+        ExprKind::Lambda { .. } => "{ ... }".to_string(),
+        _ => shown_path(e).unwrap_or_else(|| "...".to_string()),
+    }
+}
+
 struct Resolver<'a> {
     defs: &'a DefTable,
     kind: ModuleKind,
@@ -2085,7 +2188,14 @@ impl Resolver<'_> {
             ExprKind::FieldAccess(..) => {
                 expr.res = self.field_access(expr);
             }
-            ExprKind::Binary(a, _, b) | ExprKind::Pipe(a, b) | ExprKind::Range(a, b) => {
+            ExprKind::Pipe(a, b) => {
+                self.expr(a);
+                match &mut b.kind {
+                    ExprKind::Call(callee, args) => self.call(callee, args, true),
+                    _ => self.expr(b),
+                }
+            }
+            ExprKind::Binary(a, _, b) | ExprKind::Range(a, b) => {
                 self.expr(a);
                 self.expr(b);
             }
@@ -2094,12 +2204,7 @@ impl Resolver<'_> {
                 self.expr(e);
                 self.type_expr(ty);
             }
-            ExprKind::Call(callee, args) => {
-                self.expr(callee);
-                for a in args {
-                    self.expr(a);
-                }
-            }
+            ExprKind::Call(callee, args) => self.call(callee, args, false),
             ExprKind::Lambda { params, body } => {
                 self.push();
                 for param in params {
@@ -2225,6 +2330,29 @@ impl Resolver<'_> {
         }
     }
 
+    /// A call, `piped` when it is the right side of `|>`. A `_` among
+    /// its arguments is no value: silt has no placeholder arguments, and
+    /// the help writes the closure that takes the value instead.
+    fn call(&mut self, callee: &mut Expr, args: &mut [Expr], piped: bool) {
+        self.expr(callee);
+        let help = args.iter().any(is_placeholder).then(|| {
+            placeholder_help(callee, args, piped, |name| {
+                self.lookup_value(intern(name)).is_some()
+            })
+        });
+        for a in args {
+            match &help {
+                Some(help) if is_placeholder(a) => {
+                    let d =
+                        Diagnostic::error(Code::UnresolvedName, a.span, "undefined variable '_'");
+                    self.error(d.with_help(help.clone()));
+                    a.res = Some(Res::Error);
+                }
+                _ => self.expr(a),
+            }
+        }
+    }
+
     /// A closure that names itself where its name meant something else
     /// before its `let` is an error: a reader could not tell which of
     /// the two is meant.
@@ -2280,6 +2408,7 @@ impl Resolver<'_> {
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / \
                  'list.map'",
             ),
+            "_" => Some(PLACEHOLDER_VALUE_HELP),
             _ => None,
         };
         let help = match foreign {

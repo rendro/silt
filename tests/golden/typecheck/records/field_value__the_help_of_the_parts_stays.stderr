@@ -1,0 +1,27 @@
+error[type]: field `p` expects P, got {name: String, age: Int}
+ --> field_value__the_help_of_the_parts_stays.silt:22:22
+    |
+ 22 |   let o = Outer { p: { name: "a", age: 1 }, tag: "t" }
+    |                      ^^^^^^^^^^^^^^^^^^^^^ field `p` expects P, got {name: String, age: Int}
+  = help: an anonymous record is not a `P`: write `P { ... }`
+
+error[type]: field `r` expects {name: String, age: Int}, got P
+ --> field_value__the_help_of_the_parts_stays.silt:23:21
+    |
+ 23 |   let a = Anon { r: P { name: "a", age: 1 } }
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^ field `r` expects {name: String, age: Int}, got P
+  = help: a `P` is not an anonymous record: convert it with a spread, `{...v}`, or take an open row, `{x: T, ...r}`
+
+error[type]: field `items` expects List(Int), got List(Result(Int, String))
+ --> field_value__the_help_of_the_parts_stays.silt:24:24
+    |
+ 24 |   let b = Bag { items: [parse("1")] }
+    |                        ^^^^^^^^^^^^ field `items` expects List(Int), got List(Result(Int, String))
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value
+
+error[type]: field `v` expects Int, got Result(Int, String)
+ --> field_value__the_help_of_the_parts_stays.silt:25:18
+    |
+ 25 |   let w = W { v: parse("1") }
+    |                  ^^^^^^^^^^ field `v` expects Int, got Result(Int, String)
+  = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

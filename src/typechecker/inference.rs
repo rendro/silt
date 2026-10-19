@@ -4,6 +4,7 @@
 //! and check_body.
 
 use super::infer::pattern::*;
+use super::names::is_placeholder;
 use super::suggest::suggest_similar;
 use super::*;
 use crate::parser::{NO_IF, NO_IF_HELP};
@@ -1315,7 +1316,7 @@ impl TypeChecker {
                 // has parameters, the piped value and the receiver of a
                 // method call among them.
                 if params.len() != args.len() + implicit_self {
-                    let message = match form {
+                    let (message, help) = match form {
                         CallForm::Call => {
                             // A method's receiver is not one of the
                             // arguments the call writes.
@@ -1326,23 +1327,44 @@ impl TypeChecker {
                                 (_, Some(name)) => format!("`{name}`"),
                                 _ => "function".to_string(),
                             };
-                            format!(
+                            let message = format!(
                                 "{what} expects {} {}, got {}",
                                 written_params,
                                 plural(written_params, "argument", "arguments"),
                                 args.len()
-                            )
+                            );
+                            (message, None)
                         }
                         // B6: `a |> f` supplies one argument; piping into
                         // a function that needs more without an explicit
-                        // call forgets the remaining ones.
-                        CallForm::BarePipe => format!(
-                            "cannot pipe into function taking {} {}; wrap in a call or use partial application",
-                            written_params,
-                            plural(written_params, "argument", "arguments")
-                        ),
+                        // call forgets the remaining ones. The others are
+                        // written in a call, which a name can take.
+                        CallForm::BarePipe => {
+                            let message = format!(
+                                "cannot pipe into function taking {} {}",
+                                written_params,
+                                plural(written_params, "argument", "arguments")
+                            );
+                            let name = match &callee.kind {
+                                ExprKind::Ident(name) => Some(name.to_string()),
+                                ExprKind::FieldAccess(module, name, _) => match &module.kind {
+                                    ExprKind::Ident(module) => Some(format!("{module}.{name}")),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            let help = match name {
+                                _ if written_params == 0 => None,
+                                Some(name) => Some(format!(
+                                    "`|>` passes only the first argument; write the others \
+                                     in a call: `|> {name}(...)`"
+                                )),
+                                None => Some("`|>` passes only the first argument".to_string()),
+                            };
+                            (message, help)
+                        }
                     };
-                    self.error(Code::ArityMismatch, message, span);
+                    self.error_help(Code::ArityMismatch, (message, help), span);
                 }
                 (**ret).clone()
             }
@@ -2144,6 +2166,18 @@ impl TypeChecker {
             // `a |> f(b)` is the call `f(a, b)`, and `a |> f` the call
             // `f(a)`.
             ExprKind::Pipe(lhs, rhs) => match &mut rhs.kind {
+                // A `_` among the arguments was meant to say where the
+                // piped value goes, which the resolver reports; the call
+                // with the value first is not what was meant, so it is
+                // not checked.
+                ExprKind::Call(callee, call_args) if call_args.iter().any(is_placeholder) => {
+                    self.infer_expr(lhs, env);
+                    self.infer_expr(callee, env);
+                    for arg in call_args {
+                        self.infer_expr(arg, env);
+                    }
+                    self.fresh_var()
+                }
                 ExprKind::Call(callee, call_args) => {
                     let mut args: Vec<&mut Expr> = vec![&mut **lhs];
                     args.extend(call_args.iter_mut());
@@ -2370,12 +2404,14 @@ impl TypeChecker {
                         })
                         .collect();
 
-                    // Unify with declared field types (using instantiated copies)
-                    for (field_name, inferred_ty) in &field_types {
+                    // Unify with declared field types (using instantiated
+                    // copies), each at its value.
+                    for ((field_name, inferred_ty), (_, value)) in field_types.iter().zip(&*fields)
+                    {
                         if let Some((_, declared_ty)) =
                             instantiated_fields.iter().find(|(n, _)| n == field_name)
                         {
-                            self.unify(inferred_ty, declared_ty, span);
+                            self.unify_field(*field_name, inferred_ty, declared_ty, value.span);
                         }
                     }
 
@@ -2475,7 +2511,7 @@ impl TypeChecker {
                     for (field_name, field_expr) in &mut *fields {
                         let ft = self.infer_expr(field_expr, env);
                         if let Some(declared_ty) = af.get(field_name) {
-                            self.unify(&ft, declared_ty, span);
+                            self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
                         } else if let RowTail::Var(_) = at {
                             // Open row: extend by unifying with a
                             // record carrying this new field.
@@ -2540,7 +2576,7 @@ impl TypeChecker {
                     for (field_name, field_expr) in &mut *fields {
                         let ft = self.infer_expr(field_expr, env);
                         if let Some(declared_ty) = declared.get(field_name) {
-                            self.unify(&ft, declared_ty, span);
+                            self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
                         } else {
                             // GAP (round 26 L5): did-you-mean on the
                             // generic-record update path.

@@ -2408,8 +2408,8 @@ pub(crate) enum Blocks {
 }
 
 /// What the report of a failure that nobody joined advises.
-const UNJOINED_FAILURE_HELP: &str =
-    "join the task with task.join to handle its error, or cancel it with task.cancel";
+const UNJOINED_FAILURE_HELP: &str = "join it with task.join to stop where you wait for it, or \
+     cancel it with task.cancel if you don't need its result";
 
 /// The first line of the report of a failure that nobody joined.
 fn unjoined_failure_headline(task_id: usize, message: &str) -> String {

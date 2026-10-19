@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- A field's value of the wrong type keeps the help of the parts that
+-- differ: an anonymous record where a record is declared and the other
+-- way round, and a `Result` where its Ok value is wanted, also inside
+-- a list.
+import string
+
+type P { name: String, age: Int }
+
+type Outer { p: P, tag: String }
+
+type Anon { r: { name: String, age: Int } }
+
+type Bag { items: List(Int) }
+
+type W { v: Int }
+
+fn parse(s: String) -> Result(Int, String) { Ok(string.length(s)) }
+
+fn main() {
+  let o = Outer { p: { name: "a", age: 1 }, tag: "t" }
+  let a = Anon { r: P { name: "a", age: 1 } }
+  let b = Bag { items: [parse("1")] }
+  let w = W { v: parse("1") }
+  println("{o.tag} {a.r.name} {b.items} {w.v}")
+}

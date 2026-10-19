@@ -121,7 +121,7 @@ line, rendered like any runtime error:
     error[runtime]: task <handle:0> failed and was never joined: division by zero
      --> spawn_test.silt:5:29
     ...
-      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
 A test has ended when its test function has returned **and the tasks it

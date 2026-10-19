@@ -686,6 +686,43 @@ impl TypeChecker {
         }
     }
 
+    /// Unify the type of a record field's value (`got`) with the type
+    /// the record declares for the field, and report at the value
+    /// (`span`) why they do not unify. Where their heads or a part of
+    /// them differ, the error names the field and shows both types
+    /// whole: "field `age` expects Int, got String". Its help is what
+    /// the parts that differ say; the fix to wrap the value in `Ok(...)`
+    /// is offered where the field is a `Result` and the value is not.
+    pub(super) fn unify_field(&mut self, field: Symbol, got: &Type, declared: &Type, span: Span) {
+        let Err(Mismatch(faults)) = self.unify_types(got, declared) else {
+            return;
+        };
+        let (apart, others): (Vec<Fault>, Vec<Fault>) =
+            faults.into_iter().partition(|fault| fault.apart.is_some());
+        if let Some(first) = apart.first() {
+            let (got, declared) = (self.apply(got), self.apply(declared));
+            let (got_shown, declared_shown) = self.show_apart(&got, &declared);
+            let mut d = Diagnostic::error(
+                Code::TypeMismatch,
+                span,
+                format!("field `{field}` expects {declared_shown}, got {got_shown}"),
+            );
+            for help in apart.iter().filter_map(|fault| fault.help.clone()) {
+                if !d.help.contains(&help) {
+                    d.help.push(help);
+                }
+            }
+            Self::add_ok_wrap_fix(&mut d, &got, &declared);
+            if let Some((got_part, declared_part)) = &first.apart {
+                d = self.name_annotation_variables(d, declared_part, got_part);
+            }
+            self.errors.push(d);
+        }
+        if !others.is_empty() {
+            self.report_mismatch(Mismatch(others), span);
+        }
+    }
+
     /// Report a failed unification at `span`.
     pub(super) fn report_mismatch(&mut self, mismatch: Mismatch, span: Span) {
         for fault in mismatch.0 {

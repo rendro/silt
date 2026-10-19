@@ -128,6 +128,9 @@ server sent, with one exception:
 - A body of more than 10 MiB, counted as the program would get it, is
   `Err(InvalidResponse(_))`: no part of it is returned.
 
+Every request says who sends it, `user-agent: silt/<version>` (the
+version of `silt` that runs the program).
+
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
 call site looks the same.
@@ -185,7 +188,8 @@ Makes an HTTP request with full control over method, body, and headers. Use this
 
 The body is sent as it is, with its length: `bytes.from_string("...")` for
 a text, `bytes.empty()` for none. What the bytes are is the request's to
-say, in a `Content-Type` header among `headers`: none is added.
+say, in a `Content-Type` header among `headers`: none is added. A
+`user-agent` among `headers` is sent instead of `silt/<version>`.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a spawned task.

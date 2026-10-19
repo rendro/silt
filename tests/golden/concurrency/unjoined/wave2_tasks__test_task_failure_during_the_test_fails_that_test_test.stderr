@@ -4,7 +4,7 @@
         |
      16 |     10 / zero
         |     ^^^^^^^^^ task <handle:0> failed and was never joined: division by zero
-      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
   PASS wave2_tasks__test_task_failure_during_the_test_fails_that_test_test.silt::test_other
 
 2 tests: 1 passed, 1 failed, 0 skipped

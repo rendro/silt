@@ -6,7 +6,7 @@
 -- stderr-contains: fn inner(n) { 10 / n }
 -- stderr-contains: -> inner  at wave2_tasks__run_report_names_the_file_with_source_line_and_call_stack.silt:14:
 -- stderr-contains: -> outer  at wave2_tasks__run_report_names_the_file_with_source_line_and_call_stack.silt:15:
--- stderr-contains: = help: join the task with task.join
+-- stderr-contains: = help: join it with task.join
 -- The report names the program's file, shows the source line of the
 -- failure, and gives a call stack whose frames name the file too.
 import task

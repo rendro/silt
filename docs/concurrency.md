@@ -555,7 +555,7 @@ error[runtime]: task <handle:0> failed and was never joined: division by zero
    |
  4 |   let _ = task.spawn { -> 1 / 0 }
    |                           ^ task <handle:0> failed and was never joined: division by zero
-  = help: join the task with task.join to handle its error, or cancel it with task.cancel
+  = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
 The report is rendered like every other runtime error: the file and line

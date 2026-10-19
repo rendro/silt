@@ -390,23 +390,37 @@ fn finish_http_response(
     }
 }
 
+/// The client of `http.get` and `http.request`. Security: conservative
+/// default timeouts so a slow/unreachable peer cannot hang the
+/// underlying OS socket indefinitely (HIGH-3). These apply even if the
+/// silt task's SILT_IO_TIMEOUT unblocks the VM task, so we don't leak
+/// real file descriptors.
+#[cfg(feature = "http")]
+fn client() -> ureq::Agent {
+    client_with_times(Duration::from_secs(10), Duration::from_secs(60))
+}
+
+/// A client whose times to connect and in all are the given ones. Every
+/// request says `user-agent: silt/<version>`, unless the program sets a
+/// `user-agent` header of its own: ureq sends the request's header then.
+#[cfg(feature = "http")]
+fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_connect(Some(connect))
+        .timeout_global(Some(global))
+        .user_agent(format!("silt/{}", crate::VERSION))
+        .build()
+        .into()
+}
+
 /// Perform a synchronous HTTP GET and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
     if let Some(refused) = refuse_port(url) {
         return refused;
     }
-    // Security: conservative default timeouts so a slow/unreachable peer
-    // cannot hang the underlying OS socket indefinitely (HIGH-3). These
-    // apply even if the silt task's SILT_IO_TIMEOUT unblocks the VM task,
-    // so we don't leak real file descriptors.
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(60)))
-        .build()
-        .into();
-    finish_http_response(agent.get(url).call(), url, false)
+    finish_http_response(client().get(url).call(), url, false)
 }
 
 /// Perform a synchronous HTTP request and return a `Value`.
@@ -420,13 +434,7 @@ fn do_http_request(
     if let Some(refused) = refuse_port(url) {
         return refused;
     }
-    // Security: conservative default timeouts (HIGH-3). See do_http_get.
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(60)))
-        .build()
-        .into();
+    let agent = client();
 
     // Unified dispatch — each ureq verb-fn returns a differently-typed
     // `RequestBuilder<WithBody>` vs `RequestBuilder<WithoutBody>` (phantom
@@ -1703,12 +1711,7 @@ mod http_error_tests {
     /// A client whose times are `ms`, so that a test of a timeout does
     /// not wait for the times of `http.get`.
     fn agent(ms: u64) -> ureq::Agent {
-        ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_millis(ms)))
-            .timeout_global(Some(Duration::from_millis(ms)))
-            .build()
-            .into()
+        client_with_times(Duration::from_millis(ms), Duration::from_millis(ms))
     }
 
     /// The URL of a server that takes one connection, reads what the
@@ -2055,5 +2058,57 @@ mod http_body_tests {
     fn no_bytes_that_say_packed_are_invalid_response() {
         let got = failure(&do_http_get(&says_packed(Vec::new())));
         assert!(got.starts_with("InvalidResponse("), "{got}");
+    }
+}
+
+/// The `user-agent` a request of silt's client sends.
+#[cfg(all(test, feature = "http"))]
+mod user_agent_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    /// The `user-agent` lines of the request that `ask` makes of a
+    /// server on the loopback interface, which answers `200` with no
+    /// body.
+    fn sent(ask: impl FnOnce(&str) -> Value) -> Vec<String> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = listener.local_addr().expect("its address");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut head = [0u8; 4096];
+                let n = stream.read(&mut head).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&head[..n]).into_owned());
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+        ask(&format!("http://{addr}/"));
+        let head = rx.recv().expect("the request");
+        head.lines()
+            .filter(|line| line.to_ascii_lowercase().starts_with("user-agent:"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn every_request_says_silt_and_its_version() {
+        let ours = format!("user-agent: silt/{}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(sent(do_http_get), vec![ours.clone()]);
+        assert_eq!(
+            sent(|url| do_http_request("POST", url, b"body", &[])),
+            vec![ours]
+        );
+    }
+
+    #[test]
+    fn a_user_agent_the_program_sets_is_sent_instead() {
+        for name in ["user-agent", "User-Agent"] {
+            let headers = [(name.to_string(), "probe/1".to_string())];
+            let got = sent(|url| do_http_request("GET", url, b"", &headers));
+            assert_eq!(got.len(), 1, "{got:?}");
+            assert!(got[0].ends_with(": probe/1"), "{got:?}");
+        }
     }
 }
