@@ -28,7 +28,9 @@
 //! fields — so a `Date` field in the record happily receives a bare TOML
 //! `1979-05-27`, a `DateTime` field receives `1979-05-27T07:32:00Z`, and a
 //! `Time` field receives `07:32:00`. This reuses the json code path for
-//! date parsing, keeping the two modules' behavior aligned.
+//! date parsing, keeping the two modules' behavior aligned. The encoder
+//! writes a `Date`, `Time` and `DateTime` as such a literal
+//! (`time_literal`), so each reads back as the value it was.
 //!
 //! ## Semantics
 //!
@@ -41,7 +43,7 @@
 
 use std::sync::Arc;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveTime};
 
 use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
@@ -186,67 +188,12 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
             let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
             ::toml::Value::Array(items?)
         }
+        Value::Record(record)
+            if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
+        {
+            time_literal(v)
+        }
         Value::Record(fields) => {
-            // Special handling for built-in Date / Time / DateTime records:
-            // emit them as TOML native datetime literals so round-trips
-            // through `toml.parse` preserve type.
-            match fields.type_id() {
-                ty::DATE => {
-                    if let (Some(Value::Int(y)), Some(Value::Int(m)), Some(Value::Int(d))) =
-                        (fields.get("year"), fields.get("month"), fields.get("day"))
-                    {
-                        let iso = format!("{y:04}-{m:02}-{d:02}");
-                        // Parse the string through toml's own Datetime type
-                        // so the output renders as a native TOML date.
-                        if let Ok(dt) = iso.parse::<::toml::value::Datetime>() {
-                            return Ok(::toml::Value::Datetime(dt));
-                        }
-                        return Ok(::toml::Value::String(iso));
-                    }
-                    // Fall through to generic record handling if the shape
-                    // doesn't match the expected field set.
-                }
-                ty::TIME => {
-                    if let (Some(Value::Int(h)), Some(Value::Int(m)), Some(Value::Int(s))) = (
-                        fields.get("hour"),
-                        fields.get("minute"),
-                        fields.get("second"),
-                    ) {
-                        let iso = format!("{h:02}:{m:02}:{s:02}");
-                        if let Ok(dt) = iso.parse::<::toml::value::Datetime>() {
-                            return Ok(::toml::Value::Datetime(dt));
-                        }
-                        return Ok(::toml::Value::String(iso));
-                    }
-                }
-                ty::DATE_TIME => {
-                    if let (Some(Value::Record(date_fields)), Some(Value::Record(time_fields))) =
-                        (fields.get("date"), fields.get("time"))
-                        && let (
-                            Some(Value::Int(y)),
-                            Some(Value::Int(mo)),
-                            Some(Value::Int(d)),
-                            Some(Value::Int(h)),
-                            Some(Value::Int(mi)),
-                            Some(Value::Int(se)),
-                        ) = (
-                            date_fields.get("year"),
-                            date_fields.get("month"),
-                            date_fields.get("day"),
-                            time_fields.get("hour"),
-                            time_fields.get("minute"),
-                            time_fields.get("second"),
-                        )
-                    {
-                        let iso = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}");
-                        if let Ok(dt) = iso.parse::<::toml::value::Datetime>() {
-                            return Ok(::toml::Value::Datetime(dt));
-                        }
-                        return Ok(::toml::Value::String(iso));
-                    }
-                }
-                _ => {}
-            }
             let mut table = ::toml::map::Map::new();
             for (k, v) in fields.named() {
                 // TOML has no null. An `Option::None` field is omitted from the
@@ -290,6 +237,72 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
         }
         _ => return Err(unsupported_kind(caller, v)),
     })
+}
+
+/// `v`, a date, a time of day or a datetime, as TOML writes it: a
+/// native literal (`2026-10-19`, `12:30:00.25`, `2026-10-19T12:30:00`),
+/// or, for one that no literal holds (a year outside 0000-9999, fields
+/// that are no day or time of the calendar), a string of the text silt
+/// shows of it. `toml.parse` reads a literal and the text alike.
+fn time_literal(v: &Value) -> ::toml::Value {
+    use ::toml::value::{Date, Datetime, Time};
+    let int = |v: &Value, name: &str| match v {
+        Value::Record(record) => match record.get(name) {
+            Some(Value::Int(n)) => Some(*n),
+            _ => None,
+        },
+        _ => None,
+    };
+    let date = |v: &Value| {
+        let (year, month, day) = (int(v, "year")?, int(v, "month")?, int(v, "day")?);
+        let year = u16::try_from(year).ok().filter(|year| *year <= 9999)?;
+        let (month, day) = (u8::try_from(month).ok()?, u8::try_from(day).ok()?);
+        NaiveDate::from_ymd_opt(year.into(), month.into(), day.into())?;
+        Some(Date { year, month, day })
+    };
+    let time = |v: &Value| {
+        let hour = u8::try_from(int(v, "hour")?).ok()?;
+        let minute = u8::try_from(int(v, "minute")?).ok()?;
+        let second = u8::try_from(int(v, "second")?).ok()?;
+        // (Below a second: chrono takes one more for a leap second.)
+        let nanosecond = u32::try_from(int(v, "ns")?)
+            .ok()
+            .filter(|ns| *ns < 1_000_000_000)?;
+        NaiveTime::from_hms_nano_opt(hour.into(), minute.into(), second.into(), nanosecond)?;
+        Some(Time {
+            hour,
+            minute,
+            second,
+            nanosecond,
+        })
+    };
+    let field = |name: &str| match v {
+        Value::Record(record) => record.get(name),
+        _ => None,
+    };
+    let literal = match v {
+        Value::Record(record) if record.type_id() == ty::DATE => date(v).map(|date| Datetime {
+            date: Some(date),
+            time: None,
+            offset: None,
+        }),
+        Value::Record(record) if record.type_id() == ty::TIME => time(v).map(|time| Datetime {
+            date: None,
+            time: Some(time),
+            offset: None,
+        }),
+        _ => (|| {
+            Some(Datetime {
+                date: Some(date(field("date")?)?),
+                time: Some(time(field("time")?)?),
+                offset: None,
+            })
+        })(),
+    };
+    literal.map_or_else(
+        || ::toml::Value::String(v.to_string()),
+        ::toml::Value::Datetime,
+    )
 }
 
 /// Render a value at top level. TOML's top-level must be a table — a bare

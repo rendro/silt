@@ -334,7 +334,11 @@ json.stringify(value: a) -> String
 Serializes a value to a compact JSON string. A map is written as an
 object; a key of it that is no `String` is written as its shown text (so the
 `Float` key `1.0` reads `"1.0"`). A `json.Value` is written as the JSON it
-holds.
+holds. A `Date`, a `Time` and a `DateTime` (from the `time` module) are
+written as the text silt shows of them, which `json.parse` reads back into a
+field of the same type: `"2026-10-19"`, `"12:30:00"` (with a fractional second
+only when the value has one: `"12:30:00.250000000"`) and
+`"2026-10-19T12:30:00"`.
 
 `json.stringify` and `json.pretty` write the same values. A value JSON has no
 form for is a runtime error that names its kind, wherever in the value it is:
@@ -351,11 +355,14 @@ To send bytes as JSON, turn them into text first (`bytes.to_string`,
 
 ```silt
 import json
+import time
 
 fn main() {
   let data = #{ "key": [1, 2, 3] }
   println(json.stringify(data))
   -- {"key":[1,2,3]}
   println(json.stringify(#{ 1.0: "one" })) -- {"1.0":"one"}
+  println(json.stringify(time.Date { year: 2026, month: 10, day: 19 }))
+  -- "2026-10-19"
 }
 ```

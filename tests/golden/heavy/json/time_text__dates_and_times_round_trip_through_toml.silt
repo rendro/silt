@@ -1,0 +1,72 @@
+-- toml.stringify and toml.pretty write a date, a time of day and a
+-- datetime as TOML's own literals, a time of day with its fractional
+-- second, and toml.parse reads them back into the same value: at the
+-- top level of a record, and nested in a list, a map, an Option, a
+-- tuple and a record. A date whose year no literal holds (one before
+-- the year 0) is written as the text silt shows of it.
+import time
+import toml
+
+type Moment { d: time.Date, t: time.Time, dt: time.DateTime }
+
+type Nested {
+  days: List(time.Date),
+  by_name: Map(String, time.Time),
+  maybe: Option(time.DateTime),
+  none: Option(time.Date),
+  pair: (time.Date, time.Time),
+  inner: Moment,
+}
+
+type Day { d: time.Date }
+
+fn main() {
+  let d = time.Date { year: 2026, month: 10, day: 19 }
+  let t = time.Time { hour: 12, minute: 30, second: 0, ns: 0 }
+  let frac = time.Time { hour: 7, minute: 5, second: 9, ns: 250000000 }
+  let dt = time.DateTime { date: d, time: t }
+  let dt_frac = time.DateTime { date: d, time: frac }
+
+  let m = Moment { d: d, t: t, dt: dt }
+  let f = Moment { d: d, t: frac, dt: dt_frac }
+  match toml.stringify(m) {
+    Ok(text) -> {
+      println(text)
+      println(toml.parse(text, Moment) == Ok(m))
+    }
+    Err(e) -> println(e.message())
+  }
+  match toml.stringify(f) {
+    Ok(text) -> {
+      println(text)
+      println(toml.parse(text, Moment))
+      println(toml.parse(text, Moment) == Ok(f))
+    }
+    Err(e) -> println(e.message())
+  }
+
+  let n = Nested {
+    days: [d, time.Date { year: 1999, month: 12, day: 31 }],
+    by_name: #{ "noon": t, "early": frac },
+    maybe: Some(dt_frac),
+    none: None,
+    pair: (d, frac),
+    inner: m,
+  }
+  match toml.pretty(n) {
+    Ok(text) -> {
+      println(text)
+      println(toml.parse(text, Nested) == Ok(n))
+    }
+    Err(e) -> println(e.message())
+  }
+
+  let past = Day { d: time.Date { year: -1, month: 1, day: 1 } }
+  match toml.stringify(past) {
+    Ok(text) -> {
+      print(text)
+      println(toml.parse(text, Day) == Ok(past))
+    }
+    Err(e) -> println(e.message())
+  }
+}

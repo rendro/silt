@@ -241,7 +241,12 @@ toml.stringify(value: a) -> Result(String, TomlError)
 Serialises a silt record or map to a TOML document. Like `toml.pretty`, the
 top-level value must be table-shaped. A map is written as a table; a key of
 it that is no `String` is written as its shown text (so the `Float` key `1.0`
-reads `"1.0"`).
+reads `"1.0"`). A `Date`, a `Time` and a `DateTime` (from the `time` module) are
+written as TOML's own literals, which `toml.parse` reads back into a field of
+the same type: `2026-10-19`, `12:30:00` (with a fractional second only when
+the value has one: `12:30:00.25`) and `2026-10-19T12:30:00`. A date whose year
+has no literal (one before the year 0) is written as a string of the text silt
+shows of it, which `toml.parse` reads back as well.
 
 ```silt
 import toml

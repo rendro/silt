@@ -1,0 +1,61 @@
+-- json.stringify and json.pretty write a date, a time of day and a
+-- datetime as the text silt shows of them, which json.parse reads back
+-- into the same value: at the top level of a record, and nested in a
+-- list, a map, an Option, a tuple and a record. A time of day has a
+-- fractional second only when it has one. A variant's fields are
+-- written the same way. A json.Value built by hand is written as it is.
+import json
+import time
+
+type Moment { d: time.Date, t: time.Time, dt: time.DateTime }
+
+type Nested {
+  days: List(time.Date),
+  by_name: Map(String, time.Time),
+  maybe: Option(time.DateTime),
+  none: Option(time.Date),
+  pair: (time.Date, time.Time),
+  inner: Moment,
+}
+
+type Event {
+  At(time.DateTime),
+}
+
+fn main() {
+  let d = time.Date { year: 2026, month: 10, day: 19 }
+  let t = time.Time { hour: 12, minute: 30, second: 0, ns: 0 }
+  let frac = time.Time { hour: 7, minute: 5, second: 9, ns: 250000000 }
+  let dt = time.DateTime { date: d, time: t }
+  let dt_frac = time.DateTime { date: d, time: frac }
+
+  let m = Moment { d: d, t: t, dt: dt }
+  let text = json.stringify(m)
+  println(text)
+  println(json.parse(text, Moment))
+  println(json.parse(text, Moment) == Ok(m))
+
+  let f = Moment { d: d, t: frac, dt: dt_frac }
+  let text = json.stringify(f)
+  println(text)
+  println(json.parse(text, Moment) == Ok(f))
+
+  let n = Nested {
+    days: [d, time.Date { year: 1999, month: 12, day: 31 }],
+    by_name: #{ "noon": t, "early": frac },
+    maybe: Some(dt_frac),
+    none: None,
+    pair: (d, frac),
+    inner: m,
+  }
+  let text = json.pretty(n)
+  println(text)
+  println(json.parse(text, Nested) == Ok(n))
+  println(json.parse_list(json.stringify([m, f]), Moment) == Ok([m, f]))
+  println(json.parse_map(json.stringify(#{ "a": m }), Moment) == Ok(#{ "a": m }))
+
+  println(json.stringify(d))
+  println(json.stringify(frac))
+  println(json.stringify(At(dt)))
+  println(json.stringify(json.Object(#{ "day": json.Int(19) })))
+}

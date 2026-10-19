@@ -227,6 +227,14 @@ pub(crate) fn value_to_json(
             let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
             serde_json::Value::Array(items?)
         }
+        // A date, a time of day and a datetime are written as the text
+        // silt shows of them (`2026-10-19`, `12:30:00.250000000`,
+        // `2026-10-19T12:30:00`), which their decoders read back.
+        Value::Record(record)
+            if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
+        {
+            serde_json::Value::String(v.to_string())
+        }
         Value::Record(record) => {
             let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> =
                 record
