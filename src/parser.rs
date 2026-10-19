@@ -3238,6 +3238,9 @@ impl<'src> Parser<'src> {
                     self.span(),
                     format!("expected expression, found {}", self.peek()),
                 );
+                if let Some(help) = self.nested_fn_help() {
+                    return Err(d.with_help(help));
+                }
                 // A `+` that starts a statement: it was meant to go on
                 // with the line above, outside any bracket.
                 if self.at(&Token::Plus) && self.nl_before() && self.prev_ends_value() {
@@ -3249,6 +3252,52 @@ impl<'src> Parser<'src> {
                 Err(self.with_line_start_help(d))
             }
         }
+    }
+
+    /// The help for a `fn name(...)` where an expression is expected
+    /// inside braces (a function body, a closure): there a function is a
+    /// closure bound by a `let`, which may call itself by that name. The
+    /// closure takes the parameters as they are written, when they are on
+    /// one line. A top-level `let x = fn f()` is inside nothing: no help.
+    fn nested_fn_help(&self) -> Option<String> {
+        if !self.at(&Token::Fn) || self.delim_depth[self.pos] == 0 {
+            return None;
+        }
+        let Some(Tok {
+            kind: Token::Ident(name),
+            ..
+        }) = self.tokens.get(self.pos + 1)
+        else {
+            return None;
+        };
+        let params = match self.tokens.get(self.pos + 2) {
+            Some(open) if open.kind == Token::LParen => {
+                let mut depth = 0usize;
+                let close = self.tokens[self.pos + 2..].iter().find(|tok| {
+                    match tok.kind {
+                        Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                        Token::RParen | Token::RBracket | Token::RBrace => depth -= 1,
+                        Token::Eof => return true,
+                        _ => {}
+                    }
+                    depth == 0
+                })?;
+                self.source
+                    .get(open.span.end as usize..close.span.start as usize)
+                    .filter(|written| close.kind == Token::RParen && !written.contains('\n'))
+                    .map(|written| written.trim().to_string())
+            }
+            _ => None,
+        };
+        let closure = match params.as_deref() {
+            Some("") => "{ -> ... }".to_string(),
+            Some(params) => format!("{{ {params} -> ... }}"),
+            None => "{ ... -> ... }".to_string(),
+        };
+        Some(format!(
+            "a function cannot be declared inside another; bind a closure: \
+             `let {name} = {closure}`"
+        ))
     }
 
     // ── String interpolation ─────────────────────────────────────────

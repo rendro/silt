@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- A function cannot be declared inside another. The help binds a
+-- closure by the function's name, with the parameters as they are
+-- written (a `let` closure may call itself by its name). A parameter
+-- list over several lines is not copied, and a `fn` that is inside
+-- nothing (a top-level `let`) gets no help.
+fn typed() {
+  fn helper(x: Int, y) -> Int { x + y }
+  helper(1, 2)
+}
+
+fn none() {
+  let run = { -> fn tick() { 1 } }
+  run()
+}
+
+fn lines() {
+  let f = fn spread(
+    a,
+    b,
+  ) { a + b }
+  f
+}
+
+let top = fn outside(a) { a }
+
+fn main() {}
