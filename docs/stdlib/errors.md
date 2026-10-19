@@ -127,7 +127,7 @@ its own (`float.Empty` is not `int.Empty`).
 | `Query(String, String)` | message, SQLSTATE | server-reported error |
 | `TypeMismatch(String, String, String)` | column, expected, actual | row decode |
 | `NoSuchColumn(String)` | column | row.get on missing column |
-| `Closed` | — | connection dropped mid-query |
+| `Closed` | — | connection dropped, or a transaction used after it ended |
 | `Timeout` | — | SQLSTATE 57014, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE 25P02 — rollback required |
 | `Other(String)` | message | unclassified pg error |

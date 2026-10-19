@@ -268,11 +268,17 @@ impl Drop for TxConn {
 /// `PostgresError` of one whose transaction has ended. A statement that
 /// was on its way when the transaction ended would otherwise run after
 /// its end, outside it.
+/// The `PostgresError` of a statement on a transaction that has ended:
+/// `Closed`, as the connection is, for the transaction.
+fn tx_ended() -> Value {
+    Value::variant(bv::PG_CLOSED, vec![])
+}
+
 fn tx_conn(cell: &Mutex<TxConn>) -> Result<std::sync::MutexGuard<'_, TxConn>, Value> {
     let conn = cell.lock().unwrap_or_else(|e| e.into_inner());
     match conn.ended {
         false => Ok(conn),
-        true => Err(pg_connect("postgres: the transaction has ended")),
+        true => Err(tx_ended()),
     }
 }
 
@@ -1142,12 +1148,7 @@ impl TxHandle {
     /// The transaction's connection, or the `PostgresError` of one that has
     /// ended.
     fn open(self) -> Result<Arc<Mutex<TxConn>>, Value> {
-        lookup_tx(self.0).ok_or_else(|| {
-            pg_connect(format!(
-                "postgres: tx handle {} is not registered (transaction ended)",
-                self.0
-            ))
-        })
+        lookup_tx(self.0).ok_or_else(tx_ended)
     }
 }
 

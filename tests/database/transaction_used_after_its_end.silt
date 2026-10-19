@@ -1,0 +1,46 @@
+-- A transaction's `PgTx` that outlives `postgres.transact` (here it is
+-- handed out through a channel) is a transaction that has ended: a
+-- statement on it, a stream and a cursor are each `Err(Closed)`, as on
+-- a connection that is gone, and nothing runs in the server.
+import channel
+import env
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(postgres.Closed) -> "Closed"
+    Err(e) -> "another error: {e.message()}"
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let out: Channel(postgres.PgTx) = channel.new(1)
+      let done = postgres.transact(pool) { tx ->
+        channel.send(out, tx)
+        postgres.query(tx, "SELECT 1", [])
+      }
+      println("the transaction: {said(done)}")
+      match channel.receive(out) {
+        Some(tx) -> {
+          println("a statement on it afterwards: {said(postgres.query(tx, "SELECT 1", []))}")
+          println("an execute: {said(postgres.execute(tx, "SELECT 1", []))}")
+          println("a stream: {said(postgres.stream(tx, "SELECT 1", []))}")
+          println("a cursor: {said(postgres.cursor(tx, "SELECT 1", [], 10))}")
+        }
+        None -> println("no transaction came out")
+      }
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

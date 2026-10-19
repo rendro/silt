@@ -162,4 +162,5 @@ cases!(
     deadline_while_waiting_for_a_connection,
     cancel_request_reaches_no_other_statement,
     io_timeout_leaves_a_commit_alone,
+    transaction_used_after_its_end,
 );

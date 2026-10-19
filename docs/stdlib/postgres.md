@@ -289,7 +289,7 @@ needed) are:
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
 | `TypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
 | `NoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
-| `Closed` | — | Connection dropped mid-query |
+| `Closed` | — | Connection dropped, or a transaction used after it ended |
 | `Timeout` | — | SQLSTATE `57014`, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
 | `Other(msg)` | `String` | Catch-all for shapes we can't classify |
