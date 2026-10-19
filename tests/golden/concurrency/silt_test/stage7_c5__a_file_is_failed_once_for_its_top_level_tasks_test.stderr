@@ -6,12 +6,12 @@
         |
      17 |   panic("the first top-level task")
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:0> failed and was never joined: panic: the first top-level task
-      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
     error[runtime]: task <handle:1> failed and was never joined: panic: the second top-level task
      --> stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:22:3
         |
      22 |   panic("the second top-level task")
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:1> failed and was never joined: panic: the second top-level task
-      = help: join the task with task.join to handle its error, or cancel it with task.cancel
+      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 
 2 tests: 2 passed, 0 failed, 0 skipped (a top-level task of 1 file failed)
