@@ -38,11 +38,31 @@ pub(super) enum TextParam {
     Text(String),
     /// A list: an array where the statement's parameter is an array
     /// (`id = ANY($1)`), JSON anywhere else. A list of `Bytes` has no
-    /// JSON form, and is an error only where JSON is what it is to be.
+    /// JSON form, and is an error only where JSON is what it is to be:
+    /// the encoder leaves the error in `unsendable` before the statement
+    /// is sent.
     List {
         array: String,
         json: Result<String, String>,
+        unsendable: Unsendable,
     },
+}
+
+/// Where the encoder leaves why it could not send a parameter: the
+/// error of the program, worded as `json.stringify`'s, that the task
+/// gets instead of the statement's result.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Unsendable(Arc<std::sync::Mutex<Option<String>>>);
+
+impl Unsendable {
+    /// Why a parameter could not be sent, if one could not.
+    pub(super) fn take(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    fn found(&self, why: &str) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(why.to_string());
+    }
 }
 
 impl ToSql for TextParam {
@@ -54,9 +74,17 @@ impl ToSql for TextParam {
         let text = match self {
             TextParam::Null => return Ok(IsNull::Yes),
             TextParam::Text(text) => text,
-            TextParam::List { array, json } => match ty.kind() {
-                Kind::Array(_) => array,
-                _ => json.as_ref().map_err(|why| why.clone())?,
+            TextParam::List {
+                array,
+                json,
+                unsendable,
+            } => match (ty.kind(), json) {
+                (Kind::Array(_), _) => array,
+                (_, Ok(json)) => json,
+                (_, Err(why)) => {
+                    unsendable.found(why);
+                    return Err(why.clone().into());
+                }
             },
         };
         out.extend_from_slice(text.as_bytes());
@@ -75,8 +103,13 @@ impl ToSql for TextParam {
 }
 
 /// The parameters of a statement of `caller`: `params`, a tuple, or
-/// `()` for none.
-pub(super) fn params(caller: &str, params: &Value) -> Result<Vec<TextParam>, VmError> {
+/// `()` for none; and where the encoder leaves why one of them could not
+/// be sent, if one of them may not be (a list of `Bytes`, which has no
+/// JSON form).
+pub(super) fn params(
+    caller: &str,
+    params: &Value,
+) -> Result<(Vec<TextParam>, Option<Unsendable>), VmError> {
     let values: Vec<&Value> = match params {
         Value::Unit => Vec::new(),
         Value::Tuple(values) => values.iter().collect(),
@@ -87,10 +120,15 @@ pub(super) fn params(caller: &str, params: &Value) -> Result<Vec<TextParam>, VmE
             )));
         }
     };
-    values
+    let unsendable = Unsendable::default();
+    let params = values
         .into_iter()
-        .map(|value| param(caller, value))
-        .collect()
+        .map(|value| param(caller, value, &unsendable));
+    let params: Vec<TextParam> = params.collect::<Result<_, _>>()?;
+    let may_fail = params
+        .iter()
+        .any(|param| matches!(param, TextParam::List { json: Err(_), .. }));
+    Ok((params, may_fail.then_some(unsendable)))
 }
 
 /// The parameter `value`. `None` is NULL and `Some(x)` is `x`; a date,
@@ -99,11 +137,11 @@ pub(super) fn params(caller: &str, params: &Value) -> Result<Vec<TextParam>, VmE
 /// and every other value that is no scalar (a record, a map, a variant)
 /// is written as `json.stringify` writes it. A value JSON has no form
 /// for is the error `json.stringify` gives.
-fn param(caller: &str, value: &Value) -> Result<TextParam, VmError> {
+fn param(caller: &str, value: &Value, unsendable: &Unsendable) -> Result<TextParam, VmError> {
     Ok(match value {
         Value::Variant(variant) if variant.is(bv::NONE) => TextParam::Null,
         Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
-            return param(caller, &variant.fields()[0]);
+            return param(caller, &variant.fields()[0], unsendable);
         }
         // (A list that has no array form has no JSON form either.)
         Value::List(_) => TextParam::List {
@@ -112,6 +150,7 @@ fn param(caller: &str, value: &Value) -> Result<TextParam, VmError> {
                 Ok(json) => Ok(json.to_string()),
                 Err(e) => Err(e.message),
             },
+            unsendable: unsendable.clone(),
         },
         _ => TextParam::Text(scalar_text(caller, value)?),
     })
@@ -350,33 +389,6 @@ fn pg_name(ty: &PgType) -> String {
     }
 }
 
-/// `field` as silt writes the type.
-fn shown(rt: &Runtime, field: &FieldType) -> String {
-    use FieldType as F;
-    match field {
-        F::Int => "Int".into(),
-        F::Float => "Float".into(),
-        F::String => "String".into(),
-        F::Bool => "Bool".into(),
-        F::Bytes => "Bytes".into(),
-        F::Date => "Date".into(),
-        F::Time => "Time".into(),
-        F::DateTime => "DateTime".into(),
-        F::JsonValue => "json.Value".into(),
-        F::List(t) => format!("List({})", shown(rt, t)),
-        F::Option(t) => format!("Option({})", shown(rt, t)),
-        F::Map(t) => format!("Map(String, {})", shown(rt, t)),
-        F::Tuple(ts) => {
-            let parts: Vec<String> = ts.iter().map(|t| shown(rt, t)).collect();
-            format!("({})", parts.join(", "))
-        }
-        F::Record(id) => rt
-            .type_info(*id)
-            .map_or_else(String::new, |info| info.name.clone()),
-        F::Unsupported(declared) => declared.clone(),
-    }
-}
-
 // ── Errors ──────────────────────────────────────────────────────────
 
 /// `TypeMismatch(column, expected, actual)`.
@@ -415,7 +427,7 @@ struct Mismatch {
 impl Mismatch {
     fn new(rt: &Runtime, expected: &FieldType, actual: impl Into<String>) -> Mismatch {
         Mismatch {
-            expected: shown(rt, expected),
+            expected: json::shown(rt, expected),
             actual: actual.into(),
         }
     }
@@ -511,7 +523,7 @@ impl Plan {
                             FieldType::Option(inner) => inner,
                             _ => field,
                         };
-                        return Err(type_mismatch(name, &shown(rt, expected), &pg));
+                        return Err(type_mismatch(name, &json::shown(rt, expected), &pg));
                     }
                     fields.push((
                         field.clone(),
@@ -620,8 +632,9 @@ fn cell(
         // A document is the field's as json.parse decodes it: `null` is
         // an `Option`'s `None`.
         (Col::Json | Col::Jsonb, _) => {
-            let document = document(col, raw).map_err(malformed)?;
-            json::decode_field(rt, &document, field).map_err(|why| Mismatch::new(rt, field, why))?
+            let in_document = |why: String| Mismatch::new(rt, field, of_a_document(c, why));
+            let document = document(col, raw).map_err(|_| in_document(MALFORMED.into()))?;
+            json::decode_field(rt, &document, field).map_err(in_document)?
         }
         (_, F::Option(inner)) => {
             Value::variant(bv::SOME, vec![cell(rt, c, col, inner, Some(raw))?])
@@ -685,6 +698,15 @@ fn cell(
     })
 }
 
+/// The actual part of a type mismatch in a document of the column `c`
+/// (a `json` or `jsonb` column, or an array of them): the column's type,
+/// and `why` the document does not fit. The type at its head says that
+/// the mismatch is a document's, which no cast in SQL mends
+/// (`postgres::error_text`).
+fn of_a_document(c: &ColumnPlan, why: String) -> String {
+    format!("{}: {why}", c.pg)
+}
+
 /// What a cell that the server sent malformed is called in a type
 /// mismatch.
 const MALFORMED: &str = "a value the server sent malformed";
@@ -730,7 +752,10 @@ fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value,
             make_datetime(timestamp(raw).map_err(|why| Mismatch::new(rt, &field, why))?)
                 .to_string(),
         ),
-        Col::Json | Col::Jsonb => json::json_value(&document(col, raw).map_err(malformed)?),
+        Col::Json | Col::Jsonb => {
+            let in_document = |_| Mismatch::new(rt, &field, of_a_document(c, MALFORMED.into()));
+            json::json_value(&document(col, raw).map_err(in_document)?)
+        }
         Col::Void => Value::variant(bv::JSON_NULL, Vec::new()),
         Col::Array(element) => {
             let (dimensions, values) = array(raw).map_err(malformed)?;

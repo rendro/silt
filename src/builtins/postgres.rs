@@ -45,7 +45,7 @@ use crate::vm::{IoOp, Native, Runtime, Step, Vm, VmError};
 
 mod rows;
 
-use rows::{Plan, RowType, TextParam};
+use rows::{Plan, RowType, TextParam, Unsendable};
 
 /// The error of a `postgres` function whose operation has no value
 /// of its own: `Timeout` when its deadline passed, `Other` with
@@ -858,15 +858,17 @@ impl<'a> Arg<'a> for Opts<'a> {
     }
 }
 
-/// The parameters of a statement of `caller`, and the type its rows are
-/// decoded into: the error of the program if `params` is no tuple or
-/// `ty` no type a row is decoded into.
+/// The parameters of a statement of `caller` (with where the encoder
+/// leaves why one could not be sent), and the type its rows are decoded
+/// into: the error of the program if `params` is no tuple or `ty` no
+/// type a row is decoded into.
 fn statement_args(
     caller: &str,
     params: &Value,
     ty: Type,
-) -> Result<(Vec<TextParam>, RowType), VmError> {
-    Ok((rows::params(caller, params)?, RowType::of(caller, ty)?))
+) -> Result<(Vec<TextParam>, Option<Unsendable>, RowType), VmError> {
+    let (params, unsendable) = rows::params(caller, params)?;
+    Ok((params, unsendable, RowType::of(caller, ty)?))
 }
 
 /// The `PostgresError` a function ends with before its operation starts: a
@@ -1494,7 +1496,7 @@ const STREAM_CHANNEL_CAPACITY: usize = 256;
 fn do_stream_worker(
     target: ExecutorRef,
     sql: String,
-    params: Vec<TextParam>,
+    (params, unsendable): (Vec<TextParam>, Option<Unsendable>),
     (row, rt): (RowType, Arc<Runtime>),
     ch: Arc<Channel>,
     scheduler: Arc<Scheduler>,
@@ -1546,8 +1548,12 @@ fn do_stream_worker(
                 }
             },
             Err(e) => {
-                let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
-                let _ = send_or_stop(wrapped);
+                // A parameter the encoder could not send: no statement
+                // was sent, and the stream (which no task waits for)
+                // says why.
+                let why = unsendable.as_ref().and_then(Unsendable::take);
+                let error = why.map_or_else(|| pg_error_to_variant(&e), other_error);
+                let _ = send_or_stop(Value::variant(bv::ERR, vec![error]));
                 true
             }
         }
@@ -1863,7 +1869,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("TypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
             let text =
                 format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
-            match names_a_type(act) {
+            match cast_mends(act) {
                 true => format!("{text}; cast it in SQL, for example {col}::text"),
                 false => text,
             }
@@ -1879,24 +1885,15 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// Whether the actual part of a `TypeMismatch` is the column's type as
-/// Postgres names it (`float8`, `int4[]`, `int4[] with 2 dimensions`),
-/// which a cast in SQL changes: not a cell's value (`NULL`, `NaN`) nor
-/// why a document does not fit its field.
-fn names_a_type(actual: &str) -> bool {
-    let name = match actual.split_once(" with ") {
-        Some((name, dimensions)) => match dimensions.split_once(' ') {
-            Some((n, "dimension" | "dimensions")) if n.parse::<usize>().is_ok() => name,
-            _ => return false,
-        },
-        None => actual,
-    };
-    let name = name.trim_end_matches("[]");
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+/// Whether the message of a `TypeMismatch` whose actual part is
+/// `actual` says to cast the column in SQL: not for a NULL, which a
+/// cast leaves NULL, nor for what a `json` or `jsonb` column holds (the
+/// decoder builds those with the column's type at their head, or as the
+/// whole actual part when the plan refuses the column), as casting a
+/// document to text is rarely what mends it.
+fn cast_mends(actual: &str) -> bool {
+    let head = actual.split(':').next().unwrap_or(actual);
+    !(actual == "NULL" || matches!(head.trim_end_matches("[]"), "json" | "jsonb"))
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -1961,7 +1958,7 @@ builtins! {
     }
 
     fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Started {
-        let (params, row) = match statement_args("postgres.query", params, ty) {
+        let (params, unsendable, row) = match statement_args("postgres.query", params, ty) {
             Ok(args) => args,
             Err(e) => return Ok(Err(e)),
         };
@@ -1969,18 +1966,18 @@ builtins! {
         let sql = sql.to_string();
         let tx = TxHandle::take(conn).and_then(tx_canceller);
         let rt = vm.runtime.clone();
-        Ok(statement(vm, tx, move || do_query(target, sql, params, row, rt)))
+        Ok(statement(vm, tx, unsendable, move || do_query(target, sql, params, row, rt)))
     }
 
     fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Started {
-        let params = match rows::params("postgres.execute", params) {
+        let (params, unsendable) = match rows::params("postgres.execute", params) {
             Ok(params) => params,
             Err(e) => return Ok(Err(e)),
         };
         let target = resolve_executor(conn)?;
         let sql = sql.to_string();
         let tx = TxHandle::take(conn).and_then(tx_canceller);
-        Ok(statement(vm, tx, move || do_execute(target, sql, params)))
+        Ok(statement(vm, tx, unsendable, move || do_execute(target, sql, params)))
     }
 
     // `postgres.transact(pool, callback)` — pins a single pooled
@@ -2044,7 +2041,7 @@ builtins! {
     // bounded capacity; cancellation is via `channel.close` (checked
     // between rows).
     fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Result<Value, VmError>, Failed> {
-        let (params, row) = match statement_args("postgres.stream", params, ty) {
+        let (params, unsendable, row) = match statement_args("postgres.stream", params, ty) {
             Ok(args) => args,
             Err(e) => return Ok(Err(e)),
         };
@@ -2078,6 +2075,7 @@ builtins! {
         let op = vm.start_io(pg_timeout_err, move || {
             let _running = scheduler.enter();
             drop(starting);
+            let params = (params, unsendable);
             do_stream_worker(target, sql, params, decode, worker_channel, scheduler.clone());
             Value::Unit
         });
@@ -2088,7 +2086,7 @@ builtins! {
 
     // (A cursor lives inside a transaction: `tx` is a `PgTx`.)
     fn cursor(vm, tx: TxHandle, sql: &str, params: &Value, batch_size: i64, ty: Type) -> Started {
-        let (params, row) = match statement_args("postgres.cursor", params, ty) {
+        let (params, unsendable, row) = match statement_args("postgres.cursor", params, ty) {
             Ok(args) => args,
             Err(e) => return Ok(Err(e)),
         };
@@ -2098,7 +2096,7 @@ builtins! {
         };
         let sql = sql.to_string();
         let decode = (row, vm.runtime.clone());
-        Ok(statement(vm, tx_canceller(tx), move || {
+        Ok(statement(vm, tx_canceller(tx), unsendable, move || {
             do_cursor_open(tx.0, cell, sql, params, batch_size, decode)
         }))
     }
@@ -2106,12 +2104,12 @@ builtins! {
     fn cursor_next(vm, cursor: CursorHandle) -> Result<Step, VmError> {
         let tx = lookup_cursor(cursor.0).and_then(|entry| tx_canceller(TxHandle(entry.tx_id)));
         let rt = vm.runtime.clone();
-        statement(vm, tx, move || do_cursor_next(cursor.0, rt))
+        statement(vm, tx, None, move || do_cursor_next(cursor.0, rt))
     }
 
     fn cursor_close(vm, cursor: CursorHandle) -> Result<Step, VmError> {
         let tx = lookup_cursor(cursor.0).and_then(|entry| tx_canceller(TxHandle(entry.tx_id)));
-        statement(vm, tx, move || do_cursor_close(cursor.0))
+        statement(vm, tx, None, move || do_cursor_close(cursor.0))
     }
 
     fn close(pool: PoolHandle) {
@@ -2191,7 +2189,7 @@ builtins! {
         let target = resolve_executor(conn)?;
         let (channel, payload) = (channel.to_string(), payload.to_string());
         let tx = TxHandle::take(conn).and_then(tx_canceller);
-        Ok(statement(vm, tx, move || do_notify(target, channel, payload)))
+        Ok(statement(vm, tx, None, move || do_notify(target, channel, payload)))
     }
 }
 
@@ -2210,9 +2208,13 @@ fn tx_canceller(tx: TxHandle) -> Option<Canceller> {
 /// counts as aborted from then on: its later statements are
 /// `Err(TxnAborted)` at once, and so is its COMMIT. A statement on the
 /// pool that nobody waits for finishes in the server.
+///
+/// A parameter the encoder could not send (`unsendable`) is the error of
+/// the program, not the statement's value; the statement was not sent.
 fn statement(
     vm: &mut Vm,
     tx: Option<Canceller>,
+    unsendable: Option<Unsendable>,
     f: impl FnOnce() -> Value + Send + 'static,
 ) -> Result<Step, VmError> {
     let op = vm.start_io(pg_timeout_err, f);
@@ -2231,7 +2233,15 @@ fn statement(
             })
         }
     };
-    vm.io_wait("postgres", pg_timeout_err, op)
+    vm.io_wait_then(
+        "postgres",
+        pg_timeout_err,
+        op,
+        move |value| match unsendable.and_then(|unsendable| unsendable.take()) {
+            Some(why) => Err(VmError::new(why)),
+            None => Ok(value),
+        },
+    )
 }
 
 /// The frame of `postgres.transact`.
@@ -2449,30 +2459,28 @@ mod tests {
 
     /// The column an `undefined_column` error names, as the server
     /// words it.
-    /// The cast hint goes with a column's type, not with a value or a
-    /// document that does not fit.
+    /// The cast hint goes with every mismatch but a NULL and what a
+    /// json or jsonb column holds.
     #[test]
-    fn the_cast_hint_is_for_a_column_s_type() {
-        for named in [
+    fn the_cast_hint_is_for_all_but_null_and_documents() {
+        for mended in [
             "float8",
-            "int4[]",
-            "pg2_mood",
             "int4[] with 2 dimensions",
-            "int4[] with 1 dimension",
-        ] {
-            assert!(names_a_type(named), "{named}");
-        }
-        for value in [
-            "NULL",
             "NaN",
             "-Infinity",
+            "MyType",
             "24:00:00",
-            "a value the server sent malformed",
-            "json type mismatch: expected Int, got string",
-            "cannot decode field `b` of `Inner`: a value of type Bytes cannot be decoded",
-            "int4[] with many dimensions",
         ] {
-            assert!(!names_a_type(value), "{value}");
+            assert!(cast_mends(mended), "{mended}");
+        }
+        for not in [
+            "NULL",
+            "jsonb",
+            "json[]",
+            "jsonb: json type mismatch: expected Int, got string",
+            "jsonb[]: a value the server sent malformed",
+        ] {
+            assert!(!cast_mends(not), "{not}");
         }
     }
 

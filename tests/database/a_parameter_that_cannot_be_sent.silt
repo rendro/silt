@@ -1,0 +1,48 @@
+-- exit: 1
+-- A list of Bytes goes into a bytea[] parameter as an array; where the
+-- statement's parameter is no array it would go as JSON, which has no
+-- bytes. Then it is the error of the program, worded as
+-- `json.stringify`'s, and the statement is not sent: in a stream, which
+-- no task waits for, the channel's one element says so; in a query the
+-- program ends there.
+import bytes
+import channel
+import env
+import postgres
+
+type Out { v: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  let pic = bytes.from_string("pic")
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      match postgres.query(db, "SELECT cardinality($1::bytea[])::text AS v", ([pic, pic],), Out) {
+        Ok(rows) -> println("into a bytea[]: {rows}")
+        Err(e) -> println("into a bytea[]: {e.message()}")
+      }
+      match postgres.stream(db, "SELECT $1::jsonb::text AS v", ([pic],), Out) {
+        Ok(rows) -> {
+          match channel.receive(rows) {
+            Some(Ok(row)) -> println("a stream into jsonb: {row}")
+            Some(Err(postgres.Other(why))) -> println("a stream into jsonb: Other({why})")
+            Some(Err(e)) -> println("a stream into jsonb: {e.message()}")
+            None -> println("a stream into jsonb: closed")
+          }
+          println("then: {channel.receive(rows)}")
+        }
+        Err(e) -> println("a stream into jsonb: {e.message()}")
+      }
+      println("a query into jsonb:")
+      let _ = postgres.query(db, "SELECT $1::jsonb::text AS v", ([pic],), Out)
+      println("not reached")
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

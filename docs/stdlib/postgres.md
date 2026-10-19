@@ -80,9 +80,13 @@ value:
 | a record, a `Map`, a tuple, a variant, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
 
 A value that JSON has no form for (a function, a set, a channel, or
-`Bytes` inside a record) is an error, as it is for `json.stringify`. A
-list of `Bytes` goes into a `bytea[]`; where it is to be JSON, the
-statement is `Err(Other(...))` that says so.
+`Bytes` inside a record) is an error of the program, as it is for
+`json.stringify` (`postgres.query: unsupported value kind Fn`), and
+nothing is sent. A list of `Bytes` goes into a `bytea[]`; where it is to
+be JSON it is the same error, found before the statement is sent. In a
+`postgres.stream`, which returns before the statement is prepared, that
+error is the channel's one element, `Err(Other("postgres.stream:
+unsupported value kind Bytes"))`.
 
 ### Rows
 
@@ -119,9 +123,10 @@ any other field with nothing, `Err(TypeMismatch(column, field type,
 `TypeMismatch(column, field type, "NaN")` (or `"Infinity"`,
 `"-Infinity"`); an array of more dimensions, or of fewer, than the
 field's list has levels is `TypeMismatch(column, "List(List(Int))",
-"int4[] with 1 dimension")`. These say nothing of a cast, as a cast
-does not change a value. A failed decode is never a value: it is the
-call's `Err`.
+"int4[] with 1 dimension")`. The message of each says to cast the
+column in SQL, but that of a `NULL` does not, nor that of anything a
+`json` or `jsonb` column holds. A failed decode is never a value: it is
+the call's `Err`.
 
 | Column type | Field types it fills | In a `json.Value` row |
 | --- | --- | --- |
@@ -144,7 +149,9 @@ A domain's column is its base type's. A `json` or `jsonb` column fills a
 document's text), an `Option` field with `None` where the document is
 `null`, and no field that holds `Bytes` (in a record it names too); a
 document that does not fit its field is `TypeMismatch(column, field
-type, why)`, with `why` as `json.decode` says it. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
+type, "jsonb: <why>")`, with the column's type and why as
+`json.decode` says it: `TypeMismatch("doc", "Meta", "jsonb: json type
+mismatch: expected Int, got string")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
 fills no field, and is an error in a `json.Value` row as well: cast it
 in SQL, `col::text`.
 

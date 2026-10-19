@@ -49,7 +49,7 @@ use crate::vm::{Runtime, VmError};
 
 use super::json::{
     decodable_record, ensure_encodable_depth, field_record_type, parse_datetime, parse_time,
-    unsupported_field_type_message, unsupported_kind,
+    unsupported_field_type_message, unsupported_kind, without_bytes,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -351,6 +351,8 @@ fn toml_to_record(
     // (In the order the type declares them: the record's own.)
     let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
+        let unsupported = without_bytes(rt, field_type);
+        let field_type = unsupported.as_ref().unwrap_or(field_type);
         match table.get(field_name) {
             Some(val) => match toml_to_typed_value(rt, val, field_type) {
                 Ok(v) => record_fields.push(v),
@@ -665,6 +667,25 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A field whose type holds `Bytes` has no decoder, whatever the
+    /// document holds there, an empty array too.
+    #[test]
+    fn a_field_that_holds_bytes_is_never_decoded() {
+        use crate::defs::{DefId, TypeId};
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        let fields = vec![("b".to_string(), FieldType::List(Box::new(FieldType::Bytes)))];
+        let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
+        for text in ["b = []", "b = [1]"] {
+            let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
+            let decoded = toml_to_record(&vm.runtime, &ty, &fields, &doc).expect("a value");
+            assert_eq!(
+                decoded.to_string(),
+                "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",
+                "{text}"
+            );
+        }
+    }
     use crate::builtins::json::MAX_ENCODE_DEPTH;
 
     /// The deepest value the encoder writes (a map in a list in a map,

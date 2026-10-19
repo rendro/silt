@@ -165,6 +165,43 @@ impl FieldType {
     fn undecoded() -> FieldType {
         FieldType::Unsupported(String::new())
     }
+
+    /// The type as silt writes it, a record type by the name
+    /// `record_name` gives its id.
+    pub fn shown(&self, record_name: &dyn Fn(TypeId) -> String) -> String {
+        let shown = |t: &FieldType| t.shown(record_name);
+        match self {
+            FieldType::Int => "Int".into(),
+            FieldType::Float => "Float".into(),
+            FieldType::String => "String".into(),
+            FieldType::Bool => "Bool".into(),
+            FieldType::Bytes => "Bytes".into(),
+            FieldType::Date => "Date".into(),
+            FieldType::Time => "Time".into(),
+            FieldType::DateTime => "DateTime".into(),
+            FieldType::JsonValue => "json.Value".into(),
+            FieldType::List(t) => format!("List({})", shown(t)),
+            FieldType::Option(t) => format!("Option({})", shown(t)),
+            FieldType::Map(t) => format!("Map(String, {})", shown(t)),
+            FieldType::Tuple(ts) => {
+                let parts: Vec<String> = ts.iter().map(shown).collect();
+                format!("({})", parts.join(", "))
+            }
+            FieldType::Record(id) => record_name(*id),
+            FieldType::Unsupported(declared) => declared.clone(),
+        }
+    }
+
+    /// Whether the type is, or holds, `Bytes`, not counting the fields
+    /// of the record types it names.
+    pub fn holds_bytes(&self) -> bool {
+        match self {
+            FieldType::Bytes => true,
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.holds_bytes(),
+            FieldType::Tuple(ts) => ts.iter().any(FieldType::holds_bytes),
+            _ => false,
+        }
+    }
 }
 
 /// The variant of a variant value: its type and the position of its

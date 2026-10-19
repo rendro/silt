@@ -304,6 +304,23 @@ pub(crate) fn decodable_record(
     }
 }
 
+/// `field_type` as silt writes it, a record type by its name.
+pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String {
+    field_type.shown(&|id| {
+        rt.type_info(id)
+            .map_or_else(Default::default, |info| info.name.clone())
+    })
+}
+
+/// The type a field of `field_type` is decoded as by a decoder of a
+/// format with no bytes (JSON, TOML): a type that holds `Bytes` has no
+/// decoder, whatever the document holds (an empty list too).
+pub(crate) fn without_bytes(rt: &Runtime, field_type: &FieldType) -> Option<FieldType> {
+    field_type
+        .holds_bytes()
+        .then(|| FieldType::Unsupported(shown(rt, field_type)))
+}
+
 /// The record type `id` a record field names, from the program's types.
 pub(crate) fn field_record_type(
     rt: &Runtime,
@@ -365,6 +382,8 @@ fn json_to_record(
     // (In the order the type declares them: the record's own.)
     let mut record_fields = Vec::with_capacity(fields.len());
     for (field_name, field_type) in fields {
+        let unsupported = without_bytes(rt, field_type);
+        let field_type = unsupported.as_ref().unwrap_or(field_type);
         match obj.get(field_name) {
             Some(json_val) => match json_to_typed_value(rt, json_val, field_type) {
                 Ok(val) => record_fields.push(val),
@@ -723,6 +742,40 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A field whose type holds `Bytes` has no decoder, whatever the
+    /// document holds there: an empty list, a `null` for an `Option`,
+    /// or a list of numbers.
+    #[test]
+    fn a_field_that_holds_bytes_is_never_decoded() {
+        use crate::defs::{DefId, TypeId};
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        for (field, text) in [
+            (FieldType::List(Box::new(FieldType::Bytes)), r#"{"b": []}"#),
+            (FieldType::List(Box::new(FieldType::Bytes)), r#"{"b": [1]}"#),
+            (
+                FieldType::Option(Box::new(FieldType::Bytes)),
+                r#"{"b": null}"#,
+            ),
+            (
+                FieldType::Tuple(vec![FieldType::Int, FieldType::Bytes]),
+                r#"{"b": [1, 2]}"#,
+            ),
+        ] {
+            let shown = shown(&vm.runtime, &field);
+            let fields = vec![("b".to_string(), field)];
+            let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
+            let json = serde_json::from_str(text).expect("a document");
+            let decoded = json_to_record(&vm.runtime, &ty, &fields, &json).expect("a value");
+            assert_eq!(
+                decoded.to_string(),
+                format!(
+                    "Err(cannot decode field `b` of `B`: a value of type {shown} cannot be decoded)"
+                ),
+                "{text}"
+            );
+        }
+    }
 
     /// A time and a datetime are read with a fraction of a second up to
     /// nanoseconds, as silt shows them, and without one.

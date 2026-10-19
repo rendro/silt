@@ -12,7 +12,9 @@
 //! `tests/README.md` says how to run the suite.
 //!
 //! A case whose first lines are `-- env: NAME=value` runs with those
-//! variables set.
+//! variables set; one whose first lines have `-- exit: N` ends with that
+//! status (else 0), and its stderr is `<case>.stderr` if that exists
+//! (else empty).
 //!
 //! The example of docs/stdlib/postgres.md is a case too: the program and
 //! the output the page shows (`the_docs_example`).
@@ -57,13 +59,30 @@ fn case(name: &str) {
     let expected = std::fs::read_to_string(cases_dir().join(format!("{name}.stdout")))
         .unwrap_or_else(|e| panic!("{name}.stdout: {e}"));
     let source = std::fs::read_to_string(cases_dir().join(&file)).expect("read the program");
-    let vars: Vec<(String, String)> = source
-        .lines()
-        .map_while(|line| line.strip_prefix("-- env: "))
+    let header = source.lines().take_while(|line| line.starts_with("-- "));
+    let vars: Vec<(String, String)> = header
+        .clone()
+        .filter_map(|line| line.strip_prefix("-- env: "))
         .map(|var| var.split_once('=').expect("`-- env: NAME=value`"))
         .map(|(name, value)| (name.to_string(), value.to_string()))
         .collect();
-    run(name, &source, &vars, &expected);
+    let mut header = header.filter_map(|line| line.strip_prefix("-- exit: "));
+    let exit = header
+        .next()
+        .map_or(0, |n| n.parse().expect("`-- exit: N`"));
+    let stderr = std::fs::read_to_string(cases_dir().join(format!("{name}.stderr")));
+    let ending = Ending {
+        exit,
+        stderr: stderr.unwrap_or_default(),
+    };
+    run(name, &source, &vars, &expected, &ending);
+}
+
+/// How a case ends: its exit status and its stderr.
+#[derive(Default)]
+struct Ending {
+    exit: i32,
+    stderr: String,
 }
 
 /// The example of docs/stdlib/postgres.md runs, and prints what the
@@ -91,12 +110,14 @@ fn the_docs_example() {
         &source,
         &[("DATABASE_URL".to_string(), url)],
         &expected,
+        &Ending::default(),
     );
 }
 
 /// Run the program `source` as `<name>.silt`, with the environment
-/// variables `vars`, and hold its output against `expected`.
-fn run(name: &str, source: &str, vars: &[(String, String)], expected: &str) {
+/// variables `vars`, and hold its output against `expected` and its end
+/// against `ending`.
+fn run(name: &str, source: &str, vars: &[(String, String)], expected: &str, ending: &Ending) {
     let file = format!("{name}.silt");
     // The program runs in a directory of its own, so nothing `silt`
     // writes lands in the source tree.
@@ -150,8 +171,12 @@ fn run(name: &str, source: &str, vars: &[(String, String)], expected: &str) {
     let Some(status) = status else {
         panic!("{file} did not exit within {CASE_TIMEOUT:?}\n{shown}");
     };
-    assert_eq!(status.code(), Some(0), "{file}: exit status\n{shown}");
-    assert_eq!(stderr, "", "{file}: stderr\n{shown}");
+    assert_eq!(
+        status.code(),
+        Some(ending.exit),
+        "{file}: exit status\n{shown}"
+    );
+    assert_eq!(stderr, ending.stderr, "{file}: stderr\n{shown}");
     assert_eq!(stdout, expected, "{file}: stdout\n{shown}");
 }
 
@@ -208,4 +233,5 @@ cases!(
     parameters_of_every_type,
     execute_counts_and_returning,
     stream_and_cursor_of_a_record_type,
+    a_parameter_that_cannot_be_sent,
 );

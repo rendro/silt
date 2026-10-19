@@ -10,8 +10,9 @@
 -- read; a document `null` fills an `Option` with `None`, as json.parse
 -- gives it. An array of more dimensions, or of fewer, than its field's
 -- list has levels is named with its dimensions. The message of a
--- mismatch of a column's type says to cast the column in SQL; that of a
--- value (NULL, NaN, infinity) or of a document does not.
+-- mismatch says to cast the column in SQL, but not for a NULL, and not
+-- for what a json or jsonb column holds (its actual part begins with
+-- the column's type).
 import env
 import json
 import postgres

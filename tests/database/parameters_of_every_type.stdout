@@ -14,7 +14,6 @@ a list of text into an array: [Out {v: c\d,e}]
 a list of lists into an array: [Out {v: {{1,2},{3,4}}}]
 a list into jsonb: [Out {v: 3}]
 a list of Bytes into a bytea[]: [Out {v: 00ff10}]
-a list of Bytes into jsonb: error serializing parameter 0: postgres.query: unsupported value kind Bytes
 None: [Out {v: it was NULL}]
 Some: [Out {v: it was given}]
 json.Null: [Out {v: null}]

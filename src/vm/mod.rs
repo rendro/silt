@@ -270,6 +270,20 @@ impl Vm {
         timeout_err: ErrFactory,
         op: IoOp,
     ) -> Result<Step, VmError> {
+        self.io_wait_then(name, timeout_err, op, Ok)
+    }
+
+    /// [`Vm::io_wait`] whose value is `then` of the operation's: an
+    /// error of the program that the operation found (a value of the
+    /// program it could not send, say) is `then`'s `Err`.
+    pub(crate) fn io_wait_then(
+        &mut self,
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: IoOp,
+        then: impl FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
+    ) -> Result<Step, VmError> {
+        let mut then = Some(then);
         let deadline = self.runtime.scheduler.io_deadline();
         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
         // The frame owns the operation: when the wait is over, however
@@ -282,9 +296,13 @@ impl Vm {
                 Fired::Arm(..) => op.take(),
                 _ => None,
             };
-            Ok(Step::Done(value.unwrap_or_else(|| {
-                timeout_err(IoFailure::Timeout(crate::scheduler::IO_TIMEOUT))
-            })))
+            match (value, then.take()) {
+                (Some(value), Some(then)) => Ok(Step::Done(then(value)?)),
+                (Some(value), None) => Ok(Step::Done(value)),
+                (None, _) => Ok(Step::Done(timeout_err(IoFailure::Timeout(
+                    crate::scheduler::IO_TIMEOUT,
+                )))),
+            }
         }))
     }
 
