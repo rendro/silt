@@ -149,4 +149,5 @@ cases!(
     cancel_of_a_statement_in_a_transaction,
     deadline_over_a_statement_in_a_transaction,
     deadline_while_waiting_for_a_connection,
+    cancel_request_reaches_no_other_statement,
 );

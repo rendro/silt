@@ -2490,19 +2490,25 @@ fn abandon_tx(runtime: &crate::vm::Runtime, tx_id: u64) {
 /// it holds its connection: the server is asked to cancel it, and the
 /// rollback waits for the connection. The connection goes back to the
 /// pool once the rollback is done (when the last statement that had it
-/// lets it go), or is dropped if the rollback failed.
+/// lets it go), or is dropped if the rollback failed, or if a cancel
+/// request was sent: the server acts on a request when it comes, and
+/// one that comes after the statement it was for has ended cancels the
+/// next statement of the connection, whoever runs it.
 fn roll_back_abandoned(entry: TxEntry) {
     use std::sync::TryLockError;
-    let mut conn = match entry.cell.try_lock() {
-        Ok(conn) => conn,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+    let (mut conn, cancelled) = match entry.cell.try_lock() {
+        Ok(conn) => (conn, false),
+        Err(TryLockError::Poisoned(poisoned)) => (poisoned.into_inner(), false),
         Err(TryLockError::WouldBlock) => {
             entry.canceller.cancel();
-            entry.cell.lock().unwrap_or_else(|e| e.into_inner())
+            (entry.cell.lock().unwrap_or_else(|e| e.into_inner()), true)
         }
     };
     if !conn.ended {
         let _ = conn.end("ROLLBACK");
+    }
+    if cancelled {
+        conn.conn.broken = true;
     }
 }
 

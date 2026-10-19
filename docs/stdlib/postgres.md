@@ -83,8 +83,10 @@ alike. What becomes of the statement in the server differs:
   its connection then goes back to the pool.
 - Inside `postgres.transact`, the server is asked to cancel the
   statement, and the transaction is rolled back. The connection goes
-  back to the pool after the rollback, or is closed if the rollback
-  fails. The same happens when the callback fails with an error of the
+  back to the pool after the rollback; it is closed instead if the
+  rollback fails, or if a cancel request was sent for it (a request
+  that reaches the server late would cancel the connection's next
+  statement). The same happens when the callback fails with an error of the
   program.
 
 Around the callback `postgres.transact` waits too, and a deadline or a
