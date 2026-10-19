@@ -2,10 +2,11 @@
 //!
 //! Provides connection pooling, parameterised query/execute, and
 //! transaction support against a Postgres server. Built on
-//! `tokio-postgres` and an `r2d2` connection pool: each connection's
-//! protocol task runs on a runtime of the module's own, and a statement
-//! waits for its answer on the thread of its I/O operation, as the
-//! `http` builtin's requests do (sync ureq + io_pool bridge).
+//! `tokio-postgres` and an `r2d2` connection pool: each connection has
+//! a runtime of its own on which its protocol task runs, driven by the
+//! thread that waits on the connection, the thread of a statement's I/O
+//! operation, as the `http` builtin's requests wait on theirs (sync
+//! ureq + io_pool bridge).
 //!
 //! Pool handles are opaque to silt code: a `PgPool` variant with one
 //! field, an `Int`, carries an integer id into a process-global side
@@ -75,39 +76,53 @@ fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 /// itself, and each one the pool opens later.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The runtime the module's connections run on: the protocol task of
-/// each runs there for as long as the connection lives, and a
-/// statement waits for its answer on the thread of its I/O operation
-/// (`block_on`). Made at the first connect, and never dropped.
-static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
-/// The module's runtime, made if it is not there yet.
-fn runtime() -> Result<&'static tokio::runtime::Runtime, ConnectFailure> {
-    if let Some(runtime) = RUNTIME.get() {
-        return Ok(runtime);
-    }
-    let made = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("silt-postgres")
-        .enable_io()
-        .enable_time()
+/// A runtime of one connection, or of one cancel request: on the
+/// current thread, so that the thread that waits on the connection
+/// drives it, and nothing runs while nobody waits.
+fn new_runtime() -> Result<tokio::runtime::Runtime, ConnectFailure> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
         .build()
-        .map_err(|e| ConnectFailure::Broke(format!("postgres: cannot start its runtime: {e}")))?;
-    Ok(RUNTIME.get_or_init(|| made))
+        .map_err(|e| ConnectFailure::Broke(format!("postgres: cannot start a runtime: {e}")))
 }
 
-/// Wait for `future` on the calling thread, which is no thread of the
-/// runtime: one of the I/O pool's, or of the pool's own. Only what has
-/// a connection calls it, and a connection is made on the runtime.
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    let runtime = RUNTIME.get().expect("a connection is made on the runtime");
-    runtime.block_on(future)
+/// Wait for `future` on `runtime`, `limit` at most: `None` when the
+/// time ran out, and `future` was dropped.
+fn block_on_within<F: std::future::Future>(
+    runtime: &tokio::runtime::Runtime,
+    limit: Duration,
+    future: F,
+) -> Option<F::Output> {
+    runtime.block_on(async { tokio::time::timeout(limit, future).await.ok() })
 }
 
-/// [`block_on`] for `limit` at most: `None` when the time ran out, and
-/// `future` was dropped.
-fn block_on_within<F: std::future::Future>(limit: Duration, future: F) -> Option<F::Output> {
-    block_on(async { tokio::time::timeout(limit, future).await.ok() })
+/// The runtime of a connection and the connection's protocol task,
+/// which runs while somebody waits on the connection.
+struct Driver {
+    runtime: Option<tokio::runtime::Runtime>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Driver {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .expect("the runtime lives as long as its driver");
+        runtime.block_on(future)
+    }
+}
+
+impl Drop for Driver {
+    /// The client is gone (`Conn` drops it first): the protocol task
+    /// ends the session once the answers it waits for have come, and is
+    /// driven here until it has.
+    fn drop(&mut self) {
+        if let (Some(runtime), Some(task)) = (self.runtime.take(), self.task.take()) {
+            let _ = runtime.block_on(task);
+            runtime.shutdown_background();
+        }
+    }
 }
 
 /// Where the protocol task of a connection hands the notifications it
@@ -115,11 +130,12 @@ fn block_on_within<F: std::future::Future>(limit: Duration, future: F) -> Option
 /// (`postgres.listen`). With none, a notification is dropped.
 type Told = Arc<Mutex<Option<tokio::sync::mpsc::Sender<Notification>>>>;
 
-/// The protocol task of a connection: it reads what the server sends
-/// until the connection ends, which it does when its client is dropped
-/// or the socket fails. A notification goes to the listener; a full
-/// listener holds the connection's reading up, as a slow reader of a
-/// result does.
+/// The protocol task of a connection: while somebody waits on the
+/// connection, it sends the client's requests and reads what the server
+/// sends, until the connection ends, which it does when its client is
+/// dropped or the socket fails. A notification goes to the listener; a
+/// full listener holds the connection's reading up, as a slow reader of
+/// a result does.
 async fn drive<S, T>(mut connection: tokio_postgres::Connection<S, T>, told: Told)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -141,6 +157,10 @@ where
     told.lock().unwrap_or_else(|e| e.into_inner()).take();
 }
 
+/// A connection that was made: its client, where its notifications
+/// go, and its protocol task.
+type Connected = (Client, Told, tokio::task::JoinHandle<()>);
+
 /// How a pool's connections are encrypted, once `sslmode` is read.
 #[derive(Clone)]
 enum Tls {
@@ -150,23 +170,22 @@ enum Tls {
 }
 
 impl Tls {
-    /// Connect once, and start the connection's protocol task.
-    async fn connect(&self, config: &Config) -> Result<(Client, Told), tokio_postgres::Error> {
+    /// Connect once, and start the connection's protocol task on the
+    /// runtime that runs this.
+    async fn connect(&self, config: &Config) -> Result<Connected, tokio_postgres::Error> {
         let told = Told::default();
-        let client = match self {
+        let (client, task) = match self {
             Tls::Off => {
                 let (client, connection) = config.connect(NoTls).await?;
-                tokio::spawn(drive(connection, told.clone()));
-                client
+                (client, tokio::spawn(drive(connection, told.clone())))
             }
             #[cfg(feature = "postgres-tls")]
             Tls::On(connector) => {
                 let (client, connection) = config.connect(connector.clone()).await?;
-                tokio::spawn(drive(connection, told.clone()));
-                client
+                (client, tokio::spawn(drive(connection, told.clone())))
             }
         };
-        Ok((client, told))
+        Ok((client, told, task))
     }
 
     /// Send the cancel request of `token`.
@@ -214,13 +233,19 @@ impl Canceller {
     /// cancelled, and a request that comes when none runs does nothing.
     fn cancel(&self) {
         self.mark();
-        let _ = block_on_within(self.limit, self.tls.cancel(&self.token));
+        if let Ok(runtime) = new_runtime() {
+            let _ = block_on_within(&runtime, self.limit, self.tls.cancel(&self.token));
+            runtime.shutdown_background();
+        }
     }
 }
 
 /// A connection of a pool.
 struct Conn {
     client: Client,
+    /// What runs the connection. (Dropped after `client`: see its
+    /// `drop`.)
+    driver: Driver,
     canceller: Canceller,
     /// Where its notifications go.
     told: Told,
@@ -233,6 +258,12 @@ struct Conn {
 impl Conn {
     fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// Wait for `future`, an operation of the client, and run the
+    /// connection meanwhile.
+    fn wait<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.driver.block_on(future)
     }
 }
 
@@ -259,7 +290,7 @@ impl r2d2::ManageConnection for Manager {
     }
 
     fn is_valid(&self, conn: &mut Conn) -> Result<(), ConnectFailure> {
-        block_on(conn.client.simple_query(""))
+        conn.wait(conn.client.simple_query(""))
             .map(|_| ())
             .map_err(ConnectFailure::Failed)
     }
@@ -338,15 +369,15 @@ struct TxConn {
 }
 
 impl TxConn {
-    fn client(&self) -> &Client {
-        self.conn.client()
+    fn conn(&self) -> &Conn {
+        &self.conn
     }
 
     /// End the transaction with `ROLLBACK`. A connection whose
     /// transaction did not end so is not given back to the pool.
     fn roll_back(&mut self) -> Result<(), tokio_postgres::Error> {
         self.ended = true;
-        let ended = block_on(self.conn.client().batch_execute("ROLLBACK"));
+        let ended = self.conn.wait(self.conn.client().batch_execute("ROLLBACK"));
         if ended.is_err() {
             self.conn.broken = true;
         }
@@ -370,7 +401,9 @@ impl TxConn {
             return Err(Value::variant(bv::PG_TXN_ABORTED, vec![]));
         }
         self.ended = true;
-        let committed = block_on(self.conn.client().batch_execute("SELECT 1; COMMIT"));
+        let committed = self
+            .conn
+            .wait(self.conn.client().batch_execute("SELECT 1; COMMIT"));
         if committed.is_err() {
             let _ = self.roll_back();
         }
@@ -1331,20 +1364,23 @@ fn connect_first(cfg: &Config, tls: Tls, limit: Duration) -> Result<(Tls, Conn),
     }
 }
 
-/// Connect once: the socket, TLS and the login, in `limit` at most. An
-/// attempt that gets no answer in time is dropped, and its socket with
-/// it: nothing of it stays behind.
+/// Connect once: the socket, TLS and the login, in `limit` at most, on
+/// a runtime of the connection's own. An attempt that gets no answer in
+/// time is dropped, its socket and its runtime with it: nothing of it
+/// stays behind.
 fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, ConnectFailure> {
-    runtime()?;
-    let attempt = std::panic::AssertUnwindSafe(|| block_on_within(limit, tls.connect(cfg)));
-    let (client, told) = match crate::scheduler::catch_as_error(attempt) {
+    let runtime = new_runtime()?;
+    let attempt =
+        std::panic::AssertUnwindSafe(|| block_on_within(&runtime, limit, tls.connect(cfg)));
+    let (client, told, task) = match crate::scheduler::catch_as_error(attempt) {
         Ok(Some(Ok(connected))) => connected,
-        Ok(Some(Err(e))) => return Err(ConnectFailure::Failed(e)),
-        Ok(None) => return Err(ConnectFailure::NoAnswer),
-        Err(_) => {
-            return Err(ConnectFailure::Broke(
-                "postgres: the connect panicked".to_string(),
-            ));
+        failed => {
+            runtime.shutdown_background();
+            return Err(match failed {
+                Ok(Some(Err(e))) => ConnectFailure::Failed(e),
+                Ok(None) => ConnectFailure::NoAnswer,
+                _ => ConnectFailure::Broke("postgres: the connect panicked".to_string()),
+            });
         }
     };
     Ok(Conn {
@@ -1355,6 +1391,10 @@ fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, Conn
             sent: Arc::default(),
         },
         client,
+        driver: Driver {
+            runtime: Some(runtime),
+            task: Some(task),
+        },
         told,
         broken: false,
     })
@@ -1428,18 +1468,18 @@ fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
         .collect()
 }
 
-/// `f` on the client of `target`: a connection of the pool, or the
+/// `f` on the connection of `target`: one of the pool, or the
 /// transaction's. A transaction's `Mutex<TxConn>` is held while `f`
 /// runs, never across a VM yield. The value is `Ok` of `f`'s, or `Err`
 /// of the `PostgresError`.
-fn with_client(target: ExecutorRef, f: impl FnOnce(&Client) -> Result<Value, Value>) -> Value {
+fn with_conn(target: ExecutorRef, f: impl FnOnce(&Conn) -> Result<Value, Value>) -> Value {
     let done = match target {
         ExecutorRef::Pool(pool) => match pool.get() {
-            Ok(conn) => f(conn.client()),
+            Ok(conn) => f(&conn),
             Err(e) => Err(pool_error_value(&e)),
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell) {
-            Ok(conn) => f(conn.client()),
+            Ok(conn) => f(conn.conn()),
             Err(e) => Err(e),
         },
     };
@@ -1449,12 +1489,14 @@ fn with_client(target: ExecutorRef, f: impl FnOnce(&Client) -> Result<Value, Val
 /// The statement `sql` prepared, and the plan of its result's rows: the
 /// columns are checked against `row` before the statement runs.
 fn prepare(
-    client: &Client,
+    conn: &Conn,
     rt: &Runtime,
     sql: &str,
     row: &RowType,
 ) -> Result<(tokio_postgres::Statement, Plan), Value> {
-    let statement = block_on(client.prepare(sql)).map_err(|e| pg_error_to_variant(&e))?;
+    let statement = conn
+        .wait(conn.client().prepare(sql))
+        .map_err(|e| pg_error_to_variant(&e))?;
     let plan = Plan::new(rt, row, statement.columns())?;
     Ok((statement, plan))
 }
@@ -1469,10 +1511,10 @@ fn do_query(
     rt: Arc<Runtime>,
 ) -> Value {
     let bind = binding(&params);
-    with_client(target, |client| {
-        let (statement, plan) = prepare(client, &rt, &sql, &row)?;
-        let rows =
-            block_on(client.query(&statement, &bind)).map_err(|e| pg_error_to_variant(&e))?;
+    with_conn(target, |conn| {
+        let (statement, plan) = prepare(conn, &rt, &sql, &row)?;
+        let rows = conn.wait(conn.client().query(&statement, &bind));
+        let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
         let rows = rows.iter().map(|r| plan.row(&rt, r));
         Ok(Value::list(rows.collect::<Result<_, _>>()?))
     })
@@ -1481,8 +1523,8 @@ fn do_query(
 /// Run a statement and give the number of rows it affected.
 fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>) -> Value {
     let bind = binding(&params);
-    with_client(target, |client| {
-        match block_on(client.execute(sql.as_str(), &bind)) {
+    with_conn(target, |conn| {
+        match conn.wait(conn.client().execute(sql.as_str(), &bind)) {
             Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
             Err(e) => Err(pg_error_to_variant(&e)),
         }
@@ -1536,22 +1578,22 @@ fn do_stream_worker(
     let send_or_stop = |v: Value| -> bool { scheduler.send_wait(&ch, v) };
 
     // `false` when the stream stopped with rows of the statement unread.
-    let pump = |client: &Client, sql: &str, bind: &[&(dyn ToSql + Sync)]| {
-        let (statement, plan) = match prepare(client, &rt, sql, &row) {
+    let pump = |conn: &Conn, sql: &str, bind: &[&(dyn ToSql + Sync)]| {
+        let (statement, plan) = match prepare(conn, &rt, sql, &row) {
             Ok(prepared) => prepared,
             Err(e) => {
                 let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
                 return true;
             }
         };
-        match block_on(client.query_raw(&statement, bind.iter().copied())) {
+        match conn.wait(conn.client().query_raw(&statement, bind.iter().copied())) {
             Ok(rows) => {
                 let mut rows = std::pin::pin!(rows);
                 loop {
                     if ch.is_closed() {
                         break false;
                     }
-                    match block_on(rows.next()) {
+                    match conn.wait(rows.next()) {
                         Some(Ok(found)) => match plan.row(&rt, &found) {
                             Ok(value) => {
                                 if !send_or_stop(Value::variant(bv::OK, vec![value])) {
@@ -1590,7 +1632,7 @@ fn do_stream_worker(
             Ok(conn) => {
                 // Left with rows unread, the connection is not given
                 // back: a cancel request was sent for it.
-                if !pump(conn.client(), &sql, &bind) {
+                if !pump(&conn, &sql, &bind) {
                     conn.canceller.cancel();
                 }
             }
@@ -1601,7 +1643,7 @@ fn do_stream_worker(
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell) {
             Ok(conn) => {
-                let _ = pump(conn.client(), &sql, &bind);
+                let _ = pump(conn.conn(), &sql, &bind);
             }
             Err(e) => {
                 let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
@@ -1631,15 +1673,17 @@ fn do_cursor_open(
     (row, rt): (RowType, Arc<Runtime>),
 ) -> Value {
     let bind = binding(&params);
-    let planned = tx_conn(&cell).and_then(|conn| prepare(conn.client(), &rt, &sql, &row));
+    let planned = tx_conn(&cell).and_then(|conn| prepare(conn.conn(), &rt, &sql, &row));
     let plan = match planned {
         Ok((_, plan)) => Arc::new(plan),
         Err(e) => return err(e),
     };
     let (cursor_id, name) = register_cursor(tx_id, batch_size, plan);
     let declare_sql = format!("DECLARE {name} CURSOR FOR {sql}");
-    let declared =
-        tx_conn(&cell).map(|conn| block_on(conn.client().execute(declare_sql.as_str(), &bind)));
+    let declared = tx_conn(&cell).map(|conn| {
+        let conn = conn.conn();
+        conn.wait(conn.client().execute(declare_sql.as_str(), &bind))
+    });
     match declared {
         Err(e) => {
             let _ = remove_cursor(cursor_id);
@@ -1688,7 +1732,10 @@ fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>) -> Value {
         Ok(conn) => conn,
         Err(e) => return err(e),
     };
-    match block_on(conn.client().query(fetch_sql.as_str(), &[])) {
+    let fetched = conn
+        .conn()
+        .wait(conn.conn().client().query(fetch_sql.as_str(), &[]));
+    match fetched {
         Ok(rows) => {
             drop(conn);
             if (rows.len() as u64) < entry.batch_size {
@@ -1724,7 +1771,10 @@ fn do_cursor_close(cursor_id: u64) -> Value {
         // The transaction has ended, and the cursor with it.
         return ok(Value::Unit);
     };
-    match block_on(conn.client().execute(close_sql.as_str(), &[])) {
+    match conn
+        .conn()
+        .wait(conn.conn().client().execute(close_sql.as_str(), &[]))
+    {
         Ok(_) => ok(Value::Unit),
         Err(e) => err(pg_error_to_variant(&e)),
     }
@@ -1807,7 +1857,7 @@ fn do_listen_worker(
 ) {
     let tick = Duration::from_millis(LISTEN_POLL_TICK_MS);
     while !ch.is_closed() {
-        match block_on_within(tick, told.recv()) {
+        match conn.wait(async { tokio::time::timeout(tick, told.recv()).await.ok() }) {
             Some(Some(n)) => {
                 let rec = notification_to_record(&n);
                 if !scheduler.send_wait(&ch, rec) {
@@ -1831,7 +1881,7 @@ fn do_listen_worker(
     let unlisten_sql = format!("UNLISTEN {channel_name}");
     let unlisten = conn.client().batch_execute(&unlisten_sql);
     let mut unlisten = std::pin::pin!(unlisten);
-    let _ = block_on(std::future::poll_fn(|cx| {
+    let _ = conn.wait(std::future::poll_fn(|cx| {
         while let std::task::Poll::Ready(Some(_)) = told.poll_recv(cx) {}
         unlisten.as_mut().poll(cx)
     }));
@@ -1852,7 +1902,7 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
                 Ok(c) => c,
                 Err(e) => return err(pool_error_value(&e)),
             };
-            match block_on(conn.client().execute(sql, &params)) {
+            match conn.wait(conn.client().execute(sql, &params)) {
                 Ok(_) => ok(Value::Unit),
                 Err(e) => err(pg_error_to_variant(&e)),
             }
@@ -1862,7 +1912,7 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
                 Ok(conn) => conn,
                 Err(e) => return err(e),
             };
-            match block_on(conn.client().execute(sql, &params)) {
+            match conn.conn().wait(conn.conn().client().execute(sql, &params)) {
                 Ok(_) => ok(Value::Unit),
                 Err(e) => err(pg_error_to_variant(&e)),
             }
@@ -2185,7 +2235,7 @@ builtins! {
             let (listener, told) = tokio::sync::mpsc::channel(LISTEN_CHANNEL_CAPACITY);
             *conn.told.lock().unwrap_or_else(|e| e.into_inner()) = Some(listener);
             let listen_sql = format!("LISTEN {channel_name}");
-            if let Err(e) = block_on(conn.client().batch_execute(&listen_sql)) {
+            if let Err(e) = conn.wait(conn.client().batch_execute(&listen_sql)) {
                 conn.told.lock().unwrap_or_else(|e| e.into_inner()).take();
                 return err(pg_error_to_variant(&e));
             }
@@ -2383,7 +2433,7 @@ fn begin_tx(pool: &PgPool) -> Value {
         Ok(conn) => conn,
         Err(e) => return err(pool_error_value(&e)),
     };
-    if let Err(e) = block_on(conn.client().batch_execute("BEGIN")) {
+    if let Err(e) = conn.wait(conn.client().batch_execute("BEGIN")) {
         return err(pg_error_to_variant(&e));
     }
     ok(make_tx_handle(insert_tx(conn)))
@@ -2675,8 +2725,7 @@ mod tests {
     /// A server that takes the connection and never answers: the
     /// connect is `Timeout` once the URL's `connect_timeout` is over,
     /// login included (the socket's connect itself succeeds at once),
-    /// and the attempt has ended then: its connection is closed, and no
-    /// task of it is left on the runtime.
+    /// and the attempt has ended then: its connection is closed.
     #[test]
     fn a_connect_that_gets_no_answer_is_a_timeout() {
         let silent = Silent::start();
@@ -2697,8 +2746,6 @@ mod tests {
         // when the connect returns.)
         let closed = silent.closed(Duration::from_secs(60));
         assert_eq!(closed, Some((1, 1)), "the attempt's connection stayed open");
-        let runtime = RUNTIME.get().expect("the connect made the runtime");
-        assert_eq!(runtime.metrics().num_alive_tasks(), 0);
     }
 
     /// A pool of 2 whose connections meet a server that never answers:
