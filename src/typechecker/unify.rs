@@ -686,6 +686,35 @@ impl TypeChecker {
         }
     }
 
+    /// Unify the type of a record field's value (`got`) with the type
+    /// the record declares for the field, and report at the value
+    /// (`span`) why they do not unify. Where their heads or a part of
+    /// them differ, the error names the field and shows both types
+    /// whole: "field `age` expects Int, got String".
+    pub(super) fn unify_field(&mut self, field: Symbol, got: &Type, declared: &Type, span: Span) {
+        let Err(Mismatch(faults)) = self.unify_types(got, declared) else {
+            return;
+        };
+        let (apart, others): (Vec<Fault>, Vec<Fault>) =
+            faults.into_iter().partition(|fault| fault.apart.is_some());
+        if !apart.is_empty() {
+            let (got, declared) = (self.apply(got), self.apply(declared));
+            let (got_shown, declared_shown) = self.show_apart(&got, &declared);
+            let mut d = Diagnostic::error(
+                Code::TypeMismatch,
+                span,
+                format!("field `{field}` expects {declared_shown}, got {got_shown}"),
+            );
+            d.help.extend(Self::chain_hint(&got, &declared));
+            Self::add_ok_wrap_fix(&mut d, &got, &declared);
+            d = self.name_annotation_variables(d, &declared, &got);
+            self.errors.push(d);
+        }
+        if !others.is_empty() {
+            self.report_mismatch(Mismatch(others), span);
+        }
+    }
+
     /// Report a failed unification at `span`.
     pub(super) fn report_mismatch(&mut self, mismatch: Mismatch, span: Span) {
         for fault in mismatch.0 {

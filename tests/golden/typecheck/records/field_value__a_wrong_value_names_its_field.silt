@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A field's value of the wrong type is underlined, not the whole
+-- record, and the error names the field with both types whole: in a
+-- literal, a nested literal, a generic record, an update of a declared
+-- record and of an anonymous one.
+type P { name: String, age: Int }
+
+type Bag { items: List(Int) }
+
+type Pair(a) { x: a, y: a }
+
+type Outer { p: P, tag: String }
+
+fn main() {
+  let p = P { name: "a", age: "x" }
+  let bag = Bag { items: ["a"] }
+  let pair = Pair { x: 1, y: "s" }
+  let outer = Outer { p: P { name: 1, age: 2 }, tag: "t" }
+  let older = p.{ age: "y" }
+  let anon = { name: "x", age: 1 }.{ age: "z" }
+  println("{p.age} {bag.items} {pair.x} {outer.tag} {older.age} {anon.age}")
+}

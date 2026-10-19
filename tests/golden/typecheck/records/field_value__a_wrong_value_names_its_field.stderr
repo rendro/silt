@@ -1,0 +1,35 @@
+error[type]: field `age` expects Int, got String
+ --> field_value__a_wrong_value_names_its_field.silt:16:31
+    |
+ 16 |   let p = P { name: "a", age: "x" }
+    |                               ^^^ field `age` expects Int, got String
+
+error[type]: field `items` expects List(Int), got List(String)
+ --> field_value__a_wrong_value_names_its_field.silt:17:26
+    |
+ 17 |   let bag = Bag { items: ["a"] }
+    |                          ^^^^^ field `items` expects List(Int), got List(String)
+
+error[type]: field `y` expects Int, got String
+ --> field_value__a_wrong_value_names_its_field.silt:18:30
+    |
+ 18 |   let pair = Pair { x: 1, y: "s" }
+    |                              ^^^ field `y` expects Int, got String
+
+error[type]: field `name` expects String, got Int
+ --> field_value__a_wrong_value_names_its_field.silt:19:36
+    |
+ 19 |   let outer = Outer { p: P { name: 1, age: 2 }, tag: "t" }
+    |                                    ^ field `name` expects String, got Int
+
+error[type]: field `age` expects Int, got String
+ --> field_value__a_wrong_value_names_its_field.silt:20:24
+    |
+ 20 |   let older = p.{ age: "y" }
+    |                        ^^^ field `age` expects Int, got String
+
+error[type]: field `age` expects Int, got String
+ --> field_value__a_wrong_value_names_its_field.silt:21:43
+    |
+ 21 |   let anon = { name: "x", age: 1 }.{ age: "z" }
+    |                                           ^^^ field `age` expects Int, got String

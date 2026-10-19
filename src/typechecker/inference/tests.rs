@@ -224,7 +224,7 @@ fn main() {
   Point { x: "hello", y: 2 }
 }
         "#,
-        "type mismatch",
+        "field `x` expects Int, got String",
     );
 }
 

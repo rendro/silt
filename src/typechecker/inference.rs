@@ -2404,12 +2404,14 @@ impl TypeChecker {
                         })
                         .collect();
 
-                    // Unify with declared field types (using instantiated copies)
-                    for (field_name, inferred_ty) in &field_types {
+                    // Unify with declared field types (using instantiated
+                    // copies), each at its value.
+                    for ((field_name, inferred_ty), (_, value)) in field_types.iter().zip(&*fields)
+                    {
                         if let Some((_, declared_ty)) =
                             instantiated_fields.iter().find(|(n, _)| n == field_name)
                         {
-                            self.unify(inferred_ty, declared_ty, span);
+                            self.unify_field(*field_name, inferred_ty, declared_ty, value.span);
                         }
                     }
 
@@ -2509,7 +2511,7 @@ impl TypeChecker {
                     for (field_name, field_expr) in &mut *fields {
                         let ft = self.infer_expr(field_expr, env);
                         if let Some(declared_ty) = af.get(field_name) {
-                            self.unify(&ft, declared_ty, span);
+                            self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
                         } else if let RowTail::Var(_) = at {
                             // Open row: extend by unifying with a
                             // record carrying this new field.
@@ -2574,7 +2576,7 @@ impl TypeChecker {
                     for (field_name, field_expr) in &mut *fields {
                         let ft = self.infer_expr(field_expr, env);
                         if let Some(declared_ty) = declared.get(field_name) {
-                            self.unify(&ft, declared_ty, span);
+                            self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
                         } else {
                             // GAP (round 26 L5): did-you-mean on the
                             // generic-record update path.
