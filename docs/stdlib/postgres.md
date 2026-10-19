@@ -13,7 +13,8 @@ meantime.
 
 The `postgres` module is **not** built by default. Build silt with
 `--features postgres` to enable it, or `--features postgres-tls` to add
-`native-tls`-backed TLS support for `postgresql+tls://` URLs.
+`native-tls`-backed TLS; whether a connection uses TLS is chosen by its
+`sslmode` (see [TLS](#tls-secure-by-default)).
 
 ```sh
 cargo build --release --features postgres
@@ -169,16 +170,16 @@ statement whose rows the program reads, `RETURNING` among them, is a
 once why one fails: `Connect(msg)` for a port where nothing listens, a
 host that is unknown or cannot be reached, or a database that does not
 exist; `AuthFailed(msg)` for a role or password the server refuses
-(SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake; `Timeout`
+(SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake, or a
+server without TLS when `sslmode` requires TLS; `Timeout`
 for a server that does not answer within 10 seconds, login included.
 A `connect_timeout=N` in the connection string (whole seconds, more than
 0; in a URL's query or in the `key=value` form, the last one standing)
 sets that time instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
-its other connections when it needs them, each bounded the same way;
-while one of them waits past its time for a server that never answers,
-the pool tries no other. A
-statement that finds no free connection in the pool waits 30 seconds
-for one, and is then `Timeout`.
+its other connections when it needs them, each bounded the same way: an
+attempt that gets no answer in that time is given up, and nothing of it
+is left behind. A statement that finds no free connection in the pool
+waits 30 seconds for one, and is then `Timeout`.
 
 ## Cooperative I/O
 
@@ -287,8 +288,10 @@ commit/rollback, which cleans up).
 `postgres.listen(pool, "channel_name")` returns a `Channel` that
 delivers a `postgres.Notification` record for every NOTIFY on that
 PostgreSQL channel: its `channel`, its `payload`, and `pid`, the process
-id of the session that sent it. The underlying worker owns a dedicated connection, so LISTEN
-does not consume a slot from the regular query pool.
+id of the session that sent it. The listener holds one of the pool's
+connections until its channel is closed: while it is open, the pool has
+one connection fewer for statements (with `max_pool_size` 1, a
+statement waits the pool's 30 seconds and is `Timeout`).
 `postgres.notify(target, channel, payload)` sends a single NOTIFY.
 
 ## Example
@@ -374,7 +377,7 @@ fail closed against surprise MITM paths:
 | --- | --- | --- | --- |
 | *(omitted)* | **yes** | **yes** | **yes** (equivalent to `verify-full`) |
 | `disable` | no | — | — |
-| `prefer` / `allow` | opportunistic | no | no |
+| `prefer` | opportunistic | no | no |
 | `require` | yes | no | no (libpq-compatible encryption-only) |
 | `verify-ca` | yes | yes | no |
 | `verify-full` | yes | yes | yes |
@@ -385,6 +388,17 @@ from libpq's historical `prefer`, which silently downgraded to
 plaintext on handshake failure. A silt program whose URL is just
 `postgres://user@host/db` now requires a valid, hostname-matching TLS
 cert — or an explicit opt-out via `?sslmode=disable`.
+
+Every mode that requires encryption (the default, `require`,
+`verify-ca`, `verify-full`) refuses a server without TLS: the connect
+is `Tls(msg)`, and nothing more is sent to the server. Only `prefer`
+goes on without encryption.
+
+`sslmode` is read the same way in both forms of the connection string,
+a `postgres://` URL's query and `key=value` pairs. A host that is a
+Unix socket (a path, as `host=/var/run/postgresql`) never uses TLS,
+whatever `sslmode` says, as in libpq: a connection string whose hosts
+are all sockets connects without it.
 
 If silt was built **without** the `postgres-tls` feature, a URL that
 defaults to `verify-full` (or any `require` / `verify-*`) returns a
@@ -454,7 +468,7 @@ needed) are:
 | Variant | Fields | Raised for |
 | --- | --- | --- |
 | `Connect(msg)` | `String` | A connect that failed, URL parse, connect options, SQLSTATE class `08` |
-| `Tls(msg)` | `String` | TLS handshake / cert read / connector build |
+| `Tls(msg)` | `String` | TLS handshake / a server without TLS when `sslmode` requires TLS / cert read / connector build |
 | `AuthFailed(msg)` | `String` | SQLSTATE class `28`: a role or password the server refuses |
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
 | `TypeMismatch(col, expected, actual)` | `String, String, String` | A column whose type, or a cell whose value, does not fit its field (see [Rows](#rows)) |

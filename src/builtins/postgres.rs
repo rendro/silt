@@ -1,9 +1,12 @@
 //! Postgres builtin module (`postgres.*`).
 //!
 //! Provides connection pooling, parameterised query/execute, and
-//! transaction support against a Postgres server. Modeled on the sync
-//! `postgres` crate + an `r2d2` connection pool, mirroring the
-//! pattern used by the `http` builtin (sync ureq + io_pool bridge).
+//! transaction support against a Postgres server. Built on
+//! `tokio-postgres` and an `r2d2` connection pool: each connection has
+//! a runtime of its own on which its protocol task runs, driven by the
+//! thread that waits on the connection, the thread of a statement's I/O
+//! operation, as the `http` builtin's requests wait on theirs (sync
+//! ureq + io_pool bridge).
 //!
 //! Pool handles are opaque to silt code: a `PgPool` variant with one
 //! field, an `Int`, carries an integer id into a process-global side
@@ -28,10 +31,11 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
-use fallible_iterator::FallibleIterator;
-use postgres::NoTls;
-use postgres::types::ToSql;
+use futures_util::StreamExt;
 use r2d2::Pool;
+use tokio_postgres::config::SslMode;
+use tokio_postgres::types::ToSql;
+use tokio_postgres::{Client, Config, NoTls, Notification};
 
 use super::common::ok;
 use super::typed::{Arg, Map, Ret, Type, builtins};
@@ -73,6 +77,91 @@ fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 /// itself, and each one the pool opens later.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// A runtime of one connection, or of one cancel request: on the
+/// current thread, so that the thread that waits on the connection
+/// drives it, and nothing runs while nobody waits.
+fn new_runtime() -> Result<tokio::runtime::Runtime, ConnectFailure> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| ConnectFailure::Broke(format!("postgres: cannot start a runtime: {e}")))
+}
+
+/// Wait for `future` on `runtime`, `limit` at most: `None` when the
+/// time ran out, and `future` was dropped.
+fn block_on_within<F: std::future::Future>(
+    runtime: &tokio::runtime::Runtime,
+    limit: Duration,
+    future: F,
+) -> Option<F::Output> {
+    runtime.block_on(async { tokio::time::timeout(limit, future).await.ok() })
+}
+
+/// The runtime of a connection and the connection's protocol task,
+/// which runs while somebody waits on the connection.
+struct Driver {
+    runtime: Option<tokio::runtime::Runtime>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Driver {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .expect("the runtime lives as long as its driver");
+        runtime.block_on(future)
+    }
+}
+
+impl Drop for Driver {
+    /// The client is gone (`Conn` drops it first): the protocol task
+    /// ends the session once the answers it waits for have come, and is
+    /// driven here until it has.
+    fn drop(&mut self) {
+        if let (Some(runtime), Some(task)) = (self.runtime.take(), self.task.take()) {
+            let _ = runtime.block_on(task);
+            runtime.shutdown_background();
+        }
+    }
+}
+
+/// Where the protocol task of a connection hands the notifications it
+/// reads: to the listener of the connection, while one is attached
+/// (`postgres.listen`). With none, a notification is dropped.
+type Told = Arc<Mutex<Option<tokio::sync::mpsc::Sender<Notification>>>>;
+
+/// The protocol task of a connection: while somebody waits on the
+/// connection, it sends the client's requests and reads what the server
+/// sends, until the connection ends, which it does when its client is
+/// dropped or the socket fails. A notification goes to the listener; a
+/// full listener holds the connection's reading up, as a slow reader of
+/// a result does.
+async fn drive<S, T>(mut connection: tokio_postgres::Connection<S, T>, told: Told)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    while let Some(message) = std::future::poll_fn(|cx| connection.poll_message(cx)).await {
+        match message {
+            Ok(tokio_postgres::AsyncMessage::Notification(notification)) => {
+                let listener = told.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(listener) = listener {
+                    let _ = listener.send(notification).await;
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    // A listener that waits learns that no notification comes.
+    told.lock().unwrap_or_else(|e| e.into_inner()).take();
+}
+
+/// A connection that was made: its client, where its notifications
+/// go, and its protocol task.
+type Connected = (Client, Told, tokio::task::JoinHandle<()>);
+
 /// How a pool's connections are encrypted, once `sslmode` is read.
 #[derive(Clone)]
 enum Tls {
@@ -82,11 +171,33 @@ enum Tls {
 }
 
 impl Tls {
-    fn connect(&self, config: &postgres::Config) -> Result<postgres::Client, postgres::Error> {
-        match self {
-            Tls::Off => config.connect(NoTls),
+    /// Connect once, and start the connection's protocol task on the
+    /// runtime that runs this.
+    async fn connect(&self, config: &Config) -> Result<Connected, tokio_postgres::Error> {
+        let told = Told::default();
+        let (client, task) = match self {
+            Tls::Off => {
+                let (client, connection) = config.connect(NoTls).await?;
+                (client, tokio::spawn(drive(connection, told.clone())))
+            }
             #[cfg(feature = "postgres-tls")]
-            Tls::On(connector) => config.connect(connector.clone()),
+            Tls::On(connector) => {
+                let (client, connection) = config.connect(connector.clone()).await?;
+                (client, tokio::spawn(drive(connection, told.clone())))
+            }
+        };
+        Ok((client, told, task))
+    }
+
+    /// Send the cancel request of `token`.
+    async fn cancel(
+        &self,
+        token: &tokio_postgres::CancelToken,
+    ) -> Result<(), tokio_postgres::Error> {
+        match self {
+            Tls::Off => token.cancel_query(NoTls).await,
+            #[cfg(feature = "postgres-tls")]
+            Tls::On(connector) => token.cancel_query(connector.clone()).await,
         }
     }
 }
@@ -96,8 +207,10 @@ impl Tls {
 /// is why it can be sent while the statement holds the connection.
 #[derive(Clone)]
 struct Canceller {
-    token: postgres::CancelToken,
+    token: tokio_postgres::CancelToken,
     tls: Tls,
+    /// How long sending the request may take, as connecting may.
+    limit: Duration,
     /// A cancel request was sent, or is on its way. The server acts on
     /// a request when it comes, and one that comes after the statement
     /// it was for has ended cancels the connection's next statement,
@@ -121,18 +234,22 @@ impl Canceller {
     /// cancelled, and a request that comes when none runs does nothing.
     fn cancel(&self) {
         self.mark();
-        let _ = match &self.tls {
-            Tls::Off => self.token.cancel_query(NoTls),
-            #[cfg(feature = "postgres-tls")]
-            Tls::On(connector) => self.token.cancel_query(connector.clone()),
-        };
+        if let Ok(runtime) = new_runtime() {
+            let _ = block_on_within(&runtime, self.limit, self.tls.cancel(&self.token));
+            runtime.shutdown_background();
+        }
     }
 }
 
 /// A connection of a pool.
 struct Conn {
-    client: postgres::Client,
+    client: Client,
+    /// What runs the connection. (Dropped after `client`: see its
+    /// `drop`.)
+    driver: Driver,
     canceller: Canceller,
+    /// Where its notifications go.
+    told: Told,
     /// It must not go back to the pool: its transaction did not roll
     /// back. (One for which a cancel request was sent does not go back
     /// either: `Canceller::sent`.)
@@ -140,20 +257,25 @@ struct Conn {
 }
 
 impl Conn {
-    fn client_mut(&mut self) -> &mut postgres::Client {
-        &mut self.client
+    fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Wait for `future`, an operation of the client, and run the
+    /// connection meanwhile.
+    fn wait<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.driver.block_on(future)
     }
 }
 
 struct Manager {
-    config: postgres::Config,
+    config: Config,
     tls: Tls,
     /// How long a connect may take, login included.
     limit: Duration,
-    stalled: Stalled,
     /// The connection `connect` made itself, the first one the pool
     /// takes.
-    first: Mutex<Option<postgres::Client>>,
+    first: Mutex<Option<Conn>>,
 }
 
 impl r2d2::ManageConnection for Manager {
@@ -162,24 +284,14 @@ impl r2d2::ManageConnection for Manager {
 
     fn connect(&self) -> Result<Conn, ConnectFailure> {
         let first = self.first.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let client = match first {
-            Some(client) => client,
-            None => connect_within(&self.config, &self.tls, self.limit, &self.stalled)?,
-        };
-        Ok(Conn {
-            canceller: Canceller {
-                token: client.cancel_token(),
-                tls: self.tls.clone(),
-                sent: Arc::default(),
-            },
-            client,
-            broken: false,
-        })
+        match first {
+            Some(conn) => Ok(conn),
+            None => connect_within(&self.config, &self.tls, self.limit),
+        }
     }
 
     fn is_valid(&self, conn: &mut Conn) -> Result<(), ConnectFailure> {
-        conn.client
-            .simple_query("")
+        conn.wait(conn.client.simple_query(""))
             .map(|_| ())
             .map_err(ConnectFailure::Failed)
     }
@@ -258,15 +370,15 @@ struct TxConn {
 }
 
 impl TxConn {
-    fn client_mut(&mut self) -> &mut postgres::Client {
-        self.conn.client_mut()
+    fn conn(&self) -> &Conn {
+        &self.conn
     }
 
     /// End the transaction with `ROLLBACK`. A connection whose
     /// transaction did not end so is not given back to the pool.
-    fn roll_back(&mut self) -> Result<(), postgres::Error> {
+    fn roll_back(&mut self) -> Result<(), tokio_postgres::Error> {
         self.ended = true;
-        let ended = self.conn.client_mut().batch_execute("ROLLBACK");
+        let ended = self.conn.wait(self.conn.client().batch_execute("ROLLBACK"));
         if ended.is_err() {
             self.conn.broken = true;
         }
@@ -290,7 +402,9 @@ impl TxConn {
             return Err(Value::variant(bv::PG_TXN_ABORTED, vec![]));
         }
         self.ended = true;
-        let committed = self.conn.client_mut().batch_execute("SELECT 1; COMMIT");
+        let committed = self
+            .conn
+            .wait(self.conn.client().batch_execute("SELECT 1; COMMIT"));
         if committed.is_err() {
             let _ = self.roll_back();
         }
@@ -548,7 +662,7 @@ fn err(v: Value) -> Value {
 /// constraint-kind text without the offending values.
 ///
 /// Rust callers that need the full un-redacted error can still call
-/// `postgres::Error::as_db_error()` directly on the original error.
+/// `tokio_postgres::Error::as_db_error()` directly on the original error.
 /// The scrub only applies to strings destined for silt-side `PostgresError`.
 #[doc(hidden)] // Exposed for integration tests (tests/lang/postgres_hardening_tests.rs).
 pub fn redact_pg_message(s: &str) -> String {
@@ -621,10 +735,10 @@ fn pg_unknown(msg: impl Into<String>) -> Value {
     )
 }
 
-/// Classify a `postgres::Error` into the matching `PostgresError` variant.
+/// Classify a `tokio_postgres::Error` into the matching `PostgresError` variant.
 /// For DbError we inspect SQLSTATE; for transport errors we sniff the
 /// Display text for "closed" / "broken pipe" / "timed out" keywords.
-fn pg_error_to_variant(e: &postgres::Error) -> Value {
+fn pg_error_to_variant(e: &tokio_postgres::Error) -> Value {
     if let Some(db) = e.as_db_error() {
         let message = redact_pg_message(db.message());
         let sqlstate = db.code().code().to_string();
@@ -703,11 +817,12 @@ fn pool_error_value(e: &r2d2::Error) -> Value {
 
 /// The `PostgresError` of a connect that failed: `AuthFailed` when the
 /// server refused the role or its password (SQLSTATE class `28`), `Tls`
-/// for the handshake, `Timeout` for a socket that got no answer in
+/// for the handshake, or a server without TLS where the mode requires
+/// it, `Timeout` for a socket that got no answer in
 /// time, and `Connect` for every other reason: a refused port, an
 /// unknown host, a database that does not exist, a URL that lacks
 /// something.
-fn connect_error_value(e: &postgres::Error) -> Value {
+fn connect_error_value(e: &tokio_postgres::Error) -> Value {
     if let Some(db) = e.as_db_error() {
         let message = redact_pg_message(db.message());
         return match db.code().code().starts_with("28") {
@@ -718,7 +833,10 @@ fn connect_error_value(e: &postgres::Error) -> Value {
     // The error's text names its kind only ("error connecting to
     // server"): the causes say what happened.
     let mut text = e.to_string();
-    let (mut timed_out, mut tls) = (false, false);
+    // (The text of a failed TLS handshake, of a server without TLS
+    // among others.)
+    let mut tls = text == "error performing TLS handshake";
+    let mut timed_out = false;
     let causes = std::iter::successors(std::error::Error::source(e), |cause| cause.source());
     for cause in causes {
         text = format!("{text}: {cause}");
@@ -936,19 +1054,19 @@ struct ConnectOpts {
 }
 
 fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
-    // Pre-parse `sslmode` out of the query string: `postgres::Config`
-    // only recognises `disable` / `prefer` / `require` and rejects
-    // `verify-ca` / `verify-full` with a parse error. We also want the
-    // optional `sslrootcert` override. Strip both from the URL before
-    // handing it to `postgres::Config::from_str`.
-    let (stripped_url, ext) = match extract_ssl_url_params(&url) {
+    // Read `sslmode` and `sslrootcert` out of the connection string, in
+    // either form: `Config` only recognises `disable` / `prefer` /
+    // `require` and rejects `verify-ca` / `verify-full` and
+    // `sslrootcert` with a parse error. Strip them before handing the
+    // string to `Config::from_str`.
+    let (stripped_url, ext) = match without_ssl_options(&url) {
         Ok(x) => x,
         Err(e) => {
             return err(pg_connect(format!("postgres: invalid URL: {e}")));
         }
     };
 
-    let mut cfg: postgres::Config = match stripped_url.parse() {
+    let mut cfg: Config = match stripped_url.parse() {
         Ok(cfg) => cfg,
         Err(e) => {
             return err(pg_connect(format!("postgres: invalid URL: {e}")));
@@ -972,17 +1090,29 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
     // Priority:
     //   1. `ext.mode` — explicit `sslmode=` query param, including
     //      extended modes (`verify-ca` / `verify-full`) that
-    //      `postgres::Config` doesn't parse natively.
+    //      `Config` doesn't parse natively.
     //   2. If absent, `VerifyFull` (the new safe default).
     //
     // Note: we do NOT fall back to `cfg.get_ssl_mode()`. The
-    // `postgres::Config` parser defaults its internal SslMode to
+    // `Config` parser defaults its internal SslMode to
     // `Prefer` when nothing is specified, which is exactly the
     // unverified-TLS behaviour this fix is intended to prevent.
-    let effective = match ext.mode {
-        Some(m) => m,
-        None => EffectiveSslMode::VerifyFull,
+    let effective = match (only_sockets(&cfg), ext.mode) {
+        // A Unix socket carries no TLS, whatever `sslmode` says (as in
+        // libpq): a string whose every host is one connects without.
+        (true, _) => EffectiveSslMode::Disable,
+        (false, Some(m)) => m,
+        (false, None) => EffectiveSslMode::VerifyFull,
     };
+    // A mode that requires TLS refuses a server without it: the
+    // crate's own default, `prefer`, would go on without TLS.
+    cfg.ssl_mode(match effective {
+        EffectiveSslMode::Disable => SslMode::Disable,
+        EffectiveSslMode::Prefer => SslMode::Prefer,
+        EffectiveSslMode::Require | EffectiveSslMode::VerifyCa | EffectiveSslMode::VerifyFull => {
+            SslMode::Require
+        }
+    });
 
     match open_pool(cfg, effective, ext.root_cert.as_deref(), limit, &opts) {
         Ok(pool) => {
@@ -1003,71 +1133,117 @@ fn connect_limit(url: &str) -> Result<Duration, &'static str> {
     let set = options
         .iter()
         .rev()
-        .find(|(key, _)| key == "connect_timeout");
-    match set.map(|(_, value)| value.parse::<i64>()) {
+        .find(|option| option.key == "connect_timeout");
+    match set.map(|option| option.value.parse::<i64>()) {
         None => Ok(CONNECT_TIMEOUT),
         Some(Ok(seconds @ 1..)) => Ok(Duration::from_secs(seconds.unsigned_abs())),
         Some(_) => Err("connect_timeout must be > 0"),
     }
 }
 
+/// An option of a connection string: its key and its value, decoded,
+/// and where the option is in the string.
+struct ConnOption {
+    key: String,
+    value: String,
+    span: std::ops::Range<usize>,
+}
+
+/// The query of the connection string `s` if it is a `postgres://` or
+/// `postgresql://` URL, and where the query begins in `s` (an empty
+/// query at the end of a URL that has none); `None` for the `key=value`
+/// form. The credentials end at the first `@`; the query begins after
+/// the first `?` after them.
+fn url_query(s: &str) -> Option<(usize, &str)> {
+    let rest = s
+        .strip_prefix("postgresql://")
+        .or_else(|| s.strip_prefix("postgres://"))?;
+    let after_credentials = rest.find('@').map_or(0, |at| at + 1);
+    let base = s.len() - rest.len() + after_credentials;
+    Some(match s[base..].find('?') {
+        Some(at) => (base + at + 1, &s[base + at + 1..]),
+        None => (s.len(), ""),
+    })
+}
+
 /// The options of the connection string `s`, in order, as the
-/// postgres crate's parser reads them: the query of a
+/// `tokio_postgres` parser reads them: the query of a
 /// `postgres://` or `postgresql://` URL (percent-decoded), or the
 /// `key=value` pairs of the other form (a value may be quoted in `'`,
 /// and `\` escapes a character). What that parser refuses is not read
-/// here: it has refused the string before.
-fn connection_options(s: &str) -> Vec<(String, String)> {
-    let url = s
-        .strip_prefix("postgresql://")
-        .or_else(|| s.strip_prefix("postgres://"));
-    if let Some(rest) = url {
-        // The credentials end at the first `@`; the options begin at
-        // the first `?` after them.
-        let rest = rest.split_once('@').map_or(rest, |(_, rest)| rest);
-        let Some((_, query)) = rest.split_once('?') else {
-            return Vec::new();
-        };
+/// here: it refuses the string.
+fn connection_options(s: &str) -> Vec<ConnOption> {
+    if let Some((start, query)) = url_query(s) {
         let decode = |part: &str| {
             percent_encoding::percent_decode_str(part)
                 .decode_utf8_lossy()
                 .into_owned()
         };
-        return query
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .map(|(key, value)| (decode(key), decode(value)))
-            .collect();
+        let mut options = Vec::new();
+        let mut at = start;
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                options.push(ConnOption {
+                    key: decode(key),
+                    value: decode(value),
+                    span: at..at + pair.len(),
+                });
+            }
+            at += pair.len() + 1;
+        }
+        return options;
     }
     let mut options = Vec::new();
-    let mut chars = s.chars().peekable();
+    let mut chars = s.char_indices().peekable();
+    let at = |chars: &mut std::iter::Peekable<std::str::CharIndices>| {
+        chars.peek().map_or(s.len(), |&(i, _)| i)
+    };
     loop {
-        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let start = at(&mut chars);
         let mut key = String::new();
-        while let Some(c) = chars.next_if(|c| !c.is_whitespace() && *c != '=') {
+        while let Some((_, c)) = chars.next_if(|(_, c)| !c.is_whitespace() && *c != '=') {
             key.push(c);
         }
-        while chars.next_if(|c| c.is_whitespace()).is_some() {}
-        if key.is_empty() || chars.next() != Some('=') {
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        if key.is_empty() || chars.next().map(|(_, c)| c) != Some('=') {
             return options;
         }
-        while chars.next_if(|c| c.is_whitespace()).is_some() {}
-        let quoted = chars.next_if_eq(&'\'').is_some();
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let quoted = chars.next_if(|(_, c)| *c == '\'').is_some();
         let mut value = String::new();
-        while let Some(c) = chars.next_if(|c| match quoted {
+        while let Some((_, c)) = chars.next_if(|(_, c)| match quoted {
             true => *c != '\'',
             false => !c.is_whitespace(),
         }) {
             match c {
-                '\\' => value.extend(chars.next()),
+                '\\' => value.extend(chars.next().map(|(_, c)| c)),
                 c => value.push(c),
             }
         }
         if quoted {
             chars.next();
         }
-        options.push((key, value));
+        let span = start..at(&mut chars);
+        options.push(ConnOption { key, value, span });
     }
+}
+
+/// Whether every host of `cfg` is a Unix socket (a path), reached as
+/// one: no `hostaddr` stands in for it.
+#[cfg(unix)]
+fn only_sockets(cfg: &Config) -> bool {
+    use tokio_postgres::config::Host;
+    let hosts = cfg.get_hosts();
+    let sockets = hosts.iter().all(|host| matches!(host, Host::Unix(_)));
+    !hosts.is_empty() && sockets && cfg.get_hostaddrs().is_empty()
+}
+
+/// Whether every host of `cfg` is a Unix socket: never, where there are
+/// none.
+#[cfg(not(unix))]
+fn only_sockets(_cfg: &Config) -> bool {
+    false
 }
 
 /// Test-only: [`connect_limit`], for a test without a server.
@@ -1095,7 +1271,7 @@ pub enum EffectiveSslMode {
 /// resolves to `VerifyFull`, NOT the libpq-default `Prefer`.
 #[doc(hidden)]
 pub fn resolve_effective_sslmode_for_tests(url: &str) -> Result<EffectiveSslMode, String> {
-    let (_, ext) = extract_ssl_url_params(url)?;
+    let (_, ext) = without_ssl_options(url)?;
     Ok(match ext.mode {
         Some(m) => m,
         None => EffectiveSslMode::VerifyFull,
@@ -1108,33 +1284,17 @@ struct SslUrlParams {
     root_cert: Option<String>,
 }
 
-/// Extract (and strip) TLS-related query params from a postgres URL.
-/// Returns (stripped_url, parsed_params). Non-TLS URLs pass through
-/// unchanged with an empty params struct.
-///
-/// We only touch the query string — scheme, userinfo, host, path are
-/// left intact. If no query string exists, returns the input verbatim.
-fn extract_ssl_url_params(url: &str) -> Result<(String, SslUrlParams), String> {
-    let Some(q_idx) = url.find('?') else {
-        return Ok((url.to_string(), SslUrlParams::default()));
-    };
-    let (prefix, query_with_q) = url.split_at(q_idx);
-    let query = &query_with_q[1..]; // skip '?'
-
+/// The connection string `s` without its TLS options, which the crate
+/// does not read as silt does (it refuses `verify-ca`, `verify-full`
+/// and `sslrootcert`), and what they say: in either form of `s`, the
+/// last one of each standing. The rest of `s` is left as it is.
+fn without_ssl_options(s: &str) -> Result<(String, SslUrlParams), String> {
     let mut params = SslUrlParams::default();
-    let mut kept: Vec<&str> = Vec::new();
-
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (k, v) = match pair.split_once('=') {
-            Some((k, v)) => (k, v),
-            None => (pair, ""),
-        };
-        match k {
+    let mut cut = Vec::new();
+    for option in connection_options(s) {
+        match option.key.as_str() {
             "sslmode" => {
-                params.mode = Some(match v {
+                params.mode = Some(match option.value.as_str() {
                     "disable" => EffectiveSslMode::Disable,
                     "prefer" => EffectiveSslMode::Prefer,
                     "require" => EffectiveSslMode::Require,
@@ -1145,22 +1305,34 @@ fn extract_ssl_url_params(url: &str) -> Result<(String, SslUrlParams), String> {
                     }
                 });
             }
-            "sslrootcert" => {
-                params.root_cert = Some(v.to_string());
-            }
+            "sslrootcert" => params.root_cert = Some(option.value),
             // `sslcert` / `sslkey` (client certs) are v2 — silently
             // ignore for now so URLs aren't rejected outright.
             "sslcert" | "sslkey" => {}
-            _ => kept.push(pair),
+            _ => continue,
         }
+        cut.push(option.span);
     }
-
-    let stripped = if kept.is_empty() {
-        prefix.to_string()
-    } else {
-        format!("{prefix}?{}", kept.join("&"))
-    };
-    Ok((stripped, params))
+    if cut.is_empty() {
+        return Ok((s.to_string(), params));
+    }
+    let mut kept = String::with_capacity(s.len());
+    let mut from = 0;
+    for span in cut {
+        kept.push_str(&s[from..span.start]);
+        from = span.end;
+    }
+    kept.push_str(&s[from..]);
+    // A URL's query keeps its other options, joined as before.
+    if let Some((start, query)) = url_query(&kept) {
+        let pairs: Vec<&str> = query.split('&').filter(|pair| !pair.is_empty()).collect();
+        let prefix = kept[..start].trim_end_matches('?');
+        kept = match pairs.is_empty() {
+            true => prefix.to_string(),
+            false => format!("{prefix}?{}", pairs.join("&")),
+        };
+    }
+    Ok((kept, params))
 }
 
 /// Open a pool for `cfg`, encrypted as `mode` says. Its first
@@ -1168,7 +1340,7 @@ fn extract_ssl_url_params(url: &str) -> Result<(String, SslUrlParams), String> {
 /// once; the pool takes it, and opens the others itself, each when it
 /// can. The `PostgresError` of a connect that failed.
 fn open_pool(
-    cfg: postgres::Config,
+    cfg: Config,
     mode: EffectiveSslMode,
     root_cert_path: Option<&str>,
     limit: Duration,
@@ -1179,7 +1351,6 @@ fn open_pool(
         config: cfg,
         tls,
         limit,
-        stalled: Stalled::default(),
         first: Mutex::new(Some(first)),
     };
     let mut builder = Pool::builder();
@@ -1193,11 +1364,11 @@ fn open_pool(
 /// connections.
 #[cfg(feature = "postgres-tls")]
 fn first_connection(
-    cfg: &postgres::Config,
+    cfg: &Config,
     mode: EffectiveSslMode,
     root_cert_path: Option<&str>,
     limit: Duration,
-) -> Result<(Tls, postgres::Client), Value> {
+) -> Result<(Tls, Conn), Value> {
     // `build_tls_connector` takes what is NOT checked: the
     // certificate, the host name.
     let tls = match mode {
@@ -1225,11 +1396,11 @@ fn first_connection(
 /// that asks for it.
 #[cfg(not(feature = "postgres-tls"))]
 fn first_connection(
-    cfg: &postgres::Config,
+    cfg: &Config,
     mode: EffectiveSslMode,
     root_cert_path: Option<&str>,
     limit: Duration,
-) -> Result<(Tls, postgres::Client), Value> {
+) -> Result<(Tls, Conn), Value> {
     let _ = root_cert_path; // unused without TLS
     match mode {
         EffectiveSslMode::Disable | EffectiveSslMode::Prefer => connect_first(cfg, Tls::Off, limit),
@@ -1245,101 +1416,54 @@ fn first_connection(
 
 /// The pool's first connection, encrypted as `tls` says, or the
 /// `PostgresError` of a connect that failed.
-fn connect_first(
-    cfg: &postgres::Config,
-    tls: Tls,
-    limit: Duration,
-) -> Result<(Tls, postgres::Client), Value> {
-    match connect_within(cfg, &tls, limit, &Stalled::default()) {
-        Ok(client) => Ok((tls, client)),
+fn connect_first(cfg: &Config, tls: Tls, limit: Duration) -> Result<(Tls, Conn), Value> {
+    match connect_within(cfg, &tls, limit) {
+        Ok(conn) => Ok((tls, conn)),
         Err(failure) => Err(failure.value()),
     }
 }
 
-/// The connect attempts of one pool that got no answer in time and
-/// whose threads still wait for one: while there is one, the pool
-/// starts no other (R10). So a server that takes connections and never
-/// answers costs a pool one thread, not one per attempt of the pool's.
-type Stalled = Arc<std::sync::atomic::AtomicUsize>;
-
-/// Connect once, and wait for it `limit` at most. The config bounds
-/// the connect of the socket, and nothing bounds what follows it (TLS,
-/// authentication), so the connect runs on a thread of its own. One
-/// that gets no answer in time goes on there until the server or the
-/// system ends it, and what it gets then is dropped; it counts in
-/// `stalled` until then, and while one does, this starts no thread and
-/// fails at once.
-fn connect_within(
-    cfg: &postgres::Config,
-    tls: &Tls,
-    limit: Duration,
-    stalled: &Stalled,
-) -> Result<postgres::Client, ConnectFailure> {
-    use std::sync::atomic::Ordering;
-    use std::sync::mpsc::RecvTimeoutError;
-    /// Where an attempt is, for its thread and its waiter.
-    #[derive(Default)]
-    struct Attempt {
-        done: bool,
-        /// The waiter went without the answer: the attempt counts in
-        /// `stalled` until it is done.
-        given_up: bool,
-    }
-    if stalled.load(Ordering::SeqCst) > 0 {
-        return Err(ConnectFailure::NoAnswer);
-    }
-    let attempt = Arc::new(Mutex::new(Attempt::default()));
-    let (sent, answer) = std::sync::mpsc::channel();
-    let (config, tls_of_attempt) = (cfg.clone(), tls.clone());
-    let (its, its_stalled) = (attempt.clone(), stalled.clone());
-    let started = std::thread::Builder::new()
-        .name("silt-pg-connect".into())
-        .spawn(move || {
-            let connect = std::panic::AssertUnwindSafe(|| tls_of_attempt.connect(&config));
-            let connected = crate::scheduler::catch_as_error(connect);
-            {
-                let mut its = its.lock().unwrap_or_else(|e| e.into_inner());
-                its.done = true;
-                if its.given_up {
-                    its_stalled.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _ = sent.send(connected);
-        });
-    if let Err(e) = started {
-        return Err(ConnectFailure::Broke(format!(
-            "postgres: cannot start a thread to connect: {e}"
-        )));
-    }
-    let answered = match answer.recv_timeout(limit) {
-        Err(RecvTimeoutError::Timeout) => {
-            let mut attempt = attempt.lock().unwrap_or_else(|e| e.into_inner());
-            if !attempt.done {
-                attempt.given_up = true;
-                stalled.fetch_add(1, Ordering::SeqCst);
-                return Err(ConnectFailure::NoAnswer);
-            }
-            // The answer came as the time ran out: it is on its way.
-            drop(attempt);
-            answer.recv().map_err(|_| RecvTimeoutError::Disconnected)
+/// Connect once: the socket, TLS and the login, in `limit` at most, on
+/// a runtime of the connection's own. An attempt that gets no answer in
+/// time is dropped, its socket and its runtime with it: nothing of it
+/// stays behind.
+fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, ConnectFailure> {
+    let runtime = new_runtime()?;
+    let attempt =
+        std::panic::AssertUnwindSafe(|| block_on_within(&runtime, limit, tls.connect(cfg)));
+    let (client, told, task) = match crate::scheduler::catch_as_error(attempt) {
+        Ok(Some(Ok(connected))) => connected,
+        failed => {
+            runtime.shutdown_background();
+            return Err(match failed {
+                Ok(Some(Err(e))) => ConnectFailure::Failed(e),
+                Ok(None) => ConnectFailure::NoAnswer,
+                _ => ConnectFailure::Broke("postgres: the connect panicked".to_string()),
+            });
         }
-        answered => answered,
     };
-    match answered {
-        Ok(Ok(Ok(client))) => Ok(client),
-        Ok(Ok(Err(e))) => Err(ConnectFailure::Failed(e)),
-        Err(RecvTimeoutError::Timeout) => Err(ConnectFailure::NoAnswer),
-        Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => Err(ConnectFailure::Broke(
-            "postgres: the connect panicked".to_string(),
-        )),
-    }
+    Ok(Conn {
+        canceller: Canceller {
+            token: client.cancel_token(),
+            tls: tls.clone(),
+            limit,
+            sent: Arc::default(),
+        },
+        client,
+        driver: Driver {
+            runtime: Some(runtime),
+            task: Some(task),
+        },
+        told,
+        broken: false,
+    })
 }
 
 /// Why a connect failed.
 #[derive(Debug)]
 enum ConnectFailure {
     /// The server or the system said why.
-    Failed(postgres::Error),
+    Failed(tokio_postgres::Error),
     /// No answer came in time.
     NoAnswer,
     /// The connect could not run, or panicked.
@@ -1395,7 +1519,7 @@ fn build_tls_connector(
     Ok(postgres_native_tls::MakeTlsConnector::new(connector))
 }
 
-/// The parameters of a statement as `postgres` takes them.
+/// The parameters of a statement as `tokio_postgres` takes them.
 fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
     params
         .iter()
@@ -1403,21 +1527,18 @@ fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
         .collect()
 }
 
-/// `f` on the client of `target`: a connection of the pool, or the
+/// `f` on the connection of `target`: one of the pool, or the
 /// transaction's. A transaction's `Mutex<TxConn>` is held while `f`
 /// runs, never across a VM yield. The value is `Ok` of `f`'s, or `Err`
 /// of the `PostgresError`.
-fn with_client(
-    target: ExecutorRef,
-    f: impl FnOnce(&mut postgres::Client) -> Result<Value, Value>,
-) -> Value {
+fn with_conn(target: ExecutorRef, f: impl FnOnce(&Conn) -> Result<Value, Value>) -> Value {
     let done = match target {
         ExecutorRef::Pool(pool) => match pool.get() {
-            Ok(mut conn) => f(conn.client_mut()),
+            Ok(conn) => f(&conn),
             Err(e) => Err(pool_error_value(&e)),
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell) {
-            Ok(mut conn) => f(conn.client_mut()),
+            Ok(conn) => f(conn.conn()),
             Err(e) => Err(e),
         },
     };
@@ -1427,12 +1548,14 @@ fn with_client(
 /// The statement `sql` prepared, and the plan of its result's rows: the
 /// columns are checked against `row` before the statement runs.
 fn prepare(
-    client: &mut postgres::Client,
+    conn: &Conn,
     rt: &Runtime,
     sql: &str,
     row: &RowType,
-) -> Result<(postgres::Statement, Plan), Value> {
-    let statement = client.prepare(sql).map_err(|e| pg_error_to_variant(&e))?;
+) -> Result<(tokio_postgres::Statement, Plan), Value> {
+    let statement = conn
+        .wait(conn.client().prepare(sql))
+        .map_err(|e| pg_error_to_variant(&e))?;
     let plan = Plan::new(rt, row, statement.columns())?;
     Ok((statement, plan))
 }
@@ -1447,11 +1570,10 @@ fn do_query(
     rt: Arc<Runtime>,
 ) -> Value {
     let bind = binding(&params);
-    with_client(target, |client| {
-        let (statement, plan) = prepare(client, &rt, &sql, &row)?;
-        let rows = client
-            .query(&statement, &bind)
-            .map_err(|e| pg_error_to_variant(&e))?;
+    with_conn(target, |conn| {
+        let (statement, plan) = prepare(conn, &rt, &sql, &row)?;
+        let rows = conn.wait(conn.client().query(&statement, &bind));
+        let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
         let rows = rows.iter().map(|r| plan.row(&rt, r));
         Ok(Value::list(rows.collect::<Result<_, _>>()?))
     })
@@ -1460,15 +1582,17 @@ fn do_query(
 /// Run a statement and give the number of rows it affected.
 fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>) -> Value {
     let bind = binding(&params);
-    with_client(target, |client| match client.execute(sql.as_str(), &bind) {
-        Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
-        Err(e) => Err(pg_error_to_variant(&e)),
+    with_conn(target, |conn| {
+        match conn.wait(conn.client().execute(sql.as_str(), &bind)) {
+            Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
+            Err(e) => Err(pg_error_to_variant(&e)),
+        }
     })
 }
 
 // ── Streaming worker (postgres.stream) ─────────────────────────────
 //
-// Drives a server-side `query_raw` row iterator and ships each row to
+// Drives a server-side `query_raw` row stream and ships each row to
 // a bounded silt `Channel`. Each row is wrapped as `Ok(row_map)`; on
 // a mid-iteration DB error we send a final `Err(pg_error)` before
 // closing the channel. The channel's `is_closed` flag is checked
@@ -1513,40 +1637,43 @@ fn do_stream_worker(
     let send_or_stop = |v: Value| -> bool { scheduler.send_wait(&ch, v) };
 
     // `false` when the stream stopped with rows of the statement unread.
-    let pump = |client: &mut postgres::Client, sql: &str, bind: &[&(dyn ToSql + Sync)]| {
-        let (statement, plan) = match prepare(client, &rt, sql, &row) {
+    let pump = |conn: &Conn, sql: &str, bind: &[&(dyn ToSql + Sync)]| {
+        let (statement, plan) = match prepare(conn, &rt, sql, &row) {
             Ok(prepared) => prepared,
             Err(e) => {
                 let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
                 return true;
             }
         };
-        match client.query_raw(&statement, bind.iter().copied()) {
-            Ok(mut iter) => loop {
-                if ch.is_closed() {
-                    break false;
-                }
-                match iter.next() {
-                    Ok(Some(found)) => match plan.row(&rt, &found) {
-                        Ok(value) => {
-                            if !send_or_stop(Value::variant(bv::OK, vec![value])) {
+        match conn.wait(conn.client().query_raw(&statement, bind.iter().copied())) {
+            Ok(rows) => {
+                let mut rows = std::pin::pin!(rows);
+                loop {
+                    if ch.is_closed() {
+                        break false;
+                    }
+                    match conn.wait(rows.next()) {
+                        Some(Ok(found)) => match plan.row(&rt, &found) {
+                            Ok(value) => {
+                                if !send_or_stop(Value::variant(bv::OK, vec![value])) {
+                                    break false;
+                                }
+                            }
+                            // A row that cannot be decoded ends the stream.
+                            Err(e) => {
+                                let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
                                 break false;
                             }
+                        },
+                        None => break true,
+                        Some(Err(e)) => {
+                            let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
+                            let _ = send_or_stop(wrapped);
+                            break true;
                         }
-                        // A row that cannot be decoded ends the stream.
-                        Err(e) => {
-                            let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
-                            break false;
-                        }
-                    },
-                    Ok(None) => break true,
-                    Err(e) => {
-                        let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
-                        let _ = send_or_stop(wrapped);
-                        break true;
                     }
                 }
-            },
+            }
             Err(e) => {
                 // A parameter the encoder could not send: no statement
                 // was sent, and the stream (which no task waits for)
@@ -1561,10 +1688,10 @@ fn do_stream_worker(
 
     match target {
         ExecutorRef::Pool(pool) => match pool.get() {
-            Ok(mut conn) => {
+            Ok(conn) => {
                 // Left with rows unread, the connection is not given
                 // back: a cancel request was sent for it.
-                if !pump(conn.client_mut(), &sql, &bind) {
+                if !pump(&conn, &sql, &bind) {
                     conn.canceller.cancel();
                 }
             }
@@ -1574,8 +1701,8 @@ fn do_stream_worker(
             }
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell) {
-            Ok(mut conn) => {
-                let _ = pump(conn.client_mut(), &sql, &bind);
+            Ok(conn) => {
+                let _ = pump(conn.conn(), &sql, &bind);
             }
             Err(e) => {
                 let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
@@ -1605,15 +1732,17 @@ fn do_cursor_open(
     (row, rt): (RowType, Arc<Runtime>),
 ) -> Value {
     let bind = binding(&params);
-    let planned = tx_conn(&cell).and_then(|mut conn| prepare(conn.client_mut(), &rt, &sql, &row));
+    let planned = tx_conn(&cell).and_then(|conn| prepare(conn.conn(), &rt, &sql, &row));
     let plan = match planned {
         Ok((_, plan)) => Arc::new(plan),
         Err(e) => return err(e),
     };
     let (cursor_id, name) = register_cursor(tx_id, batch_size, plan);
     let declare_sql = format!("DECLARE {name} CURSOR FOR {sql}");
-    let declared =
-        tx_conn(&cell).map(|mut conn| conn.client_mut().execute(declare_sql.as_str(), &bind));
+    let declared = tx_conn(&cell).map(|conn| {
+        let conn = conn.conn();
+        conn.wait(conn.client().execute(declare_sql.as_str(), &bind))
+    });
     match declared {
         Err(e) => {
             let _ = remove_cursor(cursor_id);
@@ -1658,11 +1787,14 @@ fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>) -> Value {
         }
     };
     let fetch_sql = format!("FETCH FORWARD {} FROM {}", entry.batch_size, entry.name);
-    let mut conn = match tx_conn(&cell) {
+    let conn = match tx_conn(&cell) {
         Ok(conn) => conn,
         Err(e) => return err(e),
     };
-    match conn.client_mut().query(fetch_sql.as_str(), &[]) {
+    let fetched = conn
+        .conn()
+        .wait(conn.conn().client().query(fetch_sql.as_str(), &[]));
+    match fetched {
         Ok(rows) => {
             drop(conn);
             if (rows.len() as u64) < entry.batch_size {
@@ -1694,11 +1826,14 @@ fn do_cursor_close(cursor_id: u64) -> Value {
         }
     };
     let close_sql = format!("CLOSE {}", entry.name);
-    let Ok(mut conn) = tx_conn(&cell) else {
+    let Ok(conn) = tx_conn(&cell) else {
         // The transaction has ended, and the cursor with it.
         return ok(Value::Unit);
     };
-    match conn.client_mut().execute(close_sql.as_str(), &[]) {
+    match conn
+        .conn()
+        .wait(conn.conn().client().execute(close_sql.as_str(), &[]))
+    {
         Ok(_) => ok(Value::Unit),
         Err(e) => err(pg_error_to_variant(&e)),
     }
@@ -1707,10 +1842,12 @@ fn do_cursor_close(cursor_id: u64) -> Value {
 // ── LISTEN / NOTIFY (pub-sub) ───────────────────────────────────────
 //
 // `listen(pool, channel_name)` pins a single pool connection for the
-// listener's lifetime, runs `LISTEN <channel_name>`, and returns a
-// bounded silt `Channel` of `Notification` records. The worker polls
-// the pg connection's notification buffer via `timeout_iter` (200ms
-// tick) so `channel.close(ch)` is observed within one tick.
+// listener's lifetime, attaches a listener to it, runs `LISTEN
+// <channel_name>`, and returns a bounded silt `Channel` of
+// `Notification` records. The connection's protocol task hands each
+// notification to the listener as it comes; the worker waits for one a
+// tick (200 ms) at a time, so that `channel.close(ch)` is observed
+// within one tick.
 //
 // `notify(executor, channel_name, payload)` runs `SELECT pg_notify($1, $2)`
 // against either a pool or tx executor. `pg_notify` handles identifier
@@ -1723,9 +1860,10 @@ fn do_cursor_close(cursor_id: u64) -> Value {
 /// the worker's send ends on close.
 const LISTEN_CHANNEL_CAPACITY: usize = 64;
 
-/// Poll tick for the listener worker's notification iterator. Upper
-/// bound on the delay between `channel.close(listen_ch)` and the
-/// worker dropping the pinned connection back into the pool.
+/// How long the listener worker waits for a notification before it
+/// looks whether its channel was closed. Upper bound on the delay
+/// between `channel.close(listen_ch)` and the worker dropping the
+/// pinned connection back into the pool.
 const LISTEN_POLL_TICK_MS: u64 = 200;
 
 /// Regex-free validator for LISTEN/UNLISTEN identifiers. Matches a
@@ -1747,8 +1885,8 @@ fn is_valid_ident(s: &str) -> bool {
     iter.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Build a silt `Notification` record from a tokio-postgres notification.
-fn notification_to_record(n: &postgres::Notification) -> Value {
+/// Build a silt `Notification` record from a notification of the server.
+fn notification_to_record(n: &Notification) -> Value {
     make_notification(n.channel(), n.payload(), n.process_id() as i64)
 }
 
@@ -1766,54 +1904,47 @@ fn make_notification(channel: &str, payload: &str, pid: i64) -> Value {
 /// Long-lived worker for `listen`. Owns the `PooledConnection` for the
 /// whole listener lifetime — when this function returns, the conn is
 /// dropped back into the pool. LISTEN was already issued before this
-/// function starts (see `listen`'s io-pool closure); we just pump
-/// notifications until the channel closes or the connection errors out.
+/// function starts (see `listen`'s io-pool closure), with `told`
+/// attached to the connection; we just pump notifications until the
+/// channel closes or the connection ends.
 fn do_listen_worker(
-    mut conn: PinnedConn,
+    conn: PinnedConn,
     channel_name: String,
+    mut told: tokio::sync::mpsc::Receiver<Notification>,
     ch: Arc<Channel>,
     scheduler: Arc<Scheduler>,
 ) {
     let tick = Duration::from_millis(LISTEN_POLL_TICK_MS);
-
-    'outer: loop {
-        if ch.is_closed() {
-            break;
-        }
-        // `timeout_iter` yields buffered notifications immediately, then
-        // waits up to `tick` for new ones before returning. Each call
-        // gives us a fresh iterator; we drain all ready notifications
-        // on this pass and loop back to re-check `is_closed`.
-        let mut notifications = conn.client_mut().notifications();
-        let mut iter = notifications.timeout_iter(tick);
-        loop {
-            match iter.next() {
-                Ok(Some(n)) => {
-                    let rec = notification_to_record(&n);
-                    if !scheduler.send_wait(&ch, rec) {
-                        break 'outer;
-                    }
-                }
-                // `None` = timeout elapsed with no notification. Re-
-                // check the cancel flag and re-arm the iterator.
-                Ok(None) => break,
-                Err(_) => {
-                    // Connection-level error: stop the worker. We
-                    // don't surface the error on the channel because
-                    // the silt-side contract is a stream of
-                    // Notification records, not a Result wrapper.
-                    break 'outer;
+    while !ch.is_closed() {
+        match conn.wait(async { tokio::time::timeout(tick, told.recv()).await.ok() }) {
+            Some(Some(n)) => {
+                let rec = notification_to_record(&n);
+                if !scheduler.send_wait(&ch, rec) {
+                    break;
                 }
             }
+            // The connection has ended. We don't surface that on the
+            // channel because the silt-side contract is a stream of
+            // Notification records, not a Result wrapper.
+            Some(None) => break,
+            // No notification in this tick: look at the channel again.
+            None => {}
         }
     }
 
     // Best-effort UNLISTEN so the server stops queuing notifications for
     // this backend. Errors here are ignored — the conn is about to go
     // back into the pool, and r2d2 will recycle a broken conn on next
-    // checkout anyway.
+    // checkout anyway. The notifications that come before its answer
+    // are dropped meanwhile, so that none holds the connection up.
     let unlisten_sql = format!("UNLISTEN {channel_name}");
-    let _ = conn.client_mut().batch_execute(&unlisten_sql);
+    let unlisten = conn.client().batch_execute(&unlisten_sql);
+    let mut unlisten = std::pin::pin!(unlisten);
+    let _ = conn.wait(std::future::poll_fn(|cx| {
+        while let std::task::Poll::Ready(Some(_)) = told.poll_recv(cx) {}
+        unlisten.as_mut().poll(cx)
+    }));
+    conn.told.lock().unwrap_or_else(|e| e.into_inner()).take();
     ch.close(Close::default(), scheduler.wake());
     // `conn` drops here → returns to the pool.
 }
@@ -1826,21 +1957,21 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
     let params: [&(dyn ToSql + Sync); 2] = [&channel_name, &payload];
     match target {
         ExecutorRef::Pool(pool) => {
-            let mut conn = match pool.get() {
+            let conn = match pool.get() {
                 Ok(c) => c,
                 Err(e) => return err(pool_error_value(&e)),
             };
-            match conn.client_mut().execute(sql, &params) {
+            match conn.wait(conn.client().execute(sql, &params)) {
                 Ok(_) => ok(Value::Unit),
                 Err(e) => err(pg_error_to_variant(&e)),
             }
         }
         ExecutorRef::Tx(cell) => {
-            let mut conn = match tx_conn(&cell) {
+            let conn = match tx_conn(&cell) {
                 Ok(conn) => conn,
                 Err(e) => return err(e),
             };
-            match conn.client_mut().execute(sql, &params) {
+            match conn.conn().wait(conn.conn().client().execute(sql, &params)) {
                 Ok(_) => ok(Value::Unit),
                 Err(e) => err(pg_error_to_variant(&e)),
             }
@@ -2154,12 +2285,17 @@ builtins! {
         let runtime = vm.runtime.clone();
         let channel_name = channel.to_string();
         let work = move || -> Value {
-            let mut conn = match pool.get() {
+            let conn = match pool.get() {
                 Ok(c) => c,
                 Err(e) => return err(pool_error_value(&e)),
             };
+            // The notifications of the connection go to the worker from
+            // now on.
+            let (listener, told) = tokio::sync::mpsc::channel(LISTEN_CHANNEL_CAPACITY);
+            *conn.told.lock().unwrap_or_else(|e| e.into_inner()) = Some(listener);
             let listen_sql = format!("LISTEN {channel_name}");
-            if let Err(e) = conn.client_mut().batch_execute(&listen_sql) {
+            if let Err(e) = conn.wait(conn.client().batch_execute(&listen_sql)) {
+                conn.told.lock().unwrap_or_else(|e| e.into_inner()).take();
                 return err(pg_error_to_variant(&e));
             }
             // LISTEN ok — spawn the long-lived worker onto the io_pool.
@@ -2171,7 +2307,7 @@ builtins! {
             let scheduler = runtime.scheduler.clone();
             let serving = scheduler.external();
             let op = runtime.io_pool.submit(pg_timeout_err, move || {
-                do_listen_worker(conn, channel_name, worker_ch, scheduler);
+                do_listen_worker(conn, channel_name, told, worker_ch, scheduler);
                 drop(serving);
                 Value::Unit
             });
@@ -2352,11 +2488,11 @@ impl Native for Transact {
 /// On the I/O pool: a connection of `pool`, and `BEGIN` on it. The
 /// value is `Ok(PgTx)` of the transaction, or `Err` of what failed.
 fn begin_tx(pool: &PgPool) -> Value {
-    let mut conn = match pool.get() {
+    let conn = match pool.get() {
         Ok(conn) => conn,
         Err(e) => return err(pool_error_value(&e)),
     };
-    if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
+    if let Err(e) = conn.wait(conn.client().batch_execute("BEGIN")) {
         return err(pg_error_to_variant(&e));
     }
     ok(make_tx_handle(insert_tx(conn)))
@@ -2498,7 +2634,7 @@ mod tests {
     #[test]
     fn strip_ssl_params_preserves_rest() {
         let url = "postgres://u:p@h/db?connect_timeout=5&sslmode=verify-full&sslrootcert=/tmp/ca.pem&application_name=x";
-        let (stripped, params) = extract_ssl_url_params(url).expect("parse ok");
+        let (stripped, params) = without_ssl_options(url).expect("parse ok");
         assert_eq!(params.mode, Some(EffectiveSslMode::VerifyFull));
         assert_eq!(params.root_cert.as_deref(), Some("/tmp/ca.pem"));
         // Stripped URL keeps connect_timeout and application_name, in
@@ -2513,7 +2649,7 @@ mod tests {
     #[test]
     fn strip_ssl_params_no_query() {
         let url = "postgres://u:p@h/db";
-        let (stripped, params) = extract_ssl_url_params(url).expect("parse ok");
+        let (stripped, params) = without_ssl_options(url).expect("parse ok");
         assert_eq!(stripped, url);
         assert_eq!(params.mode, None);
         assert_eq!(params.root_cert, None);
@@ -2530,7 +2666,7 @@ mod tests {
             ("verify-full", EffectiveSslMode::VerifyFull),
         ] {
             let url = format!("postgres://u:p@h/db?sslmode={s}");
-            let (_, p) = extract_ssl_url_params(&url).expect("parse ok");
+            let (_, p) = without_ssl_options(&url).expect("parse ok");
             assert_eq!(p.mode, Some(expected), "sslmode={s}");
         }
     }
@@ -2587,26 +2723,76 @@ mod tests {
         }
     }
 
+    /// A server that takes connections and never answers: what each
+    /// connection it took had sent it, and whether its client closed it,
+    /// as it finds them. `closed` comes back when every connection it
+    /// took is closed, and at the latest at `give_up`.
+    struct Silent {
+        port: u16,
+        /// The most connections that were open at once, and how many
+        /// were taken in all, once every one is closed.
+        closed: std::sync::mpsc::Receiver<(usize, usize)>,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Silent {
+        fn start() -> Silent {
+            use std::io::Read;
+            use std::net::TcpListener;
+            use std::sync::atomic::Ordering;
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            listener.set_nonblocking(true).expect("nonblocking");
+            let port = listener.local_addr().expect("addr").port();
+            let (done, closed) = std::sync::mpsc::channel();
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stopped = stop.clone();
+            std::thread::spawn(move || {
+                let (mut open, mut most, mut taken) = (Vec::new(), 0, 0);
+                while !stopped.load(Ordering::SeqCst) || !open.is_empty() {
+                    while let Ok((stream, _)) = listener.accept() {
+                        stream.set_nonblocking(true).expect("nonblocking");
+                        open.push(stream);
+                        taken += 1;
+                    }
+                    most = most.max(open.len());
+                    // A connection is open while a read finds nothing.
+                    open.retain_mut(|stream| {
+                        let mut buf = [0; 512];
+                        loop {
+                            match stream.read(&mut buf) {
+                                Ok(0) => return false,
+                                Ok(_) => continue,
+                                Err(e) => return e.kind() == std::io::ErrorKind::WouldBlock,
+                            }
+                        }
+                    });
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let _ = done.send((most, taken));
+            });
+            Silent { port, closed, stop }
+        }
+
+        /// No more connections will come: wait until the ones taken are
+        /// closed, `give_up` at most.
+        fn closed(self, give_up: Duration) -> Option<(usize, usize)> {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.closed.recv_timeout(give_up).ok()
+        }
+    }
+
     /// A server that takes the connection and never answers: the
     /// connect is `Timeout` once the URL's `connect_timeout` is over,
-    /// login included (the socket's connect itself succeeds at once).
+    /// login included (the socket's connect itself succeeds at once),
+    /// and the attempt has ended then: its connection is closed.
     #[test]
     fn a_connect_that_gets_no_answer_is_a_timeout() {
-        use std::net::TcpListener;
-        use std::sync::mpsc;
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        let (done, over) = mpsc::channel::<()>();
-        let silent = std::thread::spawn(move || {
-            // Hold the connection, unanswered, until the test is over.
-            let held = listener.accept();
-            let _ = over.recv();
-            drop(held);
-        });
-        let url = format!("postgres://u:p@127.0.0.1:{port}/db?sslmode=disable&connect_timeout=1");
+        let silent = Silent::start();
+        let url = format!(
+            "postgres://u:p@127.0.0.1:{}/db?sslmode=disable&connect_timeout=1",
+            silent.port
+        );
         let result = do_connect(url);
-        let _ = done.send(());
-        let _ = silent.join();
         let Value::Variant(outer) = &result else {
             panic!("expected Variant, got {result:?}");
         };
@@ -2615,44 +2801,264 @@ mod tests {
             panic!("expected an error variant: {result:?}");
         };
         assert_eq!(error.name(), "Timeout", "{result:?}");
+        // (A minute is no time the test waits: the connection is closed
+        // when the connect returns.)
+        let closed = silent.closed(Duration::from_secs(60));
+        assert_eq!(closed, Some((1, 1)), "the attempt's connection stayed open");
     }
 
-    /// A pool's attempt that got no answer counts as stalled until its
-    /// thread is done; while it does, the next attempt starts no thread
-    /// and opens no connection (R10).
+    /// A pool of 2 whose connections meet a server that never answers:
+    /// it never has more than 2 attempts open at once, each ends at its
+    /// limit, and once the pool is gone none is left open.
     #[test]
-    fn a_stalled_attempt_holds_back_the_next() {
-        use std::net::TcpListener;
-        use std::sync::atomic::Ordering;
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        let cfg: postgres::Config = format!("postgres://u:p@127.0.0.1:{port}/db")
+    fn a_pool_that_meets_a_silent_server_stays_bounded() {
+        let silent = Silent::start();
+        let config: Config = format!("postgres://u:p@127.0.0.1:{}/db", silent.port)
             .parse()
             .expect("config");
-        let stalled = Stalled::default();
-        let first = connect_within(&cfg, &Tls::Off, Duration::from_millis(200), &stalled);
-        assert!(
-            matches!(first, Err(ConnectFailure::NoAnswer)),
-            "{:?}",
-            first.err()
-        );
-        assert_eq!(stalled.load(Ordering::SeqCst), 1);
-        let held = listener.accept().expect("the first attempt's connection");
-        let second = connect_within(&cfg, &Tls::Off, Duration::from_millis(200), &stalled);
-        assert!(
-            matches!(second, Err(ConnectFailure::NoAnswer)),
-            "{:?}",
-            second.err()
-        );
-        // No second connection reached the listener.
-        listener.set_nonblocking(true).expect("nonblocking");
-        assert!(listener.accept().is_err(), "a second attempt connected");
-        // The server ends the first attempt's socket: its thread ends,
-        // and the pool may try again.
-        drop(held);
-        while stalled.load(Ordering::SeqCst) > 0 {
-            std::thread::sleep(Duration::from_millis(5));
+        let manager = Manager {
+            config,
+            tls: Tls::Off,
+            limit: Duration::from_millis(300),
+            first: Mutex::new(None),
+        };
+        let pool = Pool::builder()
+            .max_size(2)
+            .connection_timeout(Duration::from_secs(2))
+            .build_unchecked(manager);
+        let pool = Arc::new(pool);
+        let getters: Vec<_> = (0..4)
+            .map(|_| {
+                let pool = pool.clone();
+                std::thread::spawn(move || pool.get().is_err())
+            })
+            .collect();
+        for getter in getters {
+            assert!(getter.join().expect("join"), "a connection was made");
         }
+        drop(pool);
+        let closed = silent.closed(Duration::from_secs(60));
+        let Some((most, taken)) = closed else {
+            panic!("an attempt's connection stayed open");
+        };
+        assert!(most <= 2, "{most} attempts were open at once");
+        assert!(taken >= 2, "the pool tried {taken} times");
+    }
+
+    /// What a client did with a server without TLS, which answers a
+    /// request for TLS with `N`.
+    #[derive(Debug, PartialEq)]
+    enum Asked {
+        /// It asked for no TLS: its first message is its startup.
+        NoTls,
+        /// It asked, and closed the connection after the answer.
+        ThenClosed,
+        /// It asked, and went on with its startup message after the
+        /// answer.
+        ThenStartup,
+    }
+
+    /// The fake server of `Asked`, on the connection `stream`.
+    fn no_tls_server(mut stream: impl std::io::Read + std::io::Write) -> Asked {
+        // A startup message: its length, then protocol version 3.0.
+        let startup = |message: &[u8]| message.get(4..8) == Some(&[0, 3, 0, 0][..]);
+        let mut first = [0; 8];
+        stream.read_exact(&mut first).expect("the first message");
+        if first != [0, 0, 0, 8, 4, 210, 22, 47] {
+            assert!(
+                startup(&first),
+                "neither a request for TLS nor a startup: {first:?}"
+            );
+            return Asked::NoTls;
+        }
+        stream.write_all(b"N").expect("answer");
+        let mut after = [0; 512];
+        match stream.read(&mut after).expect("read") {
+            0 => Asked::ThenClosed,
+            n => {
+                assert!(startup(&after[..n]), "{:?}", &after[..n]);
+                Asked::ThenStartup
+            }
+        }
+    }
+
+    /// Connect with the connection string `url` of a local port to a
+    /// server without TLS: the connect's value, and what the client did.
+    fn without_tls(url: impl FnOnce(u16) -> String) -> (Value, Asked) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            // (A safety net: the client answers at once.)
+            let net = Some(Duration::from_secs(30));
+            stream.set_read_timeout(net).expect("timeout");
+            no_tls_server(stream)
+        });
+        let result = do_connect(url(port));
+        (result, server.join().expect("the server"))
+    }
+
+    /// The URL and the `key=value` form of a connection string to a
+    /// local `port`, with the option `sslmode` if one is given.
+    fn both_forms(port: u16, sslmode: Option<&str>) -> [String; 2] {
+        let url = format!("postgres://u:p@127.0.0.1:{port}/db");
+        let kv = format!("host=127.0.0.1 port={port} user=u password=p dbname=db");
+        match sslmode {
+            Some(mode) => [
+                format!("{url}?sslmode={mode}"),
+                format!("{kv} sslmode={mode}"),
+            ],
+            None => [url, kv],
+        }
+    }
+
+    /// A server without TLS is refused when sslmode requires TLS (the
+    /// default, verify-full, among them), before the client sends
+    /// anything more, in either form of the connection string.
+    #[test]
+    #[cfg(feature = "postgres-tls")]
+    fn a_server_without_tls_is_refused_when_tls_is_required() {
+        for mode in [
+            None,
+            Some("require"),
+            Some("verify-ca"),
+            Some("verify-full"),
+        ] {
+            for form in [0, 1] {
+                let (result, asked) = without_tls(|port| both_forms(port, mode)[form].clone());
+                assert_eq!(
+                    result.to_string(),
+                    "Err(postgres TLS error: error performing TLS handshake: server does not support TLS)",
+                    "{mode:?}, form {form}"
+                );
+                assert_eq!(asked, Asked::ThenClosed, "{mode:?}, form {form}");
+            }
+        }
+    }
+
+    /// With sslmode=prefer the client goes on without TLS, as libpq's
+    /// `prefer` does, in either form of the connection string.
+    #[test]
+    #[cfg(feature = "postgres-tls")]
+    fn prefer_goes_on_without_tls() {
+        for form in [0, 1] {
+            let (_, asked) = without_tls(|port| both_forms(port, Some("prefer"))[form].clone());
+            assert_eq!(asked, Asked::ThenStartup, "form {form}");
+        }
+    }
+
+    /// With sslmode=disable the client asks for no TLS, in either form
+    /// of the connection string.
+    #[test]
+    fn disable_asks_for_no_tls() {
+        for form in [0, 1] {
+            let (_, asked) = without_tls(|port| both_forms(port, Some("disable"))[form].clone());
+            assert_eq!(asked, Asked::NoTls, "form {form}");
+        }
+    }
+
+    /// A Unix socket carries no TLS, whatever sslmode says: the client
+    /// asks for none, in either form of the connection string.
+    #[test]
+    #[cfg(unix)]
+    fn a_unix_socket_asks_for_no_tls() {
+        let dir = std::env::temp_dir().join(format!("silt-pg-socket-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the socket's directory");
+        let socket = dir.join(".s.PGSQL.5432");
+        let host = dir.to_str().expect("a UTF-8 path");
+        let encoded =
+            percent_encoding::utf8_percent_encode(host, percent_encoding::NON_ALPHANUMERIC);
+        for mode in [
+            None,
+            Some("require"),
+            Some("verify-full"),
+            Some("prefer"),
+            Some("disable"),
+        ] {
+            let option = mode.map(|mode| format!("sslmode={mode}"));
+            let forms = [
+                format!(
+                    "postgres://u:p@{encoded}/db?{}",
+                    option.clone().unwrap_or_default()
+                ),
+                format!(
+                    "host={host} user=u password=p dbname=db {}",
+                    option.unwrap_or_default()
+                ),
+            ];
+            for (form, url) in forms.into_iter().enumerate() {
+                let _ = std::fs::remove_file(&socket);
+                let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind");
+                let server = std::thread::spawn(move || {
+                    let (stream, _) = listener.accept().expect("accept");
+                    let net = Some(Duration::from_secs(30));
+                    stream.set_read_timeout(net).expect("timeout");
+                    no_tls_server(stream)
+                });
+                let _ = do_connect(url);
+                let asked = server.join().expect("the server");
+                assert_eq!(asked, Asked::NoTls, "{mode:?}, form {form}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The TLS options are read from either form of the connection
+    /// string, decoded, the last one standing, and cut out of it; the
+    /// rest of it stays as it was.
+    #[test]
+    fn tls_options_are_read_from_either_form() {
+        let read = |s: &str| {
+            let (kept, params) = without_ssl_options(s).expect("parse ok");
+            (kept, params.mode, params.root_cert)
+        };
+        assert_eq!(
+            read("host=h sslmode=verify-ca user=u sslrootcert='/a b.pem' dbname=d"),
+            (
+                "host=h  user=u  dbname=d".to_string(),
+                Some(EffectiveSslMode::VerifyCa),
+                Some("/a b.pem".to_string())
+            )
+        );
+        assert_eq!(
+            read("host=h sslmode=prefer sslmode = disable"),
+            (
+                "host=h  ".to_string(),
+                Some(EffectiveSslMode::Disable),
+                None
+            )
+        );
+        assert_eq!(
+            read(
+                "postgres://u:p@h/db?sslmode=verify%2Dfull&application_name=x&sslrootcert=%2Fca.pem"
+            ),
+            (
+                "postgres://u:p@h/db?application_name=x".to_string(),
+                Some(EffectiveSslMode::VerifyFull),
+                Some("/ca.pem".to_string())
+            )
+        );
+        assert_eq!(
+            read("postgres://u:p?w@h/db?sslmode=disable"),
+            (
+                "postgres://u:p?w@h/db".to_string(),
+                Some(EffectiveSslMode::Disable),
+                None
+            )
+        );
+        assert_eq!(
+            read("host=h user=u"),
+            ("host=h user=u".to_string(), None, None)
+        );
+        for s in ["host=h sslmode=allow", "postgres://h/db?sslmode=allow"] {
+            assert_eq!(
+                without_ssl_options(s).err(),
+                Some("unknown sslmode: allow".to_string())
+            );
+        }
+        // What is left parses.
+        let (kept, _) = without_ssl_options("host=h sslmode=verify-full dbname=d").expect("ok");
+        assert!(kept.parse::<Config>().is_ok(), "{kept}");
     }
 
     /// The ids of cursors whose transaction ended are kept as runs; a

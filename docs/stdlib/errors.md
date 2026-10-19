@@ -122,7 +122,7 @@ its own (`float.Empty` is not `int.Empty`).
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Connect(String)` | message | a connect that failed (refused port, unknown or unreachable host, missing database), URL parse, connect options, SQLSTATE class 08 |
-| `Tls(String)` | message | TLS handshake / cert read / connector build |
+| `Tls(String)` | message | TLS handshake / a server without TLS when `sslmode` requires TLS / cert read / connector build |
 | `AuthFailed(String)` | message | SQLSTATE class 28: a role or password the server refuses |
 | `Query(String, String)` | message, SQLSTATE | server-reported error |
 | `TypeMismatch(String, String, String)` | column, expected, actual | a column whose type, or a cell whose value, does not fit the field it is decoded into |

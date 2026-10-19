@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
 use fallible_iterator::FallibleIterator;
-use postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 use postgres_protocol::types as wire;
+use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
 use crate::builtins::json;
 use crate::builtins::time::{make_date, make_datetime, make_time};
@@ -69,7 +69,7 @@ impl ToSql for TextParam {
     fn to_sql(
         &self,
         ty: &PgType,
-        out: &mut postgres::types::private::BytesMut,
+        out: &mut tokio_postgres::types::private::BytesMut,
     ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
         let text = match self {
             TextParam::Null => return Ok(IsNull::Yes),
@@ -99,7 +99,7 @@ impl ToSql for TextParam {
         Format::Text
     }
 
-    postgres::types::to_sql_checked!();
+    tokio_postgres::types::to_sql_checked!();
 }
 
 /// The parameters of a statement of `caller`: `params`, a tuple, or
@@ -473,7 +473,7 @@ impl Plan {
     pub(super) fn new(
         rt: &Runtime,
         row: &RowType,
-        columns: &[postgres::Column],
+        columns: &[tokio_postgres::Column],
     ) -> Result<Plan, Value> {
         let kind = match row {
             RowType::Value => {
@@ -547,7 +547,7 @@ impl Plan {
     /// The value of `row`, or the `PostgresError` of a cell that has
     /// none (a NULL for a field that is no `Option`, a `NaN` for a
     /// `Float`).
-    pub(super) fn row(&self, rt: &Runtime, row: &postgres::Row) -> Result<Value, Value> {
+    pub(super) fn row(&self, rt: &Runtime, row: &tokio_postgres::Row) -> Result<Value, Value> {
         let raw = |column: usize| match row.try_get::<_, Raw>(column) {
             Ok(Raw(raw)) => Ok(raw),
             Err(e) => Err(super::other_error(format!("postgres: {e}"))),

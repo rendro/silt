@@ -1102,20 +1102,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "postgres"
-version = "0.19.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aacf632d0554ff75f58183694f41dc8999c8a3a43a386994d0ec2d034f1dfbe1"
-dependencies = [
- "bytes",
- "fallible-iterator",
- "futures-util",
- "log",
- "tokio",
- "tokio-postgres",
-]
-
-[[package]]
 name = "postgres-native-tls"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1663,6 +1649,7 @@ dependencies = [
  "chrono",
  "fallible-iterator",
  "flate2",
+ "futures-util",
  "getrandom 0.2.17",
  "glob",
  "hmac 0.12.1",
@@ -1678,7 +1665,6 @@ dependencies = [
  "notify",
  "parking_lot",
  "percent-encoding",
- "postgres",
  "postgres-native-tls",
  "postgres-protocol",
  "proptest",
@@ -1691,6 +1677,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tokio",
+ "tokio-postgres",
  "toml",
  "toml_edit",
  "unicode-width",
