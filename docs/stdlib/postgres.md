@@ -124,7 +124,11 @@ room in the channel (nobody reads it, or its reader was cancelled), the
 worker is dropped there, as a task that waits to send is. A stream
 opened on a `PgTx` ends with the transaction: its channel is closed
 when the transaction commits or rolls back, and the rows it holds can
-still be received.
+still be received. While it is open it holds the transaction's
+connection: the transaction's other statements wait until its worker
+has sent the last row or has stopped. A stream on a `PgTx` whose
+reader is gone (cancelled, say) without closing the channel therefore
+holds the transaction until the transaction ends or the program does.
 
 `postgres.cursor` is the lower-level primitive: it `DECLARE`s a
 server-side cursor inside an open transaction and returns an opaque
