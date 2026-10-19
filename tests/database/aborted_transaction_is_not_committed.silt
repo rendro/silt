@@ -1,0 +1,75 @@
+-- A statement of a transaction fails, and the function ignores the
+-- error and returns `Ok`. The server has aborted the transaction, and
+-- answers its COMMIT with a rollback: `postgres.transact` answers
+-- `Err(TxnAborted)`, not `Ok`, and the row written before the failure
+-- is not in the table. A transaction that a `ROLLBACK TO SAVEPOINT`
+-- brought back after the failure commits.
+import channel
+import env
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        Some(Ok(_)) -> loop(n + 1)
+        Some(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_aborted", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_aborted (said text)", [])
+      let ignored = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(
+          tx,
+          "INSERT INTO silt_database_aborted VALUES ('before the failure')",
+          [],
+        )?
+        println("the failed statement: {said(postgres.query(tx, "SELECT 1/0", []))}")
+        Ok(())
+      }
+      println("the transaction whose function ignored it: {said(ignored)}")
+      println("its rows in the table: {count(pool, "SELECT 1 FROM silt_database_aborted")}")
+      let recovered = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "INSERT INTO silt_database_aborted VALUES ('kept')", [])?
+        let _ = postgres.execute(tx, "SAVEPOINT before_it", [])?
+        println("the failed statement: {said(postgres.query(tx, "SELECT 1/0", []))}")
+        let _ = postgres.execute(tx, "ROLLBACK TO SAVEPOINT before_it", [])?
+        Ok(())
+      }
+      println("the transaction brought back to its savepoint: {said(recovered)}")
+      println("its rows in the table: {count(pool, "SELECT 1 FROM silt_database_aborted")}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_aborted", [])
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

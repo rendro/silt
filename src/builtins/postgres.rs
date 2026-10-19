@@ -241,16 +241,32 @@ impl TxConn {
         self.conn.client_mut()
     }
 
-    /// End the transaction with `sql`, `COMMIT` or `ROLLBACK`. A
-    /// connection whose transaction did not end so is not given back
-    /// to the pool.
-    fn end(&mut self, sql: &str) -> Result<(), postgres::Error> {
+    /// End the transaction with `ROLLBACK`. A connection whose
+    /// transaction did not end so is not given back to the pool.
+    fn roll_back(&mut self) -> Result<(), postgres::Error> {
         self.ended = true;
-        let ended = self.conn.client_mut().batch_execute(sql);
+        let ended = self.conn.client_mut().batch_execute("ROLLBACK");
         if ended.is_err() {
             self.conn.broken = true;
         }
         ended
+    }
+
+    /// End the transaction with `COMMIT`, or with the error of a commit
+    /// that failed, after which it is rolled back.
+    ///
+    /// The server answers the `COMMIT` of a transaction that a failed
+    /// statement aborted with a rollback and no error. So the `COMMIT`
+    /// goes with a statement before it, in the same round trip, which
+    /// fails in such a transaction (25P02, `TxnAborted`), and the
+    /// `COMMIT` is then not run.
+    fn commit(&mut self) -> Result<(), postgres::Error> {
+        self.ended = true;
+        let committed = self.conn.client_mut().batch_execute("SELECT 1; COMMIT");
+        if committed.is_err() {
+            let _ = self.roll_back();
+        }
+        committed
     }
 }
 
@@ -2619,7 +2635,7 @@ fn roll_back_abandoned(entry: TxEntry) {
         }
     };
     if !conn.ended {
-        let _ = conn.end("ROLLBACK");
+        let _ = conn.roll_back();
     }
     if cancelled {
         conn.conn.broken = true;
@@ -2639,21 +2655,19 @@ fn end_tx(entry: Option<TxEntry>, returned: Value) -> Value {
     // A statement of the transaction that is still on its way (from a
     // task the callback started) finds it ended when it gets the
     // connection.
-    let finalise = |sql: &str| -> Option<Value> {
-        let mut conn = entry.cell.lock().unwrap_or_else(|e| e.into_inner());
-        conn.end(sql).err().map(|e| err(pg_error_to_variant(&e)))
-    };
+    let mut conn = entry.cell.lock().unwrap_or_else(|e| e.into_inner());
+    let mut commit = || conn.commit().err().map(|e| err(pg_error_to_variant(&e)));
     match &returned {
-        Value::Variant(variant) if variant.is(bv::OK) => finalise("COMMIT").unwrap_or(returned),
+        Value::Variant(variant) if variant.is(bv::OK) => commit().unwrap_or(returned),
         Value::Variant(variant) if variant.is(bv::ERR) => {
-            let _ = finalise("ROLLBACK");
+            let _ = conn.roll_back();
             returned
         }
         // Callback didn't return Result(_, _). Treat as Ok and
         // forward the raw value, but COMMIT first so the user's
         // statements persist. Mirrors what most pg wrappers do
         // for callbacks that return a non-Result type.
-        _ => finalise("COMMIT").unwrap_or_else(|| ok(returned)),
+        _ => commit().unwrap_or_else(|| ok(returned)),
     }
 }
 

@@ -1,0 +1,6 @@
+the failed statement: postgres query error [22012]: division by zero
+the transaction whose function ignored it: postgres transaction aborted; rollback required
+its rows in the table: 0
+the failed statement: postgres query error [22012]: division by zero
+the transaction brought back to its savepoint: Ok
+its rows in the table: 1

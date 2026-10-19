@@ -79,6 +79,12 @@ enclosing pool would pick a different connection and miss the
 transaction entirely. Nested `postgres.transact` calls are rejected;
 use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
 
+A statement of the transaction that fails aborts it in the server:
+the transaction's later statements are `Err(TxnAborted)`, and if the
+callback returns `Ok(_)` all the same, `postgres.transact` answers
+`Err(TxnAborted)` and nothing is committed (unless a
+`ROLLBACK TO SAVEPOINT` brought the transaction back first).
+
 A `task.deadline` that passes, or a `task.cancel`, ends a task that
 waits for a statement at once, on the pool and inside a transaction
 alike. What becomes of the statement in the server differs:

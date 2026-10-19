@@ -163,4 +163,5 @@ cases!(
     cancel_request_reaches_no_other_statement,
     io_timeout_leaves_a_commit_alone,
     transaction_used_after_its_end,
+    aborted_transaction_is_not_committed,
 );
