@@ -59,11 +59,12 @@ for one, and is then `Timeout`.
 
 ## Cooperative I/O
 
-Every fallible op above cooperates with silt's task
-scheduler: when called from inside a `task.spawn`'d task, it submits
-the request to silt's I/O pool and yields the task slot until the
-response arrives. From silt's perspective the call looks synchronous.
-Called from the main task it runs synchronously on the calling thread.
+Every function above that talks to the server cooperates with silt's
+task scheduler: it hands its work to silt's I/O pool, and the task
+that called it waits for the answer while the program's other tasks go
+on, whether that task is one of `task.spawn`'s or `main`. From silt's
+perspective the call looks synchronous. `postgres.stream` returns its
+channel at once; a worker of its own feeds it.
 
 ## Transactions
 
