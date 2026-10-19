@@ -376,7 +376,7 @@ fail closed against surprise MITM paths:
 | --- | --- | --- | --- |
 | *(omitted)* | **yes** | **yes** | **yes** (equivalent to `verify-full`) |
 | `disable` | no | — | — |
-| `prefer` / `allow` | opportunistic | no | no |
+| `prefer` | opportunistic | no | no |
 | `require` | yes | no | no (libpq-compatible encryption-only) |
 | `verify-ca` | yes | yes | no |
 | `verify-full` | yes | yes | yes |
@@ -392,6 +392,12 @@ Every mode that requires encryption (the default, `require`,
 `verify-ca`, `verify-full`) refuses a server without TLS: the connect
 is `Tls(msg)`, and nothing more is sent to the server. Only `prefer`
 goes on without encryption.
+
+`sslmode` is read the same way in both forms of the connection string,
+a `postgres://` URL's query and `key=value` pairs. A host that is a
+Unix socket (a path, as `host=/var/run/postgresql`) never uses TLS,
+whatever `sslmode` says, as in libpq: a connection string whose hosts
+are all sockets connects without it.
 
 If silt was built **without** the `postgres-tls` feature, a URL that
 defaults to `verify-full` (or any `require` / `verify-*`) returns a

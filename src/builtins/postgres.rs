@@ -1054,12 +1054,12 @@ struct ConnectOpts {
 }
 
 fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
-    // Pre-parse `sslmode` out of the query string: `Config`
-    // only recognises `disable` / `prefer` / `require` and rejects
-    // `verify-ca` / `verify-full` with a parse error. We also want the
-    // optional `sslrootcert` override. Strip both from the URL before
-    // handing it to `Config::from_str`.
-    let (stripped_url, ext) = match extract_ssl_url_params(&url) {
+    // Read `sslmode` and `sslrootcert` out of the connection string, in
+    // either form: `Config` only recognises `disable` / `prefer` /
+    // `require` and rejects `verify-ca` / `verify-full` and
+    // `sslrootcert` with a parse error. Strip them before handing the
+    // string to `Config::from_str`.
+    let (stripped_url, ext) = match without_ssl_options(&url) {
         Ok(x) => x,
         Err(e) => {
             return err(pg_connect(format!("postgres: invalid URL: {e}")));
@@ -1097,9 +1097,12 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
     // `Config` parser defaults its internal SslMode to
     // `Prefer` when nothing is specified, which is exactly the
     // unverified-TLS behaviour this fix is intended to prevent.
-    let effective = match ext.mode {
-        Some(m) => m,
-        None => EffectiveSslMode::VerifyFull,
+    let effective = match (only_sockets(&cfg), ext.mode) {
+        // A Unix socket carries no TLS, whatever `sslmode` says (as in
+        // libpq): a string whose every host is one connects without.
+        (true, _) => EffectiveSslMode::Disable,
+        (false, Some(m)) => m,
+        (false, None) => EffectiveSslMode::VerifyFull,
     };
     // A mode that requires TLS refuses a server without it: the
     // crate's own default, `prefer`, would go on without TLS.
@@ -1130,12 +1133,37 @@ fn connect_limit(url: &str) -> Result<Duration, &'static str> {
     let set = options
         .iter()
         .rev()
-        .find(|(key, _)| key == "connect_timeout");
-    match set.map(|(_, value)| value.parse::<i64>()) {
+        .find(|option| option.key == "connect_timeout");
+    match set.map(|option| option.value.parse::<i64>()) {
         None => Ok(CONNECT_TIMEOUT),
         Some(Ok(seconds @ 1..)) => Ok(Duration::from_secs(seconds.unsigned_abs())),
         Some(_) => Err("connect_timeout must be > 0"),
     }
+}
+
+/// An option of a connection string: its key and its value, decoded,
+/// and where the option is in the string.
+struct ConnOption {
+    key: String,
+    value: String,
+    span: std::ops::Range<usize>,
+}
+
+/// The query of the connection string `s` if it is a `postgres://` or
+/// `postgresql://` URL, and where the query begins in `s` (an empty
+/// query at the end of a URL that has none); `None` for the `key=value`
+/// form. The credentials end at the first `@`; the query begins after
+/// the first `?` after them.
+fn url_query(s: &str) -> Option<(usize, &str)> {
+    let rest = s
+        .strip_prefix("postgresql://")
+        .or_else(|| s.strip_prefix("postgres://"))?;
+    let after_credentials = rest.find('@').map_or(0, |at| at + 1);
+    let base = s.len() - rest.len() + after_credentials;
+    Some(match s[base..].find('?') {
+        Some(at) => (base + at + 1, &s[base + at + 1..]),
+        None => (s.len(), ""),
+    })
 }
 
 /// The options of the connection string `s`, in order, as the
@@ -1143,58 +1171,79 @@ fn connect_limit(url: &str) -> Result<Duration, &'static str> {
 /// `postgres://` or `postgresql://` URL (percent-decoded), or the
 /// `key=value` pairs of the other form (a value may be quoted in `'`,
 /// and `\` escapes a character). What that parser refuses is not read
-/// here: it has refused the string before.
-fn connection_options(s: &str) -> Vec<(String, String)> {
-    let url = s
-        .strip_prefix("postgresql://")
-        .or_else(|| s.strip_prefix("postgres://"));
-    if let Some(rest) = url {
-        // The credentials end at the first `@`; the options begin at
-        // the first `?` after them.
-        let rest = rest.split_once('@').map_or(rest, |(_, rest)| rest);
-        let Some((_, query)) = rest.split_once('?') else {
-            return Vec::new();
-        };
+/// here: it refuses the string.
+fn connection_options(s: &str) -> Vec<ConnOption> {
+    if let Some((start, query)) = url_query(s) {
         let decode = |part: &str| {
             percent_encoding::percent_decode_str(part)
                 .decode_utf8_lossy()
                 .into_owned()
         };
-        return query
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .map(|(key, value)| (decode(key), decode(value)))
-            .collect();
+        let mut options = Vec::new();
+        let mut at = start;
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                options.push(ConnOption {
+                    key: decode(key),
+                    value: decode(value),
+                    span: at..at + pair.len(),
+                });
+            }
+            at += pair.len() + 1;
+        }
+        return options;
     }
     let mut options = Vec::new();
-    let mut chars = s.chars().peekable();
+    let mut chars = s.char_indices().peekable();
+    let at = |chars: &mut std::iter::Peekable<std::str::CharIndices>| {
+        chars.peek().map_or(s.len(), |&(i, _)| i)
+    };
     loop {
-        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let start = at(&mut chars);
         let mut key = String::new();
-        while let Some(c) = chars.next_if(|c| !c.is_whitespace() && *c != '=') {
+        while let Some((_, c)) = chars.next_if(|(_, c)| !c.is_whitespace() && *c != '=') {
             key.push(c);
         }
-        while chars.next_if(|c| c.is_whitespace()).is_some() {}
-        if key.is_empty() || chars.next() != Some('=') {
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        if key.is_empty() || chars.next().map(|(_, c)| c) != Some('=') {
             return options;
         }
-        while chars.next_if(|c| c.is_whitespace()).is_some() {}
-        let quoted = chars.next_if_eq(&'\'').is_some();
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let quoted = chars.next_if(|(_, c)| *c == '\'').is_some();
         let mut value = String::new();
-        while let Some(c) = chars.next_if(|c| match quoted {
+        while let Some((_, c)) = chars.next_if(|(_, c)| match quoted {
             true => *c != '\'',
             false => !c.is_whitespace(),
         }) {
             match c {
-                '\\' => value.extend(chars.next()),
+                '\\' => value.extend(chars.next().map(|(_, c)| c)),
                 c => value.push(c),
             }
         }
         if quoted {
             chars.next();
         }
-        options.push((key, value));
+        let span = start..at(&mut chars);
+        options.push(ConnOption { key, value, span });
     }
+}
+
+/// Whether every host of `cfg` is a Unix socket (a path), reached as
+/// one: no `hostaddr` stands in for it.
+#[cfg(unix)]
+fn only_sockets(cfg: &Config) -> bool {
+    use tokio_postgres::config::Host;
+    let hosts = cfg.get_hosts();
+    let sockets = hosts.iter().all(|host| matches!(host, Host::Unix(_)));
+    !hosts.is_empty() && sockets && cfg.get_hostaddrs().is_empty()
+}
+
+/// Whether every host of `cfg` is a Unix socket: never, where there are
+/// none.
+#[cfg(not(unix))]
+fn only_sockets(_cfg: &Config) -> bool {
+    false
 }
 
 /// Test-only: [`connect_limit`], for a test without a server.
@@ -1222,7 +1271,7 @@ pub enum EffectiveSslMode {
 /// resolves to `VerifyFull`, NOT the libpq-default `Prefer`.
 #[doc(hidden)]
 pub fn resolve_effective_sslmode_for_tests(url: &str) -> Result<EffectiveSslMode, String> {
-    let (_, ext) = extract_ssl_url_params(url)?;
+    let (_, ext) = without_ssl_options(url)?;
     Ok(match ext.mode {
         Some(m) => m,
         None => EffectiveSslMode::VerifyFull,
@@ -1235,33 +1284,17 @@ struct SslUrlParams {
     root_cert: Option<String>,
 }
 
-/// Extract (and strip) TLS-related query params from a postgres URL.
-/// Returns (stripped_url, parsed_params). Non-TLS URLs pass through
-/// unchanged with an empty params struct.
-///
-/// We only touch the query string — scheme, userinfo, host, path are
-/// left intact. If no query string exists, returns the input verbatim.
-fn extract_ssl_url_params(url: &str) -> Result<(String, SslUrlParams), String> {
-    let Some(q_idx) = url.find('?') else {
-        return Ok((url.to_string(), SslUrlParams::default()));
-    };
-    let (prefix, query_with_q) = url.split_at(q_idx);
-    let query = &query_with_q[1..]; // skip '?'
-
+/// The connection string `s` without its TLS options, which the crate
+/// does not read as silt does (it refuses `verify-ca`, `verify-full`
+/// and `sslrootcert`), and what they say: in either form of `s`, the
+/// last one of each standing. The rest of `s` is left as it is.
+fn without_ssl_options(s: &str) -> Result<(String, SslUrlParams), String> {
     let mut params = SslUrlParams::default();
-    let mut kept: Vec<&str> = Vec::new();
-
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (k, v) = match pair.split_once('=') {
-            Some((k, v)) => (k, v),
-            None => (pair, ""),
-        };
-        match k {
+    let mut cut = Vec::new();
+    for option in connection_options(s) {
+        match option.key.as_str() {
             "sslmode" => {
-                params.mode = Some(match v {
+                params.mode = Some(match option.value.as_str() {
                     "disable" => EffectiveSslMode::Disable,
                     "prefer" => EffectiveSslMode::Prefer,
                     "require" => EffectiveSslMode::Require,
@@ -1272,22 +1305,34 @@ fn extract_ssl_url_params(url: &str) -> Result<(String, SslUrlParams), String> {
                     }
                 });
             }
-            "sslrootcert" => {
-                params.root_cert = Some(v.to_string());
-            }
+            "sslrootcert" => params.root_cert = Some(option.value),
             // `sslcert` / `sslkey` (client certs) are v2 — silently
             // ignore for now so URLs aren't rejected outright.
             "sslcert" | "sslkey" => {}
-            _ => kept.push(pair),
+            _ => continue,
         }
+        cut.push(option.span);
     }
-
-    let stripped = if kept.is_empty() {
-        prefix.to_string()
-    } else {
-        format!("{prefix}?{}", kept.join("&"))
-    };
-    Ok((stripped, params))
+    if cut.is_empty() {
+        return Ok((s.to_string(), params));
+    }
+    let mut kept = String::with_capacity(s.len());
+    let mut from = 0;
+    for span in cut {
+        kept.push_str(&s[from..span.start]);
+        from = span.end;
+    }
+    kept.push_str(&s[from..]);
+    // A URL's query keeps its other options, joined as before.
+    if let Some((start, query)) = url_query(&kept) {
+        let pairs: Vec<&str> = query.split('&').filter(|pair| !pair.is_empty()).collect();
+        let prefix = kept[..start].trim_end_matches('?');
+        kept = match pairs.is_empty() {
+            true => prefix.to_string(),
+            false => format!("{prefix}?{}", pairs.join("&")),
+        };
+    }
+    Ok((kept, params))
 }
 
 /// Open a pool for `cfg`, encrypted as `mode` says. Its first
@@ -2589,7 +2634,7 @@ mod tests {
     #[test]
     fn strip_ssl_params_preserves_rest() {
         let url = "postgres://u:p@h/db?connect_timeout=5&sslmode=verify-full&sslrootcert=/tmp/ca.pem&application_name=x";
-        let (stripped, params) = extract_ssl_url_params(url).expect("parse ok");
+        let (stripped, params) = without_ssl_options(url).expect("parse ok");
         assert_eq!(params.mode, Some(EffectiveSslMode::VerifyFull));
         assert_eq!(params.root_cert.as_deref(), Some("/tmp/ca.pem"));
         // Stripped URL keeps connect_timeout and application_name, in
@@ -2604,7 +2649,7 @@ mod tests {
     #[test]
     fn strip_ssl_params_no_query() {
         let url = "postgres://u:p@h/db";
-        let (stripped, params) = extract_ssl_url_params(url).expect("parse ok");
+        let (stripped, params) = without_ssl_options(url).expect("parse ok");
         assert_eq!(stripped, url);
         assert_eq!(params.mode, None);
         assert_eq!(params.root_cert, None);
@@ -2621,7 +2666,7 @@ mod tests {
             ("verify-full", EffectiveSslMode::VerifyFull),
         ] {
             let url = format!("postgres://u:p@h/db?sslmode={s}");
-            let (_, p) = extract_ssl_url_params(&url).expect("parse ok");
+            let (_, p) = without_ssl_options(&url).expect("parse ok");
             assert_eq!(p.mode, Some(expected), "sslmode={s}");
         }
     }
@@ -2800,68 +2845,220 @@ mod tests {
         assert!(taken >= 2, "the pool tried {taken} times");
     }
 
-    /// A server without TLS: it answers the request for TLS with `N`.
-    /// What the client sends after that answer: `None` if it closed
-    /// the connection.
-    #[cfg(feature = "postgres-tls")]
-    fn without_tls(url: impl FnOnce(u16) -> String) -> (Value, Option<Vec<u8>>) {
-        use std::io::{Read, Write};
+    /// What a client did with a server without TLS, which answers a
+    /// request for TLS with `N`.
+    #[derive(Debug, PartialEq)]
+    enum Asked {
+        /// It asked for no TLS: its first message is its startup.
+        NoTls,
+        /// It asked, and closed the connection after the answer.
+        ThenClosed,
+        /// It asked, and went on with its startup message after the
+        /// answer.
+        ThenStartup,
+    }
+
+    /// The fake server of `Asked`, on the connection `stream`.
+    fn no_tls_server(mut stream: impl std::io::Read + std::io::Write) -> Asked {
+        // A startup message: its length, then protocol version 3.0.
+        let startup = |message: &[u8]| message.get(4..8) == Some(&[0, 3, 0, 0][..]);
+        let mut first = [0; 8];
+        stream.read_exact(&mut first).expect("the first message");
+        if first != [0, 0, 0, 8, 4, 210, 22, 47] {
+            assert!(
+                startup(&first),
+                "neither a request for TLS nor a startup: {first:?}"
+            );
+            return Asked::NoTls;
+        }
+        stream.write_all(b"N").expect("answer");
+        let mut after = [0; 512];
+        match stream.read(&mut after).expect("read") {
+            0 => Asked::ThenClosed,
+            n => {
+                assert!(startup(&after[..n]), "{:?}", &after[..n]);
+                Asked::ThenStartup
+            }
+        }
+    }
+
+    /// Connect with the connection string `url` of a local port to a
+    /// server without TLS: the connect's value, and what the client did.
+    fn without_tls(url: impl FnOnce(u16) -> String) -> (Value, Asked) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
+            let (stream, _) = listener.accept().expect("accept");
             // (A safety net: the client answers at once.)
             let net = Some(Duration::from_secs(30));
             stream.set_read_timeout(net).expect("timeout");
-            let mut request = [0; 8];
-            stream
-                .read_exact(&mut request)
-                .expect("the request for TLS");
-            assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47], "no request for TLS");
-            stream.write_all(b"N").expect("answer");
-            let mut after = [0; 512];
-            match stream.read(&mut after).expect("read") {
-                0 => None,
-                n => Some(after[..n].to_vec()),
-            }
+            no_tls_server(stream)
         });
         let result = do_connect(url(port));
         (result, server.join().expect("the server"))
     }
 
+    /// The URL and the `key=value` form of a connection string to a
+    /// local `port`, with the option `sslmode` if one is given.
+    fn both_forms(port: u16, sslmode: Option<&str>) -> [String; 2] {
+        let url = format!("postgres://u:p@127.0.0.1:{port}/db");
+        let kv = format!("host=127.0.0.1 port={port} user=u password=p dbname=db");
+        match sslmode {
+            Some(mode) => [
+                format!("{url}?sslmode={mode}"),
+                format!("{kv} sslmode={mode}"),
+            ],
+            None => [url, kv],
+        }
+    }
+
     /// A server without TLS is refused when sslmode requires TLS (the
     /// default, verify-full, among them), before the client sends
-    /// anything more.
+    /// anything more, in either form of the connection string.
     #[test]
     #[cfg(feature = "postgres-tls")]
     fn a_server_without_tls_is_refused_when_tls_is_required() {
         for mode in [
-            "",
-            "?sslmode=require",
-            "?sslmode=verify-ca",
-            "?sslmode=verify-full",
+            None,
+            Some("require"),
+            Some("verify-ca"),
+            Some("verify-full"),
         ] {
-            let (result, after) =
-                without_tls(|port| format!("postgres://u:p@127.0.0.1:{port}/db{mode}"));
-            assert_eq!(
-                result.to_string(),
-                "Err(postgres TLS error: error performing TLS handshake: server does not support TLS)",
-                "{mode:?}"
-            );
-            assert_eq!(after, None, "{mode:?}: the client went on without TLS");
+            for form in [0, 1] {
+                let (result, asked) = without_tls(|port| both_forms(port, mode)[form].clone());
+                assert_eq!(
+                    result.to_string(),
+                    "Err(postgres TLS error: error performing TLS handshake: server does not support TLS)",
+                    "{mode:?}, form {form}"
+                );
+                assert_eq!(asked, Asked::ThenClosed, "{mode:?}, form {form}");
+            }
         }
     }
 
     /// With sslmode=prefer the client goes on without TLS, as libpq's
-    /// `prefer` does: the next thing it sends is its startup message.
+    /// `prefer` does, in either form of the connection string.
     #[test]
     #[cfg(feature = "postgres-tls")]
     fn prefer_goes_on_without_tls() {
-        let (_, after) =
-            without_tls(|port| format!("postgres://u:p@127.0.0.1:{port}/db?sslmode=prefer"));
-        let after = after.expect("the client closed the connection");
-        // A startup message: its length, then protocol version 3.0.
-        assert_eq!(after.get(4..8), Some(&[0, 3, 0, 0][..]), "{after:?}");
+        for form in [0, 1] {
+            let (_, asked) = without_tls(|port| both_forms(port, Some("prefer"))[form].clone());
+            assert_eq!(asked, Asked::ThenStartup, "form {form}");
+        }
+    }
+
+    /// With sslmode=disable the client asks for no TLS, in either form
+    /// of the connection string.
+    #[test]
+    fn disable_asks_for_no_tls() {
+        for form in [0, 1] {
+            let (_, asked) = without_tls(|port| both_forms(port, Some("disable"))[form].clone());
+            assert_eq!(asked, Asked::NoTls, "form {form}");
+        }
+    }
+
+    /// A Unix socket carries no TLS, whatever sslmode says: the client
+    /// asks for none, in either form of the connection string.
+    #[test]
+    #[cfg(unix)]
+    fn a_unix_socket_asks_for_no_tls() {
+        let dir = std::env::temp_dir().join(format!("silt-pg-socket-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the socket's directory");
+        let socket = dir.join(".s.PGSQL.5432");
+        let host = dir.to_str().expect("a UTF-8 path");
+        let encoded =
+            percent_encoding::utf8_percent_encode(host, percent_encoding::NON_ALPHANUMERIC);
+        for mode in [
+            None,
+            Some("require"),
+            Some("verify-full"),
+            Some("prefer"),
+            Some("disable"),
+        ] {
+            let option = mode.map(|mode| format!("sslmode={mode}"));
+            let forms = [
+                format!(
+                    "postgres://u:p@{encoded}/db?{}",
+                    option.clone().unwrap_or_default()
+                ),
+                format!(
+                    "host={host} user=u password=p dbname=db {}",
+                    option.unwrap_or_default()
+                ),
+            ];
+            for (form, url) in forms.into_iter().enumerate() {
+                let _ = std::fs::remove_file(&socket);
+                let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind");
+                let server = std::thread::spawn(move || {
+                    let (stream, _) = listener.accept().expect("accept");
+                    let net = Some(Duration::from_secs(30));
+                    stream.set_read_timeout(net).expect("timeout");
+                    no_tls_server(stream)
+                });
+                let _ = do_connect(url);
+                let asked = server.join().expect("the server");
+                assert_eq!(asked, Asked::NoTls, "{mode:?}, form {form}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The TLS options are read from either form of the connection
+    /// string, decoded, the last one standing, and cut out of it; the
+    /// rest of it stays as it was.
+    #[test]
+    fn tls_options_are_read_from_either_form() {
+        let read = |s: &str| {
+            let (kept, params) = without_ssl_options(s).expect("parse ok");
+            (kept, params.mode, params.root_cert)
+        };
+        assert_eq!(
+            read("host=h sslmode=verify-ca user=u sslrootcert='/a b.pem' dbname=d"),
+            (
+                "host=h  user=u  dbname=d".to_string(),
+                Some(EffectiveSslMode::VerifyCa),
+                Some("/a b.pem".to_string())
+            )
+        );
+        assert_eq!(
+            read("host=h sslmode=prefer sslmode = disable"),
+            (
+                "host=h  ".to_string(),
+                Some(EffectiveSslMode::Disable),
+                None
+            )
+        );
+        assert_eq!(
+            read(
+                "postgres://u:p@h/db?sslmode=verify%2Dfull&application_name=x&sslrootcert=%2Fca.pem"
+            ),
+            (
+                "postgres://u:p@h/db?application_name=x".to_string(),
+                Some(EffectiveSslMode::VerifyFull),
+                Some("/ca.pem".to_string())
+            )
+        );
+        assert_eq!(
+            read("postgres://u:p?w@h/db?sslmode=disable"),
+            (
+                "postgres://u:p?w@h/db".to_string(),
+                Some(EffectiveSslMode::Disable),
+                None
+            )
+        );
+        assert_eq!(
+            read("host=h user=u"),
+            ("host=h user=u".to_string(), None, None)
+        );
+        for s in ["host=h sslmode=allow", "postgres://h/db?sslmode=allow"] {
+            assert_eq!(
+                without_ssl_options(s).err(),
+                Some("unknown sslmode: allow".to_string())
+            );
+        }
+        // What is left parses.
+        let (kept, _) = without_ssl_options("host=h sslmode=verify-full dbname=d").expect("ok");
+        assert!(kept.parse::<Config>().is_ok(), "{kept}");
     }
 
     /// The ids of cursors whose transaction ended are kept as runs; a
