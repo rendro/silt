@@ -60,9 +60,9 @@ fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 // ── The pool and its connections ────────────────────────────────────
 //
 // The pool is r2d2's, with a manager of the module's own: it hands
-// out the connection that `connect` made first, and its connections
-// can be marked broken, so that the pool drops them instead of taking
-// them back.
+// out the connection that `connect` made first, its connections carry
+// what a cancel request needs, and they can be marked broken, so that
+// the pool drops them instead of taking them back.
 
 /// How long connecting may take when the URL sets no
 /// `connect_timeout`: the first connection, which `connect` makes
@@ -87,9 +87,31 @@ impl Tls {
     }
 }
 
+/// What asks the server to cancel the statement that runs on one
+/// connection: the request goes over a connection of its own, which
+/// is why it can be sent while the statement holds the connection.
+#[derive(Clone)]
+struct Canceller {
+    token: postgres::CancelToken,
+    tls: Tls,
+}
+
+impl Canceller {
+    /// Ask once. The server does not say whether a statement was
+    /// cancelled, and a request that comes when none runs does nothing.
+    fn cancel(&self) {
+        let _ = match &self.tls {
+            Tls::Off => self.token.cancel_query(NoTls),
+            #[cfg(feature = "postgres-tls")]
+            Tls::On(connector) => self.token.cancel_query(connector.clone()),
+        };
+    }
+}
+
 /// A connection of a pool.
 struct Conn {
     client: postgres::Client,
+    canceller: Canceller,
     /// It must not go back to the pool: a statement of it was left
     /// with rows unread, or its transaction did not roll back.
     broken: bool,
@@ -120,6 +142,10 @@ impl r2d2::ManageConnection for Manager {
             None => self.tls.connect(&self.config)?,
         };
         Ok(Conn {
+            canceller: Canceller {
+                token: client.cancel_token(),
+                tls: self.tls.clone(),
+            },
             client,
             broken: false,
         })
@@ -1518,8 +1544,17 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value 
 // a bounded silt `Channel`. Each row is wrapped as `Ok(row_map)`; on
 // a mid-iteration DB error we send a final `Err(pg_error)` before
 // closing the channel. The channel's `is_closed` flag is checked
-// between rows so silt-side `channel.close` cancels the stream (the
-// RowIter is then dropped, which sends CancelRequest to the server).
+// between rows, and a send that finds the channel closed fails, so a
+// silt-side `channel.close` stops the stream; so does the end of the
+// program, which drops a worker that waits for room.
+//
+// A stream stopped early leaves its statement with rows unread. On a
+// pool the worker then asks the server to cancel the statement and
+// drops the connection instead of giving it back with the rest still
+// to come. In a transaction the connection is the transaction's: the
+// rest is read and dropped before its next statement, as the client
+// does with a result nobody reads (a cancel would abort the
+// transaction).
 
 /// Bounded capacity for streaming channels. Enough to hide typical
 /// per-row latency; small enough that a 1M-row query costs < 1 MB of
@@ -1548,37 +1583,44 @@ fn do_stream_worker(
     // was closed by the consumer. Returns `true` to keep going.
     let send_or_stop = |v: Value| -> bool { scheduler.send_wait(&ch, v) };
 
+    // `false` when the stream stopped with rows of the statement unread.
     let pump = |client: &mut postgres::Client, sql: &str, bind: &[&(dyn ToSql + Sync)]| match client
         .query_raw(sql, bind.iter().copied())
     {
         Ok(mut iter) => loop {
             if ch.is_closed() {
-                break;
+                break false;
             }
             match iter.next() {
                 Ok(Some(row)) => {
                     let wrapped = Value::variant(bv::OK, vec![row_to_map(&row)]);
                     if !send_or_stop(wrapped) {
-                        break;
+                        break false;
                     }
                 }
-                Ok(None) => break,
+                Ok(None) => break true,
                 Err(e) => {
                     let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
                     let _ = send_or_stop(wrapped);
-                    break;
+                    break true;
                 }
             }
         },
         Err(e) => {
             let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
             let _ = send_or_stop(wrapped);
+            true
         }
     };
 
     match target {
         ExecutorRef::Pool(pool) => match pool.get() {
-            Ok(mut conn) => pump(conn.client_mut(), &sql, &bind),
+            Ok(mut conn) => {
+                if !pump(conn.client_mut(), &sql, &bind) {
+                    conn.canceller.cancel();
+                    conn.broken = true;
+                }
+            }
             Err(e) => {
                 let wrapped = Value::variant(bv::ERR, vec![pool_error_value(&e)]);
                 let _ = send_or_stop(wrapped);
@@ -1586,7 +1628,7 @@ fn do_stream_worker(
         },
         ExecutorRef::Tx(cell) => {
             let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
-            pump(conn.client_mut(), &sql, &bind);
+            let _ = pump(conn.client_mut(), &sql, &bind);
         }
     }
 

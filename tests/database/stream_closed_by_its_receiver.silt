@@ -1,14 +1,23 @@
--- The receiver of a `postgres.stream` reads one row of 2,000 and closes
--- the channel. The stream's sender, which by then waits for room in the
--- channel (it holds 256 rows), ends: the pool answers afterwards, and
--- the program ends when `main` returns. That it ends is what the case
--- holds: with a sender that went on waiting the program would print the
--- same four lines and never exit, and the suite would report that it
--- did not exit within its 60 seconds.
+-- The receiver of a `postgres.stream` reads one row of 100,000 and
+-- closes the channel. The stream's sender, which by then waits for
+-- room in the channel (it holds 256 rows), ends, and so does its
+-- statement in the server: the sender asks the server to cancel it and
+-- drops its connection rather than give it back to the pool with the
+-- rest of the rows unread. The pool answers afterwards, and the program
+-- ends when `main` returns.
+--
+-- The server is watched through a second pool, whose connections are
+-- none of the first's: while the stream is open its statement runs
+-- there (the server waits to send rows nobody reads), and after the
+-- close no session runs it. A statement left open would be seen
+-- running for ever, and the suite would report that the case did not
+-- exit within its 60 seconds; so would a sender that went on waiting.
 import channel
 import env
+import list
 import map
 import postgres
+import time
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -37,29 +46,57 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
   }
 }
 
+-- Count the rows of `sql` again and again, until there are `n`.
+fn until(pool: postgres.PgPool, sql: String, n: Int) -> Int {
+  loop seen = count(pool, sql) {
+    match seen == n {
+      true -> seen
+      false -> {
+        time.sleep(time.ms(5))
+        loop(count(pool, sql))
+      }
+    }
+  }
+}
+
+-- The sessions that run the stream's statement, a row each. (The
+-- statement's mark is written in two parts here, so that this query
+-- does not carry it.)
+fn running() -> String {
+  "SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid() AND query LIKE '%silt_database_stream_' || 'closed_mark%'"
+}
+
 fn main() {
-  match postgres.connect(url()) {
-    Ok(pool) -> {
-      match postgres.stream(pool, "SELECT g FROM generate_series(1, 2000) AS g", []) {
+  match (postgres.connect(url()), postgres.connect(url())) {
+    (Ok(pool), Ok(watch)) -> {
+      match postgres.stream(
+        pool,
+        "SELECT g AS silt_database_stream_closed_mark, repeat('x', 200) AS pad FROM generate_series(1, 100000) AS g",
+        [],
+      ) {
         Ok(rows) -> {
           println(
             match channel.receive(rows) {
-              Some(Ok(row)) -> "the first row has the columns {map.keys(row)}"
+              Some(Ok(row)) -> "the first row has the columns {list.sort(map.keys(row))}"
               Some(Err(e)) -> e.message()
               _ -> "no row"
             },
           )
           let beside = count(pool, "SELECT 1")
           println("the pool answers beside the stream: {beside} row")
+          println("sessions that run the stream's statement: {until(watch, running(), 1)}")
           channel.close(rows)
           println("closed by the receiver")
+          println("sessions that run it after the close: {until(watch, running(), 0)}")
         }
         Err(e) -> println("postgres.stream: {e.message()}")
       }
       let after = count(pool, "SELECT 1")
       println("the pool answers after it: {after} row")
       postgres.close(pool)
+      postgres.close(watch)
     }
-    Err(e) -> println("connect: {e.message()}")
+    (Err(e), _) -> println("connect: {e.message()}")
+    (_, Err(e)) -> println("connect: {e.message()}")
   }
 }

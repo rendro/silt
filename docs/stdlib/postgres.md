@@ -82,6 +82,15 @@ the cursor into the channel and closes it when the query completes
 (or on error). Slow consumers backpressure the server side via the
 channel capacity.
 
+A receiver that has read enough closes the channel (`channel.close`),
+and the worker stops. On a pool, a stream that stops before its last
+row (closed, or dropped as the program ends) has its statement
+cancelled in the server, and its connection is closed rather than given
+back to the pool with rows unread. On a `PgTx` the connection is the
+transaction's: the rest of the rows is read and dropped before the
+transaction's next statement or its `COMMIT` (a cancel would abort the
+transaction).
+
 The worker counts as a task of the program. While it fetches rows the
 program does not end. When the program ends while the worker waits for
 room in the channel (nobody reads it, or its reader was cancelled), the
