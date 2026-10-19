@@ -83,7 +83,7 @@ A value that JSON has no form for (a function, a set, a channel, or
 `Bytes` inside a record) is an error of the program, as it is for
 `json.stringify` (`postgres.query: unsupported value kind Fn`), and
 nothing is sent. A list of `Bytes` goes into a `bytea[]`; where it is to
-be JSON it is the same error, found before the statement is sent. In a
+be JSON it is the same error, found before the statement is run. In a
 `postgres.stream`, which returns before the statement is prepared, that
 error is the channel's one element, `Err(Other("postgres.stream:
 unsupported value kind Bytes"))`.
