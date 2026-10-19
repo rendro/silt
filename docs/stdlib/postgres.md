@@ -287,8 +287,10 @@ commit/rollback, which cleans up).
 `postgres.listen(pool, "channel_name")` returns a `Channel` that
 delivers a `postgres.Notification` record for every NOTIFY on that
 PostgreSQL channel: its `channel`, its `payload`, and `pid`, the process
-id of the session that sent it. The underlying worker owns a dedicated connection, so LISTEN
-does not consume a slot from the regular query pool.
+id of the session that sent it. The listener holds one of the pool's
+connections until its channel is closed: while it is open, the pool has
+one connection fewer for statements (with `max_pool_size` 1, a
+statement waits the pool's 30 seconds and is `Timeout`).
 `postgres.notify(target, channel, payload)` sends a single NOTIFY.
 
 ## Example
