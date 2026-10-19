@@ -61,24 +61,49 @@ const DECODING_BUILTINS: &[&str] = &[
     "toml.parse_map",
 ];
 
-/// The field types the decoders support, as shown in compile errors.
-const DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
-     Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
-     non-generic record types, and aliases of these";
+/// A family of decoding builtins: they decode the same field types.
+#[derive(Clone, Copy, PartialEq)]
+enum Decoder {
+    Json,
+    Toml,
+}
 
-/// The field types the json decoders support: those of every decoder,
-/// and `json.Value`.
-const JSON_DECODABLE_TYPES_HELP: &str = "decodable field types are Int, Float, String, \
-     Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, \
-     non-generic record types, and aliases of these";
+impl Decoder {
+    /// The decoder of the decoding builtin `builtin_name`.
+    fn of(builtin_name: &str) -> Decoder {
+        match builtin_name.split_once('.').map(|(module, _)| module) {
+            Some("json") => Decoder::Json,
+            _ => Decoder::Toml,
+        }
+    }
 
-/// Whether a field of the type `field_type` holds a `json.Value`.
-fn holds_json_value(field_type: &FieldType) -> bool {
-    match field_type {
-        FieldType::JsonValue => true,
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => holds_json_value(t),
-        FieldType::Tuple(ts) => ts.iter().any(holds_json_value),
-        _ => false,
+    /// The field types it decodes, as shown in compile errors.
+    fn help(self) -> &'static str {
+        match self {
+            Decoder::Json => {
+                "decodable field types are Int, Float, String, \
+                 Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, \
+                 non-generic record types, and aliases of these"
+            }
+            Decoder::Toml => {
+                "decodable field types are Int, Float, String, \
+                 Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
+                 non-generic record types, and aliases of these"
+            }
+        }
+    }
+
+    /// The part of `field_type` that this decoder, unlike another one,
+    /// has no decoder for: `json.Value` for toml, `Bytes` for json and
+    /// toml.
+    fn lacks(self, field_type: &FieldType) -> Option<&'static str> {
+        match field_type {
+            FieldType::JsonValue if self == Decoder::Toml => Some("json.Value"),
+            FieldType::Bytes => Some("Bytes"),
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => self.lacks(t),
+            FieldType::Tuple(ts) => ts.iter().find_map(|t| self.lacks(t)),
+            _ => None,
+        }
     }
 }
 
@@ -2614,7 +2639,8 @@ impl<'a> Compiler<'a> {
     }
 
     /// A named type with no arguments as the decoders see it: Date, Time,
-    /// DateTime, or a non-generic record type of the program.
+    /// DateTime, json.Value, Bytes, or a non-generic record type of the
+    /// program.
     fn describe_named_type(
         &self,
         t: TypeRef,
@@ -2627,6 +2653,7 @@ impl<'a> Compiler<'a> {
             id if id == bt::TIME => Ok(FieldType::Time),
             id if id == bt::DATE_TIME => Ok(FieldType::DateTime),
             id if id == bt::JSON_VALUE => Ok(FieldType::JsonValue),
+            id if id == TypeRef::builtin("Bytes").id => Ok(FieldType::Bytes),
             // A non-generic record type of the program.
             id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
                 && self.units.defs.variants(id.0).is_empty()
@@ -2642,13 +2669,12 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The first field that cannot be decoded, in the record type
+    /// The first field that `decoder` cannot decode, in the record type
     /// `record` or in a record type nested in it. `None` if there is none.
-    /// A `json.Value` is decoded only by the json decoders (`json`).
     fn undecodable_field(
         &self,
         record: crate::defs::TypeId,
-        json: bool,
+        decoder: Decoder,
         seen: &mut HashSet<crate::defs::TypeId>,
     ) -> Option<UndecodableField> {
         if !seen.insert(record) {
@@ -2657,29 +2683,21 @@ impl<'a> Compiler<'a> {
         let def = *self.units.defs.get(record.0);
         for (field, ty) in self.record_fields(record) {
             let mut nested = Vec::new();
-            match self.describe_field_type(&ty, &mut nested) {
-                Err(part) => {
-                    return Some(UndecodableField {
-                        record: resolve(def.name),
-                        field: resolve(field),
-                        field_type: shown(&ty),
-                        part,
-                    });
-                }
-                Ok(field_type) if !json && holds_json_value(&field_type) => {
-                    return Some(UndecodableField {
-                        record: resolve(def.name),
-                        field: resolve(field),
-                        field_type: shown(&ty),
-                        part: "json.Value".to_string(),
-                    });
-                }
-                Ok(_) => {
-                    for nested_record in nested {
-                        if let Some(found) = self.undecodable_field(nested_record, json, seen) {
-                            return Some(found);
-                        }
-                    }
+            let lacking = match self.describe_field_type(&ty, &mut nested) {
+                Err(part) => Some(part),
+                Ok(field_type) => decoder.lacks(&field_type).map(str::to_string),
+            };
+            if let Some(part) = lacking {
+                return Some(UndecodableField {
+                    record: resolve(def.name),
+                    field: resolve(field),
+                    field_type: shown(&ty),
+                    part,
+                });
+            }
+            for nested_record in nested {
+                if let Some(found) = self.undecodable_field(nested_record, decoder, seen) {
+                    return Some(found);
                 }
             }
         }
@@ -2708,12 +2726,8 @@ impl<'a> Compiler<'a> {
         let Some(type_arg) = type_arg else {
             return Ok(());
         };
-        let json = builtin_name.starts_with("json.");
-        let decodable_types_help = if json {
-            JSON_DECODABLE_TYPES_HELP
-        } else {
-            DECODABLE_TYPES_HELP
-        };
+        let decoder = Decoder::of(builtin_name);
+        let decodable_types_help = decoder.help();
         let type_name = match &type_arg.kind {
             ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => resolve(*name),
             _ => return Ok(()),
@@ -2748,7 +2762,7 @@ impl<'a> Compiler<'a> {
                 )
                 .with_help(decodable_types_help));
             }
-            let Some(found) = self.undecodable_field(ty.id, json, &mut HashSet::new()) else {
+            let Some(found) = self.undecodable_field(ty.id, decoder, &mut HashSet::new()) else {
                 return Ok(());
             };
             let owner = if found.record == resolve(def.name) {
@@ -2772,7 +2786,7 @@ impl<'a> Compiler<'a> {
             .with_help(decodable_types_help));
         }
         if ty.id == crate::typeinfo::ty::JSON_VALUE {
-            if json {
+            if decoder == Decoder::Json {
                 return Ok(());
             }
             return Err(Diagnostic::error(

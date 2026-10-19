@@ -599,18 +599,6 @@ impl Vm {
         (self.view).renew(&mut self.view_count, &self.runtime.newest)
     }
 
-    /// The description of the program's type `id`, or of the builtin
-    /// type. (The table is the program's, not this VM's: the VM of a
-    /// task finds a type of a REPL entry later than its own. Its lock
-    /// is held for the lookup, not while anything is built of what is
-    /// found.)
-    pub(crate) fn type_info(
-        &self,
-        id: crate::defs::TypeId,
-    ) -> Option<Arc<crate::typeinfo::TypeInfo>> {
-        self.runtime.types.lock().get(id).cloned()
-    }
-
     /// The value of the global slot `slot`, if it is set.
     pub(crate) fn global(&self, slot: u16) -> Option<&Value> {
         self.view.global(slot)

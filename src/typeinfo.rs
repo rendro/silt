@@ -126,7 +126,7 @@ impl TypeInfo {
 }
 
 /// The declared type of a record field, as far as the decoders of
-/// `json.parse` and `toml.parse` are concerned.
+/// `json.parse`, `toml.parse` and `postgres.query` are concerned.
 ///
 /// Both decoders must produce, for every variant, a value of exactly the
 /// described type or an error. `Unsupported` is a type no decoder exists
@@ -147,6 +147,10 @@ pub enum FieldType {
     Date,
     Time,
     DateTime,
+    /// `Bytes`. Only the postgres decoder has it (from a `bytea`
+    /// column); to the json and toml decoders it is a type without a
+    /// decoder.
+    Bytes,
     /// `json.Value`: the document as it is. Only the json decoders
     /// have it; to the toml decoders it is a type without a decoder.
     JsonValue,
