@@ -1,0 +1,110 @@
+-- A transaction's function is ended by its `task.deadline` while the
+-- server works on a statement of the transaction. `task.deadline`
+-- answers `Err(Timeout)` at once. The statement is cancelled in the
+-- server and the transaction rolled back: neither of its rows reaches
+-- the table.
+--
+-- The statement waits for an advisory lock that `main` holds in a
+-- transaction of its own, and `main` reads in `pg_locks` that it waits
+-- before the deadline passes (a task waits for the deadline's answer).
+-- Then `main` waits until no statement waits for the lock, still
+-- holding it: only a statement that the server cancelled stops waiting
+-- then. A deadline whose answer waited for the statement (it waits for
+-- `main`) would never come, and a statement left to wait would never
+-- stop: either way the case would not end.
+import channel
+import env
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        Some(Ok(_)) -> loop(n + 1)
+        Some(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+-- Count the rows of `sql` again and again, until there are `n`.
+fn until(pool: postgres.PgPool, sql: String, n: Int) -> Int {
+  loop seen = count(pool, sql) {
+    match seen == n {
+      true -> seen
+      false -> {
+        time.sleep(time.ms(5))
+        loop(count(pool, sql))
+      }
+    }
+  }
+}
+
+-- The sessions that wait for the case's lock, a row each.
+fn waiting() -> String {
+  "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = 7304 AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_deadline_tx", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_deadline_tx (said text)", [])
+      let done = postgres.transact(pool) { tx ->
+        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7304)", [])?
+        println("main holds the lock")
+        let t = task.spawn { ->
+          let late = task.deadline(time.ms(1000)) { ->
+            postgres.transact(pool) { its ->
+              let _ = postgres.execute(
+                its,
+                "INSERT INTO silt_database_deadline_tx VALUES ('before the statement')",
+                [],
+              )?
+              let _ = postgres.execute(
+                its,
+                "INSERT INTO silt_database_deadline_tx SELECT 'the statement got the lock' FROM pg_advisory_xact_lock(7304)",
+                [],
+              )?
+              Ok("the statement's answer")
+            }
+          }
+          match late {
+            Ok(Ok(said)) -> "the function ended with {said}"
+            Ok(Err(e)) -> "the function ended with {e.message()}"
+            Err(e) -> "task.deadline: {e.message()}"
+          }
+        }
+        println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
+        println(task.join(t))
+        println("statements that wait for it after the deadline: {until(pool, waiting(), 0)}")
+        Ok(())
+      }
+      println("main's transaction: {done}")
+      println(
+        "rows of the function's transaction: {count(pool, "SELECT 1 FROM silt_database_deadline_tx")}",
+      )
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_deadline_tx", [])
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

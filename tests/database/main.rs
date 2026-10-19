@@ -146,4 +146,6 @@ cases!(
     stream_left_unread,
     stream_of_a_cancelled_reader,
     stream_left_unread_in_a_transaction,
+    cancel_of_a_statement_in_a_transaction,
+    deadline_over_a_statement_in_a_transaction,
 );

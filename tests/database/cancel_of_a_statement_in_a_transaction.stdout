@@ -1,0 +1,6 @@
+main holds the lock
+statements that wait for it in the server: 1
+task.cancel returned
+statements that wait for it after the cancel: 0
+main's transaction: Ok(())
+rows of the task's transaction: 0

@@ -75,6 +75,18 @@ enclosing pool would pick a different connection and miss the
 transaction entirely. Nested `postgres.transact` calls are rejected;
 use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
 
+A `task.deadline` that passes, or a `task.cancel`, ends a task that
+waits for a statement at once, on the pool and inside a transaction
+alike. What becomes of the statement in the server differs:
+
+- On the pool, outside a transaction, the statement is left to finish;
+  its connection then goes back to the pool.
+- Inside `postgres.transact`, the server is asked to cancel the
+  statement, and the transaction is rolled back. The connection goes
+  back to the pool after the rollback, or is closed if the rollback
+  fails. The same happens when the callback fails with an error of the
+  program.
+
 ## Streaming and cursors
 
 `postgres.stream` returns a bounded `Channel` whose elements are

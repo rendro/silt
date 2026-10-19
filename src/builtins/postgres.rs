@@ -206,7 +206,7 @@ fn remove_pool(id: u64) -> bool {
 /// Tx registry: each entry owns a single pooled connection for the
 /// lifetime of one `transact` invocation. The outer `Mutex<HashMap>` is
 /// locked briefly to fetch an `Arc` to the inner cell; the inner
-/// `Mutex<PinnedConn>` is acquired per-query on the io_pool thread.
+/// `Mutex<TxConn>` is acquired per-query on the io_pool thread.
 ///
 /// Keeping the inner lock scoped to a single query (rather than held
 /// across VM re-entries) avoids deadlocks if the scheduler reschedules
@@ -215,7 +215,62 @@ fn remove_pool(id: u64) -> bool {
 /// because the registry holds it between calls.
 struct TxRegistry {
     next_id: u64,
-    txs: BTreeMap<u64, Arc<Mutex<PinnedConn>>>,
+    txs: BTreeMap<u64, TxEntry>,
+}
+
+/// A transaction: its connection, and what cancels the statement that
+/// runs on it, which needs no lock (the statement holds it).
+struct TxEntry {
+    cell: Arc<Mutex<TxConn>>,
+    canceller: Canceller,
+}
+
+/// The connection of a transaction, as its statements share it.
+struct TxConn {
+    conn: PinnedConn,
+    /// The transaction has ended, or is ending: no statement runs on
+    /// the connection any more.
+    ended: bool,
+}
+
+impl TxConn {
+    fn client_mut(&mut self) -> &mut postgres::Client {
+        self.conn.client_mut()
+    }
+
+    /// End the transaction with `sql`, `COMMIT` or `ROLLBACK`. A
+    /// connection whose transaction did not end so is not given back
+    /// to the pool.
+    fn end(&mut self, sql: &str) -> Result<(), postgres::Error> {
+        self.ended = true;
+        let ended = self.conn.client_mut().batch_execute(sql);
+        if ended.is_err() {
+            self.conn.broken = true;
+        }
+        ended
+    }
+}
+
+impl Drop for TxConn {
+    /// A connection dropped in the middle of its transaction never goes
+    /// back to the pool.
+    fn drop(&mut self) {
+        if !self.ended {
+            self.conn.broken = true;
+        }
+    }
+}
+
+/// The connection of a transaction, for a statement: the
+/// `PostgresError` of one whose transaction has ended. A statement that
+/// was on its way when the transaction ended would otherwise run after
+/// its end, outside it.
+fn tx_conn(cell: &Mutex<TxConn>) -> Result<std::sync::MutexGuard<'_, TxConn>, Value> {
+    let conn = cell.lock().unwrap_or_else(|e| e.into_inner());
+    match conn.ended {
+        false => Ok(conn),
+        true => Err(pg_connect("postgres: the transaction has ended")),
+    }
 }
 
 fn tx_registry() -> &'static Mutex<TxRegistry> {
@@ -229,19 +284,21 @@ fn tx_registry() -> &'static Mutex<TxRegistry> {
 }
 
 fn insert_tx(conn: PinnedConn) -> u64 {
+    let canceller = conn.canceller.clone();
+    let cell = Arc::new(Mutex::new(TxConn { conn, ended: false }));
     let mut reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
     let id = reg.next_id;
     reg.next_id = reg.next_id.wrapping_add(1);
-    reg.txs.insert(id, Arc::new(Mutex::new(conn)));
+    reg.txs.insert(id, TxEntry { cell, canceller });
     id
 }
 
-fn lookup_tx(id: u64) -> Option<Arc<Mutex<PinnedConn>>> {
+fn lookup_tx(id: u64) -> Option<Arc<Mutex<TxConn>>> {
     let reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.txs.get(&id).cloned()
+    reg.txs.get(&id).map(|entry| entry.cell.clone())
 }
 
-fn remove_tx(id: u64) -> Option<Arc<Mutex<PinnedConn>>> {
+fn remove_tx(id: u64) -> Option<TxEntry> {
     let mut reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.txs.remove(&id)
 }
@@ -1068,7 +1125,7 @@ impl<'a> Arg<'a> for TxHandle {
 impl TxHandle {
     /// The transaction's connection, or the `PostgresError` of one that has
     /// ended.
-    fn open(self) -> Result<Arc<Mutex<PinnedConn>>, Value> {
+    fn open(self) -> Result<Arc<Mutex<TxConn>>, Value> {
         lookup_tx(self.0).ok_or_else(|| {
             pg_connect(format!(
                 "postgres: tx handle {} is not registered (transaction ended)",
@@ -1134,7 +1191,7 @@ impl<T: Ret> Ret for Result<T, Failed> {
 /// a pinned tx conn (reuses the BEGIN'd connection).
 enum ExecutorRef {
     Pool(Arc<PgPool>),
-    Tx(Arc<Mutex<PinnedConn>>),
+    Tx(Arc<Mutex<TxConn>>),
 }
 
 /// The executor that `conn` is, the argument of a function that takes
@@ -1530,7 +1587,7 @@ fn build_tls_connector(
 }
 
 /// Run a query (SELECT-style). Accepts either a pool (fresh conn per
-/// call) or a tx-pinned conn. The inner `Mutex<PinnedConn>` is held for
+/// call) or a tx-pinned conn. The inner `Mutex<TxConn>` is held for
 /// the duration of this single query only — never across a VM yield.
 fn do_query(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
     let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
@@ -1549,7 +1606,10 @@ fn do_query(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
             }
         }
         ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
+            let mut conn = match tx_conn(&cell) {
+                Ok(conn) => conn,
+                Err(e) => return err(e),
+            };
             match conn.client_mut().query(&sql, &bind) {
                 Ok(rows) => {
                     let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
@@ -1607,10 +1667,10 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value 
             };
             run(conn.client_mut(), &sql, &bind, has_returning)
         }
-        ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
-            run(conn.client_mut(), &sql, &bind, has_returning)
-        }
+        ExecutorRef::Tx(cell) => match tx_conn(&cell) {
+            Ok(mut conn) => run(conn.client_mut(), &sql, &bind, has_returning),
+            Err(e) => err(e),
+        },
     }
 }
 
@@ -1639,7 +1699,7 @@ const STREAM_CHANNEL_CAPACITY: usize = 256;
 
 /// Run the streaming query inside the io_pool. Owns the executor for
 /// its whole lifetime — for tx executors that means the inner
-/// `Mutex<PinnedConn>` is locked here until the stream finishes, so
+/// `Mutex<TxConn>` is locked here until the stream finishes, so
 /// concurrent tx queries block until we're done. Documented contract.
 fn do_stream_worker(
     target: ExecutorRef,
@@ -1702,10 +1762,14 @@ fn do_stream_worker(
                 let _ = send_or_stop(wrapped);
             }
         },
-        ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = pump(conn.client_mut(), &sql, &bind);
-        }
+        ExecutorRef::Tx(cell) => match tx_conn(&cell) {
+            Ok(mut conn) => {
+                let _ = pump(conn.client_mut(), &sql, &bind);
+            }
+            Err(e) => {
+                let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+            }
+        },
     }
 
     // End of stream: always close, even if we already sent an Err
@@ -1722,7 +1786,7 @@ fn do_stream_worker(
 /// if DECLARE fails we remove it again.
 fn do_cursor_open(
     tx_id: u64,
-    cell: Arc<Mutex<PinnedConn>>,
+    cell: Arc<Mutex<TxConn>>,
     sql: String,
     params: Vec<SqlParam>,
     batch_size: u64,
@@ -1730,14 +1794,21 @@ fn do_cursor_open(
     let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
     let (cursor_id, name) = register_cursor(tx_id, batch_size);
     let declare_sql = format!("DECLARE {name} CURSOR FOR {sql}");
-    let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
-    match conn.client_mut().execute(declare_sql.as_str(), &bind) {
-        Ok(_) => ok(make_cursor_handle(cursor_id)),
+    let declared =
+        tx_conn(&cell).map(|mut conn| conn.client_mut().execute(declare_sql.as_str(), &bind));
+    match declared {
         Err(e) => {
-            // Undo the registry insert so the id is not leaked.
             let _ = remove_cursor(cursor_id);
-            err(pg_error_to_variant(&e))
+            err(e)
         }
+        Ok(declared) => match declared {
+            Ok(_) => ok(make_cursor_handle(cursor_id)),
+            Err(e) => {
+                // Undo the registry insert so the id is not leaked.
+                let _ = remove_cursor(cursor_id);
+                err(pg_error_to_variant(&e))
+            }
+        },
     }
 }
 
@@ -1768,7 +1839,10 @@ fn do_cursor_next(cursor_id: u64) -> Value {
         }
     };
     let fetch_sql = format!("FETCH FORWARD {} FROM {}", entry.batch_size, entry.name);
-    let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
+    let mut conn = match tx_conn(&cell) {
+        Ok(conn) => conn,
+        Err(e) => return err(e),
+    };
     match conn.client_mut().query(fetch_sql.as_str(), &[]) {
         Ok(rows) => {
             let n = rows.len();
@@ -1801,7 +1875,10 @@ fn do_cursor_close(cursor_id: u64) -> Value {
         }
     };
     let close_sql = format!("CLOSE {}", entry.name);
-    let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(mut conn) = tx_conn(&cell) else {
+        // The transaction has ended, and the cursor with it.
+        return ok(Value::Unit);
+    };
     match conn.client_mut().execute(close_sql.as_str(), &[]) {
         Ok(_) => ok(Value::Unit),
         Err(e) => err(pg_error_to_variant(&e)),
@@ -1940,7 +2017,10 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
             }
         }
         ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
+            let mut conn = match tx_conn(&cell) {
+                Ok(conn) => conn,
+                Err(e) => return err(e),
+            };
             match conn.client_mut().execute(sql, &params) {
                 Ok(_) => ok(Value::Unit),
                 Err(e) => err(pg_error_to_variant(&e)),
@@ -2263,86 +2343,92 @@ impl Native for Transact {
             return Ok(vm.call(callee, [make_tx_handle(tx_id)]));
         }
         self.tx_id = None;
-        Ok(Step::Done(end_tx(
-            tx_id,
-            Some(input),
-            vm.scheduler().wake(),
-        )))
+        Ok(Step::Done(end_tx(tx_id, input, vm.scheduler().wake())))
     }
 
+    /// The task goes without the transaction's end: it was cancelled,
+    /// or its deadline passed, while the callback ran (a statement of
+    /// it may be running), or the callback failed with an error of the
+    /// program. The transaction is rolled back on the I/O pool, never
+    /// here.
     fn abandon(&mut self, vm: &mut Vm) {
         if let Some(tx_id) = self.tx_id.take() {
-            end_tx(tx_id, None, vm.scheduler().wake());
+            abandon_tx(vm, tx_id);
         }
     }
 }
 
-/// End the transaction `tx_id`: close its streams, and commit or roll
-/// back as the callback's value `returned` says, or roll back when the
-/// callback failed with an error of the program (`None`). The value is
-/// `postgres.transact`'s.
-fn end_tx(tx_id: u64, returned: Option<Value>, wake: &dyn crate::runtime::sync::Wake) -> Value {
-    close_tx_streams(tx_id, wake);
-    // Pull the conn out of the tx registry and finalise it.
-    let Some(cell) = remove_tx(tx_id) else {
-        // Shouldn't happen — the registry entry was valid on entry
-        // and nothing else removes it. If it does, surface the
-        // callback's result as-is and skip commit/rollback.
-        return returned.unwrap_or(Value::Unit);
+/// End the transaction `tx_id` that nobody ends: close its streams,
+/// and hand the rest to the I/O pool (`roll_back_abandoned`). Nothing
+/// here waits: the thread that drops the task may be any.
+fn abandon_tx(vm: &Vm, tx_id: u64) {
+    close_tx_streams(tx_id, vm.scheduler().wake());
+    drain_cursors_for_tx(tx_id);
+    let Some(entry) = remove_tx(tx_id) else {
+        return;
     };
-    // We are the last owner of `cell`. Moving the conn out of the
-    // `Arc<Mutex<...>>` requires unwrapping both layers. `Arc::try_unwrap`
-    // can fail if a racing query on the io_pool thread still holds a
-    // reference — that's a logic bug (all query submits for this tx
-    // should have completed by now: the callback has returned). In the
-    // rare race, fall back to locking in-place and running COMMIT /
-    // ROLLBACK against the locked cell without reclaiming ownership.
-    let finalise = |sql: &str, cell: Arc<Mutex<PinnedConn>>| -> Option<Value> {
-        match Arc::try_unwrap(cell) {
-            Ok(mutex) => {
-                let mut conn = mutex.into_inner().unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = conn.client_mut().batch_execute(sql) {
-                    return Some(err(pg_error_to_variant(&e)));
-                }
-                // `conn` drops here → returns to pool.
-                None
-            }
-            Err(shared) => {
-                // Can't reclaim ownership; run against the locked cell.
-                // The conn lingers until the other reference is dropped.
-                let mut conn = shared.lock().unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = conn.client_mut().batch_execute(sql) {
-                    return Some(err(pg_error_to_variant(&e)));
-                }
-                None
-            }
+    let op = vm.runtime.io_pool.submit(pg_timeout_err, move || {
+        roll_back_abandoned(entry);
+        Value::Unit
+    });
+    op.detach();
+}
+
+/// Roll back a transaction that nobody ends. A statement that runs on
+/// it holds its connection: the server is asked to cancel it, and the
+/// rollback waits for the connection. The connection goes back to the
+/// pool once the rollback is done (when the last statement that had it
+/// lets it go), or is dropped if the rollback failed.
+fn roll_back_abandoned(entry: TxEntry) {
+    use std::sync::TryLockError;
+    let mut conn = match entry.cell.try_lock() {
+        Ok(conn) => conn,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            entry.canceller.cancel();
+            entry.cell.lock().unwrap_or_else(|e| e.into_inner())
         }
     };
+    if !conn.ended {
+        let _ = conn.end("ROLLBACK");
+    }
+}
 
+/// End the transaction `tx_id` whose callback has returned `returned`:
+/// close its streams, and commit or roll back as `returned` says. The
+/// value is `postgres.transact`'s.
+fn end_tx(tx_id: u64, returned: Value, wake: &dyn crate::runtime::sync::Wake) -> Value {
+    close_tx_streams(tx_id, wake);
     // Any cursors opened inside the tx are about to become invalid —
     // PG drops server-side cursors at tx end, so we only need to reap
     // the local registry entries. Do this before running COMMIT /
     // ROLLBACK so a subsequent `cursor_next` with the same id sees a
     // clean "not registered" error rather than racing with the reap.
     drain_cursors_for_tx(tx_id);
-
-    match returned {
-        Some(v) => match &v {
-            Value::Variant(variant) if variant.is(bv::OK) => finalise("COMMIT", cell).unwrap_or(v),
-            Value::Variant(variant) if variant.is(bv::ERR) => {
-                let _ = finalise("ROLLBACK", cell);
-                v
-            }
-            // Callback didn't return Result(_, _). Treat as Ok and
-            // forward the raw value, but COMMIT first so the user's
-            // statements persist. Mirrors what most pg wrappers do
-            // for callbacks that return a non-Result type.
-            _ => finalise("COMMIT", cell).unwrap_or_else(|| ok(v)),
-        },
-        None => {
-            let _ = finalise("ROLLBACK", cell);
-            Value::Unit
+    let Some(entry) = remove_tx(tx_id) else {
+        // Shouldn't happen — the registry entry was valid on entry
+        // and nothing else removes it. If it does, surface the
+        // callback's result as-is and skip commit/rollback.
+        return returned;
+    };
+    // A statement of the transaction that is still on its way (from a
+    // task the callback started) finds it ended when it gets the
+    // connection.
+    let finalise = |sql: &str| -> Option<Value> {
+        let mut conn = entry.cell.lock().unwrap_or_else(|e| e.into_inner());
+        conn.end(sql).err().map(|e| err(pg_error_to_variant(&e)))
+    };
+    match &returned {
+        Value::Variant(variant) if variant.is(bv::OK) => finalise("COMMIT").unwrap_or(returned),
+        Value::Variant(variant) if variant.is(bv::ERR) => {
+            let _ = finalise("ROLLBACK");
+            returned
         }
+        // Callback didn't return Result(_, _). Treat as Ok and
+        // forward the raw value, but COMMIT first so the user's
+        // statements persist. Mirrors what most pg wrappers do
+        // for callbacks that return a non-Result type.
+        _ => finalise("COMMIT").unwrap_or_else(|| ok(returned)),
     }
 }
 
