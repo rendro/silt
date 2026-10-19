@@ -257,6 +257,36 @@ pub(crate) fn value_to_json(
 
 // ── JSON helpers ────────────────────────────────────────────────────
 
+/// The time of day that the text `s` of a document writes: `HH:MM:SS`,
+/// with a fraction of a second up to nanoseconds (`13:14:15.25`), or
+/// `HH:MM`. Shared by the JSON and TOML decoders.
+pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, chrono::ParseError> {
+    NaiveTime::parse_from_str(s, "%H:%M:%S%.f").or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+}
+
+/// The date and time that the text `s` of a document writes, in UTC
+/// where it has an offset: RFC 3339, the same with a space for the `T`,
+/// or without an offset; seconds with a fraction up to nanoseconds, or
+/// no seconds (`2024-03-09T07:30`). Shared by the JSON and TOML
+/// decoders.
+pub(crate) fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.naive_utc());
+    }
+    let offset = ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"].into_iter();
+    let naive = [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M",
+    ]
+    .into_iter();
+    offset
+        .filter_map(|f| chrono::DateTime::parse_from_str(s, f).ok())
+        .map(|dt| dt.naive_utc())
+        .chain(naive.filter_map(|f| NaiveDateTime::parse_from_str(s, f).ok()))
+        .next()
+}
+
 /// The record type `ty` a decoder builds, with its fields. `caller` is
 /// the builtin on whose behalf the type is looked up (`json.parse`,
 /// `toml.parse_list`, ...); it starts the error message. A builtin
@@ -554,30 +584,15 @@ fn json_to_typed_value(
             _ => Err(mismatch("date string", json_type_name(json))),
         },
         FieldType::Time => match json {
-            serde_json::Value::String(s) => NaiveTime::parse_from_str(s, "%H:%M:%S")
-                .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+            serde_json::Value::String(s) => parse_time(s)
                 .map(make_time)
                 .map_err(|e| unknown(format!("invalid time '{s}' (expected HH:MM:SS): {e}"))),
             _ => Err(mismatch("time string", json_type_name(json))),
         },
         FieldType::DateTime => match json {
-            serde_json::Value::String(s) => {
-                // Try timezone-aware formats first (RFC 3339 / ISO 8601 with offset),
-                // converting to UTC. Then fall back to naive formats.
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                    Ok(make_datetime(dt.naive_utc()))
-                } else if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%z") {
-                    Ok(make_datetime(dt.naive_utc()))
-                } else if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z") {
-                    Ok(make_datetime(dt.naive_utc()))
-                } else {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-                        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-                        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
-                        .map(make_datetime)
-                        .map_err(|_| unknown(format!("invalid datetime '{s}'")))
-                }
-            }
+            serde_json::Value::String(s) => parse_datetime(s)
+                .map(make_datetime)
+                .ok_or_else(|| unknown(format!("invalid datetime '{s}'"))),
             _ => Err(mismatch("datetime string", json_type_name(json))),
         },
         FieldType::Record(id) => {
@@ -708,6 +723,35 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A time and a datetime are read with a fraction of a second up to
+    /// nanoseconds, as silt shows them, and without one.
+    #[test]
+    fn times_are_read_with_a_fraction_of_a_second() {
+        let time = |s: &str| parse_time(s).map(|t| t.to_string()).ok();
+        assert_eq!(time("13:14:15.250000000").as_deref(), Some("13:14:15.250"));
+        assert_eq!(
+            time("13:14:15.123456789").as_deref(),
+            Some("13:14:15.123456789")
+        );
+        assert_eq!(time("13:14:15").as_deref(), Some("13:14:15"));
+        assert_eq!(time("13:14").as_deref(), Some("13:14:00"));
+        assert_eq!(time("13:14:15.").as_deref(), None);
+        let datetime = |s: &str| parse_datetime(s).map(|t| t.to_string());
+        assert_eq!(
+            datetime("2026-10-19T13:14:15.5").as_deref(),
+            Some("2026-10-19 13:14:15.500")
+        );
+        assert_eq!(
+            datetime("2026-10-19 13:14:15.5+02:00").as_deref(),
+            Some("2026-10-19 11:14:15.500")
+        );
+        assert_eq!(
+            datetime("2026-10-19T13:14").as_deref(),
+            Some("2026-10-19 13:14:00")
+        );
+        assert_eq!(datetime("2026-10-19").as_deref(), None);
+    }
 
     /// The deepest value the encoder writes, of the shape that makes
     /// the deepest document (a list in a variant: three levels of the

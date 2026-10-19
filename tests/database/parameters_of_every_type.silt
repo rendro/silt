@@ -4,8 +4,9 @@
 -- uuid, a Float into a float4, Bytes into a bytea, a record into a
 -- jsonb, `None` as NULL. A list goes as an array where the parameter is
 -- an array (`= ANY($1)`) and as JSON anywhere else; a `json.Value` as
--- its JSON (`json.Null` is the JSON `null`, not NULL). A Float keeps its
--- point, which no integer column takes.
+-- its JSON (`json.Null` is the JSON `null`, not NULL). A list of Bytes
+-- goes into a bytea[], and as JSON, which has no bytes, it is an error.
+-- A Float keeps its point, which no integer column takes.
 import bytes
 import env
 import json
@@ -60,6 +61,8 @@ fn main() {
       show(db, "a list of text into an array", "SELECT ($1::text[])[2] AS v", (["a\"b", "c\\d,e"],))
       show(db, "a list of lists into an array", "SELECT $1::int4[][]::text AS v", ([[1, 2], [3, 4]],))
       show(db, "a list into jsonb", "SELECT jsonb_array_length($1::jsonb)::text AS v", ([1, 2, 3],))
+      show(db, "a list of Bytes into a bytea[]", "SELECT encode(($1::bytea[])[2], 'hex') AS v", ([pic, pic],))
+      show(db, "a list of Bytes into jsonb", "SELECT $1::jsonb::text AS v", ([pic],))
       show(db, "None", "SELECT coalesce($1::text, 'it was NULL') AS v", (None,))
       show(db, "Some", "SELECT coalesce($1::text, 'it was NULL') AS v", (Some("it was given"),))
       show(db, "json.Null", "SELECT jsonb_typeof($1::jsonb) AS v", (json.Null,))

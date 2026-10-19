@@ -7,11 +7,15 @@
 -- reads. So an `INSERT ... RETURNING` whose rows do not fit inserts
 -- nothing. A cell that cannot be decoded (a NULL for a field that is no
 -- `Option`, a NaN, a document that does not fit) is an error as it is
--- read. The message of a type mismatch says to cast the column in SQL;
--- that of a NULL does not.
+-- read; a document `null` fills an `Option` with `None`, as json.parse
+-- gives it. An array of more dimensions, or of fewer, than its field's
+-- list has levels is named with its dimensions. The message of a
+-- mismatch of a column's type says to cast the column in SQL; that of a
+-- value (NULL, NaN, infinity) or of a document does not.
 import env
 import json
 import postgres
+import time
 
 type Id { id: Int }
 
@@ -24,6 +28,16 @@ type Xs { x: List(Int) }
 type Meta { level: Int }
 
 type Doc { doc: Meta }
+
+type MaybeDoc { doc: Option(Meta) }
+
+type File { name: String, data: Bytes }
+
+type Stored { v: File }
+
+type Grid { g: List(List(Int)) }
+
+type Day { d: time.Date }
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -69,6 +83,14 @@ fn main() {
       show("a NaN", postgres.query(db, "SELECT 'NaN'::float8 AS r", (), Ratio))
       show("a NaN in a json.Value row", postgres.query(db, "SELECT 'NaN'::float8 AS r", (), json.Value))
       show("a document that does not fit", postgres.query(db, """SELECT '{"level": "high"}'::jsonb AS doc""", (), Doc))
+      show("a document null for an Option", postgres.query(db, "SELECT 'null'::jsonb AS doc", (), MaybeDoc))
+      show(
+        "a document for a record that holds Bytes, no rows",
+        postgres.query(db, """SELECT '{}'::jsonb AS v WHERE false""", (), Stored),
+      )
+      show("an array of 1 dimension for a list of lists", postgres.query(db, "SELECT ARRAY[1, 2] AS g", (), Grid))
+      show("an array of 2 dimensions for a list", postgres.query(db, "SELECT ARRAY[[1], [2]] AS x", (), Xs))
+      show("a date that is infinity", postgres.query(db, "SELECT 'infinity'::date AS d", (), Day))
 
       let _ = postgres.execute(db, "DROP TABLE IF EXISTS pg2_fit", ())
       let _ = postgres.execute(db, "CREATE TABLE pg2_fit (id int4, r float8)", ())

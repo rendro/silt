@@ -37,10 +37,11 @@ pub(super) enum TextParam {
     Null,
     Text(String),
     /// A list: an array where the statement's parameter is an array
-    /// (`id = ANY($1)`), JSON anywhere else.
+    /// (`id = ANY($1)`), JSON anywhere else. A list of `Bytes` has no
+    /// JSON form, and is an error only where JSON is what it is to be.
     List {
         array: String,
-        json: String,
+        json: Result<String, String>,
     },
 }
 
@@ -55,7 +56,7 @@ impl ToSql for TextParam {
             TextParam::Text(text) => text,
             TextParam::List { array, json } => match ty.kind() {
                 Kind::Array(_) => array,
-                _ => json,
+                _ => json.as_ref().map_err(|why| why.clone())?,
             },
         };
         out.extend_from_slice(text.as_bytes());
@@ -104,9 +105,13 @@ fn param(caller: &str, value: &Value) -> Result<TextParam, VmError> {
         Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
             return param(caller, &variant.fields()[0]);
         }
+        // (A list that has no array form has no JSON form either.)
         Value::List(_) => TextParam::List {
             array: array_literal(caller, value)?,
-            json: json::value_to_json(caller, value, 0)?.to_string(),
+            json: match json::value_to_json(caller, value, 0) {
+                Ok(json) => Ok(json.to_string()),
+                Err(e) => Err(e.message),
+            },
         },
         _ => TextParam::Text(scalar_text(caller, value)?),
     })
@@ -198,15 +203,33 @@ impl RowType {
             Type::Named(info) if !info.is_builtin() && matches!(info.shape, Shape::Record(_)) => {
                 Ok(RowType::Record(info.clone()))
             }
-            Type::Named(info) => Err(VmError::new(format!(
-                "{caller}: a row is decoded into a record type or json.Value, not {}",
-                info.name
-            ))),
-            Type::Primitive(_) => Err(VmError::new(format!(
-                "{caller}: a row is decoded into a record type or json.Value, not a primitive type"
-            ))),
+            Type::Named(info) => Err(refused(caller, &info.name)),
+            Type::Primitive(field) => Err(refused(caller, &shown_primitive(&field))),
         }
     }
+}
+
+/// The error of `caller` given the type `name` to decode rows into,
+/// which is no record type and no `json.Value`. (The compiler says the
+/// same where the type is written; this is for a type argument that is
+/// a type variable.)
+fn refused(caller: &str, name: &str) -> VmError {
+    VmError::new(format!(
+        "{caller}: a row decodes into a record type or json.Value, not {name}; {}",
+        crate::compiler::ROW_TYPE_HELP
+    ))
+}
+
+/// The name of a primitive type argument.
+fn shown_primitive(field: &FieldType) -> String {
+    match field {
+        FieldType::Int => "Int",
+        FieldType::Float => "Float",
+        FieldType::String => "String",
+        FieldType::Bool => "Bool",
+        _ => "a primitive type",
+    }
+    .to_string()
 }
 
 // ── Columns ─────────────────────────────────────────────────────────
@@ -272,16 +295,17 @@ impl Col {
 
     /// Whether a value of `field` can be decoded from what the column
     /// holds (a NULL aside).
-    fn fills(&self, field: &FieldType) -> bool {
+    fn fills(&self, rt: &Runtime, field: &FieldType) -> bool {
         use FieldType as F;
         match (self, field) {
-            (_, F::Option(inner)) => self.fills(inner),
+            (_, F::Option(inner)) => self.fills(rt, inner),
             (Col::Other, _) => false,
-            (Col::Array(element), F::JsonValue) => element.fills(field),
+            (Col::Array(element), F::JsonValue) => element.fills(rt, field),
             (_, F::JsonValue) => true,
             (Col::Void, _) => false,
-            // json's decoder decodes every field type but `Bytes`.
-            (Col::Json | Col::Jsonb, _) => !holds(field, &|t| matches!(t, F::Bytes)),
+            // json's decoder decodes every field type but `Bytes`, in
+            // the records the field holds too.
+            (Col::Json | Col::Jsonb, _) => !holds_bytes(rt, field, &mut Vec::new()),
             (Col::Bool, F::Bool)
             | (Col::Int2 | Col::Int4 | Col::Int8, F::Int)
             | (Col::Float4 | Col::Float8 | Col::Numeric, F::Float)
@@ -293,21 +317,28 @@ impl Col {
             | (Col::Timestamp | Col::Timestamptz, F::DateTime) => true,
             // An array of more dimensions fills a list of lists.
             (Col::Array(element), F::List(inner)) => {
-                element.fills(inner) || matches!(&**inner, F::List(_) if self.fills(inner))
+                element.fills(rt, inner) || matches!(&**inner, F::List(_) if self.fills(rt, inner))
             }
             _ => false,
         }
     }
 }
 
-/// Whether `field` is, or holds, a type that `test` picks.
-fn holds(field: &FieldType, test: &dyn Fn(&FieldType) -> bool) -> bool {
-    test(field)
-        || match field {
-            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => holds(t, test),
-            FieldType::Tuple(ts) => ts.iter().any(|t| holds(t, test)),
-            _ => false,
+/// Whether `field` is, or holds, `Bytes`, in a record type it names
+/// too; `seen` are the record types looked into.
+fn holds_bytes(rt: &Runtime, field: &FieldType, seen: &mut Vec<crate::defs::TypeId>) -> bool {
+    match field {
+        FieldType::Bytes => true,
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => holds_bytes(rt, t, seen),
+        FieldType::Tuple(ts) => ts.iter().any(|t| holds_bytes(rt, t, seen)),
+        FieldType::Record(id) if !seen.contains(id) => {
+            seen.push(*id);
+            let info = rt.type_info(*id);
+            let fields = info.as_ref().map(|info| info.fields()).unwrap_or_default();
+            fields.iter().any(|(_, t)| holds_bytes(rt, t, seen))
         }
+        _ => false,
+    }
 }
 
 /// The name of the type `ty` as Postgres writes it, an array's as
@@ -403,19 +434,22 @@ enum PlanKind {
     /// declares them, from its column.
     Record {
         ty: Arc<TypeInfo>,
-        fields: Vec<FieldPlan>,
+        /// The type of each field, and its column.
+        fields: Vec<(FieldType, ColumnPlan)>,
     },
     /// Each row a `json.Object` of its columns.
-    Value { columns: Vec<(String, usize, Col)> },
+    Value { columns: Vec<ColumnPlan> },
 }
 
-/// A field of a record and the column it is decoded from.
-struct FieldPlan {
-    /// The field's name, which is the column's.
+/// A column a row is read from.
+struct ColumnPlan {
+    /// Its name, which is that of the field it fills.
     name: String,
+    /// Where it is in the row.
     column: usize,
     col: Col,
-    field: FieldType,
+    /// Its type as Postgres names it.
+    pg: String,
 }
 
 impl Plan {
@@ -440,12 +474,16 @@ impl Plan {
                     }
                     // A column silt has no value for is refused at
                     // once, as it is for a record's field.
-                    let col = Col::of(column.type_());
-                    if !col.fills(&FieldType::JsonValue) {
-                        let name = pg_name(column.type_());
-                        return Err(type_mismatch(column.name(), "json.Value", &name));
+                    let (col, pg) = (Col::of(column.type_()), pg_name(column.type_()));
+                    if !col.fills(rt, &FieldType::JsonValue) {
+                        return Err(type_mismatch(column.name(), "json.Value", &pg));
                     }
-                    plan.push((column.name().to_string(), at, col));
+                    plan.push(ColumnPlan {
+                        name: column.name().to_string(),
+                        column: at,
+                        col,
+                        pg,
+                    });
                 }
                 PlanKind::Value { columns: plan }
             }
@@ -467,24 +505,23 @@ impl Plan {
                     if named.next().is_some() {
                         return Err(twice(name));
                     }
-                    let col = Col::of(found.type_());
-                    if !col.fills(field) {
+                    let (col, pg) = (Col::of(found.type_()), pg_name(found.type_()));
+                    if !col.fills(rt, field) {
                         let expected = match field {
                             FieldType::Option(inner) => inner,
                             _ => field,
                         };
-                        return Err(type_mismatch(
-                            name,
-                            &shown(rt, expected),
-                            &pg_name(found.type_()),
-                        ));
+                        return Err(type_mismatch(name, &shown(rt, expected), &pg));
                     }
-                    fields.push(FieldPlan {
-                        name: name.clone(),
-                        column,
-                        col,
-                        field: field.clone(),
-                    });
+                    fields.push((
+                        field.clone(),
+                        ColumnPlan {
+                            name: name.clone(),
+                            column,
+                            col,
+                            pg,
+                        },
+                    ));
                 }
                 PlanKind::Record {
                     ty: ty.clone(),
@@ -506,19 +543,19 @@ impl Plan {
         match &self.kind {
             PlanKind::Record { ty, fields } => {
                 let mut values = Vec::with_capacity(fields.len());
-                for field in fields {
-                    let value = cell(rt, &field.col, &field.field, raw(field.column)?)
-                        .map_err(|m| type_mismatch(&field.name, &m.expected, &m.actual))?;
+                for (field, c) in fields {
+                    let value = cell(rt, c, &c.col, field, raw(c.column)?)
+                        .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
                     values.push(value);
                 }
                 Ok(Value::record(ty.clone(), values))
             }
             PlanKind::Value { columns } => {
                 let mut entries = Vec::with_capacity(columns.len());
-                for (name, column, col) in columns {
-                    let value = cell(rt, col, &FieldType::JsonValue, raw(*column)?)
-                        .map_err(|m| type_mismatch(name, &m.expected, &m.actual))?;
-                    entries.push((Value::String(name.as_str().into()), value));
+                for c in columns {
+                    let value = cell(rt, c, &c.col, &FieldType::JsonValue, raw(c.column)?)
+                        .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
+                    entries.push((Value::String(c.name.as_str().into()), value));
                 }
                 Ok(Value::variant(bv::JSON_OBJECT, vec![Value::map(entries)]))
             }
@@ -560,9 +597,16 @@ impl<'a> FromSql<'a> for Raw<'a> {
 
 // ── Cells ───────────────────────────────────────────────────────────
 
-/// The value of the type `field` that the cell `raw` of a column that
-/// holds `col` is. The plan has checked that `col` fills `field`.
-fn cell(rt: &Runtime, col: &Col, field: &FieldType, raw: Option<&[u8]>) -> Result<Value, Mismatch> {
+/// The value of the type `field` that the cell `raw` of the column `c`
+/// is, which holds `col` (the column's own, or its elements'). The plan
+/// has checked that `col` fills `field`.
+fn cell(
+    rt: &Runtime,
+    c: &ColumnPlan,
+    col: &Col,
+    field: &FieldType,
+    raw: Option<&[u8]>,
+) -> Result<Value, Mismatch> {
     use FieldType as F;
     let Some(raw) = raw else {
         return match field {
@@ -571,14 +615,18 @@ fn cell(rt: &Runtime, col: &Col, field: &FieldType, raw: Option<&[u8]>) -> Resul
             _ => Err(Mismatch::new(rt, field, "NULL")),
         };
     };
-    let malformed = |_| Mismatch::new(rt, field, "a value the server sent malformed");
+    let malformed = |_| Mismatch::new(rt, field, MALFORMED);
     Ok(match (col, field) {
-        (_, F::Option(inner)) => Value::variant(bv::SOME, vec![cell(rt, col, inner, Some(raw))?]),
-        (_, F::JsonValue) => dynamic(rt, col, raw)?,
+        // A document is the field's as json.parse decodes it: `null` is
+        // an `Option`'s `None`.
         (Col::Json | Col::Jsonb, _) => {
             let document = document(col, raw).map_err(malformed)?;
             json::decode_field(rt, &document, field).map_err(|why| Mismatch::new(rt, field, why))?
         }
+        (_, F::Option(inner)) => {
+            Value::variant(bv::SOME, vec![cell(rt, c, col, inner, Some(raw))?])
+        }
+        (_, F::JsonValue) => dynamic(rt, c, col, raw)?,
         (Col::Bool, F::Bool) => Value::Bool(wire::bool_from_sql(raw).map_err(malformed)?),
         (Col::Int2, F::Int) => Value::Int(wire::int2_from_sql(raw).map_err(malformed)?.into()),
         (Col::Int4, F::Int) => Value::Int(wire::int4_from_sql(raw).map_err(malformed)?.into()),
@@ -602,33 +650,54 @@ fn cell(rt: &Runtime, col: &Col, field: &FieldType, raw: Option<&[u8]>) -> Resul
         }
         (Col::Array(element), F::List(_)) => {
             let (dimensions, values) = array(raw).map_err(malformed)?;
+            // An array of more dimensions, or of fewer, than the list
+            // has levels (elements of a document aside, which may be
+            // lists themselves) is the column's mismatch.
+            let levels = std::iter::successors(Some(field), |t| match t {
+                F::List(inner) => Some(&**inner),
+                _ => None,
+            });
+            let levels = levels.filter(|t| matches!(t, F::List(_))).count();
+            let documents = matches!(**element, Col::Json | Col::Jsonb);
+            let fits = match documents {
+                true => dimensions.len() <= levels,
+                false => dimensions.is_empty() || dimensions.len() == levels,
+            };
+            let wrong = || {
+                let n = dimensions.len();
+                let plural = if n == 1 { "" } else { "s" };
+                Mismatch::new(rt, field, format!("{} with {n} dimension{plural}", c.pg))
+            };
+            if !fits {
+                return Err(wrong());
+            }
             let mut values = values.into_iter();
             nest(&dimensions, field, &mut values, &mut |field, raw| {
-                cell(rt, element, field, raw)
+                cell(rt, c, element, field, raw)
             })
             .map_err(|m| match m {
                 Nested::Cell(m) => m,
-                Nested::Dimensions(field) => Mismatch::new(
-                    rt,
-                    field,
-                    format!("an array of {} dimensions", dimensions.len()),
-                ),
+                Nested::Dimensions => wrong(),
             })?
         }
         // (The plan has refused every other pair.)
-        _ => return Err(Mismatch::new(rt, field, "a column of another type")),
+        _ => return Err(Mismatch::new(rt, field, c.pg.clone())),
     })
 }
 
-/// The `json.Value` of the cell `raw` of a column that holds `col`:
-/// `json.Bool`, `json.Int`, `json.Float` as the column's type says; a
-/// `numeric` as its exact text; text, a uuid, `bytea`'s hex text and a
-/// date or a time as silt shows it as `json.String`; the document of a
-/// `json` or `jsonb` column; an array as `json.Array`; `void` as
+/// What a cell that the server sent malformed is called in a type
+/// mismatch.
+const MALFORMED: &str = "a value the server sent malformed";
+
+/// The `json.Value` of the cell `raw` of the column `c`, which holds
+/// `col`: `json.Bool`, `json.Int`, `json.Float` as the column's type
+/// says; a `numeric` as its exact text; text, a uuid, `bytea`'s hex text
+/// and a date or a time as silt shows it as `json.String`; the document
+/// of a `json` or `jsonb` column; an array as `json.Array`; `void` as
 /// `json.Null`.
-fn dynamic(rt: &Runtime, col: &Col, raw: &[u8]) -> Result<Value, Mismatch> {
+fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value, Mismatch> {
     let field = FieldType::JsonValue;
-    let malformed = |_| Mismatch::new(rt, &field, "a value the server sent malformed");
+    let malformed = |_| Mismatch::new(rt, &field, MALFORMED);
     let string = |s: String| Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]);
     Ok(match col {
         Col::Bool => Value::variant(
@@ -666,37 +735,35 @@ fn dynamic(rt: &Runtime, col: &Col, raw: &[u8]) -> Result<Value, Mismatch> {
         Col::Array(element) => {
             let (dimensions, values) = array(raw).map_err(malformed)?;
             let mut values = values.into_iter();
-            let mut leaf = |_: &FieldType, raw: Option<&[u8]>| match raw {
-                Some(raw) => dynamic(rt, element, raw),
+            let mut leaf = |raw: Option<&[u8]>| match raw {
+                Some(raw) => dynamic(rt, c, element, raw),
                 None => Ok(Value::variant(bv::JSON_NULL, Vec::new())),
             };
-            nest_dynamic(&dimensions, &mut values, &mut leaf).map_err(|m| match m {
-                Nested::Cell(m) => m,
-                Nested::Dimensions(_) => Mismatch::new(rt, &field, "an array"),
-            })?
+            nest_dynamic(&dimensions, &mut values, &mut leaf)?
         }
-        Col::Other => return Err(Mismatch::new(rt, &field, "a column of another type")),
+        // (The plan has refused it.)
+        Col::Other => return Err(Mismatch::new(rt, &field, c.pg.clone())),
     })
 }
 
 /// Why the elements of an array make no value.
-enum Nested<'f> {
+enum Nested {
     Cell(Mismatch),
-    /// The array has more dimensions than the list `field` has levels.
-    Dimensions(&'f FieldType),
+    /// The array has more dimensions than the list has levels.
+    Dimensions,
 }
 
 /// The list of type `field` that the elements `values` of an array of
 /// `dimensions` (the length of each) make, each element decoded by
 /// `leaf` into the type of the innermost list's elements.
-fn nest<'f, 'r>(
+fn nest<'r>(
     dimensions: &[usize],
-    field: &'f FieldType,
+    field: &FieldType,
     values: &mut impl Iterator<Item = Option<&'r [u8]>>,
     leaf: &mut impl FnMut(&FieldType, Option<&'r [u8]>) -> Result<Value, Mismatch>,
-) -> Result<Value, Nested<'f>> {
+) -> Result<Value, Nested> {
     let FieldType::List(element) = field else {
-        return Err(Nested::Dimensions(field));
+        return Err(Nested::Dimensions);
     };
     let Some((&length, inner)) = dimensions.split_first() else {
         // An empty array has no dimensions.
@@ -717,8 +784,8 @@ fn nest<'f, 'r>(
 fn nest_dynamic<'r>(
     dimensions: &[usize],
     values: &mut impl Iterator<Item = Option<&'r [u8]>>,
-    leaf: &mut impl FnMut(&FieldType, Option<&'r [u8]>) -> Result<Value, Mismatch>,
-) -> Result<Value, Nested<'static>> {
+    leaf: &mut impl FnMut(Option<&'r [u8]>) -> Result<Value, Mismatch>,
+) -> Result<Value, Mismatch> {
     let array = |items| Value::variant(bv::JSON_ARRAY, vec![Value::list(items)]);
     let Some((&length, inner)) = dimensions.split_first() else {
         return Ok(array(Vec::new()));
@@ -726,7 +793,7 @@ fn nest_dynamic<'r>(
     let mut items = Vec::with_capacity(length);
     for _ in 0..length {
         items.push(match inner.is_empty() {
-            true => leaf(&FieldType::JsonValue, values.next().flatten()).map_err(Nested::Cell)?,
+            true => leaf(values.next().flatten())?,
             false => nest_dynamic(inner, values, leaf)?,
         });
     }
@@ -872,8 +939,9 @@ const EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(2000, 1, 1) {
 fn date(raw: &[u8]) -> Result<NaiveDate, String> {
     let days = wire::date_from_sql(raw).map_err(|e| e.to_string())?;
     match days {
-        i32::MAX => Err("infinity".into()),
-        i32::MIN => Err("-infinity".into()),
+        // (Named as a `Float`'s are.)
+        i32::MAX => Err("Infinity".into()),
+        i32::MIN => Err("-Infinity".into()),
         days => EPOCH
             .checked_add_signed(TimeDelta::days(days.into()))
             .ok_or_else(|| "a date out of Date's range".into()),
@@ -895,8 +963,8 @@ fn time(raw: &[u8]) -> Result<NaiveTime, String> {
 fn timestamp(raw: &[u8]) -> Result<NaiveDateTime, String> {
     let micros = wire::timestamp_from_sql(raw).map_err(|e| e.to_string())?;
     match micros {
-        i64::MAX => Err("infinity".into()),
-        i64::MIN => Err("-infinity".into()),
+        i64::MAX => Err("Infinity".into()),
+        i64::MIN => Err("-Infinity".into()),
         micros => EPOCH
             .and_time(NaiveTime::MIN)
             .checked_add_signed(TimeDelta::microseconds(micros))

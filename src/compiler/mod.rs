@@ -64,6 +64,10 @@ const DECODING_BUILTINS: &[&str] = &[
     "postgres.cursor",
 ];
 
+/// What to do with a type given to a postgres function to decode rows
+/// into that is no record type and no `json.Value`.
+pub(crate) const ROW_TYPE_HELP: &str = "declare a record type with a field for each column";
+
 /// The postgres functions that run a statement: their third argument is
 /// the statement's parameters, a tuple.
 const STATEMENT_BUILTINS: &[&str] = &[
@@ -2751,6 +2755,12 @@ impl<'a> Compiler<'a> {
         };
         let decoder = Decoder::of(builtin_name);
         let decodable_types_help = decoder.help();
+        // What to decode into instead of a type that is no record. A row
+        // is decoded into a record of its columns.
+        let (record_help, generic_help) = match decoder {
+            Decoder::Postgres => (ROW_TYPE_HELP, ROW_TYPE_HELP),
+            _ => ("decode into a record type", decodable_types_help),
+        };
         let type_name = match &type_arg.kind {
             ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => resolve(*name),
             _ => return Ok(()),
@@ -2769,7 +2779,7 @@ impl<'a> Compiler<'a> {
                         "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                     ),
                 )
-                .with_help("decode into a record type"));
+                .with_help(record_help));
             }
             if self
                 .type_declaration(def.span)
@@ -2783,7 +2793,7 @@ impl<'a> Compiler<'a> {
                          type, and a decoder builds a value of one type"
                     ),
                 )
-                .with_help(decodable_types_help));
+                .with_help(generic_help));
             }
             let Some(found) = self.undecodable_field(ty.id, decoder, &mut HashSet::new()) else {
                 return Ok(());
@@ -2827,7 +2837,7 @@ impl<'a> Compiler<'a> {
                     "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                 ),
             )
-            .with_help("decode into a record type"));
+            .with_help(record_help));
         }
         // Builtin types, by their declaration. `json.decode`,
         // `json.parse`, `json.parse_map` and `toml.parse_map` also decode
@@ -2843,10 +2853,7 @@ impl<'a> Compiler<'a> {
         if is_container || (is_primitive && !decodes_primitives) {
             let (accepted, help) = match (decoder, decodes_primitives) {
                 // A row is a record of its columns.
-                (Decoder::Postgres, _) => (
-                    "a record type or json.Value",
-                    "declare a record type with a field for each column, and decode into the record",
-                ),
+                (Decoder::Postgres, _) => ("a record type or json.Value", ROW_TYPE_HELP),
                 (_, true) => (
                     "Int, Float, String, Bool, or a record type",
                     "declare a record type with a field of the type you want, and decode into the record",

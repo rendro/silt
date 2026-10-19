@@ -651,7 +651,6 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         // more specific variant where we can; fall back to Other.
         let raw = format!("{e}");
         let lc = raw.to_ascii_lowercase();
-        let scrubbed = redact_pg_message(&raw);
         if lc.contains("timed out") || lc.contains("timeout") {
             Value::variant(bv::PG_TIMEOUT, vec![])
         } else if lc.contains("closed")
@@ -661,7 +660,14 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
         {
             Value::variant(bv::PG_CLOSED, vec![])
         } else {
-            Value::variant(bv::PG_OTHER, vec![Value::String(scrubbed.into())])
+            // The error's text names its kind only ("error serializing
+            // parameter 0"): its cause says what happened.
+            let causes = std::iter::successors(std::error::Error::source(e), |c| c.source());
+            let text = causes.fold(raw, |text, cause| format!("{text}: {cause}"));
+            Value::variant(
+                bv::PG_OTHER,
+                vec![Value::String(redact_pg_message(&text).into())],
+            )
         }
     }
 }
@@ -1857,10 +1863,9 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("TypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
             let text =
                 format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
-            // (A cast makes nothing of a NULL.)
-            match &**act {
-                "NULL" => text,
-                _ => format!("{text}; cast it in SQL, for example {col}::text"),
+            match names_a_type(act) {
+                true => format!("{text}; cast it in SQL, for example {col}::text"),
+                false => text,
             }
         }
         ("NoSuchColumn", [Value::String(col)]) => {
@@ -1872,6 +1877,26 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
+}
+
+/// Whether the actual part of a `TypeMismatch` is the column's type as
+/// Postgres names it (`float8`, `int4[]`, `int4[] with 2 dimensions`),
+/// which a cast in SQL changes: not a cell's value (`NULL`, `NaN`) nor
+/// why a document does not fit its field.
+fn names_a_type(actual: &str) -> bool {
+    let name = match actual.split_once(" with ") {
+        Some((name, dimensions)) => match dimensions.split_once(' ') {
+            Some((n, "dimension" | "dimensions")) if n.parse::<usize>().is_ok() => name,
+            _ => return false,
+        },
+        None => actual,
+    };
+    let name = name.trim_end_matches("[]");
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -2424,6 +2449,33 @@ mod tests {
 
     /// The column an `undefined_column` error names, as the server
     /// words it.
+    /// The cast hint goes with a column's type, not with a value or a
+    /// document that does not fit.
+    #[test]
+    fn the_cast_hint_is_for_a_column_s_type() {
+        for named in [
+            "float8",
+            "int4[]",
+            "pg2_mood",
+            "int4[] with 2 dimensions",
+            "int4[] with 1 dimension",
+        ] {
+            assert!(names_a_type(named), "{named}");
+        }
+        for value in [
+            "NULL",
+            "NaN",
+            "-Infinity",
+            "24:00:00",
+            "a value the server sent malformed",
+            "json type mismatch: expected Int, got string",
+            "cannot decode field `b` of `Inner`: a value of type Bytes cannot be decoded",
+            "int4[] with many dimensions",
+        ] {
+            assert!(!names_a_type(value), "{value}");
+        }
+    }
+
     #[test]
     fn the_column_of_an_undefined_column_error() {
         assert_eq!(column_named(r#"column "nope" does not exist"#), "nope");

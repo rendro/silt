@@ -80,7 +80,9 @@ value:
 | a record, a `Map`, a tuple, a variant, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
 
 A value that JSON has no form for (a function, a set, a channel, or
-`Bytes` inside a record) is an error, as it is for `json.stringify`.
+`Bytes` inside a record) is an error, as it is for `json.stringify`. A
+list of `Bytes` goes into a `bytea[]`; where it is to be JSON, the
+statement is `Err(Other(...))` that says so.
 
 ### Rows
 
@@ -90,9 +92,11 @@ a row is decoded into as their last argument: a record type, or
 for `json.parse`: any other type, or a record with a field of a type no
 column can fill, is an error there.
 
-Each field of the record is read from the column of its name. A column
-that no field names is not read. The columns are checked against the
-fields once per result, before the statement runs:
+Each field of the record is read from the column of its exact name;
+Postgres folds a name it is not given in quotes to lower case, so a
+column created as `"Id"` is read through `AS`: `SELECT "Id" AS id`. A
+column that no field names is not read. The columns are checked against
+the fields once per result, before the statement runs:
 
 - a field with no column is `Err(NoSuchColumn(field))`, an `Option`
   field too;
@@ -102,7 +106,8 @@ fields once per result, before the statement runs:
   its values (an `Int` field is not filled from a `float8` column even
   where the value is `2.0`). Its `message()` says how to go on:
   ``postgres type mismatch on column `id`: expected Int, got float8;
-  cast it in SQL, for example id::text``;
+  cast it in SQL, for example id::text``. A `NULL` that has no type of
+  its own (`SELECT NULL AS v`) is a `text` column: cast it, `NULL::int4`;
 - two columns of the name a field reads are
   ``Err(Other("postgres: column `id` appears twice in the result; rename one with AS"))``.
 
@@ -110,7 +115,13 @@ So a statement whose rows do not fit is not run: an `INSERT ...
 RETURNING` into a record that does not fit inserts nothing. A cell is
 checked as it is read: a `NULL` fills an `Option` field with `None`, and
 any other field with nothing, `Err(TypeMismatch(column, field type,
-"NULL"))`. A failed decode is never a value: it is the call's `Err`.
+"NULL"))`; a `NaN`, an `Infinity` or a date's `infinity` is
+`TypeMismatch(column, field type, "NaN")` (or `"Infinity"`,
+`"-Infinity"`); an array of more dimensions, or of fewer, than the
+field's list has levels is `TypeMismatch(column, "List(List(Int))",
+"int4[] with 1 dimension")`. These say nothing of a cast, as a cast
+does not change a value. A failed decode is never a value: it is the
+call's `Err`.
 
 | Column type | Field types it fills | In a `json.Value` row |
 | --- | --- | --- |
@@ -126,12 +137,14 @@ any other field with nothing, `Err(TypeMismatch(column, field type,
 | `timestamp`, `timestamptz` | `DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
 | `json`, `jsonb` | any field type but `Bytes`, decoded by `json.parse`'s rules | the document |
 | an array | `List(T)` of a `T` its elements fill, `List(Option(T))` where an element may be `NULL`, `List(List(T))` for two dimensions | `json.Array` |
+| `void` (what `pg_sleep(1)` gives) | none | `json.Null` |
 
 A domain's column is its base type's. A `json` or `jsonb` column fills a
 `String` field only with a JSON string (cast it, `col::text`, for the
-document's text), and a document that does not fit its field is
-`TypeMismatch(column, field type, why)`, with `why` as `json.decode`
-says it. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
+document's text), an `Option` field with `None` where the document is
+`null`, and no field that holds `Bytes` (in a record it names too); a
+document that does not fit its field is `TypeMismatch(column, field
+type, why)`, with `why` as `json.decode` says it. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
 fills no field, and is an error in a `json.Value` row as well: cast it
 in SQL, `col::text`.
 

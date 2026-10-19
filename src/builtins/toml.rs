@@ -41,15 +41,15 @@
 
 use std::sync::Arc;
 
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::NaiveDate;
 
 use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 use super::json::{
-    decodable_record, ensure_encodable_depth, field_record_type, unsupported_field_type_message,
-    unsupported_kind,
+    decodable_record, ensure_encodable_depth, field_record_type, parse_datetime, parse_time,
+    unsupported_field_type_message, unsupported_kind,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -539,43 +539,26 @@ fn toml_to_typed_value(
         FieldType::Time => match tv {
             ::toml::Value::Datetime(dt) => {
                 let s = dt.to_string();
-                NaiveTime::parse_from_str(&s, "%H:%M:%S")
-                    .or_else(|_| NaiveTime::parse_from_str(&s, "%H:%M"))
-                    .or_else(|_| NaiveTime::parse_from_str(&s, "%H:%M:%S%.f"))
+                parse_time(&s)
                     .map(make_time)
                     .map_err(|e| unknown(format!("invalid time '{s}': {e}")))
             }
-            ::toml::Value::String(s) => NaiveTime::parse_from_str(s, "%H:%M:%S")
-                .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+            ::toml::Value::String(s) => parse_time(s)
                 .map(make_time)
                 .map_err(|e| unknown(format!("invalid time '{s}' (expected HH:MM:SS): {e}"))),
             _ => Err(mismatch("time", toml_type_name(tv))),
         },
         FieldType::DateTime => match tv {
+            // (A TOML datetime literal as its text.)
             ::toml::Value::Datetime(dt) => {
                 let s = dt.to_string();
-                if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&s) {
-                    Ok(make_datetime(ts.naive_utc()))
-                } else if let Ok(ts) = chrono::DateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%z") {
-                    Ok(make_datetime(ts.naive_utc()))
-                } else {
-                    NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S")
-                        .or_else(|_| NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S"))
-                        .or_else(|_| NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f"))
-                        .map(make_datetime)
-                        .map_err(|_| unknown(format!("invalid datetime '{s}'")))
-                }
+                parse_datetime(&s)
+                    .map(make_datetime)
+                    .ok_or_else(|| unknown(format!("invalid datetime '{s}'")))
             }
-            ::toml::Value::String(s) => {
-                if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(s) {
-                    Ok(make_datetime(ts.naive_utc()))
-                } else {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-                        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-                        .map(make_datetime)
-                        .map_err(|_| unknown(format!("invalid datetime '{s}'")))
-                }
-            }
+            ::toml::Value::String(s) => parse_datetime(s)
+                .map(make_datetime)
+                .ok_or_else(|| unknown(format!("invalid datetime '{s}'"))),
             _ => Err(mismatch("datetime", toml_type_name(tv))),
         },
         FieldType::Record(id) => {
