@@ -2,7 +2,8 @@
 -- json and toml write it so; their decoders read such a year back, for
 -- a Date and a DateTime field, so it round-trips like any other date.
 -- (TOML's literal has four digits for the year: toml writes a string.)
--- A year before 0 is shown with its sign and reads back too.
+-- A year before 0 is shown with its sign and reads back too. A year
+-- padded with zeros is no text silt writes, and stays refused.
 import json
 import time
 import toml
@@ -30,4 +31,6 @@ fn main() {
   }
   println(json.parse("""{"d": "12026-02-30", "dt": "12026-02-28T12:00:00"}""", Moment))
   println(json.parse("""{"d": "2026-02-28", "dt": "12026-02-28T12:00:00+01:00"}""", Moment))
+  println(json.parse("""{"d": "02026-02-28", "dt": "2026-02-28T12:00:00"}""", Moment))
+  println(json.parse("""{"d": "2026-02-28", "dt": "002026-02-28T12:00:00"}""", Moment))
 }

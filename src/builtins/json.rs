@@ -269,10 +269,12 @@ pub(crate) fn value_to_json(
 
 /// `s`, the text of a date or a datetime, as chrono reads it: a year of
 /// five or more digits, which silt writes without a sign
-/// (`12026-01-01`), takes the `+` that chrono's `%Y` wants of one.
+/// (`12026-01-01`), takes the `+` that chrono's `%Y` wants of one. A
+/// year padded with zeros (`02026`) is no text silt writes, and stays
+/// refused.
 fn signed_year(s: &str) -> std::borrow::Cow<'_, str> {
     let digits = s.bytes().take_while(u8::is_ascii_digit).count();
-    match digits > 4 && s.as_bytes().get(digits) == Some(&b'-') {
+    match digits > 4 && !s.starts_with('0') && s.as_bytes().get(digits) == Some(&b'-') {
         true => format!("+{s}").into(),
         false => s.into(),
     }
@@ -861,6 +863,9 @@ mod tests {
         assert_eq!(date("12026-01-02").as_deref(), Some("+12026-01-02"));
         assert_eq!(date("-001-01-02").as_deref(), Some("-0001-01-02"));
         assert_eq!(date("2026-1-2").as_deref(), Some("2026-01-02"));
+        assert_eq!(date("02026-01-02").as_deref(), None);
+        assert_eq!(date("002026-01-02").as_deref(), None);
+        assert_eq!(datetime("02026-01-02T03:04").as_deref(), None);
         assert_eq!(
             datetime("12026-01-02T03:04").as_deref(),
             Some("+12026-01-02 03:04:00")
