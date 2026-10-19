@@ -1,0 +1,73 @@
+-- In a transaction, a function writes a row, reads one row of a
+-- `postgres.stream` of 3,000 on the transaction and returns `Ok`
+-- without closing the channel. The stream ends with the transaction:
+-- its sender, which waited for room in the channel (it holds 256
+-- rows), stops and gives the connection back, the transaction commits,
+-- and the row is in the table. With a sender that went on waiting, the
+-- commit would wait for it and the program would never end: the suite
+-- would report that it did not exit within its 60 seconds.
+import channel
+import env
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- How many rows `sql` gives, counted as they come from a stream.
+fn count(pool: postgres.PgPool, sql: String) -> Int {
+  match postgres.stream(pool, sql, []) {
+    Ok(rows) -> loop n = 0 {
+      match channel.receive(rows) {
+        Some(Ok(_)) -> loop(n + 1)
+        Some(Err(e)) -> {
+          println("count: {e.message()}")
+          -1
+        }
+        _ -> n
+      }
+    }
+    Err(e) -> {
+      println("count: {e.message()}")
+      -1
+    }
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_stream_in_tx", [])
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_stream_in_tx (said text)", [])
+      let done = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(
+          tx,
+          "INSERT INTO silt_database_stream_in_tx VALUES ('written in the transaction')",
+          [],
+        )?
+        match postgres.stream(tx, "SELECT g FROM generate_series(1, 3000) AS g", []) {
+          Ok(rows) -> {
+            println(
+              match channel.receive(rows) {
+                Some(Ok(_)) -> "the stream gave a row"
+                Some(Err(e)) -> e.message()
+                _ -> "no row"
+              },
+            )
+            Ok(())
+          }
+          Err(e) -> Err(e)
+        }
+      }
+      println("the transaction: {done}")
+      let kept = count(pool, "SELECT 1 FROM silt_database_stream_in_tx")
+      println("rows of the transaction in the table: {kept}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_stream_in_tx", [])
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

@@ -1,0 +1,3 @@
+the stream gave a row
+the transaction: Ok(())
+rows of the transaction in the table: 1

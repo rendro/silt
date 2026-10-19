@@ -1,0 +1,50 @@
+-- A task reads one row of a `postgres.stream` of 3,000 and is
+-- cancelled; `main` returns. Nobody closed the channel, and the
+-- stream's sender waits for room in it (it holds 256 rows): it is
+-- dropped as the program ends, as a task that waits to send is, and
+-- the program ends. With a sender that went on waiting the program
+-- would print the same two lines and never exit, and the suite would
+-- report that it did not exit within its 60 seconds.
+import channel
+import env
+import postgres
+import task
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let got: Channel(String) = channel.new(1)
+      let reader = task.spawn { ->
+        match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", []) {
+          Ok(rows) -> {
+            let first = match channel.receive(rows) {
+              Some(Ok(_)) -> "the reader has a row"
+              Some(Err(e)) -> e.message()
+              _ -> "no row"
+            }
+            channel.send(got, first)
+            -- Waits until it is cancelled.
+            let _ = channel.receive(got)
+            let _ = channel.receive(got)
+            ()
+          }
+          Err(e) -> channel.send(got, "postgres.stream: {e.message()}")
+        }
+      }
+      match channel.receive(got) {
+        Some(said) -> println(said)
+        None -> println("the reader said nothing")
+      }
+      task.cancel(reader)
+      println("the reader is cancelled, main returns")
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

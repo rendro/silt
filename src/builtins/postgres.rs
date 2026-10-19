@@ -25,7 +25,7 @@
 #![cfg(feature = "postgres")]
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -294,6 +294,34 @@ fn remove_cursor(id: u64) -> Option<CursorEntry> {
 fn drain_cursors_for_tx(tx_id: u64) {
     let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     reg.cursors.retain(|_, entry| entry.tx_id != tx_id);
+}
+
+// ── The streams of a transaction ───────────────────────────────────
+//
+// A stream opened on a `PgTx` holds the transaction's connection for
+// as long as its worker runs. When the transaction ends, its streams
+// are closed: a worker that waits for room ends, and gives the
+// connection back for the COMMIT or ROLLBACK.
+
+fn tx_streams() -> &'static Mutex<BTreeMap<u64, Vec<Weak<Channel>>>> {
+    static REG: OnceLock<Mutex<BTreeMap<u64, Vec<Weak<Channel>>>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn register_tx_stream(tx_id: u64, channel: &Arc<Channel>) {
+    let mut reg = tx_streams().lock().unwrap_or_else(|e| e.into_inner());
+    reg.entry(tx_id).or_default().push(Arc::downgrade(channel));
+}
+
+/// Close the streams of the transaction `tx_id` that are still there.
+fn close_tx_streams(tx_id: u64, wake: &dyn crate::runtime::sync::Wake) {
+    let streams = {
+        let mut reg = tx_streams().lock().unwrap_or_else(|e| e.into_inner());
+        reg.remove(&tx_id).unwrap_or_default()
+    };
+    for stream in streams.iter().filter_map(Weak::upgrade) {
+        stream.close(Close::default(), wake);
+    }
 }
 
 // ── Result / error builders ─────────────────────────────────────────
@@ -1965,12 +1993,28 @@ builtins! {
         let channel = Channel::new(ch_id, STREAM_CHANNEL_CAPACITY);
         let worker_channel = channel.clone();
 
+        // A stream opened in a transaction ends with it.
+        if let Some(tx) = TxHandle::take(conn) {
+            register_tx_stream(tx.0, &channel);
+        }
+
         // Fire-and-forget: submit to io_pool. The completion's return
         // value is unused (we return the channel, not a completion).
+        //
+        // The worker counts as a task of the program (`enter`): one
+        // that runs while it fetches rows, and one that waits while it
+        // waits for room in the channel. So the program is neither
+        // ended nor deadlocked while a row may still come, and when
+        // the program ends, a worker that waits for room is dropped
+        // there, as a task that waits to send is. Until the worker's
+        // thread has begun, `starting` stands in for it.
         let sql = sql.to_string();
         let scheduler = vm.scheduler().clone();
+        let starting = scheduler.external();
         let op = vm.start_io(pg_timeout_err, move || {
-            do_stream_worker(target, sql, params, worker_channel, scheduler);
+            let _running = scheduler.enter();
+            drop(starting);
+            do_stream_worker(target, sql, params, worker_channel, scheduler.clone());
             Value::Unit
         });
         op.detach();
@@ -2052,10 +2096,14 @@ builtins! {
             // LISTEN ok — spawn the long-lived worker onto the io_pool.
             // The worker owns `conn` for its whole lifetime; on exit the
             // conn drops back into the pool.
+            // The worker counts as pending for as long as it runs: a
+            // notification may come at any time.
             let worker_ch = worker_channel.clone();
             let scheduler = runtime.scheduler.clone();
+            let serving = scheduler.external();
             let op = runtime.io_pool.submit(pg_timeout_err, move || {
                 do_listen_worker(conn, channel_name, worker_ch, scheduler);
+                drop(serving);
                 Value::Unit
             });
             op.detach();
@@ -2097,20 +2145,26 @@ impl Native for Transact {
             return Ok(vm.call(callee, [make_tx_handle(tx_id)]));
         }
         self.tx_id = None;
-        Ok(Step::Done(end_tx(tx_id, Some(input))))
+        Ok(Step::Done(end_tx(
+            tx_id,
+            Some(input),
+            vm.scheduler().wake(),
+        )))
     }
 
-    fn abandon(&mut self, _vm: &mut Vm) {
+    fn abandon(&mut self, vm: &mut Vm) {
         if let Some(tx_id) = self.tx_id.take() {
-            end_tx(tx_id, None);
+            end_tx(tx_id, None, vm.scheduler().wake());
         }
     }
 }
 
-/// End the transaction `tx_id`: commit or roll back as the callback's
-/// value `returned` says, or roll back when the callback failed with
-/// an error of the program (`None`). The value is `postgres.transact`'s.
-fn end_tx(tx_id: u64, returned: Option<Value>) -> Value {
+/// End the transaction `tx_id`: close its streams, and commit or roll
+/// back as the callback's value `returned` says, or roll back when the
+/// callback failed with an error of the program (`None`). The value is
+/// `postgres.transact`'s.
+fn end_tx(tx_id: u64, returned: Option<Value>, wake: &dyn crate::runtime::sync::Wake) -> Value {
+    close_tx_streams(tx_id, wake);
     // Pull the conn out of the tx registry and finalise it.
     let Some(cell) = remove_tx(tx_id) else {
         // Shouldn't happen — the registry entry was valid on entry

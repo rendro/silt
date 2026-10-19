@@ -143,4 +143,7 @@ cases!(
     stream_closed_by_its_receiver,
     errors_of_statements,
     connect_errors,
+    stream_left_unread,
+    stream_of_a_cancelled_reader,
+    stream_left_unread_in_a_transaction,
 );

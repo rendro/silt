@@ -82,6 +82,14 @@ the cursor into the channel and closes it when the query completes
 (or on error). Slow consumers backpressure the server side via the
 channel capacity.
 
+The worker counts as a task of the program. While it fetches rows the
+program does not end. When the program ends while the worker waits for
+room in the channel (nobody reads it, or its reader was cancelled), the
+worker is dropped there, as a task that waits to send is. A stream
+opened on a `PgTx` ends with the transaction: its channel is closed
+when the transaction commits or rolls back, and the rows it holds can
+still be received.
+
 `postgres.cursor` is the lower-level primitive: it `DECLARE`s a
 server-side cursor inside an open transaction and returns an opaque
 `PgCursor` that `cursor_next` can repeatedly drain in batches. Always

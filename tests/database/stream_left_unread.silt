@@ -1,0 +1,38 @@
+-- `main` reads one row of a `postgres.stream` of 3,000 and returns
+-- without closing the channel. The stream's sender, which by then
+-- waits for room in the channel (it holds 256 rows), is dropped as the
+-- program ends, as a task that waits to send is: the program ends.
+-- That it ends is what the case holds: with a sender that went on
+-- waiting the program would print the same two lines and never exit,
+-- and the suite would report that it did not exit within its 60
+-- seconds.
+import channel
+import env
+import map
+import postgres
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", []) {
+      Ok(rows) -> {
+        println(
+          match channel.receive(rows) {
+            Some(Ok(row)) -> "the first row has the columns {map.keys(row)}"
+            Some(Err(e)) -> e.message()
+            _ -> "no row"
+          },
+        )
+        println("main returns, the stream unread")
+      }
+      Err(e) -> println("postgres.stream: {e.message()}")
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

@@ -58,7 +58,7 @@ SKIPPED` to stderr and passes, so the whole suite above stays runnable
 on a machine without a server. `cargo nextest` shows those lines (its
 summary still counts the cases as passed). Plain `cargo test` hides the
 output of a test that passes: there a run without a server reads
-"8 passed" and says nothing more, and `cargo test --all-features --test
+"11 passed" and says nothing more, and `cargo test --all-features --test
 database -- --nocapture` shows the lines. In CI (`CI` is set) a case
 without the variable fails instead: the job that runs this suite starts
 the server, and a run that tested nothing must not be green. No other
