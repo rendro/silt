@@ -2,6 +2,8 @@ a port where nothing listens: Connect
 a wrong password: AuthFailed: postgres authentication failed: password authentication failed for user "silt_orm"
 a database that does not exist: Connect: postgres connect failed: database "pg1_no_such_database" does not exist
 the suite's own URL: connected
+a connect_timeout of 5 s: connected
+a connect_timeout of 0: Connect: postgres connect failed: connect_timeout must be > 0
 an option that is none: Connect: postgres connect failed: postgres.connect_with: unknown option `max_pool_sise`; the options are: max_pool_size
 a pool of no connections: Connect: postgres connect failed: postgres.connect_with: max_pool_size must be > 0, got 0
 an option that is one: connected

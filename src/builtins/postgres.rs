@@ -126,6 +126,8 @@ impl Conn {
 struct Manager {
     config: postgres::Config,
     tls: Tls,
+    /// How long a connect may take, login included.
+    limit: Duration,
     /// The connection `connect` made itself, the first one the pool
     /// takes.
     first: Mutex<Option<postgres::Client>>,
@@ -133,13 +135,13 @@ struct Manager {
 
 impl r2d2::ManageConnection for Manager {
     type Connection = Conn;
-    type Error = postgres::Error;
+    type Error = ConnectFailure;
 
-    fn connect(&self) -> Result<Conn, postgres::Error> {
+    fn connect(&self) -> Result<Conn, ConnectFailure> {
         let first = self.first.lock().unwrap_or_else(|e| e.into_inner()).take();
         let client = match first {
             Some(client) => client,
-            None => self.tls.connect(&self.config)?,
+            None => connect_within(&self.config, &self.tls, self.limit)?,
         };
         Ok(Conn {
             canceller: Canceller {
@@ -151,8 +153,11 @@ impl r2d2::ManageConnection for Manager {
         })
     }
 
-    fn is_valid(&self, conn: &mut Conn) -> Result<(), postgres::Error> {
-        conn.client.simple_query("").map(|_| ())
+    fn is_valid(&self, conn: &mut Conn) -> Result<(), ConnectFailure> {
+        conn.client
+            .simple_query("")
+            .map(|_| ())
+            .map_err(ConnectFailure::Failed)
     }
 
     fn has_broken(&self, conn: &mut Conn) -> bool {
@@ -1185,12 +1190,10 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
             return err(pg_connect(format!("postgres: invalid URL: {e}")));
         }
     };
-    // The URL's own `connect_timeout` (whole seconds; 0 sets none)
-    // takes the place of `CONNECT_TIMEOUT`.
-    let limit = cfg
-        .get_connect_timeout()
-        .copied()
-        .unwrap_or(CONNECT_TIMEOUT);
+    let limit = match connect_limit(&url) {
+        Ok(limit) => limit,
+        Err(why) => return err(pg_connect(why)),
+    };
     cfg.connect_timeout(limit);
 
     // Derive effective TLS mode.
@@ -1224,6 +1227,31 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
         }
         Err(v) => err(v),
     }
+}
+
+/// How long a connect to `url` may take: the URL's own
+/// `connect_timeout`, in whole seconds, which must be more than 0, or
+/// `CONNECT_TIMEOUT`. A value that is no number is left to the URL's
+/// parser, which refuses it.
+fn connect_limit(url: &str) -> Result<Duration, &'static str> {
+    let query = url.split_once('?').map_or("", |(_, query)| query);
+    // The last one stands, as for the URL's parser.
+    let set = query
+        .rsplit('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(key, _)| *key == "connect_timeout")
+        .find_map(|(_, value)| value.parse::<i64>().ok());
+    match set {
+        None => Ok(CONNECT_TIMEOUT),
+        Some(seconds @ 1..) => Ok(Duration::from_secs(seconds.unsigned_abs())),
+        Some(_) => Err("connect_timeout must be > 0"),
+    }
+}
+
+/// Test-only: [`connect_limit`], for a test without a server.
+#[doc(hidden)]
+pub fn connect_limit_for_tests(url: &str) -> Result<Duration, String> {
+    connect_limit(url).map_err(str::to_string)
 }
 
 /// Effective `sslmode` once we've parsed both `postgres`-crate-native
@@ -1328,6 +1356,7 @@ fn open_pool(
     let manager = Manager {
         config: cfg,
         tls,
+        limit,
         first: Mutex::new(Some(first)),
     };
     let mut builder = Pool::builder();
@@ -1354,7 +1383,7 @@ fn first_connection(
         // (libpq's `prefer`): TLS, and a plain connection if that
         // fails other than by getting no answer.
         EffectiveSslMode::Prefer => match build_tls_connector(root_cert_path, true, true) {
-            Ok(connector) => match connect_within(cfg, Tls::On(connector), limit) {
+            Ok(connector) => match connect_first(cfg, Tls::On(connector), limit) {
                 Ok(done) => return Ok(done),
                 Err(error) if is_pg_timeout(&error) => return Err(error),
                 Err(_) => Tls::Off,
@@ -1365,7 +1394,7 @@ fn first_connection(
         EffectiveSslMode::VerifyCa => Tls::On(build_tls_connector(root_cert_path, false, true)?),
         EffectiveSslMode::VerifyFull => Tls::On(build_tls_connector(root_cert_path, false, false)?),
     };
-    connect_within(cfg, tls, limit)
+    connect_first(cfg, tls, limit)
 }
 
 /// The first connection of a pool, and the encryption of the pool's
@@ -1393,6 +1422,19 @@ fn first_connection(
     }
 }
 
+/// The pool's first connection, encrypted as `tls` says, or the
+/// `PostgresError` of a connect that failed.
+fn connect_first(
+    cfg: &postgres::Config,
+    tls: Tls,
+    limit: Duration,
+) -> Result<(Tls, postgres::Client), Value> {
+    match connect_within(cfg, &tls, limit) {
+        Ok(client) => Ok((tls, client)),
+        Err(failure) => Err(failure.value()),
+    }
+}
+
 /// Connect once, and wait for it `limit` at most. The config bounds
 /// the connect of the socket, and nothing bounds what follows it (TLS,
 /// authentication), so the connect runs on a thread of its own. One
@@ -1400,9 +1442,9 @@ fn first_connection(
 /// system ends it, and what it gets then is dropped.
 fn connect_within(
     cfg: &postgres::Config,
-    tls: Tls,
+    tls: &Tls,
     limit: Duration,
-) -> Result<(Tls, postgres::Client), Value> {
+) -> Result<postgres::Client, ConnectFailure> {
     use std::sync::mpsc::RecvTimeoutError;
     let (sent, answer) = std::sync::mpsc::channel();
     let (config, attempt) = (cfg.clone(), tls.clone());
@@ -1413,19 +1455,53 @@ fn connect_within(
             let _ = sent.send(crate::scheduler::catch_as_error(connect));
         });
     if let Err(e) = started {
-        return Err(pg_connect(format!(
+        return Err(ConnectFailure::Broke(format!(
             "postgres: cannot start a thread to connect: {e}"
         )));
     }
     match answer.recv_timeout(limit) {
-        Ok(Ok(Ok(client))) => Ok((tls, client)),
-        Ok(Ok(Err(e))) => Err(connect_error_value(&e)),
-        Err(RecvTimeoutError::Timeout) => Err(Value::variant(bv::PG_TIMEOUT, vec![])),
-        Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => {
-            Err(pg_unknown("postgres: the connect panicked"))
+        Ok(Ok(Ok(client))) => Ok(client),
+        Ok(Ok(Err(e))) => Err(ConnectFailure::Failed(e)),
+        Err(RecvTimeoutError::Timeout) => Err(ConnectFailure::NoAnswer),
+        Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => Err(ConnectFailure::Broke(
+            "postgres: the connect panicked".to_string(),
+        )),
+    }
+}
+
+/// Why a connect failed.
+#[derive(Debug)]
+enum ConnectFailure {
+    /// The server or the system said why.
+    Failed(postgres::Error),
+    /// No answer came in time.
+    NoAnswer,
+    /// The connect could not run, or panicked.
+    Broke(String),
+}
+
+impl ConnectFailure {
+    /// Its `PostgresError`.
+    fn value(&self) -> Value {
+        match self {
+            ConnectFailure::Failed(e) => connect_error_value(e),
+            ConnectFailure::NoAnswer => Value::variant(bv::PG_TIMEOUT, vec![]),
+            ConnectFailure::Broke(why) => pg_unknown(why.as_str()),
         }
     }
 }
+
+impl std::fmt::Display for ConnectFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectFailure::Failed(e) => write!(f, "{e}"),
+            ConnectFailure::NoAnswer => f.write_str("the server gave no answer in time"),
+            ConnectFailure::Broke(why) => f.write_str(why),
+        }
+    }
+}
+
+impl std::error::Error for ConnectFailure {}
 
 #[cfg(feature = "postgres-tls")]
 fn build_tls_connector(
@@ -2382,6 +2458,47 @@ mod tests {
                 "{mode} message missing feature hint: {msg}"
             );
         }
+    }
+
+    /// A server that takes the connection and never answers: the
+    /// connect is `Timeout` once the URL's `connect_timeout` is over,
+    /// login included (the socket's connect itself succeeds at once).
+    #[test]
+    fn a_connect_that_gets_no_answer_is_a_timeout() {
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (done, over) = mpsc::channel::<()>();
+        let silent = std::thread::spawn(move || {
+            // Hold the connection, unanswered, until the test is over.
+            let held = listener.accept();
+            let _ = over.recv();
+            drop(held);
+        });
+        let url = format!("postgres://u:p@127.0.0.1:{port}/db?sslmode=disable&connect_timeout=1");
+        let result = do_connect(url);
+        let _ = done.send(());
+        let _ = silent.join();
+        let Value::Variant(outer) = &result else {
+            panic!("expected Variant, got {result:?}");
+        };
+        assert_eq!(outer.name(), "Err", "{result:?}");
+        let Some(Value::Variant(error)) = outer.fields().first() else {
+            panic!("expected an error variant: {result:?}");
+        };
+        assert_eq!(error.name(), "Timeout", "{result:?}");
+    }
+
+    /// `connect_timeout=0` is refused before anything is sent.
+    #[test]
+    fn a_connect_timeout_of_0_is_refused() {
+        let result =
+            do_connect("postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=0".into());
+        assert_eq!(
+            result.to_string(),
+            "Err(postgres connect failed: connect_timeout must be > 0)"
+        );
     }
 
     /// Round-60 L6 behavioural companion to the source-grep lock in

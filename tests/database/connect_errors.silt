@@ -1,9 +1,11 @@
 -- The errors of a connect that fails, each said at once: a port where
 -- nothing listens is `Connect`, a wrong password `AuthFailed`, a
--- database that does not exist `Connect`, each with the reason. An
--- option of `postgres.connect_with` that is none, or a value it cannot
--- have, is `Connect` too, before anything is sent. (A server that does
--- not answer is `Timeout` after 10 s: no case waits for that.)
+-- database that does not exist `Connect`, each with the reason. A
+-- `connect_timeout` of 0 in the URL, an option of
+-- `postgres.connect_with` that is none, or a value it cannot have, is
+-- `Connect` too, before anything is sent. (A server that does not
+-- answer is `Timeout` after 10 s, or the URL's `connect_timeout`: a
+-- lib test waits for that.)
 --
 -- The URLs are the suite's with one part changed. A connect that
 -- waited, as one that tried again until the pool's 30 s were over,
@@ -77,6 +79,14 @@ fn with_database(url: String, database: String) -> String {
   }
 }
 
+-- `url` with one more option.
+fn with_option(url: String, option: String) -> String {
+  match string.contains(url, "?") {
+    true -> "{url}&{option}"
+    false -> "{url}?{option}"
+  }
+}
+
 fn main() {
   println(
     "a port where nothing listens: {said(postgres.connect("postgres://nobody:nothing@127.0.0.1:1/nothing?sslmode=disable"), false)}",
@@ -88,6 +98,12 @@ fn main() {
     "a database that does not exist: {said(postgres.connect(with_database(url(), "pg1_no_such_database")), true)}",
   )
   println("the suite's own URL: {said(postgres.connect(url()), true)}")
+  println(
+    "a connect_timeout of 5 s: {said(postgres.connect(with_option(url(), "connect_timeout=5")), true)}",
+  )
+  println(
+    "a connect_timeout of 0: {said(postgres.connect(with_option(url(), "connect_timeout=0")), true)}",
+  )
   println(
     "an option that is none: {said(postgres.connect_with(url(), #{ "max_pool_sise": 4 }), true)}",
   )

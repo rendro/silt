@@ -49,9 +49,10 @@ once why one fails: `Connect(msg)` for a port where nothing listens, a
 host that is unknown or cannot be reached, or a database that does not
 exist; `AuthFailed(msg)` for a role or password the server refuses
 (SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake; `Timeout`
-for a server that does not answer within 10 seconds, or within the
-`connect_timeout` (in seconds) that the URL sets. The pool opens its
-other connections when it needs them, each bounded the same way. A
+for a server that does not answer within 10 seconds, login included.
+A URL's `connect_timeout=N` (whole seconds, more than 0) sets that time
+instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
+its other connections when it needs them, each bounded the same way. A
 statement that finds no free connection in the pool waits 30 seconds
 for one, and is then `Timeout`.
 

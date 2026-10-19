@@ -22,7 +22,7 @@
 #![cfg(feature = "postgres")]
 
 use silt::builtins::postgres::{
-    EffectiveSslMode, read_max_pool_size_for_tests, redact_pg_message,
+    EffectiveSslMode, connect_limit_for_tests, read_max_pool_size_for_tests, redact_pg_message,
     resolve_effective_sslmode_for_tests,
 };
 use silt::value::Value;
@@ -152,6 +152,34 @@ fn connect_with_unknown_keys_rejected() {
         err,
         "postgres.connect_with: unknown option `max_pool_sise`; the options are: max_pool_size",
     );
+}
+
+/// A connect may take 10 s, or the `connect_timeout` (whole seconds)
+/// that the URL sets, which must be more than 0.
+#[test]
+fn connect_limit_is_the_urls_connect_timeout_or_10_s() {
+    use std::time::Duration;
+    let limit = |url: &str| connect_limit_for_tests(url);
+    assert_eq!(limit("postgres://u@h/db"), Ok(Duration::from_secs(10)));
+    assert_eq!(
+        limit("postgres://u@h/db?sslmode=disable"),
+        Ok(Duration::from_secs(10))
+    );
+    assert_eq!(
+        limit("postgres://u@h/db?sslmode=disable&connect_timeout=3"),
+        Ok(Duration::from_secs(3))
+    );
+    assert_eq!(
+        limit("postgres://u@h/db?connect_timeout=30&sslmode=disable"),
+        Ok(Duration::from_secs(30))
+    );
+    for zero in ["0", "-5"] {
+        assert_eq!(
+            limit(&format!("postgres://u@h/db?connect_timeout={zero}")),
+            Err("connect_timeout must be > 0".to_string()),
+            "connect_timeout={zero}",
+        );
+    }
 }
 
 /// Options that are no `Map(String, Int)` are not the argument's kind:
