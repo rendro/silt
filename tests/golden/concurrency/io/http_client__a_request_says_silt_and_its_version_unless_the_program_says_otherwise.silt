@@ -1,0 +1,55 @@
+-- timeout: 30
+-- requires-feature: http
+-- Every request of silt's client says who sends it, `user-agent:
+-- silt/<version>`, unless the program sets a `user-agent` of its own.
+-- The server answers with the header it got. (The version itself is
+-- pinned by a unit test in src/builtins/http.rs: this file would
+-- change with every release.)
+import bytes
+import http
+import int
+import list
+import map
+import option
+import result
+import string
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  let agent = map.get(req.headers, "user-agent") |> option.unwrap_or("(none)")
+  http.Response { status: 200, body: bytes.from_string(agent), headers: #{} }
+}
+
+-- What the server got, with the version written `<version>` when it
+-- is three numbers.
+fn shown(got: Result(http.Response, http.HttpError)) -> String {
+  match got {
+    Ok(r) -> {
+      let agent = bytes.to_string(r.body) |> result.unwrap_or("(no text)")
+      match string.split(agent, "/") {
+        ["silt", version] -> {
+          let numbers = string.split(version, ".")
+          let all = list.all(numbers) { n -> int.parse(n) |> result.is_ok }
+          match list.length(numbers) == 3 && all {
+            true -> "silt/<version>"
+            false -> agent
+          }
+        }
+        _ -> agent
+      }
+    }
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let url = "http://127.0.0.1:{port}/"
+  println("get: {shown(http.get(url))}")
+  println("post: {shown(http.request(http.POST, url, bytes.from_string("x"), #{}))}")
+  println("own: {shown(http.request(http.GET, url, bytes.empty(), #{ "user-agent": "probe/1" }))}")
+  task.cancel(server)
+}
