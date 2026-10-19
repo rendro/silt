@@ -340,6 +340,8 @@ pub struct Parser<'src> {
     /// `Lexed::line_break_before`). The end of the file starts none.
     starts_line: Vec<bool>,
     pos: usize,
+    /// How many function and closure bodies the current token is in.
+    bodies: usize,
     /// The innermost "expression followed by a block" header being
     /// parsed, if any.
     header: Option<BlockHeader>,
@@ -453,6 +455,7 @@ impl<'src> Parser<'src> {
             starts_line,
             source,
             pos: 0,
+            bodies: 0,
             header: None,
             expr_height: 0,
             statements: StatementMarks::default(),
@@ -1443,7 +1446,10 @@ impl<'src> Parser<'src> {
         let where_clauses = self.parse_where_clauses_opt()?;
         self.fn_header_whole = true;
         if self.at(&Token::LBrace) {
-            Ok((where_clauses, self.parse_block()?, false))
+            self.bodies += 1;
+            let body = self.parse_block();
+            self.bodies -= 1;
+            Ok((where_clauses, body?, false))
         } else {
             // Abstract method — no body (e.g. trait method declarations).
             // The Unit placeholder keeps the AST shape uniform; the
@@ -3254,26 +3260,34 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// The help for a `fn name(...)` where an expression is expected
-    /// inside braces (a function body, a closure): there a function is a
-    /// closure bound by a `let`, which may call itself by that name. The
-    /// closure takes the parameters as they are written, when they are on
-    /// one line. A top-level `let x = fn f()` is inside nothing: no help.
+    /// The help for a `fn name(...)` (or `pub fn name(...)`) where an
+    /// expression is expected inside a function or closure body: there a
+    /// function is a closure bound by a `let`, which may call itself by
+    /// that name. The closure takes the parameters as they are written,
+    /// when they are on one line. A top-level `let` is in no body: no
+    /// help.
     fn nested_fn_help(&self) -> Option<String> {
-        if !self.at(&Token::Fn) || self.delim_depth[self.pos] == 0 {
+        if self.bodies == 0 {
+            return None;
+        }
+        let at = match self.peek() {
+            Token::Pub => self.pos + 1,
+            _ => self.pos,
+        };
+        if self.tokens.get(at).map(|tok| &tok.kind) != Some(&Token::Fn) {
             return None;
         }
         let Some(Tok {
             kind: Token::Ident(name),
             ..
-        }) = self.tokens.get(self.pos + 1)
+        }) = self.tokens.get(at + 1)
         else {
             return None;
         };
-        let params = match self.tokens.get(self.pos + 2) {
+        let params = match self.tokens.get(at + 2) {
             Some(open) if open.kind == Token::LParen => {
                 let mut depth = 0usize;
-                let close = self.tokens[self.pos + 2..].iter().find(|tok| {
+                let close = self.tokens[at + 2..].iter().find(|tok| {
                     match tok.kind {
                         Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
                         Token::RParen | Token::RBracket | Token::RBrace => depth -= 1,
@@ -3572,7 +3586,10 @@ impl<'src> Parser<'src> {
         self.expect(&Token::Arrow)?;
 
         // Parse body statements
-        let stmts = self.parse_stmt_list(&Token::RBrace)?;
+        self.bodies += 1;
+        let stmts = self.parse_stmt_list(&Token::RBrace);
+        self.bodies -= 1;
+        let stmts = stmts?;
         self.expect(&Token::RBrace)?;
 
         let body = if stmts.len() == 1 {

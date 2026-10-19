@@ -3,8 +3,9 @@
 -- A function cannot be declared inside another. The help binds a
 -- closure by the function's name, with the parameters as they are
 -- written (a `let` closure may call itself by its name). A parameter
--- list over several lines is not copied, and a `fn` that is inside
--- nothing (a top-level `let`) gets no help.
+-- list over several lines is not copied. A `pub fn` gets the same help.
+-- A `fn` in no function or closure body (a top-level `let`, also inside
+-- a `match` there) gets no help.
 fn typed() {
   fn helper(x: Int, y) -> Int { x + y }
   helper(1, 2)
@@ -23,6 +24,15 @@ fn lines() {
   f
 }
 
+fn published() {
+  pub fn shown(x) { x }
+  shown(1)
+}
+
 let top = fn outside(a) { a }
+
+let matched = match 1 {
+  _ -> fn inside(a) { a }
+}
 
 fn main() {}

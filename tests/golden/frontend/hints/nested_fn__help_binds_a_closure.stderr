@@ -1,26 +1,39 @@
 error[parse]: expected expression, found fn
- --> nested_fn__help_binds_a_closure.silt:9:3
-   |
- 9 |   fn helper(x: Int, y) -> Int { x + y }
-   |   ^^ expected expression, found fn
+ --> nested_fn__help_binds_a_closure.silt:10:3
+    |
+ 10 |   fn helper(x: Int, y) -> Int { x + y }
+    |   ^^ expected expression, found fn
   = help: a function cannot be declared inside another; bind a closure: `let helper = { x: Int, y -> ... }`
 
 error[parse]: expected expression, found fn
- --> nested_fn__help_binds_a_closure.silt:14:18
+ --> nested_fn__help_binds_a_closure.silt:15:18
     |
- 14 |   let run = { -> fn tick() { 1 } }
+ 15 |   let run = { -> fn tick() { 1 } }
     |                  ^^ expected expression, found fn
   = help: a function cannot be declared inside another; bind a closure: `let tick = { -> ... }`
 
 error[parse]: expected expression, found fn
- --> nested_fn__help_binds_a_closure.silt:19:11
+ --> nested_fn__help_binds_a_closure.silt:20:11
     |
- 19 |   let f = fn spread(
+ 20 |   let f = fn spread(
     |           ^^ expected expression, found fn
   = help: a function cannot be declared inside another; bind a closure: `let spread = { ... -> ... }`
 
-error[parse]: expected expression, found fn
- --> nested_fn__help_binds_a_closure.silt:26:11
+error[parse]: expected expression, found pub
+ --> nested_fn__help_binds_a_closure.silt:28:3
     |
- 26 | let top = fn outside(a) { a }
+ 28 |   pub fn shown(x) { x }
+    |   ^^^ expected expression, found pub
+  = help: a function cannot be declared inside another; bind a closure: `let shown = { x -> ... }`
+
+error[parse]: expected expression, found fn
+ --> nested_fn__help_binds_a_closure.silt:32:11
+    |
+ 32 | let top = fn outside(a) { a }
     |           ^^ expected expression, found fn
+
+error[parse]: expected expression, found fn
+ --> nested_fn__help_binds_a_closure.silt:35:8
+    |
+ 35 |   _ -> fn inside(a) { a }
+    |        ^^ expected expression, found fn
