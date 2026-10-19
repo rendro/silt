@@ -7,6 +7,7 @@
 -- report that it did not exit within its 60 seconds.
 import channel
 import env
+import json
 import postgres
 import task
 
@@ -22,7 +23,7 @@ fn main() {
     Ok(pool) -> {
       let got: Channel(String) = channel.new(1)
       let reader = task.spawn { ->
-        match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", []) {
+        match postgres.stream(pool, "SELECT g FROM generate_series(1, 3000) AS g", (), json.Value) {
           Ok(rows) -> {
             let first = match channel.receive(rows) {
               Some(Ok(_)) -> "the reader has a row"

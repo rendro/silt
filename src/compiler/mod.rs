@@ -41,16 +41,16 @@ mod patterns;
 // Each record and enum type a program builds values of is described to
 // the VM by a `TypeInfo` (see `crate::typeinfo`): its id, its name, its
 // variants or its fields. A record's fields carry their types as far as
-// `json.parse(text, T)` and `toml.parse(text, T)` need them to build a
-// value of `T`. Type aliases are replaced by their target. A type no
-// decoder exists for is `FieldType::Unsupported`, which makes the
-// decoders return `Err`; it is never mapped to some other type. A direct
-// `json.parse` / `toml.parse` call whose type argument names such a
-// record is rejected at compile time (see
+// `json.parse(text, T)`, `toml.parse(text, T)` and `postgres.query(db,
+// sql, params, T)` need them to build a value of `T`. Type aliases are
+// replaced by their target. A type no decoder exists for is
+// `FieldType::Unsupported`, which makes the decoders return `Err`; it is
+// never mapped to some other type. A direct call of a decoder whose type
+// argument names such a record is rejected at compile time (see
 // `Compiler::check_decode_target`).
 
-/// The builtin functions that decode text into a value of the type named
-/// by their last argument.
+/// The builtin functions that decode text, or the rows of a result, into
+/// a value of the type named by their last argument.
 const DECODING_BUILTINS: &[&str] = &[
     "json.decode",
     "json.parse",
@@ -59,6 +59,18 @@ const DECODING_BUILTINS: &[&str] = &[
     "toml.parse",
     "toml.parse_list",
     "toml.parse_map",
+    "postgres.query",
+    "postgres.stream",
+    "postgres.cursor",
+];
+
+/// The postgres functions that run a statement: their third argument is
+/// the statement's parameters, a tuple.
+const STATEMENT_BUILTINS: &[&str] = &[
+    "postgres.query",
+    "postgres.execute",
+    "postgres.stream",
+    "postgres.cursor",
 ];
 
 /// A family of decoding builtins: they decode the same field types.
@@ -66,6 +78,8 @@ const DECODING_BUILTINS: &[&str] = &[
 enum Decoder {
     Json,
     Toml,
+    /// The rows of a result: `postgres.query(db, sql, params, T)`.
+    Postgres,
 }
 
 impl Decoder {
@@ -73,6 +87,7 @@ impl Decoder {
     fn of(builtin_name: &str) -> Decoder {
         match builtin_name.split_once('.').map(|(module, _)| module) {
             Some("json") => Decoder::Json,
+            Some("postgres") => Decoder::Postgres,
             _ => Decoder::Toml,
         }
     }
@@ -90,6 +105,11 @@ impl Decoder {
                  Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, \
                  non-generic record types, and aliases of these"
             }
+            Decoder::Postgres => {
+                "decodable field types are Int, Float, String, \
+                 Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), \
+                 tuples, non-generic record types, and aliases of these"
+            }
         }
     }
 
@@ -99,7 +119,7 @@ impl Decoder {
     fn lacks(self, field_type: &FieldType) -> Option<&'static str> {
         match field_type {
             FieldType::JsonValue if self == Decoder::Toml => Some("json.Value"),
-            FieldType::Bytes => Some("Bytes"),
+            FieldType::Bytes if self != Decoder::Postgres => Some("Bytes"),
             FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => self.lacks(t),
             FieldType::Tuple(ts) => ts.iter().find_map(|t| self.lacks(t)),
             _ => None,
@@ -1990,6 +2010,7 @@ impl<'a> Compiler<'a> {
         } else if let Some(builtin_name) = self.builtin_module_function(callee) {
             // A builtin module's function: `list.map(...)`.
             self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+            self.check_statement_params(&builtin_name, args)?;
             self.compile_operands(args.iter().copied())?;
             let argc = args.len();
             let builtin = self.builtin_row(&builtin_name, span)?.id;
@@ -2031,6 +2052,7 @@ impl<'a> Compiler<'a> {
             // `json.parse(..)`.
             if let Some(builtin_name) = self.builtin_function(callee.res) {
                 self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+                self.check_statement_params(&builtin_name, args)?;
             }
             self.compile_operands(std::iter::once(callee).chain(args.iter().copied()))?;
             let argc = args.len();
@@ -2706,7 +2728,8 @@ impl<'a> Compiler<'a> {
 
     /// Check the type argument of a call of a decoding builtin
     /// (`json.parse(text, T)`, `toml.parse(text, T)` and their `_list` /
-    /// `_map` forms), as the resolver resolved it. If `T` is a record type
+    /// `_map` forms, `postgres.query(db, sql, params, T)` and the other
+    /// postgres functions that read rows), as the resolver resolved it. If `T` is a record type
     /// of the program, every field the decoder would have to fill must
     /// have a decoder; otherwise the call is a compile error that names
     /// the field and its type. An enum, a builtin container type, or a
@@ -2786,7 +2809,7 @@ impl<'a> Compiler<'a> {
             .with_help(decodable_types_help));
         }
         if ty.id == crate::typeinfo::ty::JSON_VALUE {
-            if decoder == Decoder::Json {
+            if decoder != Decoder::Toml {
                 return Ok(());
             }
             return Err(Diagnostic::error(
@@ -2818,21 +2841,64 @@ impl<'a> Compiler<'a> {
             "json.decode" | "json.parse" | "json.parse_map" | "toml.parse_map"
         );
         if is_container || (is_primitive && !decodes_primitives) {
-            let accepted = if decodes_primitives {
-                "Int, Float, String, Bool, or a record type"
-            } else {
-                "a record type"
+            let (accepted, help) = match (decoder, decodes_primitives) {
+                // A row is a record of its columns.
+                (Decoder::Postgres, _) => (
+                    "a record type or json.Value",
+                    "declare a record type with a field for each column, and decode into the record",
+                ),
+                (_, true) => (
+                    "Int, Float, String, Bool, or a record type",
+                    "declare a record type with a field of the type you want, and decode into the record",
+                ),
+                (_, false) => (
+                    "a record type",
+                    "declare a record type with a field of the type you want, and decode into the record",
+                ),
             };
             return Err(Diagnostic::error(
                 Code::InvalidConstruct,
                 span,
                 format!("`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"),
             )
-            .with_help(
-                "declare a record type with a field of the type you want, and decode into the record",
-            ));
+            .with_help(help));
         }
         Ok(())
+    }
+
+    /// Check the parameters of a call of a postgres function that runs a
+    /// statement (`postgres.query(db, sql, (id, name), T)`): a tuple, or
+    /// `()` for none. `(id)` is `id`, and the error says to write
+    /// `(id,)`. When the type is a variable (a parameter of a generic
+    /// function) the function checks it where it runs.
+    fn check_statement_params(&self, builtin_name: &str, args: &[&Expr]) -> Result<(), Diagnostic> {
+        if !STATEMENT_BUILTINS.contains(&builtin_name) {
+            return Ok(());
+        }
+        let Some(params) = args.get(2) else {
+            return Ok(());
+        };
+        let Some(ty) = &params.ty else {
+            return Ok(());
+        };
+        let ty = crate::types::canonical::canonicalize(self.resolver(), ty);
+        match ty {
+            Type::Tuple(_)
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Rigid(_)
+            | Type::Error
+            | Type::Never => Ok(()),
+            other => Err(Diagnostic::error(
+                Code::TypeMismatch,
+                params.span,
+                format!(
+                    "the parameters of `{builtin_name}` must be a tuple, got `{}`",
+                    shown(&other)
+                ),
+            )
+            .with_help("write (id,)")),
+        }
     }
 
     // ── Context & scope helpers ───────────────────────────────────

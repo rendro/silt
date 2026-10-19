@@ -16,7 +16,7 @@ import int.{ IntError }
 import float.{ FloatError }
 import regex.{ RegexError }
 import bytes.{ BytesError }
-import postgres.{ PostgresError, PgPool, PgTx, PgCursor, QueryResult, ExecResult, PgValue }
+import postgres.{ PostgresError, PgPool, PgTx, PgCursor, Notification }
 import tcp.{ TcpError, TcpStream, TcpListener }
 import task.{ Handle }
 fn main() {

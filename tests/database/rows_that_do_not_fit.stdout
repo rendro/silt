@@ -1,0 +1,34 @@
+a field with no column: NoSuchColumn(id)
+  postgres: no such column `id`
+an Option field with no column: NoSuchColumn(nick)
+  postgres: no such column `nick`
+a column the server lacks: NoSuchColumn(nope)
+  postgres: no such column `nope`
+a float8 for an Int: TypeMismatch(id, Int, float8)
+  postgres type mismatch on column `id`: expected Int, got float8; cast it in SQL, for example id::text
+a numeric for an Int: TypeMismatch(id, Int, numeric)
+  postgres type mismatch on column `id`: expected Int, got numeric; cast it in SQL, for example id::text
+text for an Int, no rows: TypeMismatch(id, Int, text)
+  postgres type mismatch on column `id`: expected Int, got text; cast it in SQL, for example id::text
+an interval: TypeMismatch(r, Float, interval)
+  postgres type mismatch on column `r`: expected Float, got interval; cast it in SQL, for example r::text
+an interval in a json.Value row: TypeMismatch(r, json.Value, interval)
+  postgres type mismatch on column `r`: expected json.Value, got interval; cast it in SQL, for example r::text
+two columns a field reads: Other(postgres: column `id` appears twice in the result; rename one with AS)
+  postgres: column `id` appears twice in the result; rename one with AS
+two columns no field reads: [Id {id: 1}]
+two columns of a json.Value row: Other(postgres: column `x` appears twice in the result; rename one with AS)
+  postgres: column `x` appears twice in the result; rename one with AS
+a NULL for an Int: TypeMismatch(id, Int, NULL)
+  postgres type mismatch on column `id`: expected Int, got NULL
+a NULL element: TypeMismatch(x, Int, NULL)
+  postgres type mismatch on column `x`: expected Int, got NULL
+a NaN: TypeMismatch(r, Float, NaN)
+  postgres type mismatch on column `r`: expected Float, got NaN; cast it in SQL, for example r::text
+a NaN in a json.Value row: TypeMismatch(r, json.Value, NaN)
+  postgres type mismatch on column `r`: expected json.Value, got NaN; cast it in SQL, for example r::text
+a document that does not fit: TypeMismatch(doc, Meta, json type mismatch: expected Int, got string)
+  postgres type mismatch on column `doc`: expected Meta, got json type mismatch: expected Int, got string; cast it in SQL, for example doc::text
+an INSERT whose RETURNING does not fit: TypeMismatch(id, Int, float8)
+  postgres type mismatch on column `id`: expected Int, got float8; cast it in SQL, for example id::text
+rows in the table: [Id {id: 0}]

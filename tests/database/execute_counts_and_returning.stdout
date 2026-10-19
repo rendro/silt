@@ -1,0 +1,8 @@
+CREATE TABLE: 0
+INSERT of 3 rows: 3
+INSERT ... RETURNING through execute: 1
+INSERT ... RETURNING through query: [Made {id: 5, name: e}, Made {id: 6, name: f}]
+UPDATE: 4
+DELETE: 5
+DELETE of nothing: 0
+left: [Count {n: 1}]

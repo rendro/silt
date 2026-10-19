@@ -1,0 +1,971 @@
+//! The parameters of a statement and the rows of its result.
+//!
+//! A parameter goes to the server as text, which the server parses as
+//! the type the statement needs at its place (`$1` compared with an
+//! `int4` column is an `int4`): an `Int` goes into an `int4` or a
+//! `numeric`, a `String` into a `date`, a `Float` into a `float4`.
+//!
+//! A row is decoded into the type the program names, a record type or
+//! `json.Value`. The record's fields are matched with the result's
+//! columns by name once per result ([`Plan::new`]): a field with no
+//! column, or one whose type the column's type cannot fill, is an error
+//! before any row is read, however the values would have turned out (an
+//! `Int` field is not filled from a `float8` column even where it holds
+//! `2.0`). A column no field names is not read. A `json` or `jsonb`
+//! column is decoded by json's own decoder into the field's type.
+
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
+use fallible_iterator::FallibleIterator;
+use postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
+use postgres_protocol::types as wire;
+
+use crate::builtins::json;
+use crate::builtins::time::{make_date, make_datetime, make_time};
+use crate::builtins::typed::Type;
+use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
+use crate::value::{Float, Value};
+use crate::vm::{Runtime, VmError};
+
+// ── Parameters ──────────────────────────────────────────────────────
+
+/// A parameter as the server gets it: its text, or NULL.
+#[derive(Debug)]
+pub(super) enum TextParam {
+    Null,
+    Text(String),
+    /// A list: an array where the statement's parameter is an array
+    /// (`id = ANY($1)`), JSON anywhere else.
+    List {
+        array: String,
+        json: String,
+    },
+}
+
+impl ToSql for TextParam {
+    fn to_sql(
+        &self,
+        ty: &PgType,
+        out: &mut postgres::types::private::BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        let text = match self {
+            TextParam::Null => return Ok(IsNull::Yes),
+            TextParam::Text(text) => text,
+            TextParam::List { array, json } => match ty.kind() {
+                Kind::Array(_) => array,
+                _ => json,
+            },
+        };
+        out.extend_from_slice(text.as_bytes());
+        Ok(IsNull::No)
+    }
+
+    fn accepts(_ty: &PgType) -> bool {
+        true
+    }
+
+    fn encode_format(&self, _ty: &PgType) -> Format {
+        Format::Text
+    }
+
+    postgres::types::to_sql_checked!();
+}
+
+/// The parameters of a statement of `caller`: `params`, a tuple, or
+/// `()` for none.
+pub(super) fn params(caller: &str, params: &Value) -> Result<Vec<TextParam>, VmError> {
+    let values: Vec<&Value> = match params {
+        Value::Unit => Vec::new(),
+        Value::Tuple(values) => values.iter().collect(),
+        other => {
+            return Err(VmError::new(format!(
+                "{caller}: params must be a tuple, got {}; write (id,)",
+                other.kind()
+            )));
+        }
+    };
+    values
+        .into_iter()
+        .map(|value| param(caller, value))
+        .collect()
+}
+
+/// The parameter `value`. `None` is NULL and `Some(x)` is `x`; a date,
+/// a time and a datetime are written as silt shows them, `Bytes` as
+/// `bytea`'s hex text; a list is an array or JSON (see [`TextParam`]),
+/// and every other value that is no scalar (a record, a map, a variant)
+/// is written as `json.stringify` writes it. A value JSON has no form
+/// for is the error `json.stringify` gives.
+fn param(caller: &str, value: &Value) -> Result<TextParam, VmError> {
+    Ok(match value {
+        Value::Variant(variant) if variant.is(bv::NONE) => TextParam::Null,
+        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
+            return param(caller, &variant.fields()[0]);
+        }
+        Value::List(_) => TextParam::List {
+            array: array_literal(caller, value)?,
+            json: json::value_to_json(caller, value, 0)?.to_string(),
+        },
+        _ => TextParam::Text(scalar_text(caller, value)?),
+    })
+}
+
+/// The text of `value`, which is no list and no `Option`: a scalar's
+/// own, JSON for the others.
+fn scalar_text(caller: &str, value: &Value) -> Result<String, VmError> {
+    Ok(match value {
+        Value::Int(n) => n.to_string(),
+        // (`2.0` stays `2.0`, which no integer column takes.)
+        Value::Float(f) => format!("{:?}", f.get()),
+        Value::Bool(b) => b.to_string(),
+        Value::String(s) => s.to_string(),
+        Value::Bytes(bytes) => hex(bytes),
+        Value::Record(record)
+            if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
+        {
+            value.to_string()
+        }
+        _ => json::value_to_json(caller, value, 0)?.to_string(),
+    })
+}
+
+/// The list `list` as the text of a Postgres array (`{"1","2",NULL}`),
+/// a list of lists as one of more dimensions. Each element is quoted;
+/// `None` is `NULL`.
+fn array_literal(caller: &str, list: &Value) -> Result<String, VmError> {
+    let Value::List(items) = list else {
+        return scalar_text(caller, list);
+    };
+    let mut text = String::from("{");
+    for (k, item) in items.iter().enumerate() {
+        if k > 0 {
+            text.push(',');
+        }
+        let mut item = &item;
+        while let Value::Variant(variant) = item
+            && variant.is(bv::SOME)
+            && let [inner] = variant.fields()
+        {
+            item = inner;
+        }
+        match item {
+            Value::Variant(variant) if variant.is(bv::NONE) => text.push_str("NULL"),
+            Value::List(_) => text.push_str(&array_literal(caller, item)?),
+            _ => {
+                text.push('"');
+                for c in scalar_text(caller, item)?.chars() {
+                    if matches!(c, '"' | '\\') {
+                        text.push('\\');
+                    }
+                    text.push(c);
+                }
+                text.push('"');
+            }
+        }
+    }
+    text.push('}');
+    Ok(text)
+}
+
+/// `bytes` as the text of a `bytea`: `\x00ff`.
+fn hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(2 + 2 * bytes.len());
+    text.push_str("\\x");
+    for byte in bytes {
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
+}
+
+// ── The type of a row ───────────────────────────────────────────────
+
+/// The type a row is decoded into.
+#[derive(Clone)]
+pub(super) enum RowType {
+    /// A record type of the program.
+    Record(Arc<TypeInfo>),
+    /// `json.Value`: a row is a `json.Object` of its columns.
+    Value,
+}
+
+impl RowType {
+    /// The row type that the type argument `ty` of `caller` names.
+    pub(super) fn of(caller: &str, ty: Type) -> Result<RowType, VmError> {
+        match ty {
+            Type::Named(info) if info.id == ty::JSON_VALUE => Ok(RowType::Value),
+            Type::Named(info) if !info.is_builtin() && matches!(info.shape, Shape::Record(_)) => {
+                Ok(RowType::Record(info.clone()))
+            }
+            Type::Named(info) => Err(VmError::new(format!(
+                "{caller}: a row is decoded into a record type or json.Value, not {}",
+                info.name
+            ))),
+            Type::Primitive(_) => Err(VmError::new(format!(
+                "{caller}: a row is decoded into a record type or json.Value, not a primitive type"
+            ))),
+        }
+    }
+}
+
+// ── Columns ─────────────────────────────────────────────────────────
+
+/// What a column holds, as the decoder reads it. A domain's column holds
+/// what its base type's does, an enum's holds text.
+#[derive(Clone, Debug)]
+enum Col {
+    Bool,
+    Int2,
+    Int4,
+    Int8,
+    Float4,
+    Float8,
+    Numeric,
+    Text,
+    /// `"char"`, one byte.
+    Char,
+    Uuid,
+    Bytea,
+    Date,
+    Time,
+    Timestamp,
+    Timestamptz,
+    Json,
+    Jsonb,
+    Array(Box<Col>),
+    /// `void`, what `pg_sleep(1)` gives: no value.
+    Void,
+    /// A type silt has no value for (`interval`, `inet`, `timetz`, ...).
+    Other,
+}
+
+impl Col {
+    fn of(ty: &PgType) -> Col {
+        match *ty {
+            PgType::BOOL => Col::Bool,
+            PgType::INT2 => Col::Int2,
+            PgType::INT4 => Col::Int4,
+            PgType::INT8 => Col::Int8,
+            PgType::FLOAT4 => Col::Float4,
+            PgType::FLOAT8 => Col::Float8,
+            PgType::NUMERIC => Col::Numeric,
+            PgType::TEXT | PgType::VARCHAR | PgType::BPCHAR | PgType::NAME => Col::Text,
+            PgType::CHAR => Col::Char,
+            PgType::UUID => Col::Uuid,
+            PgType::BYTEA => Col::Bytea,
+            PgType::DATE => Col::Date,
+            PgType::TIME => Col::Time,
+            PgType::TIMESTAMP => Col::Timestamp,
+            PgType::TIMESTAMPTZ => Col::Timestamptz,
+            PgType::JSON => Col::Json,
+            PgType::JSONB => Col::Jsonb,
+            PgType::VOID => Col::Void,
+            _ => match ty.kind() {
+                Kind::Array(element) => Col::Array(Box::new(Col::of(element))),
+                Kind::Domain(base) => Col::of(base),
+                Kind::Enum(_) => Col::Text,
+                _ => Col::Other,
+            },
+        }
+    }
+
+    /// Whether a value of `field` can be decoded from what the column
+    /// holds (a NULL aside).
+    fn fills(&self, field: &FieldType) -> bool {
+        use FieldType as F;
+        match (self, field) {
+            (_, F::Option(inner)) => self.fills(inner),
+            (Col::Other, _) => false,
+            (Col::Array(element), F::JsonValue) => element.fills(field),
+            (_, F::JsonValue) => true,
+            (Col::Void, _) => false,
+            // json's decoder decodes every field type but `Bytes`.
+            (Col::Json | Col::Jsonb, _) => !holds(field, &|t| matches!(t, F::Bytes)),
+            (Col::Bool, F::Bool)
+            | (Col::Int2 | Col::Int4 | Col::Int8, F::Int)
+            | (Col::Float4 | Col::Float8 | Col::Numeric, F::Float)
+            | (Col::Int2 | Col::Int4 | Col::Int8, F::Float)
+            | (Col::Numeric | Col::Text | Col::Char | Col::Uuid, F::String)
+            | (Col::Bytea, F::Bytes)
+            | (Col::Date, F::Date)
+            | (Col::Time, F::Time)
+            | (Col::Timestamp | Col::Timestamptz, F::DateTime) => true,
+            // An array of more dimensions fills a list of lists.
+            (Col::Array(element), F::List(inner)) => {
+                element.fills(inner) || matches!(&**inner, F::List(_) if self.fills(inner))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Whether `field` is, or holds, a type that `test` picks.
+fn holds(field: &FieldType, test: &dyn Fn(&FieldType) -> bool) -> bool {
+    test(field)
+        || match field {
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => holds(t, test),
+            FieldType::Tuple(ts) => ts.iter().any(|t| holds(t, test)),
+            _ => false,
+        }
+}
+
+/// The name of the type `ty` as Postgres writes it, an array's as
+/// `text[]`.
+fn pg_name(ty: &PgType) -> String {
+    match ty.kind() {
+        Kind::Array(element) => format!("{}[]", pg_name(element)),
+        _ => ty.name().to_string(),
+    }
+}
+
+/// `field` as silt writes the type.
+fn shown(rt: &Runtime, field: &FieldType) -> String {
+    use FieldType as F;
+    match field {
+        F::Int => "Int".into(),
+        F::Float => "Float".into(),
+        F::String => "String".into(),
+        F::Bool => "Bool".into(),
+        F::Bytes => "Bytes".into(),
+        F::Date => "Date".into(),
+        F::Time => "Time".into(),
+        F::DateTime => "DateTime".into(),
+        F::JsonValue => "json.Value".into(),
+        F::List(t) => format!("List({})", shown(rt, t)),
+        F::Option(t) => format!("Option({})", shown(rt, t)),
+        F::Map(t) => format!("Map(String, {})", shown(rt, t)),
+        F::Tuple(ts) => {
+            let parts: Vec<String> = ts.iter().map(|t| shown(rt, t)).collect();
+            format!("({})", parts.join(", "))
+        }
+        F::Record(id) => rt
+            .type_info(*id)
+            .map_or_else(String::new, |info| info.name.clone()),
+        F::Unsupported(declared) => declared.clone(),
+    }
+}
+
+// ── Errors ──────────────────────────────────────────────────────────
+
+/// `TypeMismatch(column, expected, actual)`.
+fn type_mismatch(column: &str, expected: &str, actual: &str) -> Value {
+    Value::variant(
+        bv::PG_TYPE_MISMATCH,
+        vec![
+            Value::String(column.into()),
+            Value::String(expected.into()),
+            Value::String(actual.into()),
+        ],
+    )
+}
+
+/// `NoSuchColumn(column)`.
+pub(super) fn no_such_column(column: &str) -> Value {
+    Value::variant(bv::PG_NO_SUCH_COLUMN, vec![Value::String(column.into())])
+}
+
+/// The error of a result with two columns of the name `column`, which
+/// a field reads.
+fn twice(column: &str) -> Value {
+    super::other_error(format!(
+        "postgres: column `{column}` appears twice in the result; rename one with AS"
+    ))
+}
+
+/// A cell that cannot be a value of the type `expected` (silt's text of
+/// the part of the field's type that the cell was to be), because it is
+/// `actual`.
+struct Mismatch {
+    expected: String,
+    actual: String,
+}
+
+impl Mismatch {
+    fn new(rt: &Runtime, expected: &FieldType, actual: impl Into<String>) -> Mismatch {
+        Mismatch {
+            expected: shown(rt, expected),
+            actual: actual.into(),
+        }
+    }
+}
+
+// ── The plan of a result ────────────────────────────────────────────
+
+/// How the rows of one result are decoded: made from its columns before
+/// any row is read.
+pub(super) struct Plan {
+    kind: PlanKind,
+}
+
+enum PlanKind {
+    /// Each row a record of `ty`: each field, in the order the type
+    /// declares them, from its column.
+    Record {
+        ty: Arc<TypeInfo>,
+        fields: Vec<FieldPlan>,
+    },
+    /// Each row a `json.Object` of its columns.
+    Value { columns: Vec<(String, usize, Col)> },
+}
+
+/// A field of a record and the column it is decoded from.
+struct FieldPlan {
+    /// The field's name, which is the column's.
+    name: String,
+    column: usize,
+    col: Col,
+    field: FieldType,
+}
+
+impl Plan {
+    /// The plan of a result of `columns` whose rows are decoded into
+    /// `row`, or the `PostgresError` that says why there is none: the
+    /// first field, in the order of the type's declaration, that has no
+    /// column (`NoSuchColumn`) or whose column's type does not fill it
+    /// (`TypeMismatch`).
+    pub(super) fn new(
+        rt: &Runtime,
+        row: &RowType,
+        columns: &[postgres::Column],
+    ) -> Result<Plan, Value> {
+        let kind = match row {
+            RowType::Value => {
+                let mut seen = std::collections::HashSet::new();
+                let mut plan = Vec::with_capacity(columns.len());
+                for (at, column) in columns.iter().enumerate() {
+                    // A `json.Object` reads every column.
+                    if !seen.insert(column.name()) {
+                        return Err(twice(column.name()));
+                    }
+                    // A column silt has no value for is refused at
+                    // once, as it is for a record's field.
+                    let col = Col::of(column.type_());
+                    if !col.fills(&FieldType::JsonValue) {
+                        let name = pg_name(column.type_());
+                        return Err(type_mismatch(column.name(), "json.Value", &name));
+                    }
+                    plan.push((column.name().to_string(), at, col));
+                }
+                PlanKind::Value { columns: plan }
+            }
+            RowType::Record(ty) => {
+                let Shape::Record(declared) = &ty.shape else {
+                    return Err(super::other_error(format!("{}: no record type", ty.name)));
+                };
+                let mut fields = Vec::with_capacity(declared.len());
+                for (name, field) in declared {
+                    if let Some(declared) = unsupported(field) {
+                        return Err(super::other_error(json::unsupported_field_type_message(
+                            &ty.name, name, declared,
+                        )));
+                    }
+                    let mut named = columns.iter().enumerate().filter(|(_, c)| c.name() == name);
+                    let Some((column, found)) = named.next() else {
+                        return Err(no_such_column(name));
+                    };
+                    if named.next().is_some() {
+                        return Err(twice(name));
+                    }
+                    let col = Col::of(found.type_());
+                    if !col.fills(field) {
+                        let expected = match field {
+                            FieldType::Option(inner) => inner,
+                            _ => field,
+                        };
+                        return Err(type_mismatch(
+                            name,
+                            &shown(rt, expected),
+                            &pg_name(found.type_()),
+                        ));
+                    }
+                    fields.push(FieldPlan {
+                        name: name.clone(),
+                        column,
+                        col,
+                        field: field.clone(),
+                    });
+                }
+                PlanKind::Record {
+                    ty: ty.clone(),
+                    fields,
+                }
+            }
+        };
+        Ok(Plan { kind })
+    }
+
+    /// The value of `row`, or the `PostgresError` of a cell that has
+    /// none (a NULL for a field that is no `Option`, a `NaN` for a
+    /// `Float`).
+    pub(super) fn row(&self, rt: &Runtime, row: &postgres::Row) -> Result<Value, Value> {
+        let raw = |column: usize| match row.try_get::<_, Raw>(column) {
+            Ok(Raw(raw)) => Ok(raw),
+            Err(e) => Err(super::other_error(format!("postgres: {e}"))),
+        };
+        match &self.kind {
+            PlanKind::Record { ty, fields } => {
+                let mut values = Vec::with_capacity(fields.len());
+                for field in fields {
+                    let value = cell(rt, &field.col, &field.field, raw(field.column)?)
+                        .map_err(|m| type_mismatch(&field.name, &m.expected, &m.actual))?;
+                    values.push(value);
+                }
+                Ok(Value::record(ty.clone(), values))
+            }
+            PlanKind::Value { columns } => {
+                let mut entries = Vec::with_capacity(columns.len());
+                for (name, column, col) in columns {
+                    let value = cell(rt, col, &FieldType::JsonValue, raw(*column)?)
+                        .map_err(|m| type_mismatch(name, &m.expected, &m.actual))?;
+                    entries.push((Value::String(name.as_str().into()), value));
+                }
+                Ok(Value::variant(bv::JSON_OBJECT, vec![Value::map(entries)]))
+            }
+        }
+    }
+}
+
+/// The type a field's type holds that no decoder has, as the record
+/// declares it (a field reached only through a type argument that is a
+/// type variable; the compiler refuses the others).
+fn unsupported(field: &FieldType) -> Option<&str> {
+    match field {
+        FieldType::Unsupported(declared) => Some(declared),
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => unsupported(t),
+        FieldType::Tuple(ts) => ts.iter().find_map(unsupported),
+        _ => None,
+    }
+}
+
+/// A cell as the server sent it, in the binary format: `None` for NULL.
+struct Raw<'a>(Option<&'a [u8]>);
+
+impl<'a> FromSql<'a> for Raw<'a> {
+    fn from_sql(
+        _ty: &PgType,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(Raw(Some(raw)))
+    }
+
+    fn from_sql_null(_ty: &PgType) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(Raw(None))
+    }
+
+    fn accepts(_ty: &PgType) -> bool {
+        true
+    }
+}
+
+// ── Cells ───────────────────────────────────────────────────────────
+
+/// The value of the type `field` that the cell `raw` of a column that
+/// holds `col` is. The plan has checked that `col` fills `field`.
+fn cell(rt: &Runtime, col: &Col, field: &FieldType, raw: Option<&[u8]>) -> Result<Value, Mismatch> {
+    use FieldType as F;
+    let Some(raw) = raw else {
+        return match field {
+            F::Option(_) => Ok(Value::variant(bv::NONE, Vec::new())),
+            F::JsonValue => Ok(Value::variant(bv::JSON_NULL, Vec::new())),
+            _ => Err(Mismatch::new(rt, field, "NULL")),
+        };
+    };
+    let malformed = |_| Mismatch::new(rt, field, "a value the server sent malformed");
+    Ok(match (col, field) {
+        (_, F::Option(inner)) => Value::variant(bv::SOME, vec![cell(rt, col, inner, Some(raw))?]),
+        (_, F::JsonValue) => dynamic(rt, col, raw)?,
+        (Col::Json | Col::Jsonb, _) => {
+            let document = document(col, raw).map_err(malformed)?;
+            json::decode_field(rt, &document, field).map_err(|why| Mismatch::new(rt, field, why))?
+        }
+        (Col::Bool, F::Bool) => Value::Bool(wire::bool_from_sql(raw).map_err(malformed)?),
+        (Col::Int2, F::Int) => Value::Int(wire::int2_from_sql(raw).map_err(malformed)?.into()),
+        (Col::Int4, F::Int) => Value::Int(wire::int4_from_sql(raw).map_err(malformed)?.into()),
+        (Col::Int8, F::Int) => Value::Int(wire::int8_from_sql(raw).map_err(malformed)?),
+        (
+            Col::Float4 | Col::Float8 | Col::Numeric | Col::Int2 | Col::Int4 | Col::Int8,
+            F::Float,
+        ) => {
+            let f = float(col, raw).map_err(malformed)?;
+            Value::Float(Float::new(f).ok_or_else(|| Mismatch::new(rt, field, non_finite(f)))?)
+        }
+        (Col::Numeric, F::String) => Value::String(numeric(raw).map_err(malformed)?.into()),
+        (Col::Text | Col::Char | Col::Uuid, F::String) => {
+            Value::String(text(col, raw).map_err(malformed)?.into())
+        }
+        (Col::Bytea, F::Bytes) => Value::Bytes(Arc::new(raw.to_vec())),
+        (Col::Date, F::Date) => make_date(date(raw).map_err(|why| Mismatch::new(rt, field, why))?),
+        (Col::Time, F::Time) => make_time(time(raw).map_err(|why| Mismatch::new(rt, field, why))?),
+        (Col::Timestamp | Col::Timestamptz, F::DateTime) => {
+            make_datetime(timestamp(raw).map_err(|why| Mismatch::new(rt, field, why))?)
+        }
+        (Col::Array(element), F::List(_)) => {
+            let (dimensions, values) = array(raw).map_err(malformed)?;
+            let mut values = values.into_iter();
+            nest(&dimensions, field, &mut values, &mut |field, raw| {
+                cell(rt, element, field, raw)
+            })
+            .map_err(|m| match m {
+                Nested::Cell(m) => m,
+                Nested::Dimensions(field) => Mismatch::new(
+                    rt,
+                    field,
+                    format!("an array of {} dimensions", dimensions.len()),
+                ),
+            })?
+        }
+        // (The plan has refused every other pair.)
+        _ => return Err(Mismatch::new(rt, field, "a column of another type")),
+    })
+}
+
+/// The `json.Value` of the cell `raw` of a column that holds `col`:
+/// `json.Bool`, `json.Int`, `json.Float` as the column's type says; a
+/// `numeric` as its exact text; text, a uuid, `bytea`'s hex text and a
+/// date or a time as silt shows it as `json.String`; the document of a
+/// `json` or `jsonb` column; an array as `json.Array`; `void` as
+/// `json.Null`.
+fn dynamic(rt: &Runtime, col: &Col, raw: &[u8]) -> Result<Value, Mismatch> {
+    let field = FieldType::JsonValue;
+    let malformed = |_| Mismatch::new(rt, &field, "a value the server sent malformed");
+    let string = |s: String| Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]);
+    Ok(match col {
+        Col::Bool => Value::variant(
+            bv::JSON_BOOL,
+            vec![Value::Bool(wire::bool_from_sql(raw).map_err(malformed)?)],
+        ),
+        Col::Int2 | Col::Int4 | Col::Int8 => {
+            let n = match col {
+                Col::Int2 => wire::int2_from_sql(raw).map(i64::from),
+                Col::Int4 => wire::int4_from_sql(raw).map(i64::from),
+                _ => wire::int8_from_sql(raw),
+            };
+            Value::variant(bv::JSON_INT, vec![Value::Int(n.map_err(malformed)?)])
+        }
+        Col::Float4 | Col::Float8 => {
+            let f = float(col, raw).map_err(malformed)?;
+            let f = Float::new(f).ok_or_else(|| Mismatch::new(rt, &field, non_finite(f)))?;
+            Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)])
+        }
+        Col::Numeric => string(numeric(raw).map_err(malformed)?),
+        Col::Text | Col::Char | Col::Uuid => string(text(col, raw).map_err(malformed)?),
+        Col::Bytea => string(hex(raw)),
+        Col::Date => {
+            string(make_date(date(raw).map_err(|why| Mismatch::new(rt, &field, why))?).to_string())
+        }
+        Col::Time => {
+            string(make_time(time(raw).map_err(|why| Mismatch::new(rt, &field, why))?).to_string())
+        }
+        Col::Timestamp | Col::Timestamptz => string(
+            make_datetime(timestamp(raw).map_err(|why| Mismatch::new(rt, &field, why))?)
+                .to_string(),
+        ),
+        Col::Json | Col::Jsonb => json::json_value(&document(col, raw).map_err(malformed)?),
+        Col::Void => Value::variant(bv::JSON_NULL, Vec::new()),
+        Col::Array(element) => {
+            let (dimensions, values) = array(raw).map_err(malformed)?;
+            let mut values = values.into_iter();
+            let mut leaf = |_: &FieldType, raw: Option<&[u8]>| match raw {
+                Some(raw) => dynamic(rt, element, raw),
+                None => Ok(Value::variant(bv::JSON_NULL, Vec::new())),
+            };
+            nest_dynamic(&dimensions, &mut values, &mut leaf).map_err(|m| match m {
+                Nested::Cell(m) => m,
+                Nested::Dimensions(_) => Mismatch::new(rt, &field, "an array"),
+            })?
+        }
+        Col::Other => return Err(Mismatch::new(rt, &field, "a column of another type")),
+    })
+}
+
+/// Why the elements of an array make no value.
+enum Nested<'f> {
+    Cell(Mismatch),
+    /// The array has more dimensions than the list `field` has levels.
+    Dimensions(&'f FieldType),
+}
+
+/// The list of type `field` that the elements `values` of an array of
+/// `dimensions` (the length of each) make, each element decoded by
+/// `leaf` into the type of the innermost list's elements.
+fn nest<'f, 'r>(
+    dimensions: &[usize],
+    field: &'f FieldType,
+    values: &mut impl Iterator<Item = Option<&'r [u8]>>,
+    leaf: &mut impl FnMut(&FieldType, Option<&'r [u8]>) -> Result<Value, Mismatch>,
+) -> Result<Value, Nested<'f>> {
+    let FieldType::List(element) = field else {
+        return Err(Nested::Dimensions(field));
+    };
+    let Some((&length, inner)) = dimensions.split_first() else {
+        // An empty array has no dimensions.
+        return Ok(Value::list(Vec::new()));
+    };
+    let mut items = Vec::with_capacity(length);
+    for _ in 0..length {
+        items.push(match inner.is_empty() {
+            true => leaf(element, values.next().flatten()).map_err(Nested::Cell)?,
+            false => nest(inner, element, values, leaf)?,
+        });
+    }
+    Ok(Value::list(items))
+}
+
+/// The `json.Array` that the elements `values` of an array of
+/// `dimensions` make, each element decoded by `leaf`.
+fn nest_dynamic<'r>(
+    dimensions: &[usize],
+    values: &mut impl Iterator<Item = Option<&'r [u8]>>,
+    leaf: &mut impl FnMut(&FieldType, Option<&'r [u8]>) -> Result<Value, Mismatch>,
+) -> Result<Value, Nested<'static>> {
+    let array = |items| Value::variant(bv::JSON_ARRAY, vec![Value::list(items)]);
+    let Some((&length, inner)) = dimensions.split_first() else {
+        return Ok(array(Vec::new()));
+    };
+    let mut items = Vec::with_capacity(length);
+    for _ in 0..length {
+        items.push(match inner.is_empty() {
+            true => leaf(&FieldType::JsonValue, values.next().flatten()).map_err(Nested::Cell)?,
+            false => nest_dynamic(inner, values, leaf)?,
+        });
+    }
+    Ok(array(items))
+}
+
+type WireError = Box<dyn std::error::Error + Sync + Send>;
+
+/// The dimensions (the length of each) and the elements of an array.
+fn array(raw: &[u8]) -> Result<(Vec<usize>, Vec<Option<&[u8]>>), WireError> {
+    let array = wire::array_from_sql(raw)?;
+    let dimensions = array.dimensions().map(|d| Ok(usize::try_from(d.len)?));
+    let dimensions: Vec<usize> = dimensions.collect()?;
+    let values: Vec<Option<&[u8]>> = array.values().collect()?;
+    let count: usize = match dimensions.is_empty() {
+        true => 0,
+        false => dimensions.iter().product(),
+    };
+    match count == values.len() {
+        true => Ok((dimensions, values)),
+        false => Err("the array's elements do not fill its dimensions".into()),
+    }
+}
+
+/// The JSON document of a `json` or `jsonb` cell.
+fn document(col: &Col, raw: &[u8]) -> Result<serde_json::Value, WireError> {
+    let text = match (col, raw) {
+        // A `jsonb` cell begins with the version of its format, 1.
+        (Col::Jsonb, [1, text @ ..]) => text,
+        (Col::Jsonb, _) => return Err("a jsonb cell of an unknown version".into()),
+        _ => raw,
+    };
+    Ok(serde_json::from_slice(text)?)
+}
+
+/// The text of a text, `"char"` or uuid cell.
+fn text(col: &Col, raw: &[u8]) -> Result<String, WireError> {
+    Ok(match col {
+        Col::Char => {
+            let byte = wire::char_from_sql(raw)? as u8;
+            match byte.is_ascii() {
+                true => char::from(byte).to_string(),
+                // (Postgres's own text of such a byte.)
+                false => format!("\\{byte:03o}"),
+            }
+        }
+        Col::Uuid => uuid::Uuid::from_bytes(wire::uuid_from_sql(raw)?).to_string(),
+        _ => wire::text_from_sql(raw)?.to_string(),
+    })
+}
+
+/// The number of a `float4`, `float8`, `numeric` or integer cell: a
+/// `numeric`'s or an `int8`'s nearest `f64`, as `::float8` gives it.
+fn float(col: &Col, raw: &[u8]) -> Result<f64, WireError> {
+    Ok(match col {
+        Col::Float4 => wire::float4_from_sql(raw)?.into(),
+        Col::Float8 => wire::float8_from_sql(raw)?,
+        Col::Int2 => wire::int2_from_sql(raw)?.into(),
+        Col::Int4 => wire::int4_from_sql(raw)?.into(),
+        Col::Int8 => wire::int8_from_sql(raw)? as f64,
+        _ => match numeric(raw)?.as_str() {
+            "NaN" => f64::NAN,
+            "Infinity" => f64::INFINITY,
+            "-Infinity" => f64::NEG_INFINITY,
+            exact => exact.parse()?,
+        },
+    })
+}
+
+/// What a number that is no `Float` is called in a type mismatch.
+fn non_finite(f: f64) -> &'static str {
+    match f {
+        f if f.is_nan() => "NaN",
+        f if f > 0.0 => "Infinity",
+        _ => "-Infinity",
+    }
+}
+
+/// The exact text of a `numeric` cell, as Postgres writes it (`12.50`,
+/// `NaN`, `-Infinity`). The binary format is the number's digits in
+/// base 10000, the first of them at the power `weight`, and the count
+/// of decimal digits after the point (`scale`).
+fn numeric(raw: &[u8]) -> Result<String, WireError> {
+    let word = |at: usize| -> Result<u16, WireError> {
+        match raw.get(at..at + 2) {
+            Some(&[hi, lo]) => Ok(u16::from_be_bytes([hi, lo])),
+            _ => Err("a numeric cell too short".into()),
+        }
+    };
+    let count = usize::from(word(0)?);
+    let weight = i64::from(word(2)? as i16);
+    let sign = word(4)?;
+    let scale = usize::from(word(6)?);
+    let digits: Vec<u16> = (0..count)
+        .map(|k| word(8 + 2 * k))
+        .collect::<Result<_, _>>()?;
+    let digit = |power: i64| -> u16 {
+        // The digit at `power` of 10000.
+        usize::try_from(weight - power)
+            .ok()
+            .and_then(|k| digits.get(k).copied())
+            .unwrap_or(0)
+    };
+    let mut text = String::new();
+    match sign {
+        0x0000 => {}
+        0x4000 => text.push('-'),
+        0xC000 => return Ok("NaN".into()),
+        0xD000 => return Ok("Infinity".into()),
+        0xF000 => return Ok("-Infinity".into()),
+        _ => return Err("a numeric cell of an unknown sign".into()),
+    }
+    match weight < 0 {
+        true => text.push('0'),
+        false => {
+            let _ = write!(text, "{}", digit(weight));
+            for power in (0..weight).rev() {
+                let _ = write!(text, "{:04}", digit(power));
+            }
+        }
+    }
+    if scale > 0 {
+        let mut fraction = String::with_capacity(scale + 4);
+        let mut power = -1;
+        while fraction.len() < scale {
+            let _ = write!(fraction, "{:04}", digit(power));
+            power -= 1;
+        }
+        fraction.truncate(scale);
+        text.push('.');
+        text.push_str(&fraction);
+    }
+    Ok(text)
+}
+
+/// Postgres's dates count days from 2000-01-01, its times microseconds.
+const EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(2000, 1, 1) {
+    Some(date) => date,
+    None => unreachable!(),
+};
+
+/// The date of a `date` cell, or what it is instead.
+fn date(raw: &[u8]) -> Result<NaiveDate, String> {
+    let days = wire::date_from_sql(raw).map_err(|e| e.to_string())?;
+    match days {
+        i32::MAX => Err("infinity".into()),
+        i32::MIN => Err("-infinity".into()),
+        days => EPOCH
+            .checked_add_signed(TimeDelta::days(days.into()))
+            .ok_or_else(|| "a date out of Date's range".into()),
+    }
+}
+
+/// The time of a `time` cell, or what it is instead.
+fn time(raw: &[u8]) -> Result<NaiveTime, String> {
+    let micros = wire::time_from_sql(raw).map_err(|e| e.to_string())?;
+    let (seconds, micros) = (micros.div_euclid(1_000_000), micros.rem_euclid(1_000_000));
+    u32::try_from(seconds)
+        .ok()
+        .and_then(|s| NaiveTime::from_num_seconds_from_midnight_opt(s, (micros * 1000) as u32))
+        .ok_or_else(|| "24:00:00".into())
+}
+
+/// The date and time of a `timestamp` or `timestamptz` cell (in UTC),
+/// or what it is instead.
+fn timestamp(raw: &[u8]) -> Result<NaiveDateTime, String> {
+    let micros = wire::timestamp_from_sql(raw).map_err(|e| e.to_string())?;
+    match micros {
+        i64::MAX => Err("infinity".into()),
+        i64::MIN => Err("-infinity".into()),
+        micros => EPOCH
+            .and_time(NaiveTime::MIN)
+            .checked_add_signed(TimeDelta::microseconds(micros))
+            .ok_or_else(|| "a datetime out of DateTime's range".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The binary format of a `numeric`: its digits in base 10000.
+    fn numeric_cell(weight: i16, sign: u16, scale: u16, digits: &[u16]) -> Vec<u8> {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&(digits.len() as u16).to_be_bytes());
+        raw.extend_from_slice(&weight.to_be_bytes());
+        raw.extend_from_slice(&sign.to_be_bytes());
+        raw.extend_from_slice(&scale.to_be_bytes());
+        for digit in digits {
+            raw.extend_from_slice(&digit.to_be_bytes());
+        }
+        raw
+    }
+
+    #[test]
+    fn a_numeric_is_its_exact_text() {
+        let text = |weight, sign, scale, digits: &[u16]| {
+            numeric(&numeric_cell(weight, sign, scale, digits)).expect("a numeric")
+        };
+        assert_eq!(text(0, 0, 2, &[12, 5000]), "12.50");
+        assert_eq!(text(-1, 0, 4, &[1]), "0.0001");
+        assert_eq!(text(-2, 0, 6, &[1]), "0.000000");
+        assert_eq!(text(-2, 0, 8, &[1]), "0.00000001");
+        assert_eq!(text(1, 0, 0, &[1]), "10000");
+        assert_eq!(
+            text(2, 0x4000, 6, &[1, 2345, 6789, 1, 2300]),
+            "-123456789.000123"
+        );
+        assert_eq!(text(0, 0, 0, &[]), "0");
+        assert_eq!(text(0, 0, 2, &[]), "0.00");
+        assert_eq!(text(0, 0xC000, 0, &[]), "NaN");
+        assert_eq!(text(0, 0xD000, 0, &[]), "Infinity");
+        assert_eq!(text(0, 0xF000, 0, &[]), "-Infinity");
+        assert!(numeric(&[0, 1]).is_err());
+    }
+
+    #[test]
+    fn a_list_is_an_array_literal_with_every_element_quoted() {
+        let list = Value::list(vec![
+            Value::String("a\"b".into()),
+            Value::String("c\\d".into()),
+            Value::variant(bv::NONE, Vec::new()),
+            Value::variant(bv::SOME, vec![Value::Int(1)]),
+        ]);
+        assert_eq!(
+            array_literal("postgres.query", &list).expect("written"),
+            r#"{"a\"b","c\\d",NULL,"1"}"#
+        );
+        let grid = Value::list(vec![
+            Value::list(vec![Value::Int(1), Value::Int(2)]),
+            Value::list(vec![Value::Int(3), Value::Int(4)]),
+        ]);
+        assert_eq!(
+            array_literal("postgres.query", &grid).expect("written"),
+            r#"{{"1","2"},{"3","4"}}"#
+        );
+        assert_eq!(
+            array_literal("postgres.query", &Value::list(Vec::new())).expect("written"),
+            "{}"
+        );
+    }
+}

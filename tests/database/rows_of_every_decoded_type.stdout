@@ -1,0 +1,8 @@
+b true, i2 2, i4 4, i8 8, i8 as Float 9007199254740992.0
+f4 1.5, f8 2.5, numeric exact 12.50, numeric near 0.1
+text t, varchar v, char(3) [c  ], name n, "char" q
+uuid 0198f2e0-0000-7000-8000-000000000001, enum happy, domain 7, bytea bytes(00 ff, length: 2)
+date 2026-10-13, time 01:02:03.250000000, timestamp 2026-10-13T01:02:03, timestamptz 2026-10-12T23:02:03
+json Meta {tags: [a, b], level: 3}, jsonb Array([Int(1), String(a), Null, Object(#{"k": Float(2.5)})]), jsonb string text
+arrays [Some(1), None, Some(3)] [[1, 2], [3, 4]] [], NULL None, Some Some(x)
+[{"arr":[1,null,3],"b":true,"by":"\\x00ff","c":"c  ","d":"2026-10-13","dom":7,"empty":[],"exact":"12.50","extra":"not read","f4":1.5,"f8":2.5,"grid":[[1,2],[3,4]],"i2":2,"i4":4,"i8":8,"i8f":9007199254740993,"j":{"level":3,"tags":["a","b"]},"jb":[1,"a",null,{"k":2.5}],"js":"text","mood":"happy","n":"n","near":"0.1","nul":null,"q":"q","some":"x","t":"t","tm":"01:02:03.250000000","ts":"2026-10-13T01:02:03","tz":"2026-10-12T23:02:03","u":"0198f2e0-0000-7000-8000-000000000001","v":"v"}]

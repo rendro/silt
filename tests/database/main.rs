@@ -13,6 +13,9 @@
 //!
 //! A case whose first lines are `-- env: NAME=value` runs with those
 //! variables set.
+//!
+//! The example of docs/stdlib/postgres.md is a case too: the program and
+//! the output the page shows (`the_docs_example`).
 
 #![cfg(feature = "postgres")]
 
@@ -53,23 +56,58 @@ fn case(name: &str) {
     let file = format!("{name}.silt");
     let expected = std::fs::read_to_string(cases_dir().join(format!("{name}.stdout")))
         .unwrap_or_else(|e| panic!("{name}.stdout: {e}"));
+    let source = std::fs::read_to_string(cases_dir().join(&file)).expect("read the program");
+    let vars: Vec<(String, String)> = source
+        .lines()
+        .map_while(|line| line.strip_prefix("-- env: "))
+        .map(|var| var.split_once('=').expect("`-- env: NAME=value`"))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    run(name, &source, &vars, &expected);
+}
+
+/// The example of docs/stdlib/postgres.md runs, and prints what the
+/// page says it prints. It takes the server's URL from `DATABASE_URL`.
+#[test]
+fn the_docs_example() {
+    if !server_is_named() {
+        return;
+    }
+    let page = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/stdlib/postgres.md");
+    let page = std::fs::read_to_string(page).expect("read docs/stdlib/postgres.md");
+    let example = page
+        .split("\n## Example\n")
+        .nth(1)
+        .expect("an Example section");
+    let mut blocks = example.split("```text\n").skip(1);
+    let mut block = || {
+        let block = blocks.next().expect("a ```text block");
+        block.split("```").next().expect("the block").to_string()
+    };
+    let (source, expected) = (block(), block());
+    let url = std::env::var(URL).expect("the server's URL");
+    run(
+        "the_docs_example",
+        &source,
+        &[("DATABASE_URL".to_string(), url)],
+        &expected,
+    );
+}
+
+/// Run the program `source` as `<name>.silt`, with the environment
+/// variables `vars`, and hold its output against `expected`.
+fn run(name: &str, source: &str, vars: &[(String, String)], expected: &str) {
+    let file = format!("{name}.silt");
     // The program runs in a directory of its own, so nothing `silt`
     // writes lands in the source tree.
     let scratch = std::env::temp_dir().join(format!("silt-database-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
-    std::fs::copy(cases_dir().join(&file), scratch.join(&file)).expect("copy the program");
-
-    let source = std::fs::read_to_string(cases_dir().join(&file)).expect("read the program");
-    let vars: Vec<(&str, &str)> = source
-        .lines()
-        .map_while(|line| line.strip_prefix("-- env: "))
-        .map(|var| var.split_once('=').expect("`-- env: NAME=value`"))
-        .collect();
+    std::fs::write(scratch.join(&file), source).expect("write the program");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .args(["run", &file])
-        .envs(vars)
+        .envs(vars.iter().map(|(name, value)| (name, value)))
         .current_dir(&scratch)
         .env("NO_COLOR", "1")
         .env_remove("FORCE_COLOR")
@@ -165,4 +203,9 @@ cases!(
     transaction_used_after_its_end,
     aborted_transaction_is_not_committed,
     callback_deadline_aborts_its_transaction,
+    rows_of_every_decoded_type,
+    rows_that_do_not_fit,
+    parameters_of_every_type,
+    execute_counts_and_returning,
+    stream_and_cursor_of_a_record_type,
 );

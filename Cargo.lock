@@ -1154,7 +1154,6 @@ dependencies = [
  "bytes",
  "fallible-iterator",
  "postgres-protocol",
- "uuid",
 ]
 
 [[package]]
@@ -1681,6 +1680,7 @@ dependencies = [
  "percent-encoding",
  "postgres",
  "postgres-native-tls",
+ "postgres-protocol",
  "proptest",
  "r2d2",
  "rcgen",

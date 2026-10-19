@@ -11,6 +11,7 @@
 -- the pool, a handful of the 300 statements of `main` failed in every
 -- run tried (2 to 8 of them, in six runs).
 import env
+import json
 import postgres
 import task
 import time
@@ -30,14 +31,14 @@ fn main() {
           true -> {
             let t = task.spawn { ->
               postgres.transact(pool) { tx ->
-                let _ = postgres.query(tx, "SELECT pg_sleep({i % 4}::float8 / 1000)", [])?
+                let _ = postgres.query(tx, "SELECT pg_sleep({i % 4}::float8 / 1000)", (), json.Value)?
                 time.sleep(time.ms(i / 4 % 3))
-                postgres.query(tx, "SELECT pg_sleep({i / 2 % 3}::float8 / 1000)", [])
+                postgres.query(tx, "SELECT pg_sleep({i / 2 % 3}::float8 / 1000)", (), json.Value)
               }
             }
             time.sleep(time.ms(1 + i % 5))
             task.cancel(t)
-            match postgres.query(pool, "SELECT 1", []) {
+            match postgres.query(pool, "SELECT 1", (), json.Value) {
               Ok(_) -> loop(i + 1, failed)
               Err(_) -> loop(i + 1, failed + 1)
             }

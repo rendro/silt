@@ -1,19 +1,20 @@
 -- cmd: check
 -- requires-feature: postgres
--- `postgres.stream` gives a channel of rows, each `Ok(row)` or the
--- error that ended the query, and `postgres.listen` a channel of
--- `Notification` records: the signatures say so, and a program reads
--- them as that.
+-- `postgres.stream` gives a channel of rows of the type it is given,
+-- each `Ok(row)` or the error that ended the query, and
+-- `postgres.listen` a channel of `Notification` records: the signatures
+-- say so, and a program reads them as that.
 import channel
-import map
 import postgres
 
+type Payment { id: Int, amount: Int }
+
 fn rows(pool: postgres.PgPool) -> Int {
-  match postgres.stream(pool, "SELECT 1", []) {
+  match postgres.stream(pool, "SELECT id, amount FROM payments", (), Payment) {
     Ok(ch) -> {
-      let typed: Channel(Result(Map(String, postgres.PgValue), postgres.PostgresError)) = ch
+      let typed: Channel(Result(Payment, postgres.PostgresError)) = ch
       match channel.receive(typed) {
-        Some(Ok(row)) -> map.length(row)
+        Some(Ok(row)) -> row.amount
         Some(Err(e)) -> {
           println(e.message())
           0

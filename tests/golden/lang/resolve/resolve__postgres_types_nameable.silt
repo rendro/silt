@@ -2,9 +2,9 @@
 -- requires-feature: postgres
 -- The postgres module's opaque types are named through it.
 import postgres
+type Row { id: Int }
 fn pool(p: postgres.PgPool) -> postgres.PgPool { p }
-fn v(x: postgres.PgValue) -> postgres.PgValue { x }
-fn q(r: postgres.QueryResult, e: postgres.ExecResult, t: postgres.PgTx, c: postgres.PgCursor) -> Int { 1 }
+fn q(t: postgres.PgTx, c: postgres.PgCursor(Row)) -> Int { 1 }
 fn main() {
   println(1)
 }

@@ -8,6 +8,7 @@
 -- would report that it did not exit within its 60 seconds.
 import channel
 import env
+import json
 import postgres
 
 fn url() -> String {
@@ -19,7 +20,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -40,15 +41,15 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_stream_in_tx", [])
-      let _ = postgres.execute(pool, "CREATE TABLE silt_database_stream_in_tx (said text)", [])
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_stream_in_tx", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_stream_in_tx (said text)", ())
       let done = postgres.transact(pool) { tx ->
         let _ = postgres.execute(
           tx,
           "INSERT INTO silt_database_stream_in_tx VALUES ('written in the transaction')",
-          [],
+          (),
         )?
-        match postgres.stream(tx, "SELECT g FROM generate_series(1, 3000) AS g", []) {
+        match postgres.stream(tx, "SELECT g FROM generate_series(1, 3000) AS g", (), json.Value) {
           Ok(rows) -> {
             println(
               match channel.receive(rows) {
@@ -65,7 +66,7 @@ fn main() {
       println("the transaction: {done}")
       let kept = count(pool, "SELECT 1 FROM silt_database_stream_in_tx")
       println("rows of the transaction in the table: {kept}")
-      let _ = postgres.execute(pool, "DROP TABLE silt_database_stream_in_tx", [])
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_stream_in_tx", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")

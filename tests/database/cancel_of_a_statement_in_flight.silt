@@ -13,6 +13,7 @@
 -- ended, not because the case looked too early.
 import channel
 import env
+import json
 import postgres
 import task
 import time
@@ -26,7 +27,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -65,16 +66,16 @@ fn waiting() -> String {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancel", [])
-      let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancel (said text)", [])
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_cancel", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_cancel (said text)", ())
       let done = postgres.transact(pool) { tx ->
-        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7301)", [])?
+        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7301)", (), json.Value)?
         println("main holds the lock")
         let t = task.spawn { ->
           let _ = postgres.execute(
             pool,
             "INSERT INTO silt_database_cancel SELECT 'the statement got the lock' FROM pg_advisory_xact_lock(7301)",
-            [],
+            (),
           )
           println("the task went on with the statement's answer")
         }
@@ -89,7 +90,7 @@ fn main() {
       let written = until(pool, "SELECT 1 FROM silt_database_cancel", 1)
       println("rows the statement wrote when it got the lock: {written}")
       println("statements that wait for the lock now: {count(pool, waiting())}")
-      let _ = postgres.execute(pool, "DROP TABLE silt_database_cancel", [])
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_cancel", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")

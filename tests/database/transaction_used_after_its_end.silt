@@ -6,6 +6,7 @@
 -- says so instead.
 import channel
 import env
+import json
 import postgres
 
 fn url() -> String {
@@ -30,20 +31,20 @@ fn main() {
       let opened: Channel(postgres.PgCursor) = channel.new(2)
       let done = postgres.transact(pool) { tx ->
         channel.send(out, tx)
-        let left = postgres.cursor(tx, "SELECT g FROM generate_series(1, 5) AS g", [], 2)?
+        let left = postgres.cursor(tx, "SELECT g FROM generate_series(1, 5) AS g", (), 2, json.Value)?
         channel.send(opened, left)
-        let shut = postgres.cursor(tx, "SELECT 1", [], 2)?
+        let shut = postgres.cursor(tx, "SELECT 1", (), 2, json.Value)?
         let _ = postgres.cursor_close(shut)?
         println("a cursor closed in it, again: {said(postgres.cursor_next(shut))}")
-        postgres.query(tx, "SELECT 1", [])
+        postgres.query(tx, "SELECT 1", (), json.Value)
       }
       println("the transaction: {said(done)}")
       match channel.receive(out) {
         Some(tx) -> {
-          println("a statement on it afterwards: {said(postgres.query(tx, "SELECT 1", []))}")
-          println("an execute: {said(postgres.execute(tx, "SELECT 1", []))}")
-          println("a stream: {said(postgres.stream(tx, "SELECT 1", []))}")
-          println("a cursor: {said(postgres.cursor(tx, "SELECT 1", [], 10))}")
+          println("a statement on it afterwards: {said(postgres.query(tx, "SELECT 1", (), json.Value))}")
+          println("an execute: {said(postgres.execute(tx, "SELECT 1", ()))}")
+          println("a stream: {said(postgres.stream(tx, "SELECT 1", (), json.Value))}")
+          println("a cursor: {said(postgres.cursor(tx, "SELECT 1", (), 10, json.Value))}")
         }
         None -> println("no transaction came out")
       }

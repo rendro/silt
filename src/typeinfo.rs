@@ -354,26 +354,23 @@ pub mod ty {
     pub const PG_POOL: TypeId = TypeId(DefId(17));
     pub const PG_TX: TypeId = TypeId(DefId(18));
     pub const PG_CURSOR: TypeId = TypeId(DefId(19));
-    pub const PG_VALUE: TypeId = TypeId(DefId(20));
-    pub const DATE: TypeId = TypeId(DefId(21));
-    pub const TIME: TypeId = TypeId(DefId(22));
-    pub const DATE_TIME: TypeId = TypeId(DefId(23));
-    pub const DURATION: TypeId = TypeId(DefId(24));
-    pub const INSTANT: TypeId = TypeId(DefId(25));
-    pub const FILE_STAT: TypeId = TypeId(DefId(26));
-    pub const RESPONSE: TypeId = TypeId(DefId(27));
-    pub const REQUEST: TypeId = TypeId(DefId(28));
-    pub const QUERY_RESULT: TypeId = TypeId(DefId(29));
-    pub const EXEC_RESULT: TypeId = TypeId(DefId(30));
-    pub const ANON_RECORD: TypeId = TypeId(DefId(31));
-    pub const NOTIFICATION: TypeId = TypeId(DefId(32));
-    pub const FLOAT_ERROR: TypeId = TypeId(DefId(33));
-    pub const CRYPTO_ERROR: TypeId = TypeId(DefId(34));
-    pub const ENCODING_ERROR: TypeId = TypeId(DefId(35));
-    pub const UUID_ERROR: TypeId = TypeId(DefId(36));
-    pub const TASK_ERROR: TypeId = TypeId(DefId(37));
-    pub const SELECTED: TypeId = TypeId(DefId(38));
-    pub const JSON_VALUE: TypeId = TypeId(DefId(39));
+    pub const DATE: TypeId = TypeId(DefId(20));
+    pub const TIME: TypeId = TypeId(DefId(21));
+    pub const DATE_TIME: TypeId = TypeId(DefId(22));
+    pub const DURATION: TypeId = TypeId(DefId(23));
+    pub const INSTANT: TypeId = TypeId(DefId(24));
+    pub const FILE_STAT: TypeId = TypeId(DefId(25));
+    pub const RESPONSE: TypeId = TypeId(DefId(26));
+    pub const REQUEST: TypeId = TypeId(DefId(27));
+    pub const ANON_RECORD: TypeId = TypeId(DefId(28));
+    pub const NOTIFICATION: TypeId = TypeId(DefId(29));
+    pub const FLOAT_ERROR: TypeId = TypeId(DefId(30));
+    pub const CRYPTO_ERROR: TypeId = TypeId(DefId(31));
+    pub const ENCODING_ERROR: TypeId = TypeId(DefId(32));
+    pub const UUID_ERROR: TypeId = TypeId(DefId(33));
+    pub const TASK_ERROR: TypeId = TypeId(DefId(34));
+    pub const SELECTED: TypeId = TypeId(DefId(35));
+    pub const JSON_VALUE: TypeId = TypeId(DefId(36));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -485,12 +482,6 @@ pub mod bv {
     pub const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
     pub const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
     pub const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
-    pub const V_INT: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 0);
-    pub const V_STR: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 1);
-    pub const V_BOOL: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 2);
-    pub const V_FLOAT: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 3);
-    pub const V_NULL: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 4);
-    pub const V_LIST: BuiltinVariant = BuiltinVariant::new(ty::PG_VALUE, 5);
     pub const JSON_NULL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 0);
     pub const JSON_BOOL: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 1);
     pub const JSON_INT: BuiltinVariant = BuiltinVariant::new(ty::JSON_VALUE, 2);
@@ -524,7 +515,6 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "PgPool",
     "PgTx",
     "PgCursor",
-    "PgValue",
     "Date",
     "Time",
     "DateTime",
@@ -533,8 +523,6 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "FileStat",
     "Response",
     "Request",
-    "QueryResult",
-    "ExecResult",
     "<anon>",
     "Notification",
     "FloatError",
@@ -554,26 +542,6 @@ const HANDLE_VARIANTS: &[(&str, &[(&str, usize)])] = &[
     ("PgPool", &[("PgPool", 1)]),
     ("PgTx", &[("PgTx", 1)]),
     ("PgCursor", &[("PgCursor", 1)]),
-    (
-        "PgValue",
-        &[
-            ("VInt", 1),
-            ("VStr", 1),
-            ("VBool", 1),
-            ("VFloat", 1),
-            ("VNull", 0),
-            ("VList", 1),
-        ],
-    ),
-];
-
-/// The builtin record types the builtin registry does not declare (the
-/// checker has them opaque: a program reads no field of them), with
-/// their fields. The other builtin records are the registry's `pub
-/// type` declarations.
-const OPAQUE_RECORDS: &[(&str, &[&str])] = &[
-    ("QueryResult", &["row_count", "rows"]),
-    ("ExecResult", &["affected", "returning"]),
 ];
 
 /// The description of every builtin type, indexed by id.
@@ -596,7 +564,6 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                 }
                 crate::builtins::registry::TypeShape::Enum(_) => None,
             })
-            .chain(OPAQUE_RECORDS.iter().copied())
             .collect();
         crate::defs::builtin_types()
             .iter()
@@ -762,8 +729,6 @@ mod tests {
             ["method", "path", "query", "headers", "body"]
         );
         assert_eq!(fields(ty::NOTIFICATION), ["channel", "payload", "pid"]);
-        assert_eq!(fields(ty::QUERY_RESULT), ["row_count", "rows"]);
-        assert_eq!(fields(ty::EXEC_RESULT), ["affected", "returning"]);
         assert_eq!(fields(ty::FILE_STAT).len(), 9);
         assert_eq!(fields(ty::FILE_STAT)[0], "size");
         assert!(fields(ty::ANON_RECORD).is_empty());
@@ -906,12 +871,6 @@ mod tests {
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),
             (bv::PG_CURSOR, "PgCursor"),
-            (bv::V_INT, "VInt"),
-            (bv::V_STR, "VStr"),
-            (bv::V_BOOL, "VBool"),
-            (bv::V_FLOAT, "VFloat"),
-            (bv::V_NULL, "VNull"),
-            (bv::V_LIST, "VList"),
         ];
         for (variant, name) in constants {
             let tag = variant.tag();
@@ -923,8 +882,8 @@ mod tests {
             {
                 continue;
             }
-            // The variants of the builtin handle types (`PgPool`,
-            // postgres `Value`) are the run time's own: the checker sees
+            // The variants of the builtin handle types (`PgPool`) are
+            // the run time's own: the checker sees
             // the types as opaque.
             let Some(declared) = defs.variants.get(&variant.ty.0) else {
                 assert!(

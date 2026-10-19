@@ -1,13 +1,9 @@
--- A pool is opened on the server and answers `SELECT 1`: one row, whose
--- one column is the Int 1.
---
--- The line this prints is `json.stringify`'s text of a value that the
--- module does not let a program read (a `QueryResult` has no field a
--- program can name): it is here because nothing else shows the cell,
--- and it is not the module's interface.
+-- A pool is opened on the server and answers `SELECT 1 AS one`: one
+-- row, decoded into the record type the program names.
 import env
-import json
 import postgres
+
+type One { one: Int }
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -19,8 +15,8 @@ fn url() -> String {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      match postgres.query(pool, "SELECT 1", []) {
-        Ok(result) -> println(json.stringify(result))
+      match postgres.query(pool, "SELECT 1 AS one", (), One) {
+        Ok(rows) -> println(rows)
         Err(e) -> println("query: {e.message()}")
       }
       postgres.close(pool)

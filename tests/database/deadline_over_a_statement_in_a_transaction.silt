@@ -14,6 +14,7 @@
 -- stop: either way the case would not end.
 import channel
 import env
+import json
 import postgres
 import task
 import time
@@ -27,7 +28,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -66,10 +67,10 @@ fn waiting() -> String {
 fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
-      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_deadline_tx", [])
-      let _ = postgres.execute(pool, "CREATE TABLE silt_database_deadline_tx (said text)", [])
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_deadline_tx", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_deadline_tx (said text)", ())
       let done = postgres.transact(pool) { tx ->
-        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7304)", [])?
+        let _ = postgres.query(tx, "SELECT pg_advisory_xact_lock(7304)", (), json.Value)?
         println("main holds the lock")
         let t = task.spawn { ->
           let late = task.deadline(time.ms(1000)) { ->
@@ -77,12 +78,12 @@ fn main() {
               let _ = postgres.execute(
                 its,
                 "INSERT INTO silt_database_deadline_tx VALUES ('before the statement')",
-                [],
+                (),
               )?
               let _ = postgres.execute(
                 its,
                 "INSERT INTO silt_database_deadline_tx SELECT 'the statement got the lock' FROM pg_advisory_xact_lock(7304)",
-                [],
+                (),
               )?
               Ok("the statement's answer")
             }
@@ -102,7 +103,7 @@ fn main() {
       println(
         "rows of the function's transaction: {count(pool, "SELECT 1 FROM silt_database_deadline_tx")}",
       )
-      let _ = postgres.execute(pool, "DROP TABLE silt_database_deadline_tx", [])
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_deadline_tx", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {e.message()}")

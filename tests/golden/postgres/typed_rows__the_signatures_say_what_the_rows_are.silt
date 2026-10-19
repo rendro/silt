@@ -1,0 +1,28 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 0
+-- The functions that read rows give values of the type they are
+-- given: `query` a list of it, `stream` a channel of `Result`s of it,
+-- `cursor` a `PgCursor` of it whose batches are lists of it; `execute`
+-- gives the number of rows the statement affected. A `json.Value` reads
+-- a row of a shape the program does not know.
+import json
+import postgres
+
+type User { id: Int, name: String, nick: Option(String) }
+
+fn all(db: postgres.PgPool, tx: postgres.PgTx) -> Result(Int, postgres.PostgresError) {
+  let users: List(User) = postgres.query(db, "SELECT id, name, nick FROM users", (), User)?
+  let rows: List(json.Value) = postgres.query(db, "SELECT * FROM audit WHERE who = $1", ("ann",), json.Value)?
+  let n: Int = postgres.execute(db, "DELETE FROM users WHERE id = $1", (1,))?
+  let ch: Channel(Result(User, postgres.PostgresError)) =
+    postgres.stream(db, "SELECT id, name, nick FROM users", (), User)?
+  let c: postgres.PgCursor(User) = postgres.cursor(tx, "SELECT id, name, nick FROM users", (), 10, User)?
+  let batch: List(User) = postgres.cursor_next(c)?
+  let _ = postgres.cursor_close(c)?
+  Ok(n)
+}
+
+fn main() {
+  println(1)
+}

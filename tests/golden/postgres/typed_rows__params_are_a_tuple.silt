@@ -1,0 +1,18 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: error[type]: the parameters of `postgres.query` must be a tuple, got `Int`
+-- stderr-contains: help: write (id,)
+-- The parameters of a statement are a tuple: `(id)` is `id` itself,
+-- not a tuple of one, and the compiler says to write `(id,)`.
+import postgres
+
+type User { id: Int, name: String }
+
+fn find(db: postgres.PgPool, id: Int) -> Result(List(User), postgres.PostgresError) {
+  postgres.query(db, "SELECT id, name FROM users WHERE id = $1", (id), User)
+}
+
+fn main() {
+  println(1)
+}

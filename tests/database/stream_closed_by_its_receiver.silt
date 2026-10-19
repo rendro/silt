@@ -14,10 +14,12 @@
 -- exit within its 60 seconds; so would a sender that went on waiting.
 import channel
 import env
-import list
-import map
+import json
 import postgres
+import string
 import time
+
+type Marked { silt_database_stream_closed_mark: Int, pad: String }
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -28,7 +30,7 @@ fn url() -> String {
 
 -- How many rows `sql` gives, counted as they come from a stream.
 fn count(pool: postgres.PgPool, sql: String) -> Int {
-  match postgres.stream(pool, sql, []) {
+  match postgres.stream(pool, sql, (), json.Value) {
     Ok(rows) -> loop n = 0 {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
@@ -72,12 +74,16 @@ fn main() {
       match postgres.stream(
         pool,
         "SELECT g AS silt_database_stream_closed_mark, repeat('x', 200) AS pad FROM generate_series(1, 100000) AS g",
-        [],
+        (),
+        Marked,
       ) {
         Ok(rows) -> {
           println(
             match channel.receive(rows) {
-              Some(Ok(row)) -> "the first row has the columns {list.sort(map.keys(row))}"
+              Some(Ok(row)) -> {
+                let pad = string.length(row.pad)
+                "the first row: mark {row.silt_database_stream_closed_mark}, a pad of {pad}"
+              }
               Some(Err(e)) -> e.message()
               _ -> "no row"
             },

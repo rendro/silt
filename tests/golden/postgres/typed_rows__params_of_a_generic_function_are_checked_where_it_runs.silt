@@ -1,0 +1,26 @@
+-- requires-feature: postgres
+-- exit: 1
+-- stdout-contains: a tuple: postgres requires PgPool or PgTx, got Int
+-- stderr-contains: postgres.query: params must be a tuple, got Int; write (id,)
+-- In a function that takes the parameters as a type variable, the
+-- compiler does not know their type, and `postgres.query` checks it
+-- where it runs, before anything else (here, before it looks at the
+-- connection, which is no pool).
+import postgres
+
+type User { id: Int }
+
+fn find(db: a, ps: p) -> Result(List(User), postgres.PostgresError) {
+  postgres.query(db, "SELECT id FROM users WHERE id = $1", ps, User)
+}
+
+fn main() {
+  match find(0, (1,)) {
+    Ok(_) -> println("a tuple: Ok")
+    Err(e) -> println("a tuple: {e.message()}")
+  }
+  match find(0, 1) {
+    Ok(_) -> println("an Int: Ok")
+    Err(e) -> println("an Int: {e.message()}")
+  }
+}

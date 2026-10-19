@@ -6,14 +6,17 @@
 -- The element type of the channel that `postgres.stream` gives is the
 -- signature's, not the caller's to choose: it was a type variable that
 -- nothing decided, so this annotation checked, and the pattern below it
--- took a row apart as a `Cents`.
+-- took a row apart as a `Cents`. The rows are of the type the call
+-- names, in a `Result`.
 import channel
 import postgres
 
 type Cents { Cents(Int) }
 
+type Payment { amount: Int }
+
 fn total(pool: postgres.PgPool) -> Int {
-  match postgres.stream(pool, "SELECT amount FROM payments", []) {
+  match postgres.stream(pool, "SELECT amount FROM payments", (), Payment) {
     Ok(ch) -> {
       let typed: Channel(Cents) = ch
       match channel.receive(typed) {

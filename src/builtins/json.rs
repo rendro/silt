@@ -188,7 +188,11 @@ pub(crate) fn unsupported_kind(caller: &str, v: &Value) -> VmError {
 /// JSON. A value JSON has no form for (a set, bytes, a function, the
 /// constructor of a variant among them, a channel, a handle) is an
 /// error, wherever in the value it is.
-fn value_to_json(caller: &str, v: &Value, level: usize) -> Result<serde_json::Value, VmError> {
+pub(crate) fn value_to_json(
+    caller: &str,
+    v: &Value,
+    level: usize,
+) -> Result<serde_json::Value, VmError> {
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_json(caller, v, level + 1);
     // `Some(x)` is written as `x` is, and so is a `json.Value` as the
@@ -417,7 +421,7 @@ fn json_to_map(rt: &Runtime, value_type: Type, json: &serde_json::Value) -> Resu
 /// The `json.Value` that holds the document `json`. A number is an
 /// `Int` when it is a whole number an `Int` can be, as for an `Int`
 /// field, and a `Float` otherwise.
-fn json_value(json: &serde_json::Value) -> Value {
+pub(crate) fn json_value(json: &serde_json::Value) -> Value {
     match json {
         serde_json::Value::Null => Value::variant(bv::JSON_NULL, Vec::new()),
         serde_json::Value::Bool(b) => Value::variant(bv::JSON_BOOL, vec![Value::Bool(*b)]),
@@ -594,6 +598,29 @@ fn json_to_typed_value(
             }
         }
     }
+}
+
+/// The value of the field type `expected` that the document `json` is,
+/// for a decoder of a format that holds JSON documents (postgres's
+/// `json` and `jsonb` columns): `Err` of what `JsonError`'s `message`
+/// says of why there is none.
+#[cfg(feature = "postgres")]
+pub(crate) fn decode_field(
+    rt: &Runtime,
+    json: &serde_json::Value,
+    expected: &FieldType,
+) -> Result<Value, std::string::String> {
+    json_to_typed_value(rt, json, expected).map_err(|e| {
+        let error = decode_err_to_silt(e);
+        let because = match &error {
+            Value::Variant(err) => match err.fields() {
+                [Value::Variant(why)] => error_text(why.name(), why.fields()),
+                _ => None,
+            },
+            _ => None,
+        };
+        because.unwrap_or_else(|| error.to_string())
+    })
 }
 
 /// The value of type `ty` that the document `parsed` is, for

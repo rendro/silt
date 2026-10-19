@@ -19,11 +19,11 @@ The `postgres` module is **not** built by default. Build silt with
 cargo build --release --features postgres
 ```
 
-Pair the builtins below with a silt-side `pg.silt` package that
-declares the companion types (`PgPool`, `PgTx`, `PostgresError`, `PgValue`,
-`QueryResult`, `ExecResult`, and `PgCursor`). The
-built-in functions reference those types by name; the typechecker
-unifies them against whatever your `pg.silt` library defines.
+A statement's parameters are a tuple of plain values, and the rows of
+its result are decoded into a record type the program declares (or into
+`json.Value`, for rows of a shape the program does not know), as
+`json.parse(text, T)` decodes a document. See
+[Parameters and rows](#parameters-and-rows).
 
 ## Summary
 
@@ -31,16 +31,117 @@ unifies them against whatever your `pg.silt` library defines.
 |----------|-----------|-------------|
 | `connect` | `(String) -> Result(PgPool, PostgresError)` | Open a connection pool from a `postgresql://` URL (uses r2d2 defaults) |
 | `connect_with` | `(String, Map(String, Int)) -> Result(PgPool, PostgresError)` | Like `connect` with a tunable options bag (see [Connect options](#connect-options)) |
-| `query` | `(a, String, List(PgValue)) -> Result(QueryResult, PostgresError)` | Run a SELECT-style statement and materialize rows |
-| `execute` | `(a, String, List(PgValue)) -> Result(ExecResult, PostgresError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
+| `query` | `(a, String, p, type r) -> Result(List(r), PostgresError)` | Run a statement and decode its rows into a record type (or json.Value) |
+| `execute` | `(a, String, p) -> Result(Int, PostgresError)` | Run a statement and return the number of rows it affected |
 | `transact` | `(PgPool, Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
 | `close` | `(PgPool) -> ()` | Drop the pool; future ops on it error |
-| `stream` | `(a, String, List(PgValue)) -> Result(Channel(Result(Map(String, PgValue), PostgresError)), PostgresError)` | Stream rows through a bounded channel (backpressured) |
-| `cursor` | `(PgTx, String, List(PgValue), Int) -> Result(PgCursor, PostgresError)` | Declare a server-side cursor with batch size |
-| `cursor_next` | `(PgCursor) -> Result(List(Map(String, PgValue)), PostgresError)` | Fetch the next batch of rows from a cursor |
-| `cursor_close` | `(PgCursor) -> Result((), PostgresError)` | Release a cursor and its underlying connection |
+| `stream` | `(a, String, p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)` | Stream decoded rows through a bounded channel (backpressured) |
+| `cursor` | `(PgTx, String, p, Int, type r) -> Result(PgCursor(r), PostgresError)` | Declare a server-side cursor with batch size |
+| `cursor_next` | `(PgCursor(r)) -> Result(List(r), PostgresError)` | Fetch the next batch of decoded rows from a cursor |
+| `cursor_close` | `(PgCursor(r)) -> Result((), PostgresError)` | Release a cursor and its underlying connection |
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
+
+## Parameters and rows
+
+```text
+type User { id: Int, name: String, nick: Option(String), born: time.Date }
+type Id { id: Int }
+
+let users = postgres.query(db, "SELECT id, name, nick, born FROM users WHERE id > $1", (10,), User)?
+let rows  = postgres.query(db, "SELECT * FROM audit", (), json.Value)?
+let n     = postgres.execute(db, "DELETE FROM users WHERE id = $1", (id,))?
+let ids   = postgres.query(db, "INSERT INTO users (name) VALUES ($1) RETURNING id", (name,), Id)?
+```
+
+### Parameters
+
+The parameters of a statement are a tuple, `$1` its first element:
+`(id, name)`, `(id,)` for one (`(id)` is `id` itself, and the compiler
+says to write `(id,)`), `()` for none. In a function that takes the
+parameters as a type variable, a value that is no tuple is an error
+where the statement runs: `postgres.query: params must be a tuple, got
+Int; write (id,)`.
+
+Each parameter goes to the server as text, and the server reads it as
+the type the statement needs at its place, so an `Int` goes into an
+`int4`, an `int8` or a `numeric`, a `String` into a `date`, a `uuid`
+or an enum, a `Float` into a `float4`; a text the type does not take
+(`"abc"` for an `int4`) is the server's `Query` error. The text of a
+value:
+
+| Value | Sent as |
+| --- | --- |
+| `None` | `NULL` (`Some(x)` is sent as `x`) |
+| `Int`, `Float`, `Bool`, `String` | its text (a `Float` keeps its point: `2.0`, which no integer column takes) |
+| `Bytes` | `bytea`'s hex text, `\x00ff` |
+| `Date`, `Time`, `DateTime` | silt's text of it: `2026-10-13`, `01:02:03`, `2026-10-13T01:02:03` |
+| a `List` | an array (`{"1","2"}`) where the statement's parameter is an array (`id = ANY($1)`), and JSON anywhere else |
+| a record, a `Map`, a tuple, a variant, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
+
+A value that JSON has no form for (a function, a set, a channel, or
+`Bytes` inside a record) is an error, as it is for `json.stringify`.
+
+### Rows
+
+`postgres.query`, `postgres.stream` and `postgres.cursor` take the type
+a row is decoded into as their last argument: a record type, or
+`json.Value`. The compiler checks it where it is written, as it does
+for `json.parse`: any other type, or a record with a field of a type no
+column can fill, is an error there.
+
+Each field of the record is read from the column of its name. A column
+that no field names is not read. The columns are checked against the
+fields once per result, before the statement runs:
+
+- a field with no column is `Err(NoSuchColumn(field))`, an `Option`
+  field too;
+- a column whose type cannot fill its field is
+  `Err(TypeMismatch(column, field type, column type))`, say
+  `TypeMismatch("id", "Int", "float8")`: the column's type decides, not
+  its values (an `Int` field is not filled from a `float8` column even
+  where the value is `2.0`). Its `message()` says how to go on:
+  ``postgres type mismatch on column `id`: expected Int, got float8;
+  cast it in SQL, for example id::text``;
+- two columns of the name a field reads are
+  ``Err(Other("postgres: column `id` appears twice in the result; rename one with AS"))``.
+
+So a statement whose rows do not fit is not run: an `INSERT ...
+RETURNING` into a record that does not fit inserts nothing. A cell is
+checked as it is read: a `NULL` fills an `Option` field with `None`, and
+any other field with nothing, `Err(TypeMismatch(column, field type,
+"NULL"))`. A failed decode is never a value: it is the call's `Err`.
+
+| Column type | Field types it fills | In a `json.Value` row |
+| --- | --- | --- |
+| `bool` | `Bool` | `json.Bool` |
+| `int2`, `int4`, `int8` | `Int`; `Float` (the nearest) | `json.Int` |
+| `float4`, `float8` | `Float` (`NaN` and `Infinity` are errors) | `json.Float` |
+| `numeric` | `String` (the exact text), `Float` (the nearest) | `json.String`, the exact text |
+| `text`, `varchar`, `char(n)`, `name`, `"char"`, an enum | `String` | `json.String` |
+| `uuid` | `String` | `json.String` |
+| `bytea` | `Bytes` | `json.String`, the hex text `\x00ff` |
+| `date` | `Date` | `json.String`, as silt shows a `Date` |
+| `time` | `Time` | `json.String`, as silt shows a `Time` |
+| `timestamp`, `timestamptz` | `DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
+| `json`, `jsonb` | any field type but `Bytes`, decoded by `json.parse`'s rules | the document |
+| an array | `List(T)` of a `T` its elements fill, `List(Option(T))` where an element may be `NULL`, `List(List(T))` for two dimensions | `json.Array` |
+
+A domain's column is its base type's. A `json` or `jsonb` column fills a
+`String` field only with a JSON string (cast it, `col::text`, for the
+document's text), and a document that does not fit its field is
+`TypeMismatch(column, field type, why)`, with `why` as `json.decode`
+says it. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
+fills no field, and is an error in a `json.Value` row as well: cast it
+in SQL, `col::text`.
+
+In a `json.Value` row each row is a `json.Object` of all its columns,
+`json.Null` for a `NULL`; two columns of one name are the error above.
+
+`postgres.execute` gives the number of rows the statement affected (for
+a statement that affects no rows, such as `CREATE TABLE`, `0`). A
+statement whose rows the program reads, `RETURNING` among them, is a
+`postgres.query`.
 
 ## Connecting
 
@@ -125,11 +226,12 @@ for a transaction that was committed.
 
 ## Streaming and cursors
 
-`postgres.stream` returns a bounded `Channel` whose elements are
-`Result(Map(String, PgValue), PostgresError)` rows. A background worker pumps
-the cursor into the channel and closes it when the query completes
-(or on error). Slow consumers backpressure the server side via the
-channel capacity.
+`postgres.stream(conn, sql, params, T)` returns a bounded `Channel`
+whose elements are `Result(T, PostgresError)` rows. A background worker
+pumps the rows into the channel and closes it when the query completes
+(or on error: a statement that fails, a result whose columns do not fit
+`T`, a row that cannot be decoded). Slow consumers backpressure the
+server side via the channel capacity.
 
 A receiver that has read enough closes the channel (`channel.close`),
 and the worker stops. On a pool, a stream that stops before its last
@@ -152,11 +254,13 @@ has sent the last row or has stopped. A stream on a `PgTx` whose
 reader is gone (cancelled, say) without closing the channel therefore
 holds the transaction until the transaction ends or the program does.
 
-`postgres.cursor` is the lower-level primitive: it `DECLARE`s a
-server-side cursor inside an open transaction and returns an opaque
-`PgCursor` that `cursor_next` can repeatedly drain in batches. Always
-call `cursor_close` (or let the transaction commit/rollback, which
-cleans up).
+`postgres.cursor(tx, sql, params, batch_size, T)` is the lower-level
+primitive: it `DECLARE`s a server-side cursor inside an open
+transaction and returns an opaque `PgCursor(T)` that `cursor_next` can
+repeatedly drain in batches of `List(T)`. Its columns are checked
+against `T` when it is declared, so that is where a mismatch is an
+error. Always call `cursor_close` (or let the transaction
+commit/rollback, which cleans up).
 
 ## LISTEN / NOTIFY
 
@@ -170,42 +274,69 @@ does not consume a slot from the regular query pool.
 ## Example
 
 ```text
--- Pair with a user-side `pg.silt` that declares the PgValue ADT
--- (VInt/VStr/VBool/VFloat/VNull/VList), PgPool, PgTx, PostgresError,
--- QueryResult, ExecResult, and PgCursor.
-import pg
+import env
+import json
 import postgres
-import uuid
+import time
+
+type User { id: Int, name: String, nick: Option(String), born: time.Date }
+
+type Id { id: Int }
+
+-- In one transaction: a table of its own, two users in it, one of them
+-- changed, and the users read back.
+fn users(db: postgres.PgPool) -> Result(List(User), postgres.PostgresError) {
+  postgres.transact(db) { tx ->
+    let _ = postgres.execute(
+      tx,
+      "CREATE TEMP TABLE users (id int4 PRIMARY KEY, name text NOT NULL, nick text, born date) ON COMMIT DROP",
+      (),
+    )?
+    let ids = postgres.query(
+      tx,
+      "INSERT INTO users VALUES ($1, $2, $3, $4), ($5, $6, $7, $8) RETURNING id",
+      (11, "alice", Some("al"), "1990-05-17", 12, "bob", None, "2001-02-03"),
+      Id,
+    )?
+    println("inserted: {ids}")
+    let n = postgres.execute(tx, "UPDATE users SET nick = $1 WHERE id = $2", ("bobby", 12))?
+    println("updated: {n}")
+    let rows = postgres.query(tx, "SELECT id, born FROM users WHERE id = $1", (11,), json.Value)?
+    println("as json: {json.stringify(rows)}")
+    postgres.query(tx, "SELECT id, name, nick, born FROM users WHERE id > $1 ORDER BY id", (10,), User)
+  }
+}
 
 fn main() {
-  match postgres.connect("postgresql://localhost/app") {
-    Ok(pool) -> {
-      -- Transactional INSERT + SELECT.
-      let result = postgres.transact(pool, { tx ->
-        let _ = postgres.execute(
-          tx,
-          "INSERT INTO users (id, name) VALUES ($1, $2)",
-          [VStr(uuid.v7()), VStr("alice")],
-        )?
-        postgres.query(tx, "SELECT count(*) FROM users", [])
-      })
-      match result {
-        Ok(rows) -> println("committed: {rows}")
-        Err(TxnAborted) -> println("rolled back (txn aborted — retry)")
+  let url = match env.get("DATABASE_URL") {
+    Some(url) -> url
+    None -> "postgres://localhost/app"
+  }
+  match postgres.connect(url) {
+    Ok(db) -> {
+      match users(db) {
+        Ok(found) -> println("users: {found}")
+        Err(postgres.TxnAborted) -> println("rolled back (transaction aborted, retry)")
         Err(e) -> println("rolled back: {e.message()}")
       }
-      postgres.close(pool)
+      postgres.close(db)
     }
-    Err(e) -> println("connect err: {e.message()}")
+    Err(e) -> println("connect: {e.message()}")
   }
 }
 ```
 
+It prints:
+
+```text
+inserted: [Id {id: 11}, Id {id: 12}]
+updated: 1
+as json: [{"born":"1990-05-17","id":11}]
+users: [User {id: 11, name: alice, nick: Some(al), born: 1990-05-17}, User {id: 12, name: bob, nick: Some(bobby), born: 2001-02-03}]
+```
+
 ## Notes
 
-- The `PgValue` parameter ADT (`VInt`, `VStr`, `VBool`, `VFloat`, `VNull`,
-  `VList`) is declared in the user's `pg.silt`, not here — the builtin
-  module references it by name only.
 - `uuid.v7` produces a time-ordered UUID suitable for use as a primary
   key; collisions within the same millisecond are disambiguated with
   random bits per RFC 9562.
@@ -306,8 +437,8 @@ needed) are:
 | `Tls(msg)` | `String` | TLS handshake / cert read / connector build |
 | `AuthFailed(msg)` | `String` | SQLSTATE class `28`: a role or password the server refuses |
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
-| `TypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
-| `NoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
+| `TypeMismatch(col, expected, actual)` | `String, String, String` | A column whose type, or a cell whose value, does not fit its field (see [Rows](#rows)) |
+| `NoSuchColumn(col)` | `String` | A field with no column in the result; SQLSTATE `42703` (undefined_column), the column the server names |
 | `Closed` | — | Connection dropped, or a transaction used after it ended |
 | `Timeout` | — | SQLSTATE `57014`, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |

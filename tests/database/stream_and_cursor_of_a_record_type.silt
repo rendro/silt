@@ -1,0 +1,80 @@
+-- `postgres.stream` and `postgres.cursor` decode rows into the record
+-- type they name, as `postgres.query` does: a stream's channel carries
+-- `Ok(row)` of that type, and a row that cannot be decoded is the
+-- channel's last element, an `Err`; a cursor's batches are lists of
+-- it, and a cursor whose columns do not fit is refused where it is
+-- declared.
+import channel
+import env
+import postgres
+
+type N { n: Int }
+
+type Wrong { n: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- What the stream of `sql` gives, element by element.
+fn drain(db: postgres.PgPool, sql: String) {
+  match postgres.stream(db, sql, (3,), N) {
+    Ok(rows) -> loop {
+      match channel.receive(rows) {
+        Some(Ok(row)) -> {
+          println("  Ok({row})")
+          loop()
+        }
+        Some(Err(e)) -> {
+          println("  Err: {e.message()}")
+          loop()
+        }
+        None -> println("  closed")
+      }
+    }
+    Err(e) -> println("  stream: {e.message()}")
+  }
+}
+
+fn batches(c: postgres.PgCursor(N)) -> Result(Int, postgres.PostgresError) {
+  loop count = 0 {
+    match postgres.cursor_next(c)? {
+      [] -> Ok(count)
+      batch -> {
+        println("  batch: {batch}")
+        loop(count + 1)
+      }
+    }
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println("a stream of rows:")
+      drain(db, "SELECT n FROM generate_series(1, $1) AS n")
+      println("a stream whose third row has a NULL:")
+      drain(db, "SELECT CASE WHEN n = 3 THEN NULL ELSE n END AS n FROM generate_series(1, $1 + 2) AS n")
+      let read = postgres.transact(db) { tx ->
+        let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, $1) AS n", (5,), 2, N)?
+        let count = batches(c)?
+        let _ = postgres.cursor_close(c)?
+        Ok(count)
+      }
+      println("a cursor: {read} batches")
+      let refused = postgres.transact(db) { tx ->
+        let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 3) AS n", (), 2, Wrong)?
+        postgres.cursor_next(c)
+      }
+      match refused {
+        Ok(rows) -> println("a cursor that does not fit: {rows}")
+        Err(e) -> println("a cursor that does not fit: {e.message()}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

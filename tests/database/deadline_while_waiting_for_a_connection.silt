@@ -8,6 +8,7 @@
 -- could not be ended there would answer after them, with the pool's
 -- `Timeout` as its own value.
 import env
+import json
 import postgres
 import task
 import time
@@ -34,7 +35,7 @@ fn main() {
             Err(e) -> "task.deadline: {e.message()}"
           },
         )
-        postgres.query(tx, "SELECT 1", [])
+        postgres.query(tx, "SELECT 1", (), json.Value)
       }
       println(
         match done {
