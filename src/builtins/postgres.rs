@@ -96,12 +96,29 @@ impl Tls {
 struct Canceller {
     token: postgres::CancelToken,
     tls: Tls,
+    /// A cancel request was sent, or is on its way. The server acts on
+    /// a request when it comes, and one that comes after the statement
+    /// it was for has ended cancels the connection's next statement,
+    /// whoever runs it: such a connection never goes back to the pool,
+    /// and its transaction counts as aborted.
+    sent: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Canceller {
+    /// A cancel request is on its way: from now on the connection
+    /// counts as one for which it was sent.
+    fn mark(&self) {
+        self.sent.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn was_sent(&self) -> bool {
+        self.sent.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Ask once. The server does not say whether a statement was
     /// cancelled, and a request that comes when none runs does nothing.
     fn cancel(&self) {
+        self.mark();
         let _ = match &self.tls {
             Tls::Off => self.token.cancel_query(NoTls),
             #[cfg(feature = "postgres-tls")]
@@ -114,8 +131,9 @@ impl Canceller {
 struct Conn {
     client: postgres::Client,
     canceller: Canceller,
-    /// It must not go back to the pool: a statement of it was left
-    /// with rows unread, or its transaction did not roll back.
+    /// It must not go back to the pool: its transaction did not roll
+    /// back. (One for which a cancel request was sent does not go back
+    /// either: `Canceller::sent`.)
     broken: bool,
 }
 
@@ -150,6 +168,7 @@ impl r2d2::ManageConnection for Manager {
             canceller: Canceller {
                 token: client.cancel_token(),
                 tls: self.tls.clone(),
+                sent: Arc::default(),
             },
             client,
             broken: false,
@@ -164,7 +183,7 @@ impl r2d2::ManageConnection for Manager {
     }
 
     fn has_broken(&self, conn: &mut Conn) -> bool {
-        conn.broken || conn.client.is_closed()
+        conn.broken || conn.canceller.was_sent() || conn.client.is_closed()
     }
 }
 
@@ -260,13 +279,20 @@ impl TxConn {
     /// goes with a statement before it, in the same round trip, which
     /// fails in such a transaction (25P02, `TxnAborted`), and the
     /// `COMMIT` is then not run.
-    fn commit(&mut self) -> Result<(), postgres::Error> {
+    ///
+    /// A transaction for one of whose statements a cancel request was
+    /// sent counts as aborted too (`tx_conn`): it is rolled back.
+    fn commit(&mut self) -> Result<(), Value> {
+        if self.conn.canceller.was_sent() {
+            let _ = self.roll_back();
+            return Err(Value::variant(bv::PG_TXN_ABORTED, vec![]));
+        }
         self.ended = true;
         let committed = self.conn.client_mut().batch_execute("SELECT 1; COMMIT");
         if committed.is_err() {
             let _ = self.roll_back();
         }
-        committed
+        committed.map_err(|e| pg_error_to_variant(&e))
     }
 }
 
@@ -292,9 +318,15 @@ fn tx_ended() -> Value {
 
 fn tx_conn(cell: &Mutex<TxConn>) -> Result<std::sync::MutexGuard<'_, TxConn>, Value> {
     let conn = cell.lock().unwrap_or_else(|e| e.into_inner());
-    match conn.ended {
+    if conn.ended {
+        return Err(tx_ended());
+    }
+    // A statement whose task stopped waiting for it was cancelled: the
+    // transaction is aborted, whether or not the request reached the
+    // statement in time.
+    match conn.conn.canceller.was_sent() {
         false => Ok(conn),
-        true => Err(tx_ended()),
+        true => Err(Value::variant(bv::PG_TXN_ABORTED, vec![])),
     }
 }
 
@@ -1887,9 +1919,10 @@ fn do_stream_worker(
     match target {
         ExecutorRef::Pool(pool) => match pool.get() {
             Ok(mut conn) => {
+                // Left with rows unread, the connection is not given
+                // back: a cancel request was sent for it.
                 if !pump(conn.client_mut(), &sql, &bind) {
                     conn.canceller.cancel();
-                    conn.broken = true;
                 }
             }
             Err(e) => {
@@ -2261,14 +2294,16 @@ builtins! {
         let target = resolve_executor(conn)?;
         let params = sql_params(params)?;
         let sql = sql.to_string();
-        Ok(vm.io("postgres", pg_timeout_err, move || do_query(target, sql, params)))
+        let tx = TxHandle::take(conn).and_then(tx_canceller);
+        Ok(statement(vm, tx, move || do_query(target, sql, params)))
     }
 
     fn execute(vm, conn: &Value, sql: &str, params: List) -> Started {
         let target = resolve_executor(conn)?;
         let params = sql_params(params)?;
         let sql = sql.to_string();
-        Ok(vm.io("postgres", pg_timeout_err, move || do_execute(target, sql, params)))
+        let tx = TxHandle::take(conn).and_then(tx_canceller);
+        Ok(statement(vm, tx, move || do_execute(target, sql, params)))
     }
 
     // `postgres.transact(pool, callback)` — pins a single pooled
@@ -2378,17 +2413,19 @@ builtins! {
         };
         let params = sql_params(params)?;
         let sql = sql.to_string();
-        Ok(vm.io("postgres", pg_timeout_err, move || {
+        Ok(statement(vm, tx_canceller(tx), move || {
             do_cursor_open(tx.0, cell, sql, params, batch_size)
         }))
     }
 
     fn cursor_next(vm, cursor: CursorHandle) -> Result<Step, VmError> {
-        vm.io("postgres", pg_timeout_err, move || do_cursor_next(cursor.0))
+        let tx = lookup_cursor(cursor.0).and_then(|entry| tx_canceller(TxHandle(entry.tx_id)));
+        statement(vm, tx, move || do_cursor_next(cursor.0))
     }
 
     fn cursor_close(vm, cursor: CursorHandle) -> Result<Step, VmError> {
-        vm.io("postgres", pg_timeout_err, move || do_cursor_close(cursor.0))
+        let tx = lookup_cursor(cursor.0).and_then(|entry| tx_canceller(TxHandle(entry.tx_id)));
+        statement(vm, tx, move || do_cursor_close(cursor.0))
     }
 
     fn close(pool: PoolHandle) {
@@ -2467,8 +2504,48 @@ builtins! {
     fn notify(vm, conn: &Value, channel: &str, payload: &str) -> Started {
         let target = resolve_executor(conn)?;
         let (channel, payload) = (channel.to_string(), payload.to_string());
-        Ok(vm.io("postgres", pg_timeout_err, move || do_notify(target, channel, payload)))
+        let tx = TxHandle::take(conn).and_then(tx_canceller);
+        Ok(statement(vm, tx, move || do_notify(target, channel, payload)))
     }
+}
+
+/// The canceller of the transaction `tx`, if it is open.
+fn tx_canceller(tx: TxHandle) -> Option<Canceller> {
+    let reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.txs.get(&tx.0).map(|entry| entry.canceller.clone())
+}
+
+/// The step of a statement that runs `f` on the I/O pool and waits for
+/// its value: one of the transaction of `tx`, if that is given.
+///
+/// A statement of a transaction that its task stops waiting for while
+/// it runs (a deadline or a cancel that the callback set around it, or
+/// `SILT_IO_TIMEOUT`) is cancelled in the server, and the transaction
+/// counts as aborted from then on: its later statements are
+/// `Err(TxnAborted)` at once, and so is its COMMIT. A statement on the
+/// pool that nobody waits for finishes in the server.
+fn statement(
+    vm: &mut Vm,
+    tx: Option<Canceller>,
+    f: impl FnOnce() -> Value + Send + 'static,
+) -> Result<Step, VmError> {
+    let op = vm.start_io(pg_timeout_err, f);
+    let op = match tx {
+        None => op,
+        Some(canceller) => {
+            let runtime = vm.runtime.clone();
+            // Called where the waiter goes, which must not wait.
+            op.stop_with(move || {
+                canceller.mark();
+                let request = runtime.io_pool.submit(pg_timeout_err, move || {
+                    canceller.cancel();
+                    Value::Unit
+                });
+                request.detach();
+            })
+        }
+    };
+    vm.io_wait("postgres", pg_timeout_err, op)
 }
 
 /// The frame of `postgres.transact`.
@@ -2621,24 +2698,19 @@ fn abandon_tx(runtime: &crate::vm::Runtime, tx_id: u64) {
 /// rollback waits for the connection. The connection goes back to the
 /// pool once the rollback is done (when the last statement that had it
 /// lets it go), or is dropped if the rollback failed, or if a cancel
-/// request was sent: the server acts on a request when it comes, and
-/// one that comes after the statement it was for has ended cancels the
-/// next statement of the connection, whoever runs it.
+/// request was sent for it (`Canceller::sent`).
 fn roll_back_abandoned(entry: TxEntry) {
     use std::sync::TryLockError;
-    let (mut conn, cancelled) = match entry.cell.try_lock() {
-        Ok(conn) => (conn, false),
-        Err(TryLockError::Poisoned(poisoned)) => (poisoned.into_inner(), false),
+    let mut conn = match entry.cell.try_lock() {
+        Ok(conn) => conn,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         Err(TryLockError::WouldBlock) => {
             entry.canceller.cancel();
-            (entry.cell.lock().unwrap_or_else(|e| e.into_inner()), true)
+            entry.cell.lock().unwrap_or_else(|e| e.into_inner())
         }
     };
     if !conn.ended {
         let _ = conn.roll_back();
-    }
-    if cancelled {
-        conn.conn.broken = true;
     }
 }
 
@@ -2656,7 +2728,7 @@ fn end_tx(entry: Option<TxEntry>, returned: Value) -> Value {
     // task the callback started) finds it ended when it gets the
     // connection.
     let mut conn = entry.cell.lock().unwrap_or_else(|e| e.into_inner());
-    let mut commit = || conn.commit().err().map(|e| err(pg_error_to_variant(&e)));
+    let mut commit = || conn.commit().err().map(err);
     match &returned {
         Value::Variant(variant) if variant.is(bv::OK) => commit().unwrap_or(returned),
         Value::Variant(variant) if variant.is(bv::ERR) => {

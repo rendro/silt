@@ -1,0 +1,9 @@
+main holds the lock
+task.deadline: the function was ended by its deadline
+the next statement: postgres transaction aborted; rollback required
+the transaction of the deadline: postgres transaction aborted; rollback required
+the task is cancelled
+the transaction of the cancel: postgres transaction aborted; rollback required
+statements that wait for the lock: 0
+main's transaction: Ok
+rows in the table: 0

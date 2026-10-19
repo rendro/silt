@@ -92,12 +92,19 @@ alike. What becomes of the statement in the server differs:
 - On the pool, outside a transaction, the statement is left to finish;
   its connection then goes back to the pool.
 - Inside `postgres.transact`, the server is asked to cancel the
-  statement, and the transaction is rolled back. The connection goes
-  back to the pool after the rollback; it is closed instead if the
-  rollback fails, or if a cancel request was sent for it (a request
-  that reaches the server late would cancel the connection's next
-  statement). The same happens when the callback fails with an error of the
-  program.
+  statement. When the task that ends is the one that runs `transact`
+  (or the callback fails with an error of the program), the
+  transaction is rolled back. When the deadline or the cancel is one
+  the callback set around the statement itself, the statement fails
+  as any failed statement does: the transaction is aborted, its later
+  statements are `Err(TxnAborted)` at once, and so is
+  `postgres.transact`'s answer if the callback returns `Ok(_)`. The
+  same holds where `SILT_IO_TIMEOUT` ends the wait for a statement of
+  a transaction.
+  The connection goes back to the pool after the rollback; it is
+  closed instead if the rollback fails, or if a cancel request was sent
+  for it (a request that reaches the server late would cancel the
+  connection's next statement).
 
 Around the callback `postgres.transact` waits too, and a deadline or a
 cancel ends the task there at once as well. While it waits for a
