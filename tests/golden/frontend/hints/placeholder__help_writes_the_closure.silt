@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- silt has no placeholder arguments: a `_` among a call's arguments
+-- gets the closure to write, with the callee and the `_` replaced by a
+-- parameter whose name hides nothing in scope. After `|>` the closure
+-- takes the piped value; a `_` first there is what `|>` already does,
+-- and two `_` there have no closure to write. A `_` that is no
+-- argument is a pattern's, never a value, and gets no "did you mean".
+import list
+
+fn combine(a: Int, b: Int, c: Int) -> Int { a + b + c }
+
+fn calls() {
+  let one = combine(1, _, 3)
+  let two = list.fold([1], _, _)
+  let x = 5
+  let hidden = combine(x, _, [x] |> list.length)
+  let unnamed = { a, b, c -> a + b + c }(1, _, 3)
+  (one, two, hidden, unnamed)
+}
+
+fn pipes() {
+  let first = 2 |> combine(_, 3, 4)
+  let later = 2 |> combine(1, _, 4)
+  let both = 2 |> combine(_, _, 4)
+  (first, later, both)
+}
+
+fn values() {
+  let alone = _
+  let listed = [1, _]
+  (alone, listed)
+}
+
+fn main() {}

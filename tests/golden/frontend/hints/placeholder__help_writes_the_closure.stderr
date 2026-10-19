@@ -1,0 +1,76 @@
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:14:24
+    |
+ 14 |   let one = combine(1, _, 3)
+    |                        ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure: `{ x -> combine(1, x, 3) }`
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:15:28
+    |
+ 15 |   let two = list.fold([1], _, _)
+    |                            ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure: `{ x, y -> list.fold(..., x, y) }`
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:15:31
+    |
+ 15 |   let two = list.fold([1], _, _)
+    |                               ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure: `{ x, y -> list.fold(..., x, y) }`
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:17:27
+    |
+ 17 |   let hidden = combine(x, _, [x] |> list.length)
+    |                           ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure: `{ y -> combine(x, y, ...) }`
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:18:45
+    |
+ 18 |   let unnamed = { a, b, c -> a + b + c }(1, _, 3)
+    |                                             ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:23:28
+    |
+ 23 |   let first = 2 |> combine(_, 3, 4)
+    |                            ^ undefined variable '_'
+  = help: `|>` passes the value as the first argument: write `|> combine(3, 4)`
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:24:31
+    |
+ 24 |   let later = 2 |> combine(1, _, 4)
+    |                               ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure: `|> { x -> combine(1, x, 4) }`
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:25:27
+    |
+ 25 |   let both = 2 |> combine(_, _, 4)
+    |                           ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:25:30
+    |
+ 25 |   let both = 2 |> combine(_, _, 4)
+    |                              ^ undefined variable '_'
+  = help: silt has no placeholder arguments; write a closure
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:30:15
+    |
+ 30 |   let alone = _
+    |               ^ undefined variable '_'
+  = help: `_` matches anything in a pattern; it is not a value
+
+error[type]: undefined variable '_'
+ --> placeholder__help_writes_the_closure.silt:31:20
+    |
+ 31 |   let listed = [1, _]
+    |                    ^ undefined variable '_'
+  = help: `_` matches anything in a pattern; it is not a value

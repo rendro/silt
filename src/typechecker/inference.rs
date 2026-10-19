@@ -4,6 +4,7 @@
 //! and check_body.
 
 use super::infer::pattern::*;
+use super::names::is_placeholder;
 use super::suggest::suggest_similar;
 use super::*;
 use crate::parser::{NO_IF, NO_IF_HELP};
@@ -2165,6 +2166,18 @@ impl TypeChecker {
             // `a |> f(b)` is the call `f(a, b)`, and `a |> f` the call
             // `f(a)`.
             ExprKind::Pipe(lhs, rhs) => match &mut rhs.kind {
+                // A `_` among the arguments was meant to say where the
+                // piped value goes, which the resolver reports; the call
+                // with the value first is not what was meant, so it is
+                // not checked.
+                ExprKind::Call(callee, call_args) if call_args.iter().any(is_placeholder) => {
+                    self.infer_expr(lhs, env);
+                    self.infer_expr(callee, env);
+                    for arg in call_args {
+                        self.infer_expr(arg, env);
+                    }
+                    self.fresh_var()
+                }
                 ExprKind::Call(callee, call_args) => {
                     let mut args: Vec<&mut Expr> = vec![&mut **lhs];
                     args.extend(call_args.iter_mut());
