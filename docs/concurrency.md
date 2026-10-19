@@ -554,7 +554,7 @@ error[runtime]: task <handle:0> failed and was never joined: division by zero
  --> main.silt:4:27
    |
  4 |   let _ = task.spawn { -> 1 / 0 }
-   |                           ^ task <handle:0> failed and was never joined: division by zero
+   |                           ^^^^^ task <handle:0> failed and was never joined: division by zero
   = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
