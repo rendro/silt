@@ -180,6 +180,48 @@ fn connect_limit_is_the_urls_connect_timeout_or_10_s() {
             "connect_timeout={zero}",
         );
     }
+    // As the URL's parser reads it: percent-decoded, the last one
+    // standing, a `?` in the password no start of the options.
+    let refused = Err("connect_timeout must be > 0".to_string());
+    assert_eq!(limit("postgres://u@h/db?connect_timeout=%30"), refused);
+    assert_eq!(limit("postgres://u@h/db?connect_%74imeout=0"), refused);
+    assert_eq!(
+        limit("postgres://u@h/db?connect_timeout=2&connect_timeout=0"),
+        refused
+    );
+    assert_eq!(
+        limit("postgres://u@h/db?connect_timeout=0&connect_timeout=2"),
+        Ok(Duration::from_secs(2))
+    );
+    assert_eq!(
+        limit("postgres://u:a?b@h/db?connect_timeout=4"),
+        Ok(Duration::from_secs(4))
+    );
+}
+
+/// The same for the `key=value` form of a connection string.
+#[test]
+fn connect_limit_reads_the_key_value_form() {
+    use std::time::Duration;
+    let limit = |dsn: &str| connect_limit_for_tests(dsn);
+    let refused = Err("connect_timeout must be > 0".to_string());
+    assert_eq!(limit("host=h user=u"), Ok(Duration::from_secs(10)));
+    assert_eq!(
+        limit("host=h connect_timeout=3 user=u"),
+        Ok(Duration::from_secs(3))
+    );
+    assert_eq!(
+        limit("host=h connect_timeout = '7'"),
+        Ok(Duration::from_secs(7))
+    );
+    assert_eq!(limit("host=h connect_timeout=0"), refused);
+    assert_eq!(limit("connect_timeout='-1' host=h"), refused);
+    assert_eq!(limit("host=h connect_timeout=2 connect_timeout=0"), refused);
+    // A quoted value with a space and an escaped quote is one value.
+    assert_eq!(
+        limit("password='a b\\'c' connect_timeout=5"),
+        Ok(Duration::from_secs(5))
+    );
 }
 
 /// Options that are no `Map(String, Int)` are not the argument's kind:

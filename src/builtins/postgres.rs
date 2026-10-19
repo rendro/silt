@@ -1297,22 +1297,80 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
     }
 }
 
-/// How long a connect to `url` may take: the URL's own
-/// `connect_timeout`, in whole seconds, which must be more than 0, or
-/// `CONNECT_TIMEOUT`. A value that is no number is left to the URL's
-/// parser, which refuses it.
+/// How long a connect to `url` may take: its `connect_timeout`, in
+/// whole seconds, which must be more than 0, or `CONNECT_TIMEOUT`. It
+/// is read as the URL's parser reads it, which has refused `url`
+/// already if the value is no whole number, and which ignores one that
+/// is not more than 0: the last one stands, in either form of `url`.
 fn connect_limit(url: &str) -> Result<Duration, &'static str> {
-    let query = url.split_once('?').map_or("", |(_, query)| query);
-    // The last one stands, as for the URL's parser.
-    let set = query
-        .rsplit('&')
-        .filter_map(|pair| pair.split_once('='))
-        .filter(|(key, _)| *key == "connect_timeout")
-        .find_map(|(_, value)| value.parse::<i64>().ok());
-    match set {
+    let options = connection_options(url);
+    let set = options
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "connect_timeout");
+    match set.map(|(_, value)| value.parse::<i64>()) {
         None => Ok(CONNECT_TIMEOUT),
-        Some(seconds @ 1..) => Ok(Duration::from_secs(seconds.unsigned_abs())),
+        Some(Ok(seconds @ 1..)) => Ok(Duration::from_secs(seconds.unsigned_abs())),
         Some(_) => Err("connect_timeout must be > 0"),
+    }
+}
+
+/// The options of the connection string `s`, in order, as the
+/// postgres crate's parser reads them: the query of a
+/// `postgres://` or `postgresql://` URL (percent-decoded), or the
+/// `key=value` pairs of the other form (a value may be quoted in `'`,
+/// and `\` escapes a character). What that parser refuses is not read
+/// here: it has refused the string before.
+fn connection_options(s: &str) -> Vec<(String, String)> {
+    let url = s
+        .strip_prefix("postgresql://")
+        .or_else(|| s.strip_prefix("postgres://"));
+    if let Some(rest) = url {
+        // The credentials end at the first `@`; the options begin at
+        // the first `?` after them.
+        let rest = rest.split_once('@').map_or(rest, |(_, rest)| rest);
+        let Some((_, query)) = rest.split_once('?') else {
+            return Vec::new();
+        };
+        let decode = |part: &str| {
+            percent_encoding::percent_decode_str(part)
+                .decode_utf8_lossy()
+                .into_owned()
+        };
+        return query
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(key, value)| (decode(key), decode(value)))
+            .collect();
+    }
+    let mut options = Vec::new();
+    let mut chars = s.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let mut key = String::new();
+        while let Some(c) = chars.next_if(|c| !c.is_whitespace() && *c != '=') {
+            key.push(c);
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if key.is_empty() || chars.next() != Some('=') {
+            return options;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let quoted = chars.next_if_eq(&'\'').is_some();
+        let mut value = String::new();
+        while let Some(c) = chars.next_if(|c| match quoted {
+            true => *c != '\'',
+            false => !c.is_whitespace(),
+        }) {
+            match c {
+                '\\' => value.extend(chars.next()),
+                c => value.push(c),
+            }
+        }
+        if quoted {
+            chars.next();
+        }
+        options.push((key, value));
     }
 }
 

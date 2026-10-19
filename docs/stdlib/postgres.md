@@ -50,8 +50,9 @@ host that is unknown or cannot be reached, or a database that does not
 exist; `AuthFailed(msg)` for a role or password the server refuses
 (SQLSTATE class `28`); `Tls(msg)` for a failed TLS handshake; `Timeout`
 for a server that does not answer within 10 seconds, login included.
-A URL's `connect_timeout=N` (whole seconds, more than 0) sets that time
-instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
+A `connect_timeout=N` in the connection string (whole seconds, more than
+0; in a URL's query or in the `key=value` form, the last one standing)
+sets that time instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
 its other connections when it needs them, each bounded the same way. A
 statement that finds no free connection in the pool waits 30 seconds
 for one, and is then `Timeout`.
