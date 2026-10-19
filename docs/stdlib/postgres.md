@@ -13,7 +13,8 @@ meantime.
 
 The `postgres` module is **not** built by default. Build silt with
 `--features postgres` to enable it, or `--features postgres-tls` to add
-`native-tls`-backed TLS support for `postgresql+tls://` URLs.
+`native-tls`-backed TLS; whether a connection uses TLS is chosen by its
+`sslmode` (see [TLS](#tls-secure-by-default)).
 
 ```sh
 cargo build --release --features postgres
