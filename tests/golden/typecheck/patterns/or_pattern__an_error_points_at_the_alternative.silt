@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- An or-pattern whose alternatives bind different names, or one name at
+-- different types, is reported at the alternative that differs from the
+-- first, not at what is matched.
+type Either { Left(Int), Right(String) }
+
+fn main() {
+  let x = Some(1)
+  let v = match x {
+    Some(a) | None -> 1
+  }
+  let e = Left(1)
+  let w = match e {
+    Left(n) | Right(n) -> 2
+  }
+  println(v + w)
+}

@@ -10,8 +10,10 @@ use crate::intern::{Symbol, intern};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{BindDestructKind, Compiler, FieldRead, MATCH_ARM, name_without_binding};
-use crate::diagnostic::{Code, Diagnostic};
+use super::{
+    BindDestructKind, Compiler, FieldRead, MATCH_ARM, checker_missed, name_without_binding,
+};
+use crate::diagnostic::Diagnostic;
 
 impl Compiler<'_> {
     /// The declared record type the record pattern `pattern` names, if
@@ -764,15 +766,10 @@ impl Compiler<'_> {
                     return Ok(());
                 };
                 let expected = Self::pattern_binding_names(first);
-                for alt in &alternatives[1..] {
-                    let actual = Self::pattern_binding_names(alt);
-                    if actual != expected {
-                        return Err(Diagnostic::error(
-                            Code::InvalidConstruct,
-                            span,
-                            "or-pattern alternatives must bind the same variables",
-                        ));
-                    }
+                let differs = |alt: &&Pattern| Self::pattern_binding_names(alt) != expected;
+                if let Some(alt) = alternatives[1..].iter().find(differs) {
+                    let what = "an or-pattern whose alternatives bind different names";
+                    return Err(checker_missed(alt.span, what));
                 }
 
                 if expected.is_empty() {

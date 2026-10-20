@@ -211,9 +211,6 @@ codes! {
     /// Something the bytecode cannot express: too many constants, locals,
     /// arguments, a jump too far.
     CompileLimit = "E0405", Compile;
-    /// A construct the compiler rejects (a decoder for a type that has
-    /// none, ...).
-    InvalidConstruct = "E0406", Compile;
     /// A defect in silt: the compiler lost track of its own state.
     CompilerBug = "E0409", Compile;
     /// A module file named like a builtin module: `import` of the name
