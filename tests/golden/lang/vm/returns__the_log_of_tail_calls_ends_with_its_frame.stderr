@@ -120,6 +120,7 @@
       -> boom  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3
       -> wrap  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:58:7
       -> closure in test_task  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:109:51
+      -> test_task  at returns__the_log_of_tail_calls_ends_with_its_frame.silt:109:11
   FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_twice
     error[runtime]: division by zero
      --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:51:10
