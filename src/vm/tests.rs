@@ -3622,7 +3622,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 3:3; work 3:3; closure in main 6:27"
+            "joined task failed: division by zero at 3:3; work 3:3; closure in main 6:27; main 7:11; <script> 5:1"
         );
     }
 
@@ -3671,7 +3671,8 @@ fn main() {
             "division by zero at 5:3; slow 5:3; closure in main 8:46; main 8:11; <script> 7:1"
         );
         // The same from a task: the join's error has the stack of
-        // the function and of the task that set the deadline.
+        // the function, of the task that set the deadline, and of the
+        // join.
         let source = "\
 import task
 import time
@@ -3686,7 +3687,7 @@ fn main() {
 ";
         assert_eq!(
             stops(source),
-            "joined task failed: division by zero at 5:3; slow 5:3; closure in main 8:62; closure in main 8:27"
+            "joined task failed: division by zero at 5:3; slow 5:3; closure in main 8:62; closure in main 8:27; main 9:11; <script> 7:1"
         );
     }
 

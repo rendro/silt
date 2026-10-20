@@ -1,0 +1,9 @@
+error[runtime]: joined task failed: cancelled
+ --> join__a_cancelled_task_fails_at_the_join.silt:8:3
+   |
+ 8 |   task.join(h)
+   |   ^^^^^^^^^^^^ joined task failed: cancelled
+
+call stack:
+  -> wait_for  at join__a_cancelled_task_fails_at_the_join.silt:8:3
+  -> main  at join__a_cancelled_task_fails_at_the_join.silt:14:3

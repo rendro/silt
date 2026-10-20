@@ -219,7 +219,7 @@ fn main() {
 // TLS variant (tcp-tls feature). We can't easily run a full TLS client
 // + server handshake in one process against a self-signed cert because
 // silt's `connect_tls` uses webpki-roots, which rejects unknown CAs.
-// What we CAN verify: after `tcp.accept_tls` fails (garbage client),
+// What we CAN verify: after `tcp.tls_server` fails (garbage client),
 // closing the listener-side connection the server accepted at the TCP
 // layer still calls shutdown cleanly. We synthesize this by having the
 // server call `tcp.accept` (plain) — giving us a real stream handle —
@@ -233,7 +233,7 @@ fn main() {
 #[cfg(feature = "tcp-tls")]
 #[test]
 fn test_tls_close_shutdown_does_not_hang() {
-    // We exercise the accept_tls -> error path (garbage client) to
+    // We exercise the tls_server -> error path (garbage client) to
     // prove the server path doesn't hang on cleanup, which implicitly
     // depends on sockets being released cleanly. This is the closest
     // in-process TLS test we can get without a matching trust anchor.
@@ -249,9 +249,12 @@ fn main() {
       let server = task.spawn({ ->
         let bad_cert = bytes.from_string("-----BEGIN CERTIFICATE-----\nnotacert\n-----END CERTIFICATE-----\n")
         let bad_key = bytes.from_string("-----BEGIN PRIVATE KEY-----\nnotakey\n-----END PRIVATE KEY-----\n")
-        match tcp.accept_tls(listener, bad_cert, bad_key) {
-          Ok(_) -> "unexpected: should error"
-          Err(_) -> "errored"
+        match tcp.accept(listener) {
+          Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
+            Ok(_) -> "unexpected: should error"
+            Err(_) -> "errored"
+          }
+          Err(e) -> "accept-err:{e}"
         }
       })
       time.sleep(time.ms(50))

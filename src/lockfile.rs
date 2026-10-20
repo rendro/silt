@@ -41,7 +41,10 @@
 //!
 //! The local package gets an entry with no `source` or `checksum` (it
 //! is the root of the dep graph; nothing pins *it*). All other entries
-//! must carry both fields.
+//! must carry both fields. The checksum covers the package's
+//! `silt.toml` and its `src/` sources. A git dependency's checkout must
+//! have the checksum its entry pins (`package_graph`); a path
+//! dependency's is written and not compared.
 //!
 //! # Why not `toml::to_string`?
 //!
@@ -174,8 +177,9 @@ impl Lockfile {
     }
 
     /// Whether `self` pins what `other` pins: the same packages with
-    /// the same versions and sources. Checksums are not compared:
-    /// content drift in a path dep is what `silt update` is for.
+    /// the same versions and sources. Checksums are not compared: a git
+    /// checkout's is compared when it is loaded, and content drift in a
+    /// path dep is what `silt update` is for.
     pub fn same_pins(&self, other: &Lockfile) -> bool {
         let key = |lock: &Lockfile| {
             let mut entries: Vec<(String, String, LockedSource)> = lock
@@ -198,17 +202,20 @@ pub enum ChecksumError {
     Symlink(PathBuf),
 }
 
-/// Compute a content-hash over a path-dep's source tree.
+/// Compute a content-hash over a dependency's manifest and sources.
 ///
-/// Walks `<pkg_root>/src/` recursively, hashes every `.silt` file's
-/// contents, then folds those into a single SHA-256 keyed by relative
-/// path. The encoding (`"{relpath}\0{filehash}\n"`) is unambiguous even
-/// across paths containing newlines or NUL — neither is legal in silt
-/// module names but the encoding stays robust regardless.
+/// Hashes `<pkg_root>/silt.toml` and every `.silt` file under
+/// `<pkg_root>/src/` (recursively), then folds those into a single
+/// SHA-256 keyed by the path relative to the package root
+/// (`silt.toml`, `src/lib.silt`). The encoding
+/// (`"{relpath}\0{filehash}\n"`) is unambiguous even across paths
+/// containing newlines or NUL — neither is legal in silt module names
+/// but the encoding stays robust regardless.
 ///
 /// Excluded by virtue of not walking them: `silt.lock`, `target/`,
-/// `.git/`. Sticking to `src/` makes the checksum mean exactly "the
-/// sources the compiler will see".
+/// `.git/`. The checksum means exactly "what silt reads of the
+/// package": the manifest, which names its dependencies, and the
+/// sources the compiler will see.
 ///
 /// This walk is also the one symlink rule for a dependency, path or git
 /// alike: `silt.toml` and everything under `src/` (`src` itself
@@ -223,6 +230,11 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
     }
     let src_root = pkg_root.join("src");
     let mut entries: Vec<(String, String)> = Vec::new();
+    match fs::read(pkg_root.join("silt.toml")) {
+        Ok(bytes) => entries.push(("silt.toml".to_string(), file_hash(&bytes))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(ChecksumError::Io(e)),
+    }
     match fs::symlink_metadata(&src_root) {
         Ok(meta) if meta.file_type().is_symlink() => {
             return Err(ChecksumError::Symlink(PathBuf::from("src")));
@@ -288,15 +300,21 @@ impl From<std::io::Error> for ChecksumError {
     }
 }
 
+/// The SHA-256 of a file's bytes, in hexadecimal.
+fn file_hash(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
 /// Hash the `.silt` files under `dir` into `out`, keyed by their path
-/// relative to `pkg_root`'s `src/`. Nothing is followed: the kind of an
-/// entry is read from the entry itself, and a link is an error.
+/// relative to `pkg_root` (`src/...`). Nothing is followed: the kind of
+/// an entry is read from the entry itself, and a link is an error.
 fn collect_silt_files(
     pkg_root: &Path,
     dir: &Path,
     out: &mut Vec<(String, String)>,
 ) -> Result<(), ChecksumError> {
-    let base = pkg_root.join("src");
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -309,21 +327,18 @@ fn collect_silt_files(
         if kind.is_dir() {
             collect_silt_files(pkg_root, &path, out)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("silt") {
-            let bytes = fs::read(&path)?;
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            let file_hash = format!("{:x}", hasher.finalize());
+            let hash = file_hash(&fs::read(&path)?);
             // Use forward slashes for stable hashing across platforms.
             // Otherwise checksums computed on Windows wouldn't match
             // those computed on Unix even for identical contents.
             let relpath = path
-                .strip_prefix(&base)
+                .strip_prefix(pkg_root)
                 .unwrap_or(&path)
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect::<Vec<_>>()
                 .join("/");
-            out.push((relpath, file_hash));
+            out.push((relpath, hash));
         }
     }
     Ok(())
@@ -840,6 +855,26 @@ mod tests {
         let h_a = checksum_path_source(&dir.join("a")).unwrap();
         let h_b = checksum_path_source(&dir.join("b")).unwrap();
         assert_eq!(h_a, h_b, "checksums should match: {h_a} vs {h_b}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The manifest is part of what silt reads of a package (it names
+    /// the package's dependencies): a change to it changes the checksum.
+    #[test]
+    fn checksum_covers_the_manifest() {
+        let dir = std::env::temp_dir().join(format!("silt_lockfile_toml_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.silt"), b"pub fn f() { 1 }\n").unwrap();
+        fs::write(dir.join("silt.toml"), b"[package]\nname = \"x\"\n").unwrap();
+        let before = checksum_path_source(&dir).unwrap();
+        fs::write(
+            dir.join("silt.toml"),
+            b"[package]\nname = \"x\"\n# edited\n",
+        )
+        .unwrap();
+        let after = checksum_path_source(&dir).unwrap();
+        assert_ne!(before, after);
         let _ = fs::remove_dir_all(&dir);
     }
 }

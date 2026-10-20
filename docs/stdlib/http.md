@@ -362,7 +362,7 @@ flight, of the 4,096 a program can have (see
 
 While `http.serve` serves a listener, the listener is the server's alone:
 
-- `tcp.accept`, `tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
+- `tcp.accept` on it returns
   `Err(Other("the listener is served by http.serve"))` at once. An
   accept that was already waiting on the listener when the server started
   returns the same error at that moment: the server has every client.

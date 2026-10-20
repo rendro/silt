@@ -533,15 +533,24 @@ impl Native for Deadline {
 }
 
 /// The result of a task for the one that joins it.
-fn joined(handle: &TaskHandle, result: Result<Value, VmError>) -> Result<Step, VmError> {
+fn joined(vm: &Vm, handle: &TaskHandle, result: Result<Value, VmError>) -> Result<Step, VmError> {
     // The joiner has the result now. If the task failed, the error is
     // the joiner's to handle and is not reported as an unjoined
     // failure.
     handle.mark_joined();
     match result {
         Ok(value) => Ok(Step::Done(value)),
+        // As for `task.deadline`: where the task failed, and below
+        // the task's own calls the calls that led to this
+        // `task.join`. A failure that has no place (a cancelled task)
+        // is placed at the join.
         Err(mut inner) => {
             inner.message = format!("joined task failed: {}", inner.message);
+            let here = vm.enrich_error(VmError::new(String::new()));
+            if inner.span.is_none() {
+                inner.span = here.span;
+            }
+            inner.call_stack.extend(here.call_stack);
             Err(inner)
         }
     }
@@ -580,15 +589,15 @@ pub(crate) mod task {
 
         fn join(vm, handle: Handle) -> Result<Step, VmError> {
             if let Some(result) = handle.try_get() {
-                return joined(handle, result);
+                return joined(vm, handle, result);
             }
             let handle = handle.clone();
             let wait = Wait::new(vec![Arm::Cell(handle.done())]);
-            Ok(vm.park("task.join", wait, move |_, _| {
+            Ok(vm.park("task.join", wait, move |vm, _| {
                 let result = handle.try_get().ok_or_else(|| {
                     VmError::new("internal VM error: a join ended before its task".into())
                 })?;
-                joined(&handle, result)
+                joined(vm, &handle, result)
             }))
         }
 

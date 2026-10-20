@@ -200,6 +200,33 @@ fn extract_silt_blocks(body: &str) -> Vec<(usize, String)> {
     blocks
 }
 
+/// Whether a `silt check` found a use of a function whose cargo
+/// feature this build lacks (the TLS functions of `tcp` without
+/// `tcp-tls`): the block is checked by a build that has the feature.
+/// (The other errors of such a check can follow from that one: a value
+/// of the missing function has no type.)
+fn needs_a_feature_not_built(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .filter(|line| line.starts_with("error"))
+        .any(|line| {
+            line.split_once("it needs the cargo feature `")
+                .and_then(|(_, rest)| rest.split_once('`'))
+                .is_some_and(|(feature, _)| !feature_is_built(feature))
+        })
+}
+
+/// Whether this test build has the cargo feature `name`.
+fn feature_is_built(name: &str) -> bool {
+    match name {
+        "tcp-tls" => cfg!(feature = "tcp-tls"),
+        "postgres" => cfg!(feature = "postgres"),
+        "http" => cfg!(feature = "http"),
+        "tcp" => cfg!(feature = "tcp"),
+        _ => true,
+    }
+}
+
 /// Regression test for GAP audit findings D1+D2: every ```silt fenced
 /// block in the documentation that contains `fn main` must type-check
 /// cleanly via `silt check`. Supersedes the old http-only walker by
@@ -290,7 +317,7 @@ fn all_doc_fn_main_blocks_type_check() {
             .arg(&file)
             .output()
             .expect("failed to spawn silt");
-        if !output.status.success() {
+        if !output.status.success() && !needs_a_feature_not_built(&output.stderr) {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             failures.lock().unwrap().push(format!(
@@ -894,6 +921,10 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         "http.delete",
         "http.serve",
         "http.Server",
+        // `tcp.accept` waits for a client that never comes;
+        // `tcp.connect_tls` reaches a host on the internet.
+        "tcp.accept",
+        "tcp.connect_tls",
         // Concurrency — can block forever on unbounded
         // send/receive, and task scheduling is non-deterministic
         // under subprocess timing. Blocks using these are doc-only.
