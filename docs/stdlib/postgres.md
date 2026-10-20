@@ -43,6 +43,13 @@ its result are decoded into a record type the program declares (or into
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
 
+The first argument of `query`, `execute`, `stream` and `notify` (`a`
+above) is the connection: a `PgPool`, or the `PgTx` of a transaction.
+The compiler refuses any other type where the call is written:
+``the connection of `postgres.query` must be a PgPool or a PgTx``. A
+function that takes the connection as a type variable is checked where
+it runs: `Err(Other("postgres requires PgPool or PgTx, got Int"))`.
+
 ## Parameters and rows
 
 ```text

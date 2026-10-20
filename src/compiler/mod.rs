@@ -77,6 +77,16 @@ const STATEMENT_BUILTINS: &[&str] = &[
     "postgres.cursor",
 ];
 
+/// The postgres functions whose first argument, the connection, may be
+/// a pool or a transaction: its type is a variable in their
+/// signatures, and the compiler checks it.
+const CONNECTION_BUILTINS: &[&str] = &[
+    "postgres.query",
+    "postgres.execute",
+    "postgres.stream",
+    "postgres.notify",
+];
+
 /// A family of decoding builtins: they decode the same field types.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Decoder {
@@ -2029,6 +2039,7 @@ impl<'a> Compiler<'a> {
         } else if let Some(builtin_name) = self.builtin_module_function(callee) {
             // A builtin module's function: `list.map(...)`.
             self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+            self.check_connection(&builtin_name, args)?;
             self.check_statement_params(&builtin_name, args)?;
             self.compile_operands(args.iter().copied())?;
             let argc = args.len();
@@ -2071,6 +2082,7 @@ impl<'a> Compiler<'a> {
             // `json.parse(..)`.
             if let Some(builtin_name) = self.builtin_function(callee.res) {
                 self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+                self.check_connection(&builtin_name, args)?;
                 self.check_statement_params(&builtin_name, args)?;
             }
             self.compile_operands(std::iter::once(callee).chain(args.iter().copied()))?;
@@ -2892,6 +2904,36 @@ impl<'a> Compiler<'a> {
             .with_help(help));
         }
         Ok(())
+    }
+
+    /// Check the connection of a call of a postgres function that takes
+    /// a pool or a transaction (`postgres.query(db, ..)`): a `PgPool` or
+    /// a `PgTx`. When the type is a variable (a parameter of a generic
+    /// function) the function checks it where it runs.
+    fn check_connection(&self, builtin_name: &str, args: &[&Expr]) -> Result<(), Diagnostic> {
+        if !CONNECTION_BUILTINS.contains(&builtin_name) {
+            return Ok(());
+        }
+        let Some(conn) = args.first() else {
+            return Ok(());
+        };
+        let Some(ty) = &conn.ty else {
+            return Ok(());
+        };
+        let ty = crate::types::canonical::canonicalize(self.resolver(), ty);
+        match ty {
+            Type::Generic(t, _)
+                if t.id == crate::typeinfo::ty::PG_POOL || t.id == crate::typeinfo::ty::PG_TX =>
+            {
+                Ok(())
+            }
+            Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => Ok(()),
+            _ => Err(Diagnostic::error(
+                Code::TypeMismatch,
+                conn.span,
+                format!("the connection of `{builtin_name}` must be a PgPool or a PgTx"),
+            )),
+        }
     }
 
     /// Check the parameters of a call of a postgres function that runs a

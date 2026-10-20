@@ -1,0 +1,26 @@
+-- cmd: check
+-- requires-feature: postgres
+-- A pool and a transaction are connections; so is a value whose type
+-- is a variable, which the function checks where it runs.
+import postgres
+
+type V { v: Int }
+
+fn on_pool(db: postgres.PgPool) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(db, "SELECT 1", ())
+}
+
+fn in_tx(db: postgres.PgPool) -> Result(List(V), postgres.PostgresError) {
+  postgres.transact(db) { tx ->
+    let _ = postgres.notify(tx, "jobs", "go")?
+    postgres.query(tx, "SELECT 1 AS v", (), V)
+  }
+}
+
+fn anywhere(conn: a) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(conn, "SELECT 1", ())
+}
+
+fn main() {
+  println(1)
+}
