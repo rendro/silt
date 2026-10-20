@@ -28,8 +28,8 @@ error[lex]: \u{110000} is past U+10FFFF, the largest Unicode scalar value
  7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
    |                                                ^^^^^^^^^^ \u{110000} is past U+10FFFF, the largest Unicode scalar value
 
-error[lex]: \u{...} takes 1 to 6 hex digits
+error[lex]: \u{...} is missing its closing }
  --> string_escapes__unicode_escape_errors.silt:7:60
    |
  7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
-   |                                                            ^^^^^ \u{...} takes 1 to 6 hex digits
+   |                                                            ^^^^^ \u{...} is missing its closing }

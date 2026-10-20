@@ -1,5 +1,71 @@
 use super::*;
 
+/// The type variables of a type declaration, for
+/// [`TypeChecker::resolve_declared`].
+pub(super) struct DeclVars {
+    /// Its parameters, and the variables reported as not being one.
+    known: std::collections::HashSet<Symbol>,
+    /// Each lowercase name its body writes where a type stands, and each
+    /// row (keyed `__row__r`, as `param_vars` keys it), in the order of
+    /// its first use, with the place of that use.
+    written: Vec<(Symbol, Span)>,
+}
+
+impl DeclVars {
+    fn of(td: &TypeDecl) -> Self {
+        fn write(written: &mut Vec<(Symbol, Span)>, name: Symbol, span: Span) {
+            if !written.iter().any(|(seen, _)| *seen == name) {
+                written.push((name, span));
+            }
+        }
+        fn walk(te: &TypeExpr, written: &mut Vec<(Symbol, Span)>) {
+            match &te.kind {
+                TypeExprKind::Named {
+                    module: None,
+                    name,
+                    name_span,
+                } if resolve(*name).starts_with(char::is_lowercase) => {
+                    write(written, *name, *name_span)
+                }
+                TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
+                TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+                    args.iter().for_each(|arg| walk(arg, written));
+                }
+                TypeExprKind::Function(params, ret) => {
+                    params.iter().for_each(|param| walk(param, written));
+                    walk(ret, written);
+                }
+                TypeExprKind::AssocProj { receiver, .. } => walk(receiver, written),
+                TypeExprKind::AnonRecord { fields, tail } => {
+                    fields.iter().for_each(|(_, ty)| walk(ty, written));
+                    if let Some((row, span)) = tail {
+                        write(written, intern(&format!("__row__{row}")), *span);
+                    }
+                }
+            }
+        }
+        let mut written = Vec::new();
+        match &td.body {
+            TypeBody::Enum(variants) => (variants.iter())
+                .flat_map(|variant| &variant.fields)
+                .for_each(|te| walk(te, &mut written)),
+            TypeBody::Record(fields) => fields.iter().for_each(|f| walk(&f.ty, &mut written)),
+            TypeBody::Alias(target) => walk(target, &mut written),
+        }
+        DeclVars {
+            known: td.params.iter().copied().collect(),
+            written,
+        }
+    }
+
+    /// Where `name` is first written in the body.
+    fn first_use(&self, name: Symbol) -> Option<usize> {
+        self.written
+            .iter()
+            .position(|(written, _)| *written == name)
+    }
+}
+
 impl TypeChecker {
     // ── Register type declarations ──────────────────────────────────
 
@@ -57,9 +123,7 @@ impl TypeChecker {
             let tv = self.fresh_var();
             param_vars.insert(*p, tv);
         }
-        // The type variables of the declaration: its parameters, and
-        // each one reported as not being one (`undeclared_type_vars`).
-        let mut known: std::collections::HashSet<Symbol> = td.params.iter().copied().collect();
+        let mut known = DeclVars::of(td);
 
         // Phase D: type aliases follow a parallel registration path
         // — resolve the target with each param bound to a fresh
@@ -307,7 +371,7 @@ impl TypeChecker {
         &mut self,
         td: &TypeDecl,
         te: &TypeExpr,
-        known: &mut std::collections::HashSet<Symbol>,
+        vars: &mut DeclVars,
         param_vars: &mut HashMap<Symbol, Type>,
         canonical: bool,
     ) -> Type {
@@ -319,34 +383,54 @@ impl TypeChecker {
         let ty = resolve_in(self, param_vars);
         let mut undeclared: Vec<Symbol> = (param_vars.keys())
             .copied()
-            .filter(|name| !known.contains(name))
+            .filter(|name| !vars.known.contains(name))
             .collect();
         if undeclared.is_empty() {
             return ty;
         }
-        undeclared.sort_by_key(|s| resolve(*s));
-        let at = te.span;
-        // The parameters the declaration would have, for the help.
-        let declared = (td.params.iter().chain(&undeclared))
-            .map(|p| resolve(*p))
-            .filter(|p| !p.starts_with("__row__"))
+        undeclared.sort_by_key(|name| (vars.first_use(*name), resolve(*name)));
+        // The parameters the declaration needs, for the help: the
+        // declared ones, then each variable of the body in the order of
+        // its first use.
+        let declared = (td.params.iter().copied())
+            .chain(vars.written.iter().map(|(name, _)| *name))
+            .filter(|name| !resolve(*name).starts_with("__row__"))
+            .filter(|name| {
+                self.case_mismatched_type_name(&resolve(*name), false)
+                    .is_none()
+            })
+            .fold(Vec::new(), |mut names, name| {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+                names
+            })
+            .iter()
+            .map(|name| resolve(*name))
             .collect::<Vec<_>>()
             .join(", ");
         for name in undeclared {
-            known.insert(name);
+            vars.known.insert(name);
             param_vars.insert(name, Type::Error);
+            let at = match vars.first_use(name) {
+                Some(index) => vars.written[index].1,
+                None => te.span,
+            };
             let text = resolve(name);
             let diagnostic = match text.strip_prefix("__row__") {
-                Some(row) => Diagnostic::error(
-                    Code::InvalidTypeDeclaration,
-                    at,
-                    format!(
-                        "a type declaration cannot leave a record open: '...{row}' would be \
-                         one row for every use of '{}'",
-                        td.name
-                    ),
-                )
-                .with_help("write the record's fields out"),
+                Some(row) => {
+                    let reason = if td.params.iter().any(|p| resolve(*p) == row) {
+                        "a row cannot be a type parameter".to_string()
+                    } else {
+                        format!("'...{row}' would be one row for every use of '{}'", td.name)
+                    };
+                    Diagnostic::error(
+                        Code::InvalidTypeDeclaration,
+                        at,
+                        format!("a type declaration cannot leave a record open: {reason}"),
+                    )
+                    .with_help("write the record's fields out")
+                }
                 None => Diagnostic::error(
                     Code::InvalidTypeDeclaration,
                     at,
@@ -383,7 +467,7 @@ impl TypeChecker {
         td: &TypeDecl,
         target_te: &TypeExpr,
         param_vars: &mut HashMap<Symbol, Type>,
-        known: &mut std::collections::HashSet<Symbol>,
+        known: &mut DeclVars,
     ) {
         // The alias name itself must already be in `type_aliases` (the
         // pre-pass placeholder loop populated it). Mark it as in-

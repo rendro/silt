@@ -1,12 +1,14 @@
 -- cmd: check
 -- exit: 1
--- A record's field type names a variable the record does not declare;
--- the help lists the parameters the record would have.
+-- A record's field types name variables the record does not declare;
+-- each is underlined where it is first written, and the help lists
+-- every parameter the record needs, in the order of first use.
 type Pair(a) {
   left: a,
-  right: b,
+  right: Map(c, b),
+  both: (b, d),
 }
 
 fn main() {
-  println(Pair { left: 1, right: "x" }.left)
+  println(1)
 }

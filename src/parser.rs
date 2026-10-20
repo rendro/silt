@@ -2328,7 +2328,7 @@ impl<'src> Parser<'src> {
         // `{name: Type, ...r}`.
         if self.at(&Token::LBrace) {
             self.advance();
-            let mut tail: Option<Symbol> = None;
+            let mut tail: Option<(Symbol, Span)> = None;
             let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
             let fields = self.comma_list(
                 "anon record type",
@@ -2337,9 +2337,10 @@ impl<'src> Parser<'src> {
                 |p| {
                     p.nothing_after_rest(tail.is_some(), "...", '}', "an anon record type")?;
                     if p.at(&Token::DotDotDot) {
-                        p.advance();
+                        let dots = p.advance().span;
                         // Row variable name (e.g. `r` in `...r`). Required.
-                        tail = Some(p.expect_ident()?.0);
+                        let (row, row_span) = p.expect_ident()?;
+                        tail = Some((row, dots.to(row_span)));
                         return Ok(None);
                     }
                     let (fname, fname_span) = p.expect_ident()?;

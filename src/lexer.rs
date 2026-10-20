@@ -810,9 +810,15 @@ impl Lexer {
         }
         if digits.is_empty() || digits.len() > 6 || self.peek() != Some('}') {
             let at = self.since(esc);
-            self.error(|| {
-                Diagnostic::error(Code::InvalidEscape, at, "\\u{...} takes 1 to 6 hex digits")
-            });
+            // 1 to 6 digits and then nothing that could be more of the
+            // code: the brace is missing.
+            let missing_brace =
+                (1..=6).contains(&digits.len()) && !self.peek().is_some_and(char::is_alphanumeric);
+            let message = match missing_brace {
+                true => "\\u{...} is missing its closing }",
+                false => "\\u{...} takes 1 to 6 hex digits",
+            };
+            self.error(|| Diagnostic::error(Code::InvalidEscape, at, message));
             return None;
         }
         self.advance_char();

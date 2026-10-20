@@ -521,7 +521,7 @@ impl TypeChecker {
                 }
                 let row_tail = match tail {
                     None => RowTail::Closed,
-                    Some(rname) => {
+                    Some((rname, _)) => {
                         // Row-tail variable name: bind it through param_vars
                         // so multiple annotations in the same scope sharing
                         // a row name refer to the same row variable. The
