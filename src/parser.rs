@@ -342,6 +342,9 @@ pub struct Parser<'src> {
     pos: usize,
     /// How many function and closure bodies the current token is in.
     bodies: usize,
+    /// The name of the declared function whose body the current token
+    /// is in, and the body's `{`.
+    fn_body: Option<(Symbol, Span)>,
     /// The innermost "expression followed by a block" header being
     /// parsed, if any.
     header: Option<BlockHeader>,
@@ -456,6 +459,7 @@ impl<'src> Parser<'src> {
             source,
             pos: 0,
             bodies: 0,
+            fn_body: None,
             header: None,
             expr_height: 0,
             statements: StatementMarks::default(),
@@ -1447,7 +1451,9 @@ impl<'src> Parser<'src> {
         self.fn_header_whole = true;
         if self.at(&Token::LBrace) {
             self.bodies += 1;
+            let outer = self.fn_body.replace((decl.name, self.span()));
             let body = self.parse_block();
+            self.fn_body = outer;
             self.bodies -= 1;
             Ok((where_clauses, body?, false))
         } else {
@@ -3245,7 +3251,7 @@ impl<'src> Parser<'src> {
                     format!("expected expression, found {}", self.peek()),
                 );
                 if let Some(help) = self.nested_fn_help() {
-                    return Err(d.with_help(help));
+                    return Err(self.unclosed_fn_body(d).with_help(help));
                 }
                 // A `+` that starts a statement: it was meant to go on
                 // with the line above, outside any bracket.
@@ -3258,6 +3264,30 @@ impl<'src> Parser<'src> {
                 Err(self.with_line_start_help(d))
             }
         }
+    }
+
+    /// The error `d` for a `fn` where an expression is expected, in the
+    /// body of a declared function, when the file ends with a delimiter
+    /// still open: then that body most likely lacks its `}`, which is
+    /// said first. Otherwise `d` as it is.
+    fn unclosed_fn_body(&self, d: Diagnostic) -> Diagnostic {
+        let Some((_, open)) = self.fn_body else {
+            return d;
+        };
+        if self.delim_depth.last().is_none_or(|depth| *depth <= 0) {
+            return d;
+        }
+        let at = match self.peek() {
+            Token::Pub => self.pos + 1,
+            _ => self.pos,
+        };
+        let Some(Token::Ident(name)) = self.tokens.get(at + 1).map(|tok| &tok.kind) else {
+            return d;
+        };
+        self.delim_unclosed_err_no_comma("function body", '}', open)
+            .with_help(format!(
+                "if `{name}` is a function of its own, a `}}` is missing above it"
+            ))
     }
 
     /// The help for a `fn name(...)` (or `pub fn name(...)`) where an
