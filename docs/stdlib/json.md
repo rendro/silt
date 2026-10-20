@@ -99,6 +99,13 @@ The parsers stop sooner: `json.parse`, `json.parse_list` and
 one nested deeper. A value written at more levels than that is valid JSON
 that silt itself does not read back.
 
+`json.decode` reads a `json.Value` nested up to 1,000 levels deep, counted
+as for `json.stringify`; one nested deeper is an `Err(Other(msg))`:
+
+```text
+json.decode: the value is nested more than 1000 levels deep
+```
+
 
 ## `json.Value`
 

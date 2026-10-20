@@ -1,0 +1,2 @@
+1000: Ok
+1001: Other(json.decode: the value is nested more than 1000 levels deep)

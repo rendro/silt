@@ -121,22 +121,40 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// What a number that is no `Int` is called in a type mismatch.
-const NOT_IN_RANGE: &str = "a number out of Int's range";
+/// `i64::MAX` is not exactly an `f64` (it rounds up to 2^63): the
+/// bound of `Int`'s range that an `f64` can hold, exclusive.
+const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
 
-/// The `Int` that the number `f` of a document is: a whole number in
-/// `Int`'s range. Else what it is instead, for the type mismatch.
-fn whole(f: f64) -> Result<i64, &'static str> {
-    // `i64::MAX` is not exactly an `f64` (it rounds up to 2^63), so
-    // the upper bound is exclusive.
-    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
-    const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
-    if !f.is_finite() || !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
-        Err(NOT_IN_RANGE)
-    } else if f.fract() != 0.0 {
-        Err("a number with a fraction")
-    } else {
-        Ok(f as i64)
+/// The `Int` that the number `n` of a document is: as
+/// [`parse_document`] reads a document, and as [`whole_numbers`] makes
+/// one of a `json.Value`, the number is held as an `i64` when it is
+/// one. Else what it is instead, for the type mismatch.
+fn int_of(n: &serde_json::Number) -> Result<i64, &'static str> {
+    match (n.as_i64(), n.as_f64()) {
+        (Some(i), _) => Ok(i),
+        (None, Some(f)) if f.abs() < I64_MAX_PLUS_ONE => Err("a number with a fraction"),
+        (None, _) => Err("a number out of Int's range"),
+    }
+}
+
+/// `json`, which is made of a `json.Value`, with every number that is a
+/// whole number in `Int`'s range held as an `i64`, as
+/// [`parse_document`] holds one of a text: `json.Float(1.0)` decodes
+/// into an `Int` as the text `1.0` does.
+fn whole_numbers(json: &mut serde_json::Value) {
+    match json {
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64()
+                && n.as_i64().is_none()
+                && f.fract() == 0.0
+                && (-I64_MAX_PLUS_ONE..I64_MAX_PLUS_ONE).contains(&f)
+            {
+                *n = (f as i64).into();
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(whole_numbers),
+        serde_json::Value::Object(fields) => fields.values_mut().for_each(whole_numbers),
+        _ => {}
     }
 }
 
@@ -263,6 +281,177 @@ pub(crate) fn value_to_json(
         Value::Unit => serde_json::Value::Null,
         _ => return Err(unsupported_kind(caller, v)),
     })
+}
+
+// ── Reading a document ──────────────────────────────────────────────
+
+/// The document the JSON text `text` is, with serde_json's errors. A
+/// number whose text is a whole number in `Int`'s range (`1`, `1.0`,
+/// `1e3`, `9223372036854775807.0`) is held as an `i64`, decided on its
+/// text: serde_json alone reads every number that is no integer
+/// literal of 64 bits as an `f64`, which rounds (`9007199254740993.0`)
+/// and hides a fraction or a number out of range
+/// (`-9223372036854775809`). Every other number keeps serde_json's
+/// reading, so a number held as no `i64` is no `Int`.
+pub(crate) fn parse_document(text: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
+    use serde::de::DeserializeSeed;
+    let mut de = serde_json::Deserializer::from_slice(text);
+    let read = Node {
+        text,
+        at: &std::cell::Cell::new(0),
+    }
+    .deserialize(&mut de)?;
+    de.end()?;
+    Ok(read)
+}
+
+/// The reader of one value of the document `text`. `at` is how far the
+/// numbers of the text are read: serde_json gives the values in the
+/// order the text has them, so the next number it gives is the next
+/// number token after `at`.
+#[derive(Clone, Copy)]
+struct Node<'t> {
+    text: &'t [u8],
+    at: &'t std::cell::Cell<usize>,
+}
+
+impl<'t> Node<'t> {
+    /// The text of the next number of the document.
+    fn next_number(self) -> &'t [u8] {
+        let text = self.text;
+        let mut i = self.at.get();
+        let mut in_string = false;
+        while let Some(&b) = text.get(i) {
+            match (in_string, b) {
+                (true, b'\\') => i += 1,
+                (_, b'"') => in_string = !in_string,
+                (false, b'-' | b'0'..=b'9') => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        let start = i;
+        while text
+            .get(i)
+            .is_some_and(|b| matches!(b, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E'))
+        {
+            i += 1;
+        }
+        self.at.set(i);
+        &text[start..i]
+    }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for Node<'_> {
+    type Value = serde_json::Value;
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for Node<'_> {
+    type Value = serde_json::Value;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Bool(b))
+    }
+
+    fn visit_i64<E>(self, n: i64) -> Result<Self::Value, E> {
+        self.next_number();
+        Ok(serde_json::Value::Number(n.into()))
+    }
+
+    fn visit_u64<E>(self, n: u64) -> Result<Self::Value, E> {
+        self.next_number();
+        Ok(serde_json::Value::Number(n.into()))
+    }
+
+    fn visit_f64<E>(self, f: f64) -> Result<Self::Value, E> {
+        Ok(match exact_int(self.next_number()) {
+            Some(n) => serde_json::Value::Number(n.into()),
+            None => serde_json::Number::from_f64(f).map_or(serde_json::Value::Null, Into::into),
+        })
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::String(s.to_owned()))
+    }
+
+    fn visit_string<E>(self, s: std::string::String) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::String(s))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Null)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut items = Vec::new();
+        while let Some(item) = seq.next_element_seed(self)? {
+            items.push(item);
+        }
+        Ok(serde_json::Value::Array(items))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        // (Of a key written twice the last value counts.)
+        let mut object = serde_json::Map::new();
+        while let Some(key) = map.next_key::<std::string::String>()? {
+            object.insert(key, map.next_value_seed(self)?);
+        }
+        Ok(serde_json::Value::Object(object))
+    }
+}
+
+/// The `Int` the JSON number `text` is, decided on its digits: `None`
+/// when it has a fraction or is out of `Int`'s range.
+fn exact_int(text: &[u8]) -> Option<i64> {
+    let (negative, text) = match text.split_first() {
+        Some((b'-', rest)) => (true, rest),
+        _ => (false, text),
+    };
+    let (mantissa, exponent) = match text.iter().position(|b| matches!(b, b'e' | b'E')) {
+        Some(e) => (&text[..e], &text[e + 1..]),
+        None => (text, &b""[..]),
+    };
+    let (whole, fraction) = match mantissa.iter().position(|&b| b == b'.') {
+        Some(dot) => (&mantissa[..dot], &mantissa[dot + 1..]),
+        None => (mantissa, &b""[..]),
+    };
+    // The digits, and the power of ten they are multiplied by.
+    let digits: Vec<u8> = whole.iter().chain(fraction).map(|b| b - b'0').collect();
+    let first = digits.iter().position(|&d| d != 0);
+    let last = digits.iter().rposition(|&d| d != 0);
+    let (Some(first), Some(last)) = (first, last) else {
+        return Some(0);
+    };
+    // An exponent past what any digits make up for is out of range one
+    // way or a fraction the other: kept within `i64` as such.
+    let mut power: i64 = 0;
+    let (sign, exponent) = match exponent.split_first() {
+        Some((b'-', rest)) => (-1, rest),
+        Some((b'+', rest)) => (1, rest),
+        _ => (1, exponent),
+    };
+    for &b in exponent {
+        power = (power * 10 + i64::from(b - b'0')).min(1 << 40);
+    }
+    let power = sign * power - fraction.len() as i64 + (digits.len() - 1 - last) as i64;
+    let significant = &digits[first..=last];
+    if power < 0 || significant.len() as i64 + power > 19 {
+        return None;
+    }
+    let mut n: i128 = 0;
+    for &d in significant {
+        n = n * 10 + i128::from(d);
+    }
+    n *= 10i128.pow(power as u32);
+    i64::try_from(if negative { -n } else { n }).ok()
 }
 
 // ── JSON helpers ────────────────────────────────────────────────────
@@ -524,20 +713,16 @@ fn json_to_map(rt: &Runtime, value_type: Type, json: &serde_json::Value) -> Resu
 }
 
 /// The `json.Value` that holds the document `json`. A number is an
-/// `Int` when it is a whole number an `Int` can be, as for an `Int`
-/// field, and a `Float` otherwise.
+/// `Int` when it is held as one ([`int_of`]), as for an `Int` field, and
+/// a `Float` otherwise.
 pub(crate) fn json_value(json: &serde_json::Value) -> Value {
     match json {
         serde_json::Value::Null => Value::variant(bv::JSON_NULL, Vec::new()),
         serde_json::Value::Bool(b) => Value::variant(bv::JSON_BOOL, vec![Value::Bool(*b)]),
-        serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64()) {
+        serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64().and_then(Float::new)) {
             (Some(i), _) => Value::variant(bv::JSON_INT, vec![Value::Int(i)]),
-            (None, Some(f)) => match (whole(f), Float::new(f)) {
-                (Ok(i), _) => Value::variant(bv::JSON_INT, vec![Value::Int(i)]),
-                (Err(_), Some(f)) => Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)]),
-                // (A document has no NaN.)
-                (Err(_), None) => Value::variant(bv::JSON_NULL, Vec::new()),
-            },
+            (None, Some(f)) => Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)]),
+            // (A document has no NaN.)
             (None, None) => Value::variant(bv::JSON_NULL, Vec::new()),
         },
         serde_json::Value::String(s) => {
@@ -588,11 +773,9 @@ fn json_to_typed_value(
         // be (`1`, `1.0`, `1e3`); one with a fraction, or out of range,
         // is no `Int`, and nothing is cut off or saturated.
         FieldType::Int => match json {
-            serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64().map(whole)) {
-                (Some(i), _) | (None, Some(Ok(i))) => Ok(Value::Int(i)),
-                (None, Some(Err(what))) => Err(mismatch("Int", what)),
-                (None, None) => Err(mismatch("Int", NOT_IN_RANGE)),
-            },
+            serde_json::Value::Number(n) => int_of(n)
+                .map(Value::Int)
+                .map_err(|what| mismatch("Int", what)),
             _ => Err(mismatch("Int", json_type_name(json))),
         },
         FieldType::Float => match json {
@@ -743,19 +926,26 @@ fn decode_document(
 
 builtins! {
     fn decode(vm, value: &Value, ty: Type) -> Result<Value, VmError> {
-        let json = value_to_json("json.decode", value, 0)?;
+        // A `json.Value` holds only what JSON has a form for, so the one
+        // way to fail here is a value nested past the limit: an `Err`,
+        // as `json.parse` gives one for a document nested too deep.
+        let mut json = match value_to_json("json.decode", value, 0) {
+            Ok(json) => json,
+            Err(e) => return Ok(json_unknown_err(e.message)),
+        };
+        whole_numbers(&mut json);
         decode_document(&vm.runtime, "json.decode", Ok(json), ty)
     }
 
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        decode_document(&vm.runtime, "json.parse", serde_json::from_str(s), ty)
+        decode_document(&vm.runtime, "json.parse", parse_document(s.as_bytes()), ty)
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
         if let Type::Named(ty) = ty
             && ty.id == ty::JSON_VALUE
         {
-            return Ok(match serde_json::from_str::<serde_json::Value>(s) {
+            return Ok(match parse_document(s.as_bytes()) {
                 Ok(serde_json::Value::Array(items)) => Value::variant(
                     bv::OK,
                     vec![Value::list(items.iter().map(json_value).collect())],
@@ -770,14 +960,14 @@ builtins! {
             ));
         };
         let fields = decodable_record("json.parse_list", ty)?;
-        match serde_json::from_str::<serde_json::Value>(s) {
+        match parse_document(s.as_bytes()) {
             Ok(json) => json_to_record_list(&vm.runtime, ty, &fields, &json),
             Err(e) => Ok(json_result_err(&e)),
         }
     }
 
     fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
-        match serde_json::from_str::<serde_json::Value>(s) {
+        match parse_document(s.as_bytes()) {
             Ok(json) => json_to_map(&vm.runtime, value_type, &json),
             Err(e) => Ok(json_result_err(&e)),
         }
