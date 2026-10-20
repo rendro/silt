@@ -1,0 +1,33 @@
+-- toml writes a `json.Value` as the TOML value it holds, as json writes
+-- it as the JSON it holds: a scalar as itself, `json.Array` as an
+-- array, `json.Object` as a table (keys sorted), and `json.Null` as
+-- toml writes `None`: left out of a table, refused in an array. (It
+-- was written as a variant table, `{ fields = [1], variant = "Int" }`.)
+import json
+import toml
+
+fn said(result: Result(String, toml.TomlError)) -> String {
+  match result {
+    Ok(text) -> text
+    Err(toml.Other(message)) -> message
+    Err(other) -> "another error: {other}"
+  }
+}
+
+fn main() {
+  let doc = json.Object(#{
+    "n": json.Int(1),
+    "f": json.Float(2.5),
+    "s": json.String("x"),
+    "b": json.Bool(true),
+    "gone": json.Null,
+    "xs": json.Array([json.Int(1), json.Int(2)]),
+    "t": json.Object(#{"k": json.String("v")}),
+  })
+  println(said(toml.stringify(doc)))
+  println(said(toml.stringify(#{"v": json.Array([json.Null])})))
+  match json.parse("\{\"name\": \"silt\", \"tags\": [\"a\", \"b\"]}", json.Value) {
+    Ok(parsed) -> println(said(toml.stringify(parsed)))
+    Err(e) -> println("parse: {e.message()}")
+  }
+}

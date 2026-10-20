@@ -22,11 +22,12 @@ use fallible_iterator::FallibleIterator;
 use postgres_protocol::types as wire;
 use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
+use crate::builtins::data::{self, Data};
 use crate::builtins::json;
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
-use crate::value::{Float, Record, Value};
+use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 // ── Parameters ──────────────────────────────────────────────────────
@@ -135,80 +136,65 @@ pub(super) fn params(
 /// a time and a datetime are written as silt shows them (a datetime
 /// with the offset `+00`, a year before 1 as a year BC), `Bytes` as
 /// `bytea`'s hex text; a list is an array or JSON (see [`TextParam`]),
-/// and every other value that is no scalar (a record, a map, a variant)
-/// is written as `json.stringify` writes it. A value JSON has no form
-/// for is the error `json.stringify` gives.
+/// and every other value that is no scalar (a record, a map, a tuple, a
+/// variant, a `json.Value`) is written as `json.stringify` writes it. A
+/// value JSON has no form for is the error `json.stringify` gives.
 fn param(caller: &str, value: &Value, unsendable: &Unsendable) -> Result<TextParam, VmError> {
+    let value = data::data(caller, data::Format::Postgres, value)?;
     Ok(match value {
-        Value::Variant(variant) if variant.is(bv::NONE) => TextParam::Null,
-        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
-            return param(caller, &variant.fields()[0], unsendable);
-        }
-        // (A list that has no array form has no JSON form either.)
-        Value::List(_) => TextParam::List {
-            array: array_literal(caller, value)?,
-            json: match json::value_to_json(caller, value, 0) {
-                Ok(json) => Ok(json.to_string()),
-                Err(e) => Err(e.message),
-            },
+        Data::Null => TextParam::Null,
+        Data::Array(_) => TextParam::List {
+            array: array_literal(caller, &value)?,
+            json: json::text(caller, &value, false).map_err(|e| e.message),
             unsendable: unsendable.clone(),
         },
-        _ => TextParam::Text(scalar_text(caller, value)?),
+        _ => TextParam::Text(scalar_text(caller, &value)?),
     })
 }
 
-/// The text of `value`, which is no list and no `Option`: a scalar's
-/// own, JSON for the others.
-fn scalar_text(caller: &str, value: &Value) -> Result<String, VmError> {
+/// The text of `value`, which is no list and no null: a scalar's own,
+/// JSON for the others.
+fn scalar_text(caller: &str, value: &Data) -> Result<String, VmError> {
     Ok(match value {
-        Value::Int(n) => n.to_string(),
+        Data::Int(n) => n.to_string(),
         // (`2.0` stays `2.0`, which no integer column takes.)
-        Value::Float(f) => format!("{:?}", f.get()),
-        Value::Bool(b) => b.to_string(),
-        Value::String(s) => s.to_string(),
-        Value::Bytes(bytes) => hex(bytes),
-        Value::Record(record) if record.type_id() == ty::DATE => {
-            let (date, era) = date_text(record);
+        Data::Float(f) => format!("{f:?}"),
+        Data::Bool(b) => b.to_string(),
+        Data::String(s) => s.to_string(),
+        Data::Bytes(bytes) => hex(bytes),
+        Data::Date(date) => {
+            let (date, era) = date_text(date);
             format!("{date}{era}")
         }
-        Value::Record(record) if record.type_id() == ty::TIME => value.to_string(),
+        Data::Time(time) => time.to_string(),
         // In UTC, as a `timestamptz` is read: a `timestamp` ignores
         // the offset.
-        Value::Record(record) if record.type_id() == ty::DATE_TIME => {
-            match (record.get("date"), record.get("time")) {
-                (Some(Value::Record(date)), Some(time)) => {
-                    let (date, era) = date_text(date);
-                    format!("{date}T{time}+00{era}")
-                }
-                _ => value.to_string(),
-            }
+        Data::DateTime(at) => {
+            let (date, time) = &**at;
+            let (date, era) = date_text(date);
+            format!("{date}T{time}+00{era}")
         }
-        _ => json::value_to_json(caller, value, 0)?.to_string(),
+        _ => json::text(caller, value, false)?,
     })
 }
 
-/// The text of the `Date` `date` as Postgres reads it, and its era: a
+/// The text of the date `date` as Postgres reads it, and its era: a
 /// year before 1 is a year BC (year 0 is 1 BC), `0044-03-15` and
 /// `" BC"` for -43.
-fn date_text(date: &Record) -> (String, &'static str) {
-    let part = |name| match date.get(name) {
-        Some(Value::Int(n)) => *n,
-        _ => 0,
+fn date_text(date: &data::Date) -> (String, &'static str) {
+    let (year, era) = match date.year < 1 {
+        true => (1 - date.year, " BC"),
+        false => (date.year, ""),
     };
-    let (year, month, day) = (part("year"), part("month"), part("day"));
-    let (year, era) = if year < 1 {
-        (1 - year, " BC")
-    } else {
-        (year, "")
-    };
+    let (month, day) = (date.month, date.day);
     (format!("{year:04}-{month:02}-{day:02}"), era)
 }
 
 /// The list `list` as the text of a Postgres array (`{"1","2",NULL}`),
 /// a list of lists as one of more dimensions. Each element is quoted;
-/// `None` is `NULL`.
-fn array_literal(caller: &str, list: &Value) -> Result<String, VmError> {
-    let Value::List(items) = list else {
+/// a null is `NULL`.
+fn array_literal(caller: &str, list: &Data) -> Result<String, VmError> {
+    let Data::Array(items) = list else {
         return scalar_text(caller, list);
     };
     let mut text = String::from("{");
@@ -216,16 +202,9 @@ fn array_literal(caller: &str, list: &Value) -> Result<String, VmError> {
         if k > 0 {
             text.push(',');
         }
-        let mut item = &item;
-        while let Value::Variant(variant) = item
-            && variant.is(bv::SOME)
-            && let [inner] = variant.fields()
-        {
-            item = inner;
-        }
         match item {
-            Value::Variant(variant) if variant.is(bv::NONE) => text.push_str("NULL"),
-            Value::List(_) => text.push_str(&array_literal(caller, item)?),
+            Data::Null => text.push_str("NULL"),
+            Data::Array(_) => text.push_str(&array_literal(caller, item)?),
             _ => {
                 text.push('"');
                 for c in scalar_text(caller, item)?.chars() {
@@ -1088,6 +1067,11 @@ mod tests {
         }
     }
 
+    /// `value` as the data of a parameter.
+    fn pg(value: &Value) -> Data {
+        data::data("postgres.query", data::Format::Postgres, value).expect("data")
+    }
+
     #[test]
     fn a_list_is_an_array_literal_with_every_element_quoted() {
         let list = Value::list(vec![
@@ -1097,7 +1081,7 @@ mod tests {
             Value::variant(bv::SOME, vec![Value::Int(1)]),
         ]);
         assert_eq!(
-            array_literal("postgres.query", &list).expect("written"),
+            array_literal("postgres.query", &pg(&list)).expect("written"),
             r#"{"a\"b","c\\d",NULL,"1"}"#
         );
         let grid = Value::list(vec![
@@ -1105,12 +1089,24 @@ mod tests {
             Value::list(vec![Value::Int(3), Value::Int(4)]),
         ]);
         assert_eq!(
-            array_literal("postgres.query", &grid).expect("written"),
+            array_literal("postgres.query", &pg(&grid)).expect("written"),
             r#"{{"1","2"},{"3","4"}}"#
         );
         assert_eq!(
-            array_literal("postgres.query", &Value::list(Vec::new())).expect("written"),
+            array_literal("postgres.query", &pg(&Value::list(Vec::new()))).expect("written"),
             "{}"
+        );
+    }
+
+    /// A range too long to write out is refused where the parameter is
+    /// to be an array too, as json refuses it.
+    #[test]
+    fn a_range_too_long_to_write_out_is_no_parameter() {
+        let range = Value::List(crate::value::List::ints(1, 10_000_001).expect("a range"));
+        let refused = param("postgres.query", &range, &Unsendable::default()).unwrap_err();
+        assert_eq!(
+            refused.message,
+            "range 1..10000001 has 10000001 elements; materializing more than 10000000 is not allowed"
         );
     }
 
@@ -1118,7 +1114,7 @@ mod tests {
     /// a year BC (year 0 is 1 BC).
     #[test]
     fn dates_are_written_as_postgres_reads_them() {
-        let text = |value: Value| scalar_text("postgres.query", &value).expect("written");
+        let text = |value: Value| scalar_text("postgres.query", &pg(&value)).expect("written");
         let day = |y, m, d| make_date(NaiveDate::from_ymd_opt(y, m, d).expect("a date"));
         let at = |y, m, d| {
             let date = NaiveDate::from_ymd_opt(y, m, d).expect("a date");
@@ -1132,5 +1128,186 @@ mod tests {
         assert_eq!(text(at(-43, 3, 15)), "0044-03-15T12:00:00.250000000+00 BC");
         let time = make_time(NaiveTime::from_hms_opt(1, 2, 3).expect("a time"));
         assert_eq!(text(time), "01:02:03");
+    }
+
+    /// What `f`, the builtin `json.stringify` or `toml.stringify`,
+    /// writes of `#{"v": value}`: the text, or the message of its
+    /// refusal (json raises, toml returns `Err(Other(message))`).
+    fn written_by(
+        f: fn(&mut crate::vm::Vm, &[Value]) -> crate::builtins::typed::Called,
+        value: &Value,
+    ) -> Result<String, String> {
+        let mut vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        let doc = Value::map([(Value::String("v".into()), value.clone())]);
+        let written = match f(&mut vm, &[doc]) {
+            Some(Ok(crate::vm::Step::Done(written))) => written,
+            Some(Err(e)) => return Err(e.message),
+            _ => panic!("no result"),
+        };
+        match written {
+            Value::String(text) => Ok(text.to_string()),
+            Value::Variant(result) if result.is(bv::OK) => match result.fields() {
+                [Value::String(text)] => Ok(text.to_string()),
+                other => panic!("{other:?}"),
+            },
+            Value::Variant(result) => match result.fields() {
+                [Value::Variant(other)] => match other.fields() {
+                    [Value::String(message)] => Err(message.to_string()),
+                    fields => panic!("{fields:?}"),
+                },
+                fields => panic!("{fields:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The text of the parameter `value`, or the message of its refusal.
+    fn sent(value: &Value) -> Result<String, String> {
+        match param("postgres.query", value, &Unsendable::default()) {
+            Ok(TextParam::Text(text)) => Ok(text),
+            Ok(other) => panic!("{other:?}"),
+            Err(e) => Err(e.message),
+        }
+    }
+
+    /// What a refusal says, without the function it names.
+    fn said(message: &str) -> &str {
+        message.split_once(": ").expect("a caller").1
+    }
+
+    /// One value of every kind written by `json.stringify`,
+    /// `toml.stringify` and as a parameter: the three agree on what they
+    /// share, the scalars, the dates and times (each format in its own
+    /// form: toml's literal, postgres's `+00`), and the refusals.
+    #[test]
+    fn json_toml_and_a_parameter_agree_on_a_value() {
+        use crate::builtins::{json as j, toml as t};
+        use chrono::NaiveDateTime;
+        // How a date or time is compared: as what it reads back as.
+        #[derive(Clone, Copy)]
+        enum Read {
+            Text,
+            Time,
+            DateTime,
+        }
+        let date = |y, m, d| make_date(NaiveDate::from_ymd_opt(y, m, d).expect("a date"));
+        let time = NaiveTime::from_hms_milli_opt(12, 30, 0, 250).expect("a time");
+        let at = NaiveDate::from_ymd_opt(2026, 10, 19)
+            .expect("a date")
+            .and_hms_milli_opt(12, 30, 5, 500)
+            .expect("a time");
+        let float = |f| Value::Float(Float::new(f).expect("finite"));
+        let shared = [
+            (Value::Int(42), Read::Text, "42"),
+            (Value::Int(-7), Read::Text, "-7"),
+            (float(2.5), Read::Text, "2.5"),
+            (float(2.0), Read::Text, "2.0"),
+            (Value::Bool(true), Read::Text, "true"),
+            (Value::String("a \"b\" ü".into()), Read::Text, "a \"b\" ü"),
+            (
+                Value::variant(bv::SOME, vec![Value::Int(3)]),
+                Read::Text,
+                "3",
+            ),
+            (
+                Value::variant(bv::JSON_INT, vec![Value::Int(5)]),
+                Read::Text,
+                "5",
+            ),
+            (date(2026, 10, 19), Read::Text, "2026-10-19"),
+            // (No TOML literal holds the year: a string of the text.)
+            (date(12345, 3, 15), Read::Text, "12345-03-15"),
+            (make_time(time), Read::Time, "12:30:00.250"),
+            (make_datetime(at), Read::DateTime, "2026-10-19 12:30:05.500"),
+        ];
+        for (value, read, expected) in shared {
+            let json = written_by(j::stringify, &value).expect("json");
+            let toml = written_by(t::stringify, &value).expect("toml");
+            let json = match &serde_json::from_str::<serde_json::Value>(&json).expect("JSON")["v"] {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let toml = match ::toml::from_str::<::toml::Value>(&toml)
+                .expect("TOML")
+                .get("v")
+            {
+                Some(::toml::Value::String(s)) => s.clone(),
+                Some(::toml::Value::Float(f)) => format!("{f:?}"),
+                Some(::toml::Value::Datetime(at)) => at.to_string(),
+                Some(other) => other.to_string(),
+                None => panic!("no v in {toml}"),
+            };
+            let pg = sent(&value).expect("a parameter");
+            let texts = match read {
+                Read::Text => [json, toml, pg],
+                Read::Time => [json, toml, pg].map(|text| {
+                    json::parse_time(&text)
+                        .expect("a time")
+                        .format("%H:%M:%S%.3f")
+                        .to_string()
+                }),
+                // (Postgres's own: the offset of UTC.)
+                Read::DateTime => {
+                    [json, toml, pg.strip_suffix("+00").expect("+00").into()].map(|text| {
+                        let at: NaiveDateTime = json::parse_datetime(&text).expect("a datetime");
+                        at.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+                    })
+                }
+            };
+            assert_eq!(texts, [expected; 3].map(String::from), "{value:?}");
+        }
+
+        // The value each refuses: as `#{"v": doc}` for json and toml, as
+        // `param` for postgres (`Bytes` is a parameter, not inside one;
+        // the nested list is as deep as the others'). On the smallest
+        // stack a thread that runs silt code has, as the deepest value
+        // takes megabytes of it in a debug build.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let bytes = Value::Bytes(Arc::new(vec![1, 2]));
+                let v = |x: Value| Value::map([(Value::String("v".into()), x)]);
+                let nested = (0..crate::builtins::data::MAX_ENCODE_DEPTH)
+                    .fold(Value::Int(1), |inner, _| Value::list(vec![inner]));
+                let refused = [
+                    (
+                        Value::set([Value::Int(1)]),
+                        None,
+                        "unsupported value kind Set",
+                    ),
+                    (
+                        bytes.clone(),
+                        Some(v(bytes)),
+                        "unsupported value kind Bytes",
+                    ),
+                    (
+                        nested.clone(),
+                        Some(v(nested)),
+                        "the value is nested more than 1000 levels deep",
+                    ),
+                    (
+                        Value::List(crate::value::List::ints(1, 10_000_001).expect("a range")),
+                        None,
+                        "range 1..10000001 has 10000001 elements; \
+                         materializing more than 10000000 is not allowed",
+                    ),
+                ];
+                for (doc, param, expected) in refused {
+                    let json = written_by(j::stringify, &doc).expect_err(expected);
+                    let toml = written_by(t::stringify, &doc).expect_err(expected);
+                    let pg = sent(param.as_ref().unwrap_or(&doc)).expect_err(expected);
+                    let texts = [json, toml, pg];
+                    let texts = texts
+                        .each_ref()
+                        .map(|text| match text.starts_with("range ") {
+                            true => text.as_str(),
+                            false => said(text),
+                        });
+                    assert_eq!(texts, [expected; 3]);
+                }
+            })
+            .expect("a thread")
+            .join()
+            .expect("the refusals agree");
     }
 }

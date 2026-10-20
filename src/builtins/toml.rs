@@ -29,7 +29,7 @@
 //! `Time` field receives `07:32:00`. This reuses the json code path for
 //! date parsing, keeping the two modules' behavior aligned. The encoder
 //! writes a `Date`, `Time` and `DateTime` as such a literal
-//! (`time_literal`), so each reads back as the value it was.
+//! (`literal`), so each reads back as the value it was.
 //!
 //! ## Semantics
 //!
@@ -44,14 +44,14 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveTime};
 
-use crate::typeinfo::{FieldType, TypeInfo, bv, ty};
+use crate::typeinfo::{FieldType, TypeInfo, bv};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
+use super::data::{self, Data, Format};
 use super::json::{
-    At, Written, decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
-    invalid_time_message, parse_date, parse_datetime, parse_time, shown,
-    unsupported_field_type_message, unsupported_kind, without_bytes,
+    At, decodable_record, field_record_type, invalid_date_message, invalid_time_message,
+    parse_date, parse_datetime, parse_time, shown, unsupported_field_type_message, without_bytes,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -150,179 +150,117 @@ fn toml_type_name(v: &::toml::Value) -> &'static str {
     }
 }
 
-/// Convert a silt `Value` into a `toml::Value`. Fails for values that TOML
-/// cannot represent (e.g. `Unit`, non-finite floats at the top level — TOML
-/// 1.0 technically permits `nan`/`inf` but we emit the closest valid
-/// representation and reject ambiguous ones like `Unit`).
-///
-/// `v` is `level` levels inside the value `caller` writes. The fields of
-/// a record are in the order its type declares them, the keys of a map
-/// sorted; the writer puts the plain keys of a table before its
-/// sub-tables, as TOML has them.
-fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<Written<::toml::Value>, VmError> {
-    use ::toml::Value as T;
-    ensure_encodable_depth(caller, level)?;
-    let inner = |v: &Value| value_to_toml(caller, v, level + 1);
-    // `Some(x)` is written as `x` is, and is no level of its own.
-    let mut v = v;
-    while let Value::Variant(variant) = v
-        && variant.is(bv::SOME)
-        && let [content] = variant.fields()
-    {
-        v = content;
-    }
-    Ok(match v {
-        Value::Int(n) => Written::Scalar(T::Integer(*n)),
-        Value::Float(f) => Written::Scalar(T::Float(f.get())),
-        Value::Bool(b) => Written::Scalar(T::Boolean(*b)),
-        Value::String(s) => Written::Scalar(T::String(s.to_string())),
-        Value::List(xs) => {
-            xs.writable()?;
-            let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
-            Written::Array(items?)
-        }
-        Value::Map(m) => {
-            let entries: Result<Vec<_>, VmError> = m
-                .iter()
-                .map(|(k, v)| {
-                    let key = match k {
-                        Value::String(s) => s.to_string(),
-                        other => other.to_string(),
-                    };
-                    Ok((key, inner(v)?))
-                })
-                .collect();
-            Written::sorted(entries?)
-        }
-        Value::Tuple(vs) => {
-            let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
-            Written::Array(items?)
-        }
-        Value::Record(record)
-            if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
-        {
-            Written::Scalar(time_literal(v))
-        }
-        Value::Record(fields) => {
-            let mut table = Vec::new();
-            for (k, v) in fields.named() {
-                // TOML has no null. An `Option::None` field is omitted from the
-                // table entirely; on parse-back, a missing Option field decodes
-                // back to None (see `toml_to_record`). Emitting a placeholder
-                // (e.g. an empty string) would corrupt the round-trip:
-                // `Option(String)` None would parse back as `Some("")`, and
-                // `Option(Int)` None would fail with a type mismatch.
-                if matches!(v, Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty())
-                {
-                    continue;
+/// `data` as TOML: a member of a table that is null (a `None`, a
+/// `json.Null`) is left out, as TOML has no null, and reads back as
+/// `None`; a date and a time are TOML's own literals ([`literal`]).
+/// (Data written as TOML holds no other null, no `()` and no `Bytes`:
+/// [`data::data`] refuses them.) The writer puts the plain keys of a
+/// table before its sub-tables, as TOML has them.
+struct Toml<'d>(&'d Data);
+
+impl serde::Serialize for Toml<'_> {
+    fn serialize<S: serde::Serializer>(&self, to: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeMap, SerializeSeq};
+        match self.0 {
+            Data::Int(n) => to.serialize_i64(*n),
+            Data::Float(f) => to.serialize_f64(*f),
+            Data::Bool(b) => to.serialize_bool(*b),
+            Data::String(s) => to.serialize_str(s),
+            Data::Date(_) | Data::Time(_) | Data::DateTime(..) => match literal(self.0) {
+                Ok(literal) => literal.serialize(to),
+                Err(text) => to.serialize_str(&text),
+            },
+            Data::Array(items) | Data::Tuple(items) => {
+                let mut seq = to.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    seq.serialize_element(&Toml(item))?;
                 }
-                table.push((k.to_string(), inner(v)?));
+                seq.end()
             }
-            Written::Object(table)
-        }
-        Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => {
-            // TOML has no null and no representation for a freestanding None.
-            // Record fields holding None are omitted in the Record arm above;
-            // a None reaching here is a bare top-level None, which has no valid
-            // TOML rendering. Emit an empty string as a deterministic
-            // placeholder so serialization does not fail outright.
-            Written::Scalar(T::String(String::new()))
-        }
-        // (`fields` before `variant`, as the keys of a table sort.)
-        Value::Variant(variant) => {
-            let mut table = Vec::with_capacity(2);
-            if !variant.fields().is_empty() {
-                let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
-                table.push(("fields".into(), Written::Array(items?)));
+            Data::Table(members) => {
+                let mut map = to.serialize_map(None)?;
+                for (key, value) in members {
+                    if !matches!(value, Data::Null) {
+                        map.serialize_entry(key, &Toml(value))?;
+                    }
+                }
+                map.end()
             }
-            let name = Written::Scalar(T::String(variant.name().into()));
-            table.push(("variant".into(), name));
-            Written::Object(table)
+            Data::Json(content) => Toml(content).serialize(to),
+            Data::Null | Data::Unit | Data::Bytes(_) => {
+                Err(S::Error::custom("TOML has no form for the value"))
+            }
         }
-        Value::Unit => {
-            return Err(VmError::new(format!(
-                "{caller}: TOML cannot represent Unit"
-            )));
-        }
-        _ => return Err(unsupported_kind(caller, v)),
-    })
+    }
 }
 
-/// `v`, a date, a time of day or a datetime, as TOML writes it: a
-/// native literal (`2026-10-19`, `12:30:00.25`, `2026-10-19T12:30:00`),
-/// or, for one that no literal holds (a year outside 0000-9999, fields
-/// that are no day or time of the calendar), a string of the text silt
-/// shows of it. `toml.parse` reads a literal and the text alike.
-fn time_literal(v: &Value) -> ::toml::Value {
-    use ::toml::value::{Date, Datetime, Time};
-    let int = |v: &Value, name: &str| match v {
-        Value::Record(record) => match record.get(name) {
-            Some(Value::Int(n)) => Some(*n),
-            _ => None,
-        },
-        _ => None,
-    };
-    let date = |v: &Value| {
-        let (year, month, day) = (int(v, "year")?, int(v, "month")?, int(v, "day")?);
-        let year = u16::try_from(year).ok().filter(|year| *year <= 9999)?;
-        let (month, day) = (u8::try_from(month).ok()?, u8::try_from(day).ok()?);
+/// `data`, a date, a time of day or a datetime, as a TOML literal
+/// (`2026-10-19`, `12:30:00.25`, `2026-10-19T12:30:00`), or, for one
+/// that no literal holds (a year outside 0000-9999, fields that are no
+/// day or time of the calendar), `Err` of the text silt shows of it,
+/// which toml writes as a string. `toml.parse` reads a literal and the
+/// text alike.
+fn literal(data: &Data) -> Result<::toml::value::Datetime, std::string::String> {
+    use ::toml::value::Datetime;
+    let date = |date: &data::Date| {
+        let year = u16::try_from(date.year).ok().filter(|year| *year <= 9999)?;
+        let (month, day) = (u8::try_from(date.month).ok()?, u8::try_from(date.day).ok()?);
         NaiveDate::from_ymd_opt(year.into(), month.into(), day.into())?;
-        Some(Date { year, month, day })
+        Some(::toml::value::Date { year, month, day })
     };
-    let time = |v: &Value| {
-        let hour = u8::try_from(int(v, "hour")?).ok()?;
-        let minute = u8::try_from(int(v, "minute")?).ok()?;
-        let second = u8::try_from(int(v, "second")?).ok()?;
+    let time = |time: &data::Time| {
+        let hour = u8::try_from(time.hour).ok()?;
+        let minute = u8::try_from(time.minute).ok()?;
+        let second = u8::try_from(time.second).ok()?;
         // (Below a second: chrono takes one more for a leap second.)
-        let nanosecond = u32::try_from(int(v, "ns")?)
+        let nanosecond = u32::try_from(time.ns)
             .ok()
             .filter(|ns| *ns < 1_000_000_000)?;
         NaiveTime::from_hms_nano_opt(hour.into(), minute.into(), second.into(), nanosecond)?;
-        Some(Time {
+        Some(::toml::value::Time {
             hour,
             minute,
             second,
             nanosecond,
         })
     };
-    let field = |name: &str| match v {
-        Value::Record(record) => record.get(name),
-        _ => None,
+    let (literal, text) = match data {
+        Data::Date(d) => (date(d).map(|d| (Some(d), None)), d.to_string()),
+        Data::Time(t) => (time(t).map(|t| (None, Some(t))), t.to_string()),
+        Data::DateTime(at) => {
+            let (d, t) = &**at;
+            (
+                date(d).zip(time(t)).map(|(d, t)| (Some(d), Some(t))),
+                format!("{d}T{t}"),
+            )
+        }
+        _ => (None, std::string::String::new()),
     };
-    let literal = match v {
-        Value::Record(record) if record.type_id() == ty::DATE => date(v).map(|date| Datetime {
-            date: Some(date),
-            time: None,
+    literal
+        .map(|(date, time)| Datetime {
+            date,
+            time,
             offset: None,
-        }),
-        Value::Record(record) if record.type_id() == ty::TIME => time(v).map(|time| Datetime {
-            date: None,
-            time: Some(time),
-            offset: None,
-        }),
-        _ => (|| {
-            Some(Datetime {
-                date: Some(date(field("date")?)?),
-                time: Some(time(field("time")?)?),
-                offset: None,
-            })
-        })(),
-    };
-    literal.map_or_else(
-        || ::toml::Value::String(v.to_string()),
-        ::toml::Value::Datetime,
-    )
+        })
+        .ok_or(text)
 }
 
-/// Render a value at top level. TOML's top-level must be a table — a bare
-/// scalar or array at top level is not a valid document. We therefore only
-/// accept `Record`, `Map`, or `Table`-shaped values here; everything else
-/// returns a descriptive `Err`.
-fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<Written<::toml::Value>, VmError> {
-    let kind = match value_to_toml(caller, v, 0)? {
-        table @ Written::Object(_) => return Ok(table),
-        Written::Array(_) => "array",
-        Written::Scalar(other) => toml_type_name(&other),
+/// `data` as the document `caller` writes. TOML's top level must be a
+/// table: a value that is no record, no map (a scalar, an array, a
+/// `None`) is an error naming what it is.
+fn top_level(caller: &str, data: Data) -> Result<Data, VmError> {
+    let kind = match &data {
+        Data::Table(_) => return Ok(data),
+        Data::Array(_) | Data::Tuple(_) => "array",
+        Data::Int(_) => "integer",
+        Data::Float(_) => "float",
+        Data::Bool(_) => "boolean",
+        Data::String(_) => "string",
+        Data::Date(_) | Data::Time(_) | Data::DateTime(..) => match literal(&data) {
+            Ok(_) => "datetime",
+            Err(_) => "string",
+        },
+        Data::Null | Data::Unit | Data::Bytes(_) | Data::Json(_) => "null",
     };
     Err(VmError::new(format!(
         "{caller}: top-level value must be a table/record, got {kind}"
@@ -610,19 +548,19 @@ fn record_type<'a>(name: &str, ty: Type<'a>) -> Result<&'a Arc<TypeInfo>, VmErro
     }
 }
 
-/// `value` as TOML text, for `toml.<name>`: `Ok(text)`, or the
-/// `TomlError` of a value that TOML has no form for.
-fn written(
-    name: &str,
-    value: &Value,
-    write: fn(&Written<::toml::Value>) -> Result<String, ::toml::ser::Error>,
-) -> Value {
+/// `value` as TOML text, for `toml.<name>`, `pretty` or not:
+/// `Ok(text)`, or the `TomlError` of a value that TOML has no form for.
+fn written(name: &str, value: &Value, pretty: bool) -> Value {
     let caller = format!("toml.{name}");
-    let tv = match value_to_top_level_toml(&caller, value) {
-        Ok(tv) => tv,
+    let data = match data::data(&caller, Format::Toml, value).and_then(|d| top_level(&caller, d)) {
+        Ok(data) => data,
         Err(e) => return toml_unknown_err(e.message),
     };
-    match write(&tv) {
+    let text = match pretty {
+        true => ::toml::to_string_pretty(&Toml(&data)),
+        false => ::toml::to_string(&Toml(&data)),
+    };
+    match text {
         Ok(s) => Value::variant(bv::OK, vec![Value::String(s.into())]),
         Err(e) => toml_unknown_err(format!("{caller}: {e}")),
     }
@@ -669,11 +607,11 @@ builtins! {
     }
 
     fn stringify(value: &Value) -> Value {
-        written("stringify", value, ::toml::to_string)
+        written("stringify", value, false)
     }
 
     fn pretty(value: &Value) -> Value {
-        written("pretty", value, ::toml::to_string_pretty)
+        written("pretty", value, true)
     }
 }
 
@@ -700,7 +638,7 @@ mod tests {
             );
         }
     }
-    use crate::builtins::json::MAX_ENCODE_DEPTH;
+    use crate::builtins::data::MAX_ENCODE_DEPTH;
 
     /// The deepest value the encoder writes (a map in a list in a map,
     /// and so on) is written on a stack of 16 MiB, the least a thread
@@ -722,17 +660,9 @@ mod tests {
                             _ => Value::list(vec![inner]),
                         })
                 };
-                let text = written("stringify", &nested(MAX_ENCODE_DEPTH), ::toml::to_string);
-                let pretty = written(
-                    "pretty",
-                    &nested(MAX_ENCODE_DEPTH),
-                    ::toml::to_string_pretty,
-                );
-                let refused = written(
-                    "pretty",
-                    &nested(MAX_ENCODE_DEPTH + 1),
-                    ::toml::to_string_pretty,
-                );
+                let text = written("stringify", &nested(MAX_ENCODE_DEPTH), false);
+                let pretty = written("pretty", &nested(MAX_ENCODE_DEPTH), true);
+                let refused = written("pretty", &nested(MAX_ENCODE_DEPTH + 1), true);
                 (
                     [text, pretty].map(|v| v.to_string().len()),
                     format!("{refused:?}"),

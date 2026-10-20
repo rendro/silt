@@ -1,0 +1,8 @@
+written: b = 1
+
+written: b = 2
+
+toml.stringify: TOML has no null: a None in an array
+toml.stringify: TOML has no null: a None in an array
+toml.pretty: TOML has no null: a None in an array
+toml.stringify: top-level value must be a table/record, got null

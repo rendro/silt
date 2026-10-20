@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
+use super::data::{self, Data, Format};
 use super::time::{
     LEAP_SECOND, is_leap_second, leap_datetime_message, make_date, make_datetime, make_time,
 };
@@ -229,187 +230,56 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
     }
 }
 
-/// The most levels a value may be nested to be written as JSON or as
-/// TOML (`json.stringify`, `json.pretty`, `toml.stringify`,
-/// `toml.pretty`): the element of a list or of a tuple, the field of a
-/// record or of a variant and the value of a map are each one level
-/// further in than what holds them (the content of a `Some` is not: it
-/// is written in the `Some`'s place). The encoders go down a value on
-/// the native stack, and one nested without bound would overflow it:
-/// a value at the bound takes some 5 MiB of it in a debug build, a
-/// third of the least a thread that runs silt code has
-/// (`scheduler::WORKER_STACK_BYTES`). (A parser stops far sooner:
-/// `json.parse` at 127 levels of a document, `toml.parse` at 79.)
-pub(crate) const MAX_ENCODE_DEPTH: usize = 1000;
+/// `data` as JSON: a date and a time as the text silt shows of them
+/// (`2026-10-19`, `12:30:00.250000000`, `2026-10-19T12:30:00`), which
+/// their decoders read back; `None` and `()` as `null`.
+struct Json<'d>(&'d Data);
 
-/// The error of `caller` for a value nested deeper than
-/// [`MAX_ENCODE_DEPTH`]: `level` is how far in the encoder is.
-pub(crate) fn ensure_encodable_depth(caller: &str, level: usize) -> Result<(), VmError> {
-    match level > MAX_ENCODE_DEPTH {
-        true => Err(VmError::new(format!(
-            "{caller}: the value is nested more than {MAX_ENCODE_DEPTH} levels deep"
-        ))),
-        false => Ok(()),
-    }
-}
-
-/// The error of `caller` for `v`, a value the format it writes has no
-/// form for: it names the kind of the value. (To a program every
-/// function is an `Fn`.)
-pub(crate) fn unsupported_kind(caller: &str, v: &Value) -> VmError {
-    let kind = match v.is_fn() {
-        true => "Fn",
-        false => v.kind(),
-    };
-    VmError::new(format!("{caller}: unsupported value kind {kind}"))
-}
-
-/// A document as the writers write it (`json.stringify`, `toml.stringify`
-/// and their `pretty` forms): an object, or a table, keeps its members
-/// in the order they are put in, where `serde_json::Map` and
-/// `toml::map::Map` would sort them. `S` is a value of the format that
-/// has no members.
-#[derive(Debug)]
-pub(crate) enum Written<S> {
-    Scalar(S),
-    Array(Vec<Written<S>>),
-    Object(Vec<(std::string::String, Written<S>)>),
-}
-
-impl<S> Written<S> {
-    /// The object of the members of a map, `entries`: sorted by key,
-    /// and of a key written twice the last value counts.
-    pub(crate) fn sorted(entries: Vec<(std::string::String, Written<S>)>) -> Written<S> {
-        let members: std::collections::BTreeMap<_, _> = entries.into_iter().collect();
-        Written::Object(members.into_iter().collect())
-    }
-}
-
-impl<S: serde::Serialize> serde::Serialize for Written<S> {
-    fn serialize<Z: serde::Serializer>(&self, to: Z) -> Result<Z::Ok, Z::Error> {
-        use serde::ser::{SerializeMap, SerializeSeq};
-        match self {
-            Written::Scalar(v) => v.serialize(to),
-            Written::Array(items) => {
+impl serde::Serialize for Json<'_> {
+    fn serialize<S: serde::Serializer>(&self, to: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeMap, SerializeSeq};
+        match self.0 {
+            Data::Null | Data::Unit => to.serialize_unit(),
+            Data::Int(n) => to.serialize_i64(*n),
+            Data::Float(f) => to.serialize_f64(*f),
+            Data::Bool(b) => to.serialize_bool(*b),
+            Data::String(s) => to.serialize_str(s),
+            Data::Bytes(_) => Err(S::Error::custom(data::unsupported("Bytes"))),
+            Data::Date(date) => to.collect_str(date),
+            Data::Time(time) => to.collect_str(time),
+            Data::DateTime(at) => {
+                let (date, time) = &**at;
+                to.collect_str(&format_args!("{date}T{time}"))
+            }
+            Data::Array(items) | Data::Tuple(items) => {
                 let mut seq = to.serialize_seq(Some(items.len()))?;
                 for item in items {
-                    seq.serialize_element(item)?;
+                    seq.serialize_element(&Json(item))?;
                 }
                 seq.end()
             }
-            Written::Object(members) => {
+            Data::Table(members) => {
                 let mut map = to.serialize_map(Some(members.len()))?;
                 for (key, value) in members {
-                    map.serialize_entry(key, value)?;
+                    map.serialize_entry(key, &Json(value))?;
                 }
                 map.end()
             }
+            Data::Json(content) => Json(content).serialize(to),
         }
     }
 }
 
-impl Written<serde_json::Value> {
-    /// The document as serde_json holds it, for a decoder to read.
-    fn into_value(self) -> serde_json::Value {
-        match self {
-            Written::Scalar(v) => v,
-            Written::Array(items) => {
-                serde_json::Value::Array(items.into_iter().map(Written::into_value).collect())
-            }
-            Written::Object(members) => serde_json::Value::Object(
-                members
-                    .into_iter()
-                    .map(|(key, value)| (key, value.into_value()))
-                    .collect(),
-            ),
-        }
-    }
-}
-
-/// The compact JSON text.
-impl std::fmt::Display for Written<serde_json::Value> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&serde_json::to_string(self).map_err(|_| std::fmt::Error)?)
-    }
-}
-
-/// `v`, which is `level` levels inside the value `caller` writes, as
-/// JSON: the fields of a record in the order its type declares them,
-/// the keys of a map sorted. A value JSON has no form for (a set, bytes,
-/// a function, the constructor of a variant among them, a channel, a
-/// handle) is an error, wherever in the value it is.
-pub(crate) fn value_to_json(
-    caller: &str,
-    v: &Value,
-    level: usize,
-) -> Result<Written<serde_json::Value>, VmError> {
-    use serde_json::Value as J;
-    ensure_encodable_depth(caller, level)?;
-    let inner = |v: &Value| value_to_json(caller, v, level + 1);
-    // `Some(x)` is written as `x` is, and so is a `json.Value` as the
-    // JSON it holds (`json.Int(1)` as `1`); neither is a level of its own.
-    let mut v = v;
-    while let Value::Variant(variant) = v
-        && (variant.is(bv::SOME) || variant.of(ty::JSON_VALUE))
-        && let [content] = variant.fields()
-    {
-        v = content;
-    }
-    Ok(match v {
-        Value::Int(n) => Written::Scalar(J::Number((*n).into())),
-        Value::Float(f) => {
-            Written::Scalar(serde_json::Number::from_f64(f.get()).map_or(J::Null, J::Number))
-        }
-        Value::Bool(b) => Written::Scalar(J::Bool(*b)),
-        Value::String(s) => Written::Scalar(J::String(s.to_string())),
-        Value::List(xs) => {
-            xs.writable()?;
-            let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
-            Written::Array(items?)
-        }
-        Value::Map(m) => {
-            let entries: Result<Vec<_>, VmError> = m
-                .iter()
-                .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
-                .collect();
-            Written::sorted(entries?)
-        }
-        Value::Tuple(vs) => {
-            let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
-            Written::Array(items?)
-        }
-        // A date, a time of day and a datetime are written as the text
-        // silt shows of them (`2026-10-19`, `12:30:00.250000000`,
-        // `2026-10-19T12:30:00`), which their decoders read back.
-        Value::Record(record)
-            if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
-        {
-            Written::Scalar(J::String(v.to_string()))
-        }
-        Value::Record(record) => {
-            let members: Result<Vec<_>, VmError> = record
-                .named()
-                .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
-                .collect();
-            Written::Object(members?)
-        }
-        Value::Variant(variant) if variant.is(bv::NONE) || variant.is(bv::JSON_NULL) => {
-            Written::Scalar(J::Null)
-        }
-        // (`fields` before `variant`, as the keys of an object sort.)
-        Value::Variant(variant) => {
-            let mut members = Vec::with_capacity(2);
-            if !variant.fields().is_empty() {
-                let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
-                members.push(("fields".into(), Written::Array(items?)));
-            }
-            let name = Written::Scalar(J::String(variant.name().into()));
-            members.push(("variant".into(), name));
-            Written::Object(members)
-        }
-        Value::Unit => Written::Scalar(J::Null),
-        _ => return Err(unsupported_kind(caller, v)),
-    })
+/// `data` as the JSON text of `caller`, compact or `pretty`: an object
+/// keeps its members in the order of the data (a record's fields as
+/// its type declares them). `Bytes` in it, which only a postgres
+/// parameter holds, has no form.
+pub(crate) fn text(caller: &str, data: &Data, pretty: bool) -> Result<String, VmError> {
+    let text = match pretty {
+        true => serde_json::to_string_pretty(&Json(data)),
+        false => serde_json::to_string(&Json(data)),
+    };
+    text.map_err(|e| VmError::new(format!("{caller}: {e}")))
 }
 
 // ── Reading a document ──────────────────────────────────────────────
@@ -1059,8 +929,9 @@ builtins! {
         // A `json.Value` holds only what JSON has a form for, so the one
         // way to fail here is a value nested past the limit: an `Err`,
         // as `json.parse` gives one for a document nested too deep.
-        let mut json = match value_to_json("json.decode", value, 0) {
-            Ok(json) => json.into_value(),
+        let mut json = match data::data("json.decode", Format::Json, value) {
+            Ok(data) => serde_json::to_value(Json(&data))
+                .map_err(|e| VmError::new(format!("json.decode: {e}")))?,
             Err(e) => return Ok(json_unknown_err(e.message)),
         };
         whole_numbers(&mut json);
@@ -1088,18 +959,18 @@ builtins! {
     }
 
     fn stringify(value: &Value) -> Result<String, VmError> {
-        Ok(value_to_json("json.stringify", value, 0)?.to_string())
+        text("json.stringify", &data::data("json.stringify", Format::Json, value)?, false)
     }
 
     fn pretty(value: &Value) -> Result<String, VmError> {
-        let json = value_to_json("json.pretty", value, 0)?;
-        Ok(serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string()))
+        text("json.pretty", &data::data("json.pretty", Format::Json, value)?, true)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::data::MAX_ENCODE_DEPTH;
 
     /// A field whose type holds `Bytes` has no decoder, whatever the
     /// document holds there: an empty list, a `null` for an `Option`,
@@ -1213,13 +1084,13 @@ mod tests {
                     })
                 };
                 let deepest = nested(MAX_ENCODE_DEPTH);
-                let json = value_to_json("json.stringify", &deepest, 0).expect("written");
-                let text = json.to_string();
-                let pretty = serde_json::to_string_pretty(&json).expect("written");
+                let json = data::data("json.stringify", Format::Json, &deepest).expect("data");
+                let compact = text("json.stringify", &json, false).expect("written");
+                let pretty = text("json.pretty", &json, true).expect("written");
                 drop(json);
                 let too_deep = nested(MAX_ENCODE_DEPTH + 2);
-                let refused = value_to_json("json.pretty", &too_deep, 0).unwrap_err();
-                (text, pretty, refused.message)
+                let refused = data::data("json.pretty", Format::Json, &too_deep).unwrap_err();
+                (compact, pretty, refused.message)
             })
             .expect("a thread")
             .join()

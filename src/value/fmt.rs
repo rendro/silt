@@ -16,6 +16,7 @@ use std::fmt;
 
 use super::list::Runs;
 use super::{List, MapIter, Record, SetIter, TooLong, Value};
+use crate::builtins::data::{Date, Time};
 use crate::typeinfo::{FieldType, ty};
 
 impl Value {
@@ -369,23 +370,8 @@ fn write_ints(f: &mut fmt::Formatter<'_>, xs: &List, lo: i64, hi: i64) -> fmt::R
 /// its text (`2024-03-09`, `07:30:05`, `1.500s`), and say so.
 fn write_time(record: &Record, f: &mut fmt::Formatter<'_>) -> Result<bool, fmt::Error> {
     match record.type_id() {
-        ty::DATE => {
-            let y = val_i64(record.get("year"));
-            let m = val_i64(record.get("month"));
-            let d = val_i64(record.get("day"));
-            write!(f, "{y:04}-{m:02}-{d:02}")?;
-        }
-        ty::TIME => {
-            let h = val_i64(record.get("hour"));
-            let m = val_i64(record.get("minute"));
-            let s = val_i64(record.get("second"));
-            let ns = val_i64(record.get("ns"));
-            if ns > 0 {
-                write!(f, "{h:02}:{m:02}:{s:02}.{ns:09}")?;
-            } else {
-                write!(f, "{h:02}:{m:02}:{s:02}")?;
-            }
-        }
+        ty::DATE => write!(f, "{}", Date::of(record))?,
+        ty::TIME => write!(f, "{}", Time::of(record))?,
         ty::DATE_TIME => match (record.get("date"), record.get("time")) {
             (Some(date), Some(time)) => write!(f, "{date}T{time}")?,
             _ => f.write_str("DateTime {}")?,

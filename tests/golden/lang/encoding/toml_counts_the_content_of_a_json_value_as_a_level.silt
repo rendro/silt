@@ -1,0 +1,22 @@
+-- toml counts the content of a `json.Value` as a level further in, as it
+-- counts the content of a variant, though it writes the value it holds;
+-- json writes it in its place. So a `json.Array` nested 600 deep is
+-- written by json (some 600 levels) and refused by toml (some 1,200).
+import json
+import list
+import string
+import toml
+
+fn main() {
+  let deep = list.fold(1..600, json.Int(1), { acc, _ -> json.Array([acc]) })
+  println(string.length(json.stringify(#{"v": deep})))
+  match toml.stringify(#{"v": deep}) {
+    Ok(text) -> println("written: {string.length(text)}")
+    Err(e) -> println(e.message())
+  }
+  let shallow = list.fold(1..400, json.Int(1), { acc, _ -> json.Array([acc]) })
+  match toml.stringify(#{"v": shallow}) {
+    Ok(text) -> println("written: {string.length(text)}")
+    Err(e) -> println(e.message())
+  }
+}

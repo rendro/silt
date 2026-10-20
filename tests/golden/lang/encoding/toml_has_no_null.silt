@@ -1,0 +1,27 @@
+-- TOML has no null: a `None` member of a table is left out, of a map as
+-- of a record (`Some(None)` too), and reads back as `None`; a `None` in
+-- an array (a list, a tuple, the fields of a variant) has no form, and
+-- neither has a `None` at the top. (A `None` that was no record field
+-- was written as `""`, which reads back as no `None`.)
+import toml
+
+type Shade { Grey(Option(Int)) }
+
+type Box { a: Option(Option(Int)), b: Int }
+
+fn said(result: Result(String, toml.TomlError)) -> String {
+  match result {
+    Ok(text) -> "written: {text}"
+    Err(toml.Other(message)) -> message
+    Err(other) -> "another error: {other}"
+  }
+}
+
+fn main() {
+  println(said(toml.stringify(#{"a": None, "b": Some(1)})))
+  println(said(toml.stringify(Box { a: Some(None), b: 2 })))
+  println(said(toml.stringify(#{"v": [Some(1), None]})))
+  println(said(toml.stringify(#{"v": (1, None)})))
+  println(said(toml.pretty(#{"v": Grey(None)})))
+  println(said(toml.stringify(None)))
+}
