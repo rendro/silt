@@ -1128,4 +1128,185 @@ mod tests {
         let time = make_time(NaiveTime::from_hms_opt(1, 2, 3).expect("a time"));
         assert_eq!(text(time), "01:02:03");
     }
+
+    /// What `f`, the builtin `json.stringify` or `toml.stringify`,
+    /// writes of `#{"v": value}`: the text, or the message of its
+    /// refusal (json raises, toml returns `Err(Other(message))`).
+    fn written_by(
+        f: fn(&mut crate::vm::Vm, &[Value]) -> crate::builtins::typed::Called,
+        value: &Value,
+    ) -> Result<String, String> {
+        let mut vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        let doc = Value::map([(Value::String("v".into()), value.clone())]);
+        let written = match f(&mut vm, &[doc]) {
+            Some(Ok(crate::vm::Step::Done(written))) => written,
+            Some(Err(e)) => return Err(e.message),
+            _ => panic!("no result"),
+        };
+        match written {
+            Value::String(text) => Ok(text.to_string()),
+            Value::Variant(result) if result.is(bv::OK) => match result.fields() {
+                [Value::String(text)] => Ok(text.to_string()),
+                other => panic!("{other:?}"),
+            },
+            Value::Variant(result) => match result.fields() {
+                [Value::Variant(other)] => match other.fields() {
+                    [Value::String(message)] => Err(message.to_string()),
+                    fields => panic!("{fields:?}"),
+                },
+                fields => panic!("{fields:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The text of the parameter `value`, or the message of its refusal.
+    fn sent(value: &Value) -> Result<String, String> {
+        match param("postgres.query", value, &Unsendable::default()) {
+            Ok(TextParam::Text(text)) => Ok(text),
+            Ok(other) => panic!("{other:?}"),
+            Err(e) => Err(e.message),
+        }
+    }
+
+    /// What a refusal says, without the function it names.
+    fn said(message: &str) -> &str {
+        message.split_once(": ").expect("a caller").1
+    }
+
+    /// One value of every kind written by `json.stringify`,
+    /// `toml.stringify` and as a parameter: the three agree on what they
+    /// share, the scalars, the dates and times (each format in its own
+    /// form: toml's literal, postgres's `+00`), and the refusals.
+    #[test]
+    fn json_toml_and_a_parameter_agree_on_a_value() {
+        use crate::builtins::{json as j, toml as t};
+        use chrono::NaiveDateTime;
+        // How a date or time is compared: as what it reads back as.
+        #[derive(Clone, Copy)]
+        enum Read {
+            Text,
+            Time,
+            DateTime,
+        }
+        let date = |y, m, d| make_date(NaiveDate::from_ymd_opt(y, m, d).expect("a date"));
+        let time = NaiveTime::from_hms_milli_opt(12, 30, 0, 250).expect("a time");
+        let at = NaiveDate::from_ymd_opt(2026, 10, 19)
+            .expect("a date")
+            .and_hms_milli_opt(12, 30, 5, 500)
+            .expect("a time");
+        let float = |f| Value::Float(Float::new(f).expect("finite"));
+        let shared = [
+            (Value::Int(42), Read::Text, "42"),
+            (Value::Int(-7), Read::Text, "-7"),
+            (float(2.5), Read::Text, "2.5"),
+            (float(2.0), Read::Text, "2.0"),
+            (Value::Bool(true), Read::Text, "true"),
+            (Value::String("a \"b\" ü".into()), Read::Text, "a \"b\" ü"),
+            (
+                Value::variant(bv::SOME, vec![Value::Int(3)]),
+                Read::Text,
+                "3",
+            ),
+            (
+                Value::variant(bv::JSON_INT, vec![Value::Int(5)]),
+                Read::Text,
+                "5",
+            ),
+            (date(2026, 10, 19), Read::Text, "2026-10-19"),
+            // (No TOML literal holds the year: a string of the text.)
+            (date(12345, 3, 15), Read::Text, "12345-03-15"),
+            (make_time(time), Read::Time, "12:30:00.250"),
+            (make_datetime(at), Read::DateTime, "2026-10-19 12:30:05.500"),
+        ];
+        for (value, read, expected) in shared {
+            let json = written_by(j::stringify, &value).expect("json");
+            let toml = written_by(t::stringify, &value).expect("toml");
+            let json = match &serde_json::from_str::<serde_json::Value>(&json).expect("JSON")["v"] {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let toml = match ::toml::from_str::<::toml::Value>(&toml)
+                .expect("TOML")
+                .get("v")
+            {
+                Some(::toml::Value::String(s)) => s.clone(),
+                Some(::toml::Value::Float(f)) => format!("{f:?}"),
+                Some(::toml::Value::Datetime(at)) => at.to_string(),
+                Some(other) => other.to_string(),
+                None => panic!("no v in {toml}"),
+            };
+            let pg = sent(&value).expect("a parameter");
+            let texts = match read {
+                Read::Text => [json, toml, pg],
+                Read::Time => [json, toml, pg].map(|text| {
+                    json::parse_time(&text)
+                        .expect("a time")
+                        .format("%H:%M:%S%.3f")
+                        .to_string()
+                }),
+                // (Postgres's own: the offset of UTC.)
+                Read::DateTime => {
+                    [json, toml, pg.strip_suffix("+00").expect("+00").into()].map(|text| {
+                        let at: NaiveDateTime = json::parse_datetime(&text).expect("a datetime");
+                        at.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+                    })
+                }
+            };
+            assert_eq!(texts, [expected; 3].map(String::from), "{value:?}");
+        }
+
+        // The value each refuses: as `#{"v": doc}` for json and toml, as
+        // `param` for postgres (`Bytes` is a parameter, not inside one;
+        // the nested list is as deep as the others'). On the smallest
+        // stack a thread that runs silt code has, as the deepest value
+        // takes megabytes of it in a debug build.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let bytes = Value::Bytes(Arc::new(vec![1, 2]));
+                let v = |x: Value| Value::map([(Value::String("v".into()), x)]);
+                let nested = (0..crate::builtins::data::MAX_ENCODE_DEPTH)
+                    .fold(Value::Int(1), |inner, _| Value::list(vec![inner]));
+                let refused = [
+                    (
+                        Value::set([Value::Int(1)]),
+                        None,
+                        "unsupported value kind Set",
+                    ),
+                    (
+                        bytes.clone(),
+                        Some(v(bytes)),
+                        "unsupported value kind Bytes",
+                    ),
+                    (
+                        nested.clone(),
+                        Some(v(nested)),
+                        "the value is nested more than 1000 levels deep",
+                    ),
+                    (
+                        Value::List(crate::value::List::ints(1, 10_000_001).expect("a range")),
+                        None,
+                        "range 1..10000001 has 10000001 elements; \
+                         materializing more than 10000000 is not allowed",
+                    ),
+                ];
+                for (doc, param, expected) in refused {
+                    let json = written_by(j::stringify, &doc).expect_err(expected);
+                    let toml = written_by(t::stringify, &doc).expect_err(expected);
+                    let pg = sent(param.as_ref().unwrap_or(&doc)).expect_err(expected);
+                    let texts = [json, toml, pg];
+                    let texts = texts
+                        .each_ref()
+                        .map(|text| match text.starts_with("range ") {
+                            true => text.as_str(),
+                            false => said(text),
+                        });
+                    assert_eq!(texts, [expected; 3]);
+                }
+            })
+            .expect("a thread")
+            .join()
+            .expect("the refusals agree");
+    }
 }
