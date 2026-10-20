@@ -49,7 +49,12 @@ type Weekday {
 ```
 
 `Date`, `Time`, and `DateTime` display as ISO 8601 in string interpolation.
-`Duration` displays in human-readable form (`2h30m15s`, `500ms`, `42ns`).
+`Duration` displays in human-readable form (`2h30m15s`, `500ms`, `42ns`):
+every unit from the largest it has down to the smallest it has, zeros
+between included (`1h0m5s`, but `1h` and `1h1m`), and what lies below a
+whole unit of the last as a fraction of it, in groups of three digits
+(`1.500s`, `1m1.500s`, `1.999ms`, `1.000000001s`). Two durations that
+differ never display the same.
 Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 
 ## Errors
