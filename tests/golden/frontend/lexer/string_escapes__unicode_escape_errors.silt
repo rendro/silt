@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A wrong `\u` escape: no braces, no digits or more than six, no
+-- closing brace, a surrogate, a code past 10FFFF. Each is an error of
+-- the string, which goes on behind it.
+fn main() {
+  println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+}

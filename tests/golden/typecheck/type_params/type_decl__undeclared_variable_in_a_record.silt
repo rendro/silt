@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A record's field types name variables the record does not declare;
+-- each is underlined where it is first written, and the help lists
+-- every parameter the record needs, in the order of first use.
+type Pair(a) {
+  left: a,
+  right: Map(c, b),
+  both: (b, d),
+}
+
+fn main() {
+  println(1)
+}

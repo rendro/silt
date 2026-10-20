@@ -300,8 +300,8 @@ parameters directly in the impl header. Lowercase names in the target's
 argument list are fresh type variables scoped to every method in the impl:
 
 ```silt
-type Box(T) {
-  Box(T),
+type Box(a) {
+  Box(a),
 }
 
 trait Wrap {
@@ -329,7 +329,7 @@ Rules:
   silt has no specialization.
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
 - **Arity must match the target.** `trait X for Box(a, b)` on the 1-param
-  `Box(T)` is a type error.
+  `Box(a)` is a type error.
 - **The bare form still works.** `trait X for Box { ... }` is an impl for
   every `Box(a)`, like `trait X for Box(a)` without a name for `a` —
   useful when the method bodies never observe the element type.
@@ -350,8 +350,8 @@ site — passing a `Box(v)` where `v`'s type does not implement the
 required trait is a compile-time error:
 
 ```silt
-type Box(T) {
-  Box(T),
+type Box(a) {
+  Box(a),
 }
 
 trait Greet {
@@ -421,8 +421,8 @@ trait Greet for Box(a) {
 Field access on a type-var field in a record works the same way:
 
 ```silt
-type Cell(T) {
-  value: T,
+type Cell(a) {
+  value: a,
 }
 
 trait Peek {

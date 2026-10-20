@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- A type parameter is a lowercase type variable, as a trait's is.
+type Cell(T) { value: T }
+
+fn main() {}

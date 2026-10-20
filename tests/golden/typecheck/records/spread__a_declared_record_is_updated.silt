@@ -1,0 +1,12 @@
+-- A field of a declared record is changed with the update form; a
+-- spread adds the fields the record lacks.
+type Person {
+  name: String,
+  age: Int,
+}
+
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  println(p.{ name: "Al" })
+  println({ ...p, city: "x" })
+}

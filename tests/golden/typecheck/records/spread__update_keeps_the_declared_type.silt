@@ -7,6 +7,6 @@ fn main() {
   let older = p.{ age: 43 }
   println(greet(older))
   println(older)
-  println({...p, age: 43})
+  println({...p, city: "x"})
   println(older == Person { name: "Bob", age: 43 })
 }

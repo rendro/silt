@@ -1,0 +1,5 @@
+error[parse]: type parameter 'T' must be a lowercase type variable
+ --> type_decl__uppercase_parameter.silt:4:11
+   |
+ 4 | type Cell(T) { value: T }
+   |           ^ type parameter 'T' must be a lowercase type variable

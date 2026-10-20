@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: expected type _, got
 -- An enum shadowed by its same-named variant cannot be passed as a type argument.
-type Box(T) { Box(T) }
+type Box(a) { Box(a) }
 
 fn tag(type a) -> String { "ok" }
 

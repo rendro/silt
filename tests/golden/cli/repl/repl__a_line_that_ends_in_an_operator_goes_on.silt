@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: import list\nfn one() ->\n  Int {\n  1\n}\none()\nlet a = 1 +\n2\na\nlet n = [1, 2, 3] |>\nlist.length\nn\nlet t =\n  "x"\nt\nlet ok = a > 2 &&\n  n == 3\nok\nlet r = 1..\n3\nr\n:help\n:quit\n
+-- A line whose last token is a binary operator, `|>`, `=` or `->`
+-- goes on in the next line, as in a file; `:help` says so.

@@ -1,4 +1,4 @@
-type Cell(T) { value: T }
+type Cell(a) { value: a }
 trait Peek { fn peek(self) -> Int }
 trait Peek for Int { fn peek(self) -> Int { self } }
 trait Peek for Cell(a) where a: Peek {

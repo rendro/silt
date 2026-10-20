@@ -1,0 +1,5 @@
+error[parse]: duplicate type variable 'a' in type declaration
+ --> type_decl__duplicate_parameter.silt:4:14
+   |
+ 4 | type Pair(a, a) { left: a }
+   |              ^ duplicate type variable 'a' in type declaration

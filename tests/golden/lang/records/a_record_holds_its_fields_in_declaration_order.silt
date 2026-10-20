@@ -95,7 +95,7 @@ fn main() {
   let wider = { ...a, patch: 4 }
   println(wider)
   println("{wider.major} {wider.patch}")
-  let over = { ...a, build: 30 }
+  let over = { ...a }.{ build: 30 }
   println(over)
   println({ ...a } == { label: "a", major: 1, build: 9 })
 

@@ -167,6 +167,10 @@ pub fn run_repl() {
     }
 
     let mut buffer = String::new();
+    // Whether the entry being read is open because a delimiter, a
+    // string or a block comment of it is (not because a line ended in
+    // an operator).
+    let mut delimiter_open = false;
 
     loop {
         let prompt = if buffer.is_empty() {
@@ -205,7 +209,7 @@ pub fn run_repl() {
                 // quote leaves it open: it is not lexed again for such a
                 // line, so a list of thousands of lines that is pasted
                 // is read once, at its last line.
-                let still_open = !buffer.is_empty() && !line.contains([')', ']', '}', '"']);
+                let still_open = delimiter_open && !line.contains([')', ']', '}', '"']);
                 if buffer.is_empty() {
                     buffer = line.to_string();
                 } else {
@@ -218,10 +222,11 @@ pub fn run_repl() {
 
                 // An input that more lines can finish (an open
                 // delimiter of code, a string or a block comment that
-                // is not closed) goes on in the next line: the lexer
-                // says so.
+                // is not closed, or a last line that ends in an
+                // operator) goes on in the next line: the lexer says so.
                 let lexed = Lexer::new(FileId::default(), &buffer).tokenize();
-                if lexed.ends_open() {
+                delimiter_open = lexed.ends_open();
+                if delimiter_open || lexed.ends_in_operator() {
                     continue;
                 }
 
@@ -230,6 +235,7 @@ pub fn run_repl() {
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
+                delimiter_open = false;
                 println!("^C");
             }
             // The input ends: an entry that was still being read is
@@ -566,7 +572,7 @@ fn print_help() {
     println!();
     println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");
     println!(
-        "Multi-line input: an open brace, paren, bracket, string or block comment continues on the next line."
+        "Multi-line input: an open brace, paren, bracket, string or block comment, or a line that ends in an operator (+, |>, =, -> ...), continues on the next line."
     );
     println!("A brace in a string starts an interpolation: write \\{{ for the character itself.");
 }

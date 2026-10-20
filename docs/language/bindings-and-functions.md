@@ -13,7 +13,7 @@ order: 1
 Silt has a small, fixed keyword set. The full keyword list is:
 
 ```
-as  else  fn  import  let  loop  match  mod
+as  else  fn  import  let  loop  match
 pub  return  trait  type  when  where
 ```
 

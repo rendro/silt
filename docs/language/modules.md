@@ -305,7 +305,7 @@ The **prelude** needs no import: the primitive and container types (`Int`,
 `TypeOf(a)` (the type of a type used as a value, like `Int` or a
 `type a` parameter), `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `print`, `println` and
 `panic`. A module's own declaration or import of one of these names
-shadows the prelude: after `type Maybe { Some(a), None }`, a bare `None`
+shadows the prelude: after `type Maybe(a) { Some(a), None }`, a bare `None`
 is `Maybe.None`, and the prelude's is still `Option.None`.
 
 

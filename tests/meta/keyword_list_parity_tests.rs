@@ -14,7 +14,7 @@
 //!     braces: if someone trims the const we still notice.
 //!
 //!   * `src/repl.rs` still inlines its own keyword list (REPL completion
-//!     surface, not in scope of round-63 L1). It must include the 14
+//!     surface, not in scope of round-63 L1). It must include the 13
 //!     core keywords plus `true`/`false`.
 //!
 //! Authoritative shape:
@@ -23,8 +23,8 @@
 //!     `EXPECTED_CORE_KEYWORDS` here.
 
 const EXPECTED_CORE_KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
-    "when", "where",
+    "as", "else", "fn", "import", "let", "loop", "match", "pub", "return", "trait", "type", "when",
+    "where",
 ];
 
 #[test]

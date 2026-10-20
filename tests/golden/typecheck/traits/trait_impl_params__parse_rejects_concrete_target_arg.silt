@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: must be a lowercase type variable
 -- stderr-contains: Int
-type Box(T) { Box(T) }
+type Box(a) { Box(a) }
 trait X { fn x(self) -> Int }
 trait X for Box(Int) {
   fn x(self) -> Int { 1 }

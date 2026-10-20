@@ -844,7 +844,7 @@ impl ShapeWriter {
             }
             TypeExprKind::AnonRecord { fields, tail } => {
                 self.open("record");
-                self.opt_sym(*tail);
+                self.opt_sym(tail.map(|(name, _)| name));
                 for (name, ty) in fields {
                     self.open("field");
                     self.sym(*name);

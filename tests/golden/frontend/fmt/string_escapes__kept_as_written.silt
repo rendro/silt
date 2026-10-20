@@ -1,0 +1,6 @@
+-- cmd: fmt
+-- The formatter writes every escape as it is written.
+fn main() {
+    let s = "a\r\n\t\0\\\"\{\}{1}\u{1F600}\u{e9}\u{000041}"
+  println(s)
+}

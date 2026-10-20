@@ -1,4 +1,4 @@
-type Box(T) { value: T }
+type Box(a) { value: a }
 trait Tag { fn tag(self) -> String }
 trait Tag for Box { fn tag(self) -> String { "box" } }
 fn main() {

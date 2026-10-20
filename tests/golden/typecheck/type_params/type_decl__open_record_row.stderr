@@ -1,0 +1,27 @@
+error[type]: a type declaration cannot leave a record open: a row cannot be a type parameter
+ --> type_decl__open_record_row.silt:6:28
+   |
+ 6 | type Wrap(r) { v: {x: Int, ...r} }
+   |                            ^^^^ a type declaration cannot leave a record open: a row cannot be a type parameter
+  = help: write the record's fields out
+
+error[type]: a type declaration cannot leave a record open: '...r' would be one row for every use of 'Tagged'
+ --> type_decl__open_record_row.silt:8:31
+   |
+ 8 | type Tagged { Tagged({x: Int, ...r}) }
+   |                               ^^^^ a type declaration cannot leave a record open: '...r' would be one row for every use of 'Tagged'
+  = help: write the record's fields out
+
+error[type]: a type declaration cannot leave a record open: '...r' would be one row for every use of 'Open'
+ --> type_decl__open_record_row.silt:10:22
+    |
+ 10 | type Open = {x: Int, ...r}
+    |                      ^^^^ a type declaration cannot leave a record open: '...r' would be one row for every use of 'Open'
+  = help: write the record's fields out
+
+error[type]: a type declaration cannot leave a record open: a row cannot be a type parameter
+ --> type_decl__open_record_row.silt:12:26
+    |
+ 12 | type Param(r) = {x: Int, ...r}
+    |                          ^^^^ a type declaration cannot leave a record open: a row cannot be a type parameter
+  = help: write the record's fields out

@@ -1,8 +1,8 @@
 -- The formatter keeps `for Pair(a, b)` and is idempotent on this file.
 -- cmd: fmt --check
 
-type Pair(A, B) {
-  Pair(A, B),
+type Pair(a, b) {
+  Pair(a, b),
 }
 
 trait First {
