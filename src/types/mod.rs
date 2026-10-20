@@ -510,6 +510,59 @@ pub enum Pred {
     /// (`{...p, age: 30}`), whether or not what it makes reaches the
     /// definition's type.
     Lacks { row: Type, field: Symbol },
+    /// `subject` is a type the builtin of `check` takes where its
+    /// signature cannot say so: one the decoder decodes, a connection,
+    /// a statement's parameters. `through`: the predicate is a
+    /// definition's, which passes the type on to the builtin (a use of
+    /// the definition reports that).
+    Builtin {
+        check: BuiltinCheck,
+        subject: Type,
+        through: bool,
+    },
+}
+
+/// What a builtin asks of the type of one of its arguments beyond its
+/// signature (`Pred::Builtin`); the builtin is named as the registry
+/// names it (`json.parse`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BuiltinCheck {
+    /// The type argument of a decoder: `decoding` decodes it. `written`
+    /// is the alias the call names it by, if it names it by one.
+    Decodes {
+        builtin: Symbol,
+        decoding: crate::builtins::registry::decoding::Decoding,
+        written: Option<Symbol>,
+    },
+    /// The connection of a postgres function: a `PgPool` or a `PgTx`.
+    Connection { builtin: Symbol },
+    /// The parameters of a postgres statement: a tuple, or `()`.
+    Params { builtin: Symbol },
+}
+
+impl BuiltinCheck {
+    /// The builtin that asks it.
+    pub fn builtin(self) -> Symbol {
+        match self {
+            BuiltinCheck::Decodes { builtin, .. }
+            | BuiltinCheck::Connection { builtin }
+            | BuiltinCheck::Params { builtin } => builtin,
+        }
+    }
+
+    /// The check without the name a call gives the type.
+    pub fn unwritten(self) -> BuiltinCheck {
+        match self {
+            BuiltinCheck::Decodes {
+                builtin, decoding, ..
+            } => BuiltinCheck::Decodes {
+                builtin,
+                decoding,
+                written: None,
+            },
+            other => other,
+        }
+    }
 }
 
 impl Pred {
@@ -538,13 +591,22 @@ impl Pred {
                 row: substitute_vars(row, mapping),
                 field: *field,
             },
+            Pred::Builtin {
+                check,
+                subject,
+                through,
+            } => Pred::Builtin {
+                check: *check,
+                subject: substitute_vars(subject, mapping),
+                through: *through,
+            },
         }
     }
 
     /// The type the predicate is about.
     pub fn subject(&self) -> &Type {
         match self {
-            Pred::Trait { subject, .. } => subject,
+            Pred::Trait { subject, .. } | Pred::Builtin { subject, .. } => subject,
             Pred::Anon { row, .. } | Pred::Lacks { row, .. } => row,
         }
     }
@@ -553,7 +615,7 @@ impl Pred {
     pub fn args(&self) -> &[Type] {
         match self {
             Pred::Trait { args, .. } => args,
-            Pred::Anon { .. } | Pred::Lacks { .. } => &[],
+            Pred::Anon { .. } | Pred::Lacks { .. } | Pred::Builtin { .. } => &[],
         }
     }
 }

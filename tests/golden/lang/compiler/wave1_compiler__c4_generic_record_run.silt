@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: error[compile]
+-- stderr-contains: error[type]
 -- stderr-contains: json.parse
 -- stderr-contains: Wrap
 -- stderr-contains: it is a generic record type

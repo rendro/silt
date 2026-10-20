@@ -139,6 +139,13 @@ impl TypeChecker {
                         row: Type::Var(subject),
                         field: *field,
                     },
+                    // The definition passes the type on to the builtin;
+                    // each use names its own type (`written`).
+                    Pred::Builtin { check, .. } => Pred::Builtin {
+                        check: check.unwritten(),
+                        subject: Type::Var(subject),
+                        through: true,
+                    },
                 };
                 if !preds.contains(&pred) {
                     preds.push(pred);
@@ -209,6 +216,9 @@ impl TypeChecker {
                 Goal::Listed { .. }
                 | Goal::Rebuild { .. }
                 | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
+                // A type nothing decides is no type a builtin is given:
+                // nothing to check.
+                Goal::Pred(Pred::Builtin { .. }) => continue,
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(

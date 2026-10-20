@@ -107,15 +107,21 @@ impl Tables {
     /// Whether the program declares the type `t` (a record or an enum
     /// type) without type parameters.
     fn declares_non_generic(&self, t: TypeRef) -> bool {
-        match (self.records.get(&t), self.enums.get(&t)) {
-            (Some(_), _) => !self.record_param_var_ids.contains_key(&t),
-            (None, Some(info)) => info.params.is_empty(),
-            (None, None) => false,
-        }
+        (self.records.get(&t).is_some() || self.enums.get(&t).is_some()) && !self.is_generic(t)
+    }
+
+    /// Whether the program declares the record or enum type `t` with
+    /// type parameters.
+    pub(super) fn is_generic(&self, t: TypeRef) -> bool {
+        self.record_param_var_ids.contains_key(&t)
+            || self
+                .enums
+                .get(&t)
+                .is_some_and(|info| !info.params.is_empty())
     }
 
     /// Whether `t` is an enum type: one with variants.
-    fn is_enum(&self, t: TypeRef) -> bool {
+    pub(super) fn is_enum(&self, t: TypeRef) -> bool {
         self.enums
             .get(&t)
             .is_some_and(|info| !info.variants.is_empty())

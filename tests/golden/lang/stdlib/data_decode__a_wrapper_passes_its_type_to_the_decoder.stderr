@@ -1,0 +1,15 @@
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> data_decode__a_wrapper_passes_its_type_to_the_decoder.silt:23:23
+    |
+ 23 |   let _ = load("\{}", Blob)
+    |                       ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = note: `load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Mood`: it is an enum type, and enums have no decoder
+ --> data_decode__a_wrapper_passes_its_type_to_the_decoder.silt:25:26
+    |
+ 25 |   let _ = load_twice("", Mood)
+    |                          ^^^^ `toml.parse` cannot decode `Mood`: it is an enum type, and enums have no decoder
+  = note: `load_twice` passes it to `toml.parse`
+  = help: decode into a record type

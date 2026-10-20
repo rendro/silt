@@ -1,5 +1,5 @@
 //! What the decoding builtins decode: the one description that the
-//! compiler's check of a decoder's type argument, its help texts, the
+//! checker's check of a decoder's type argument, its help texts, the
 //! decoders' refusals at run time and the reference pages read.
 //!
 //! A decoding builtin's row (`json.parse`, `toml.parse_list`,

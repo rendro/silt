@@ -201,6 +201,9 @@ codes! {
     /// An impl that gives a record type a method named like one of the
     /// type's fields.
     MethodNamedLikeField = "E0341", Type;
+    /// A type given to a decoder that has no decoder for it (a field of
+    /// a type no decoder exists for, an enum, a generic type, ...).
+    Undecodable = "E0342", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;

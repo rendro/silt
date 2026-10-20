@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A decoder used as a value asks what it asks in a call: of the type
+-- it is given where the type is known, through a local that holds it
+-- (named in a note) or a function that calls it.
+import json
+
+type Blob { data: Set(Int) }
+type Fine { n: Int }
+
+fn apply(f) {
+  f("\{}", Blob)
+}
+
+fn main() {
+  let p = json.parse
+  let _ = p("\{\"n\": 1}", Fine)
+  let _ = p("\{}", Blob)
+  let _ = apply(json.parse)
+}

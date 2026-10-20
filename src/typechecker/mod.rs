@@ -8,6 +8,7 @@
 //! - Exhaustiveness checking for match expressions
 //! - Trait bounds: declared, inferred and owed at each use
 
+mod builtin_checks;
 mod builtin_env;
 mod builtin_traits;
 mod declare_fns;
@@ -1048,6 +1049,15 @@ impl TypeChecker {
                     Pred::Lacks { row, field } => Pred::Lacks {
                         row: rep(row),
                         field,
+                    },
+                    Pred::Builtin {
+                        check,
+                        subject,
+                        through,
+                    } => Pred::Builtin {
+                        check,
+                        subject: rep(subject),
+                        through,
                     },
                 }
             })

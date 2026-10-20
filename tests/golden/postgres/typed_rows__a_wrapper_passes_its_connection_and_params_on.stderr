@@ -1,0 +1,14 @@
+error[type]: the connection of `postgres.query` must be a PgPool or a PgTx
+ --> typed_rows__a_wrapper_passes_its_connection_and_params_on.silt:16:16
+    |
+ 16 |   let _ = find(0, 1)
+    |                ^ the connection of `postgres.query` must be a PgPool or a PgTx
+  = note: `find` passes it to `postgres.query`
+
+error[type]: the parameters of `postgres.query` must be a tuple, got `Int`
+ --> typed_rows__a_wrapper_passes_its_connection_and_params_on.silt:16:19
+    |
+ 16 |   let _ = find(0, 1)
+    |                   ^ the parameters of `postgres.query` must be a tuple, got `Int`
+  = note: `find` passes it to `postgres.query`
+  = help: write (id,)

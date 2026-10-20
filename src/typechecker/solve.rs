@@ -264,6 +264,17 @@ impl TypeChecker {
                             self.try_operand(&operand, &ok, ret, origin.span);
                         }
                     }
+                    Goal::Pred(Pred::Builtin {
+                        check,
+                        subject,
+                        through,
+                    }) => {
+                        let subject = self.apply(&subject);
+                        if !matches!(subject, Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            self.check_builtin_argument(check, &subject, through, origin);
+                        }
+                    }
                     Goal::Pred(Pred::Lacks { row, field }) => {
                         let row = self.apply(&row);
                         if !matches!(row, Type::Var(_)) {

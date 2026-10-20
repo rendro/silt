@@ -1212,6 +1212,19 @@ impl TypeChecker {
         }
     }
 
+    /// The alias `arg` names, if it is a type written as a value by an
+    /// alias's name (`IntBox`, `m.IntBox`).
+    fn alias_named(&self, arg: &Expr) -> Option<Symbol> {
+        if !matches!(arg.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            return None;
+        }
+        let Some(crate::defs::Res::Def(id)) = arg.res else {
+            return None;
+        };
+        let def = self.defs.as_ref()?.get(id);
+        (def.kind == crate::defs::DefKind::TypeAlias).then_some(def.name)
+    }
+
     /// The name a callee is written with, for a message about a call of
     /// it: `f`, or `m.f` for a member of a module.
     fn callee_label(callee: &Expr) -> Option<Symbol> {
@@ -1368,6 +1381,16 @@ impl TypeChecker {
                         .and_then(|i| args.get(i));
                     if let (Some(arg), CallForm::Call) = (at, form) {
                         self.wanted[k].origin.span = arg.span;
+                        // A type argument the call names by an alias:
+                        // what a decoder's refusal calls it.
+                        let alias = self.alias_named(arg);
+                        if let Goal::Pred(Pred::Builtin {
+                            check: BuiltinCheck::Decodes { written, .. },
+                            ..
+                        }) = &mut self.wanted[k].goal
+                        {
+                            *written = alias;
+                        }
                     }
                 }
                 let mut mismatched = false;

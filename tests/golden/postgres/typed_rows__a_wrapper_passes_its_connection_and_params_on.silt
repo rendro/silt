@@ -1,0 +1,17 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A function whose parameters reach a postgres statement as its
+-- connection and its parameters asks of their types what the statement
+-- asks: each call that gives them types is checked.
+import postgres
+
+type User { id: Int }
+
+fn find(db, ps) {
+  postgres.query(db, "SELECT id FROM users WHERE id = $1", ps, User)
+}
+
+fn main() {
+  let _ = find(0, 1)
+}
