@@ -1,0 +1,6 @@
+Err(toml type mismatch: expected String, got datetime)
+Err(toml type mismatch: expected String, got datetime)
+Err(toml type mismatch: expected String, got datetime)
+Ok(Named {name: 1990-01-01})
+Err(toml type mismatch: expected String, got datetime)
+Ok(Dated {day: 1990-01-01, at: 1979-05-27T07:32:00})

@@ -466,10 +466,8 @@ fn toml_to_typed_value(
     };
     match expected {
         FieldType::String => match tv {
+            // (A datetime literal is no string, as a float is no `Int`.)
             ::toml::Value::String(s) => Ok(Value::String(s.clone().into())),
-            // TOML datetimes have a canonical string form — accept them as
-            // strings so users targeting `String` still receive something.
-            ::toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string().into())),
             _ => Err(mismatch("String", toml_type_name(tv))),
         },
         // (TOML says which kind a number is: a float is no `Int`,

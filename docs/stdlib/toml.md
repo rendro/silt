@@ -63,7 +63,10 @@ parameter) has no decoder.
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
 field is `Err(TypeMismatch("Int", "float"))`, because TOML says
-which kind a number is.
+which kind a number is. In the same way a datetime literal (`1990-01-01`,
+`07:32:00`) goes into a `Date`, `Time` or `DateTime` field only: for a
+`String` field it is `Err(TypeMismatch("String", "datetime"))`, and the
+text in quotes (`"1990-01-01"`) is a string.
 
 When the type is written at the call, `toml.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile
