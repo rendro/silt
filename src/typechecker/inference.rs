@@ -1170,18 +1170,26 @@ impl TypeChecker {
                     let Type::AnonRecord { fields, .. } = &anon else {
                         unreachable!()
                     };
-                    let written: Vec<String> =
-                        fields.keys().map(|field| format!("{field}: ...")).collect();
+                    // The record as a literal or a pattern writes it.
+                    let written: Vec<String> = fields
+                        .keys()
+                        .map(|field| match in_pattern {
+                            true => format!("{field}"),
+                            false => format!("{field}: ..."),
+                        })
+                        .collect();
                     let shown = self.show_type(&anon);
-                    self.error(
-                        Code::UndefinedConstructor,
-                        format!(
-                            "`{name}` is another name for the anonymous record type `{shown}`: \
-                             write the record without the name, `{{ {} }}`",
+                    let mut message =
+                        format!("`{name}` is another name for the anonymous record type `{shown}`");
+                    // (`{}` is the empty block: no literal writes the
+                    // record without fields.)
+                    if !written.is_empty() {
+                        message.push_str(&format!(
+                            ": write the record without the name, `{{ {} }}`",
                             written.join(", ")
-                        ),
-                        span,
-                    );
+                        ));
+                    }
+                    self.error(Code::UndefinedConstructor, message, span);
                     return None;
                 }
                 _ => {}

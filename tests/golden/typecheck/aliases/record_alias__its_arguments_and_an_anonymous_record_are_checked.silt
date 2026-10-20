@@ -2,7 +2,8 @@
 -- exit: 1
 -- An alias with arguments builds the record of those arguments. An
 -- alias of an anonymous record type names the type only: such a record
--- is written without a name, in a literal and in a pattern.
+-- is written without a name, in a literal and in a pattern, each in its
+-- own syntax (no literal writes the record without fields).
 type Box(a) {
   value: a,
 }
@@ -11,12 +12,15 @@ type IntBox = Box(Int)
 
 type Person = { name: String, age: Int }
 
+type Nothing = {}
+
 fn main() {
   let b = IntBox { value: "no" }
   let p = Person { name: "n", age: 3 }
+  let n = Nothing {}
   let q: Person = { name: "m", age: 4 }
   match q {
     Person { name, .. } -> println(name)
   }
-  println("{b} {p}")
+  println("{b} {p} {n}")
 }
