@@ -169,7 +169,8 @@ fn scalar_text(caller: &str, value: &Data) -> Result<String, VmError> {
         Data::Time(time) => time.to_string(),
         // In UTC, as a `timestamptz` is read: a `timestamp` ignores
         // the offset.
-        Data::DateTime(date, time) => {
+        Data::DateTime(at) => {
+            let (date, time) = &**at;
             let (date, era) = date_text(date);
             format!("{date}T{time}+00{era}")
         }

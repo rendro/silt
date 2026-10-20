@@ -55,9 +55,11 @@ pub(crate) enum Data {
     /// Only for [`Format::Postgres`], at a parameter's place or in an
     /// array.
     Bytes(#[cfg_attr(not(feature = "postgres"), allow(dead_code))] Arc<Vec<u8>>),
-    Date(Date),
-    Time(Time),
-    DateTime(Date, Time),
+    // (Boxed, as each is rare and larger than the rest: a node is 32
+    // bytes, a list of three million Ints some 96 MB of them.)
+    Date(Box<Date>),
+    Time(Box<Time>),
+    DateTime(Box<(Date, Time)>),
     /// A list, the fields of a variant.
     Array(Vec<Data>),
     /// A tuple: an array to json and toml, JSON to postgres where a list
@@ -70,6 +72,9 @@ pub(crate) enum Data {
     /// toml, and inside JSON, a `json.Value` is what it holds.)
     Json(Box<Data>),
 }
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Data>() == 32);
 
 /// A `Date`'s fields. Shown as the text of a `Date`, the one place it
 /// is decided (a `Date` value displays it too): `2026-10-19`,
@@ -174,6 +179,19 @@ pub(crate) fn data(caller: &str, format: Format, v: &Value) -> Result<Data, VmEr
     Writer { caller, format }.data(v, 0, Place::Value)
 }
 
+/// `f` of each of `items`, or its first error. (Collecting a `Result`
+/// would grow the vector by doubling: it is made the size it ends.)
+fn each<I: ExactSizeIterator, T>(
+    items: I,
+    mut f: impl FnMut(I::Item) -> Result<T, VmError>,
+) -> Result<Vec<T>, VmError> {
+    let mut all = Vec::with_capacity(items.len());
+    for item in items {
+        all.push(f(item)?);
+    }
+    Ok(all)
+}
+
 /// Where in the value being written a value is, as far as the format
 /// tells them apart.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -248,8 +266,7 @@ impl Writer<'_> {
             }
             Value::List(xs) => {
                 xs.writable()?;
-                let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x, element)).collect();
-                Data::Array(items?)
+                Data::Array(each(xs.iter(), |x| inner(&x, element))?)
             }
             Value::Map(m) => {
                 let entries: Result<Vec<_>, VmError> = m
@@ -267,29 +284,25 @@ impl Writer<'_> {
                 let members: std::collections::BTreeMap<_, _> = entries?.into_iter().collect();
                 Data::Table(members.into_iter().collect())
             }
-            Value::Tuple(vs) => {
-                let items: Result<Vec<_>, _> =
-                    vs.iter().map(|v| inner(v, Place::Element)).collect();
-                Data::Tuple(items?)
+            Value::Tuple(vs) => Data::Tuple(each(vs.iter(), |v| inner(v, Place::Element))?),
+            Value::Record(record) if record.type_id() == ty::DATE => {
+                Data::Date(Box::new(Date::of(record)))
             }
-            Value::Record(record) if record.type_id() == ty::DATE => Data::Date(Date::of(record)),
-            Value::Record(record) if record.type_id() == ty::TIME => Data::Time(Time::of(record)),
+            Value::Record(record) if record.type_id() == ty::TIME => {
+                Data::Time(Box::new(Time::of(record)))
+            }
             Value::Record(record) if record.type_id() == ty::DATE_TIME => {
                 match (record.get("date"), record.get("time")) {
                     (Some(Value::Record(date)), Some(Value::Record(time))) => {
-                        Data::DateTime(Date::of(date), Time::of(time))
+                        Data::DateTime(Box::new((Date::of(date), Time::of(time))))
                     }
                     // (A `DateTime` holds a `Date` and a `Time`.)
                     _ => return Err(refused(self.caller, v)),
                 }
             }
-            Value::Record(record) => {
-                let members: Result<Vec<_>, VmError> = record
-                    .named()
-                    .map(|(k, v)| Ok((k.to_string(), inner(v, Place::Member)?)))
-                    .collect();
-                Data::Table(members?)
-            }
+            Value::Record(record) => Data::Table(each(record.named(), |(k, v)| {
+                Ok((k.to_string(), inner(v, Place::Member)?))
+            })?),
             Value::Variant(variant) if variant.is(bv::NONE) || variant.is(bv::JSON_NULL) => {
                 // (A `None` at the top is no table: toml says so.)
                 if self.format == Format::Toml && place != Place::Member && level > 0 {
@@ -308,12 +321,8 @@ impl Writer<'_> {
             Value::Variant(variant) => {
                 let mut members = Vec::with_capacity(2);
                 if !variant.fields().is_empty() {
-                    let items: Result<Vec<_>, _> = variant
-                        .fields()
-                        .iter()
-                        .map(|v| inner(v, Place::Element))
-                        .collect();
-                    members.push(("fields".into(), Data::Array(items?)));
+                    let items = each(variant.fields().iter(), |v| inner(v, Place::Element))?;
+                    members.push(("fields".into(), Data::Array(items)));
                 }
                 members.push(("variant".into(), Data::String(variant.name().into())));
                 Data::Table(members)

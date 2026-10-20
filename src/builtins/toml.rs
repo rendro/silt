@@ -227,10 +227,13 @@ fn literal(data: &Data) -> Result<::toml::value::Datetime, std::string::String> 
     let (literal, text) = match data {
         Data::Date(d) => (date(d).map(|d| (Some(d), None)), d.to_string()),
         Data::Time(t) => (time(t).map(|t| (None, Some(t))), t.to_string()),
-        Data::DateTime(d, t) => (
-            date(d).zip(time(t)).map(|(d, t)| (Some(d), Some(t))),
-            format!("{d}T{t}"),
-        ),
+        Data::DateTime(at) => {
+            let (d, t) = &**at;
+            (
+                date(d).zip(time(t)).map(|(d, t)| (Some(d), Some(t))),
+                format!("{d}T{t}"),
+            )
+        }
         _ => (None, std::string::String::new()),
     };
     literal

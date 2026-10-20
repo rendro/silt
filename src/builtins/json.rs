@@ -247,7 +247,10 @@ impl serde::Serialize for Json<'_> {
             Data::Bytes(_) => Err(S::Error::custom(data::unsupported("Bytes"))),
             Data::Date(date) => to.collect_str(date),
             Data::Time(time) => to.collect_str(time),
-            Data::DateTime(date, time) => to.collect_str(&format_args!("{date}T{time}")),
+            Data::DateTime(at) => {
+                let (date, time) = &**at;
+                to.collect_str(&format_args!("{date}T{time}"))
+            }
             Data::Array(items) | Data::Tuple(items) => {
                 let mut seq = to.serialize_seq(Some(items.len()))?;
                 for item in items {
