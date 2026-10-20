@@ -1,0 +1,16 @@
+import time
+-- time.date and time.time return Err(OutOfRange) for every part that
+-- is none, also a negative one or one past what a date can hold.
+fn main() {
+  println(time.date(2024, -1, 1))
+  println(time.date(2024, 1, -1))
+  println(time.date(-9223372036854775808, 1, 1))
+  println(time.date(9223372036854775807, 1, 1))
+  println(time.date(2024, 4294967297, 1))
+  println(time.time(-1, 0, 0))
+  println(time.time(0, -1, 0))
+  println(time.time(0, 0, 9223372036854775807))
+  println(time.time(4294967296, 0, 0))
+  println(time.date(2024, 2, 29))
+  println(time.time(23, 59, 59))
+}

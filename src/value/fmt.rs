@@ -421,46 +421,61 @@ fn val_i64(v: Option<&Value>) -> i64 {
     }
 }
 
-/// Format a duration in nanoseconds as a human-readable string.
+/// Format a duration in nanoseconds as a human-readable string: each
+/// unit from the largest it has down to the smallest it has, zeros
+/// between included (`1h0m5s`, `2m`), and what is below a whole unit of
+/// the last as a fraction of it in groups of three digits (`1.500s`,
+/// `1m1.000000001s`, `1.999ms`). Two durations that differ never read
+/// the same.
 fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
+    const SECOND: u64 = 1_000_000_000;
+    const MINUTE: u64 = 60 * SECOND;
+    const HOUR: u64 = 60 * MINUTE;
     if total_ns < 0 {
-        write!(f, "-")?;
+        f.write_str("-")?;
     }
     let ns = total_ns.unsigned_abs();
     if ns == 0 {
-        write!(f, "0s")
-    } else if ns >= 3_600_000_000_000 {
-        let h = ns / 3_600_000_000_000;
-        let m = (ns % 3_600_000_000_000) / 60_000_000_000;
-        let s = (ns % 60_000_000_000) / 1_000_000_000;
-        if m > 0 && s > 0 {
-            write!(f, "{h}h{m}m{s}s")
-        } else if m > 0 {
-            write!(f, "{h}h{m}m")
-        } else {
-            write!(f, "{h}h")
-        }
-    } else if ns >= 60_000_000_000 {
-        let m = ns / 60_000_000_000;
-        let s = (ns % 60_000_000_000) / 1_000_000_000;
-        if s > 0 {
-            write!(f, "{m}m{s}s")
-        } else {
-            write!(f, "{m}m")
-        }
-    } else if ns >= 1_000_000_000 {
-        let s = ns / 1_000_000_000;
-        let ms = (ns % 1_000_000_000) / 1_000_000;
-        if ms > 0 {
-            write!(f, "{s}.{ms:03}s")
-        } else {
-            write!(f, "{s}s")
-        }
-    } else if ns >= 1_000_000 {
-        write!(f, "{}ms", ns / 1_000_000)
-    } else if ns >= 1_000 {
-        write!(f, "{}us", ns / 1_000)
-    } else {
-        write!(f, "{ns}ns")
+        return f.write_str("0s");
     }
+    if ns < SECOND {
+        let (per, unit) = match ns {
+            1_000_000.. => (1_000_000, "ms"),
+            1_000.. => (1_000, "us"),
+            _ => (1, "ns"),
+        };
+        write!(f, "{}", ns / per)?;
+        write_fraction(f, ns % per, per)?;
+        return f.write_str(unit);
+    }
+    if ns >= HOUR {
+        write!(f, "{}h", ns / HOUR)?;
+        if ns.is_multiple_of(HOUR) {
+            return Ok(());
+        }
+    }
+    if ns >= MINUTE {
+        write!(f, "{}m", ns % HOUR / MINUTE)?;
+        if ns.is_multiple_of(MINUTE) {
+            return Ok(());
+        }
+    }
+    write!(f, "{}", ns % MINUTE / SECOND)?;
+    write_fraction(f, ns % SECOND, SECOND)?;
+    f.write_str("s")
+}
+
+/// Write `rest`, which is less than `per` nanoseconds, as the fraction
+/// of `per` it is: none for 0, else the fewest groups of three digits
+/// that hold it (`.500`, `.000001`).
+fn write_fraction(f: &mut fmt::Formatter<'_>, rest: u64, per: u64) -> fmt::Result {
+    if rest == 0 {
+        return Ok(());
+    }
+    let (mut digits, mut step) = (per.ilog10() as usize, 1);
+    while digits > 3 && rest.is_multiple_of(step * 1_000) {
+        digits -= 3;
+        step *= 1_000;
+    }
+    write!(f, ".{:0digits$}", rest / step)
 }

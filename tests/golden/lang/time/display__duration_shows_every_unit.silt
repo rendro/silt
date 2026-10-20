@@ -1,0 +1,26 @@
+import time
+-- A Duration shows every unit from its largest to its smallest, zeros
+-- between included, and a part below a whole unit as its fraction:
+-- two durations that differ never read the same.
+fn main() {
+  println(time.seconds(3605))
+  println(time.seconds(7201))
+  println(time.seconds(3600))
+  println(time.seconds(3660))
+  println(time.seconds(9015))
+  println(time.ms(61500))
+  println(time.seconds(120))
+  println(time.ms(1500))
+  println(time.micros(1999))
+  println(time.nanos(1999))
+  println(time.nanos(1000000001))
+  println(time.nanos(3600000000001))
+  println(time.micros(60000001))
+  println(time.nanos(1001000))
+  println(time.ms(500))
+  println(time.nanos(42))
+  println(time.nanos(0))
+  println(time.seconds(-3605))
+  println(time.nanos(-9223372036854775808))
+  println(time.seconds(3605) == time.hours(1))
+}

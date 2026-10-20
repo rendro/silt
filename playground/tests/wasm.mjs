@@ -81,7 +81,9 @@ fn main() {
   println(time.since(before, time.now()))
 }
 `);
-  assert.equal(ran.output, '1h\n', ran.error);
+  // The clock moves on by the hour, plus the real time the program took
+  // to run, which a Duration now shows to the nanosecond (1h0m0.001s).
+  assert.match(ran.output, /^1h(0m0\.\d+s)?\n$/, ran.error);
   assert.ok(Date.now() - started < 30_000);
 });
 

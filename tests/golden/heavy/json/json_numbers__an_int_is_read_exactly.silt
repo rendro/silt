@@ -1,0 +1,26 @@
+import json
+-- A number goes into an Int when its text is a whole number in Int's
+-- range, decided on the text: nothing is rounded, and a number out of
+-- range or with a fraction is refused, however close to an Int it is.
+fn main() {
+  println(json.parse("-9223372036854775809", Int))
+  println(json.parse("9007199254740993.0", Int))
+  println(json.parse("9223372036854775807.0", Int))
+  println(json.parse("-9223372036854775808.0", Int))
+  println(json.parse("9.223372036854775807e18", Int))
+  println(json.parse("1.0000000000000001", Int))
+  println(json.parse("123456789012345678901234567890e-11", Int))
+  println(json.parse("1e-99999999999999999999", Int))
+  println(json.parse("0e99999999999999999999", Int))
+  println(json.parse("1e3", Int))
+  println(json.parse("12.30e1", Int))
+  println(json.parse("-0.0", Int))
+  println(json.parse("1e19", Int))
+  println(json.parse("[9007199254740993.0, \"9.5\", 2]", json.Value))
+  println(json.parse("-9223372036854775809", json.Value))
+  println(json.parse("1.0000000000000001", json.Value))
+  println(json.parse_map("""{"a": 9007199254740993.0}""", Int))
+  println(json.decode(json.Float(1.0), Int))
+  println(json.decode(json.Float(1.5), Int))
+  println(json.decode(json.Float(10000000000000000000.0), Int))
+}

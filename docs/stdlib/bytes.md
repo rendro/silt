@@ -30,8 +30,8 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `get` | `(Bytes, Int) -> Option(Int)` | The byte at index, or None |
 | `index_of` | `(Bytes, Bytes) -> Option(Int)` | First offset at which `needle` appears |
 | `length` | `(Bytes) -> Int` | Number of bytes |
-| `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both clamped to the length |
-| `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (panics if `sep` is empty) |
+| `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both clamped to the length (a negative index is a runtime error) |
+| `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (an empty `sep` is a runtime error) |
 | `starts_with` | `(Bytes, Bytes) -> Bool` | True if `b` begins with `prefix` |
 | `to_base64` | `(Bytes) -> String` | Encode as base64 |
 | `to_hex` | `(Bytes) -> String` | Encode as lowercase hex |
@@ -107,7 +107,8 @@ for granular handling or fall back to `e.message()`:
 | `Other(msg)` | `String` | unclassified failure |
 
 `bytes.get` is a lookup and returns an `Option`; `bytes.slice` clamps its
-indices to the length, as `string.slice` does, and returns `Bytes`.
+indices to the length, as `string.slice` does, and returns `Bytes` (empty if
+`start > end`). As for `string.slice`, a negative index is a runtime error.
 
 `BytesError` implements the built-in `Error` trait.
 
@@ -120,7 +121,7 @@ indices to the length, as `string.slice` does, and returns `Bytes`.
   for stable serialization.
 - `bytes.index_of` returns `Some(0)` for an empty `needle`. `bytes.starts_with`
   and `bytes.ends_with` return `true` for an empty prefix / suffix.
-- `bytes.split` panics if `sep` is empty (ambiguous). Splitting an empty
+- `bytes.split` with an empty `sep` is a runtime error (ambiguous). Splitting an empty
   `b` yields `[empty_bytes]` — one element — mirroring `string.split`.
 - A future silt release may promote `Bytes` to a language-level type with
   literal syntax (e.g. `b"hello"`) and method-form access. Today's API

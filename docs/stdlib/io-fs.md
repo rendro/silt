@@ -199,6 +199,10 @@ env.set(key: String, value: String) -> ()
 ```
 
 Sets the environment variable `key` to `value` for the current process.
+It may only be called from the main task: a spawned task that changes the
+process-wide environment would race with any other task reading it
+(libc's `setenv` is not synchronized), so the VM rejects the call from a
+spawned task with an error.
 
 ```silt
 import env
@@ -232,10 +236,8 @@ fn main() {
 }
 ```
 
-Like `env.set`, `env.remove` may only be called from the main task.
-Mutating the process-wide environment from a spawned task races with
-any other task reading it (libc's `setenv`/`unsetenv` are not
-synchronized), so the VM rejects it with an error.
+Like `env.set`, `env.remove` may only be called from the main task, for
+the same reason (libc's `unsetenv` is not synchronized either).
 
 
 ## `env.vars`
@@ -578,16 +580,20 @@ fs.walk(root: String) -> Result(List(String), IoError)
 ```
 
 Recursively walks the directory tree rooted at `root` and returns a
-flat list of every path discovered — files **and** directories, in
-arbitrary order. Paths are canonicalized when possible (so the result
+flat list of every path discovered — the root, files **and**
+directories, in arbitrary order. Every path is absolute, so the result
 is safe to pass back into other `fs.*` calls without worrying about
-cwd drift); when canonicalization fails — e.g. the entry was removed
-between the walk and the canonicalize — the raw path is preserved.
+cwd drift: the root with its own symlinks resolved, joined with the
+entry's path inside the tree.
 
-**Symlinks are not followed.** This avoids infinite loops on cyclic
-trees (including trees with a `link -> .` inside them) and matches the
-principle of least surprise for build tooling. If you need to follow
-symlinks, walk, then post-filter with `fs.stat` / `fs.read_link`.
+**Symlinks are not followed.** A symlink inside the tree is listed as
+itself (`<root>/link`), never as the path it points to, and the walk
+does not go into a symlinked directory. This avoids infinite loops on
+cyclic trees (including trees with a `link -> .` inside them), and a
+program that walks and then removes what it found removes the link,
+not its target. A `root` that is itself a symlink to a directory is
+walked. If you need to follow symlinks, walk, then post-filter with
+`fs.stat` / `fs.read_link`.
 
 **Entry cap.** To avoid accidental OOM on huge trees, `fs.walk`
 refuses to materialize more than `1_000_000` entries. Hitting the cap
@@ -622,6 +628,14 @@ start with `/` (or a drive prefix on Windows). Syntax mirrors the
 - `?` matches a single character
 - `[abc]` / `[!abc]` matches one of a character set
 - `**` matches any number of directories recursively
+
+**Symlinks are not followed** while matching, as by `fs.walk`: a symlink
+is matched by its own name and is gone into only where the start of the
+pattern, with no wildcard before it, names the path through it
+(`out/link/*.txt` lists the directory `out/link` leads to, but
+`out/l*/x.txt` and `out/*/link/x.txt` find nothing through a link), so a
+`link -> .` makes no loop, and `*/` and `**/` do not list a link to a
+directory.
 
 Returns `Err(InvalidInput(msg))` if the pattern itself is malformed. The result
 is subject to the same `1_000_000`-entry cap as `fs.walk`.

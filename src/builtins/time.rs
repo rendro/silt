@@ -27,12 +27,12 @@ fn civil_from_epoch_secs(secs: i64) -> (i32, u32, u32) {
 }
 
 /// Whether `year` is a leap year.
-fn leap(year: i32) -> bool {
+fn leap(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
 /// The number of days in the month (1-12) of the year.
-fn days_in(year: i32, month: u32) -> u32 {
+fn days_in(year: i64, month: u32) -> u32 {
     match month {
         4 | 6 | 9 | 11 => 30,
         2 if leap(year) => 29,
@@ -541,24 +541,22 @@ builtins! {
         }
     }
 
-    fn date(year: i64, month: i64, day: i64) -> Result<Value, VmError> {
-        let y = as_i32("time.date", "year", year)?;
-        let m = as_u32("time.date", "month", month)?;
-        let d = as_u32("time.date", "day", day)?;
-        Ok(match NaiveDate::from_ymd_opt(y, m, d) {
+    // A part out of the range of what chrono takes (a negative month,
+    // a year past `i32`) is no date either: `Err`, like month 13.
+    fn date(year: i64, month: i64, day: i64) -> Value {
+        let date = (|| NaiveDate::from_ymd_opt(year.try_into().ok()?, month.try_into().ok()?, day.try_into().ok()?))();
+        match date {
             Some(date) => ok(make_date(date)),
             None => time_out_of_range_err(format!("invalid date: {year}-{month}-{day}")),
-        })
+        }
     }
 
-    fn time(hour: i64, min: i64, sec: i64) -> Result<Value, VmError> {
-        let h = as_u32("time.time", "hour", hour)?;
-        let m = as_u32("time.time", "minute", min)?;
-        let s = as_u32("time.time", "second", sec)?;
-        Ok(match NaiveTime::from_hms_opt(h, m, s) {
+    fn time(hour: i64, min: i64, sec: i64) -> Value {
+        let time = (|| NaiveTime::from_hms_opt(hour.try_into().ok()?, min.try_into().ok()?, sec.try_into().ok()?))();
+        match time {
             Some(time) => ok(make_time(time)),
             None => time_out_of_range_err(format!("invalid time: {hour}:{min}:{sec}")),
-        })
+        }
     }
 
     fn datetime(date: Date, time: Time) -> Result<Value, VmError> {
@@ -706,7 +704,7 @@ builtins! {
         })?;
         let target_month = (total_months.rem_euclid(12) + 1) as u32;
         // Clamp day to last valid day of target month
-        let target_day = date.day().min(days_in(target_year, target_month));
+        let target_day = date.day().min(days_in(target_year.into(), target_month));
         let result = NaiveDate::from_ymd_opt(target_year, target_month, target_day)
             .ok_or_else(|| {
                 VmError::new(format!(
@@ -772,21 +770,19 @@ builtins! {
         Ok(to.signed_duration_since(from).num_days())
     }
 
+    // Of any year: the calendar's rule is arithmetic. A month outside
+    // 1..=12 is refused, as `time.date` refuses each part that is none.
     fn days_in_month(year: i64, month: i64) -> Result<i64, VmError> {
-        let y = as_i32("time.days_in_month", "year", year)?;
-        let m = as_u32("time.days_in_month", "month", month)?;
-        // A month outside 1..=12 is refused, as `time.date` and
-        // `time.time` refuse each part that is none.
-        if !(1..=12).contains(&m) {
-            return Err(VmError::new(format!(
+        match month {
+            1..=12 => Ok(days_in(year, month as u32) as i64),
+            _ => Err(VmError::new(format!(
                 "time.days_in_month: month {month} out of range (must be 1..=12)"
-            )));
+            ))),
         }
-        Ok(days_in(y, m) as i64)
     }
 
-    fn is_leap_year(year: i64) -> Result<bool, VmError> {
-        Ok(leap(as_i32("time.is_leap_year", "year", year)?))
+    fn is_leap_year(year: i64) -> bool {
+        leap(year)
     }
 }
 

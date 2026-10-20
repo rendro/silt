@@ -880,7 +880,7 @@ fn document(col: &Col, raw: &[u8]) -> Result<serde_json::Value, WireError> {
         (Col::Jsonb, _) => return Err("a jsonb cell of an unknown version".into()),
         _ => raw,
     };
-    Ok(serde_json::from_slice(text)?)
+    Ok(json::parse_document(text)?)
 }
 
 /// The text of a text, `"char"` or uuid cell.
@@ -1063,6 +1063,29 @@ mod tests {
         assert_eq!(text(0, 0xD000, 0, &[]), "Infinity");
         assert_eq!(text(0, 0xF000, 0, &[]), "-Infinity");
         assert!(numeric(&[0, 1]).is_err());
+    }
+
+    /// A json or jsonb cell is read as `json.parse` reads a text: a
+    /// number is an `Int` only when its text is a whole number in range.
+    #[test]
+    fn a_number_of_a_json_cell_is_read_exactly() {
+        for col in [Col::Json, Col::Jsonb] {
+            let cell = |text: &str| {
+                // (A jsonb cell begins with the version of its format.)
+                let mut raw = match matches!(col, Col::Jsonb) {
+                    true => vec![1],
+                    false => Vec::new(),
+                };
+                raw.extend_from_slice(text.as_bytes());
+                json::json_value(&document(&col, &raw).expect("a document")).to_string()
+            };
+            assert_eq!(cell("9007199254740993.0"), "Int(9007199254740993)");
+            assert_eq!(
+                cell("-9223372036854775809"),
+                "Float(-9223372036854776000.0)"
+            );
+            assert_eq!(cell("1.0000000000000001"), "Float(1.0)");
+        }
     }
 
     #[test]
