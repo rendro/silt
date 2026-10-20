@@ -235,4 +235,5 @@ cases!(
     execute_counts_and_returning,
     stream_and_cursor_of_a_record_type,
     a_parameter_that_cannot_be_sent,
+    dates_go_back_as_they_were_read,
 );
