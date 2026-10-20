@@ -2839,21 +2839,31 @@ impl<'a> Compiler<'a> {
             )
             .with_help(record_help));
         }
-        // Builtin types, by their declaration. `json.decode`,
-        // `json.parse`, `json.parse_map` and `toml.parse_map` also decode
-        // the primitive types; every other decoder, and every decoder given a container
-        // type such as `List`, needs a record type.
+        // Builtin types, by their declaration. The json decoders, and
+        // `toml.parse_list` and `toml.parse_map`, also decode the
+        // primitive types; `toml.parse` and the postgres functions, and
+        // every decoder given a container type such as `List`, need a
+        // record type.
         let builtin = crate::defs::builtin_types()[ty.id.0.0 as usize].0;
         let is_primitive = module::BUILTIN_PRIMITIVE_NAMES.contains(&builtin);
         let is_container = module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&builtin);
         let decodes_primitives = matches!(
             builtin_name,
-            "json.decode" | "json.parse" | "json.parse_map" | "toml.parse_map"
+            "json.decode"
+                | "json.parse"
+                | "json.parse_list"
+                | "json.parse_map"
+                | "toml.parse_list"
+                | "toml.parse_map"
         );
         if is_container || (is_primitive && !decodes_primitives) {
             let (accepted, help) = match (decoder, decodes_primitives) {
                 // A row is a record of its columns.
                 (Decoder::Postgres, _) => ("a record type or json.Value", ROW_TYPE_HELP),
+                (Decoder::Json, true) => (
+                    "Int, Float, String, Bool, json.Value, or a record type",
+                    "declare a record type with a field of the type you want, and decode into the record",
+                ),
                 (_, true) => (
                     "Int, Float, String, Bool, or a record type",
                     "declare a record type with a field of the type you want, and decode into the record",

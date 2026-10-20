@@ -722,63 +722,51 @@ fn json_to_record(
     ))
 }
 
-fn json_to_record_list(
-    rt: &Runtime,
-    ty: &Arc<TypeInfo>,
-    fields: &[(std::string::String, FieldType)],
-    json: &serde_json::Value,
-) -> Result<Value, VmError> {
-    let serde_json::Value::Array(arr) = json else {
-        return Ok(json_type_mismatch_err("array", json_type_name(json)));
-    };
-    let mut records = Vec::new();
-    for item in arr.iter() {
-        let result = json_to_record(rt, ty, fields, item)?;
-        match result {
-            Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
-                records.push(variant.fields()[0].clone());
-            }
-            ref err @ Value::Variant(ref variant) if variant.is(bv::ERR) => {
-                // Already a typed `Err(JsonError)`; forward unchanged
-                // so the caller still gets a structured variant.
-                return Ok(err.clone());
-            }
-            _ => {
-                return Ok(json_unknown_err(format!(
-                    "json.parse_list({}): unexpected result",
-                    ty.name
-                )));
-            }
-        }
-    }
-    Ok(Value::variant(bv::OK, vec![Value::list(records)]))
-}
-
-fn json_to_map(rt: &Runtime, value_type: Type, json: &serde_json::Value) -> Result<Value, VmError> {
-    let serde_json::Value::Object(obj) = json else {
-        return Ok(json_type_mismatch_err("object", json_type_name(json)));
-    };
-    let field_type = match value_type {
+/// The type of the elements `json.parse_list` and of the values
+/// `json.parse_map` (`caller`) decode, which their type argument `ty`
+/// names: `Int`, `Float`, `String`, `Bool`, `json.Value` or a record
+/// type. Any other type is an error.
+fn element_type(caller: &str, ty: Type) -> Result<FieldType, VmError> {
+    Ok(match ty {
         Type::Primitive(field_type) => field_type,
         Type::Named(ty) if ty.id == ty::JSON_VALUE => FieldType::JsonValue,
         Type::Named(ty) => {
-            if decodable_record("json.parse_map", ty).is_err() {
-                return Ok(json_unknown_err(format!(
-                    "json.parse_map: unknown value type '{}'",
-                    ty.name
-                )));
-            }
+            decodable_record(caller, ty)?;
             FieldType::Record(ty.id)
         }
+    })
+}
+
+/// The list of values of the field type `element` that the document
+/// `json`, an array, holds.
+fn json_to_list(rt: &Runtime, element: &FieldType, json: &serde_json::Value) -> Value {
+    let serde_json::Value::Array(items) = json else {
+        return json_type_mismatch_err("array", json_type_name(json));
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        match json_to_typed_value(rt, item, element) {
+            Ok(value) => values.push(value),
+            Err(e) => return decode_err_to_silt(e),
+        }
+    }
+    Value::variant(bv::OK, vec![Value::list(values)])
+}
+
+/// The map of values of the field type `element` that the document
+/// `json`, an object, holds.
+fn json_to_map(rt: &Runtime, element: &FieldType, json: &serde_json::Value) -> Value {
+    let serde_json::Value::Object(obj) = json else {
+        return json_type_mismatch_err("object", json_type_name(json));
     };
     let mut map = Vec::with_capacity(obj.len());
     for (key, json_val) in obj {
-        match json_to_typed_value(rt, json_val, &field_type) {
+        match json_to_typed_value(rt, json_val, element) {
             Ok(val) => map.push((Value::String(key.clone().into()), val)),
-            Err(e) => return Ok(decode_err_to_silt(e)),
+            Err(e) => return decode_err_to_silt(e),
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::map(map)]))
+    Value::variant(bv::OK, vec![Value::map(map)])
 }
 
 /// The `json.Value` that holds the document `json`. A number is an
@@ -1011,35 +999,19 @@ builtins! {
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        if let Type::Named(ty) = ty
-            && ty.id == ty::JSON_VALUE
-        {
-            return Ok(match parse_document(s.as_bytes()) {
-                Ok(serde_json::Value::Array(items)) => Value::variant(
-                    bv::OK,
-                    vec![Value::list(items.iter().map(json_value).collect())],
-                ),
-                Ok(json) => json_type_mismatch_err("array", json_type_name(&json)),
-                Err(e) => json_result_err(&e),
-            });
-        }
-        let Type::Named(ty) = ty else {
-            return Err(VmError::new(
-                "json.parse_list: type argument must be a record type".into(),
-            ));
-        };
-        let fields = decodable_record("json.parse_list", ty)?;
-        match parse_document(s.as_bytes()) {
-            Ok(json) => json_to_record_list(&vm.runtime, ty, &fields, &json),
-            Err(e) => Ok(json_result_err(&e)),
-        }
+        let element = element_type("json.parse_list", ty)?;
+        Ok(match parse_document(s.as_bytes()) {
+            Ok(json) => json_to_list(&vm.runtime, &element, &json),
+            Err(e) => json_result_err(&e),
+        })
     }
 
-    fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
-        match parse_document(s.as_bytes()) {
-            Ok(json) => json_to_map(&vm.runtime, value_type, &json),
-            Err(e) => Ok(json_result_err(&e)),
-        }
+    fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let element = element_type("json.parse_map", ty)?;
+        Ok(match parse_document(s.as_bytes()) {
+            Ok(json) => json_to_map(&vm.runtime, &element, &json),
+            Err(e) => json_result_err(&e),
+        })
     }
 
     fn stringify(value: &Value) -> Result<String, VmError> {

@@ -13,7 +13,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record |
-| `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse a single `[[items]]` section into a list of records |
+| `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse the one array of a document (such as a `[[items]]` section) into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError)` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, TomlError)` | Pretty-print a value as TOML |
 | `stringify` | `(a) -> Result(String, TomlError)` | Serialize a value as TOML |
@@ -43,7 +43,7 @@ names the type to decode into:
 | Function | Type argument |
 |----------|---------------|
 | `toml.parse` | a record type |
-| `toml.parse_list` | a record type |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, or a record type |
 | `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
 
 The fields of a record type (and of every record type nested in it) may have
@@ -71,7 +71,7 @@ text in quotes (`"1990-01-01"`) is a string.
 When the type is written at the call, `toml.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile
 error that names the field and its type; so is an enum, or a type the function
-does not take (such as `toml.parse_list(text, Int)`). The check applies
+does not take (such as `toml.parse(text, Int)`). The check applies
 equally to a decoder imported by name (`import toml.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
@@ -154,8 +154,10 @@ toml.parse_list(s: String, type a) -> Result(List(a), TomlError)
 
 TOML's spec requires the top level of every document to be a table, so there is
 no direct equivalent of a JSON top-level array. `toml.parse_list` therefore
-accepts a document whose top-level table contains exactly one key — an array-of-
-tables — and returns the list of records under that key. This is the natural
+accepts a document whose top-level table contains exactly one key, an array,
+and returns the list of values under that key, each decoded into `a`. The type
+is passed as a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record
+type), as for `toml.parse_map`. For a record type the array is the natural
 shape of `[[items]]` sections:
 
 ```silt
@@ -176,8 +178,8 @@ fn main() {
 }
 ```
 
-The key name (`points` in the example above) is not checked — any single
-top-level array-of-tables key works.
+The key name (`points` in the example above) is not checked: any single
+top-level key works, `xs = [1, 2, 3]` for `toml.parse_list(text, Int)` too.
 
 
 ## `toml.parse_map`

@@ -8,8 +8,8 @@
 //! - `toml.parse(T: Type, s: String) -> Result(T, TomlError)` — parse a top-
 //!   level TOML table into a record of type `T`.
 //! - `toml.parse_list(T: Type, s: String) -> Result(List(T), TomlError)` —
-//!   parse a document whose top-level shape is a single `[[items]]` array-of-
-//!   tables section.
+//!   parse a document whose top-level table has one key, an array: a
+//!   `[[items]]` array of tables for a record type, `xs = [1, 2]` for `Int`.
 //! - `toml.parse_map(V: Type, s: String) -> Result(Map(String, V), TomlError)`
 //!   — parse a top-level table as a `Map(String, V)`.
 //! - `toml.stringify(v) -> Result(String, TomlError)` — serialize a silt
@@ -50,8 +50,8 @@ use crate::vm::{Runtime, VmError};
 
 use super::json::{
     Written, decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
-    invalid_time_message, parse_date, parse_datetime, parse_time, unsupported_field_type_message,
-    unsupported_kind, without_bytes,
+    invalid_time_message, parse_date, parse_datetime, parse_time, shown,
+    unsupported_field_type_message, unsupported_kind, without_bytes,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -396,61 +396,50 @@ fn toml_to_record(
     ))
 }
 
-fn toml_to_record_list(
-    rt: &Runtime,
-    ty: &Arc<TypeInfo>,
-    fields: &[(String, FieldType)],
-    tv: &::toml::Value,
-) -> Result<Value, VmError> {
-    let ::toml::Value::Array(arr) = tv else {
-        return Ok(toml_type_mismatch_err("array", toml_type_name(tv)));
-    };
-    let mut records = Vec::new();
-    for item in arr.iter() {
-        let result = toml_to_record(rt, ty, fields, item)?;
-        match result {
-            Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
-                records.push(variant.fields()[0].clone());
-            }
-            ref err @ Value::Variant(ref variant) if variant.is(bv::ERR) => {
-                // Already a typed Err(TomlError); forward unchanged.
-                return Ok(err.clone());
-            }
-            _ => {
-                return Ok(toml_unknown_err(format!(
-                    "toml.parse_list({}): unexpected result",
-                    ty.name
-                )));
-            }
-        }
-    }
-    Ok(Value::variant(bv::OK, vec![Value::list(records)]))
-}
-
-fn toml_to_map(rt: &Runtime, value_type: Type, tv: &::toml::Value) -> Result<Value, VmError> {
-    let ::toml::Value::Table(table) = tv else {
-        return Ok(toml_type_mismatch_err("table", toml_type_name(tv)));
-    };
-    let field_type = match value_type {
+/// The type of the elements `toml.parse_list` and of the values
+/// `toml.parse_map` (`caller`) decode, which their type argument `ty`
+/// names: `Int`, `Float`, `String`, `Bool` or a record type. Any other
+/// type is an error.
+fn element_type(caller: &str, ty: Type) -> Result<FieldType, VmError> {
+    Ok(match ty {
         Type::Primitive(field_type) => field_type,
         Type::Named(ty) => {
-            if decodable_record("toml.parse_map", ty).is_err() {
-                return Ok(toml_unknown_err(format!(
-                    "toml.parse_map: unknown value type '{}'",
-                    ty.name
-                )));
-            }
+            decodable_record(caller, ty)?;
             FieldType::Record(ty.id)
         }
+    })
+}
+
+/// The list of values of the field type `element` that `tv`, an array,
+/// holds.
+fn toml_to_list(rt: &Runtime, element: &FieldType, tv: &::toml::Value) -> Value {
+    let ::toml::Value::Array(items) = tv else {
+        return toml_type_mismatch_err("array", toml_type_name(tv));
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        match toml_to_typed_value(rt, item, element) {
+            Ok(value) => values.push(value),
+            Err(e) => return decode_err_to_silt(e),
+        }
+    }
+    Value::variant(bv::OK, vec![Value::list(values)])
+}
+
+/// The map of values of the field type `element` that `tv`, a table,
+/// holds.
+fn toml_to_map(rt: &Runtime, element: &FieldType, tv: &::toml::Value) -> Value {
+    let ::toml::Value::Table(table) = tv else {
+        return toml_type_mismatch_err("table", toml_type_name(tv));
     };
     let mut map = Vec::with_capacity(table.len());
     for (key, val) in table.iter() {
-        match toml_to_typed_value(rt, val, &field_type) {
+        match toml_to_typed_value(rt, val, element) {
             Ok(v) => map.push((Value::String(key.clone().into()), v)),
-            Err(e) => return Ok(decode_err_to_silt(e)),
+            Err(e) => return decode_err_to_silt(e),
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::map(map)]))
+    Value::variant(bv::OK, vec![Value::map(map)])
 }
 
 fn toml_to_typed_value(
@@ -636,35 +625,33 @@ builtins! {
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let ty = record_type("parse_list", ty)?;
-        let fields = decodable_record("toml.parse_list", ty)?;
+        let element = element_type("toml.parse_list", ty)?;
         let tv = match ::toml::from_str::<::toml::Value>(s) {
             Ok(tv) => tv,
             Err(e) => return Ok(toml_de_result_err(&e)),
         };
-        // TOML's top-level is always a table. For `parse_list` we
-        // expect that table to contain exactly one array-of-tables key,
-        // whose values are the list elements. This matches how
-        // `[[items]]` naturally renders.
+        // TOML's top level is always a table: the list is the array
+        // under its one key (`[[points]]` for records, `xs = [1, 2]`).
         let ::toml::Value::Table(table) = &tv else {
             return Ok(toml_type_mismatch_err("table", toml_type_name(&tv)));
         };
         let mut values = table.values();
         let (Some(only), None) = (values.next(), values.next()) else {
             return Ok(toml_unknown_err(format!(
-                "toml.parse_list({}): expected a document with exactly one top-level array-of-tables key, found {} keys",
-                ty.name,
+                "toml.parse_list({}): expected a document with exactly one top-level key, an array, found {} keys",
+                shown(&vm.runtime, &element),
                 table.len()
             )));
         };
-        toml_to_record_list(&vm.runtime, ty, &fields, only)
+        Ok(toml_to_list(&vm.runtime, &element, only))
     }
 
-    fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
-        match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => toml_to_map(&vm.runtime, value_type, &tv),
-            Err(e) => Ok(toml_de_result_err(&e)),
-        }
+    fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let element = element_type("toml.parse_map", ty)?;
+        Ok(match ::toml::from_str::<::toml::Value>(s) {
+            Ok(tv) => toml_to_map(&vm.runtime, &element, &tv),
+            Err(e) => toml_de_result_err(&e),
+        })
     }
 
     fn stringify(value: &Value) -> Value {
