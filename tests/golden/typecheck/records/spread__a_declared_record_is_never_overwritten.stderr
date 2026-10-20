@@ -1,0 +1,13 @@
+error[type]: cannot extend the record with field 'age': it has one already
+ --> spread__a_declared_record_is_never_overwritten.silt:14:29
+    |
+ 14 |   people |> list.map { x -> { ...x, age: 1 } }
+    |                             ^^^^^^^^^^^^^^^^ cannot extend the record with field 'age': it has one already
+  = help: a record is extended, never overwritten: update the field with `r.{ age: ... }`
+
+error[type]: cannot extend the record with field 'name': it has one already
+ --> spread__a_declared_record_is_never_overwritten.silt:19:11
+    |
+ 19 |   let r = { ...p, name: "Al" }
+    |           ^^^^^^^^^^^^^^^^^^^^ cannot extend the record with field 'name': it has one already
+  = help: a record is extended, never overwritten: update the field with `r.{ name: ... }`
