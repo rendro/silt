@@ -1,8 +1,8 @@
 -- The formatter keeps `for Box(a)` and is idempotent on this file.
 -- cmd: fmt --check
 
-type Box(T) {
-  Box(T),
+type Box(a) {
+  Box(a),
 }
 
 trait Wrap {

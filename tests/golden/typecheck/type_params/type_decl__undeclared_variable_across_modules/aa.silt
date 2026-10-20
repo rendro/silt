@@ -1,0 +1,5 @@
+import shape
+
+pub fn make() -> shape.Maybe {
+  shape.Some("hello")
+}

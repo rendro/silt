@@ -521,7 +521,7 @@ impl TypeChecker {
                 }
                 let row_tail = match tail {
                     None => RowTail::Closed,
-                    Some(rname) => {
+                    Some((rname, _)) => {
                         // Row-tail variable name: bind it through param_vars
                         // so multiple annotations in the same scope sharing
                         // a row name refer to the same row variable. The
@@ -533,6 +533,9 @@ impl TypeChecker {
                             Some(Type::Var(v)) => RowTail::Var(v),
                             // Inside the declaration that introduced it.
                             Some(Type::Rigid(r)) => RowTail::Rigid(r),
+                            // A row that was reported (a type
+                            // declaration's): the record is not known.
+                            Some(Type::Error) => return Type::Error,
                             _ => {
                                 let id = self.fresh_tyvar_id();
                                 param_vars.insert(key, Type::Var(id));

@@ -33,7 +33,6 @@ fn arb_ident() -> impl Strategy<Value = String> {
                     | "loop"
                     | "true"
                     | "false"
-                    | "mod"
             )
         })
 }

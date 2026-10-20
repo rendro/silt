@@ -1,0 +1,3 @@
+-- cmd: repl
+-- stdin: let mod = 3\nmod + 1\n:quit\n
+-- An entry that starts with `mod` is an ordinary statement.

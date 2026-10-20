@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A type variable of an enum's variants that the enum does not declare
+-- after its name is an error at the declaration; the uses of the type
+-- say nothing more (once it was one variable for the whole program,
+-- fixed by its first use).
+type Maybe { Some(a), None }
+
+fn mk_int() -> Maybe {
+  Some(1)
+}
+
+fn mk_str() -> Maybe {
+  Some("hello")
+}
+
+fn main() {
+  println(mk_int())
+  println(mk_str())
+}

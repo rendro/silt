@@ -1,0 +1,8 @@
+import shape
+
+pub fn read(m: shape.Maybe) -> Int {
+  match m {
+    shape.Some(v) -> v + 1
+    shape.None -> 0
+  }
+}

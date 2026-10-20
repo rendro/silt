@@ -100,6 +100,35 @@ Escape literal braces with backslash: `"\{not interpolation}"`.
 The expression between the braces may span lines, and a line break may
 stand in front of the closing brace.
 
+### Escapes
+
+A backslash in a string starts an escape. These are all of them:
+
+| Escape      | Character                                             |
+|-------------|-------------------------------------------------------|
+| `\n`        | line feed (U+000A)                                    |
+| `\r`        | carriage return (U+000D)                              |
+| `\t`        | tab (U+0009)                                          |
+| `\0`        | NUL (U+0000)                                          |
+| `\\`        | backslash                                             |
+| `\"`        | double quote                                          |
+| `\{`        | `{`, which otherwise starts an interpolation          |
+| `\}`        | `}`                                                   |
+| `\u{1F600}` | the Unicode character with that code: 1 to 6 hex digits, no surrogate (`D800` to `DFFF`), at most `10FFFF` |
+
+```silt
+import string
+
+fn main() {
+  println("caf\u{e9} \u{1F600}") -- café 😀
+  println(string.length("a\r\n")) -- 3
+  println(string.char_code("\0")) -- Some(0)
+}
+```
+
+Any other character behind a backslash is an error. Triple-quoted
+strings take no escapes: a backslash in one is a backslash.
+
 ### Triple-Quoted Strings
 
 No escape processing, no interpolation, indentation stripping:

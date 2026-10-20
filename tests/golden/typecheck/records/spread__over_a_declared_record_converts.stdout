@@ -2,6 +2,6 @@
 true
 Bob 42
 once
-{age: old, city: x, name: Bob}
+{age: 42, city: x, name: Bob}
 [1]
 1

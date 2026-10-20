@@ -215,7 +215,7 @@ LSP server with diagnostics, hover types, go-to-definition, go-to-type-definitio
 
 | Feature | Details |
 |---|---|
-| **keywords** | `as else fn import let loop match mod pub return trait type when where` |
+| **keywords** | `as else fn import let loop match pub return trait type when where` |
 | **types** | inferred, with ADTs, records, and traits |
 | **literals** | `42`, `0xFF`, `0b1010`, `1e5`, `1_000`, `"hi {x}"` |
 | **branching** | match only |

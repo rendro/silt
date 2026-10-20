@@ -437,9 +437,9 @@ fn main() {
 fn test_let_constructor_wrong_arity_is_type_error() {
     assert_has_error(
         r#"
-type Maybe(T) {
+type Maybe(a) {
   None,
-  Some(T),
+  Some(a),
 }
 fn main() {
   let Some(x, y) = Some(42)
@@ -454,12 +454,12 @@ fn main() {
 fn test_let_nested_constructor_wrong_arity_is_type_error() {
     assert_has_error(
         r#"
-type Maybe(T) {
+type Maybe(a) {
   None,
-  Some(T),
+  Some(a),
 }
-type Pair(A, B) {
-  P(A, B),
+type Pair(a, b) {
+  P(a, b),
 }
 fn main() {
   let P(Some(x, y), b) = P(Some(42), 1)
