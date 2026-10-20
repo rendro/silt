@@ -42,17 +42,17 @@ fn test_runtime_error_multiline_message_is_one_note_and_help_is_structured() {
     );
 }
 
-// ── GAP #13: REPL completion includes all five missing keywords ────
+// ── GAP #13: REPL completion includes the keywords it once lacked ────
 
 #[test]
 fn test_repl_builtin_names_includes_round59_missing_keywords() {
-    // The five keywords that round-58 left out of the REPL's completion
+    // The keywords that round-58 left out of the REPL's completion
     // list. Each one is present in `src/lsp/completion.rs::KEYWORDS` and
     // round-59 adds them to the REPL so the two completion UIs are in
     // sync. An exact-match-each-keyword lock beats a vector equality
     // check because it survives future additions to either list.
     let names = builtin_names();
-    for kw in ["as", "else", "mod", "pub", "where"] {
+    for kw in ["as", "else", "pub", "where"] {
         assert!(
             names.contains(&kw.to_string()),
             "round-59 keyword `{kw}` missing from REPL builtin_names, got:\n{names:?}"
@@ -75,19 +75,13 @@ fn test_repl_completion_for_p_suggests_pub() {
 
 #[test]
 fn test_repl_completion_for_each_new_keyword_prefix_suggests_it() {
-    // Each of the five round-59 keywords must be offered when the user
+    // Each of the round-59 keywords must be offered when the user
     // types its first character (or the whole keyword, in the case of
     // single-prefix overlaps). We check each prefix independently with
     // a tightly-scoped assertion so a regression that drops one keyword
     // is isolated to exactly one failing test rather than hidden in an
     // aggregate failure.
-    for (prefix, keyword) in [
-        ("a", "as"),
-        ("e", "else"),
-        ("m", "mod"),
-        ("p", "pub"),
-        ("w", "where"),
-    ] {
+    for (prefix, keyword) in [("a", "as"), ("e", "else"), ("p", "pub"), ("w", "where")] {
         let matches = completion_candidates_for_prefix(prefix);
         assert!(
             matches.iter().any(|s| s == keyword),

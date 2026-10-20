@@ -492,13 +492,7 @@ impl<'src> Parser<'src> {
         self.top_level_item = "statement";
         if matches!(
             self.peek(),
-            Token::Fn
-                | Token::Type
-                | Token::Trait
-                | Token::Pub
-                | Token::Import
-                | Token::Let
-                | Token::Mod
+            Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
         ) {
             return self.parse_program_recovering();
         }

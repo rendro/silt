@@ -7,7 +7,7 @@ if exists("b:current_syntax")
 endif
 
 " ── Keywords ────────────────────────────────────────────────────────
-syntax keyword siltKeyword as else fn import let loop match mod pub return trait type when where
+syntax keyword siltKeyword as else fn import let loop match pub return trait type when where
 syntax keyword siltBoolean true false
 
 " ── Primitive type names ────────────────────────────────────────────

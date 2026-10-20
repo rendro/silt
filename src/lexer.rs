@@ -16,7 +16,6 @@ pub enum Token {
     When,
     Return,
     Pub,
-    Mod,
     Import,
     As,
     Else,
@@ -107,7 +106,6 @@ impl fmt::Display for Token {
             Token::When => write!(f, "when"),
             Token::Return => write!(f, "return"),
             Token::Pub => write!(f, "pub"),
-            Token::Mod => write!(f, "mod"),
             Token::Import => write!(f, "import"),
             Token::As => write!(f, "as"),
             Token::Else => write!(f, "else"),
@@ -348,8 +346,8 @@ type Scanned = (Token, Span);
 /// `match name.as_str()` arms in `scan_ident_or_keyword` and that no
 /// LSP module re-introduces a hand-rolled keyword list.
 pub const KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
-    "when", "where",
+    "as", "else", "fn", "import", "let", "loop", "match", "pub", "return", "trait", "type", "when",
+    "where",
 ];
 
 /// Reserved-word-shaped boolean literals. Lexed as `Token::Bool(_)`,
@@ -1038,7 +1036,6 @@ impl Lexer {
             "return" => Token::Return,
             // "select" is no longer a keyword; it's now channel.select
             "pub" => Token::Pub,
-            "mod" => Token::Mod,
             "import" => Token::Import,
             "as" => Token::As,
             "else" => Token::Else,
