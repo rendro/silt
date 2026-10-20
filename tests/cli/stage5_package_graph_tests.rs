@@ -815,3 +815,157 @@ fn three_packages_of_one_name_are_all_reported() {
     assert_eq!(d.labels.len(), 2, "{d:?}");
     let _ = fs::remove_dir_all(&ws);
 }
+
+// ── The lockfile's checksum of a git dependency ──────────────────────
+
+/// An app beside the repository `lib` (the package `remote`) that pins
+/// it at its head by `rev`; it has run once, so the lock and the cached
+/// checkout are there. Returns the app, the checkout and the checksum
+/// the lock pins.
+fn app_with_a_cached_git_dependency(ws: &Path) -> (PathBuf, PathBuf, String) {
+    let head = sibling_repository(ws, "pub fn v() { \"from lib\" }\n");
+    let app = ws.join("app");
+    let dep = format!("remote = {{ git = \"../lib\", rev = \"{head}\" }}");
+    write_package(
+        &app,
+        "app",
+        &[&dep],
+        "main.silt",
+        "import remote\nfn main() { println(remote.v()) }\n",
+    );
+    let out = silt(ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
+    let url_dirs: Vec<PathBuf> = fs::read_dir(git_cache(ws))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(url_dirs.len(), 1, "{url_dirs:?}");
+    let checkout = url_dirs[0].join(&head);
+    assert!(checkout.is_dir(), "{}", checkout.display());
+    (app.clone(), checkout, locked_checksum(&app))
+}
+
+/// The checksum of the one git dependency in the app's silt.lock.
+fn locked_checksum(app: &Path) -> String {
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    lock.lines()
+        .find_map(|line| line.strip_prefix("checksum = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_else(|| panic!("no checksum in silt.lock:\n{lock}"))
+        .to_string()
+}
+
+/// The checksum error of the dependency `remote`, whose lock pins
+/// `expected`: its message, place, both checksums and the checkout.
+fn assert_checksum_error(out: &Output, expected: &str, checkout: &Path) {
+    let err = stderr(out);
+    // The checkout as silt shows it from the app: its URL's directory
+    // of the cache and its commit.
+    let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
+    let separator = std::path::MAIN_SEPARATOR;
+    let checkout_shown = format!(
+        "{}{separator}{}",
+        name(checkout.parent().unwrap()),
+        name(checkout)
+    );
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.starts_with(
+            "error[package]: dependency `remote`: its checkout does not match the checksum \
+             in silt.lock"
+        ) && err.contains(" --> silt.toml:6:")
+            && err.contains(&format!("= note: silt.lock: {expected}\n"))
+            && err.contains("= note: found:     sha256:")
+            && err.contains(&checkout_shown)
+            && err.contains("so that the commit is fetched again"),
+        "{err}"
+    );
+    let found = err
+        .split("found:     ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap();
+    assert_ne!(found, expected, "{err}");
+}
+
+/// A cached checkout that was changed after it was fetched is refused,
+/// by a command that may write the lock and by one that may not, and
+/// the lock is left as it was. FAILS on the base: the changed code ran.
+#[test]
+fn a_changed_checkout_in_the_cache_is_refused() {
+    let ws = fresh_workspace("checksum_cache");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    fs::write(
+        checkout.join("src").join("lib.silt"),
+        "pub fn v() { \"changed\" }\n",
+    )
+    .unwrap();
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+
+    let out = silt(&ws, &app, &["run"]);
+    assert_checksum_error(&out, &expected, &checkout);
+    assert_eq!(stdout(&out), "");
+    let out = silt(&ws, &app, &["disasm"]);
+    assert_checksum_error(&out, &expected, &checkout);
+    assert_eq!(fs::read_to_string(app.join("silt.lock")).unwrap(), lock);
+
+    // As the help says: without the checkout, the commit is fetched
+    // again, and its checksum is the lock's.
+    fs::remove_dir_all(&checkout).unwrap();
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A lock whose checksum was changed by hand refuses the commit even
+/// when it was just fetched. FAILS on the base: nothing compared it.
+#[test]
+fn a_lock_checksum_that_is_not_the_commit_s_is_refused() {
+    let ws = fresh_workspace("checksum_lock");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    let wrong = format!("sha256:{}", "0".repeat(64));
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    fs::write(app.join("silt.lock"), lock.replace(&expected, &wrong)).unwrap();
+    fs::remove_dir_all(&checkout).unwrap();
+
+    let out = silt(&ws, &app, &["run"]);
+    assert_checksum_error(&out, &wrong, &checkout);
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// `silt update` does not pin a cached checkout that was changed: it
+/// compares it with the lock it replaces. Without the checkout it
+/// fetches the commit and pins what it finds. FAILS on the base: the
+/// changed checkout's checksum was written into the lock.
+#[test]
+fn silt_update_refuses_a_changed_checkout_in_the_cache() {
+    let ws = fresh_workspace("checksum_update");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    fs::write(
+        checkout.join("src").join("lib.silt"),
+        "pub fn v() { \"changed\" }\n",
+    )
+    .unwrap();
+
+    let out = silt(&ws, &app, &["update"]);
+    assert_checksum_error(&out, &expected, &checkout);
+    assert_eq!(locked_checksum(&app), expected);
+
+    fs::remove_dir_all(&checkout).unwrap();
+    let out = silt(&ws, &app, &["update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(locked_checksum(&app), expected);
+    let _ = fs::remove_dir_all(&ws);
+}

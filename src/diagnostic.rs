@@ -246,6 +246,9 @@ codes! {
     SymlinkInDependency = "E0609", Package;
     /// A package file that cannot be read or written.
     PackageIo = "E0610", Package;
+    /// A git dependency's checkout whose checksum is not the one
+    /// `silt.lock` pins.
+    LockfileChecksum = "E0611", Package;
     // ── runtime ──
     RuntimeError = "E0701", Runtime;
     /// `main` returned `Err(..)`.

@@ -52,6 +52,13 @@
 //!   lives next to the project's `silt.toml`.
 //! - A symbolic link in a dependency's `silt.toml` or `src/` is
 //!   `SymlinkInDependency`; a git checkout that holds one is not cached.
+//! - The checkout of a git dependency must have the checksum the lock
+//!   pins for its URL and commit, or it is `LockfileChecksum`: under
+//!   [`LockPolicy::Update`] and [`LockPolicy::ReadOnly`] whether it came
+//!   from the cache or was just fetched; under [`LockPolicy::Refresh`]
+//!   (which pins what it finds) a checkout that was in the cache before
+//!   is compared with the lock that is being replaced. Path dependencies
+//!   are not compared: their sources change by design.
 //!
 //! Every problem is a [`Diagnostic`] in the `silt.toml` (or `silt.lock`)
 //! it is about, a dependency's own manifest included. Nothing here
@@ -156,11 +163,20 @@ pub fn resolve_packages(
             Lockfile::load(&lock_path, sources).map_err(|d| vec![d])?
         }
     };
+    // The lock `silt update` replaces, for the checksums of the
+    // checkouts it finds in the cache; one that does not load has none.
+    let replaced = match policy {
+        LockPolicy::Refresh => Lockfile::load(&lock_path, &mut SourceMap::new())
+            .ok()
+            .flatten(),
+        LockPolicy::Update | LockPolicy::ReadOnly => None,
+    };
 
     let mut resolver = Resolver {
         sources,
         policy,
         existing,
+        replaced,
         nodes: Vec::new(),
         manifests: Vec::new(),
         locked: Vec::new(),
@@ -243,6 +259,8 @@ struct Resolver<'a> {
     sources: &'a mut SourceMap,
     policy: LockPolicy,
     existing: Option<Lockfile>,
+    /// Under [`LockPolicy::Refresh`], the lock that is replaced.
+    replaced: Option<Lockfile>,
     /// Indexed by `PackageId`, as are the three below.
     nodes: Vec<PackageNode>,
     manifests: Vec<Manifest>,
@@ -333,6 +351,7 @@ impl Resolver<'_> {
                     SourceKey::Path(root.clone()),
                     root,
                     locked,
+                    None,
                     from,
                     &key_name,
                     entry,
@@ -364,6 +383,14 @@ impl Resolver<'_> {
                         }
                     },
                 };
+                // A checkout that is in the cache already is compared
+                // with the lock under every policy; one fetched now is
+                // the commit itself, which `silt update` pins as found.
+                let cached = git::cache_for(&url, &commit).is_ok_and(|dir| dir.is_dir());
+                let expected = match self.policy {
+                    LockPolicy::Refresh if !cached => None,
+                    _ => self.locked_checksum(&url, &commit),
+                };
                 let root = match git::fetch_to_cache(&url, &commit) {
                     Ok(root) => crate::source::canonical_path(&root),
                     Err(e) => {
@@ -392,6 +419,7 @@ impl Resolver<'_> {
                     SourceKey::Git(url, commit),
                     root,
                     locked,
+                    expected,
                     from,
                     &key_name,
                     entry,
@@ -401,12 +429,15 @@ impl Resolver<'_> {
     }
 
     /// The package at `root`, entering it into the graph the first time
-    /// its source is met.
+    /// its source is met. `expected` is the checksum its sources must
+    /// have, if the lock pins one.
+    #[allow(clippy::too_many_arguments)]
     fn enter(
         &mut self,
         source: SourceKey,
         root: PathBuf,
         locked: LockedSource,
+        expected: Option<String>,
         from: PackageId,
         key_name: &str,
         entry: &DependencyEntry,
@@ -438,6 +469,19 @@ impl Resolver<'_> {
                 return None;
             }
         };
+        if let Some(expected) = expected
+            && expected != checksum
+        {
+            self.diagnostics.push(checksum_diagnostic(
+                entry.value,
+                key_name,
+                &expected,
+                &checksum,
+                &root,
+            ));
+            self.failed.insert(source);
+            return None;
+        }
         let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
             Ok(manifest) => manifest,
             Err(d) => {
@@ -472,6 +516,21 @@ impl Resolver<'_> {
             checksum,
             Some((from, entry.key)),
         ))
+    }
+
+    /// The checksum the lock pins the checkout of `url` at `commit` to:
+    /// the existing lock's, or under [`LockPolicy::Refresh`] the
+    /// replaced one's.
+    fn locked_checksum(&self, url: &str, commit: &str) -> Option<String> {
+        let lock = self.existing.as_ref().or(self.replaced.as_ref())?;
+        lock.packages.iter().find_map(|p| match &p.source {
+            LockedSource::Git {
+                url: locked_url,
+                resolved_sha,
+                ..
+            } if locked_url == url && resolved_sha == commit => Some(p.checksum.clone()),
+            _ => None,
+        })
     }
 
     /// The commit the existing lock pins `url` at `ref_spec` to, when the
@@ -689,6 +748,27 @@ fn symlink_diagnostic(at: Span, key: &str, path: &Path) -> Diagnostic {
         ),
     )
     .with_help("a dependency's files must be its own; replace the link with the file")
+}
+
+fn checksum_diagnostic(
+    at: Span,
+    key: &str,
+    expected: &str,
+    found: &str,
+    checkout: &Path,
+) -> Diagnostic {
+    let checkout = escape_for_display(&display_path(checkout).display().to_string());
+    Diagnostic::error(
+        Code::LockfileChecksum,
+        at,
+        format!("dependency `{key}`: its checkout does not match the checksum in silt.lock"),
+    )
+    .with_note(format!("silt.lock: {}", escape_for_display(expected)))
+    .with_note(format!("found:     {found} in {checkout}"))
+    .with_help(format!(
+        "delete {checkout} so that the commit is fetched again; if the checksum still \
+         differs, silt.lock was changed: run `silt update`"
+    ))
 }
 
 fn stale_diagnostic(at: Span, key: &str, reason: &str) -> Diagnostic {

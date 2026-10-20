@@ -86,9 +86,9 @@ fn a_pinned_git_dependency_resolves_without_git() {
                     ref_spec: GitRef::Branch(ref_name.to_string()),
                     resolved_sha: resolved_sha.to_string(),
                 },
-                // Checksums are not compared: content drift is what
-                // `silt update` is for.
-                checksum: "sha256:deadbeef".into(),
+                // The checkout's own: a git checkout is compared with
+                // the checksum the lock pins.
+                checksum: silt::lockfile::checksum_path_source(&cache_dir).expect("checksum"),
             },
         ],
     };

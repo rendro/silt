@@ -41,7 +41,9 @@
 //!
 //! The local package gets an entry with no `source` or `checksum` (it
 //! is the root of the dep graph; nothing pins *it*). All other entries
-//! must carry both fields.
+//! must carry both fields. A git dependency's checkout must have the
+//! checksum its entry pins (`package_graph`); a path dependency's is
+//! written and not compared.
 //!
 //! # Why not `toml::to_string`?
 //!
@@ -174,8 +176,9 @@ impl Lockfile {
     }
 
     /// Whether `self` pins what `other` pins: the same packages with
-    /// the same versions and sources. Checksums are not compared:
-    /// content drift in a path dep is what `silt update` is for.
+    /// the same versions and sources. Checksums are not compared: a git
+    /// checkout's is compared when it is loaded, and content drift in a
+    /// path dep is what `silt update` is for.
     pub fn same_pins(&self, other: &Lockfile) -> bool {
         let key = |lock: &Lockfile| {
             let mut entries: Vec<(String, String, LockedSource)> = lock
