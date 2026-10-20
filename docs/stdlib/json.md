@@ -213,11 +213,14 @@ stored as UTC:
 
 | Field type | Accepted formats | Example |
 |------------|-----------------|---------|
-| `Date` | `YYYY-MM-DD` | `"2024-03-15"` |
+| `Date` | `YYYY-MM-DD`, a year of more digits or with a sign as silt shows it (`12026-01-01`, `-001-01-01`) | `"2024-03-15"` |
 | `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `"14:30:00"`, `"14:30:00.25"` |
-| `DateTime` | `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second, with optional `Z` or `±HH:MM` offset | `"2024-03-15T09:00:00+09:00"` |
+| `DateTime` | `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second, with optional `Z` or `±HH:MM` offset; the year as for `Date` | `"2024-03-15T09:00:00+09:00"` |
 
-A fractional second is read to the nanosecond; further digits are cut.
+A fractional second is read to the nanosecond; further digits are cut. A
+second 60, a leap second, is no time silt holds: it is refused with an
+`Other` that names the text, such as
+`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
 
 ```silt
 import json
@@ -334,7 +337,11 @@ json.stringify(value: a) -> String
 Serializes a value to a compact JSON string. A map is written as an
 object; a key of it that is no `String` is written as its shown text (so the
 `Float` key `1.0` reads `"1.0"`). A `json.Value` is written as the JSON it
-holds.
+holds. A `Date`, a `Time` and a `DateTime` (from the `time` module) are
+written as the text silt shows of them, which `json.parse` reads back into a
+field of the same type: `"2026-10-19"`, `"12:30:00"` (with a fractional second
+only when the value has one: `"12:30:00.250000000"`) and
+`"2026-10-19T12:30:00"`.
 
 `json.stringify` and `json.pretty` write the same values. A value JSON has no
 form for is a runtime error that names its kind, wherever in the value it is:
@@ -351,11 +358,14 @@ To send bytes as JSON, turn them into text first (`bytes.to_string`,
 
 ```silt
 import json
+import time
 
 fn main() {
   let data = #{ "key": [1, 2, 3] }
   println(json.stringify(data))
   -- {"key":[1,2,3]}
   println(json.stringify(#{ 1.0: "one" })) -- {"1.0":"one"}
+  println(json.stringify(time.Date { year: 2026, month: 10, day: 19 }))
+  -- "2026-10-19"
 }
 ```

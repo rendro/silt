@@ -113,11 +113,16 @@ that `json.parse` accepts for each of those field types:
 
 | Field type | Accepted formats | Example |
 |------------|-----------------|---------|
-| `Date` | `YYYY-MM-DD` | `1979-05-27` or `"1979-05-27"` |
+| `Date` | `YYYY-MM-DD`, a year of more digits or with a sign as silt shows it (`12026-01-01`, `-001-01-01`) | `1979-05-27` or `"1979-05-27"` |
 | `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `07:32:00` or `"07:32:00.5"` |
-| `DateTime` | RFC 3339 / ISO 8601 (`YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second), with optional `Z` or `±HH:MM` offset | `1979-05-27T07:32:00Z` |
+| `DateTime` | RFC 3339 / ISO 8601 (`YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second), with optional `Z` or `±HH:MM` offset; the year as for `Date` | `1979-05-27T07:32:00Z` |
 
-A fractional second is read to the nanosecond; further digits are cut.
+A fractional second is read to the nanosecond; further digits are cut. A
+second 60, a leap second, is no time silt holds: it is refused with an `Other`
+that names the text, from a string
+`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`
+and from a literal
+`invalid time '23:59:60': a leap second (second 60) is not read`.
 
 ```silt
 import toml
@@ -241,7 +246,12 @@ toml.stringify(value: a) -> Result(String, TomlError)
 Serialises a silt record or map to a TOML document. Like `toml.pretty`, the
 top-level value must be table-shaped. A map is written as a table; a key of
 it that is no `String` is written as its shown text (so the `Float` key `1.0`
-reads `"1.0"`).
+reads `"1.0"`). A `Date`, a `Time` and a `DateTime` (from the `time` module) are
+written as TOML's own literals, which `toml.parse` reads back into a field of
+the same type: `2026-10-19`, `12:30:00` (with a fractional second only when
+the value has one: `12:30:00.25`) and `2026-10-19T12:30:00`. A date whose year
+has no literal (one before the year 0 or past 9999) is written as a string of
+the text silt shows of it, which `toml.parse` reads back as well.
 
 ```silt
 import toml

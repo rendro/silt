@@ -1,0 +1,43 @@
+-- A second 60, a leap second, is no time a Time holds: every reader of
+-- a time from text refuses it, at any minute and with a fraction too,
+-- and says so with the text it read. json.parse and toml.parse refuse
+-- it for a Time and a DateTime field (a toml string or literal alike,
+-- a datetime with an offset too, in a list as at the top), time.parse
+-- refuses it with OutOfRange. Second 59 still reads.
+import json
+import time
+import toml
+
+type T { t: time.Time }
+type D { dt: time.DateTime }
+type L { ts: List(time.Time) }
+
+fn main() {
+  println(json.parse("""{"t": "23:59:60"}""", T))
+  println(json.parse("""{"t": "12:30:60.5"}""", T))
+  println(json.parse("""{"t": "23:59:59.999999999"}""", T))
+  println(json.parse("""{"dt": "2016-12-31T23:59:60"}""", D))
+  println(json.parse("""{"dt": "2016-12-31 23:59:60Z"}""", D))
+  println(json.parse("""{"dt": "2017-01-01T00:59:60+01:00"}""", D))
+  println(json.parse("""{"ts": ["01:00:00", "23:59:60"]}""", L))
+  println(toml.parse("t = \"23:59:60\"", T))
+  println(toml.parse("t = 23:59:60", T))
+  println(toml.parse("dt = \"2016-12-31T23:59:60\"", D))
+  println(toml.parse("dt = 2016-12-31T23:59:60Z", D))
+  println(toml.parse("ts = [01:00:00, 23:59:60.25]", L))
+  println(time.parse("2016-12-31 23:59:60", "%Y-%m-%d %H:%M:%S"))
+  println(time.parse("2016-12-31 12:30:60.5", "%Y-%m-%d %H:%M:%S%.f"))
+  println(time.parse("2016-12-31 23:59:59", "%Y-%m-%d %H:%M:%S"))
+  match time.parse("2016-12-31 23:59:60", "%Y-%m-%d %H:%M:%S") {
+    Err(time.OutOfRange(why)) -> println("OutOfRange: {why}")
+    other -> println("unexpected: {other}")
+  }
+  match json.parse("""{"t": "23:59:60"}""", T) {
+    Err(json.Other(why)) -> println("Other: {why}")
+    other -> println("unexpected: {other}")
+  }
+  match toml.parse("t = 23:59:60", T) {
+    Err(toml.Other(why)) -> println("Other: {why}")
+    other -> println("unexpected: {other}")
+  }
+}
