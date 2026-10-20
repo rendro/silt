@@ -128,6 +128,38 @@ impl TypeChecker {
                 let Goal::Pred(pred) = &self.wanted[i].goal.clone() else {
                     continue;
                 };
+                // A trait method called on an annotation variable of the
+                // enclosing function, by a closure general in the type it
+                // gives (`{ t -> l.load(t) }`): each use of the closure
+                // owes it at the type that use gives.
+                if let Pred::Via {
+                    receiver,
+                    method_ty,
+                    ..
+                } = pred
+                    && let Type::Rigid(_) = self.apply(receiver)
+                {
+                    let method_ty = self.apply(method_ty);
+                    if free_vars_in(&method_ty).iter().any(|v| vars.contains(v)) {
+                        self.wanted[i].solved = true;
+                        if let Pred::Via {
+                            tr, method, passer, ..
+                        } = pred
+                        {
+                            let pred = Pred::Via {
+                                tr: *tr,
+                                method: *method,
+                                receiver: self.apply(receiver),
+                                method_ty,
+                                passer: self.passing_on.or(*passer),
+                            };
+                            if !preds.contains(&pred) {
+                                preds.push(pred);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 let Type::Var(subject) = self.apply(pred.subject()) else {
                     continue;
                 };
@@ -271,7 +303,26 @@ impl TypeChecker {
                 | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
                 // A type nothing decides is no type a builtin is given:
                 // nothing to check.
-                Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. } | Pred::Via { .. }) => {
+                Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. }) => continue,
+                // A trait method called on an annotation variable of the
+                // scope's function: a need of its body.
+                Goal::Pred(Pred::Via {
+                    tr,
+                    method,
+                    receiver,
+                    method_ty,
+                    passer,
+                }) => {
+                    if !wanted.in_scheme && matches!(self.apply(receiver), Type::Rigid(_)) {
+                        let need = super::builtin_needs::ViaNeed {
+                            tr: *tr,
+                            method: *method,
+                            receiver: receiver.clone(),
+                            method_ty: method_ty.clone(),
+                        };
+                        let in_body = self.body_owner;
+                        self.via_owed(need, *passer, wanted.origin, in_body);
+                    }
                     continue;
                 }
                 Goal::Try { .. } => {

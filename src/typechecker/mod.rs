@@ -129,9 +129,23 @@ pub struct TypeChecker {
     /// needs it finds on a variable its trait's or impl's methods share
     /// are its own.
     pub(super) body_owner: Option<Symbol>,
-    /// The trait-method calls looked at, by method, types and place
-    /// (`resolve_via`).
-    pub(super) resolved_vias: std::collections::HashSet<std::string::String>,
+    /// The calls of trait methods on values of known types, waiting for
+    /// the module's bodies (`settle_builtin_needs`).
+    pub(super) via_waiting: Vec<builtin_needs::ViaUse>,
+    /// What each trait method asks at the types it is called with, and
+    /// the calls being looked into (`leaves`).
+    pub(super) leaf_memo: builtin_needs::LeafMemo,
+    pub(super) leaf_busy: Vec<(TraitKey, Symbol, Type, Type)>,
+    pub(super) via_cache:
+        HashMap<(TyVar, Option<Symbol>), std::rc::Rc<Vec<builtin_needs::ViaNeed>>>,
+    /// The `wanted` goals of decoders whose type was unknown when they
+    /// were owed, and the `given_waiting` uses not placed at the argument
+    /// of their call: what `point_at_type_arguments` looks at.
+    pub(super) waiting_decoders: Vec<usize>,
+    /// The variables (by representative and body) whose needs grew since
+    /// `settle_builtin_needs` last looked.
+    pub(super) grown_needs: Vec<(TyVar, Option<Symbol>)>,
+    pub(super) unplaced: Vec<usize>,
     /// The instantiations made so far, and the one under way: the
     /// `Pred::Given`s one owes are one use (`GivenUse::use_id`).
     pub(super) uses: usize,
@@ -337,7 +351,13 @@ impl TypeChecker {
             given_waiting: Vec::new(),
             via_needs: HashMap::new(),
             body_owner: None,
-            resolved_vias: std::collections::HashSet::new(),
+            via_waiting: Vec::new(),
+            leaf_memo: HashMap::new(),
+            leaf_busy: Vec::new(),
+            via_cache: HashMap::new(),
+            waiting_decoders: Vec::new(),
+            grown_needs: Vec::new(),
+            unplaced: Vec::new(),
             uses: 0,
             use_id: 0,
             given_marks: Vec::new(),

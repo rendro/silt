@@ -9,7 +9,7 @@
 
 use super::solve::{Goal, Origin};
 use super::*;
-use std::collections::HashSet;
+use std::rc::Rc;
 
 /// A use of a function or a method that gives a type to an annotation
 /// variable of its signature (`Pred::Given`), waiting for the bodies of
@@ -50,6 +50,41 @@ pub(crate) struct ViaNeed {
 /// Each argument of a call: its place, the alias it names a type by,
 /// and its type.
 pub(super) type CallArguments = [(Span, Option<Symbol>, Type)];
+
+/// The types a use gives, each with its place and the alias it names
+/// the type by.
+pub(super) type Places = Vec<(Type, Origin, Option<Symbol>)>;
+
+/// A call of a trait method on a value of a known type, waiting for the
+/// bodies of the module: in the body `in_body`, at `origin`, a note
+/// naming `passer`.
+#[derive(Clone, Debug)]
+pub(crate) struct ViaUse {
+    pub(super) need: ViaNeed,
+    pub(super) passer: Option<Symbol>,
+    pub(super) origin: Origin,
+    pub(super) in_body: Option<Symbol>,
+}
+
+/// What a trait method of a type asks (`TypeChecker::leaves`): a check of
+/// a type it gives a builtin, or a call of a trait method on a value
+/// whose type is an annotation variable of a caller.
+#[derive(Clone, Debug)]
+pub(crate) enum Leaf {
+    Check(BuiltinCheck, Type),
+    Via(ViaNeed),
+}
+
+/// Where a use's checks go: the types it gives, at their places, and the
+/// function its caller called.
+struct Placing {
+    passer: Option<Symbol>,
+    origin: Origin,
+    places: Places,
+}
+
+/// The keys `TypeChecker::leaves` keeps what it found by.
+pub(crate) type LeafMemo = HashMap<(Symbol, u64), Vec<(TraitKey, Type, Type, Rc<Vec<Leaf>>)>>;
 
 /// The method `method` of the impl of `tr` for `owner` (for a trait's
 /// default, `owner` is empty), as the needs of its body are kept: an
@@ -102,114 +137,325 @@ impl TypeChecker {
         .collect()
     }
 
+    /// `via_needs_of`, kept while the needs do not grow (`via_cache`).
+    fn vias_of(&mut self, var: TyVar, body: Option<Symbol>) -> Rc<Vec<ViaNeed>> {
+        let key = (self.rigid_rep_var(var), body);
+        if let Some(found) = self.via_cache.get(&key) {
+            return found.clone();
+        }
+        let found = Rc::new(self.via_needs_of(var, body));
+        self.via_cache.insert(key, found.clone());
+        found
+    }
+
     /// A call of a trait method owed (`Pred::Via`), its receiver known
-    /// now: on an annotation variable, a need of its function's body; on
-    /// a type, what that type's method asks, at `origin` (or at the
-    /// place in `places` that gave a type). `in_body`: the method body
-    /// the call is in.
+    /// now: on an annotation variable, a need of the body the call is in
+    /// (`in_body`); on a type, decided with the module's bodies
+    /// (`via_waiting`), at `origin`, naming `passer`. Whether a need grew.
     pub(super) fn via_owed(
         &mut self,
         need: ViaNeed,
         passer: Option<Symbol>,
         origin: Origin,
-        places: &[(Type, Origin, Option<Symbol>)],
         in_body: Option<Symbol>,
     ) -> bool {
         match self.apply(&need.receiver) {
             Type::Var(_) | Type::Error | Type::Never => false,
-            Type::Rigid(r) => {
-                let key = (self.rigid_rep_var(r.var), in_body);
-                let needs = self.via_needs.entry(key).or_default();
-                if needs.contains(&need) {
-                    return false;
-                }
-                needs.push(need);
-                true
-            }
-            receiver => {
-                self.resolve_via(&need, &receiver, passer, origin, places);
-                true
+            Type::Rigid(r) => self.add_via_need(r, need, in_body),
+            _ => {
+                self.via_waiting.push(ViaUse {
+                    need,
+                    passer,
+                    origin,
+                    in_body,
+                });
+                false
             }
         }
     }
 
-    /// What the method `need.method` of the impl for `receiver` (or the
-    /// trait's default it takes) asks of the types the call gives it: its
-    /// uses are owed as a call of it would owe them, each where the call
-    /// gave its type, and a note names `passer`, the function the caller
-    /// called.
-    fn resolve_via(
+    /// The body `in_body` calls a trait method on a value of the type of
+    /// its annotation variable `r`. Whether that is news.
+    fn add_via_need(&mut self, r: RigidId, need: ViaNeed, in_body: Option<Symbol>) -> bool {
+        let key = (self.rigid_rep_var(r.var), in_body);
+        let needs = self.via_needs.entry(key).or_default();
+        if needs.contains(&need) {
+            return false;
+        }
+        needs.push(need);
+        self.via_cache.clear();
+        self.grown_needs.push(key);
+        true
+    }
+
+    /// The body `in_body` gives its annotation variable `r` to a builtin
+    /// that asks `check` of it. Whether that is news.
+    fn add_builtin_need(
+        &mut self,
+        r: RigidId,
+        check: BuiltinCheck,
+        in_body: Option<Symbol>,
+    ) -> bool {
+        let key = (self.rigid_rep_var(r.var), in_body);
+        let needs = self.builtin_needs.entry(key).or_default();
+        if needs.contains(&check.unwritten()) {
+            return false;
+        }
+        needs.push(check.unwritten());
+        self.grown_needs.push(key);
+        true
+    }
+
+    /// Decide the call `need` of a trait method, in the body `in_body`:
+    /// on an annotation variable, a need of that body; on a type, what
+    /// the method of the type's impl (or the trait's default) asks of the
+    /// types the call gives it (`leaves`). With `placing`, the checks of
+    /// types are made, each where the use gave its type; without, only
+    /// what the body's annotation variables owe is gathered. Whether a
+    /// need grew.
+    fn apply_via(
         &mut self,
         need: &ViaNeed,
-        receiver: &Type,
-        passer: Option<Symbol>,
-        origin: Origin,
-        places: &[(Type, Origin, Option<Symbol>)],
-    ) {
-        let Some(head) = self.type_name_for_impl(receiver) else {
-            return;
-        };
-        // A method that calls itself, or a chain of them, on the same
-        // types for the same use is looked at once.
-        let key = format!(
-            "{:?} {} {} {} {:?}",
-            need.tr,
-            need.method,
-            self.show_type(receiver),
-            self.show_type(&self.apply(&need.method_ty)),
-            origin.span
-        );
-        if !self.resolved_vias.insert(key) {
-            return;
-        }
-        let Some(entry) = self.tables.impl_methods.get(head, need.method, need.tr) else {
-            return;
-        };
-        if entry.structural {
-            return;
-        }
-        let scheme = self.method_scheme(&entry.clone());
-        let (owed_before, given_before) = (self.wanted.len(), self.given_waiting.len());
-        self.named_use = Some(origin);
-        let ty = self.instantiate(&scheme);
-        let _ = self.unify_types(&ty, &need.method_ty);
-        let place = |checker: &Self, subject: &Type| {
-            let subject = checker.apply(subject);
-            (places.iter())
-                .find(|(ty, ..)| checker.apply(ty) == subject)
-                .map_or((origin, None), |(_, origin, written)| (*origin, *written))
-        };
-        for k in given_before..self.given_waiting.len() {
-            let (at, written) = place(self, &self.given_waiting[k].subject);
-            let given = &mut self.given_waiting[k];
-            given.origin = at;
-            given.placed = true;
-            given.written = written.or(given.written);
-            if let Some(passer) = passer {
-                given.passer = passer;
-            }
-        }
-        for k in owed_before..self.wanted.len() {
-            let subject = self.wanted[k].goal.waits_on().clone();
-            let (at, alias) = place(self, &subject);
-            let wanted = &mut self.wanted[k];
-            wanted.origin = at;
-            match &mut wanted.goal {
-                Goal::Pred(Pred::Builtin {
-                    check,
-                    passer: owner,
-                    ..
-                }) => {
-                    if let BuiltinCheck::Decodes { written, .. } = check {
-                        *written = alias.or(*written);
+        in_body: Option<Symbol>,
+        placing: Option<&Placing>,
+    ) -> bool {
+        match self.apply(&need.receiver) {
+            Type::Var(_) | Type::Error | Type::Never => false,
+            Type::Rigid(r) => self.add_via_need(r, need.clone(), in_body),
+            receiver => {
+                let leaves = self.leaves(need.tr, need.method, &receiver, &need.method_ty);
+                let mut grown = false;
+                for leaf in leaves.iter() {
+                    match leaf {
+                        Leaf::Check(check, ty) => match self.apply(ty) {
+                            Type::Rigid(r) => grown |= self.add_builtin_need(r, *check, in_body),
+                            Type::Var(_) | Type::Error | Type::Never => {}
+                            ty => {
+                                if let Some(placing) = placing {
+                                    self.check_placed(*check, &ty, placing);
+                                }
+                            }
+                        },
+                        Leaf::Via(via) => {
+                            if let Type::Rigid(r) = self.apply(&via.receiver) {
+                                grown |= self.add_via_need(r, via.clone(), in_body);
+                            }
+                        }
                     }
-                    *owner = passer.or(*owner);
                 }
-                Goal::Pred(Pred::Via { passer: owner, .. }) => *owner = passer.or(*owner),
-                _ => {}
+                grown
             }
         }
-        self.solve_wanted(owed_before);
+    }
+
+    /// Check `check` of the type `ty`, where the use `placing` gave it,
+    /// naming the function the caller called.
+    fn check_placed(&mut self, check: BuiltinCheck, ty: &Type, placing: &Placing) {
+        let (origin, written) = (placing.places.iter())
+            .find(|(given, ..)| self.apply(given) == *ty)
+            .map_or((placing.origin, None), |(_, origin, written)| {
+                (*origin, *written)
+            });
+        let check = match check {
+            BuiltinCheck::Decodes {
+                builtin, decoding, ..
+            } => BuiltinCheck::Decodes {
+                builtin,
+                decoding,
+                written,
+            },
+            other => other,
+        };
+        self.check_builtin_argument(check, ty, placing.passer, origin);
+    }
+
+    /// What the method `method` of the impl of `tr` for `receiver` (or
+    /// the trait's default it takes), called with the type `method_ty`,
+    /// asks: the checks of the types it gives builtins, and the trait
+    /// methods it calls on an annotation variable of a caller, through
+    /// the methods it calls in turn. Kept by the method and the types
+    /// (`leaf_memo`): each call of the method on them reads it.
+    fn leaves(
+        &mut self,
+        tr: TraitKey,
+        method: Symbol,
+        receiver: &Type,
+        method_ty: &Type,
+    ) -> Rc<Vec<Leaf>> {
+        let receiver = self.apply(receiver);
+        let method_ty = self.apply(method_ty);
+        let key = (
+            method,
+            shape_hash(&receiver) ^ shape_hash(&method_ty).rotate_left(1),
+        );
+        let same = |at: &(TraitKey, Type, Type, Rc<Vec<Leaf>>)| {
+            at.0 == tr && same_shape(&at.1, &receiver) && same_shape(&at.2, &method_ty)
+        };
+        if let Some(found) = self
+            .leaf_memo
+            .get(&key)
+            .and_then(|at| at.iter().find(|at| same(at)))
+        {
+            return found.3.clone();
+        }
+        // A method that calls itself on the same types: what it asks is
+        // what the outer call gathers.
+        if (self.leaf_busy.iter()).any(|(t, m, r, ty)| {
+            *t == tr && *m == method && same_shape(r, &receiver) && same_shape(ty, &method_ty)
+        }) {
+            return Rc::new(Vec::new());
+        }
+        let mut out = Vec::new();
+        let entry = self
+            .type_name_for_impl(&receiver)
+            .and_then(|head| self.tables.impl_methods.get(head, method, tr))
+            .filter(|entry| !entry.structural)
+            .cloned();
+        if let Some(entry) = entry {
+            self.leaf_busy
+                .push((tr, method, receiver.clone(), method_ty.clone()));
+            let scheme = self.method_scheme(&entry);
+            // (The method's type read against the call's: no variable of
+            // the session is bound.)
+            let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+            match_type(&scheme.ty, &method_ty, &scheme.vars, &mut mapping);
+            let preds: Vec<Pred> = (scheme.preds.iter())
+                .map(|pred| pred.substitute(&mapping))
+                .collect();
+            let given: HashMap<TyVar, Type> = (preds.iter())
+                .filter_map(|pred| match pred {
+                    Pred::Given { subject, given, .. } => {
+                        Some((self.rigid_rep_var(*given), self.apply(subject)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for pred in &preds {
+                match pred {
+                    Pred::Builtin { check, subject, .. } => {
+                        out.push(Leaf::Check(*check, self.apply(subject)));
+                    }
+                    Pred::Given {
+                        subject,
+                        given: var,
+                        body,
+                        ..
+                    } => {
+                        for check in self.builtin_needs_of(*var, *body) {
+                            out.push(Leaf::Check(check, self.apply(subject)));
+                        }
+                        for via in self.vias_of(*var, *body).iter() {
+                            let via = self.at_use(via, &given);
+                            self.expand(via, &mut out);
+                        }
+                    }
+                    Pred::Via {
+                        tr,
+                        method,
+                        receiver,
+                        method_ty,
+                        ..
+                    } => {
+                        let via = ViaNeed {
+                            tr: *tr,
+                            method: *method,
+                            receiver: self.apply(receiver),
+                            method_ty: self.apply(method_ty),
+                        };
+                        self.expand(via, &mut out);
+                    }
+                    _ => {}
+                }
+            }
+            self.leaf_busy.pop();
+        }
+        // (Each once: methods that call each other give the same checks
+        // many times over.)
+        let mut leaves: Vec<Leaf> = Vec::with_capacity(out.len());
+        for leaf in out {
+            let known = leaves.iter().any(|seen| match (seen, &leaf) {
+                (Leaf::Check(a, x), Leaf::Check(b, y)) => a == b && x == y,
+                (Leaf::Via(a), Leaf::Via(b)) => a == b,
+                _ => false,
+            });
+            if !known {
+                leaves.push(leaf);
+            }
+        }
+        let out = Rc::new(leaves);
+        (self.leaf_memo.entry(key).or_default()).push((tr, receiver, method_ty, out.clone()));
+        out
+    }
+
+    /// The leaves of the trait-method call `via`, gathered into `out`.
+    fn expand(&mut self, via: ViaNeed, out: &mut Vec<Leaf>) {
+        match self.apply(&via.receiver) {
+            Type::Rigid(_) => out.push(Leaf::Via(via)),
+            Type::Var(_) | Type::Error | Type::Never => {}
+            receiver => {
+                let leaves = self.leaves(via.tr, via.method, &receiver, &via.method_ty);
+                out.extend(leaves.iter().cloned());
+            }
+        }
+    }
+
+    /// Whether the call `via` names an annotation variable.
+    fn names_a_variable(&self, via: &ViaNeed) -> bool {
+        let mut found = false;
+        for ty in [&via.receiver, &via.method_ty] {
+            map_rigid(&self.apply(ty), &mut |r| {
+                found = true;
+                Type::Rigid(r)
+            });
+        }
+        found
+    }
+
+    /// The call `via` of a body's need at a use that gives the body's
+    /// variables the types `given`.
+    fn at_use(&self, via: &ViaNeed, given: &HashMap<TyVar, Type>) -> ViaNeed {
+        ViaNeed {
+            receiver: substitute_vars(&via.receiver, given),
+            method_ty: substitute_vars(&via.method_ty, given),
+            ..via.clone()
+        }
+    }
+
+    /// The types each waiting use gives the signature's variables.
+    fn given_by_use(&self) -> HashMap<usize, HashMap<TyVar, Type>> {
+        let mut given_by_use: HashMap<usize, HashMap<TyVar, Type>> = HashMap::new();
+        for use_ in &self.given_waiting {
+            (given_by_use.entry(use_.use_id).or_default())
+                .insert(self.rigid_rep_var(use_.given), self.apply(&use_.subject));
+        }
+        given_by_use
+    }
+
+    /// Each waiting use whose variable a body calls trait methods on,
+    /// with those calls at the types the use gives the signature's
+    /// variables, and the places it gives them at.
+    fn uses_with_vias(&mut self) -> Vec<(GivenUse, Vec<ViaNeed>, Places)> {
+        let mut given_by_use: HashMap<usize, HashMap<TyVar, Type>> = HashMap::new();
+        let mut places_by_use: HashMap<usize, Places> = HashMap::new();
+        for use_ in &self.given_waiting {
+            let ty = self.apply(&use_.subject);
+            (given_by_use.entry(use_.use_id).or_default())
+                .insert(self.rigid_rep_var(use_.given), ty.clone());
+            (places_by_use.entry(use_.use_id).or_default()).push((ty, use_.origin, use_.written));
+        }
+        let mut out = Vec::new();
+        for k in 0..self.given_waiting.len() {
+            let use_ = self.given_waiting[k].clone();
+            let vias = self.vias_of(use_.given, use_.body);
+            if vias.is_empty() {
+                continue;
+            }
+            let given = &given_by_use[&use_.use_id];
+            let vias = vias.iter().map(|via| self.at_use(via, given)).collect();
+            let places = places_by_use[&use_.use_id].clone();
+            out.push((use_, vias, places));
+        }
+        out
     }
 
     /// Point what a decoder asks of its type argument, still owed in the
@@ -244,7 +490,15 @@ impl TypeChecker {
             })
         };
         let scope = self.wanted_marks.last().copied().unwrap_or(0);
-        for k in scope..self.wanted.len() {
+        // (Only the decoders whose type was unknown when they were owed:
+        // `waiting_decoders`, kept small as they are decided.)
+        let len = self.wanted.len();
+        self.waiting_decoders
+            .retain(|&k| k < len && !self.wanted[k].solved);
+        let candidates: Vec<usize> = (self.waiting_decoders.iter().copied())
+            .filter(|&k| k >= scope)
+            .collect();
+        for k in candidates {
             if self.wanted[k].solved {
                 continue;
             }
@@ -295,10 +549,11 @@ impl TypeChecker {
         // The same for a type given to an annotation variable of a
         // function the scope holds.
         let scope = self.given_marks.last().copied().unwrap_or(0);
-        for k in scope..self.given_waiting.len() {
-            if self.given_waiting[k].placed {
-                continue;
-            }
+        self.unplaced.retain(|&k| !self.given_waiting[k].placed);
+        let candidates: Vec<usize> = (self.unplaced.iter().copied())
+            .filter(|&k| k >= scope)
+            .collect();
+        for k in candidates {
             let subject = self.apply(&self.given_waiting[k].subject);
             if matches!(subject, Type::Error) {
                 continue;
@@ -327,80 +582,87 @@ impl TypeChecker {
     /// value of such a variable's type asks, at each use, what the method
     /// of the type the use gives asks.
     pub(super) fn settle_builtin_needs(&mut self) {
-        let mut applied: HashSet<(usize, TyVar, usize)> = HashSet::new();
-        let mut by_use: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut indexed = 0;
-        // The uses to look at: all of them while what a body asks grows,
-        // else only those the last round made.
-        let mut from = 0;
+        // What each body's annotation variables owe, through the
+        // functions and trait methods they are given to, until it stops
+        // growing; then each use's checks.
+        // The uses of each variable, by the variable's representative and
+        // its body: a use is looked at again when what its variable owes
+        // grows (`grown_needs`).
+        let mut by_given: HashMap<(TyVar, Option<Symbol>), Vec<usize>> = HashMap::new();
+        for (k, use_) in self.given_waiting.iter().enumerate() {
+            let key = (self.rigid_rep_var(use_.given), use_.body);
+            by_given.entry(key).or_default().push(k);
+        }
+        let given_by_use = self.given_by_use();
+        self.grown_needs.clear();
+        let mut queue: std::collections::VecDeque<usize> = (0..self.given_waiting.len()).collect();
+        let mut queued = vec![true; self.given_waiting.len()];
         loop {
-            let known = self.given_waiting.len();
-            for k in indexed..known {
-                by_use
-                    .entry(self.given_waiting[k].use_id)
-                    .or_default()
-                    .push(k);
-            }
-            indexed = known;
-            let mut grown = false;
-            for k in from..known {
+            while let Some(k) = queue.pop_front() {
+                queued[k] = false;
                 let use_ = self.given_waiting[k].clone();
-                let subject = self.apply(&use_.subject);
-                if let Type::Rigid(r) = &subject {
-                    let to = self.rigid_rep_var(r.var);
+                if let Type::Rigid(r) = self.apply(&use_.subject) {
                     for check in self.builtin_needs_of(use_.given, use_.body) {
-                        let needs = self.builtin_needs.entry((to, use_.in_body)).or_default();
-                        if !needs.contains(&check) {
-                            needs.push(check);
-                            grown = true;
+                        self.add_builtin_need(r, check, use_.in_body);
+                    }
+                }
+                // (A call on types that name no annotation variable owes
+                // none of a body's: its checks are made below.)
+                let vias = self.vias_of(use_.given, use_.body);
+                for via in vias.iter() {
+                    let via = self.at_use(via, &given_by_use[&use_.use_id]);
+                    if self.names_a_variable(&via) {
+                        self.apply_via(&via, use_.in_body, None);
+                    }
+                }
+                for key in std::mem::take(&mut self.grown_needs) {
+                    for &u in by_given.get(&key).into_iter().flatten() {
+                        if !queued[u] {
+                            queued[u] = true;
+                            queue.push_back(u);
                         }
                     }
-                }
-                let vias = self.via_needs_of(use_.given, use_.body);
-                if vias.is_empty() {
-                    continue;
-                }
-                // The types this use gives the signature's variables, and
-                // where it gives each.
-                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-                let mut places = Vec::new();
-                for &s in &by_use[&use_.use_id] {
-                    let sibling = &self.given_waiting[s];
-                    let ty = self.apply(&sibling.subject);
-                    mapping.insert(self.rigid_rep_var(sibling.given), ty.clone());
-                    places.push((ty, sibling.origin, sibling.written));
-                }
-                let given = self.rigid_rep_var(use_.given);
-                for (t, via) in vias.into_iter().enumerate() {
-                    if !applied.insert((use_.use_id, given, t)) {
-                        continue;
-                    }
-                    // (What the call leaves general is new at each use.)
-                    let mut mapping = mapping.clone();
-                    for v in free_vars_in(&via.receiver)
-                        .into_iter()
-                        .chain(free_vars_in(&via.method_ty))
-                    {
-                        if let std::collections::hash_map::Entry::Vacant(slot) = mapping.entry(v) {
-                            slot.insert(self.fresh_var());
-                        }
-                    }
-                    let need = ViaNeed {
-                        receiver: substitute_vars(&via.receiver, &mapping),
-                        method_ty: substitute_vars(&via.method_ty, &mapping),
-                        ..via
-                    };
-                    let on_variable = matches!(self.apply(&need.receiver), Type::Rigid(_));
-                    let owed =
-                        self.via_owed(need, Some(use_.passer), use_.origin, &places, use_.in_body);
-                    grown |= owed && on_variable;
                 }
             }
-            from = match (grown, self.given_waiting.len() > known) {
-                (true, _) => 0,
-                (false, true) => known,
-                (false, false) => break,
+            let mut grown = false;
+            for k in 0..self.via_waiting.len() {
+                let use_ = self.via_waiting[k].clone();
+                if self.names_a_variable(&use_.need) {
+                    grown |= self.apply_via(&use_.need, use_.in_body, None);
+                }
+            }
+            for key in std::mem::take(&mut self.grown_needs) {
+                for &u in by_given.get(&key).into_iter().flatten() {
+                    if !queued[u] {
+                        queued[u] = true;
+                        queue.push_back(u);
+                    }
+                }
+            }
+            if !grown && queue.is_empty() {
+                break;
+            }
+        }
+        // (What a method asks may have grown with what its body's
+        // variables owe.)
+        self.leaf_memo.clear();
+        for (use_, vias, places) in self.uses_with_vias() {
+            let placing = Placing {
+                passer: Some(use_.passer),
+                origin: use_.origin,
+                places,
             };
+            for via in vias {
+                self.apply_via(&via, use_.in_body, Some(&placing));
+            }
+        }
+        for use_ in std::mem::take(&mut self.via_waiting) {
+            let placing = Placing {
+                passer: use_.passer,
+                origin: use_.origin,
+                places: Vec::new(),
+            };
+            self.apply_via(&use_.need, use_.in_body, Some(&placing));
         }
         // What another module, or a later REPL entry, reads of this
         // module's impls and traits: the needs, decided.
@@ -551,5 +813,88 @@ fn mentions_type_of(ty: &Type, subject: &Type, apply: &dyn Fn(&Type) -> Type) ->
         Type::Map(k, v) => within(k) || within(v),
         Type::AnonRecord { fields, .. } => fields.values().any(within),
         _ => false,
+    }
+}
+
+/// A hash of the shape of `ty`: every type variable is one shape (what a
+/// call leaves general is new at each call).
+fn shape_hash(ty: &Type) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn walk(ty: &Type, h: &mut std::collections::hash_map::DefaultHasher) {
+        std::mem::discriminant(ty).hash(h);
+        match ty {
+            Type::Generic(name, args) => {
+                name.id.hash(h);
+                args.iter().for_each(|t| walk(t, h));
+            }
+            Type::Rigid(r) => r.var.hash(h),
+            Type::Fun(params, ret) => {
+                params.iter().for_each(|t| walk(t, h));
+                walk(ret, h);
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, h),
+            Type::Map(k, v) => {
+                walk(k, h);
+                walk(v, h);
+            }
+            Type::Tuple(ts) => ts.iter().for_each(|t| walk(t, h)),
+            _ => {}
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    walk(ty, &mut h);
+    h.finish()
+}
+
+/// Whether `a` and `b` have one shape: equal, any type variable being
+/// any other.
+fn same_shape(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Var(_), Type::Var(_)) => true,
+        (Type::Generic(x, xs), Type::Generic(y, ys)) => {
+            x == y && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| same_shape(x, y))
+        }
+        (Type::Fun(xs, x), Type::Fun(ys, y)) => {
+            xs.len() == ys.len()
+                && xs.iter().zip(ys).all(|(x, y)| same_shape(x, y))
+                && same_shape(x, y)
+        }
+        (Type::List(x), Type::List(y))
+        | (Type::Set(x), Type::Set(y))
+        | (Type::Channel(x), Type::Channel(y)) => same_shape(x, y),
+        (Type::Map(xk, xv), Type::Map(yk, yv)) => same_shape(xk, yk) && same_shape(xv, yv),
+        (Type::Tuple(xs), Type::Tuple(ys)) => {
+            xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| same_shape(x, y))
+        }
+        (x, y) => x == y,
+    }
+}
+
+/// Bind each of the variables `vars` of `pattern` to the part of `ty` at
+/// its place, into `mapping` (the first place a variable is at decides).
+fn match_type(pattern: &Type, ty: &Type, vars: &[TyVar], mapping: &mut HashMap<TyVar, Type>) {
+    let mut zip = |xs: &[Type], ys: &[Type]| {
+        for (x, y) in xs.iter().zip(ys) {
+            match_type(x, y, vars, mapping);
+        }
+    };
+    match (pattern, ty) {
+        (Type::Var(v), _) if vars.contains(v) => {
+            mapping.entry(*v).or_insert_with(|| ty.clone());
+        }
+        (Type::Generic(x, xs), Type::Generic(y, ys)) if x == y => zip(xs, ys),
+        (Type::Tuple(xs), Type::Tuple(ys)) => zip(xs, ys),
+        (Type::Fun(xs, x), Type::Fun(ys, y)) => {
+            zip(xs, ys);
+            match_type(x, y, vars, mapping);
+        }
+        (Type::List(x), Type::List(y))
+        | (Type::Set(x), Type::Set(y))
+        | (Type::Channel(x), Type::Channel(y)) => match_type(x, y, vars, mapping),
+        (Type::Map(xk, xv), Type::Map(yk, yv)) => {
+            match_type(xk, yk, vars, mapping);
+            match_type(xv, yv, vars, mapping);
+        }
+        _ => {}
     }
 }

@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- A closure that takes the type as its own parameter and calls a trait
+-- method on a value whose type is a type variable (a bounded parameter
+-- of a generic function, `self` in a default method) passes the type on
+-- like the function it is in: each call that gives the type is checked.
+import json
+
+type Blob { data: Bytes }
+type Fine { n: Int }
+type Src { s: String }
+
+trait Loader {
+  fn text(self) -> String
+  fn load(self, type a) -> Result(a, json.JsonError)
+  fn load_by_closure(self, type a) -> Result(a, json.JsonError) {
+    let g = { t -> self.load(t) }
+    g(a)
+  }
+}
+
+trait Loader for Src {
+  fn text(self) -> String {
+    self.s
+  }
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}
+
+fn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+  let g = { t -> l.load(t) }
+  g(b)
+}
+
+fn main() {
+  let src = Src { s: "\{\"n\": 1}" }
+  let _ = go(src, Fine)
+  let _ = go(src, Blob)
+  let _ = src.load_by_closure(Blob)
+}

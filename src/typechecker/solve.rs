@@ -156,6 +156,7 @@ impl TypeChecker {
                 body,
             } => {
                 let passer = self.passer_at(passer, &origin);
+                self.unplaced.push(self.given_waiting.len());
                 self.given_waiting.push(super::builtin_needs::GivenUse {
                     given,
                     subject,
@@ -193,7 +194,18 @@ impl TypeChecker {
             },
             other => other,
         };
+        let decoder = matches!(
+            pred,
+            Pred::Builtin {
+                check: BuiltinCheck::Decodes { .. },
+                ..
+            }
+        );
         self.want_goal(Goal::Pred(pred), origin);
+        let k = self.wanted.len() - 1;
+        if decoder && !self.wanted[k].solved {
+            self.waiting_decoders.push(k);
+        }
     }
 
     /// `goal` waits for its type, or is decided now if the type is known.
@@ -328,7 +340,10 @@ impl TypeChecker {
                         method_ty,
                         passer,
                     }) => {
-                        if !matches!(self.apply(&receiver), Type::Var(_)) {
+                        // (On an annotation variable it waits for the
+                        // scope's end: a closure the call is in may be
+                        // general in the type it gives, `generalize`.)
+                        if !matches!(self.apply(&receiver), Type::Var(_) | Type::Rigid(_)) {
                             self.wanted[i].solved = true;
                             let need = super::builtin_needs::ViaNeed {
                                 tr,
@@ -337,7 +352,7 @@ impl TypeChecker {
                                 method_ty,
                             };
                             let in_body = self.body_owner;
-                            self.via_owed(need, passer, origin, &[], in_body);
+                            self.via_owed(need, passer, origin, in_body);
                         }
                     }
                     // (Never wanted: `given_waiting`.)

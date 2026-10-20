@@ -1487,6 +1487,13 @@ impl TypeChecker {
                     let passer = self.user_callee(callee);
                     self.point_at_type_arguments(&given, passer);
                 }
+                // A type this call gives its callee is placed here: no later
+                // call is its place.
+                for k in given_before..self.given_waiting.len() {
+                    if !matches!(self.apply(&self.given_waiting[k].subject), Type::Var(_)) {
+                        self.given_waiting[k].placed = true;
+                    }
+                }
                 // A call supplies exactly as many arguments as the callee
                 // has parameters, the piped value and the receiver of a
                 // method call among them.
