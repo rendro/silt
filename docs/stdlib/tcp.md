@@ -252,9 +252,15 @@ fn serve(conn, cert, key) {
 
 fn main() {
   -- (Build silt with `--features tcp-tls` for this function.)
-  when let Ok(cert_text) = io.read_file("server.crt") else { panic("no cert") }
-  when let Ok(key_text) = io.read_file("server.key") else { panic("no key") }
-  when let Ok(listener) = tcp.listen("0.0.0.0:8443") else { panic("cannot listen") }
+  when let Ok(cert_text) = io.read_file("server.crt") else {
+    panic("no cert")
+  }
+  when let Ok(key_text) = io.read_file("server.key") else {
+    panic("no key")
+  }
+  when let Ok(listener) = tcp.listen("0.0.0.0:8443") else {
+    panic("cannot listen")
+  }
   let cert = bytes.from_string(cert_text)
   let key = bytes.from_string(key_text)
   loop _ = () {
@@ -291,11 +297,21 @@ import tcp
 fn main() {
   -- Load the server identity and the CA bundle that signs your
   -- clients. (Build silt with `--features tcp-tls` for this function.)
-  when let Ok(cert) = io.read_file("server.crt") else { panic("no cert") }
-  when let Ok(key) = io.read_file("server.key") else { panic("no key") }
-  when let Ok(client_ca) = io.read_file("clients-ca.crt") else { panic("no CA bundle") }
-  when let Ok(listener) = tcp.listen("0.0.0.0:8443") else { panic("cannot listen") }
-  when let Ok(conn) = tcp.accept(listener) else { panic("accept failed") }
+  when let Ok(cert) = io.read_file("server.crt") else {
+    panic("no cert")
+  }
+  when let Ok(key) = io.read_file("server.key") else {
+    panic("no key")
+  }
+  when let Ok(client_ca) = io.read_file("clients-ca.crt") else {
+    panic("no CA bundle")
+  }
+  when let Ok(listener) = tcp.listen("0.0.0.0:8443") else {
+    panic("cannot listen")
+  }
+  when let Ok(conn) = tcp.accept(listener) else {
+    panic("accept failed")
+  }
   match tcp.tls_server_mtls(
     conn,
     bytes.from_string(cert),
