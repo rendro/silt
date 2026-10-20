@@ -65,21 +65,27 @@ impl Server {
             && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
             && let Some(view) = self.imported_module(doc, module)
         {
-            let file = view
-                .uri
-                .path()
-                .as_str()
-                .rsplit('/')
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("```silt\nmodule {}\n```\n\n{file}", resolve(module)),
-                }),
-                range: None,
-            });
+            return Some(markdown(Self::module_hover(&view, module)));
+        }
+
+        // The module an import names (`list` in `import list`).
+        if let Some(value) = self.imported_module_hover(doc, cursor) {
+            return Some(markdown(value));
+        }
+
+        // A type the program declares, named (`P` in `p: P`): its
+        // declaration as it is written, and its doc comment.
+        if let Some(text) = self
+            .declared_type_at(uri, cursor)
+            .and_then(|ty| self.type_declaration_text(doc, ty))
+        {
+            let mut value = format!("```silt\n{text}\n```");
+            if let Named::Definition(info) = self.named_at(uri, cursor)
+                && let Some(doc) = info.doc
+            {
+                value.push_str(&format!("\n\n---\n\n{doc}"));
+            }
+            return Some(markdown(value));
         }
 
         let ty = find_type_at_offset(program, cursor);
@@ -187,5 +193,16 @@ impl Server {
             }),
             range: None,
         })
+    }
+}
+
+/// A hover of the markdown `value`.
+fn markdown(value: String) -> Hover {
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: None,
     }
 }

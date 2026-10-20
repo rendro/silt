@@ -98,6 +98,58 @@ impl Server {
         self.module_view(doc, module_name)
     }
 
+    /// The hover of the module `module` of the program: its name and
+    /// file.
+    pub(super) fn module_hover(view: &ModuleView, module: Symbol) -> String {
+        let file = view
+            .uri
+            .path()
+            .as_str()
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        format!(
+            "```silt\nmodule {}\n```\n\n{file}",
+            crate::intern::resolve(module)
+        )
+    }
+
+    /// The hover of the module an import of the open document `doc`
+    /// names at byte `cursor` (`list` in `import list`): a module of the
+    /// program as `module_hover` shows it, one of silt's own with the
+    /// first paragraph of its reference page.
+    pub(super) fn imported_module_hover(&self, doc: &Document, cursor: usize) -> Option<String> {
+        let program = doc.program.as_ref()?;
+        let text = &doc.source.text;
+        let module = program.decls.iter().find_map(|decl| {
+            let Decl::Import(target, span) = decl else {
+                return None;
+            };
+            let module = target.module();
+            let rest = text
+                .get(span.start as usize..span.end as usize)?
+                .strip_prefix("import")?;
+            let start = span.start as usize + "import".len() + rest.len() - rest.trim_start().len();
+            let end = start + crate::intern::resolve(module).len();
+            (start..=end).contains(&cursor).then_some(module)
+        })?;
+        if let Some(view) = self.module_view(doc, module) {
+            return Some(Self::module_hover(&view, module));
+        }
+        let name = crate::intern::resolve(module);
+        let page = crate::builtins::registry::registry()
+            .enabled_modules()
+            .find(|m| m.name == name)?
+            .page;
+        let about = crate::builtins::registry::docs::strip_frontmatter(page)
+            .split("\n\n")
+            .map(str::trim)
+            .find(|paragraph| !paragraph.is_empty() && !paragraph.starts_with('#'))
+            .unwrap_or_default();
+        Some(format!("```silt\nmodule {name}\n```\n\n{about}"))
+    }
+
     /// The module that binds `name` bare in the open document `doc`
     /// through `import m.{ name }` (of two, the first in the one order
     /// of imports, as the checker binds it).

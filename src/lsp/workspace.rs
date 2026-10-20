@@ -229,6 +229,22 @@ impl Server {
         }
     }
 
+    /// The type a program declares that the name at byte `cursor` of
+    /// the open document `uri` names (`P` in `p: P`), if it names one.
+    pub(super) fn declared_type_at(&self, uri: &Uri, cursor: usize) -> Option<crate::defs::TypeId> {
+        let (_, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
+            return None;
+        };
+        let module = self.documents.get(uri)?.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        keys.iter().find_map(
+            |key| match session.defs().get(def_of_key(session, key)?).kind {
+                DefKind::Type(ty) => Some(ty),
+                _ => None,
+            },
+        )
+    }
+
     /// The builtin definition the name at byte `cursor` of the open
     /// document `uri` means, as it is reached qualified: `io.NotFound`,
     /// `list.map`; a name of the prelude bare.
@@ -428,6 +444,57 @@ impl Server {
         }
         let (module, span) = of_trait?;
         self.location_in(session, module, span)
+    }
+
+    /// The declaration of the type `id` in the session of the open
+    /// document `doc`, with the module that declares it.
+    fn type_decl_of(
+        &self,
+        doc: &Document,
+        id: crate::defs::TypeId,
+    ) -> Option<(&Session, ModuleId, &TypeDecl)> {
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let def = session.defs().get(id.0);
+        if def.module.is_builtin() || !def.span.is_in_source() {
+            return None;
+        }
+        let analysis = session.module_analysis(def.module)?;
+        analysis.ast.decls.iter().find_map(|decl| match decl {
+            Decl::Type(td) if td.name_span == def.span => Some((session, def.module, td)),
+            _ => None,
+        })
+    }
+
+    /// Where the field `field` of the record type `id` is declared.
+    pub(super) fn field_declaration(
+        &self,
+        doc: &Document,
+        id: crate::defs::TypeId,
+        field: Symbol,
+    ) -> Option<Location> {
+        let (session, module, td) = self.type_decl_of(doc, id)?;
+        let TypeBody::Record(fields) = &td.body else {
+            return None;
+        };
+        let declared = fields.iter().find(|f| f.name == field)?;
+        self.location_in(session, module, declared.name_span)
+    }
+
+    /// The declaration of the type `id` as it is written, for hover.
+    pub(super) fn type_declaration_text(
+        &self,
+        doc: &Document,
+        id: crate::defs::TypeId,
+    ) -> Option<String> {
+        let (session, module, td) = self.type_decl_of(doc, id)?;
+        let source = session
+            .sources()
+            .get(session.graph().module(module).file?)?;
+        source
+            .text
+            .get(td.span.start as usize..td.span.end as usize)
+            .map(str::to_string)
     }
 
     /// The definition of the type `id` of the session of the open

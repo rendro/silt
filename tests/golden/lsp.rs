@@ -544,6 +544,14 @@ impl Asked<'_> {
                 "textDocument/definition",
                 json!({"textDocument": doc, "position": at()?}),
             ),
+            "type-definition" => (
+                "textDocument/typeDefinition",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
+            "completion" => (
+                "textDocument/completion",
+                json!({"textDocument": doc, "position": at()?}),
+            ),
             "highlight" => (
                 "textDocument/documentHighlight",
                 json!({"textDocument": doc, "position": at()?}),
@@ -621,13 +629,22 @@ impl Asked<'_> {
         let what = request.split_whitespace().next().unwrap_or("");
         let mut lines: Vec<String> = match what {
             // A definition is one location or a list of them.
-            "references" | "definition" => result
+            "references" | "definition" | "type-definition" => result
                 .as_array()
                 .map(|a| a.as_slice())
                 .unwrap_or(std::slice::from_ref(result))
                 .iter()
                 .filter(|loc| loc.is_object())
                 .map(|loc| self.location(loc["uri"].as_str().unwrap_or(""), &loc["range"]))
+                .collect(),
+            // The labels offered, sorted.
+            "completion" => result["items"]
+                .as_array()
+                .or_else(|| result.as_array())
+                .map(|a| a.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|item| item["label"].as_str().map(str::to_string))
                 .collect(),
             "highlight" => result
                 .as_array()
