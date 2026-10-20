@@ -1,0 +1,37 @@
+-- A cursor batch whose rows cannot be decoded (a NULL for a String
+-- field in its first row) is the call's `Err`, and ends the cursor, as
+-- a stream ends after its `Err`: every later `cursor_next` is the same
+-- error, so a loop that goes on after it does not read an empty batch
+-- as the end, with the failed batch's good rows lost. The transaction
+-- goes on, and `cursor_close` closes the cursor.
+import env
+import postgres
+
+type R { n: Int, s: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let done = postgres.transact(db) { tx ->
+        let sql = "SELECT g AS n, CASE WHEN g = 3 THEN NULL ELSE 'z' END AS s FROM generate_series(1, 4) g"
+        let c = postgres.cursor(tx, sql, (), 2, R)?
+        println("batch 1: {postgres.cursor_next(c)}")
+        println("batch 2: {postgres.cursor_next(c)}")
+        println("batch 3: {postgres.cursor_next(c)}")
+        println("batch 4: {postgres.cursor_next(c)}")
+        println("close: {postgres.cursor_close(c)}")
+        postgres.query(tx, "SELECT 7 AS n, 'q' AS s", (), R)
+      }
+      println("transact: {done}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

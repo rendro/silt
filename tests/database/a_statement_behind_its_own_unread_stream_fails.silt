@@ -1,0 +1,44 @@
+-- A stream on a transaction holds the transaction's connection until
+-- it has sent its last row. Here nobody reads it: once its channel (of
+-- 256 rows) is full it waits for room, and the callback's next
+-- statement fails at once, rather than wait for ever for a stream only
+-- its own task would read. Once the stream is closed (or read to its
+-- end) the transaction's statements run again, and it commits.
+import channel
+import env
+import postgres
+
+type N { n: Int }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let done = postgres.transact(db) { tx ->
+        let rows = postgres.stream(tx, "SELECT g::int8 AS n FROM generate_series(1, 1000) g", (), N)?
+        -- (The first row: the stream has the connection.)
+        println("first row: {channel.receive(rows)}")
+        match postgres.query(tx, "SELECT 1::int8 AS n", (), N) {
+          Ok(found) -> println("the statement ran: {found}")
+          Err(postgres.Other(text)) -> println("the statement: Other({text})")
+          Err(e) -> println("the statement: {e.message()}")
+        }
+        match postgres.execute(tx, "SELECT 1", ()) {
+          Ok(n) -> println("execute ran: {n}")
+          Err(e) -> println("execute: {e.message()}")
+        }
+        channel.close(rows)
+        postgres.query(tx, "SELECT 2::int8 AS n", (), N)
+      }
+      println("transact: {done}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

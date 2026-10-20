@@ -1,0 +1,6 @@
+batch 1: Ok([R {n: 1, s: z}, R {n: 2, s: z}])
+batch 2: Err(postgres type mismatch on column `s`: expected String, got NULL)
+batch 3: Err(postgres type mismatch on column `s`: expected String, got NULL)
+batch 4: Err(postgres type mismatch on column `s`: expected String, got NULL)
+close: Ok(())
+transact: Ok([R {n: 7, s: q}])

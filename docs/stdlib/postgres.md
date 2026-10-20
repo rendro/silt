@@ -251,6 +251,11 @@ alike. What becomes of the statement in the server differs:
   for it (a request that reaches the server late would cancel the
   connection's next statement).
 
+  This is for a statement that has the transaction's connection. One
+  that still waits for it, while another statement of the transaction
+  runs (from a task the callback started), gives up: it is not sent,
+  nothing is cancelled, and the transaction goes on.
+
 Around the callback `postgres.transact` waits too, and a deadline or a
 cancel ends the task there at once as well. While it waits for a
 connection of the pool or for its `BEGIN`, the transaction is not
@@ -287,17 +292,25 @@ worker is dropped there, as a task that waits to send is. A stream
 opened on a `PgTx` ends with the transaction: its channel is closed
 when the transaction commits or rolls back, and the rows it holds can
 still be received. While it is open it holds the transaction's
-connection: the transaction's other statements wait until its worker
-has sent the last row or has stopped. A stream on a `PgTx` whose
+connection: the transaction's other statements wait while its worker
+fetches rows, until it has sent the last row or has stopped. While the
+worker waits for room in the channel (nobody reads it), a statement of
+the transaction does not wait, which would be for ever where the task
+that would read the stream is the one that waits for the statement:
+it is `Err(Other("postgres: a stream of this transaction is still
+open; read or close it first"))` at once. A stream on a `PgTx` whose
 reader is gone (cancelled, say) without closing the channel therefore
-holds the transaction until the transaction ends or the program does.
+holds the connection until the transaction ends or the program does.
 
 `postgres.cursor(tx, sql, params, batch_size, T)` is the lower-level
 primitive: it `DECLARE`s a server-side cursor inside an open
 transaction and returns an opaque `PgCursor(T)` that `cursor_next` can
 repeatedly drain in batches of `List(T)`. Its columns are checked
 against `T` when it is declared, so that is where a mismatch is an
-error. Always call `cursor_close` (or let the transaction
+error. A batch that cannot be decoded (a `NULL` for a field that is no
+`Option`, say), or that the server fails, is `cursor_next`'s `Err`, and
+ends the cursor, as a stream ends after its `Err`: every later
+`cursor_next` is the same error. Always call `cursor_close` (or let the transaction
 commit/rollback, which cleans up).
 
 ## LISTEN / NOTIFY

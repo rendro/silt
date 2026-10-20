@@ -239,4 +239,7 @@ cases!(
     a_pool_opens_connections_when_it_needs_them,
     a_channel_is_notified_under_the_name_it_was_listened_on,
     a_connection_the_server_ended_is_not_taken,
+    a_statement_that_never_got_the_connection_gives_up,
+    a_statement_behind_its_own_unread_stream_fails,
+    a_cursor_ends_at_a_batch_that_fails,
 );
