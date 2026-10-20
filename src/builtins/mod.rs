@@ -11,6 +11,7 @@ pub mod concurrency;
 pub mod core;
 pub mod crypto;
 pub(crate) mod data;
+pub(crate) mod decode;
 pub mod encoding;
 pub mod http;
 pub mod io;

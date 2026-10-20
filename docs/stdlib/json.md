@@ -92,7 +92,8 @@ equally to a decoder imported by name (`import json.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
 decoder gives an `Err(Other(msg))` whose message names the field and its
-record, and a type the function does not take is a run-time error.
+record, whatever the document holds there (an `Option` field whose key is
+left out too), and a type the function does not take is a run-time error.
 
 
 ## Nesting limits
