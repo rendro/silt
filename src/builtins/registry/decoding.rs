@@ -217,3 +217,264 @@ impl Decoding {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins::decode::{self, Error};
+    use crate::builtins::registry::{Row, registry};
+    use crate::builtins::typed::Type;
+    use crate::typeinfo::{TypeInfo, ty};
+
+    /// The leaves as a program writes them.
+    fn written(leaf: Leaf) -> &'static str {
+        match leaf {
+            Leaf::Date => "time.Date",
+            Leaf::Time => "time.Time",
+            Leaf::DateTime => "time.DateTime",
+            other => other.name(),
+        }
+    }
+
+    /// What a program imports: `postgres` where it is built.
+    const IMPORTS: &str = match cfg!(feature = "postgres") {
+        true => "import json\nimport postgres\nimport time\nimport toml\n",
+        false => "import json\nimport time\nimport toml\n",
+    };
+
+    /// A program with the record types `R { f: field }` and `Inner { x:
+    /// leaf }`, and `body`.
+    fn program(leaf: &str, field: &str, body: &str) -> String {
+        format!(
+            "{IMPORTS}type Color {{ Red, Blue }}\ntype Gen(t) {{ v: t }}\n\
+             type Inner {{ x: {leaf} }}\ntype R {{ f: {field} }}\n{body}\n"
+        )
+    }
+
+    /// A call of `row` whose type argument is `ty`, its other arguments
+    /// values of their types (`db` and `tx` a pool and a transaction).
+    fn call(row: &Row, ty: &str) -> String {
+        let (label, params) = row.qualified_signature(row.module).expect("a function");
+        let args: Vec<String> = params
+            .iter()
+            .map(|[start, end]| {
+                let param = &label[*start as usize..*end as usize];
+                let param_type = param.split_once(": ").map_or("", |(_, t)| t);
+                match param_type {
+                    _ if param.starts_with("type ") => ty.to_string(),
+                    "String" => "\"\"".to_string(),
+                    "Int" => "1".to_string(),
+                    "Value" => "json.Null".to_string(),
+                    "PgTx" => "tx".to_string(),
+                    // The connection, a pool; the parameters, none.
+                    "a" => "db".to_string(),
+                    "p" => "()".to_string(),
+                    other => panic!("no argument for `{param}` ({other}) of {}", row.qualified()),
+                }
+            })
+            .collect();
+        format!("{}({})", row.qualified(), args.join(", "))
+    }
+
+    /// The function that calls `row` with the type `ty`.
+    fn caller(row: &Row, ty: &str) -> String {
+        let params = match row.module {
+            "postgres" => "db: postgres.PgPool, tx: postgres.PgTx",
+            _ => "",
+        };
+        format!("fn call({params}) {{\n  {}\n}}", call(row, ty))
+    }
+
+    /// The compile errors of `source`, none if it compiles.
+    fn compiled(
+        source: &str,
+    ) -> Result<crate::session::Program, Vec<crate::diagnostic::Diagnostic>> {
+        crate::session::testing::compile_decls_str(source)
+    }
+
+    /// The leaves a help text of the compiler names: those it lists
+    /// before `List(T)`.
+    fn helped(help: &str) -> Vec<&str> {
+        let list = help
+            .strip_prefix("decodable field types are ")
+            .and_then(|rest| rest.split_once(", List(T)"))
+            .map_or("", |(leaves, _)| leaves);
+        list.split(", ").collect()
+    }
+
+    /// The part a compile error of a field says has no decoder.
+    fn lacking_part(message: &str) -> Option<&str> {
+        match message.split_once(", and `") {
+            Some((_, rest)) => rest.split_once('`').map(|(part, _)| part),
+            None => message
+                .rsplit_once("has type ")
+                .and_then(|(_, rest)| rest.split('`').nth(1)),
+        }
+    }
+
+    /// Every decoding builtin of the registry, for field types made of
+    /// each leaf (the leaf, a list, a map and a tuple of it, a record
+    /// type that has a field of it and a list of that record) and of
+    /// types no decoder has: the compiler accepts a record with a field
+    /// of the type exactly when the run time decodes it (json's and
+    /// toml's decoders reading a document; postgres's plan, which needs
+    /// no server, by its first step), and the help of a refusal names the
+    /// leaves the family decodes and not the leaf it lacks.
+    #[test]
+    fn compile_check_help_and_run_time_agree_on_every_field_type() {
+        let rows: Vec<&Row> = registry()
+            .modules
+            .iter()
+            .flat_map(|module| module.enabled_rows())
+            .filter(|row| row.decoding.is_some())
+            .collect();
+        assert!(rows.len() >= 7, "the decoding rows: {}", rows.len());
+        let mut fields: Vec<(&str, String)> = Vec::new();
+        for leaf in Leaf::ALL {
+            let l = written(leaf);
+            for field in [
+                l.to_string(),
+                format!("List({l})"),
+                format!("Map(String, {l})"),
+                format!("(Int, {l})"),
+                "Inner".to_string(),
+                "Option(List(Inner))".to_string(),
+            ] {
+                fields.push((l, field));
+            }
+        }
+        for field in ["Set(Int)", "Color", "Map(Int, Int)", "Gen(Int)"] {
+            fields.push(("Int", field.to_string()));
+        }
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        let rt = &vm.runtime;
+        let mut compared = 0;
+        for (inner, field) in &fields {
+            // The types as the run time has them: through `type a`, which
+            // the compiler does not check.
+            let generic = program(
+                inner,
+                field,
+                "fn go(type a) -> a {\n  panic(\"\")\n}\nfn main() {\n  let _: R = go(R)\n}",
+            );
+            let program_types = compiled(&generic)
+                .unwrap_or_else(|e| panic!("{field}: {}\n{generic}", e[0].message))
+                .types;
+            for info in program_types.iter() {
+                rt.types.lock().insert(info.clone());
+            }
+            let r: &std::sync::Arc<TypeInfo> = program_types
+                .iter()
+                .find(|info| info.name == "R")
+                .expect("R is described");
+            let (_, f) = &r.fields()[0];
+            for row in &rows {
+                let decoding = row.decoding.expect("a decoder");
+                let family = decoding.family;
+                let name = row.qualified();
+                // Accepted at run time: the type argument is taken, and
+                // the field is decoded or found missing, not refused.
+                let target = decode::target(&name, Type::Named(r)).expect("a record type is taken");
+                let decoded = match family {
+                    Family::Json => decode::document(rt, &target, &serde_json::json!({})),
+                    Family::Toml => {
+                        decode::document(rt, &target, &::toml::Value::Table(Default::default()))
+                    }
+                    Family::Postgres => match decode::undecodable(rt, family, "R", "f", f) {
+                        Some(message) => Err(Error::Other(message)),
+                        None => Ok(crate::value::Value::Unit),
+                    },
+                };
+                let run_time = !matches!(
+                    &decoded,
+                    Err(Error::Other(message)) if message.starts_with("cannot decode field")
+                );
+                let direct = program(inner, field, &caller(row, "R"));
+                let compile = compiled(&direct);
+                assert_eq!(
+                    compile.is_ok(),
+                    run_time,
+                    "{name}, a field of {field}: the compiler {} it, the run time {}\n{direct}",
+                    if compile.is_ok() {
+                        "accepts"
+                    } else {
+                        "refuses"
+                    },
+                    match &decoded {
+                        Err(Error::Other(message)) => message.clone(),
+                        _ => "decodes it".to_string(),
+                    }
+                );
+                let help = family.help();
+                let listed = helped(&help);
+                assert_eq!(
+                    listed,
+                    family
+                        .leaves()
+                        .iter()
+                        .map(|leaf| leaf.name())
+                        .collect::<Vec<_>>(),
+                    "{help}"
+                );
+                match compile {
+                    Ok(_) => {
+                        // Every leaf of an accepted field is one the help names.
+                        for leaf in Leaf::ALL {
+                            let l = written(leaf);
+                            if field.contains(l) || (field.contains("Inner") && l == *inner) {
+                                assert!(listed.contains(&leaf.name()), "{name}, {field}: {help}");
+                            }
+                        }
+                    }
+                    Err(errors) => {
+                        let error = &errors[0];
+                        let help_text = error.help.join("\n");
+                        if let Some(part) = lacking_part(&error.message)
+                            && Leaf::ALL.iter().any(|leaf| leaf.name() == part)
+                        {
+                            match family.decodes(
+                                Leaf::ALL
+                                    .into_iter()
+                                    .find(|leaf| leaf.name() == part)
+                                    .expect("a leaf"),
+                            ) {
+                                // Decoded in some places only: the help says where.
+                                true => assert!(
+                                    help_text.contains(family.bytes_help())
+                                        && !family.bytes_help().is_empty(),
+                                    "{name}, {field}: {help_text}"
+                                ),
+                                false => assert!(
+                                    !helped(&help_text).contains(&part),
+                                    "{name}, {field}: {help_text}"
+                                ),
+                            }
+                        }
+                    }
+                }
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, fields.len() * rows.len());
+        // A type argument that is a primitive type or `json.Value`: the
+        // compiler takes it where the run time does.
+        for row in &rows {
+            let name = row.qualified();
+            for (written, ty) in [
+                ("Int", Type::Primitive(FieldType::Int)),
+                ("String", Type::Primitive(FieldType::String)),
+                (
+                    "json.Value",
+                    Type::Named(crate::typeinfo::builtin_type(ty::JSON_VALUE)),
+                ),
+            ] {
+                let direct = program("Int", "Int", &caller(row, written));
+                assert_eq!(
+                    compiled(&direct).is_ok(),
+                    decode::target(&name, ty).is_ok(),
+                    "{name}({written})\n{direct}"
+                );
+            }
+        }
+    }
+}
