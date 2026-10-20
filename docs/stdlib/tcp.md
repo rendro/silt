@@ -59,7 +59,7 @@ fn main() {
   match tcp.listen("127.0.0.1:8080") {
     Ok(listener) -> {
       println("listening on 127.0.0.1:8080")
-      loop {
+      loop _ = () {
         match tcp.accept(listener) {
           Ok(conn) -> {
             let _ = task.spawn { ->
@@ -71,8 +71,12 @@ fn main() {
                 Err(_) -> tcp.close(conn)
               }
             }
+            loop(())
           }
-          Err(e) -> println("accept error: {e.message()}")
+          Err(e) -> {
+            println("accept error: {e.message()}")
+            loop(())
+          }
         }
       }
     }
