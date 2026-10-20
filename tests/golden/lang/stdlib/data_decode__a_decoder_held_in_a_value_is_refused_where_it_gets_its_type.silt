@@ -1,10 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- A decoder held in a local, a list, an Option or a record field, or
--- returned by a function, is refused at the type argument of the call
--- that gives it its type, with no note: no function passes the type on.
--- A function that does pass it on (it gives a decoder and a type it is
--- given to each other) is named in a note.
+-- returned by a function, or given to a function together with a type
+-- it gives the decoder, is refused at the type argument of the call that
+-- gives it its type.
 import json
 
 type Blob { data: Bytes }

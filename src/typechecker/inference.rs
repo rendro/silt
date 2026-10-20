@@ -3364,10 +3364,7 @@ impl TypeChecker {
                     PatternKind::Ident(name) => {
                         let scheme = if is_value {
                             self.exit_level();
-                            self.passing_on = matches!(value.kind, ExprKind::Lambda { .. });
-                            let scheme = self.generalize_let(&val_ty, &own);
-                            self.passing_on = false;
-                            scheme
+                            self.generalize_let(&val_ty, &own)
                         } else {
                             Scheme::mono(self.apply(&val_ty))
                         };
