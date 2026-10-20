@@ -800,10 +800,39 @@ impl TypeChecker {
                 if self.of_every_shape(name, &entry, field, span) {
                     return Some(Type::Error);
                 }
+                if entry.structural {
+                    return Some(self.structural_type_method(name, &inner, field, span));
+                }
                 self.method_trait = self.entry_trait(&entry, field);
                 let scheme = self.method_scheme(&entry);
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
+            }
+        }
+    }
+
+    /// `T.method` where the method is one of a builtin structural trait
+    /// that the type `ty`, of the instance `inner`, has by its structure
+    /// (`Int.display`, `P.compare`): the method `structural_method`
+    /// gives a value of `inner`. Written through the type, every
+    /// parameter is an argument of the call, the receiver too.
+    fn structural_type_method(
+        &mut self,
+        ty: TypeRef,
+        inner: &Type,
+        field: Symbol,
+        span: Span,
+    ) -> Type {
+        let method = self.structural_method(inner, field, span);
+        self.last_field_access_was_method = false;
+        match method {
+            Some(method) => self.apply(&method),
+            // The type has the method by its structure, so the
+            // receiver's head is the type's: `structural_method` gives
+            // it a type.
+            None => {
+                debug_assert!(false, "structural method {ty}.{field} without a type");
+                Type::Error
             }
         }
     }
@@ -824,17 +853,23 @@ impl TypeChecker {
             && matches!(&entry.method_type, Type::Fun(params, _)
                 if matches!(params.first(), Some(Type::Var(_))));
         if every {
-            self.error(
-                Code::InvalidMethodCall,
-                format!(
-                    "method `{field}` of the impl for every `{0}` is called on a value: \
-                     write `x.{field}(..)`, not `{0}.{field}`",
-                    ty.name
-                ),
-                span,
-            );
+            self.of_every_shape_error(ty, field, span);
         }
         every
+    }
+
+    /// Report `Fn.field` or `Tuple.field`: the method is found by the
+    /// value it is called on.
+    fn of_every_shape_error(&mut self, ty: TypeRef, field: Symbol, span: Span) {
+        self.error(
+            Code::InvalidMethodCall,
+            format!(
+                "method `{field}` of the impl for every `{0}` is called on a value: \
+                 write `x.{field}(..)`, not `{0}.{field}`",
+                ty.name
+            ),
+            span,
+        );
     }
 
     /// Report `T.field` where the type `T` has no method `field`. A builtin
@@ -1759,6 +1794,21 @@ impl TypeChecker {
                         if self.of_every_shape(key.0, &entry, field, span) {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
+                        }
+                        if entry.structural {
+                            let ty = match self.type_instance(key.0) {
+                                Some(inner) => {
+                                    self.structural_type_method(key.0, &inner, field, span)
+                                }
+                                // A type of every shape (`Tuple`): its
+                                // values have the method, not the type.
+                                None => {
+                                    self.of_every_shape_error(key.0, field, span);
+                                    Type::Error
+                                }
+                            };
+                            expr.ty = Some(ty.clone());
+                            return ty;
                         }
                         self.method_trait = self.entry_trait(&entry, field);
                         let scheme = self.method_scheme(&entry);

@@ -1618,7 +1618,16 @@ impl Vm {
             }
         }
         // No impl has the method for the receiver's type: what the
-        // call does then goes by the method's name.
+        // call does then goes by the method's name. Called through a
+        // type (`a.display(x)` for a `type a`, `t.compare(x, y)` for a
+        // type held in `t`), the descriptor only chose the type: the
+        // value the method is of is the first argument.
+        let argc = if descriptor_receiver && argc > 1 {
+            self.stack.remove(receiver_slot);
+            argc - 1
+        } else {
+            argc
+        };
         let receiver = self.stack[receiver_slot].clone();
         let slots = self.view.entry.clone();
         // (The compiler checks each function against the globals of
