@@ -376,6 +376,12 @@ pub(crate) fn record<D: Document>(
     for (name, field) in fields {
         let unsupported = without_bytes(rt, field);
         let field = unsupported.as_ref().unwrap_or(field);
+        // A field no decoder exists for is the error whatever the
+        // document holds there, its key left out too.
+        if let FieldType::Unsupported(declared) = field {
+            let message = unsupported_field_type_message(&ty.name, name, declared);
+            return Err(Error::Other(message));
+        }
         let at = at.key(name);
         values.push(match D::get(table, name) {
             Some(item) => value(rt, item, field, &at).map_err(|e| match e {
@@ -820,7 +826,10 @@ mod tests {
                 r#"{"b": []}"#,
                 "Other cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded",
             ),
-            (r#"{}"#, "MissingField b"),
+            (
+                r#"{}"#,
+                "Other cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded",
+            ),
         ];
         let no_bytes = no_bytes
             .iter()

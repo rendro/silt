@@ -487,7 +487,8 @@ mod tests {
 
     /// A field whose type holds `Bytes` has no decoder, whatever the
     /// document holds there: an empty list, a `null` for an `Option`,
-    /// or a list of numbers.
+    /// a list of numbers, or nothing (an `Option` whose key is left
+    /// out).
     #[test]
     fn a_field_that_holds_bytes_is_never_decoded() {
         use crate::defs::{DefId, TypeId};
@@ -499,6 +500,7 @@ mod tests {
                 FieldType::Option(Box::new(FieldType::Bytes)),
                 r#"{"b": null}"#,
             ),
+            (FieldType::Option(Box::new(FieldType::Bytes)), r#"{}"#),
             (
                 FieldType::Tuple(vec![FieldType::Int, FieldType::Bytes]),
                 r#"{"b": [1, 2]}"#,

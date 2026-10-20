@@ -376,14 +376,14 @@ mod tests {
     use crate::typeinfo::FieldType;
 
     /// A field whose type holds `Bytes` has no decoder, whatever the
-    /// document holds there, an empty array too.
+    /// document holds there, an empty array too, or nothing.
     #[test]
     fn a_field_that_holds_bytes_is_never_decoded() {
         use crate::defs::{DefId, TypeId};
         let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
         let fields = vec![("b".to_string(), FieldType::List(Box::new(FieldType::Bytes)))];
         let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
-        for text in ["b = []", "b = [1]"] {
+        for text in ["b = []", "b = [1]", ""] {
             let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
             let decoded = decode::result(
                 &RULES,
