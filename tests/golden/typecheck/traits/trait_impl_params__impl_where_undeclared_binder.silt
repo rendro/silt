@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: 'b'
 -- stderr-contains: not declared in the target type arguments
-type Box(T) { Box(T) }
+type Box(a) { Box(a) }
 trait Show { fn show(self) -> String }
 trait Show for Box(a) where b: Show {
   fn show(self) -> String {

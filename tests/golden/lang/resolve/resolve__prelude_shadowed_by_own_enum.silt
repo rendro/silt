@@ -1,6 +1,6 @@
 -- verdict: same
 -- A module's own declaration shadows the prelude: after
--- `type Maybe { Some(a), None }`, bare `Some` and `None` are `Maybe`'s,
+-- `type Maybe(a) { Some(a), None }`, bare `Some` and `None` are `Maybe`'s,
 -- and the prelude's are still `Option.Some` and `Option.None`.
 type Maybe(a) { Some(a), None }
 

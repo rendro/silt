@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- The parameters of a type declaration are distinct.
+type Pair(a, a) { left: a }
+
+fn main() {}

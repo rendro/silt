@@ -1,6 +1,6 @@
 -- A bound on the impl's type variable, on the impl's header: the body
 -- uses it, a direct call and a call through the trait owe it.
-type Box(T) { Box(T) }
+type Box(a) { Box(a) }
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
 trait Wrap { fn unwrap(self) -> String }

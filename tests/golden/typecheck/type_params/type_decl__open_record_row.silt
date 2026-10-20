@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A record type in a type declaration is closed: a row there could not
+-- be declared, and would be one row for every use of the type; a
+-- parameter is no row.
+type Wrap(r) { v: {x: Int, ...r} }
+
+type Tagged { Tagged({x: Int, ...r}) }
+
+type Open = {x: Int, ...r}
+
+type Param(r) = {x: Int, ...r}
+
+fn main() {
+  let w = Wrap { v: { x: 1, y: 2 } }
+  println(w.v.x)
+}

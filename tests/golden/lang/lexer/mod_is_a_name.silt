@@ -1,0 +1,10 @@
+-- `mod` is no keyword: it names a binding, a parameter and a field.
+fn half(mod: Int) -> Int {
+  mod / 2
+}
+
+fn main() {
+  let mod = 4
+  let r = { mod: mod }
+  println(half(r.mod))
+}

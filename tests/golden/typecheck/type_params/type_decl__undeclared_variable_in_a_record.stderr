@@ -1,0 +1,20 @@
+error[type]: type variable 'c' is not a parameter of 'Pair'
+ --> type_decl__undeclared_variable_in_a_record.silt:8:14
+   |
+ 8 |   right: Map(c, b),
+   |              ^ type variable 'c' is not a parameter of 'Pair'
+  = help: declare it after the type's name: `type Pair(a, c, b, d)`
+
+error[type]: type variable 'b' is not a parameter of 'Pair'
+ --> type_decl__undeclared_variable_in_a_record.silt:8:17
+   |
+ 8 |   right: Map(c, b),
+   |                 ^ type variable 'b' is not a parameter of 'Pair'
+  = help: declare it after the type's name: `type Pair(a, c, b, d)`
+
+error[type]: type variable 'd' is not a parameter of 'Pair'
+ --> type_decl__undeclared_variable_in_a_record.silt:9:13
+   |
+ 9 |   both: (b, d),
+   |             ^ type variable 'd' is not a parameter of 'Pair'
+  = help: declare it after the type's name: `type Pair(a, c, b, d)`

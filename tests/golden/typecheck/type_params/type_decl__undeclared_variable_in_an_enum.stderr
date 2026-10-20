@@ -1,0 +1,6 @@
+error[type]: type variable 'a' is not a parameter of 'Maybe'
+ --> type_decl__undeclared_variable_in_an_enum.silt:7:19
+   |
+ 7 | type Maybe { Some(a), None }
+   |                   ^ type variable 'a' is not a parameter of 'Maybe'
+  = help: declare it after the type's name: `type Maybe(a)`

@@ -1,4 +1,4 @@
-type Box(T) { Box(T) }
+type Box(a) { Box(a) }
 trait Unwrap { fn get(self) -> Int }
 trait Unwrap for Box(a) {
   fn get(self) -> Int { match self { Box(inner) -> 1 } }

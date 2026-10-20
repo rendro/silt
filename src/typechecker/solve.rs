@@ -785,12 +785,10 @@ impl TypeChecker {
             base_ty = self.apply(&open);
         }
         let (mut fields, tail): (BTreeMap<Symbol, Type>, RowTail) = match &base_ty {
-            // A declared record gives its fields: a field written after
-            // the spread is added, or replaces the record's by name.
+            // A declared record gives its fields.
             Type::Generic(name, args) if self.tables.records.contains_key(name) => (
                 self.instantiate_record_fields_with_args(*name, args)
                     .into_iter()
-                    .filter(|(n, _)| !with.iter().any(|(written, _)| written == n))
                     .collect(),
                 RowTail::Closed,
             ),

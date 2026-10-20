@@ -1,5 +1,71 @@
 use super::*;
 
+/// The type variables of a type declaration, for
+/// [`TypeChecker::resolve_declared`].
+pub(super) struct DeclVars {
+    /// Its parameters, and the variables reported as not being one.
+    known: std::collections::HashSet<Symbol>,
+    /// Each lowercase name its body writes where a type stands, and each
+    /// row (keyed `__row__r`, as `param_vars` keys it), in the order of
+    /// its first use, with the place of that use.
+    written: Vec<(Symbol, Span)>,
+}
+
+impl DeclVars {
+    fn of(td: &TypeDecl) -> Self {
+        fn write(written: &mut Vec<(Symbol, Span)>, name: Symbol, span: Span) {
+            if !written.iter().any(|(seen, _)| *seen == name) {
+                written.push((name, span));
+            }
+        }
+        fn walk(te: &TypeExpr, written: &mut Vec<(Symbol, Span)>) {
+            match &te.kind {
+                TypeExprKind::Named {
+                    module: None,
+                    name,
+                    name_span,
+                } if resolve(*name).starts_with(char::is_lowercase) => {
+                    write(written, *name, *name_span)
+                }
+                TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
+                TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+                    args.iter().for_each(|arg| walk(arg, written));
+                }
+                TypeExprKind::Function(params, ret) => {
+                    params.iter().for_each(|param| walk(param, written));
+                    walk(ret, written);
+                }
+                TypeExprKind::AssocProj { receiver, .. } => walk(receiver, written),
+                TypeExprKind::AnonRecord { fields, tail } => {
+                    fields.iter().for_each(|(_, ty)| walk(ty, written));
+                    if let Some((row, span)) = tail {
+                        write(written, intern(&format!("__row__{row}")), *span);
+                    }
+                }
+            }
+        }
+        let mut written = Vec::new();
+        match &td.body {
+            TypeBody::Enum(variants) => (variants.iter())
+                .flat_map(|variant| &variant.fields)
+                .for_each(|te| walk(te, &mut written)),
+            TypeBody::Record(fields) => fields.iter().for_each(|f| walk(&f.ty, &mut written)),
+            TypeBody::Alias(target) => walk(target, &mut written),
+        }
+        DeclVars {
+            known: td.params.iter().copied().collect(),
+            written,
+        }
+    }
+
+    /// Where `name` is first written in the body.
+    fn first_use(&self, name: Symbol) -> Option<usize> {
+        self.written
+            .iter()
+            .position(|(written, _)| *written == name)
+    }
+}
+
 impl TypeChecker {
     // ── Register type declarations ──────────────────────────────────
 
@@ -57,6 +123,7 @@ impl TypeChecker {
             let tv = self.fresh_var();
             param_vars.insert(*p, tv);
         }
+        let mut known = DeclVars::of(td);
 
         // Phase D: type aliases follow a parallel registration path
         // — resolve the target with each param bound to a fresh
@@ -66,7 +133,7 @@ impl TypeChecker {
         // are the target's), and emit no constructor bindings.
         // Early-return before the stamps at the end of the function.
         if let TypeBody::Alias(target_te) = &td.body {
-            self.register_type_alias(td, target_te, &mut param_vars);
+            self.register_type_alias(td, target_te, &mut param_vars, &mut known);
             self.current_type_anno_span = prev_type_span;
             return;
         }
@@ -114,7 +181,7 @@ impl TypeChecker {
                     let field_types: Vec<Type> = variant
                         .fields
                         .iter()
-                        .map(|te| self.resolve_type_expr(te, &mut param_vars))
+                        .map(|te| self.resolve_declared(td, te, &mut known, &mut param_vars, true))
                         .collect();
 
                     variant_infos.push(VariantInfo {
@@ -153,7 +220,7 @@ impl TypeChecker {
                 // passed to `type a` parameters (`json.parse(body, Color)`,
                 // user-defined decoders, etc.). Mirrors the record path.
                 // Skipped when a variant shares the enum's name
-                // (e.g. `type Box(T) { Box(T) }`) because the variant
+                // (e.g. `type Box(a) { Box(a) }`) because the variant
                 // constructor is already bound under the same symbol.
                 let variant_shares_name = variant_infos.iter().any(|v| v.name == td.name);
                 if !variant_shares_name {
@@ -207,7 +274,8 @@ impl TypeChecker {
                 let field_types: Vec<(Symbol, Type)> = fields
                     .iter()
                     .map(|f| {
-                        let ty = self.resolve_type_expr(&f.ty, &mut param_vars);
+                        let ty =
+                            self.resolve_declared(td, &f.ty, &mut known, &mut param_vars, true);
                         (f.name, ty)
                     })
                     .collect();
@@ -286,6 +354,98 @@ impl TypeChecker {
         self.current_type_anno_span = prev_type_span;
     }
 
+    /// The type `te` written in the declaration `td` (`canonical`: with
+    /// aliases expanded), with the type variables `known` holds, which
+    /// are the declaration's parameters and the variables reported
+    /// already.
+    ///
+    /// Resolving a type adds every lowercase name it meets to
+    /// `param_vars`, so a variable the declaration does not declare
+    /// after its name (`type Maybe { Some(a) }`) would be one variable
+    /// for every use of the type, fixed by the first. Such a variable
+    /// is reported, and stands for an error type from then on, so that
+    /// the uses of the type say nothing more of it. A record row
+    /// (`{x: Int, ...r}`) cannot be declared, so a type declaration
+    /// has none.
+    fn resolve_declared(
+        &mut self,
+        td: &TypeDecl,
+        te: &TypeExpr,
+        vars: &mut DeclVars,
+        param_vars: &mut HashMap<Symbol, Type>,
+        canonical: bool,
+    ) -> Type {
+        let resolve_in =
+            |checker: &mut Self, param_vars: &mut HashMap<Symbol, Type>| match canonical {
+                true => checker.resolve_type_expr(te, param_vars),
+                false => checker.resolve_type_expr_inner(te, param_vars),
+            };
+        let ty = resolve_in(self, param_vars);
+        let mut undeclared: Vec<Symbol> = (param_vars.keys())
+            .copied()
+            .filter(|name| !vars.known.contains(name))
+            .collect();
+        if undeclared.is_empty() {
+            return ty;
+        }
+        undeclared.sort_by_key(|name| (vars.first_use(*name), resolve(*name)));
+        // The parameters the declaration needs, for the help: the
+        // declared ones, then each variable of the body in the order of
+        // its first use.
+        let declared = (td.params.iter().copied())
+            .chain(vars.written.iter().map(|(name, _)| *name))
+            .filter(|name| !resolve(*name).starts_with("__row__"))
+            .filter(|name| {
+                self.case_mismatched_type_name(&resolve(*name), false)
+                    .is_none()
+            })
+            .fold(Vec::new(), |mut names, name| {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+                names
+            })
+            .iter()
+            .map(|name| resolve(*name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for name in undeclared {
+            vars.known.insert(name);
+            param_vars.insert(name, Type::Error);
+            let at = match vars.first_use(name) {
+                Some(index) => vars.written[index].1,
+                None => te.span,
+            };
+            let text = resolve(name);
+            let diagnostic = match text.strip_prefix("__row__") {
+                Some(row) => {
+                    let reason = if td.params.iter().any(|p| resolve(*p) == row) {
+                        "a row cannot be a type parameter".to_string()
+                    } else {
+                        format!("'...{row}' would be one row for every use of '{}'", td.name)
+                    };
+                    Diagnostic::error(
+                        Code::InvalidTypeDeclaration,
+                        at,
+                        format!("a type declaration cannot leave a record open: {reason}"),
+                    )
+                    .with_help("write the record's fields out")
+                }
+                None => Diagnostic::error(
+                    Code::InvalidTypeDeclaration,
+                    at,
+                    format!("type variable '{text}' is not a parameter of '{}'", td.name),
+                )
+                .with_help(format!(
+                    "declare it after the type's name: `type {}({declared})`",
+                    td.name
+                )),
+            };
+            self.errors.push(diagnostic);
+        }
+        resolve_in(self, param_vars)
+    }
+
     /// Phase D: register a `type Foo(...) = <target>` alias.
     ///
     /// Resolves `target_te` to a [`Type`] (with the alias's params bound
@@ -307,6 +467,7 @@ impl TypeChecker {
         td: &TypeDecl,
         target_te: &TypeExpr,
         param_vars: &mut HashMap<Symbol, Type>,
+        known: &mut DeclVars,
     ) {
         // The alias name itself must already be in `type_aliases` (the
         // pre-pass placeholder loop populated it). Mark it as in-
@@ -315,18 +476,6 @@ impl TypeChecker {
         let alias = self.own_type(td.name);
         self.tables.type_aliases.insert(alias);
         self.tables.type_alias_arity.insert(alias, td.params.len());
-
-        // Round 74 Fix #3: snapshot the declared parameter names BEFORE
-        // resolving the target so we can detect undeclared free tyvars
-        // — `resolve_type_expr_inner` lazily inserts a fresh `Type::Var`
-        // into `param_vars` for any lowercase identifier it encounters,
-        // including ones the user forgot to declare in `td.params`.
-        // Without this guard, `type AnyList = List(a)` (no `(a)` after
-        // `AnyList`) silently allocated one shared TyVar reused across
-        // every use site, breaking polymorphism (each site would unify
-        // with the FIRST use's element type and reject every other).
-        let declared_params: std::collections::HashSet<Symbol> =
-            td.params.iter().copied().collect();
 
         // Resolve the target with this alias's params bound. We use
         // `resolve_type_expr_inner` here (not the public canonicalising
@@ -339,30 +488,7 @@ impl TypeChecker {
         // The outer registration step (`register_alias` below) then
         // stores the un-expanded target — canonicalisation expands at
         // every use site instead.
-        let target_ty = self.resolve_type_expr_inner(target_te, param_vars);
-
-        // Round 74 Fix #3: any name `param_vars` gained during
-        // resolution that wasn't in `declared_params` is an undeclared
-        // free tyvar in the alias target. Emit a clear diagnostic that
-        // names the offending identifier and suggests adding it to the
-        // alias header. Multiple undeclared names produce one
-        // diagnostic per name (sorted for stable output).
-        let mut undeclared: Vec<Symbol> = param_vars
-            .keys()
-            .copied()
-            .filter(|name| !declared_params.contains(name))
-            .collect();
-        undeclared.sort_by_key(|s| resolve(*s));
-        for name in undeclared {
-            let name_str = resolve(name);
-            self.error(Code::InvalidTypeDeclaration,
-                format!(
-                    "undeclared type parameter '{name_str}' in alias target — did you mean `type {}({name_str}) = ...`?",
-                    resolve(td.name)
-                ),
-                target_te.span,
-            );
-        }
+        let target_ty = self.resolve_declared(td, target_te, known, param_vars, false);
 
         // Detect cycles before registering. Build a chain that names
         // every alias visited; if `td.name` appears, report it.

@@ -12,7 +12,7 @@ trait Cast for Int {
     }
 }
 
-type Box(T) { value: T }
+type Box(a) { value: a }
 
 fn use_it() {
     -- Passing a record type here exercises: receiver=Int flows
