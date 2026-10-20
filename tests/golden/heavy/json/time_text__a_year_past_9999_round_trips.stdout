@@ -6,7 +6,7 @@ true
 d = "12026-02-28"
 dt = "12026-02-28T12:00:00"
 true
-Err(invalid date '12026-02-30' (expected YYYY-MM-DD): input is out of range)
+Err(invalid date '12026-02-30' (expected YYYY-MM-DD): input is out of range at d)
 Ok(Moment {d: 2026-02-28, dt: 12026-02-28T11:00:00})
-Err(invalid date '02026-02-28' (expected YYYY-MM-DD): input contains invalid characters)
-Err(invalid datetime '002026-02-28T12:00:00')
+Err(invalid date '02026-02-28' (expected YYYY-MM-DD): input contains invalid characters at d)
+Err(invalid datetime '002026-02-28T12:00:00' at dt)

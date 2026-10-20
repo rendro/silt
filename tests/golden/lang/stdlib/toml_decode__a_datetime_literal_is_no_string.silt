@@ -1,0 +1,23 @@
+-- A TOML datetime literal does not go into a String field: it is a type
+-- mismatch, as a float is for an Int field. Quoted, the same text is a
+-- string; and the literal still goes into a Date or DateTime field.
+import time
+import toml
+
+type Named {
+  name: String,
+}
+
+type Dated {
+  day: time.Date,
+  at: time.DateTime,
+}
+
+fn main() {
+  println(toml.parse("name = 1990-01-01", Named))
+  println(toml.parse("name = 1979-05-27T07:32:00Z", Named))
+  println(toml.parse("name = 07:32:00", Named))
+  println(toml.parse("name = \"1990-01-01\"", Named))
+  println(toml.parse_map("a = 1990-01-01", String))
+  println(toml.parse("day = 1990-01-01\nat = 1979-05-27T07:32:00Z", Dated))
+}

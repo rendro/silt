@@ -311,7 +311,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn decode(value: Value, type a) -> Result(a, JsonError)", "Decode a json.Value into a typed value", json::decode),
                 f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse),
-                f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse JSON array into record list", json::parse_list),
+                f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse a JSON array into a list", json::parse_list),
                 f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError)", "Parse JSON object into map", json::parse_map),
                 f("fn pretty(value: a) -> String", "Pretty-print value as JSON", json::pretty),
                 f("fn stringify(value: a) -> String", "Serialize value as compact JSON", json::stringify),
@@ -326,7 +326,7 @@ pub(super) fn modules() -> Vec<Module> {
             error: "TomlError" => toml::error_text,
             rows: [
                 f("fn parse(s: String, type a) -> Result(a, TomlError)", "Parse a TOML document (top-level table) into a record", toml::parse),
-                f("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse a single `[[items]]` section into a list of records", toml::parse_list),
+                f("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse the one array of a document (such as a `[[items]]` section) into a list", toml::parse_list),
                 f("fn parse_map(s: String, type a) -> Result(Map(String, a), TomlError)", "Parse a top-level table into a map", toml::parse_map),
                 f("fn pretty(value: a) -> Result(String, TomlError)", "Pretty-print a value as TOML", toml::pretty),
                 f("fn stringify(value: a) -> Result(String, TomlError)", "Serialize a value as TOML", toml::stringify),

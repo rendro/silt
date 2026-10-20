@@ -165,8 +165,9 @@ document's text), an `Option` field with `None` where the document is
 `null`, and no field that holds `Bytes` (in a record it names too); a
 document that does not fit its field is `TypeMismatch(column, field
 type, "jsonb: <why>")`, with the column's type and why as
-`json.decode` says it: `TypeMismatch("doc", "Meta", "jsonb: json type
-mismatch: expected Int, got string")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
+`json.decode` says it, ending with the path of the value in the document:
+`TypeMismatch("doc", "Meta", "jsonb: json type mismatch: expected Int, got
+string at level")`. Every other type (`interval`, `timetz`, `inet`, `money`, ...)
 fills no field, and is an error in a `json.Value` row as well: cast it
 in SQL, `col::text`.
 

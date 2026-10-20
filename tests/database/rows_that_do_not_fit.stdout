@@ -27,8 +27,8 @@ a NaN: TypeMismatch(r, Float, NaN)
   postgres type mismatch on column `r`: expected Float, got NaN; cast it in SQL, for example r::text
 a NaN in a json.Value row: TypeMismatch(r, json.Value, NaN)
   postgres type mismatch on column `r`: expected json.Value, got NaN; cast it in SQL, for example r::text
-a document that does not fit: TypeMismatch(doc, Meta, jsonb: json type mismatch: expected Int, got string)
-  postgres type mismatch on column `doc`: expected Meta, got jsonb: json type mismatch: expected Int, got string
+a document that does not fit: TypeMismatch(doc, Meta, jsonb: json type mismatch: expected Int, got string at level)
+  postgres type mismatch on column `doc`: expected Meta, got jsonb: json type mismatch: expected Int, got string at level
 a document null for an Option: [MaybeDoc {doc: None}]
 a document for a record that holds Bytes, no rows: TypeMismatch(v, File, jsonb)
   postgres type mismatch on column `v`: expected File, got jsonb

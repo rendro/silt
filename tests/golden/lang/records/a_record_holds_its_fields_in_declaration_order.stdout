@@ -36,7 +36,7 @@ Some(second)
 true
 Ver {major: 4, build: 5, label: j} 4 5 j
 Ver {major: 5, build: 6, label: t} 5 6 t
-{"build":9,"label":"a","major":1}
+{"major":1,"build":9,"label":"a"}
 2024-03-09
 2024 3 9
 2024-03-09T07:30:05
