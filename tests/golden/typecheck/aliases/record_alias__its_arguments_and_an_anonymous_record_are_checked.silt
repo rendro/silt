@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- An alias with arguments builds the record of those arguments. An
+-- alias of an anonymous record type names the type only: such a record
+-- is written without a name, in a literal and in a pattern.
+type Box(a) {
+  value: a,
+}
+
+type IntBox = Box(Int)
+
+type Person = { name: String, age: Int }
+
+fn main() {
+  let b = IntBox { value: "no" }
+  let p = Person { name: "n", age: 3 }
+  let q: Person = { name: "m", age: 4 }
+  match q {
+    Person { name, .. } -> println(name)
+  }
+  println("{b} {p}")
+}

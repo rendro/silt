@@ -1,0 +1,5 @@
+pub type Square {
+  side: Int,
+}
+
+pub type Sq = Square

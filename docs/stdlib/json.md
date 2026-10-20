@@ -50,6 +50,9 @@ The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
 | `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
 | `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
 
+An alias of one of these is the type it names (`type Users = User`, then
+`json.parse(text, Users)`).
+
 The fields of a record type (and of every record type nested in it) may have
 these types:
 

@@ -46,6 +46,8 @@ names the type to decode into:
 | `toml.parse_list` | a record type |
 | `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
 
+An alias of one of these is the type it names.
+
 The fields of a record type (and of every record type nested in it) may have
 these types:
 

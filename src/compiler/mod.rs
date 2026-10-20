@@ -2359,16 +2359,22 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The type a resolution names, if it names a record or enum type.
+    /// The type a resolution names, if it names a record or enum type,
+    /// or an alias, which is only another name: the type it stands for.
     fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
         let Some(crate::defs::Res::Def(id)) = res else {
             return None;
         };
         let def = self.units.defs.get(id);
-        matches!(def.kind, crate::defs::DefKind::Type(_)).then_some(TypeRef {
+        let ty = TypeRef {
             id: crate::defs::TypeId(id),
             name: def.name,
-        })
+        };
+        match def.kind {
+            crate::defs::DefKind::Type(_) => Some(ty),
+            crate::defs::DefKind::TypeAlias => Some(canonical_head(self.resolver(), ty)),
+            _ => None,
+        }
     }
 
     /// The value of a type used as a value, if the resolution names a

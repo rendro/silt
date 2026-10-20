@@ -837,6 +837,32 @@ impl TypeChecker {
         }
     }
 
+    /// The value an alias names written as a value (`json.parse(s, PA)`
+    /// for `type PA = P`): the descriptor of the type it stands for, of
+    /// the type `TypeOf(target)`, when that type is a value (a primitive,
+    /// container, record or enum type). An alias is only another name.
+    pub(super) fn alias_value(
+        &mut self,
+        res: Option<crate::defs::Res>,
+        env: &TypeEnv,
+    ) -> Option<Type> {
+        let def = self.res_def(res)?;
+        if def.kind != crate::defs::DefKind::TypeAlias {
+            return None;
+        }
+        let alias = self.res_type(res)?;
+        let instance = self.type_instance(alias)?;
+        let target = crate::types::canonical::canonicalize(&self.tables.resolver, &instance);
+        let head = crate::types::canonical::head_of_canon(&target)?;
+        let scheme = self.def_scheme(Some(crate::defs::Res::Def(head.id.0)), env)?;
+        match self.instantiate(&scheme) {
+            Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
+                Some(Type::type_of(target))
+            }
+            _ => None,
+        }
+    }
+
     /// `Fn.field` or `Tuple.field` where `entry` is the method of an impl
     /// for every function (`trait T for Fn`) or every tuple: reported.
     /// That impl is found by the receiver; as far as the method's
@@ -1111,25 +1137,60 @@ impl TypeChecker {
     }
 
     /// The record type a record pattern or literal names, with its type
-    /// parameters' variables: the one the resolver resolved it to.
-    /// Reports a name that names no record type, unless the resolver
-    /// reported it already.
+    /// parameters' variables: the one the resolver resolved it to. An
+    /// alias of a record type names that type, with the arguments the
+    /// alias gives it (the last part). Reports a name that names no
+    /// record type, unless the resolver reported it already.
+    #[allow(clippy::type_complexity)]
     pub(super) fn named_record(
         &mut self,
         res: Option<crate::defs::Res>,
         name: Symbol,
         span: Span,
         in_pattern: bool,
-    ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>)> {
+    ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>, Option<Vec<Type>>)> {
         if res == Some(crate::defs::Res::Error) || self.names_rejected(res, name) {
             return None;
         }
-        let ty = self.named_type(res, name);
+        let mut ty = self.named_type(res, name);
         let name = ty.map_or(name, |ty| ty.name);
+        let mut fixed = None;
+        if let Some(alias) = ty.filter(|ty| self.tables.type_aliases.contains(ty)) {
+            let target = self.type_instance(alias).map(|instance| {
+                crate::types::canonical::canonicalize(&self.tables.resolver, &instance)
+            });
+            match target {
+                Some(Type::Generic(rec, args)) if self.tables.records.contains_key(&rec) => {
+                    ty = Some(rec);
+                    fixed = Some(args);
+                }
+                // An alias of an anonymous record type: such a record is
+                // written without a name.
+                Some(anon @ Type::AnonRecord { .. }) => {
+                    let Type::AnonRecord { fields, .. } = &anon else {
+                        unreachable!()
+                    };
+                    let written: Vec<String> =
+                        fields.keys().map(|field| format!("{field}: ...")).collect();
+                    let shown = self.show_type(&anon);
+                    self.error(
+                        Code::UndefinedConstructor,
+                        format!(
+                            "`{name}` is another name for the anonymous record type `{shown}`: \
+                             write the record without the name, `{{ {} }}`",
+                            written.join(", ")
+                        ),
+                        span,
+                    );
+                    return None;
+                }
+                _ => {}
+            }
+        }
         match ty.and_then(|ty| Some((ty, self.tables.records.get(&ty).cloned()?))) {
             Some((ty, info)) => {
                 let ids = self.tables.record_param_var_ids.get(&ty).cloned();
-                Some((ty, info, ids))
+                Some((ty, info, ids, fixed))
             }
             None => {
                 let message = if in_pattern {
@@ -1702,6 +1763,8 @@ impl TypeChecker {
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
+                } else if let Some(ty) = self.alias_value(expr.res, env) {
+                    ty
                 } else if self.res_def(expr.res).is_some_and(|def| {
                     matches!(
                         def.kind,
@@ -1742,6 +1805,7 @@ impl TypeChecker {
                             let ty = self.instantiate(&scheme);
                             self.apply(&ty)
                         }
+                        None if let Some(ty) = self.alias_value(expr.res, env) => ty,
                         // A member the resolver found that has no
                         // scheme: a type alias or a trait used as a
                         // value.
@@ -2426,13 +2490,17 @@ impl TypeChecker {
                 // The type identity is the bare name: `util.Pt { x: 1 }`
                 // builds a `Pt`.
                 let looked = self.named_record(expr.res, name, span, false);
-                if let Some((rec_ty, rec_info, param_ids)) = looked {
+                if let Some((rec_ty, rec_info, param_ids, fixed)) = looked {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
                     // This prevents different instantiations from sharing the same
                     // template variables (e.g., Box { value: 42 } and Box { value: "hi" }).
                     let (instantiated_fields, type_args) =
                         self.instantiate_record_fields(&rec_info, param_ids.as_deref());
+                    // An alias's arguments (`BI { .. }` for `type BI = B(Int)`).
+                    for (arg, fixed) in type_args.iter().zip(fixed.iter().flatten()) {
+                        self.unify(arg, fixed, span);
+                    }
 
                     let field_types: Vec<(Symbol, Type)> = fields
                         .iter_mut()
