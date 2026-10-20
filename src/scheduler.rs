@@ -87,7 +87,7 @@ const MAX_TASKS: usize = 100_000;
 /// is made, and a value that is nested deeply is compared, hashed,
 /// shown and dropped on none. What still goes down a value on the
 /// worker's native stack is its encoding as JSON or TOML, to the bound
-/// those have (`MAX_ENCODE_DEPTH` levels, src/builtins/json.rs): in a
+/// those have (`MAX_ENCODE_DEPTH` levels, src/builtins/data.rs): in a
 /// debug build that takes megabytes, more than the platform default
 /// for a spawned thread (2 MiB) holds. A native stack overflow aborts
 /// the whole process.

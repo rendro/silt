@@ -165,8 +165,8 @@ Ranges are lazy: a range holds its two ends and no element, so
 and `list.contains`. In every other respect it is the list of its
 elements: `println(1..3)` prints `[1, 2, 3]`, and `1..3 == [1, 2, 3]`.
 What needs every element at once (printing the range, `list.reverse`,
-`json.stringify`) is a runtime error for a range of more than 10,000,000
-elements. A range can have more elements than an `Int` counts
+`json.stringify`, a postgres parameter) is a runtime error for a range
+of more than 10,000,000 elements. A range can have more elements than an `Int` counts
 (`0..9223372036854775807`); `list.length` of such a range is a runtime
 error, and so is the range of all the Ints there are.
 

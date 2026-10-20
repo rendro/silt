@@ -22,11 +22,12 @@ use fallible_iterator::FallibleIterator;
 use postgres_protocol::types as wire;
 use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
+use crate::builtins::data::{self, Data};
 use crate::builtins::json;
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
-use crate::value::{Float, Record, Value};
+use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 // ── Parameters ──────────────────────────────────────────────────────
@@ -135,80 +136,64 @@ pub(super) fn params(
 /// a time and a datetime are written as silt shows them (a datetime
 /// with the offset `+00`, a year before 1 as a year BC), `Bytes` as
 /// `bytea`'s hex text; a list is an array or JSON (see [`TextParam`]),
-/// and every other value that is no scalar (a record, a map, a variant)
-/// is written as `json.stringify` writes it. A value JSON has no form
-/// for is the error `json.stringify` gives.
+/// and every other value that is no scalar (a record, a map, a tuple, a
+/// variant, a `json.Value`) is written as `json.stringify` writes it. A
+/// value JSON has no form for is the error `json.stringify` gives.
 fn param(caller: &str, value: &Value, unsendable: &Unsendable) -> Result<TextParam, VmError> {
+    let value = data::data(caller, data::Format::Postgres, value)?;
     Ok(match value {
-        Value::Variant(variant) if variant.is(bv::NONE) => TextParam::Null,
-        Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
-            return param(caller, &variant.fields()[0], unsendable);
-        }
-        // (A list that has no array form has no JSON form either.)
-        Value::List(_) => TextParam::List {
-            array: array_literal(caller, value)?,
-            json: match json::value_to_json(caller, value, 0) {
-                Ok(json) => Ok(json.to_string()),
-                Err(e) => Err(e.message),
-            },
+        Data::Null => TextParam::Null,
+        Data::Array(_) => TextParam::List {
+            array: array_literal(caller, &value)?,
+            json: json::text(caller, &value, false).map_err(|e| e.message),
             unsendable: unsendable.clone(),
         },
-        _ => TextParam::Text(scalar_text(caller, value)?),
+        _ => TextParam::Text(scalar_text(caller, &value)?),
     })
 }
 
-/// The text of `value`, which is no list and no `Option`: a scalar's
-/// own, JSON for the others.
-fn scalar_text(caller: &str, value: &Value) -> Result<String, VmError> {
+/// The text of `value`, which is no list and no null: a scalar's own,
+/// JSON for the others.
+fn scalar_text(caller: &str, value: &Data) -> Result<String, VmError> {
     Ok(match value {
-        Value::Int(n) => n.to_string(),
+        Data::Int(n) => n.to_string(),
         // (`2.0` stays `2.0`, which no integer column takes.)
-        Value::Float(f) => format!("{:?}", f.get()),
-        Value::Bool(b) => b.to_string(),
-        Value::String(s) => s.to_string(),
-        Value::Bytes(bytes) => hex(bytes),
-        Value::Record(record) if record.type_id() == ty::DATE => {
-            let (date, era) = date_text(record);
+        Data::Float(f) => format!("{f:?}"),
+        Data::Bool(b) => b.to_string(),
+        Data::String(s) => s.to_string(),
+        Data::Bytes(bytes) => hex(bytes),
+        Data::Date(date) => {
+            let (date, era) = date_text(date);
             format!("{date}{era}")
         }
-        Value::Record(record) if record.type_id() == ty::TIME => value.to_string(),
+        Data::Time(time) => time.to_string(),
         // In UTC, as a `timestamptz` is read: a `timestamp` ignores
         // the offset.
-        Value::Record(record) if record.type_id() == ty::DATE_TIME => {
-            match (record.get("date"), record.get("time")) {
-                (Some(Value::Record(date)), Some(time)) => {
-                    let (date, era) = date_text(date);
-                    format!("{date}T{time}+00{era}")
-                }
-                _ => value.to_string(),
-            }
+        Data::DateTime(date, time) => {
+            let (date, era) = date_text(date);
+            format!("{date}T{time}+00{era}")
         }
-        _ => json::value_to_json(caller, value, 0)?.to_string(),
+        _ => json::text(caller, value, false)?,
     })
 }
 
-/// The text of the `Date` `date` as Postgres reads it, and its era: a
+/// The text of the date `date` as Postgres reads it, and its era: a
 /// year before 1 is a year BC (year 0 is 1 BC), `0044-03-15` and
 /// `" BC"` for -43.
-fn date_text(date: &Record) -> (String, &'static str) {
-    let part = |name| match date.get(name) {
-        Some(Value::Int(n)) => *n,
-        _ => 0,
+fn date_text(date: &data::Date) -> (String, &'static str) {
+    let (year, era) = match date.year < 1 {
+        true => (1 - date.year, " BC"),
+        false => (date.year, ""),
     };
-    let (year, month, day) = (part("year"), part("month"), part("day"));
-    let (year, era) = if year < 1 {
-        (1 - year, " BC")
-    } else {
-        (year, "")
-    };
+    let (month, day) = (date.month, date.day);
     (format!("{year:04}-{month:02}-{day:02}"), era)
 }
 
 /// The list `list` as the text of a Postgres array (`{"1","2",NULL}`),
 /// a list of lists as one of more dimensions. Each element is quoted;
-/// `None` is `NULL`.
-fn array_literal(caller: &str, list: &Value) -> Result<String, VmError> {
-    let Value::List(items) = list else {
+/// a null is `NULL`.
+fn array_literal(caller: &str, list: &Data) -> Result<String, VmError> {
+    let Data::Array(items) = list else {
         return scalar_text(caller, list);
     };
     let mut text = String::from("{");
@@ -216,16 +201,9 @@ fn array_literal(caller: &str, list: &Value) -> Result<String, VmError> {
         if k > 0 {
             text.push(',');
         }
-        let mut item = &item;
-        while let Value::Variant(variant) = item
-            && variant.is(bv::SOME)
-            && let [inner] = variant.fields()
-        {
-            item = inner;
-        }
         match item {
-            Value::Variant(variant) if variant.is(bv::NONE) => text.push_str("NULL"),
-            Value::List(_) => text.push_str(&array_literal(caller, item)?),
+            Data::Null => text.push_str("NULL"),
+            Data::Array(_) => text.push_str(&array_literal(caller, item)?),
             _ => {
                 text.push('"');
                 for c in scalar_text(caller, item)?.chars() {
@@ -1088,6 +1066,11 @@ mod tests {
         }
     }
 
+    /// `value` as the data of a parameter.
+    fn pg(value: &Value) -> Data {
+        data::data("postgres.query", data::Format::Postgres, value).expect("data")
+    }
+
     #[test]
     fn a_list_is_an_array_literal_with_every_element_quoted() {
         let list = Value::list(vec![
@@ -1097,7 +1080,7 @@ mod tests {
             Value::variant(bv::SOME, vec![Value::Int(1)]),
         ]);
         assert_eq!(
-            array_literal("postgres.query", &list).expect("written"),
+            array_literal("postgres.query", &pg(&list)).expect("written"),
             r#"{"a\"b","c\\d",NULL,"1"}"#
         );
         let grid = Value::list(vec![
@@ -1105,12 +1088,24 @@ mod tests {
             Value::list(vec![Value::Int(3), Value::Int(4)]),
         ]);
         assert_eq!(
-            array_literal("postgres.query", &grid).expect("written"),
+            array_literal("postgres.query", &pg(&grid)).expect("written"),
             r#"{{"1","2"},{"3","4"}}"#
         );
         assert_eq!(
-            array_literal("postgres.query", &Value::list(Vec::new())).expect("written"),
+            array_literal("postgres.query", &pg(&Value::list(Vec::new()))).expect("written"),
             "{}"
+        );
+    }
+
+    /// A range too long to write out is refused where the parameter is
+    /// to be an array too, as json refuses it.
+    #[test]
+    fn a_range_too_long_to_write_out_is_no_parameter() {
+        let range = Value::List(crate::value::List::ints(1, 10_000_001).expect("a range"));
+        let refused = param("postgres.query", &range, &Unsendable::default()).unwrap_err();
+        assert_eq!(
+            refused.message,
+            "range 1..10000001 has 10000001 elements; materializing more than 10000000 is not allowed"
         );
     }
 
@@ -1118,7 +1113,7 @@ mod tests {
     /// a year BC (year 0 is 1 BC).
     #[test]
     fn dates_are_written_as_postgres_reads_them() {
-        let text = |value: Value| scalar_text("postgres.query", &value).expect("written");
+        let text = |value: Value| scalar_text("postgres.query", &pg(&value)).expect("written");
         let day = |y, m, d| make_date(NaiveDate::from_ymd_opt(y, m, d).expect("a date"));
         let at = |y, m, d| {
             let date = NaiveDate::from_ymd_opt(y, m, d).expect("a date");
