@@ -1,0 +1,46 @@
+{"name":"box","origin":{"y":2,"x":1},"zoom":1.5,"corners":[{"y":0,"x":0},{"y":4,"x":3}],"tags":{"alpha":2,"zeta":1},"alias":null}
+{
+  "y": 2,
+  "x": 1
+}
+name = "box"
+zoom = 1.5
+
+[origin]
+y = 2
+x = 1
+
+[[corners]]
+y = 0
+x = 0
+
+[[corners]]
+y = 4
+x = 3
+
+[tags]
+alpha = 2
+zeta = 1
+name = "box"
+zoom = 1.5
+
+[origin]
+y = 2
+x = 1
+
+[[corners]]
+y = 0
+x = 0
+
+[[corners]]
+y = 4
+x = 3
+
+[tags]
+alpha = 2
+zeta = 1
+{"10":"ten","9":"nine"}
+{"a":2,"b":1}
+{"fields":[{"y":2,"x":1}],"variant":"Ok"}
+true
+true

@@ -204,15 +204,86 @@ pub(crate) fn unsupported_kind(caller: &str, v: &Value) -> VmError {
     VmError::new(format!("{caller}: unsupported value kind {kind}"))
 }
 
+/// A document as the writers write it (`json.stringify`, `toml.stringify`
+/// and their `pretty` forms): an object, or a table, keeps its members
+/// in the order they are put in, where `serde_json::Map` and
+/// `toml::map::Map` would sort them. `S` is a value of the format that
+/// has no members.
+#[derive(Debug)]
+pub(crate) enum Written<S> {
+    Scalar(S),
+    Array(Vec<Written<S>>),
+    Object(Vec<(std::string::String, Written<S>)>),
+}
+
+impl<S> Written<S> {
+    /// The object of the members of a map, `entries`: sorted by key,
+    /// and of a key written twice the last value counts.
+    pub(crate) fn sorted(entries: Vec<(std::string::String, Written<S>)>) -> Written<S> {
+        let members: std::collections::BTreeMap<_, _> = entries.into_iter().collect();
+        Written::Object(members.into_iter().collect())
+    }
+}
+
+impl<S: serde::Serialize> serde::Serialize for Written<S> {
+    fn serialize<Z: serde::Serializer>(&self, to: Z) -> Result<Z::Ok, Z::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self {
+            Written::Scalar(v) => v.serialize(to),
+            Written::Array(items) => {
+                let mut seq = to.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            }
+            Written::Object(members) => {
+                let mut map = to.serialize_map(Some(members.len()))?;
+                for (key, value) in members {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+impl Written<serde_json::Value> {
+    /// The document as serde_json holds it, for a decoder to read.
+    fn into_value(self) -> serde_json::Value {
+        match self {
+            Written::Scalar(v) => v,
+            Written::Array(items) => {
+                serde_json::Value::Array(items.into_iter().map(Written::into_value).collect())
+            }
+            Written::Object(members) => serde_json::Value::Object(
+                members
+                    .into_iter()
+                    .map(|(key, value)| (key, value.into_value()))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// The compact JSON text.
+impl std::fmt::Display for Written<serde_json::Value> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&serde_json::to_string(self).map_err(|_| std::fmt::Error)?)
+    }
+}
+
 /// `v`, which is `level` levels inside the value `caller` writes, as
-/// JSON. A value JSON has no form for (a set, bytes, a function, the
-/// constructor of a variant among them, a channel, a handle) is an
-/// error, wherever in the value it is.
+/// JSON: the fields of a record in the order its type declares them,
+/// the keys of a map sorted. A value JSON has no form for (a set, bytes,
+/// a function, the constructor of a variant among them, a channel, a
+/// handle) is an error, wherever in the value it is.
 pub(crate) fn value_to_json(
     caller: &str,
     v: &Value,
     level: usize,
-) -> Result<serde_json::Value, VmError> {
+) -> Result<Written<serde_json::Value>, VmError> {
+    use serde_json::Value as J;
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_json(caller, v, level + 1);
     // `Some(x)` is written as `x` is, and so is a `json.Value` as the
@@ -225,27 +296,27 @@ pub(crate) fn value_to_json(
         v = content;
     }
     Ok(match v {
-        Value::Int(n) => serde_json::Value::Number((*n).into()),
-        Value::Float(f) => serde_json::Number::from_f64(f.get())
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::String(s) => serde_json::Value::String(s.to_string()),
+        Value::Int(n) => Written::Scalar(J::Number((*n).into())),
+        Value::Float(f) => {
+            Written::Scalar(serde_json::Number::from_f64(f.get()).map_or(J::Null, J::Number))
+        }
+        Value::Bool(b) => Written::Scalar(J::Bool(*b)),
+        Value::String(s) => Written::Scalar(J::String(s.to_string())),
         Value::List(xs) => {
             xs.writable()?;
             let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
-            serde_json::Value::Array(items?)
+            Written::Array(items?)
         }
         Value::Map(m) => {
-            let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> = m
+            let entries: Result<Vec<_>, VmError> = m
                 .iter()
                 .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
                 .collect();
-            serde_json::Value::Object(obj?)
+            Written::sorted(entries?)
         }
         Value::Tuple(vs) => {
             let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
-            serde_json::Value::Array(items?)
+            Written::Array(items?)
         }
         // A date, a time of day and a datetime are written as the text
         // silt shows of them (`2026-10-19`, `12:30:00.250000000`,
@@ -253,32 +324,30 @@ pub(crate) fn value_to_json(
         Value::Record(record)
             if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
         {
-            serde_json::Value::String(v.to_string())
+            Written::Scalar(J::String(v.to_string()))
         }
         Value::Record(record) => {
-            let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> =
-                record
-                    .named()
-                    .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
-                    .collect();
-            serde_json::Value::Object(obj?)
+            let members: Result<Vec<_>, VmError> = record
+                .named()
+                .map(|(k, v)| Ok((k.to_string(), inner(v)?)))
+                .collect();
+            Written::Object(members?)
         }
         Value::Variant(variant) if variant.is(bv::NONE) || variant.is(bv::JSON_NULL) => {
-            serde_json::Value::Null
+            Written::Scalar(J::Null)
         }
+        // (`fields` before `variant`, as the keys of an object sort.)
         Value::Variant(variant) => {
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "variant".into(),
-                serde_json::Value::String(variant.name().into()),
-            );
+            let mut members = Vec::with_capacity(2);
             if !variant.fields().is_empty() {
                 let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
-                obj.insert("fields".into(), serde_json::Value::Array(items?));
+                members.push(("fields".into(), Written::Array(items?)));
             }
-            serde_json::Value::Object(obj)
+            let name = Written::Scalar(J::String(variant.name().into()));
+            members.push(("variant".into(), name));
+            Written::Object(members)
         }
-        Value::Unit => serde_json::Value::Null,
+        Value::Unit => Written::Scalar(J::Null),
         _ => return Err(unsupported_kind(caller, v)),
     })
 }
@@ -930,7 +999,7 @@ builtins! {
         // way to fail here is a value nested past the limit: an `Err`,
         // as `json.parse` gives one for a document nested too deep.
         let mut json = match value_to_json("json.decode", value, 0) {
-            Ok(json) => json,
+            Ok(json) => json.into_value(),
             Err(e) => return Ok(json_unknown_err(e.message)),
         };
         whole_numbers(&mut json);

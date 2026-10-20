@@ -49,7 +49,7 @@ use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 use super::json::{
-    decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
+    Written, decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
     invalid_time_message, parse_date, parse_datetime, parse_time, unsupported_field_type_message,
     unsupported_kind, without_bytes,
 };
@@ -151,8 +151,12 @@ fn toml_type_name(v: &::toml::Value) -> &'static str {
 /// 1.0 technically permits `nan`/`inf` but we emit the closest valid
 /// representation and reject ambiguous ones like `Unit`).
 ///
-/// `v` is `level` levels inside the value `caller` writes.
-fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value, VmError> {
+/// `v` is `level` levels inside the value `caller` writes. The fields of
+/// a record are in the order its type declares them, the keys of a map
+/// sorted; the writer puts the plain keys of a table before its
+/// sub-tables, as TOML has them.
+fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<Written<::toml::Value>, VmError> {
+    use ::toml::Value as T;
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_toml(caller, v, level + 1);
     // `Some(x)` is written as `x` is, and is no level of its own.
@@ -164,37 +168,39 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
         v = content;
     }
     Ok(match v {
-        Value::Int(n) => ::toml::Value::Integer(*n),
-        Value::Float(f) => ::toml::Value::Float(f.get()),
-        Value::Bool(b) => ::toml::Value::Boolean(*b),
-        Value::String(s) => ::toml::Value::String(s.to_string()),
+        Value::Int(n) => Written::Scalar(T::Integer(*n)),
+        Value::Float(f) => Written::Scalar(T::Float(f.get())),
+        Value::Bool(b) => Written::Scalar(T::Boolean(*b)),
+        Value::String(s) => Written::Scalar(T::String(s.to_string())),
         Value::List(xs) => {
             xs.writable()?;
             let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
-            ::toml::Value::Array(items?)
+            Written::Array(items?)
         }
         Value::Map(m) => {
-            let mut table = ::toml::map::Map::new();
-            for (k, v) in m.iter() {
-                let key = match k {
-                    Value::String(s) => s.to_string(),
-                    other => other.to_string(),
-                };
-                table.insert(key, inner(v)?);
-            }
-            ::toml::Value::Table(table)
+            let entries: Result<Vec<_>, VmError> = m
+                .iter()
+                .map(|(k, v)| {
+                    let key = match k {
+                        Value::String(s) => s.to_string(),
+                        other => other.to_string(),
+                    };
+                    Ok((key, inner(v)?))
+                })
+                .collect();
+            Written::sorted(entries?)
         }
         Value::Tuple(vs) => {
             let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
-            ::toml::Value::Array(items?)
+            Written::Array(items?)
         }
         Value::Record(record)
             if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
         {
-            time_literal(v)
+            Written::Scalar(time_literal(v))
         }
         Value::Record(fields) => {
-            let mut table = ::toml::map::Map::new();
+            let mut table = Vec::new();
             for (k, v) in fields.named() {
                 // TOML has no null. An `Option::None` field is omitted from the
                 // table entirely; on parse-back, a missing Option field decodes
@@ -206,9 +212,9 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
                 {
                     continue;
                 }
-                table.insert(k.to_string(), inner(v)?);
+                table.push((k.to_string(), inner(v)?));
             }
-            ::toml::Value::Table(table)
+            Written::Object(table)
         }
         Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => {
             // TOML has no null and no representation for a freestanding None.
@@ -216,19 +222,18 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
             // a None reaching here is a bare top-level None, which has no valid
             // TOML rendering. Emit an empty string as a deterministic
             // placeholder so serialization does not fail outright.
-            ::toml::Value::String(String::new())
+            Written::Scalar(T::String(String::new()))
         }
+        // (`fields` before `variant`, as the keys of a table sort.)
         Value::Variant(variant) => {
-            let mut table = ::toml::map::Map::new();
-            table.insert(
-                "variant".into(),
-                ::toml::Value::String(variant.name().into()),
-            );
+            let mut table = Vec::with_capacity(2);
             if !variant.fields().is_empty() {
                 let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
-                table.insert("fields".into(), ::toml::Value::Array(items?));
+                table.push(("fields".into(), Written::Array(items?)));
             }
-            ::toml::Value::Table(table)
+            let name = Written::Scalar(T::String(variant.name().into()));
+            table.push(("variant".into(), name));
+            Written::Object(table)
         }
         Value::Unit => {
             return Err(VmError::new(format!(
@@ -309,14 +314,15 @@ fn time_literal(v: &Value) -> ::toml::Value {
 /// scalar or array at top level is not a valid document. We therefore only
 /// accept `Record`, `Map`, or `Table`-shaped values here; everything else
 /// returns a descriptive `Err`.
-fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<::toml::Value, VmError> {
-    match value_to_toml(caller, v, 0)? {
-        t @ ::toml::Value::Table(_) => Ok(t),
-        other => Err(VmError::new(format!(
-            "{caller}: top-level value must be a table/record, got {}",
-            toml_type_name(&other)
-        ))),
-    }
+fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<Written<::toml::Value>, VmError> {
+    let kind = match value_to_toml(caller, v, 0)? {
+        table @ Written::Object(_) => return Ok(table),
+        Written::Array(_) => "array",
+        Written::Scalar(other) => toml_type_name(&other),
+    };
+    Err(VmError::new(format!(
+        "{caller}: top-level value must be a table/record, got {kind}"
+    )))
 }
 
 // ── Conversion: toml::Value → silt typed Value ──────────────────────
@@ -606,7 +612,7 @@ fn record_type<'a>(name: &str, ty: Type<'a>) -> Result<&'a Arc<TypeInfo>, VmErro
 fn written(
     name: &str,
     value: &Value,
-    write: fn(&::toml::Value) -> Result<String, ::toml::ser::Error>,
+    write: fn(&Written<::toml::Value>) -> Result<String, ::toml::ser::Error>,
 ) -> Value {
     let caller = format!("toml.{name}");
     let tv = match value_to_top_level_toml(&caller, value) {

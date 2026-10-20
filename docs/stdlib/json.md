@@ -349,7 +349,7 @@ written as follows:
 | `Int`, `Float`, `String`, `Bool` | a number, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1,"a"]` |
 | `Map(k, v)` | an object; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
-| a record | an object of its fields: `{"age":36,"name":"Ada"}` |
+| a record | an object of its fields, in the order the type declares them: `{"name":"Ada","age":36}` |
 | `Some(x)` | `x`, as `x` is written |
 | `None`, `()` | `null` |
 | any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is `{"variant":"Name"}` |
@@ -357,9 +357,8 @@ written as follows:
 | `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250000000"`) and `"2026-10-19T12:30:00"` |
 | `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |
 
-The keys of every object, the fields of a record among them, are written
-in sorted order, not in the order the record declares its fields.
-`json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
+The keys of a map, and so of a `json.Object`, are written in sorted order;
+the fields of a record in the order its type declares them. `json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
 the same type, and a record into its record type; a variant and `()` are
 written but not read back (an enum has no decoder).
 
