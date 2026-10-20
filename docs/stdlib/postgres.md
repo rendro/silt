@@ -112,6 +112,12 @@ time, through a `type a` parameter, a field of a type no column can fill
 document could fill) is `Err(Other(msg))` naming the field and its record,
 whatever the result holds, and any other type is a run-time error.
 
+| Function | Type argument |
+|----------|---------------|
+| `postgres.query` | a record type or `json.Value` |
+| `postgres.stream` | a record type or `json.Value` |
+| `postgres.cursor` | a record type or `json.Value` |
+
 Each field of the record is read from the column of its exact name;
 Postgres folds a name it is not given in quotes to lower case, so a
 column created as `"Id"` is read through `AS`: `SELECT "Id" AS id`. A
