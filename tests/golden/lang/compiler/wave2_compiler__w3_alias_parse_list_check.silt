@@ -3,7 +3,7 @@
 -- stderr-contains: error[compile]
 -- stderr-contains: json.parse_list
 -- stderr-contains: `List`
--- stderr-contains: its type argument must be Int, Float, String, Bool, json.Value, or a record type
+-- stderr-contains: its type argument must be Int, Float, String, Bool, json.Value, a record type, or an enum type
 import json as j
 
 fn main() {

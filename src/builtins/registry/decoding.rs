@@ -209,8 +209,8 @@ impl Decoding {
     }
 
     /// What the type argument may be, each type as `name` writes it:
-    /// `Int, Float, String, Bool, json.Value, or a record type`, `a
-    /// record type or json.Value`.
+    /// `Int, Float, String, Bool, json.Value, a record type, or an enum
+    /// type`, `a record type or json.Value`.
     pub fn type_arguments(self, name: impl Fn(&str) -> String) -> String {
         let json_value = self.json_value().then(|| name(Leaf::JsonValue.name()));
         match self.primitives {
@@ -219,6 +219,9 @@ impl Decoding {
                     BUILTIN_PRIMITIVE_NAMES.iter().map(|t| name(t)).collect();
                 types.extend(json_value);
                 types.push("a record type".to_string());
+                if self.family.decodes_enums() {
+                    types.push("an enum type".to_string());
+                }
                 if let Some(last) = types.last_mut() {
                     *last = format!("or {last}");
                 }
