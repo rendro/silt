@@ -1,0 +1,16 @@
+error[parse]: expected expression, found fn
+ --> nested_fn__in_a_body_that_closes_is_nested.silt:7:3
+   |
+ 7 |   fn helper(x: Int) -> Int {
+   |   ^^ expected expression, found fn
+  = help: a function cannot be declared inside another; bind a closure: `let helper = { x: Int -> ... }`
+
+error[parse]: expected '}' to close block, found EOF
+ --> nested_fn__in_a_body_that_closes_is_nested.silt:14:15
+    |
+ 14 |   println(a())
+    |               ^ expected '}' to close block, found EOF
+ ::: nested_fn__in_a_body_that_closes_is_nested.silt:13:11
+    |
+ 13 | fn main() {
+    |           - the block starts here

@@ -3284,14 +3284,16 @@ impl<'src> Parser<'src> {
     }
 
     /// The error `d` for a `fn` where an expression is expected, in the
-    /// body of a declared function, when the file ends with a delimiter
-    /// still open: then that body most likely lacks its `}`, which is
-    /// said first. Otherwise `d` as it is.
+    /// body of a declared function, when what holds the `fn` is never
+    /// closed behind it (no token behind it is outside it): then that
+    /// body most likely lacks its `}`, which is said first. Otherwise
+    /// (the `fn` is inside a body that closes behind it) `d` as it is.
     fn unclosed_fn_body(&self, d: Diagnostic) -> Diagnostic {
         let Some((_, open)) = self.fn_body else {
             return d;
         };
-        if self.delim_depth.last().is_none_or(|depth| *depth <= 0) {
+        let depth = self.delim_depth_at(self.pos);
+        if self.delim_depth[self.pos..].iter().any(|at| *at < depth) {
             return d;
         }
         let at = match self.peek() {
