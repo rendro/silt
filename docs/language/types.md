@@ -457,6 +457,7 @@ grammar.
 `type Name = T` gives the type `T` another name; the name stands for
 `T` wherever it is written. An alias of a record type builds and
 matches that record (`type Q = P`, then `Q { x: 1 }` and `Q { x } ->`),
+an alias of an enum writes its variants (`type C = Color`, then `C.Red`),
 an alias with arguments gives them (`type IntBox = Box(Int)`, then
 `IntBox { value: 1 }` is a `Box(Int)`), and an alias is a type argument
 as its type is (`json.parse(text, Q)`).
