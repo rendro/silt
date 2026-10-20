@@ -289,8 +289,8 @@ let x = 42 -- inline comment
 
 silt has arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`,
 `<`, `>`, `<=`, `>=`), boolean (`&&`, `||`, `!`), pipe (`|>`), range
-(`..`), error propagation (`?`), field / record-update (`.`), type
-ascription (`as`), and float recovery (`else`).
+(`..`), error propagation (`?`), field / record-update (`.`), and type
+ascription (`as`).
 
 See [Operators and Precedence](operators.md) for the full table with
 precedence, associativity, and newline-sensitivity rules.

@@ -3,6 +3,7 @@
 //! One test binary; each module was a separate test crate before.
 
 mod builtin_docs_frontmatter_tests;
+mod docs_false_claims_tests;
 mod docs_markdown_println_parity_tests;
 mod docs_primitive_descriptor_list_tests;
 mod docs_round26_tests;
