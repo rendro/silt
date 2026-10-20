@@ -52,16 +52,6 @@ mod patterns;
 // `Compiler::check_decode_target`). What each decoder decodes is its
 // registry row's `Decoding` (`crate::builtins::registry::decoding`).
 
-/// The record types a field type names.
-fn collect_records(field_type: &FieldType, out: &mut Vec<crate::defs::TypeId>) {
-    match field_type {
-        FieldType::Record(id) => out.push(*id),
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => collect_records(t, out),
-        FieldType::Tuple(ts) => ts.iter().for_each(|t| collect_records(t, out)),
-        _ => {}
-    }
-}
-
 /// A type as messages write it, a record type by its name.
 fn shown(ty: &Type) -> String {
     Type::show_all(&[ty], |_, _| None).remove(0)
@@ -2170,7 +2160,7 @@ impl<'a> Compiler<'a> {
                         let field_type = self
                             .describe_field_type(ty, &mut Vec::new())
                             .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
-                        collect_records(&field_type, &mut nested);
+                        field_type.records(&mut nested);
                         (resolve(*name), field_type)
                     })
                     .collect(),

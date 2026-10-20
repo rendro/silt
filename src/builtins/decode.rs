@@ -193,13 +193,86 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
     })
 }
 
-/// The type a field of `field_type` is decoded as by a decoder of a
-/// format with no bytes (JSON, TOML): a type that holds `Bytes` has no
-/// decoder, whatever the document holds (an empty list too).
-fn without_bytes(rt: &Runtime, field_type: &FieldType) -> Option<FieldType> {
-    field_type
-        .holds_bytes()
-        .then(|| FieldType::Unsupported(shown(rt, field_type)))
+/// A field whose type holds a part that a family of decoders has no
+/// decoder for.
+struct Lacking {
+    /// The record type that declares the field and the field's name, if
+    /// it is a field of a record type nested in the field asked about;
+    /// `None` for that field itself.
+    nested: Option<(std::string::String, std::string::String)>,
+    /// The field's type, as silt writes it.
+    declared: std::string::String,
+}
+
+/// The first part of `field_type` that `family` has no decoder for: a
+/// type no decoder has, a leaf the family does not decode, or such a
+/// part of a field of a record type it names (which `family.nested()`
+/// decodes). `seen` are the record types looked into.
+fn lacking(
+    rt: &Runtime,
+    family: Family,
+    field_type: &FieldType,
+    seen: &mut Vec<(TypeId, Family)>,
+) -> Option<Lacking> {
+    if matches!(field_type, FieldType::Unsupported(_)) || family.lacks(field_type).is_some() {
+        let declared = shown(rt, field_type);
+        return Some(Lacking {
+            nested: None,
+            declared,
+        });
+    }
+    let mut records = Vec::new();
+    field_type.records(&mut records);
+    let family = family.nested();
+    for id in records {
+        if seen.contains(&(id, family)) {
+            continue;
+        }
+        seen.push((id, family));
+        let Some(info) = rt.type_info(id) else {
+            continue;
+        };
+        for (name, field) in info.fields() {
+            if let Some(found) = lacking(rt, family, field, seen) {
+                let nested = found
+                    .nested
+                    .or_else(|| Some((info.name.clone(), name.clone())));
+                return Some(Lacking { nested, ..found });
+            }
+        }
+    }
+    None
+}
+
+/// Whether a decoder of `family` decodes a value of `field_type`, in the
+/// record types it names too.
+#[cfg(feature = "postgres")]
+pub(crate) fn decodes(rt: &Runtime, family: Family, field_type: &FieldType) -> bool {
+    lacking(rt, family, field_type, &mut Vec::new()).is_none()
+}
+
+/// The message of the error of a decoder of `family` for the field
+/// `field` of the record type `record`, whose type is `field_type`, if
+/// it has no decoder: whatever the document holds there, its key left
+/// out too. It names the field, or the field of a record type nested in
+/// it whose type has no decoder.
+pub(crate) fn undecodable(
+    rt: &Runtime,
+    family: Family,
+    record: &str,
+    field: &str,
+    field_type: &FieldType,
+) -> Option<std::string::String> {
+    let found = lacking(rt, family, field_type, &mut Vec::new())?;
+    let (record, field) = match &found.nested {
+        Some((record, field)) => (record.as_str(), field.as_str()),
+        None => (record, field),
+    };
+    Some(unsupported_field_type_message(
+        record,
+        field,
+        &found.declared,
+    ))
 }
 
 /// The record type `id` a record field names, from the program's types.
@@ -430,12 +503,10 @@ pub(crate) fn record<D: Document>(
     // (In the order the type declares them: the record's own.)
     let mut values = Vec::with_capacity(fields.len());
     for (name, field) in fields {
-        let unsupported = without_bytes(rt, field);
-        let field = unsupported.as_ref().unwrap_or(field);
-        // A field no decoder exists for is the error whatever the
-        // document holds there, its key left out too.
-        if let FieldType::Unsupported(declared) = field {
-            let message = unsupported_field_type_message(&ty.name, name, declared);
+        // A field no decoder exists for (in a record type it names too)
+        // is the error whatever the document holds there, its key left
+        // out too.
+        if let Some(message) = undecodable(rt, D::RULES.family, &ty.name, name, field) {
             return Err(Error::Other(message));
         }
         let at = at.key(name);

@@ -192,14 +192,14 @@ impl FieldType {
         }
     }
 
-    /// Whether the type is, or holds, `Bytes`, not counting the fields
-    /// of the record types it names.
-    pub fn holds_bytes(&self) -> bool {
+    /// The record types the type names (not those named by the fields
+    /// of those record types), added to `out`.
+    pub fn records(&self, out: &mut Vec<TypeId>) {
         match self {
-            FieldType::Bytes => true,
-            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.holds_bytes(),
-            FieldType::Tuple(ts) => ts.iter().any(FieldType::holds_bytes),
-            _ => false,
+            FieldType::Record(id) => out.push(*id),
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.records(out),
+            FieldType::Tuple(ts) => ts.iter().for_each(|t| t.records(out)),
+            _ => {}
         }
     }
 }

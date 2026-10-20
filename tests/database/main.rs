@@ -231,6 +231,7 @@ cases!(
     callback_deadline_aborts_its_transaction,
     rows_of_every_decoded_type,
     rows_that_do_not_fit,
+    a_field_with_bytes_a_document_would_hold_is_refused,
     parameters_of_every_type,
     execute_counts_and_returning,
     stream_and_cursor_of_a_record_type,
