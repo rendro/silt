@@ -1,0 +1,23 @@
+-- float.format rounds a number halfway between two away from zero, as
+-- float.round does; halfway is judged on the value the Float holds.
+import float
+
+fn main() {
+  println(float.format(2.5, 0))
+  println(float.format(0.5, 0))
+  println(float.format(-2.5, 0))
+  println(float.format(-0.5, 0))
+  println(float.format(1.5, 0))
+  println(float.format(9.5, 0))
+  println(float.format(-99.5, 0))
+  println(float.format(0.125, 2))
+  println(float.format(-0.125, 2))
+  println(float.format(0.375, 2))
+  println(float.format(2.5, 3))
+  println(float.format(1.005, 2))
+  println(float.format(0.49999999999999994, 0))
+  println(float.format(-0.4, 0))
+  println(float.format(4503599627370495.5, 0))
+  println(float.format(float.min_positive, 0))
+  println(float.round(2.5) == 3.0 && float.round(-2.5) == -3.0)
+}
