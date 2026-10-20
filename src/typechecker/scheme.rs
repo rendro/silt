@@ -110,6 +110,12 @@ impl TypeChecker {
             .filter(|v| self.tables.vars.is_generalizable(*v))
             .collect();
         let mut preds: Vec<Pred> = Vec::new();
+        // The variables of a function's parameters: a type one of them
+        // gives a builtin, the function passes on.
+        let passed: Vec<TyVar> = match (&ty, self.passing_on) {
+            (Type::Fun(params, _), true) => params.iter().flat_map(free_vars_in).collect(),
+            _ => Vec::new(),
+        };
         if !vars.is_empty() {
             for i in self.closed_mark..self.wanted.len() {
                 if self.wanted[i].solved {
@@ -141,10 +147,10 @@ impl TypeChecker {
                     },
                     // The definition passes the type on to the builtin;
                     // each use names its own type (`written`).
-                    Pred::Builtin { check, .. } => Pred::Builtin {
+                    Pred::Builtin { check, through, .. } => Pred::Builtin {
                         check: check.unwritten(),
                         subject: Type::Var(subject),
-                        through: true,
+                        through: *through || passed.contains(&subject),
                     },
                     Pred::Given { given, .. } => Pred::Given {
                         subject: Type::Var(subject),

@@ -2,7 +2,7 @@
 -- exit: 1
 -- A decoder used as a value asks what it asks in a call: of the type
 -- it is given where the type is known, through a local that holds it
--- (named in a note) or a function that calls it.
+-- or a function it is given to that calls it.
 import json
 
 type Blob { data: Set(Int) }
