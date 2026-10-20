@@ -800,11 +800,66 @@ impl TypeChecker {
                 if self.of_every_shape(name, &entry, field, span) {
                     return Some(Type::Error);
                 }
+                if entry.structural {
+                    return Some(self.structural_type_method(name, &inner, field, span));
+                }
                 self.method_trait = self.entry_trait(&entry, field);
                 let scheme = self.method_scheme(&entry);
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
             }
+        }
+    }
+
+    /// `T.method` where the method is one of a builtin structural trait
+    /// that the type `ty`, of the instance `inner`, has by its structure
+    /// (`Int.display`, `P.compare`): the method `structural_method`
+    /// gives a value of `inner`. Written through the type, every
+    /// parameter is an argument of the call, the receiver too.
+    fn structural_type_method(
+        &mut self,
+        ty: TypeRef,
+        inner: &Type,
+        field: Symbol,
+        span: Span,
+    ) -> Type {
+        let method = self.structural_method(inner, field, span);
+        self.last_field_access_was_method = false;
+        match method {
+            Some(method) => self.apply(&method),
+            // The type has the method by its structure, so the
+            // receiver's head is the type's: `structural_method` gives
+            // it a type.
+            None => {
+                debug_assert!(false, "structural method {ty}.{field} without a type");
+                Type::Error
+            }
+        }
+    }
+
+    /// The value an alias names written as a value (`json.parse(s, PA)`
+    /// for `type PA = P`): the descriptor of the type it stands for, of
+    /// the type `TypeOf(target)`, when that type is a value (a primitive,
+    /// container, record or enum type). An alias is only another name.
+    pub(super) fn alias_value(
+        &mut self,
+        res: Option<crate::defs::Res>,
+        env: &TypeEnv,
+    ) -> Option<Type> {
+        let def = self.res_def(res)?;
+        if def.kind != crate::defs::DefKind::TypeAlias {
+            return None;
+        }
+        let alias = self.res_type(res)?;
+        let instance = self.type_instance(alias)?;
+        let target = crate::types::canonical::canonicalize(&self.tables.resolver, &instance);
+        let head = crate::types::canonical::head_of_canon(&target)?;
+        let scheme = self.def_scheme(Some(crate::defs::Res::Def(head.id.0)), env)?;
+        match self.instantiate(&scheme) {
+            Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
+                Some(Type::type_of(target))
+            }
+            _ => None,
         }
     }
 
@@ -824,17 +879,23 @@ impl TypeChecker {
             && matches!(&entry.method_type, Type::Fun(params, _)
                 if matches!(params.first(), Some(Type::Var(_))));
         if every {
-            self.error(
-                Code::InvalidMethodCall,
-                format!(
-                    "method `{field}` of the impl for every `{0}` is called on a value: \
-                     write `x.{field}(..)`, not `{0}.{field}`",
-                    ty.name
-                ),
-                span,
-            );
+            self.of_every_shape_error(ty, field, span);
         }
         every
+    }
+
+    /// Report `Fn.field` or `Tuple.field`: the method is found by the
+    /// value it is called on.
+    fn of_every_shape_error(&mut self, ty: TypeRef, field: Symbol, span: Span) {
+        self.error(
+            Code::InvalidMethodCall,
+            format!(
+                "method `{field}` of the impl for every `{0}` is called on a value: \
+                 write `x.{field}(..)`, not `{0}.{field}`",
+                ty.name
+            ),
+            span,
+        );
     }
 
     /// Report `T.field` where the type `T` has no method `field`. A builtin
@@ -964,44 +1025,35 @@ impl TypeChecker {
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
         env.pop();
-        let ret_unify_err_count = self.errors.len();
-        self.unify(&body_type, &ret_type, f.body.span);
-        self.retarget_ok_wrap_fixes(ret_unify_err_count, &f.body);
-        self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &ret_type);
+        self.unify_body_result(&f.body, &body_type, &ret_type);
 
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
         self.sig_names = prev_names;
     }
 
-    /// The Ok-wrap fixes of the diagnostics from `from` on that are about
-    /// the whole `body` of a function: a block is wrapped at its tail
-    /// expression, not around its braces, and a block without one gets
-    /// no fix.
-    fn retarget_ok_wrap_fixes(&mut self, from: usize, body: &Expr) {
+    /// Unify the type `body_type` of a function's or closure's `body`
+    /// with its result `ret`, at the value the body gives: a block's tail
+    /// expression, where a mismatch is underlined and the Ok-wrap fix
+    /// wraps. A block without one is underlined whole and gets no fix.
+    fn unify_body_result(&mut self, body: &Expr, body_type: &Type, ret: &Type) {
+        let from = self.errors.len();
         let tail = match &body.kind {
             ExprKind::Block(stmts) => match stmts.last() {
                 Some(Stmt::Expr(e)) => Some(e.span),
                 _ => None,
             },
-            _ => return,
+            _ => Some(body.span),
         };
-        for d in self.errors.iter_mut().skip(from) {
-            if d.span != body.span {
-                continue;
-            }
-            match tail {
-                Some(tail) => {
-                    for fix in &mut d.fixes {
-                        fix.edits = vec![
-                            (Span::point(tail.file, tail.start), "Ok(".to_string()),
-                            (Span::point(tail.file, tail.end), ")".to_string()),
-                        ];
-                    }
+        self.unify(body_type, ret, tail.unwrap_or(body.span));
+        if tail.is_none() {
+            for d in self.errors.iter_mut().skip(from) {
+                if d.span == body.span {
+                    d.fixes.clear();
                 }
-                None => d.fixes.clear(),
             }
         }
+        self.note_qmark_requirement_on_ret_mismatch(from, ret);
     }
 
     /// GAP (round 93): when the body/return-type unify fails AND the
@@ -1085,25 +1137,68 @@ impl TypeChecker {
     }
 
     /// The record type a record pattern or literal names, with its type
-    /// parameters' variables: the one the resolver resolved it to.
-    /// Reports a name that names no record type, unless the resolver
-    /// reported it already.
+    /// parameters' variables: the one the resolver resolved it to. An
+    /// alias of a record type names that type, with the arguments the
+    /// alias gives it (the last part). Reports a name that names no
+    /// record type, unless the resolver reported it already.
+    #[allow(clippy::type_complexity)]
     pub(super) fn named_record(
         &mut self,
         res: Option<crate::defs::Res>,
         name: Symbol,
         span: Span,
         in_pattern: bool,
-    ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>)> {
+    ) -> Option<(TypeRef, RecordInfo, Option<Vec<TyVar>>, Option<Vec<Type>>)> {
         if res == Some(crate::defs::Res::Error) || self.names_rejected(res, name) {
             return None;
         }
-        let ty = self.named_type(res, name);
+        let mut ty = self.named_type(res, name);
         let name = ty.map_or(name, |ty| ty.name);
+        let mut fixed = None;
+        if let Some(alias) = ty.filter(|ty| self.tables.type_aliases.contains(ty)) {
+            let target = self.type_instance(alias).map(|instance| {
+                crate::types::canonical::canonicalize(&self.tables.resolver, &instance)
+            });
+            match target {
+                Some(Type::Generic(rec, args)) if self.tables.records.contains_key(&rec) => {
+                    ty = Some(rec);
+                    fixed = Some(args);
+                }
+                // An alias of an anonymous record type: such a record is
+                // written without a name.
+                Some(anon @ Type::AnonRecord { .. }) => {
+                    let Type::AnonRecord { fields, .. } = &anon else {
+                        unreachable!()
+                    };
+                    // The record as a literal or a pattern writes it.
+                    let written: Vec<String> = fields
+                        .keys()
+                        .map(|field| match in_pattern {
+                            true => format!("{field}"),
+                            false => format!("{field}: ..."),
+                        })
+                        .collect();
+                    let shown = self.show_type(&anon);
+                    let mut message =
+                        format!("`{name}` is another name for the anonymous record type `{shown}`");
+                    // (`{}` is the empty block: no literal writes the
+                    // record without fields.)
+                    if !written.is_empty() {
+                        message.push_str(&format!(
+                            ": write the record without the name, `{{ {} }}`",
+                            written.join(", ")
+                        ));
+                    }
+                    self.error(Code::UndefinedConstructor, message, span);
+                    return None;
+                }
+                _ => {}
+            }
+        }
         match ty.and_then(|ty| Some((ty, self.tables.records.get(&ty).cloned()?))) {
             Some((ty, info)) => {
                 let ids = self.tables.record_param_var_ids.get(&ty).cloned();
-                Some((ty, info, ids))
+                Some((ty, info, ids, fixed))
             }
             None => {
                 let message = if in_pattern {
@@ -1676,6 +1771,8 @@ impl TypeChecker {
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
+                } else if let Some(ty) = self.alias_value(expr.res, env) {
+                    ty
                 } else if self.res_def(expr.res).is_some_and(|def| {
                     matches!(
                         def.kind,
@@ -1716,6 +1813,7 @@ impl TypeChecker {
                             let ty = self.instantiate(&scheme);
                             self.apply(&ty)
                         }
+                        None if let Some(ty) = self.alias_value(expr.res, env) => ty,
                         // A member the resolver found that has no
                         // scheme: a type alias or a trait used as a
                         // value.
@@ -1759,6 +1857,30 @@ impl TypeChecker {
                         if self.of_every_shape(key.0, &entry, field, span) {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
+                        }
+                        if entry.structural {
+                            // Written through an alias, the instance is the
+                            // alias's (`Ints` for `type Ints = List(Int)` is
+                            // a `List(Int)`), with its arguments.
+                            let instance = self.type_instance(ty).map(|instance| {
+                                crate::types::canonical::canonicalize(
+                                    &self.tables.resolver,
+                                    &instance,
+                                )
+                            });
+                            let ty = match instance {
+                                Some(inner) => {
+                                    self.structural_type_method(key.0, &inner, field, span)
+                                }
+                                // A type of every shape (`Tuple`): its
+                                // values have the method, not the type.
+                                None => {
+                                    self.of_every_shape_error(key.0, field, span);
+                                    Type::Error
+                                }
+                            };
+                            expr.ty = Some(ty.clone());
+                            return ty;
                         }
                         self.method_trait = self.entry_trait(&entry, field);
                         let scheme = self.method_scheme(&entry);
@@ -2346,10 +2468,7 @@ impl TypeChecker {
                 let body_type = self.infer_expr(body, env);
                 self.fn_frames.pop();
                 env.pop();
-                let ret_unify_err_count = self.errors.len();
-                self.unify(&body_type, &lambda_ret, body.span);
-                self.retarget_ok_wrap_fixes(ret_unify_err_count, body);
-                self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &lambda_ret);
+                self.unify_body_result(body, &body_type, &lambda_ret);
 
                 self.current_return_type = prev_return_type;
                 self.current_qmark_spans = prev_qmark_spans;
@@ -2388,13 +2507,17 @@ impl TypeChecker {
                 // The type identity is the bare name: `util.Pt { x: 1 }`
                 // builds a `Pt`.
                 let looked = self.named_record(expr.res, name, span, false);
-                if let Some((rec_ty, rec_info, param_ids)) = looked {
+                if let Some((rec_ty, rec_info, param_ids, fixed)) = looked {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
                     // This prevents different instantiations from sharing the same
                     // template variables (e.g., Box { value: 42 } and Box { value: "hi" }).
                     let (instantiated_fields, type_args) =
                         self.instantiate_record_fields(&rec_info, param_ids.as_deref());
+                    // An alias's arguments (`BI { .. }` for `type BI = B(Int)`).
+                    for (arg, fixed) in type_args.iter().zip(fixed.iter().flatten()) {
+                        self.unify(arg, fixed, span);
+                    }
 
                     let field_types: Vec<(Symbol, Type)> = fields
                         .iter_mut()
@@ -2772,7 +2895,7 @@ impl TypeChecker {
                             let arm_ty = self.infer_expr(&mut arm.body, env);
                             env.pop();
                             every_arm_diverges &= matches!(arm_ty, Type::Never);
-                            self.unify(&result_ty, &arm_ty, body_span);
+                            self.unify(&arm_ty, &result_ty, body_span);
                         }
 
                         // Check exhaustiveness after pattern checking, so the
@@ -2855,7 +2978,7 @@ impl TypeChecker {
                             let arm_ty = self.infer_expr(&mut arm.body, env);
                             env.pop();
                             every_arm_diverges &= matches!(arm_ty, Type::Never);
-                            self.unify(&result_ty, &arm_ty, body_span);
+                            self.unify(&arm_ty, &result_ty, body_span);
                         }
 
                         if every_arm_diverges {

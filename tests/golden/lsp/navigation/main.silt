@@ -1,0 +1,31 @@
+-- cmd: lsp
+-- lsp: definition 27:13
+-- lsp: definition 28:11
+-- lsp: hover 21:13
+-- lsp: hover 16:8
+-- lsp: type-definition 21:10
+-- lsp: type-definition 26:7
+-- lsp: type-definition 29:7
+-- lsp: completion 17:10
+-- lsp: hover 15:8
+-- Navigation reaches what a name means: the field a field access reads,
+-- the module a qualifier names, the type an annotation names and the
+-- module an import names (hover), the type of a binder and of a list of
+-- records (typeDefinition), the modules an import may name.
+import helpers
+import list
+import li
+
+type P { name: String, age: Int }
+
+fn older(p: P) -> P {
+  p.{ age: p.age + 1 }
+}
+
+fn main() {
+  let q = older(P { name: "a", age: 1 })
+  println(q.age)
+  println(helpers.div(4, 2))
+  let ps = list.map([q], older)
+  println(ps)
+}

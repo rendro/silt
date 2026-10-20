@@ -1,6 +1,6 @@
 -- cmd: fmt
--- Line ends become line feeds, also inside a comment that spans lines;
--- a string keeps the ones it holds.
+-- Line ends become line feeds, also inside a comment that spans lines
+-- and inside a string, whose value they do not change.
 fn main() {
   {- a comment
      over two lines -}

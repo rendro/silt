@@ -573,9 +573,9 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn read_exact(stream: TcpStream, n: Int) -> Result(Bytes, TcpError)", "Read exactly `n` bytes (cooperative; loops)", tcp::read_exact),
                 f("fn set_nodelay(stream: TcpStream, on: Bool) -> Result((), TcpError)", "Send small writes at once (`true`) instead of gathering them (Nagle's algorithm, the default)", tcp::set_nodelay),
                 f("fn write(stream: TcpStream, data: Bytes) -> Result((), TcpError)", "Write the entire buffer and flush (cooperative)", tcp::write),
-                f("fn accept_tls(listener: TcpListener, cert_pem: Bytes, key_pem: Bytes) -> Result(TcpStream, TcpError)", "Accept a connection and complete the TLS server handshake using the supplied PEM cert chain + key", tcp::accept_tls).feature("tcp-tls"),
-                f("fn accept_tls_mtls(listener: TcpListener, cert_pem: Bytes, key_pem: Bytes, client_ca_pem: Bytes) -> Result(TcpStream, TcpError)", "Like `accept_tls`, but also requires the client to present a cert chaining to the supplied CA PEM bundle (mutual TLS)", tcp::accept_tls_mtls).feature("tcp-tls"),
                 f("fn connect_tls(addr: String, hostname: String) -> Result(TcpStream, TcpError)", "Open a TCP connection then complete the TLS client handshake against `hostname`", tcp::connect_tls).feature("tcp-tls"),
+                f("fn tls_server(conn: TcpStream, cert_pem: Bytes, key_pem: Bytes) -> Result(TcpStream, TcpError)", "Run the TLS server handshake on an accepted connection with the PEM cert chain + key; `conn` is taken (cooperative I/O)", tcp::tls_server).feature("tcp-tls"),
+                f("fn tls_server_mtls(conn: TcpStream, cert_pem: Bytes, key_pem: Bytes, client_ca_pem: Bytes) -> Result(TcpStream, TcpError)", "Like `tls_server`, but the client must present a cert chaining to the CA PEM bundle (mutual TLS)", tcp::tls_server_mtls).feature("tcp-tls"),
             ],
         },
         module! {

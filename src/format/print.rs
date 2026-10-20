@@ -1587,8 +1587,9 @@ impl Printer<'_> {
         verbatim |= text.contains('\n');
         let body = if verbatim {
             // A comment that waits for the end of the line stands in
-            // front of the ones in the string.
-            Doc::concat(vec![Doc::Settle, Doc::text(text)])
+            // front of the ones in the string. Its line ends are line
+            // feeds, as the file's are.
+            Doc::concat(vec![Doc::Settle, Doc::text(text.replace("\r\n", "\n"))])
         } else {
             Doc::concat(docs)
         };

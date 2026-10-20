@@ -148,6 +148,8 @@ a range is `line:col-line:col`, its end exclusive.
 |---|---|---|
 | `references L:C` | `textDocument/references`, with the declaration | `geo.silt:1:8-1:10` |
 | `definition L:C` | `textDocument/definition` | `geo.silt:1:8-1:10` |
+| `type-definition L:C` | `textDocument/typeDefinition` | `geo.silt:1:6-1:11` |
+| `completion L:C` | `textDocument/completion` | a label offered that starts with the name typed in front of the position (sorted) |
 | `highlight L:C` | `textDocument/documentHighlight` | `19:7-19:9` |
 | `prepare-rename L:C` | `textDocument/prepareRename` | `20:13-20:19` |
 | `rename L:C NAME` | `textDocument/rename` | `geo.silt:1:8-1:10 => NAME` |

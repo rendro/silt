@@ -8,3 +8,4 @@ call stack:
   -> closure in consumer  at callback_frame_capture__resume_suspended_invoke.silt:9:13
   -> consumer  at callback_frame_capture__resume_suspended_invoke.silt:7:3
   -> closure in main  at callback_frame_capture__resume_suspended_invoke.silt:22:28
+  -> main  at callback_frame_capture__resume_suspended_invoke.silt:24:3

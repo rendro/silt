@@ -1,0 +1,32 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.query` cannot decode `MA`: it is an enum type, and enums have no decoder
+-- stderr-not-contains: is not a value
+-- An alias is only another name: as a row type it is the type it names,
+-- checked as that type is. `UU` names a record and checks; `MA` names an
+-- enum, which has no decoder.
+import postgres
+
+type U {
+  id: Int,
+  name: String,
+}
+
+type UU = U
+
+type Mood { Sad, Happy }
+
+type MA = Mood
+
+fn users(db: postgres.PgPool) -> Result(List(U), postgres.PostgresError) {
+  postgres.query(db, "SELECT id, name FROM users", (), UU)
+}
+
+fn moods(db: postgres.PgPool) -> Result(List(Mood), postgres.PostgresError) {
+  postgres.query(db, "SELECT mood FROM people", (), MA)
+}
+
+fn main() {
+  println(1)
+}

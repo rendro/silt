@@ -452,6 +452,31 @@ grammar.
 | `{name: String, ...r}`            | Open row — at least `name`, plus any tail captured by `r` |
 | `{...p, age: 30}`                 | Record extension — copy `p`, append `age` (no overwrite) |
 
+## Type Aliases
+
+`type Name = T` gives the type `T` another name; the name stands for
+`T` wherever it is written. An alias of a record type builds and
+matches that record (`type Q = P`, then `Q { x: 1 }` and `Q { x } ->`),
+an alias of an enum writes its variants (`type C = Color`, then `C.Red`),
+an alias with arguments gives them (`type IntBox = Box(Int)`, then
+`IntBox { value: 1 }` is a `Box(Int)`), and an alias is a type argument
+as its type is (`json.parse(text, Q)`).
+
+An alias of an anonymous record type names the type in annotations
+only: such a record is written without a name.
+
+```silt
+type Person = { name: String, age: Int }
+
+fn main() {
+  let p: Person = { name: "A", age: 30 }
+  println(p.name)
+}
+```
+
+`Person { name: "A", age: 30 }` is an error: write the record without
+the name, `{ name: ..., age: ... }`.
+
 ## Tuples
 
 Fixed-size, heterogeneous:

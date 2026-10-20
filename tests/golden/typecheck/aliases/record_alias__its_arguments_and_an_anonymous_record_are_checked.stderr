@@ -1,0 +1,23 @@
+error[type]: field `value` expects Int, got String
+ --> record_alias__its_arguments_and_an_anonymous_record_are_checked.silt:18:27
+    |
+ 18 |   let b = IntBox { value: "no" }
+    |                           ^^^^ field `value` expects Int, got String
+
+error[type]: `Person` is another name for the anonymous record type `{name: String, age: Int}`: write the record without the name, `{ name: ..., age: ... }`
+ --> record_alias__its_arguments_and_an_anonymous_record_are_checked.silt:19:11
+    |
+ 19 |   let p = Person { name: "n", age: 3 }
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Person` is another name for the anonymous record type `{name: String, age: Int}`: write the record without the name, `{ name: ..., age: ... }`
+
+error[type]: `Nothing` is another name for the anonymous record type `{}`
+ --> record_alias__its_arguments_and_an_anonymous_record_are_checked.silt:20:11
+    |
+ 20 |   let n = Nothing {}
+    |           ^^^^^^^^^^ `Nothing` is another name for the anonymous record type `{}`
+
+error[type]: `Person` is another name for the anonymous record type `{name: String, age: Int}`: write the record without the name, `{ name, age }`
+ --> record_alias__its_arguments_and_an_anonymous_record_are_checked.silt:23:5
+    |
+ 23 |     Person { name, .. } -> println(name)
+    |     ^^^^^^^^^^^^^^^^^^^ `Person` is another name for the anonymous record type `{name: String, age: Int}`: write the record without the name, `{ name, age }`

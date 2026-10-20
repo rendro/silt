@@ -1,0 +1,11 @@
+error[parse]: expected '}' to close function body, found fn
+ --> nested_fn__a_body_not_closed_is_said_first.silt:14:1
+    |
+ 14 | fn b() -> Int {
+    | ^^ expected '}' to close function body, found fn
+ ::: nested_fn__a_body_not_closed_is_said_first.silt:6:15
+   |
+ 6 | fn a() -> Int {
+   |               - the function body starts here
+  = help: if `b` is a function of its own, a `}` is missing above it
+  = help: a function cannot be declared inside another; bind a closure: `let b = { -> ... }`

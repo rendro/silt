@@ -696,10 +696,14 @@ impl TypeChecker {
                 // The record type the pattern names, with its fields in
                 // the order of the declaration.
                 let declared = name
-                    .and_then(|rec_name| self.named_record(res, rec_name, span, true))
-                    .map(|(rec_ref, rec_info, param_ids)| {
+                    .and_then(|rec_name| self.named_record(res, rec_name, pattern_span, true))
+                    .map(|(rec_ref, rec_info, param_ids, fixed)| {
                         let (fields, args) =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
+                        // An alias's arguments (`BI { .. }` for `type BI = B(Int)`).
+                        for (arg, fixed) in args.iter().zip(fixed.iter().flatten()) {
+                            self.unify(arg, fixed, span);
+                        }
                         self.unify(expected, &Type::Generic(rec_ref, args), span);
                         (rec_ref, fields)
                     });

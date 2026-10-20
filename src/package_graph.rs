@@ -52,6 +52,13 @@
 //!   lives next to the project's `silt.toml`.
 //! - A symbolic link in a dependency's `silt.toml` or `src/` is
 //!   `SymlinkInDependency`; a git checkout that holds one is not cached.
+//! - Under [`LockPolicy::Update`] and [`LockPolicy::ReadOnly`], the
+//!   checkout of a git dependency must have the checksum the lock pins
+//!   for its URL and commit, whether it came from the cache or was just
+//!   fetched, or it is `LockfileChecksum`. [`LockPolicy::Refresh`]
+//!   fetches every git dependency afresh (a checkout in the cache is
+//!   not taken) and pins what it fetched. Path dependencies are not
+//!   compared: their sources change by design.
 //!
 //! Every problem is a [`Diagnostic`] in the `silt.toml` (or `silt.lock`)
 //! it is about, a dependency's own manifest included. Nothing here
@@ -333,6 +340,7 @@ impl Resolver<'_> {
                     SourceKey::Path(root.clone()),
                     root,
                     locked,
+                    None,
                     from,
                     &key_name,
                     entry,
@@ -364,7 +372,27 @@ impl Resolver<'_> {
                         }
                     },
                 };
-                let root = match git::fetch_to_cache(&url, &commit) {
+                // A source met before is that package (not fetched
+                // again: under `silt update` that would remove the
+                // checkout the package was read from).
+                let source = SourceKey::Git(url.clone(), commit.clone());
+                if let Some(id) = self.by_source.get(&source) {
+                    return Some(*id);
+                }
+                if self.failed.contains(&source) {
+                    return None;
+                }
+                // `silt update` takes nothing from the cache and pins
+                // what it fetched; everything else compares the
+                // checkout with the lock.
+                let (fetched, expected) = match self.policy {
+                    LockPolicy::Refresh => (git::fetch_afresh(&url, &commit), None),
+                    LockPolicy::Update | LockPolicy::ReadOnly => (
+                        git::fetch_to_cache(&url, &commit),
+                        self.locked_checksum(&url, &commit),
+                    ),
+                };
+                let root = match fetched {
                     Ok(root) => crate::source::canonical_path(&root),
                     Err(e) => {
                         let d = match &e {
@@ -388,25 +416,21 @@ impl Resolver<'_> {
                     ref_spec,
                     resolved_sha: commit.clone(),
                 };
-                self.enter(
-                    SourceKey::Git(url, commit),
-                    root,
-                    locked,
-                    from,
-                    &key_name,
-                    entry,
-                )
+                self.enter(source, root, locked, expected, from, &key_name, entry)
             }
         }
     }
 
     /// The package at `root`, entering it into the graph the first time
-    /// its source is met.
+    /// its source is met. `expected` is the checksum its sources must
+    /// have, if the lock pins one.
+    #[allow(clippy::too_many_arguments)]
     fn enter(
         &mut self,
         source: SourceKey,
         root: PathBuf,
         locked: LockedSource,
+        expected: Option<String>,
         from: PackageId,
         key_name: &str,
         entry: &DependencyEntry,
@@ -438,6 +462,19 @@ impl Resolver<'_> {
                 return None;
             }
         };
+        if let Some(expected) = expected
+            && expected != checksum
+        {
+            self.diagnostics.push(checksum_diagnostic(
+                entry.value,
+                key_name,
+                &expected,
+                &checksum,
+                &root,
+            ));
+            self.failed.insert(source);
+            return None;
+        }
         let manifest = match Manifest::load(&root.join("silt.toml"), self.sources) {
             Ok(manifest) => manifest,
             Err(d) => {
@@ -472,6 +509,20 @@ impl Resolver<'_> {
             checksum,
             Some((from, entry.key)),
         ))
+    }
+
+    /// The checksum the existing lock pins the checkout of `url` at
+    /// `commit` to.
+    fn locked_checksum(&self, url: &str, commit: &str) -> Option<String> {
+        let lock = self.existing.as_ref()?;
+        lock.packages.iter().find_map(|p| match &p.source {
+            LockedSource::Git {
+                url: locked_url,
+                resolved_sha,
+                ..
+            } if locked_url == url && resolved_sha == commit => Some(p.checksum.clone()),
+            _ => None,
+        })
     }
 
     /// The commit the existing lock pins `url` at `ref_spec` to, when the
@@ -689,6 +740,27 @@ fn symlink_diagnostic(at: Span, key: &str, path: &Path) -> Diagnostic {
         ),
     )
     .with_help("a dependency's files must be its own; replace the link with the file")
+}
+
+fn checksum_diagnostic(
+    at: Span,
+    key: &str,
+    expected: &str,
+    found: &str,
+    checkout: &Path,
+) -> Diagnostic {
+    let checkout = escape_for_display(&display_path(checkout).display().to_string());
+    Diagnostic::error(
+        Code::LockfileChecksum,
+        at,
+        format!("dependency `{key}`: its checkout does not match the checksum in silt.lock"),
+    )
+    .with_note(format!("silt.lock: {}", escape_for_display(expected)))
+    .with_note(format!("found:     {found} in {checkout}"))
+    .with_help(format!(
+        "delete {checkout} so that the commit is fetched again; if the checksum still \
+         differs, silt.lock was changed: run `silt update`"
+    ))
 }
 
 fn stale_diagnostic(at: Span, key: &str, reason: &str) -> Diagnostic {

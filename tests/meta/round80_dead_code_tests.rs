@@ -52,7 +52,7 @@ fn main() -> String {{
         "client wrapper produced empty error message"
     );
 
-    // Server side: accept_tls drives `ServerStreamWrapper`. Send
+    // Server side: tls_server drives `ServerStreamWrapper`. Send
     // garbage on a real connection so the server's
     // `complete_io_handshake` fails with a TLS alert. Pre-fix the
     // body that produced this error lived in `ServerStreamWrapper`.
@@ -68,8 +68,11 @@ fn main() -> String {
       let server = task.spawn({ ->
         let bad_cert = bytes.from_string("not a real cert")
         let bad_key = bytes.from_string("not a real key")
-        match tcp.accept_tls(listener, bad_cert, bad_key) {
-          Ok(_) -> "wrong: server expected to fail"
+        match tcp.accept(listener) {
+          Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
+            Ok(_) -> "wrong: server expected to fail"
+            Err(e) -> e.message()
+          }
           Err(e) -> e.message()
         }
       })

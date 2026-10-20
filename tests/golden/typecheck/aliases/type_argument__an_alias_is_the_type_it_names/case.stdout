@@ -1,0 +1,5 @@
+Ok(P {x: 4})
+Ok(4)
+Ok([P {x: 1}])
+a type
+Ok(Square {side: 2})

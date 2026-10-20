@@ -1,8 +1,8 @@
 error[type]: type mismatch: expected a, got Int
- --> rigid_variable_mismatch__names_the_variable.silt:7:18
+ --> rigid_variable_mismatch__names_the_variable.silt:8:3
    |
- 7 | fn id(x: a) -> a {
-   |                  ^ type mismatch: expected a, got Int
+ 8 |   1
+   |   ^ type mismatch: expected a, got Int
  ::: rigid_variable_mismatch__names_the_variable.silt:7:10
    |
  7 | fn id(x: a) -> a {
@@ -10,10 +10,10 @@ error[type]: type mismatch: expected a, got Int
   = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
 
 error[type]: type mismatch: expected a, got b
- --> rigid_variable_mismatch__names_the_variable.silt:11:26
+ --> rigid_variable_mismatch__names_the_variable.silt:12:3
     |
- 11 | fn pair(x: a, y: b) -> a {
-    |                          ^ type mismatch: expected a, got b
+ 12 |   y
+    |   ^ type mismatch: expected a, got b
  ::: rigid_variable_mismatch__names_the_variable.silt:11:12
     |
  11 | fn pair(x: a, y: b) -> a {
@@ -36,10 +36,10 @@ error[type]: type mismatch: expected a, got Int
   = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
 
 error[type]: type mismatch: expected t, got Int
- --> rigid_variable_mismatch__names_the_variable.silt:23:38
+ --> rigid_variable_mismatch__names_the_variable.silt:24:3
     |
- 23 | fn area_of(s: t) -> t where t: Shape {
-    |                                      ^ type mismatch: expected t, got Int
+ 24 |   s.area()
+    |   ^^^^^^^^ type mismatch: expected t, got Int
  ::: rigid_variable_mismatch__names_the_variable.silt:23:15
     |
  23 | fn area_of(s: t) -> t where t: Shape {
@@ -47,10 +47,10 @@ error[type]: type mismatch: expected t, got Int
   = note: `t` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
 
 error[type]: type mismatch: expected e, got Int
- --> rigid_variable_mismatch__names_the_variable.silt:27:26
+ --> rigid_variable_mismatch__names_the_variable.silt:28:3
     |
- 27 | fn wrap(x: e) -> List(e) {
-    |                          ^ type mismatch: expected e, got Int
+ 28 |   [1]
+    |   ^^^ type mismatch: expected e, got Int
  ::: rigid_variable_mismatch__names_the_variable.silt:27:12
     |
  27 | fn wrap(x: e) -> List(e) {
