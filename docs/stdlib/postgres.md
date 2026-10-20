@@ -122,7 +122,10 @@ the fields once per result, before the statement runs:
 
 So a statement whose rows do not fit is not run: an `INSERT ...
 RETURNING` into a record that does not fit inserts nothing. A cell is
-checked as it is read: a `NULL` fills an `Option` field with `None`, and
+checked as it is read, after the statement has run: an `INSERT ...
+RETURNING` whose returned cell does not fit is `Err`, and its rows were
+inserted all the same (on a pool they stay; in a transaction the
+callback decides). A `NULL` fills an `Option` field with `None`, and
 any other field with nothing, `Err(TypeMismatch(column, field type,
 "NULL"))`; a `NaN`, an `Infinity` or a date's `infinity` is
 `TypeMismatch(column, field type, "NaN")` (or `"Infinity"`,
