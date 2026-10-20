@@ -297,12 +297,68 @@ impl r2d2::ManageConnection for Manager {
     }
 
     fn has_broken(&self, conn: &mut Conn) -> bool {
-        conn.broken || conn.canceller.was_sent() || conn.client.is_closed()
+        conn.is_broken()
+    }
+}
+
+impl Conn {
+    /// It must not go back to the pool.
+    fn is_broken(&self) -> bool {
+        self.broken || self.canceller.was_sent() || self.client.is_closed()
     }
 }
 
 type PgPool = Pool<Manager>;
-type PinnedConn = r2d2::PooledConnection<Manager>;
+
+/// A connection taken from its pool, which it goes back to when it is
+/// dropped.
+struct PinnedConn {
+    conn: Option<r2d2::PooledConnection<Manager>>,
+    pool: PgPool,
+}
+
+impl PinnedConn {
+    /// A connection of `pool`: an idle one, or one it opens, waiting
+    /// for one 30 seconds at most.
+    fn take(pool: &PgPool) -> Result<PinnedConn, r2d2::Error> {
+        Ok(PinnedConn {
+            conn: Some(pool.get()?),
+            pool: pool.clone(),
+        })
+    }
+}
+
+impl std::ops::Deref for PinnedConn {
+    type Target = Conn;
+
+    fn deref(&self) -> &Conn {
+        self.conn.as_ref().expect("a pinned connection until it is dropped")
+    }
+}
+
+impl std::ops::DerefMut for PinnedConn {
+    fn deref_mut(&mut self) -> &mut Conn {
+        self.conn.as_mut().expect("a pinned connection until it is dropped")
+    }
+}
+
+impl Drop for PinnedConn {
+    /// A broken connection is closed, not given back
+    /// (`Manager::has_broken`). The pool keeps no idle connection in
+    /// reserve, so it would not open one in its place, and a statement
+    /// that waits for a connection would wait its 30 seconds: one is
+    /// opened for it, as for a checkout that finds no idle one.
+    fn drop(&mut self) {
+        let Some(conn) = self.conn.take() else {
+            return;
+        };
+        let broken = conn.is_broken();
+        drop(conn);
+        if broken {
+            drop(self.pool.get_timeout(Duration::ZERO));
+        }
+    }
+}
 
 // ── Pool + tx handle side tables ────────────────────────────────────
 
@@ -1338,7 +1394,7 @@ fn without_ssl_options(s: &str) -> Result<(String, SslUrlParams), String> {
 /// Open a pool for `cfg`, encrypted as `mode` says. Its first
 /// connection is made here, so that a connect that fails says why at
 /// once; the pool takes it, and opens the others itself, each when it
-/// can. The `PostgresError` of a connect that failed.
+/// needs one. The `PostgresError` of a connect that failed.
 fn open_pool(
     cfg: Config,
     mode: EffectiveSslMode,
@@ -1353,11 +1409,20 @@ fn open_pool(
         limit,
         first: Mutex::new(Some(first)),
     };
-    let mut builder = Pool::builder();
+    Ok(pool_of(manager, opts))
+}
+
+/// The pool of `manager`. It keeps no idle connections in reserve
+/// (r2d2 would keep `max_size` of them, and open them all at once): a
+/// statement that finds no idle connection opens one. A connection
+/// idle for 10 minutes, or open for 30, is closed while it is idle
+/// (r2d2's defaults), and not opened again until one is needed.
+fn pool_of(manager: Manager, opts: &ConnectOpts) -> PgPool {
+    let mut builder = Pool::builder().min_idle(Some(0));
     if let Some(n) = opts.max_pool_size {
         builder = builder.max_size(n);
     }
-    Ok(builder.build_unchecked(manager))
+    builder.build_unchecked(manager)
 }
 
 /// The first connection of a pool, and the encryption of the pool's
@@ -1533,7 +1598,7 @@ fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
 /// of the `PostgresError`.
 fn with_conn(target: ExecutorRef, f: impl FnOnce(&Conn) -> Result<Value, Value>) -> Value {
     let done = match target {
-        ExecutorRef::Pool(pool) => match pool.get() {
+        ExecutorRef::Pool(pool) => match PinnedConn::take(&pool) {
             Ok(conn) => f(&conn),
             Err(e) => Err(pool_error_value(&e)),
         },
@@ -1687,7 +1752,7 @@ fn do_stream_worker(
     };
 
     match target {
-        ExecutorRef::Pool(pool) => match pool.get() {
+        ExecutorRef::Pool(pool) => match PinnedConn::take(&pool) {
             Ok(conn) => {
                 // Left with rows unread, the connection is not given
                 // back: a cancel request was sent for it.
@@ -1957,7 +2022,7 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
     let params: [&(dyn ToSql + Sync); 2] = [&channel_name, &payload];
     match target {
         ExecutorRef::Pool(pool) => {
-            let conn = match pool.get() {
+            let conn = match PinnedConn::take(&pool) {
                 Ok(c) => c,
                 Err(e) => return err(pool_error_value(&e)),
             };
@@ -2285,7 +2350,7 @@ builtins! {
         let runtime = vm.runtime.clone();
         let channel_name = channel.to_string();
         let work = move || -> Value {
-            let conn = match pool.get() {
+            let conn = match PinnedConn::take(&pool) {
                 Ok(c) => c,
                 Err(e) => return err(pool_error_value(&e)),
             };
@@ -2488,7 +2553,7 @@ impl Native for Transact {
 /// On the I/O pool: a connection of `pool`, and `BEGIN` on it. The
 /// value is `Ok(PgTx)` of the transaction, or `Err` of what failed.
 fn begin_tx(pool: &PgPool) -> Value {
-    let conn = match pool.get() {
+    let conn = match PinnedConn::take(pool) {
         Ok(conn) => conn,
         Err(e) => return err(pool_error_value(&e)),
     };

@@ -1,0 +1,61 @@
+-- `postgres.connect` opens the pool's first connection, and the pool
+-- opens the others when it needs them: right after the connect, and
+-- after statements one after the other, the program has one session in
+-- the server, however large the pool may grow; two statements at once
+-- take two. (The sessions are counted by the URL's application_name.)
+import env
+import list
+import postgres
+import string
+import task
+import time
+
+type N { n: Int }
+
+type Slept { slept: String }
+
+fn url() -> String {
+  let url = match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+  let name = "application_name=silt_lazy_pool_case"
+  match string.contains(url, "?") {
+    true -> "{url}&{name}"
+    false -> "{url}?{name}"
+  }
+}
+
+-- The number of the program's sessions in the server.
+fn sessions(db: postgres.PgPool) -> String {
+  let sql = "SELECT count(*)::int8 AS n FROM pg_stat_activity WHERE application_name = 'silt_lazy_pool_case'"
+  match postgres.query(db, sql, (), N) {
+    Ok([row]) -> "{row.n}"
+    Ok(rows) -> "{rows}"
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{"max_pool_size": 5}) {
+    Ok(db) -> {
+      -- (Time for connections the pool would open at once.)
+      time.sleep(time.ms(300))
+      println("after the connect: {sessions(db)}")
+      println("again: {sessions(db)}")
+      println("and again: {sessions(db)}")
+      let sleepers = [1, 2] |> list.map { _ ->
+        task.spawn { -> postgres.query(db, "SELECT pg_sleep(0.3)::text AS slept", (), Slept) }
+      }
+      sleepers |> list.each { t ->
+        match task.join(t) {
+          Ok(_) -> ()
+          Err(e) -> println("a statement at once: {e.message()}")
+        }
+      }
+      println("after two statements at once: {sessions(db)}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

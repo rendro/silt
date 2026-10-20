@@ -236,4 +236,5 @@ cases!(
     stream_and_cursor_of_a_record_type,
     a_parameter_that_cannot_be_sent,
     dates_go_back_as_they_were_read,
+    a_pool_opens_connections_when_it_needs_them,
 );
