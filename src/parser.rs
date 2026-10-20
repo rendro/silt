@@ -342,6 +342,9 @@ pub struct Parser<'src> {
     pos: usize,
     /// How many function and closure bodies the current token is in.
     bodies: usize,
+    /// The name of the declared function whose body the current token
+    /// is in, and the body's `{`.
+    fn_body: Option<(Symbol, Span)>,
     /// The innermost "expression followed by a block" header being
     /// parsed, if any.
     header: Option<BlockHeader>,
@@ -362,6 +365,8 @@ pub struct Parser<'src> {
     /// What the lexer found wrong with the text; reported with the
     /// parser's own errors.
     lex_errors: Vec<Diagnostic>,
+    /// Where the semicolons of the text stand (`Lexed::semicolons`).
+    semicolons: Vec<u32>,
     /// The errors that are counted and not kept: the lexer's
     /// (`Lexed::more_errors`), and the parser's own behind its first
     /// `MAX_SYNTAX_ERRORS`.
@@ -443,6 +448,7 @@ impl<'src> Parser<'src> {
         let delim_depth = delimiter_depths(&tokens);
         Self {
             comments: lexed.comments,
+            semicolons: lexed.semicolons,
             lex_errors: lexed.errors,
             more_errors: lexed.more_errors,
             cut_short,
@@ -456,6 +462,7 @@ impl<'src> Parser<'src> {
             source,
             pos: 0,
             bodies: 0,
+            fn_body: None,
             header: None,
             expr_height: 0,
             statements: StatementMarks::default(),
@@ -845,6 +852,9 @@ impl<'src> Parser<'src> {
                 self.advance();
             } else if self.at(close) {
                 break;
+            } else if self.semicolon_before() {
+                // A semicolon where the comma belongs (`f(1; 2)`): the
+                // lexer reported it; it is read as that comma.
             } else if matches!(end, ListEnd::BeforeOrNothing(_)) {
                 return Ok(items);
             } else {
@@ -855,6 +865,17 @@ impl<'src> Parser<'src> {
             self.advance();
         }
         Ok(items)
+    }
+
+    /// Whether a semicolon stands between the previous token and the
+    /// current one.
+    fn semicolon_before(&self) -> bool {
+        let Some(prev) = self.pos.checked_sub(1).and_then(|at| self.tokens.get(at)) else {
+            return false;
+        };
+        let (from, to) = (prev.span.end, self.span().start);
+        let at = self.semicolons.partition_point(|s| *s < from);
+        self.semicolons.get(at).is_some_and(|s| *s < to)
     }
 
     /// The error for a comma-separated list that is not closed; see
@@ -1447,7 +1468,9 @@ impl<'src> Parser<'src> {
         self.fn_header_whole = true;
         if self.at(&Token::LBrace) {
             self.bodies += 1;
+            let outer = self.fn_body.replace((decl.name, self.span()));
             let body = self.parse_block();
+            self.fn_body = outer;
             self.bodies -= 1;
             Ok((where_clauses, body?, false))
         } else {
@@ -3245,7 +3268,7 @@ impl<'src> Parser<'src> {
                     format!("expected expression, found {}", self.peek()),
                 );
                 if let Some(help) = self.nested_fn_help() {
-                    return Err(d.with_help(help));
+                    return Err(self.unclosed_fn_body(d).with_help(help));
                 }
                 // A `+` that starts a statement: it was meant to go on
                 // with the line above, outside any bracket.
@@ -3258,6 +3281,32 @@ impl<'src> Parser<'src> {
                 Err(self.with_line_start_help(d))
             }
         }
+    }
+
+    /// The error `d` for a `fn` where an expression is expected, in the
+    /// body of a declared function, when what holds the `fn` is never
+    /// closed behind it (no token behind it is outside it): then that
+    /// body most likely lacks its `}`, which is said first. Otherwise
+    /// (the `fn` is inside a body that closes behind it) `d` as it is.
+    fn unclosed_fn_body(&self, d: Diagnostic) -> Diagnostic {
+        let Some((_, open)) = self.fn_body else {
+            return d;
+        };
+        let depth = self.delim_depth_at(self.pos);
+        if self.delim_depth[self.pos..].iter().any(|at| *at < depth) {
+            return d;
+        }
+        let at = match self.peek() {
+            Token::Pub => self.pos + 1,
+            _ => self.pos,
+        };
+        let Some(Token::Ident(name)) = self.tokens.get(at + 1).map(|tok| &tok.kind) else {
+            return d;
+        };
+        self.delim_unclosed_err_no_comma("function body", '}', open)
+            .with_help(format!(
+                "if `{name}` is a function of its own, a `}}` is missing above it"
+            ))
     }
 
     /// The help for a `fn name(...)` (or `pub fn name(...)`) where an

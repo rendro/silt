@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A `fn` inside a function's body, in a file that ends with a brace not
+-- closed: the body most likely lacks its `}`, which is said first; the
+-- closure help comes second.
+fn a() -> Int {
+  let x = 1
+  match x {
+    1 -> 2
+    _ -> 3
+
+}
+
+fn b() -> Int {
+  5
+}
+
+fn main() {
+  println("{a()} {b()}")
+}

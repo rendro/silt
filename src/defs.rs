@@ -263,6 +263,10 @@ pub struct DefTable {
     variants: HashMap<DefId, Vec<DefId>>,
     /// The slots of each module that was cleared, to be reused.
     free: HashMap<ModuleId, VecDeque<DefId>>,
+    /// The type each alias of the session names by its head (`Color`
+    /// for `type C = Color`, `Box` for `type IntBox = Box(Int)`), when
+    /// that is a type with a definition.
+    alias_types: HashMap<DefId, DefId>,
 }
 
 impl DefTable {
@@ -273,7 +277,28 @@ impl DefTable {
             by_module: HashMap::new(),
             variants: HashMap::new(),
             free: HashMap::new(),
+            alias_types: HashMap::new(),
         }
+    }
+
+    /// Record that the alias `alias` names the type `ty` by its head.
+    pub fn set_alias_type(&mut self, alias: DefId, ty: DefId) {
+        self.alias_types.insert(alias, ty);
+    }
+
+    /// The type `id` names: an alias's type (through aliases of
+    /// aliases), any other definition itself.
+    pub fn through_alias(&self, id: DefId) -> DefId {
+        let mut at = id;
+        // (An alias names an alias a bounded number of times: a cycle
+        // is rejected where it is declared.)
+        for _ in 0..64 {
+            match self.alias_types.get(&at) {
+                Some(next) => at = *next,
+                None => break,
+            }
+        }
+        at
     }
 
     /// The definition `id`. Panics on an id of another table.
@@ -318,6 +343,7 @@ impl DefTable {
         for id in &ids {
             self.defs[id.0 as usize - builtin] = None;
             self.variants.remove(id);
+            self.alias_types.remove(id);
         }
         self.free.entry(module).or_default().extend(ids);
     }

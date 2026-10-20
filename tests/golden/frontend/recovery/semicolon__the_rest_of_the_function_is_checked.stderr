@@ -1,0 +1,12 @@
+error[lex]: semicolons are not used in silt — use a newline to separate statements
+ --> semicolon__the_rest_of_the_function_is_checked.silt:10:20
+    |
+ 10 |   let v = helper(3);
+    |                    ^ semicolons are not used in silt — use a newline to separate statements
+  = note: a semicolon is written in 1 more place
+
+error[type]: type mismatch: expected String, got Int
+ --> semicolon__the_rest_of_the_function_is_checked.silt:11:19
+    |
+ 11 |   let w: String = v
+    |                   ^ type mismatch: expected String, got Int

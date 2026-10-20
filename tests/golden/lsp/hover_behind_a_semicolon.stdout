@@ -1,0 +1,8 @@
+13:20 error semicolons are not used in silt — use a newline to separate statements
+14:19 error type mismatch: expected String, got Int
+> hover 13:7
+```silt
+Int
+```
+> definition 13:11
+hover_behind_a_semicolon.silt:8:4-8:10

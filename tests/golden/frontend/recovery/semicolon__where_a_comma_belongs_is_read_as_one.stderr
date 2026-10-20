@@ -1,0 +1,12 @@
+error[lex]: semicolons are not used in silt — use a newline to separate statements
+ --> semicolon__where_a_comma_belongs_is_read_as_one.silt:6:16
+   |
+ 6 | type P { x: Int; y: Int }
+   |                ^ semicolons are not used in silt — use a newline to separate statements
+  = note: a semicolon is written in 3 more places
+
+error[type]: type mismatch: expected String, got Int
+ --> semicolon__where_a_comma_belongs_is_read_as_one.silt:16:19
+    |
+ 16 |   let s: String = r
+    |                   ^ type mismatch: expected String, got Int

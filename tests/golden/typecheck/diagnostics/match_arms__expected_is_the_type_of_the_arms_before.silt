@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- An arm whose type differs from the arms before it is the one reported,
+-- and what is expected is the type of those arms: an arm that is not a
+-- Result where the arms before are gets the help to wrap it in `Ok(...)`.
+fn word(n: Int) -> String {
+  match n {
+    0 -> "zero"
+    _ -> n
+  }
+}
+
+fn checked(n: Int) -> Result(Int, String) {
+  match n {
+    0 -> Err("zero")
+    _ -> n
+  }
+}
+
+fn main() {
+  let m = match 3 {
+    0 -> 1
+    _ -> "s"
+  }
+  println("{word(1)} {checked(2)} {m}")
+}

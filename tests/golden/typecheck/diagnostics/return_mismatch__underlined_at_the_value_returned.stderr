@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected String, got Int
+ --> return_mismatch__underlined_at_the_value_returned.silt:7:3
+   |
+ 7 |   x + 41
+   |   ^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected Result(Int, String), got Int
+ --> return_mismatch__underlined_at_the_value_returned.silt:12:3
+    |
+ 12 |   y * 2
+    |   ^^^^^ type mismatch: expected Result(Int, String), got Int

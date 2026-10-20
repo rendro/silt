@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A method of a structural trait written through an alias is the method
+-- of the type the alias names, with the alias's arguments: `Ints` is a
+-- `List(Int)`, so a list of strings is no argument of `Ints.display`.
+type Ints = List(Int)
+
+fn main() {
+  println(Ints.display(["s"]))
+  println(Ints.display([1, 2]))
+  let t = Ints
+  println(t.compare([1], ["t"]))
+}

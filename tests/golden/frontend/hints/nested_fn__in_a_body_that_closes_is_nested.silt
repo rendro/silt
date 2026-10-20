@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A `fn` inside a body that closes behind it is a nested function, also
+-- when a later body of the file lacks its `}`: it gets the closure help,
+-- and the body not closed its own error.
+fn a() -> Int {
+  fn helper(x: Int) -> Int {
+    x + 1
+  }
+  helper(1)
+}
+
+fn main() {
+  println(a())

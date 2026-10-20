@@ -1,0 +1,28 @@
+-- An alias of a record type is only another name: it builds the record
+-- and matches it, with the arguments it gives the record.
+type P {
+  x: Int,
+}
+
+type Q = P
+
+type Box(a) {
+  value: a,
+}
+
+type IntBox = Box(Int)
+
+type AnyBox(a) = Box(a)
+
+fn main() {
+  let q = Q { x: 1 }
+  match q {
+    Q { x } -> println(x)
+  }
+  let b = IntBox { value: 2 }
+  match b {
+    IntBox { value } -> println(value + 1)
+  }
+  println(AnyBox { value: "s" })
+  println(q == P { x: 1 })
+}

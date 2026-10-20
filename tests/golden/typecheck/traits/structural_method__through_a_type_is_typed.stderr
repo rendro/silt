@@ -1,0 +1,41 @@
+error[type]: type mismatch: expected Int, got Float
+ --> structural_method__through_a_type_is_typed.silt:14:24
+    |
+ 14 |   println(Int.equal(1, 2.0))
+    |                        ^^^ type mismatch: expected Int, got Float
+
+error[type]: type mismatch: expected P, got Int
+ --> structural_method__through_a_type_is_typed.silt:15:21
+    |
+ 15 |   println(P.display(5))
+    |                     ^ type mismatch: expected P, got Int
+
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__through_a_type_is_typed.silt:16:16
+    |
+ 16 |   let n: Int = String.display("s")
+    |                ^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__through_a_type_is_typed.silt:17:26
+    |
+ 17 |   let names: List(Int) = list.map(["a", "b"], String.display)
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected P, got Int
+ --> structural_method__through_a_type_is_typed.silt:19:33
+    |
+ 19 |   println(q.compare(P { x: 1 }, 3))
+    |                                 ^ type mismatch: expected P, got Int
+
+error[type]: function expects 1 argument, got 0
+ --> structural_method__through_a_type_is_typed.silt:20:11
+    |
+ 20 |   println(Int.display())
+    |           ^^^^^^^^^^^^^ function expects 1 argument, got 0
+
+error[type]: method `display` of the impl for every `Tuple` is called on a value: write `x.display(..)`, not `Tuple.display`
+ --> structural_method__through_a_type_is_typed.silt:21:11
+    |
+ 21 |   println(Tuple.display((1, 2)))
+    |           ^^^^^^^^^^^^^ method `display` of the impl for every `Tuple` is called on a value: write `x.display(..)`, not `Tuple.display`

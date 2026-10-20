@@ -2212,3 +2212,21 @@ fn test_unify_list() {
     let resolved = tc.apply(&var);
     assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
 }
+
+#[test]
+fn an_arm_that_is_no_result_after_a_result_arm_gets_the_ok_wrap_fix() {
+    // The arm reported is the one that differs from the arms before it:
+    // what is expected is their type, so an arm that is no `Result`
+    // after an `Err(..)` arm is offered `Ok(...)`.
+    let errors = check_errors(
+        "fn checked(n: Int) -> Result(Int, String) {\n  match n {\n    0 -> Err(\"zero\")\n    _ -> n\n  }\n}\n",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0].message,
+        "type mismatch: expected Result(_, String), got Int"
+    );
+    assert!(errors[0].help.is_empty(), "{:?}", errors[0].help);
+    let titles: Vec<&str> = errors[0].fixes.iter().map(|f| f.title.as_str()).collect();
+    assert_eq!(titles, ["Wrap expression in `Ok(...)`"]);
+}

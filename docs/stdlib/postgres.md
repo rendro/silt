@@ -104,7 +104,7 @@ unsupported value kind Bytes"))`.
 
 `postgres.query`, `postgres.stream` and `postgres.cursor` take the type
 a row is decoded into as their last argument: a record type, or
-`json.Value`. The compiler checks it where it is written, as it does
+`json.Value`, or an alias of one (the type it names). The compiler checks it where it is written, as it does
 for `json.parse`: any other type, or a record with a field of a type no
 column can fill, is an error there.
 

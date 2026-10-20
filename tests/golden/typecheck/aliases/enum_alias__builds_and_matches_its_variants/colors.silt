@@ -1,0 +1,4 @@
+pub type Color { Red, Green(Int) }
+pub type C = Color
+pub type P { x: Int }
+pub type Q = P

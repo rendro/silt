@@ -1,0 +1,27 @@
+-- An alias is only another name: as a type argument it is the type it
+-- names, a record, a primitive or a container type, also an alias that
+-- another module exports.
+import json
+import shapes
+
+type P {
+  x: Int,
+}
+
+type PA = P
+
+type IA = Int
+
+type Ints = List(Int)
+
+fn kind(type a) -> String {
+  "a type"
+}
+
+fn main() {
+  println(json.parse("""{"x": 4}""", PA))
+  println(json.parse("4", IA))
+  println(json.parse_list("""[{"x": 1}]""", PA))
+  println(kind(Ints))
+  println(json.parse("""{"side": 2}""", shapes.Sq))
+}

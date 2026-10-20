@@ -1,0 +1,6 @@
+error[lex]: unterminated string
+ --> unterminated_string__the_note_skips_an_interpolation_on_the_quotes_line.silt:8:11
+   |
+ 8 |   println("abc {n} def)
+   |           ^ unterminated string
+  = note: the string goes on behind the `{` at 9:11, which starts an interpolation: write `\{` for a literal brace

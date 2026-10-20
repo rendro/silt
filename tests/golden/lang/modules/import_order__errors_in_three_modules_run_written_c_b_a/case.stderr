@@ -1,17 +1,17 @@
 error[type]: type mismatch: expected Int, got String
- --> a.silt:1:20
+ --> a.silt:2:3
    |
- 1 | pub fn fa() -> Int {
-   |                    ^ type mismatch: expected Int, got String
+ 2 |   "a"
+   |   ^^^ type mismatch: expected Int, got String
 
 error[type]: type mismatch: expected Int, got String
- --> b.silt:1:20
+ --> b.silt:2:3
    |
- 1 | pub fn fb() -> Int {
-   |                    ^ type mismatch: expected Int, got String
+ 2 |   "b"
+   |   ^^^ type mismatch: expected Int, got String
 
 error[type]: type mismatch: expected Int, got String
- --> c.silt:1:20
+ --> c.silt:2:3
    |
- 1 | pub fn fc() -> Int {
-   |                    ^ type mismatch: expected Int, got String
+ 2 |   "c"
+   |   ^^^ type mismatch: expected Int, got String

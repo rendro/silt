@@ -70,6 +70,13 @@ impl Server {
         }
         let doc = self.documents.get(uri);
 
+        // After `import `: the modules there are to import.
+        if let Some(doc) = doc
+            && at_import_name(&doc.source.text, &pos)
+        {
+            return Some(CompletionResponse::Array(import_completions(uri)));
+        }
+
         let mut items: Vec<CompletionItem> = Vec::new();
 
         // Keywords
@@ -671,6 +678,65 @@ fn methods_for_receiver(
 /// identifier characters (plus `.` for qualified names like `mod.inner.`).
 /// Anything else terminates the walk — keeps multi-statement lines from
 /// greedily swallowing the previous expression.
+/// Whether the position `pos` of `source` is at the module name of an
+/// import being written: the line up to it is `import` and a name begun.
+fn at_import_name(source: &str, pos: &Position) -> bool {
+    let Some(line) = source.lines().nth(pos.line as usize) else {
+        return false;
+    };
+    let mut units = 0usize;
+    let end = line
+        .char_indices()
+        .find(|(_, ch)| {
+            let past = units >= pos.character as usize;
+            units += ch.len_utf16();
+            past
+        })
+        .map_or(line.len(), |(at, _)| at);
+    let Some(name) = line[..end].trim_start().strip_prefix("import") else {
+        return false;
+    };
+    name.starts_with(char::is_whitespace)
+        && name
+            .trim_start()
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+/// The modules the file `uri` may import: silt's own that this build
+/// has, and the other `.silt` files beside it but a program's entry
+/// file, `main.silt`, which is no module.
+fn import_completions(uri: &Uri) -> Vec<CompletionItem> {
+    let item = |label: String| CompletionItem {
+        label,
+        kind: Some(CompletionItemKind::MODULE),
+        ..CompletionItem::default()
+    };
+    let mut items: Vec<CompletionItem> = module::builtin_modules()
+        .iter()
+        .filter(|name| module::missing_feature(name).is_none())
+        .map(|name| item(name.to_string()))
+        .collect();
+    let path = super::diagnostics::uri_to_path(uri);
+    let siblings = path
+        .parent()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|sibling| *sibling != path && sibling.extension().is_some_and(|e| e == "silt"))
+        .filter_map(|sibling| Some(sibling.file_stem()?.to_str()?.to_string()))
+        .filter(|stem| stem != "main")
+        .filter(|stem| {
+            stem.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        });
+    let mut local: Vec<String> = siblings.collect();
+    local.sort();
+    items.extend(local.into_iter().map(item));
+    items
+}
+
 fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
     let line = source.lines().nth(pos.line as usize)?;
     let col = pos.character as usize;
