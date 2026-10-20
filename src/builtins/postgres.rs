@@ -332,13 +332,17 @@ impl std::ops::Deref for PinnedConn {
     type Target = Conn;
 
     fn deref(&self) -> &Conn {
-        self.conn.as_ref().expect("a pinned connection until it is dropped")
+        self.conn
+            .as_ref()
+            .expect("a pinned connection until it is dropped")
     }
 }
 
 impl std::ops::DerefMut for PinnedConn {
     fn deref_mut(&mut self) -> &mut Conn {
-        self.conn.as_mut().expect("a pinned connection until it is dropped")
+        self.conn
+            .as_mut()
+            .expect("a pinned connection until it is dropped")
     }
 }
 

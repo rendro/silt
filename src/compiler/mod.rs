@@ -78,7 +78,7 @@ const STATEMENT_BUILTINS: &[&str] = &[
 ];
 
 /// A family of decoding builtins: they decode the same field types.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Decoder {
     Json,
     Toml,
@@ -112,20 +112,32 @@ impl Decoder {
             Decoder::Postgres => {
                 "decodable field types are Int, Float, String, \
                  Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), \
-                 tuples, non-generic record types, and aliases of these"
+                 tuples, non-generic record types, and aliases of these; Bytes only as a field, \
+                 in an Option or in a List (a bytea column), not in a Map, a tuple or a nested record"
             }
+        }
+    }
+
+    /// The decoder of what a map, a tuple or a nested record of a field
+    /// holds: a column fills those only with a json document, so for
+    /// postgres it is json's.
+    fn nested(self) -> Decoder {
+        match self {
+            Decoder::Postgres => Decoder::Json,
+            other => other,
         }
     }
 
     /// The part of `field_type` that this decoder, unlike another one,
     /// has no decoder for: `json.Value` for toml, `Bytes` for json and
-    /// toml.
+    /// toml, and for postgres in a map or a tuple.
     fn lacks(self, field_type: &FieldType) -> Option<&'static str> {
         match field_type {
             FieldType::JsonValue if self == Decoder::Toml => Some("json.Value"),
             FieldType::Bytes if self != Decoder::Postgres => Some("Bytes"),
-            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => self.lacks(t),
-            FieldType::Tuple(ts) => ts.iter().find_map(|t| self.lacks(t)),
+            FieldType::List(t) | FieldType::Option(t) => self.lacks(t),
+            FieldType::Map(t) => self.nested().lacks(t),
+            FieldType::Tuple(ts) => ts.iter().find_map(|t| self.nested().lacks(t)),
             _ => None,
         }
     }
@@ -155,6 +167,9 @@ struct UndecodableField {
     field_type: String,
     /// The part of the field's type that has no decoder.
     part: String,
+    /// The record type is nested in the one given to the decoder (it
+    /// may be that one itself, in a field of its own).
+    nested: bool,
 }
 
 // ── Reading a field ──────────────────────────────────────────────────
@@ -2696,14 +2711,15 @@ impl<'a> Compiler<'a> {
     }
 
     /// The first field that `decoder` cannot decode, in the record type
-    /// `record` or in a record type nested in it. `None` if there is none.
+    /// `record` or in a record type nested in it (which
+    /// `decoder.nested()` decodes). `None` if there is none.
     fn undecodable_field(
         &self,
         record: crate::defs::TypeId,
         decoder: Decoder,
-        seen: &mut HashSet<crate::defs::TypeId>,
+        seen: &mut HashSet<(crate::defs::TypeId, Decoder)>,
     ) -> Option<UndecodableField> {
-        if !seen.insert(record) {
+        if !seen.insert((record, decoder)) {
             return None;
         }
         let def = *self.units.defs.get(record.0);
@@ -2719,11 +2735,16 @@ impl<'a> Compiler<'a> {
                     field: resolve(field),
                     field_type: shown(&ty),
                     part,
+                    nested: false,
                 });
             }
             for nested_record in nested {
+                let decoder = decoder.nested();
                 if let Some(found) = self.undecodable_field(nested_record, decoder, seen) {
-                    return Some(found);
+                    return Some(UndecodableField {
+                        nested: true,
+                        ..found
+                    });
                 }
             }
         }
@@ -2798,10 +2819,10 @@ impl<'a> Compiler<'a> {
             let Some(found) = self.undecodable_field(ty.id, decoder, &mut HashSet::new()) else {
                 return Ok(());
             };
-            let owner = if found.record == resolve(def.name) {
-                String::new()
-            } else {
+            let owner = if found.nested {
                 format!(" of `{}`, a record type nested in it,", found.record)
+            } else {
+                String::new()
             };
             let part = if found.part == found.field_type {
                 "which has no decoder".to_string()
