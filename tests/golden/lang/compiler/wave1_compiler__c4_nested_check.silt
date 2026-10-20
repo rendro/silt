@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[compile]
+-- stderr-contains: error[type]
 -- stderr-contains: json.parse_list
 -- stderr-contains: Outer
 -- stderr-contains: Inner

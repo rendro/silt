@@ -1,10 +1,12 @@
+-- cmd: check
+-- exit: 1
 -- An enum whose variant has a field no decoder exists for (here Bytes)
 -- has no json decoder, so a record with a field of it, or the enum
--- itself, is refused whatever the document holds: another variant, the
--- key left out, an empty list. And toml has no decoder for an enum, so a
--- record with an enum field is refused with its key left out too. (The
--- type arrives at run time: written at the call, the compiler refuses
--- it.)
+-- itself, is refused whatever the document would hold: another
+-- variant, the key left out, an empty list. And toml has no decoder for
+-- an enum, so a record with an enum field is refused too.
+-- (Through a `type a` parameter: the checker asks of each type a call
+-- gives it what the decoder the function gives it to asks.)
 import json
 import toml
 

@@ -1,0 +1,55 @@
+error[type]: `json.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:30:34
+    |
+ 30 |   show(from_json("""{"n": 1}""", B))
+    |                                  ^ `json.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+  = note: `from_json` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `toml.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:31:27
+    |
+ 31 |   show(from_toml("n = 1", B))
+    |                           ^ `toml.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+  = note: `from_toml` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+
+error[type]: `json.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:32:43
+    |
+ 32 |   show(from_json("""{"n": 1, "b": []}""", B))
+    |                                           ^ `json.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+  = note: `from_json` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `toml.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:33:35
+    |
+ 33 |   show(from_toml("n = 1\nb = []", B))
+    |                                   ^ `toml.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
+  = note: `from_toml` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+
+error[type]: `json.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:34:34
+    |
+ 34 |   show(from_json("""{"n": 1}""", S))
+    |                                  ^ `json.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
+  = note: `from_json` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `toml.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:35:27
+    |
+ 35 |   show(from_toml("n = 1", S))
+    |                           ^ `toml.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
+  = note: `from_toml` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+
+error[type]: `json.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
+ --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:36:45
+    |
+ 36 |   show(from_json("""{"n": 1, "s": null}""", S))
+    |                                             ^ `json.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
+  = note: `from_json` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these

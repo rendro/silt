@@ -1,0 +1,70 @@
+-- cmd: check
+-- exit: 1
+-- A trait method called on a value whose type is a type variable (a
+-- bounded parameter, `self` in a default method, the parameter of a
+-- generic impl) asks, at each call where the type becomes known, what
+-- the method of that type's impl asks: through chains of functions and
+-- of default methods. A type variable that stays one is never checked.
+import json
+
+type Blob { data: Bytes }
+type Fine { n: Int }
+type Src { s: String }
+type Box(t) { inner: t }
+
+trait Loader {
+  fn text(self) -> String
+  fn load(self, type a) -> Result(a, json.JsonError)
+  fn load_via_load(self, type a) -> Result(a, json.JsonError) {
+    self.load(a)
+  }
+  fn load_twice(self, type a) -> Result(a, json.JsonError) {
+    self.load_via_load(a)
+  }
+}
+
+trait Loader for Src {
+  fn text(self) -> String {
+    self.s
+  }
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}
+
+trait Loader for Box(t) where t: Loader {
+  fn text(self) -> String {
+    self.inner.text()
+  }
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    self.inner.load(a)
+  }
+}
+
+fn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+  l.load(b)
+}
+
+fn go2(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+  go(l, b)
+}
+
+fn go3(l, b) {
+  l.load(b)
+}
+
+fn generic_all_the_way(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+  go2(l, b)
+}
+
+fn main() {
+  let src = Src { s: "\{\"n\": 1}" }
+  let _ = go(src, Fine)
+  let _ = go(src, Blob)
+  let _ = go2(src, Blob)
+  let _ = go3(src, Blob)
+  let _ = src.load_via_load(Blob)
+  let _ = src.load_twice(Blob)
+  let _ = Box { inner: src }.load(Blob)
+  let _ = go(Box { inner: Box { inner: src } }, Blob)
+}

@@ -32,7 +32,6 @@ use crate::ast::{self, Decl, ImportTarget};
 use crate::bytecode::Globals;
 use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
-use crate::layers::Layers;
 use crate::source::{FileId, Span};
 
 use super::graph::{ModuleId, cell_name};
@@ -107,9 +106,6 @@ pub(super) struct Cells {
     /// The cells added since that were not committed, and whose
     /// declarations the session has not forgotten yet.
     dropped: Vec<ModuleId>,
-    /// Their type declarations, as checked, each by the span of its
-    /// name: a later cell's code knows those types.
-    types: Layers<Span, Arc<ast::TypeDecl>>,
     /// What binds each top-level name the committed cells bind.
     scope: HashMap<Symbol, Binder>,
     /// The modules (not cells) whose code the committed cells installed.
@@ -257,7 +253,6 @@ impl Cells {
     /// a cell; `index` numbers the modules of its program.
     pub fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
         EarlierCells {
-            types: self.types.clone(),
             installed: self
                 .installed
                 .iter()
@@ -318,11 +313,6 @@ impl Cells {
                         self.scope.remove(&v.name);
                     }
                 }
-            }
-        }
-        for decl in own {
-            if let Decl::Type(t) = decl {
-                self.types.insert(t.name_span, Arc::new(t.clone()));
             }
         }
         self.dropped.retain(|cell| *cell != id);

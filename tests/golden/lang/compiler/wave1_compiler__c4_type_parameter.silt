@@ -1,3 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A record with a field no decoder exists for, given through a
+-- `type a` parameter to json.parse and to toml.parse, is refused at
+-- each call that gives it.
 import json
 import toml
 

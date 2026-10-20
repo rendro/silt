@@ -1,0 +1,40 @@
+-- cmd: check
+-- exit: 1
+-- A function that passes its type on to a decoder, held in an Option
+-- (annotated or not), is checked at the call that gives the type, and
+-- the note names the function, not what holds it. A function the call
+-- gives a decoder and a type, which it gives each other, is named too.
+import json
+
+type Blob { data: Bytes }
+
+fn load(s: String, type a) -> Result(a, json.JsonError) {
+  json.parse(s, a)
+}
+
+fn load_unannotated(s, t) {
+  json.parse(s, t)
+}
+
+fn call(f, s, t) {
+  f(s, t)
+}
+
+fn main() {
+  let o = Some(load)
+  match o {
+    Some(p) -> println(p("\{}", Blob))
+    None -> ()
+  }
+  let u = Some(load_unannotated)
+  match u {
+    Some(p) -> println(p("\{}", Blob))
+    None -> ()
+  }
+  let d = Some(json.parse)
+  match d {
+    Some(p) -> println(call(p, "\{}", Blob))
+    None -> ()
+  }
+  println(call(load, "\{}", Blob))
+}

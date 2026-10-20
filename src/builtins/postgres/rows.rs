@@ -108,7 +108,8 @@ impl ToSql for TextParam {
 /// The parameters of a statement of `caller`: `params`, a tuple, or
 /// `()` for none; and where the encoder leaves why one of them could not
 /// be sent, if one of them may not be (a list of `Bytes`, which has no
-/// JSON form).
+/// JSON form). (The checker refuses parameters that are no tuple
+/// wherever a program gives them: the error is a guard.)
 pub(super) fn params(
     caller: &str,
     params: &Value,
@@ -472,9 +473,9 @@ impl Plan {
                 };
                 // A field no decoder fills (in a record or enum type it
                 // names too) is refused whatever the result holds, before
-                // any column is matched. (A type reached only through a
-                // type argument that is a type variable: the compiler
-                // refuses the others.)
+                // any column is matched. (The checker refuses such a
+                // type wherever a program gives one: the decoders'
+                // guard.)
                 if let Some(message) = decode::record_refusal(rt, Family::Postgres, ty) {
                     return Err(super::other_error(message));
                 }

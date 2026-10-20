@@ -1,0 +1,35 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- postgres has no decoder for an enum: a row type with an enum field (or
+-- a List of one) given through a type parameter is refused at the call
+-- that gives it. A record nested in a field is filled from a json
+-- document by json's rules, which decode an enum.
+import postgres
+
+type Status {
+  Active,
+  Paused(Int),
+}
+
+type Job { state: Status }
+
+type Jobs { states: List(Status) }
+
+type Inner { state: Status }
+
+type Wrapped { inner: Inner }
+
+fn rows(db: postgres.PgPool, sql: String, type a) -> Result(List(a), postgres.PostgresError) {
+  postgres.query(db, sql, (), a)
+}
+
+fn refused(db: postgres.PgPool) {
+  let _ = rows(db, "SELECT 1 AS state", Job)
+  let _ = rows(db, "SELECT 1 AS states", Jobs)
+  let _ = rows(db, "SELECT 1 AS inner", Wrapped)
+}
+
+fn main() {
+  println("checked")
+}

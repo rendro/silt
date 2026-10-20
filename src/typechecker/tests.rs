@@ -2230,3 +2230,38 @@ fn an_arm_that_is_no_result_after_a_result_arm_gets_the_ok_wrap_fix() {
     let titles: Vec<&str> = errors[0].fixes.iter().map(|f| f.title.as_str()).collect();
     assert_eq!(titles, ["Wrap expression in `Ok(...)`"]);
 }
+
+// ── A decoder's type argument ──────────────────────────────────
+
+/// The checker refuses a type a decoder has no decoder for, naming the
+/// decoder, the field and its type, at the type argument, next to the
+/// other type errors.
+#[test]
+fn a_decoder_s_type_argument_with_an_undecodable_field_is_refused() {
+    let source = r#"
+import json
+type Bag { items: Set(Int) }
+fn main() {
+  let n: Int = "x"
+  json.parse("x", Bag)
+}
+"#;
+    let errors = check_errors(source);
+    let refusal = errors
+        .iter()
+        .find(|e| e.code == Code::Undecodable)
+        .expect("the refusal");
+    assert!(
+        refusal.message.contains("json.parse")
+            && refusal.message.contains("`items`")
+            && refusal.message.contains("Set(Int)"),
+        "expected the error to name the call, the field and its type, got: {}",
+        refusal.message
+    );
+    let at = refusal.span.start as usize;
+    assert_eq!(&source[at..at + 3], "Bag", "at the type argument");
+    assert!(
+        errors.iter().any(|e| e.code == Code::TypeMismatch),
+        "with the type error: {errors:?}"
+    );
+}

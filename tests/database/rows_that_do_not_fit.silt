@@ -12,10 +12,7 @@
 -- list has levels is named with its dimensions. The message of a
 -- mismatch says to cast the column in SQL, but not for a NULL, and not
 -- for what a json or jsonb column holds (its actual part begins with
--- the column's type). A record that holds `Bytes` nested in a field,
--- which no column fills, is refused by the compiler where the type is
--- named; given through a type variable, the field is refused as it is
--- in json.parse, whatever the result holds (`Other`).
+-- the column's type).
 import env
 import json
 import postgres
@@ -34,10 +31,6 @@ type Meta { level: Int }
 type Doc { doc: Meta }
 
 type MaybeDoc { doc: Option(Meta) }
-
-type File { name: String, data: Bytes }
-
-type Stored { v: File }
 
 type Grid { g: List(List(Int)) }
 
@@ -59,12 +52,6 @@ fn said(e: postgres.PostgresError) -> String {
     _ -> "another error"
   }
   "{variant}\n  {e.message()}"
-}
-
--- The rows of `sql`, decoded into `r`, which the compiler does not
--- know here.
-fn rows_of(db: postgres.PgPool, sql: String, type r) -> Result(List(r), postgres.PostgresError) {
-  postgres.query(db, sql, (), r)
 }
 
 fn show(what: String, answer: Result(List(a), postgres.PostgresError)) where a: Display {
@@ -94,10 +81,6 @@ fn main() {
       show("a NaN in a json.Value row", postgres.query(db, "SELECT 'NaN'::float8 AS r", (), json.Value))
       show("a document that does not fit", postgres.query(db, """SELECT '{"level": "high"}'::jsonb AS doc""", (), Doc))
       show("a document null for an Option", postgres.query(db, "SELECT 'null'::jsonb AS doc", (), MaybeDoc))
-      show(
-        "a document for a record that holds Bytes, no rows",
-        rows_of(db, """SELECT '{}'::jsonb AS v WHERE false""", Stored),
-      )
       show("an array of 1 dimension for a list of lists", postgres.query(db, "SELECT ARRAY[1, 2] AS g", (), Grid))
       show("an array of 2 dimensions for a list", postgres.query(db, "SELECT ARRAY[[1], [2]] AS x", (), Xs))
       show("a date that is infinity", postgres.query(db, "SELECT 'infinity'::date AS d", (), Day))

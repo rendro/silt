@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- The checker refuses a type a decoder has no decoder for, next to the
+-- other type errors and in source order: every one in one run, at the
+-- type argument. A type in a variable is the type it holds; an instance
+-- of a generic type that no alias names is named as the checker shows
+-- it.
+import json
+import toml
+
+type Box(t) { v: t }
+type IntBox = Box(Int)
+type Blob { data: Set(Int) }
+type Mood { Happy, Sad }
+type Bin { b: Bytes }
+
+fn main() {
+  let n: Int = "not a number"
+  let _ = json.parse("\{}", Blob)
+  let _ = toml.parse("", Mood)
+  let _ = json.parse("\{}", IntBox)
+  let t = Blob
+  let _ = json.parse("\{}", t)
+  let b = IntBox
+  let _ = json.parse("\{}", b)
+  let _ = toml.parse_list("", Bin)
+  println(n)
+}

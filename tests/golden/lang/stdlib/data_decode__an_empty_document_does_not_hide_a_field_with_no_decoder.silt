@@ -1,8 +1,10 @@
--- A type with a field no decoder exists for is refused before the
--- document is read, so an empty list or map refuses it too: there is no
--- element to decode, but the type has no decoder all the same. (The
--- type arrives at run time: written at the call, the compiler refuses
--- it.)
+-- cmd: check
+-- exit: 1
+-- A type with a field no decoder exists for is refused before any
+-- document is read, so an empty list or map does not hide it: there is
+-- no element to decode, but the type has no decoder all the same.
+-- (Through a `type a` parameter: the checker asks of each type a call
+-- gives it what the decoder the function gives it to asks.)
 import json
 import toml
 

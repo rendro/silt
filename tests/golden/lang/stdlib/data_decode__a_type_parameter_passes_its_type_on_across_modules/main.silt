@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A function whose `type a` parameter reaches a decoder, through
+-- another function of its module too, asks of the type each call gives
+-- it what the decoder asks: in an importing module, and through that
+-- module's own `type c` parameter.
+import store
+
+type Blob { data: Set(Int) }
+type Fine { n: Int }
+
+fn mine(text: String, type c) -> String {
+  match store.via(text, c) {
+    Ok(_) -> "ok"
+    Err(_) -> "err"
+  }
+}
+
+fn main() {
+  println(store.load("\{\"n\": 1}", Fine))
+  println(store.load("\{}", Blob))
+  println(mine("\{}", Blob))
+}

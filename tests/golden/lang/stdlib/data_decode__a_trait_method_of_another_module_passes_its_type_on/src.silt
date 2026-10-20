@@ -1,0 +1,9 @@
+import json
+import loader.{ Loader }
+
+pub type Src { s: String }
+
+trait Loader for Src {
+  fn text(self) -> String { self.s }
+  fn own(self, type a) -> Result(a, json.JsonError) { json.parse(self.s, a) }
+}

@@ -1279,7 +1279,8 @@ enum ExecutorRef {
 }
 
 /// The executor that `conn` is, the argument of a function that takes
-/// a pool or a transaction: the `PostgresError` if it is neither, or is one
+/// a pool or a transaction: the `PostgresError` if it is neither (which
+/// the checker refuses wherever a program gives one: a guard), or is one
 /// that is closed.
 fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
     if let Some(pool) = PoolHandle::take(conn) {

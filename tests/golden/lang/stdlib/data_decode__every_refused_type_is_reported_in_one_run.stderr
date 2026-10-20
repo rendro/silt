@@ -1,0 +1,47 @@
+error[type]: type mismatch: expected Int, got String
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:18:16
+    |
+ 18 |   let n: Int = "not a number"
+    |                ^^^^^^^^^^^^^^ type mismatch: expected Int, got String
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:19:29
+    |
+ 19 |   let _ = json.parse("\{}", Blob)
+    |                             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Mood`: it is an enum type, and enums have no decoder
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:20:26
+    |
+ 20 |   let _ = toml.parse("", Mood)
+    |                          ^^^^ `toml.parse` cannot decode `Mood`: it is an enum type, and enums have no decoder
+  = help: decode into a record type
+
+error[type]: `json.parse` cannot decode `IntBox`: it names `Box(Int)`, an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:21:29
+    |
+ 21 |   let _ = json.parse("\{}", IntBox)
+    |                             ^^^^^^ `json.parse` cannot decode `IntBox`: it names `Box(Int)`, an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:23:29
+    |
+ 23 |   let _ = json.parse("\{}", t)
+    |                             ^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Box(Int)`: it is an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:25:29
+    |
+ 25 |   let _ = json.parse("\{}", b)
+    |                             ^ `json.parse` cannot decode `Box(Int)`: it is an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `toml.parse_list` cannot decode `Bin`: field `b` has type `Bytes`, which has no decoder
+ --> data_decode__every_refused_type_is_reported_in_one_run.silt:26:31
+    |
+ 26 |   let _ = toml.parse_list("", Bin)
+    |                               ^^^ `toml.parse_list` cannot decode `Bin`: field `b` has type `Bytes`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these

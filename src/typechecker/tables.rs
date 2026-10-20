@@ -94,6 +94,16 @@ pub(super) struct TraitInfo {
     /// name and the trait bounds the impl-supplied binding must satisfy.
     /// Empty for traits with no associated types (the common case).
     pub(super) assoc_types: Vec<AssocTypeInfo>,
+    /// What the default methods' bodies ask of their annotation
+    /// variables (`var_names`) for the builtins they give them to, once
+    /// the trait's module is checked: an impl in another module that
+    /// takes a default asks it of the types a call gives.
+    /// (By each variable and the default method's name.)
+    pub(super) builtin_needs: HashMap<(TyVar, Symbol), Vec<BuiltinCheck>>,
+    /// The trait methods those bodies call on a value whose type is one
+    /// of their annotation variables (`Pred::Via`), as the trait's module
+    /// decided them.
+    pub(super) via_needs: HashMap<(TyVar, Symbol), Vec<super::builtin_needs::ViaNeed>>,
 }
 
 /// Information about a single associated-type declaration inside a
@@ -214,6 +224,11 @@ impl<K: Copy + Eq + std::hash::Hash, V> Table<HashMap<K, V>, K> {
         added
     }
 
+    /// Whether the check under way entered the row of `key`.
+    pub(super) fn is_own(&self, key: &K) -> bool {
+        self.own.contains(key)
+    }
+
     /// How often the check under way tried to write over a row that is
     /// not its own, since this was last asked.
     fn take_overwritten(&mut self) -> usize {
@@ -295,6 +310,19 @@ impl ImplMethods {
     /// Every row's key.
     pub(super) fn keys(&self) -> impl Iterator<Item = &ImplMethodKey> {
         self.rows.keys()
+    }
+
+    /// The keys of the rows the check under way entered.
+    pub(super) fn own_keys(&self) -> Vec<ImplMethodKey> {
+        self.rows.own.iter().copied().collect()
+    }
+
+    /// The row of `key`, which the check under way entered, to change.
+    pub(super) fn own_mut(&mut self, key: &ImplMethodKey) -> Option<&mut MethodEntry> {
+        if !self.rows.own.contains(key) {
+            return None;
+        }
+        self.rows.rows.get_mut(key)
     }
 
     fn remove(&mut self, key: &ImplMethodKey) {

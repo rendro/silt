@@ -1,0 +1,9 @@
+import json
+
+pub trait Loader {
+  fn text(self) -> String
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.text(), a)
+  }
+  fn own(self, type a) -> Result(a, json.JsonError)
+}

@@ -1,0 +1,11 @@
+error[type]: or-pattern alternatives must bind the same variables; first alternative binds {a}, alternative 2 binds {}
+ --> or_pattern__an_error_points_at_the_alternative.silt:11:15
+    |
+ 11 |     Some(a) | None -> 1
+    |               ^^^^ or-pattern alternatives must bind the same variables; first alternative binds {a}, alternative 2 binds {}
+
+error[type]: or-pattern alternatives bind 'n' to conflicting types: Int vs String
+ --> or_pattern__an_error_points_at_the_alternative.silt:15:15
+    |
+ 15 |     Left(n) | Right(n) -> 2
+    |               ^^^^^^^^ or-pattern alternatives bind 'n' to conflicting types: Int vs String

@@ -1,7 +1,10 @@
+-- cmd: check
+-- exit: 1
 -- A field whose type no decoder exists for (one that holds Bytes, a Set)
--- is refused whatever the document holds there: its key left out too,
--- where its type is an Option. (The type arrives at run time: written
--- at the call, the compiler refuses it.)
+-- is refused whatever the document would hold there: its key left out
+-- too, where its type is an Option.
+-- (Through a `type a` parameter: the checker asks of each type a call
+-- gives it what the decoder the function gives it to asks.)
 import json
 import toml
 

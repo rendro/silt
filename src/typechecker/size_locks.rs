@@ -36,10 +36,12 @@ fn trait_info_size_locked() {
     // Stage 5 shrank its spans from 24 to 12 bytes; stage 6 added `self_var`,
     // `var_names` and `method_bounds`, which a default body and an impl
     // are checked with, and `receivers`, which says where `x.m(..)` may
-    // call a method.
+    // call a method. `builtin_needs` and `via_needs`: what the default
+    // bodies ask of their annotation variables for the builtins and the
+    // trait methods they give them to.
     assert_eq!(
         std::mem::size_of::<TraitInfo>(),
-        360,
+        456,
         "TraitInfo size changed — see module doc"
     );
 }

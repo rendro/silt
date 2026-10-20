@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- A trait method that gives its `type a` to a decoder, called on a value
+-- of a known type, asks of the type each call gives what the decoder
+-- asks: the impl's own method, the trait's default method the impl
+-- takes, the method reached through its type, and a function that calls
+-- the method.
+import json
+
+type Blob { data: Bytes }
+type Fine { n: Int }
+type Src { s: String }
+
+trait Loader {
+  fn text(self) -> String
+  fn load(self, type a) -> Result(a, json.JsonError)
+  fn load_text(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.text(), a)
+  }
+}
+
+trait Loader for Src {
+  fn text(self) -> String {
+    self.s
+  }
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}
+
+fn via(src: Src, type a) -> Result(a, json.JsonError) {
+  src.load(a)
+}
+
+fn main() {
+  let src = Src { s: "\{\"n\": 1}" }
+  let _ = src.load(Fine)
+  let _ = src.load(Blob)
+  let _ = src.load_text(Blob)
+  let _ = Src.load(src, Blob)
+  let _ = via(src, Blob)
+}

@@ -201,6 +201,9 @@ codes! {
     /// An impl that gives a record type a method named like one of the
     /// type's fields.
     MethodNamedLikeField = "E0341", Type;
+    /// A type given to a decoder that has no decoder for it (a field of
+    /// a type no decoder exists for, an enum, a generic type, ...).
+    Undecodable = "E0342", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;
@@ -208,9 +211,6 @@ codes! {
     /// Something the bytecode cannot express: too many constants, locals,
     /// arguments, a jump too far.
     CompileLimit = "E0405", Compile;
-    /// A construct the compiler rejects (a decoder for a type that has
-    /// none, ...).
-    InvalidConstruct = "E0406", Compile;
     /// A defect in silt: the compiler lost track of its own state.
     CompilerBug = "E0409", Compile;
     /// A module file named like a builtin module: `import` of the name

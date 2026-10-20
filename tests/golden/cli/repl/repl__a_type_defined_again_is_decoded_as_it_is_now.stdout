@@ -1,4 +1,2 @@
 Silt REPL (type :quit to exit, :help for commands)
-Err(cannot decode field `b` of `R`: a value of type Bytes cannot be decoded)
 Ok(R {n: 1})
-Err(cannot decode field `b` of `R`: a value of type Bytes cannot be decoded)

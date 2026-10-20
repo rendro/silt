@@ -1,9 +1,10 @@
+-- cmd: check
+-- exit: 1
 -- A field whose type names a record type with a field no decoder exists
--- for (Bytes, in json and toml) is refused whatever the document holds
--- there: its key left out, an Option left out, an empty array. The error
--- names the field of the nested record type, as it does where the
--- document holds that record. (The type arrives at run time: written at
--- the call, the compiler refuses it.)
+-- for (Bytes, in json and toml) is refused, whatever the document holds
+-- there: the refusal names the field of the nested record type.
+-- (Through a `type a` parameter: the checker asks of each type a call
+-- gives it what the decoder the function gives it to asks.)
 import json
 import toml
 

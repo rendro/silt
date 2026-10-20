@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: error[compile]
+-- stderr-contains: error[type]
 -- stderr-contains: toml.parse
 -- stderr-contains: `String`
 -- stderr-contains: record type

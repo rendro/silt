@@ -1,0 +1,15 @@
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> main.silt:21:29
+    |
+ 21 |   println(store.load("\{}", Blob))
+    |                             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = note: `store.load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> main.silt:22:23
+    |
+ 22 |   println(mine("\{}", Blob))
+    |                       ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = note: `mine` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these

@@ -30,8 +30,6 @@ a NaN in a json.Value row: TypeMismatch(r, json.Value, NaN)
 a document that does not fit: TypeMismatch(doc, Meta, jsonb: json type mismatch: expected Int, got string at level)
   postgres type mismatch on column `doc`: expected Meta, got jsonb: json type mismatch: expected Int, got string at level
 a document null for an Option: [MaybeDoc {doc: None}]
-a document for a record that holds Bytes, no rows: Other(cannot decode field `data` of `File`: a value of type Bytes cannot be decoded)
-  cannot decode field `data` of `File`: a value of type Bytes cannot be decoded
 an array of 1 dimension for a list of lists: TypeMismatch(g, List(List(Int)), int4[] with 1 dimension)
   postgres type mismatch on column `g`: expected List(List(Int)), got int4[] with 1 dimension; cast it in SQL, for example g::text
 an array of 2 dimensions for a list: TypeMismatch(x, List(Int), int4[] with 2 dimensions)

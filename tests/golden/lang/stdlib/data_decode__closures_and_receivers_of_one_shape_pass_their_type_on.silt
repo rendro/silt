@@ -1,0 +1,80 @@
+-- cmd: check
+-- exit: 1
+-- Two receivers of one shape in one function are checked each with its
+-- own type; a closure that captures a receiver of a known type passes the
+-- type it takes on through an annotated or an unannotated generic
+-- function; a closure a function returns, keeps in a record or gives to
+-- another function is refused at the type argument of the call that
+-- gives the type.
+import json
+
+type Blob { data: Bytes }
+type Fine { n: Int }
+type Src { s: String }
+type Other { s: String }
+type Box(t) { v: t }
+type H(f) { f: f }
+
+trait Loader {
+  fn load(self, type a) -> Result(a, json.JsonError)
+}
+
+trait Loader for Src {
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}
+
+trait Loader for Other {
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    Err(json.Other("other"))
+  }
+}
+
+trait Loader for Box(t) where t: Loader {
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    self.v.load(a)
+  }
+}
+
+fn both(x, y, t) {
+  let _ = Box { v: x }.load(t)
+  Box { v: y }.load(t)
+}
+
+fn go(l, t) {
+  l.load(t)
+}
+
+fn go_annotated(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+  l.load(b)
+}
+
+fn returned(l) {
+  { t -> l.load(t) }
+}
+
+fn kept(l) {
+  H { f: { t -> l.load(t) } }
+}
+
+fn apply1(f, t) {
+  f(t)
+}
+
+fn main() {
+  let src = Src { s: "\{\"n\": 1}" }
+  let other = Other { s: "" }
+  let _ = both(src, other, Blob)
+  let _ = both(other, src, Blob)
+  let p = { t -> go(src, t) }
+  let _ = p(Fine)
+  let _ = p(Blob)
+  let q = { t -> go_annotated(src, t) }
+  let _ = q(Blob)
+  let g = returned(src)
+  let _ = g(Blob)
+  let h = kept(src)
+  let _ = h.f(Blob)
+  let _ = apply1({ t -> src.load(t) }, Blob)
+}

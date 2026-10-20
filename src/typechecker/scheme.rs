@@ -110,6 +110,29 @@ impl TypeChecker {
             .filter(|v| self.tables.vars.is_generalizable(*v))
             .collect();
         let mut preds: Vec<Pred> = Vec::new();
+        // The variables of a function's parameters: a type one of them
+        // gives a builtin, the function passes on.
+        let passed: Vec<TyVar> = match (&ty, self.passing_on) {
+            (Type::Fun(params, _), Some(_)) => params.iter().flat_map(free_vars_in).collect(),
+            _ => Vec::new(),
+        };
+        let passer_of = |owner: Option<Symbol>, subject: TyVar| match passed.contains(&subject) {
+            true => self.passing_on,
+            false => owner,
+        };
+        // A trait method's call: the function passes on what its
+        // parameters give the method beyond the receiver (a function that
+        // returns a closure making the call passes nothing on).
+        let via_passer = |owner: Option<Symbol>, receiver: &Type, method_ty: &Type| {
+            let receiver = free_vars_in(receiver);
+            let given = free_vars_in(method_ty)
+                .into_iter()
+                .filter(|v| !receiver.contains(v));
+            match given.into_iter().any(|v| passed.contains(&v)) {
+                true => self.passing_on,
+                false => owner,
+            }
+        };
         if !vars.is_empty() {
             for i in self.closed_mark..self.wanted.len() {
                 if self.wanted[i].solved {
@@ -118,6 +141,45 @@ impl TypeChecker {
                 let Goal::Pred(pred) = &self.wanted[i].goal.clone() else {
                     continue;
                 };
+                // A trait method called on an annotation variable of the
+                // enclosing function, by a closure general in the type it
+                // gives (`{ t -> l.load(t) }`): each use of the closure
+                // owes it at the type that use gives.
+                if let Pred::Via {
+                    receiver,
+                    method_ty,
+                    ..
+                } = pred
+                    && !matches!(self.apply(receiver), Type::Var(_))
+                {
+                    let method_ty = self.apply(method_ty);
+                    let receiver_ty = self.apply(receiver);
+                    let mentioned = free_vars_in(&method_ty)
+                        .into_iter()
+                        .chain(free_vars_in(&receiver_ty));
+                    if mentioned.into_iter().any(|v| vars.contains(&v)) {
+                        self.wanted[i].solved = true;
+                        if let Pred::Via {
+                            tr, method, passer, ..
+                        } = pred
+                        {
+                            let passer = via_passer(*passer, &receiver_ty, &method_ty);
+                            let at = given_at(&method_ty, self.wanted[i].origin.span);
+                            let pred = Pred::Via {
+                                tr: *tr,
+                                method: *method,
+                                receiver: receiver_ty,
+                                method_ty,
+                                passer,
+                                at,
+                            };
+                            if !preds.contains(&pred) {
+                                preds.push(pred);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 let Type::Var(subject) = self.apply(pred.subject()) else {
                     continue;
                 };
@@ -139,10 +201,81 @@ impl TypeChecker {
                         row: Type::Var(subject),
                         field: *field,
                     },
+                    // The definition passes the type on to the builtin;
+                    // each use names its own type (`written`).
+                    Pred::Builtin { check, passer, .. } => Pred::Builtin {
+                        check: check.unwritten(),
+                        subject: Type::Var(subject),
+                        passer: passer_of(*passer, subject),
+                    },
+                    Pred::Via {
+                        tr,
+                        method,
+                        method_ty,
+                        passer,
+                        ..
+                    } => Pred::Via {
+                        tr: *tr,
+                        method: *method,
+                        receiver: Type::Var(subject),
+                        method_ty: self.apply(method_ty),
+                        passer: via_passer(*passer, &Type::Var(subject), &self.apply(method_ty)),
+                        at: given_at(&self.apply(method_ty), self.wanted[i].origin.span),
+                    },
+                    Pred::Given {
+                        given,
+                        passer,
+                        body,
+                        group,
+                        ..
+                    } => Pred::Given {
+                        subject: Type::Var(subject),
+                        given: *given,
+                        written: None,
+                        passer: passer_of(Some(*passer), subject).unwrap_or(*passer),
+                        body: *body,
+                        group: *group,
+                    },
                 };
                 if !preds.contains(&pred) {
                     preds.push(pred);
                 }
+            }
+            // A type the scope gives a function's annotation variable,
+            // if the definition is general in it.
+            // (The types one use gives belong together: a use the
+            // definition is general in goes into the scheme whole, with
+            // the types it gives that are known already.)
+            let mut general: HashMap<usize, Option<Symbol>> = HashMap::new();
+            for k in self.given_closed..self.given_waiting.len() {
+                let use_ = &self.given_waiting[k];
+                let mentioned = free_vars_in(&self.apply(&use_.subject));
+                if mentioned.iter().any(|v| vars.contains(v)) {
+                    let passes = mentioned.iter().any(|v| passed.contains(v));
+                    let passer = general.entry(use_.use_id).or_insert(None);
+                    if passes {
+                        *passer = self.passing_on;
+                    }
+                }
+            }
+            for k in self.given_closed..self.given_waiting.len() {
+                let use_ = &self.given_waiting[k];
+                let Some(passer) = general.get(&use_.use_id) else {
+                    continue;
+                };
+                let pred = Pred::Given {
+                    subject: self.apply(&use_.subject),
+                    given: use_.given,
+                    written: None,
+                    passer: passer.unwrap_or(use_.passer),
+                    body: use_.body,
+                    group: Some(use_.use_id),
+                };
+                if !preds.contains(&pred) {
+                    preds.push(pred);
+                }
+                // (Each use of the definition owes it now.)
+                self.given_waiting[k].taken = true;
             }
             // A variable only a predicate's trait arguments mention is
             // the scheme's as well.
@@ -163,6 +296,26 @@ impl TypeChecker {
     pub(super) fn generalize_fn(&mut self, ty: &Type, bounds: &[Pred]) -> Scheme {
         let (ty, rigid_vars) = unrigidify(&self.apply(ty));
         let mut scheme = self.generalize(&ty);
+        // A trait method's call on the function's own annotation variable
+        // that a closure it returns makes: on the variable the scheme
+        // quantifies.
+        let own = |ty: &Type| {
+            map_rigid(ty, &mut |r| match rigid_vars.contains(&r.var) {
+                true => Type::Var(r.var),
+                false => Type::Rigid(r),
+            })
+        };
+        for pred in &mut scheme.preds {
+            if let Pred::Via {
+                receiver,
+                method_ty,
+                ..
+            } = pred
+            {
+                *receiver = own(receiver);
+                *method_ty = own(method_ty);
+            }
+        }
         for v in rigid_vars {
             if !scheme.vars.contains(&v) {
                 scheme.vars.push(v);
@@ -190,6 +343,10 @@ impl TypeChecker {
         let fixed = self.fix_statement_calls(false);
         self.recheck_fixed(&fixed, Self::decide_closed);
         let recorded = self.wanted.split_off(self.closed_mark);
+        // (What stood at the places the scope's goals leave is gone.)
+        let kept = self.closed_mark;
+        self.waiting_decoders.retain(|&k| k < kept);
+        self.waiting_vias.retain(|&k| k < kept);
         for wanted in recorded {
             if wanted.solved {
                 continue;
@@ -209,6 +366,31 @@ impl TypeChecker {
                 Goal::Listed { .. }
                 | Goal::Rebuild { .. }
                 | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
+                // A type nothing decides is no type a builtin is given:
+                // nothing to check.
+                Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. }) => continue,
+                // A trait method called on an annotation variable of the
+                // scope's function: a need of its body.
+                Goal::Pred(Pred::Via {
+                    tr,
+                    method,
+                    receiver,
+                    method_ty,
+                    passer,
+                    ..
+                }) => {
+                    if !wanted.in_scheme && !matches!(self.apply(receiver), Type::Var(_)) {
+                        let need = super::builtin_needs::ViaNeed {
+                            tr: *tr,
+                            method: *method,
+                            receiver: receiver.clone(),
+                            method_ty: method_ty.clone(),
+                        };
+                        let in_body = self.body_owner;
+                        self.via_owed(need, *passer, wanted.origin, in_body);
+                    }
+                    continue;
+                }
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -283,13 +465,28 @@ impl TypeChecker {
     /// variables (`want`), whatever the use is: a call, a name passed as
     /// a value, a pipe, a pattern.
     pub(super) fn instantiate(&mut self, scheme: &Scheme) -> Type {
+        // (The types this use gives a signature's variables are one use.)
+        self.uses += 1;
+        let use_id = self.uses;
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
         }
         if !scheme.preds.is_empty() {
             let origin = self.use_origin();
+            // (The uses a definition took from its body stay apart.)
+            let mut groups: HashMap<usize, usize> = HashMap::new();
             for pred in &scheme.preds {
+                // (A predicate decided now may make a use of its own.)
+                self.use_id = match pred {
+                    Pred::Given {
+                        group: Some(group), ..
+                    } => *groups.entry(*group).or_insert_with(|| {
+                        self.uses += 1;
+                        self.uses
+                    }),
+                    _ => use_id,
+                };
                 self.want(pred.substitute(&mapping), origin);
             }
         }
@@ -405,4 +602,13 @@ impl TypeChecker {
             ty,
         }
     }
+}
+
+/// Where a trait method's call gave its type argument (`at`), if the call
+/// knows the type already: each use of a definition that takes the call
+/// into its scheme reports it there.
+fn given_at(method_ty: &Type, at: Span) -> Option<Span> {
+    super::inference::type_of_var(method_ty)
+        .is_none()
+        .then_some(at)
 }

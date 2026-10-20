@@ -1,7 +1,0 @@
-cannot decode field `j` of `Doc`: a value of type json.Value cannot be decoded
-cannot decode field `j` of `Maybe`: a value of type Option(json.Value) cannot be decoded
-cannot decode field `js` of `Many`: a value of type List(json.Value) cannot be decoded
-cannot decode field `j` of `Inner`: a value of type json.Value cannot be decoded
-ok
-ok
-ok

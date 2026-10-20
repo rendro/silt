@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A trait with a default method and an impl in one module, a generic
+-- function that calls the default on a bounded parameter in a second,
+-- and a call in a third: checked at the call, with the type the call
+-- gives.
+import generic
+import source
+
+type Blob { data: Bytes }
+type Fine { n: Int }
+
+fn main() {
+  let s = source.Src { s: "\{\"n\": 1}" }
+  let _ = generic.fetch(s, Fine)
+  let _ = generic.fetch(s, Blob)
+}

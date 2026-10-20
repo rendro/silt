@@ -1,8 +1,10 @@
--- Every decoder takes its type argument, and refuses a type with a
--- field no decoder exists for, before it reads the document: a text
--- that is no JSON or TOML gives the refusal too, in json.parse as in
--- json.parse_list and toml.parse. (The type arrives at run time: written
--- at the call, the compiler refuses it.)
+-- cmd: check
+-- exit: 1
+-- Every decoder refuses a type with a field no decoder exists for
+-- before any document is read: a text that is no JSON or TOML does not
+-- hide it, in json.parse as in json.parse_list and toml.parse.
+-- (Through a `type a` parameter: the checker asks of each type a call
+-- gives it what the decoder the function gives it to asks.)
 import json
 import toml
 

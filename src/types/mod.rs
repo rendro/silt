@@ -510,6 +510,94 @@ pub enum Pred {
     /// (`{...p, age: 30}`), whether or not what it makes reaches the
     /// definition's type.
     Lacks { row: Type, field: Symbol },
+    /// `subject` is a type the builtin of `check` takes where its
+    /// signature cannot say so: one the decoder decodes, a connection,
+    /// a statement's parameters. `passer`: the function or method that
+    /// passes the type on to the builtin, which a use names in a note;
+    /// none for the builtin's own.
+    Builtin {
+        check: BuiltinCheck,
+        subject: Type,
+        passer: Option<Symbol>,
+    },
+    /// `subject` is given to the annotation variable `given` of the
+    /// signature of the function or method `passer` (`type a`, `db: a`):
+    /// what its body asks of `given` for the builtins it gives it to
+    /// (`Pred::Builtin`, `Pred::Via`), it asks of `subject`. Which that
+    /// is is known once the bodies of its module are checked. `written`
+    /// is the alias the use names the type by, if it names it by one.
+    /// `body`: the method body the variable is of, for the variables
+    /// an impl's or a trait's methods share (`Self`, an impl's
+    /// parameters); none for a function's own. `group`: for a predicate
+    /// a definition took from a use in its body, that use (the types one
+    /// use gives belong together, `GivenUse::use_id`).
+    Given {
+        subject: Type,
+        given: TyVar,
+        written: Option<Symbol>,
+        passer: Symbol,
+        body: Option<Symbol>,
+        group: Option<usize>,
+    },
+    /// A call of the method `method` of the trait `tr` on a value of the
+    /// type `receiver`, of the type `method_ty` there: what the method
+    /// of the receiver's impl (or the trait's default) asks of the types
+    /// the call gives it (its `Pred::Given`), the call asks. Decided when
+    /// the receiver's type is known; a receiver that is an annotation
+    /// variable passes it on to the uses of its function. `at`: where the
+    /// call gave the method its type argument, when a definition took the
+    /// call into its scheme with that type known (`{ l -> go(l, Blob) }`).
+    Via {
+        tr: TraitKey,
+        method: Symbol,
+        receiver: Type,
+        method_ty: Type,
+        passer: Option<Symbol>,
+        at: Option<crate::source::Span>,
+    },
+}
+
+/// What a builtin asks of the type of one of its arguments beyond its
+/// signature (`Pred::Builtin`); the builtin is named as the registry
+/// names it (`json.parse`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BuiltinCheck {
+    /// The type argument of a decoder: `decoding` decodes it. `written`
+    /// is the alias the call names it by, if it names it by one.
+    Decodes {
+        builtin: Symbol,
+        decoding: crate::builtins::registry::decoding::Decoding,
+        written: Option<Symbol>,
+    },
+    /// The connection of a postgres function: a `PgPool` or a `PgTx`.
+    Connection { builtin: Symbol },
+    /// The parameters of a postgres statement: a tuple, or `()`.
+    Params { builtin: Symbol },
+}
+
+impl BuiltinCheck {
+    /// The builtin that asks it.
+    pub fn builtin(self) -> Symbol {
+        match self {
+            BuiltinCheck::Decodes { builtin, .. }
+            | BuiltinCheck::Connection { builtin }
+            | BuiltinCheck::Params { builtin } => builtin,
+        }
+    }
+
+    /// The check without the name a call gives the type.
+    pub fn unwritten(self) -> BuiltinCheck {
+        match self {
+            BuiltinCheck::Decodes {
+                builtin, decoding, ..
+            } => BuiltinCheck::Decodes {
+                builtin,
+                decoding,
+                written: None,
+            },
+            other => other,
+        }
+    }
 }
 
 impl Pred {
@@ -538,13 +626,55 @@ impl Pred {
                 row: substitute_vars(row, mapping),
                 field: *field,
             },
+            Pred::Builtin {
+                check,
+                subject,
+                passer,
+            } => Pred::Builtin {
+                check: *check,
+                subject: substitute_vars(subject, mapping),
+                passer: *passer,
+            },
+            Pred::Given {
+                subject,
+                given,
+                written,
+                passer,
+                body,
+                group,
+            } => Pred::Given {
+                subject: substitute_vars(subject, mapping),
+                given: *given,
+                written: *written,
+                passer: *passer,
+                body: *body,
+                group: *group,
+            },
+            Pred::Via {
+                tr,
+                method,
+                receiver,
+                method_ty,
+                passer,
+                at,
+            } => Pred::Via {
+                tr: *tr,
+                method: *method,
+                receiver: substitute_vars(receiver, mapping),
+                method_ty: substitute_vars(method_ty, mapping),
+                passer: *passer,
+                at: *at,
+            },
         }
     }
 
     /// The type the predicate is about.
     pub fn subject(&self) -> &Type {
         match self {
-            Pred::Trait { subject, .. } => subject,
+            Pred::Trait { subject, .. }
+            | Pred::Builtin { subject, .. }
+            | Pred::Given { subject, .. } => subject,
+            Pred::Via { receiver, .. } => receiver,
             Pred::Anon { row, .. } | Pred::Lacks { row, .. } => row,
         }
     }
@@ -553,7 +683,10 @@ impl Pred {
     pub fn args(&self) -> &[Type] {
         match self {
             Pred::Trait { args, .. } => args,
-            Pred::Anon { .. } | Pred::Lacks { .. } => &[],
+            Pred::Via { method_ty, .. } => std::slice::from_ref(method_ty),
+            Pred::Anon { .. } | Pred::Lacks { .. } | Pred::Builtin { .. } | Pred::Given { .. } => {
+                &[]
+            }
         }
     }
 }

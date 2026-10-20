@@ -1,0 +1,24 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A function that takes the connection and the parameters as type
+-- variables asks of the types each call gives them what
+-- `postgres.query` asks: a pool or a transaction, and a tuple.
+import postgres
+
+type User { id: Int }
+
+fn find(db: a, ps: p) -> Result(List(User), postgres.PostgresError) {
+  postgres.query(db, "SELECT id FROM users WHERE id = $1", ps, User)
+}
+
+fn main() {
+  match find(0, (1,)) {
+    Ok(_) -> println("a tuple: Ok")
+    Err(e) -> println("a tuple: {e.message()}")
+  }
+  match find(0, 1) {
+    Ok(_) -> println("an Int: Ok")
+    Err(e) -> println("an Int: {e.message()}")
+  }
+}

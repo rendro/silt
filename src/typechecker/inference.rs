@@ -424,7 +424,8 @@ impl TypeChecker {
                 }
             }
             // What the method leaves general (its own type variables)
-            // is new at each call, which owes the method's own bounds.
+            // is new at each call, which owes the method's own bounds,
+            // and what the method of the type `r` stands for asks.
             let ty = substitute_vars(method_ty, &mapping);
             let preds = info
                 .method_bounds
@@ -432,6 +433,14 @@ impl TypeChecker {
                 .into_iter()
                 .flatten()
                 .map(|pred| pred.substitute(&mapping))
+                .chain([Pred::Via {
+                    tr: trait_name,
+                    method: field,
+                    receiver: Type::Rigid(r),
+                    method_ty: ty.clone(),
+                    passer: None,
+                    at: None,
+                }])
                 .collect();
             matches.push((
                 trait_name,
@@ -1212,6 +1221,31 @@ impl TypeChecker {
         }
     }
 
+    /// The name of the callee, as a message writes it, if it is a
+    /// function of the program (or a local that holds one), not a
+    /// builtin.
+    fn user_callee(&self, callee: &Expr) -> Option<Symbol> {
+        if let Some(crate::defs::Res::Def(id)) = callee.res
+            && (self.defs.as_ref()).is_some_and(|defs| defs.get(id).module.is_builtin())
+        {
+            return None;
+        }
+        Self::callee_label(callee)
+    }
+
+    /// The alias `arg` names, if it is a type written as a value by an
+    /// alias's name (`IntBox`, `m.IntBox`).
+    fn alias_named(&self, arg: &Expr) -> Option<Symbol> {
+        if !matches!(arg.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            return None;
+        }
+        let Some(crate::defs::Res::Def(id)) = arg.res else {
+            return None;
+        };
+        let def = self.defs.as_ref()?.get(id);
+        (def.kind == crate::defs::DefKind::TypeAlias).then_some(def.name)
+    }
+
     /// The name a callee is written with, for a message about a call of
     /// it: `f`, or `m.f` for a member of a module.
     fn callee_label(callee: &Expr) -> Option<Symbol> {
@@ -1303,6 +1337,7 @@ impl TypeChecker {
             return self.fresh_var();
         }
         let owed_before = self.wanted.len();
+        let given_before = self.given_waiting.len();
         // Reset the method-dispatch flag so a stale value from an
         // earlier field access does not leak into this call, and read it
         // before the arguments are checked (they may overwrite it).
@@ -1354,9 +1389,23 @@ impl TypeChecker {
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
-                    let Type::Var(v) = (match &self.wanted[k].goal {
-                        Goal::Pred(pred) => pred.subject(),
-                        Goal::Listed { row, .. } => row,
+                    // (A trait method's call is at the type it is given,
+                    // not at its receiver: where it was given, if that is
+                    // known.)
+                    if let Goal::Pred(Pred::Via { at: Some(at), .. }) = &self.wanted[k].goal {
+                        self.wanted[k].origin.span = *at;
+                        continue;
+                    }
+                    let type_given = match &self.wanted[k].goal {
+                        Goal::Pred(Pred::Via { method_ty, .. }) => {
+                            type_of_var(&self.apply(method_ty))
+                        }
+                        _ => None,
+                    };
+                    let Type::Var(v) = (match (&self.wanted[k].goal, &type_given) {
+                        (_, Some(given)) => given,
+                        (Goal::Pred(pred), None) => pred.subject(),
+                        (Goal::Listed { row, .. }, None) => row,
                         _ => continue,
                     }) else {
                         continue;
@@ -1368,9 +1417,46 @@ impl TypeChecker {
                         .and_then(|i| args.get(i));
                     if let (Some(arg), CallForm::Call) = (at, form) {
                         self.wanted[k].origin.span = arg.span;
+                        // A type argument the call names by an alias:
+                        // what a decoder's refusal calls it.
+                        let alias = self.alias_named(arg);
+                        if let Goal::Pred(Pred::Builtin {
+                            check: BuiltinCheck::Decodes { written, .. },
+                            ..
+                        }) = &mut self.wanted[k].goal
+                        {
+                            *written = alias;
+                        }
+                    }
+                }
+                // The same for a type given to an annotation variable of
+                // the callee's signature.
+                for k in given_before..self.given_waiting.len() {
+                    let Type::Var(v) = self.given_waiting[k].subject else {
+                        continue;
+                    };
+                    let at = params
+                        .iter()
+                        .skip(implicit_self)
+                        .position(|param| free_vars_in(param).contains(&v))
+                        .and_then(|i| args.get(i));
+                    if let (Some(arg), CallForm::Call) = (at, form) {
+                        let alias = self.alias_named(arg);
+                        let use_ = &mut self.given_waiting[k];
+                        use_.origin.span = arg.span;
+                        use_.written = alias;
                     }
                 }
                 let mut mismatched = false;
+                // Each argument's place, the alias it names a type by,
+                // and its type.
+                let mut given: Vec<(Span, Option<Symbol>, Type)> = Vec::new();
+                // The calls of trait methods held in a closure (returned
+                // by a function, kept in a record) whose type argument is
+                // still unknown: this call may be the one that gives it.
+                let open_vias = self.open_vias();
+                // (The uses the callee owes are at this call's arguments.)
+                let callee_owes = given_before..self.given_waiting.len();
                 for (i, arg) in args.iter_mut().enumerate() {
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
@@ -1380,6 +1466,7 @@ impl TypeChecker {
                     }
                     let arg_ty = self.infer_expr(arg, env);
                     self.expected_closure = None;
+                    given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {
                         let at = match form {
                             CallForm::Call => arg.span,
@@ -1405,6 +1492,18 @@ impl TypeChecker {
                 if mismatched {
                     for wanted in &mut self.wanted[owed_before..] {
                         wanted.solved = true;
+                    }
+                    self.given_waiting.truncate(given_before);
+                } else if let CallForm::Call = form {
+                    let passer = self.user_callee(callee);
+                    self.point_at_type_arguments(&given, passer, callee_owes);
+                    self.point_vias_at_type_arguments(&given, &open_vias);
+                }
+                // A type this call gives its callee is placed here: no later
+                // call is its place.
+                for k in given_before..self.given_waiting.len() {
+                    if !matches!(self.apply(&self.given_waiting[k].subject), Type::Var(_)) {
+                        self.given_waiting[k].placed = true;
                     }
                 }
                 // A call supplies exactly as many arguments as the callee
@@ -3293,7 +3392,11 @@ impl TypeChecker {
                     PatternKind::Ident(name) => {
                         let scheme = if is_value {
                             self.exit_level();
-                            self.generalize_let(&val_ty, &own)
+                            self.passing_on =
+                                matches!(value.kind, ExprKind::Lambda { .. }).then_some(*name);
+                            let scheme = self.generalize_let(&val_ty, &own);
+                            self.passing_on = None;
+                            scheme
                         } else {
                             Scheme::mono(self.apply(&val_ty))
                         };
@@ -3746,3 +3849,16 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod tests;
+
+/// The first type variable `ty` gives as a type argument (`TypeOf(a)`),
+/// as a type.
+pub(super) fn type_of_var(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args
+            .first()
+            .filter(|arg| matches!(arg, Type::Var(_)))
+            .cloned(),
+        Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(type_of_var),
+        _ => None,
+    }
+}

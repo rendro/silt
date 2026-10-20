@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[compile]
+-- stderr-contains: error[type]
 -- stderr-contains: json.parse_list
 -- stderr-contains: `List`
 -- stderr-contains: its type argument must be Int, Float, String, Bool, json.Value, a record type, or an enum type

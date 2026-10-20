@@ -761,7 +761,8 @@ impl TypeChecker {
                 self.ctor_pat(CtorId::Record(names), subs)
             }
             PatternKind::Or(alts) => {
-                // All alternatives bind the same names.
+                // All alternatives bind the same names: an error points
+                // at the alternative that binds others.
                 if let Some((first, others)) = alts.split_first() {
                     let first_vars: BTreeSet<Symbol> =
                         collect_pattern_vars(first).into_iter().collect();
@@ -778,7 +779,7 @@ impl TypeChecker {
                                     i + 2,
                                     format_symbol_set(&alt_vars)
                                 ),
-                                span,
+                                alt.span,
                             );
                         }
                     }
@@ -791,6 +792,7 @@ impl TypeChecker {
                 let mut subs = Vec::with_capacity(alts.len());
                 let mut bound: Option<Vec<(Symbol, Scheme)>> = None;
                 for alt in alts.iter_mut() {
+                    let alt_span = alt.span;
                     env.push();
                     subs.push(self.type_pattern(alt, expected, env, cx));
                     let names = env.pop();
@@ -811,7 +813,7 @@ impl TypeChecker {
                                     "or-pattern alternatives bind '{name}' to conflicting \
                                      types: {a} vs {b}"
                                 ),
-                                span,
+                                alt_span,
                             );
                         }
                     }

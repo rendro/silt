@@ -274,6 +274,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
             {
                 scheme = Scheme::mono(*value);
             }
+            scheme.preds.extend(argument_checks(row, &scheme.ty));
             env.define(intern(&format!("{}.{name}", module.name)), scheme);
         }
         // The module's error enum implements `Error` natively
@@ -308,6 +309,49 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.registry_rows = false;
     checker.defs = None;
     checker.own_types.clear();
+}
+
+/// What the builtin of `row`, of the type `ty`, asks of its arguments
+/// beyond its signature (`Pred::Builtin`): a decoder, that its type
+/// argument is one it decodes; a postgres function, that its connection
+/// is a pool or a transaction and a statement's parameters a tuple.
+fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred> {
+    let Type::Fun(params, _) = ty else {
+        return Vec::new();
+    };
+    let builtin = intern(&row.qualified());
+    let pred = |check, subject: &Type| Pred::Builtin {
+        check,
+        subject: subject.clone(),
+        passer: None,
+    };
+    let mut checks = Vec::new();
+    if let Some(decoding) = row.decoding {
+        // The `type a` parameter, of the type `TypeOf(a)`.
+        let type_argument = params.iter().find_map(|param| match param {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args.first(),
+            _ => None,
+        });
+        if let Some(subject) = type_argument {
+            let check = BuiltinCheck::Decodes {
+                builtin,
+                decoding,
+                written: None,
+            };
+            checks.push(pred(check, subject));
+        }
+    }
+    if row.connection
+        && let Some(subject) = params.first()
+    {
+        checks.push(pred(BuiltinCheck::Connection { builtin }, subject));
+    }
+    if row.statement
+        && let Some(subject) = params.get(2)
+    {
+        checks.push(pred(BuiltinCheck::Params { builtin }, subject));
+    }
+    checks
 }
 
 /// Test-only introspection: collect the structural-trait and method
