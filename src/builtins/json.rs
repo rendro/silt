@@ -340,6 +340,7 @@ const RULES: Rules = Rules {
     dates: ["date string", "time string", "datetime string"],
     numbers: Numbers::Values,
     json_value: true,
+    enums: true,
     errors: [
         bv::JSON_TYPE_MISMATCH,
         bv::JSON_MISSING_FIELD,
@@ -427,6 +428,9 @@ fn decode_document(
         Type::Primitive(field_type) => decode::value(rt, &json, &field_type, &At::Top),
         Type::Named(ty) if ty.id == ty::JSON_VALUE => {
             decode::value(rt, &json, &FieldType::JsonValue, &At::Top)
+        }
+        Type::Named(ty) if decode::decodable_enum(ty) => {
+            decode::value(rt, &json, &FieldType::Enum(ty.id), &At::Top)
         }
         Type::Named(ty) => decode::record(rt, ty, decodable_record(caller, ty)?, &json, &At::Top),
     };

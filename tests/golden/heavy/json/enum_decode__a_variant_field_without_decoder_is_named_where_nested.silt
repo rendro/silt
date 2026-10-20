@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `Job`: variant `Raw` of `Bad`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
+import json
+
+type Bad {
+  Fine,
+  Raw(Bytes),
+}
+
+type Job { bad: Option(List(Bad)) }
+
+fn main() {
+  println(json.parse("""{}""", Job))
+}

@@ -471,6 +471,16 @@ impl Tables {
         self.records.get(&ty).map_or(&[], |info| &info.fields)
     }
 
+    /// The variants of the enum type `ty`, each with the types of its
+    /// fields, in declaration order; none for a type that is no enum.
+    pub fn variant_fields_of(&self, ty: TypeRef) -> Vec<(Symbol, &[Type])> {
+        self.enums.get(&ty).map_or_else(Vec::new, |info| {
+            (info.variants.iter())
+                .map(|v| (v.name, v.field_types.as_slice()))
+                .collect()
+        })
+    }
+
     /// Every method a value has, as (the type impls key the value's type
     /// by, the method's name): those of the impls that take `self`, and those of the
     /// structural traits (of a builtin type, the traits it is stamped

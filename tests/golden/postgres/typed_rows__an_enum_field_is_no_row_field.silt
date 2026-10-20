@@ -1,0 +1,19 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.query` cannot decode `Person`: field `mood` has type `Mood`, which has no decoder
+-- Only json decodes an enum: a row's field of an enum type has no
+-- decoder, as the row itself has none.
+import postgres
+
+type Mood { Sad, Happy }
+
+type Person { name: String, mood: Mood }
+
+fn people(db: postgres.PgPool) -> Result(List(Person), postgres.PostgresError) {
+  postgres.query(db, "SELECT name, mood FROM people", (), Person)
+}
+
+fn main() {
+  println(1)
+}

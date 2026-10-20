@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `toml.parse` cannot decode `Many`: field `all` has type `List(Status)`, and `Status` has no decoder
+import toml
+
+type Status {
+  Active,
+  Paused(Int),
+}
+
+type Many { all: List(Status) }
+
+fn main() {
+  println(toml.parse("all = []", Many))
+}

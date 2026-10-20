@@ -1,0 +1,42 @@
+-- A document that is no variant of the enum is an Err, never a panic:
+-- a name the enum has no variant of and the wrong number of fields are
+-- Other and name the enum and the variant; a field of the wrong type is
+-- the TypeMismatch a record field gets; an object without "variant" is
+-- MissingField("variant"); a value that is no object (a bare variant
+-- name too) is TypeMismatch with the enum's name. In a record field and
+-- in a list the Err is the same.
+import json
+
+type Status {
+  Active,
+  Paused(Int),
+}
+
+type Job { status: Status }
+
+fn main() {
+  println(json.parse("""{"variant": "Gone"}""", Status))
+  println(json.parse("""{"variant": "Paused"}""", Status))
+  println(json.parse("""{"variant": "Paused", "fields": [1, 2]}""", Status))
+  println(json.parse("""{"variant": "Active", "fields": [1]}""", Status))
+  println(json.parse("""{"variant": "Paused", "fields": ["x"]}""", Status))
+  println(json.parse("""{"fields": [1]}""", Status))
+  println(json.parse("""{"variant": 1}""", Status))
+  println(json.parse("""{"variant": "Paused", "fields": 1}""", Status))
+  println(json.parse("\"Active\"", Status))
+  println(json.parse("""{"status": {"variant": "Gone"}}""", Job))
+  println(json.parse_list("""[{"variant": "Active"}, {"variant": "Paused", "fields": [1.5]}]""", Status))
+  println(json.parse_list("""{"variant": "Active"}""", Status))
+  match json.parse("""{"variant": "Gone"}""", Status) {
+    Err(json.Other(why)) -> println("Other: {why}")
+    other -> println("unexpected: {other}")
+  }
+  match json.parse("""{"variant": "Paused", "fields": ["x"]}""", Status) {
+    Err(json.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected}, {actual}")
+    other -> println("unexpected: {other}")
+  }
+  match json.parse("""{}""", Status) {
+    Err(json.MissingField(name)) -> println("MissingField: {name}")
+    other -> println("unexpected: {other}")
+  }
+}
