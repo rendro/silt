@@ -1,0 +1,35 @@
+error[lex]: \u takes its code point in braces, e.g. \u{1F600}
+ --> string_escapes__unicode_escape_errors.silt:7:13
+   |
+ 7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+   |             ^^ \u takes its code point in braces, e.g. \u{1F600}
+
+error[lex]: \u{...} takes 1 to 6 hex digits
+ --> string_escapes__unicode_escape_errors.silt:7:19
+   |
+ 7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+   |                   ^^^ \u{...} takes 1 to 6 hex digits
+
+error[lex]: \u{...} takes 1 to 6 hex digits
+ --> string_escapes__unicode_escape_errors.silt:7:25
+   |
+ 7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+   |                         ^^^^^^^^^^ \u{...} takes 1 to 6 hex digits
+
+error[lex]: \u{D800} is a surrogate, not a Unicode scalar value
+ --> string_escapes__unicode_escape_errors.silt:7:38
+   |
+ 7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+   |                                      ^^^^^^^^ \u{D800} is a surrogate, not a Unicode scalar value
+
+error[lex]: \u{110000} is past U+10FFFF, the largest Unicode scalar value
+ --> string_escapes__unicode_escape_errors.silt:7:48
+   |
+ 7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+   |                                                ^^^^^^^^^^ \u{110000} is past U+10FFFF, the largest Unicode scalar value
+
+error[lex]: \u{...} takes 1 to 6 hex digits
+ --> string_escapes__unicode_escape_errors.silt:7:60
+   |
+ 7 |   println("a\u41 b\u{} c\u{1234567} d\u{D800} e\u{110000} f\u{12")
+   |                                                            ^^^^^ \u{...} takes 1 to 6 hex digits

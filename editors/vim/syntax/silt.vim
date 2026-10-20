@@ -52,11 +52,13 @@ syntax keyword siltTodo TODO FIXME NOTE XXX HACK contained
 " Regular strings with interpolation
 syntax region siltString start='"' skip='\\"' end='"' contains=siltStringInterp,siltStringEscape
 " Escape class sourced from the lexer's escape match arms in
-" src/lexer.rs (`\n \t \\ \" \{ \}` — note: NO `\r`). The `\{` / `\}`
-" entries must be present so an escaped brace is consumed by this
-" match and does not trigger the siltStringInterp region below.
-" Parity lock: tests/editor_grammar_string_escapes_tests.rs.
-syntax match siltStringEscape '\\[nt\\"{}]' contained
+" src/lexer.rs (`\n \r \t \0 \\ \" \{ \}`, and `\u{...}` with 1 to 6
+" hex digits). The `\{` / `\}` entries must be present so an escaped
+" brace is consumed by this match and does not trigger the
+" siltStringInterp region below.
+" Parity lock: tests/meta/editor_grammar_string_escapes_tests.rs.
+syntax match siltStringEscape '\\[nrt0\\"{}]' contained
+syntax match siltStringEscape '\\u{\x\{1,6}}' contained
 syntax region siltStringInterp start='{' end='}' contained contains=TOP
 
 " Triple-quoted raw strings (no escapes, no interpolation)

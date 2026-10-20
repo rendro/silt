@@ -680,7 +680,14 @@ impl Lexer {
                     self.advance_char();
                     match self.advance_char() {
                         Some('n') => text.push('\n'),
+                        Some('r') => text.push('\r'),
                         Some('t') => text.push('\t'),
+                        Some('0') => text.push('\0'),
+                        Some('u') => {
+                            if let Some(c) = self.unicode_escape(esc_span) {
+                                text.push(c);
+                            }
+                        }
                         Some('\\') => text.push('\\'),
                         Some('"') => text.push('"'),
                         Some('{') => text.push('{'),
@@ -747,6 +754,51 @@ impl Lexer {
                 }
             }
         }
+    }
+
+    /// The character of the `\u{...}` escape whose `\u` was just read;
+    /// `esc` is where its backslash is. The braces hold 1 to 6 hex
+    /// digits, the code of a Unicode scalar value. A wrong escape is an
+    /// error of the string, which goes on behind it.
+    fn unicode_escape(&mut self, esc: Span) -> Option<char> {
+        if self.peek() != Some('{') {
+            let at = self.since(esc);
+            self.error(|| {
+                Diagnostic::error(
+                    Code::InvalidEscape,
+                    at,
+                    "\\u takes its code point in braces, e.g. \\u{1F600}",
+                )
+            });
+            return None;
+        }
+        self.advance_char();
+        let mut digits = String::new();
+        while let Some(c) = self.peek().filter(char::is_ascii_hexdigit) {
+            digits.push(c);
+            self.advance_char();
+        }
+        if digits.is_empty() || digits.len() > 6 || self.peek() != Some('}') {
+            let at = self.since(esc);
+            self.error(|| {
+                Diagnostic::error(Code::InvalidEscape, at, "\\u{...} takes 1 to 6 hex digits")
+            });
+            return None;
+        }
+        self.advance_char();
+        let code = u32::from_str_radix(&digits, 16).ok()?;
+        let c = char::from_u32(code);
+        if c.is_none() {
+            let at = self.since(esc);
+            let message = match code {
+                0xD800..=0xDFFF => {
+                    format!("\\u{{{digits}}} is a surrogate, not a Unicode scalar value")
+                }
+                _ => format!("\\u{{{digits}}} is past U+10FFFF, the largest Unicode scalar value"),
+            };
+            self.error(|| Diagnostic::error(Code::InvalidEscape, at, message));
+        }
+        c
     }
 
     fn scan_triple_string(&mut self, start: Span) -> Scanned {

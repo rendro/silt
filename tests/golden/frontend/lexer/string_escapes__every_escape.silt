@@ -1,0 +1,24 @@
+-- Every escape of a string, and what it stands for, in a plain string
+-- and in the parts of one with interpolations; a triple-quoted string
+-- takes none.
+import list
+import string
+
+fn codes(s: String) -> List(Int) {
+  string.chars(s)
+  |> list.map { c ->
+    match string.char_code(c) {
+      Some(n) -> n
+      None -> -1
+    }
+  }
+}
+
+fn main() {
+  println(codes("\n\r\t\0\\\"\{\}"))
+  println(codes("\u{41}\u{e9}\u{000041}\u{10FFFF}\u{0}"))
+  println("caf\u{e9} \u{1F600}")
+  let n = 1
+  println(codes("\r{n}\0{n}\u{7A}"))
+  println(codes("""\r\0\u{41}"""))
+}

@@ -64,7 +64,11 @@
           "patterns": [
             {
               "name": "constant.character.escape.silt",
-              "match": "\\\\[nt\\\\\"{}]"
+              "match": "\\\\[nrt0\\\\\"{}]"
+            },
+            {
+              "name": "constant.character.escape.silt",
+              "match": "\\\\u\\{[0-9A-Fa-f]{1,6}\\}"
             },
             {
               "name": "meta.interpolation.silt",

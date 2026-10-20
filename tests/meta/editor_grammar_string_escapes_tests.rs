@@ -3,9 +3,9 @@
 //! accepts inside double-quoted strings.
 //!
 //! The lexer (src/lexer.rs, string-escape match arms) accepts exactly:
-//!     \n \t \\ \" \{ \}
-//! and hard-errors "unknown escape sequence: \<c>" on anything else —
-//! notably `\r` is REJECTED.
+//!     \n \r \t \0 \\ \" \{ \}
+//! and `\u{...}` with 1 to 6 hex digits, and hard-errors "unknown
+//! escape sequence: \<c>" on anything else.
 //!
 //! Before this lock (round 101):
 //!   - editors/vim/syntax/silt.vim `siltStringEscape` was `\\[nrt\\"]`
@@ -189,7 +189,9 @@ fn fmt_set(set: &HashSet<char>) -> String {
 /// editor grammars together.
 #[test]
 fn lexer_accepted_escape_set_baseline() {
-    let expected: HashSet<char> = ['n', 't', '\\', '"', '{', '}'].into_iter().collect();
+    let expected: HashSet<char> = ['n', 'r', 't', '0', '\\', '"', '{', '}']
+        .into_iter()
+        .collect();
     let actual = lexer_escape_set(&HashSet::new());
     assert_eq!(
         actual,
@@ -200,11 +202,30 @@ fn lexer_accepted_escape_set_baseline() {
          (constant.character.escape.silt) together.",
         fmt_set(&actual)
     );
-    // Spot-check the historical drift char: `\r` must stay rejected
-    // unless the lexer deliberately adds it.
+}
+
+/// `\u{...}` is no one-character escape, so the classes above do not
+/// hold it: each grammar has a pattern of its own for it, and the
+/// lexer takes 1 to 6 hex digits in the braces.
+#[test]
+fn unicode_escape_is_in_both_grammars_and_the_lexer() {
+    let lexes = |src: &str| {
+        silt::lexer::Lexer::new(silt::source::FileId::default(), src)
+            .tokenize()
+            .checked()
+            .is_ok()
+    };
+    assert!(lexes(r#""\u{1F600}""#) && lexes(r#""\u{0}""#) && lexes(r#""\u{10FFFF}""#));
+    assert!(!lexes(r#""\u{}""#) && !lexes(r#""\u{1234567}""#) && !lexes(r#""\u41""#));
+    let vim_raw = read_grammar("editors/vim/syntax/silt.vim");
     assert!(
-        !lexer_accepts_escape('r'),
-        "lexer now accepts `\\r` — update both editor grammars and this baseline"
+        vim_raw.contains(r"syntax match siltStringEscape '\\u{\x\{1,6}}' contained"),
+        "editors/vim/syntax/silt.vim has no siltStringEscape match for `\\u{{...}}`"
+    );
+    let vscode_raw = read_grammar("editors/vscode/syntaxes/silt.tmLanguage.json");
+    assert!(
+        vscode_raw.contains(r#""match": "\\\\u\\{[0-9A-Fa-f]{1,6}\\}""#),
+        "the VS Code grammar has no constant.character.escape.silt match for `\\u{{...}}`"
     );
 }
 

@@ -1,0 +1,2 @@
+6:23 error \u{D800} is a surrogate, not a Unicode scalar value
+7:16 error type mismatch: expected Int, got String
