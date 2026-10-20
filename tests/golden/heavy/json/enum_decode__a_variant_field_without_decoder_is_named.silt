@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `Bad`: variant `Holds` has a field of type `Set(Int)`, which has no decoder
+import json
+
+type Bad {
+  Fine,
+  Holds(Int, Set(Int)),
+}
+
+fn main() {
+  println(json.parse("""{"variant": "Fine"}""", Bad))
+}

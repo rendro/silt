@@ -1,0 +1,22 @@
+{"variant":"Active"}
+Ok(Active)
+{"fields":[3],"variant":"Paused"}
+Ok(Paused(3))
+{"fields":["x",null],"variant":"Moved"}
+Ok(Moved(x, None))
+{"fields":["y",2],"variant":"Moved"}
+Ok(Moved(y, Some(2)))
+{"fields":[{"x":1,"y":2},[3]],"variant":"At"}
+Ok(At(Point {x: 1, y: 2}, [3]))
+{"name":"build","status":{"fields":[1],"variant":"Paused"},"history":[{"variant":"Active"},{"fields":[2],"variant":"Paused"}],"next":{"variant":"Active"},"by_host":{"h":{"fields":["z",1],"variant":"Moved"}}}
+true
+true
+Ok(Tagged(Moved(q, None), [Active, Paused(4)]))
+Ok(Dot)
+Ok(Node(Leaf(1), Node(Leaf(2), Leaf(3))))
+Ok([Active, Paused(3), Moved(x, None), Moved(y, Some(2)), At(Point {x: 1, y: 2}, [3])])
+Ok(#{"a": Active, "b": Paused(5)})
+Ok(Paused(9))
+Ok(Moved(t, Some(7)))
+true
+Ok(Active)

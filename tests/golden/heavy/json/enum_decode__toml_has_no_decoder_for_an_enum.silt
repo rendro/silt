@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `toml.parse` cannot decode `Status`: it is an enum type, and enums have no decoder
+import toml
+
+type Status {
+  Active,
+  Paused(Int),
+}
+
+fn main() {
+  println(toml.parse("status = 1", Status))
+}

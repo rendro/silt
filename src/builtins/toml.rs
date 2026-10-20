@@ -245,6 +245,7 @@ const RULES: Rules = Rules {
     dates: ["date", "time", "datetime"],
     numbers: Numbers::Kinds,
     json_value: false,
+    enums: false,
     errors: [
         bv::TOML_TYPE_MISMATCH,
         bv::TOML_MISSING_FIELD,

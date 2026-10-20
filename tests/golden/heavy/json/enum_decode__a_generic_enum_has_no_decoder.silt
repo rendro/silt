@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `Box`: it is a generic enum type, and a decoder builds a value of one type
+-- stderr-contains: non-generic record and enum types
+import json
+
+type Box(a) {
+  Empty,
+  Full(a),
+}
+
+fn main() {
+  println(json.parse("""{"variant": "Empty"}""", Box))
+}
