@@ -32,7 +32,6 @@ use crate::ast::{self, Decl, ImportTarget};
 use crate::bytecode::Globals;
 use crate::compiler::EarlierCells;
 use crate::intern::{Symbol, intern, resolve};
-
 use crate::source::{FileId, Span};
 
 use super::graph::{ModuleId, cell_name};

@@ -19,7 +19,6 @@ use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Param, PatternKind, Program,
     Stmt, StringPart, TypeBody, UnaryOp,
 };
-
 use crate::bytecode::emit::limit_diagnostic;
 use crate::bytecode::ops::Limit;
 use crate::bytecode::{
@@ -27,7 +26,6 @@ use crate::bytecode::{
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-
 use crate::module;
 use crate::source::Span;
 use crate::typechecker::decodable::shown;
