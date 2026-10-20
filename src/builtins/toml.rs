@@ -49,7 +49,7 @@ use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 use super::data::{self, Data, Format};
-use super::json::{
+use super::decode::{
     At, decodable_record, field_record_type, invalid_date_message, invalid_time_message,
     parse_date, parse_datetime, parse_time, shown, unsupported_field_type_message, without_bytes,
 };

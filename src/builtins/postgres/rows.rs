@@ -23,9 +23,9 @@ use postgres_protocol::types as wire;
 use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
 use crate::builtins::data::{self, Data};
-use crate::builtins::json;
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
+use crate::builtins::{decode, json};
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
@@ -435,7 +435,7 @@ struct Mismatch {
 impl Mismatch {
     fn new(rt: &Runtime, expected: &FieldType, actual: impl Into<String>) -> Mismatch {
         Mismatch {
-            expected: json::shown(rt, expected),
+            expected: decode::shown(rt, expected),
             actual: actual.into(),
         }
     }
@@ -514,7 +514,7 @@ impl Plan {
                 let mut fields = Vec::with_capacity(declared.len());
                 for (name, field) in declared {
                     if let Some(declared) = unsupported(field) {
-                        return Err(super::other_error(json::unsupported_field_type_message(
+                        return Err(super::other_error(decode::unsupported_field_type_message(
                             &ty.name, name, declared,
                         )));
                     }
@@ -531,7 +531,7 @@ impl Plan {
                             FieldType::Option(inner) => inner,
                             _ => field,
                         };
-                        return Err(type_mismatch(name, &json::shown(rt, expected), &pg));
+                        return Err(type_mismatch(name, &decode::shown(rt, expected), &pg));
                     }
                     fields.push((
                         field.clone(),
@@ -1241,7 +1241,7 @@ mod tests {
             let texts = match read {
                 Read::Text => [json, toml, pg],
                 Read::Time => [json, toml, pg].map(|text| {
-                    json::parse_time(&text)
+                    decode::parse_time(&text)
                         .expect("a time")
                         .format("%H:%M:%S%.3f")
                         .to_string()
@@ -1249,7 +1249,7 @@ mod tests {
                 // (Postgres's own: the offset of UTC.)
                 Read::DateTime => {
                     [json, toml, pg.strip_suffix("+00").expect("+00").into()].map(|text| {
-                        let at: NaiveDateTime = json::parse_datetime(&text).expect("a datetime");
+                        let at: NaiveDateTime = decode::parse_datetime(&text).expect("a datetime");
                         at.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
                     })
                 }
