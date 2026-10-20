@@ -1,0 +1,15 @@
+Silt REPL (type :quit to exit, :help for commands)
+1
+3
+3
+x
+true
+[1, 2, 3]
+Commands:
+  :help, :h    Show this help
+  :quit, :q    Exit the REPL
+  <Tab>        Autocomplete builtins and user-defined names
+
+Enter expressions to evaluate, or declarations (fn, type, trait, import).
+Multi-line input: an open brace, paren, bracket, string or block comment, or a line that ends in an operator (+, |>, =, -> ...), continues on the next line.
+A brace in a string starts an interpolation: write \{ for the character itself.

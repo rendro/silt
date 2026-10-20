@@ -305,6 +305,36 @@ impl Lexed {
         }
     }
 
+    /// Whether the last token of the text is one that an operand or a
+    /// value follows: a binary operator, `|>`, `=` or `->`. In a file
+    /// the next line goes on from such a token, and the REPL reads
+    /// another line of such an input.
+    pub fn ends_in_operator(&self) -> bool {
+        let last = self.tokens.iter().rev().find(|tok| tok.kind != Token::Eof);
+        matches!(
+            last.map(|tok| &tok.kind),
+            Some(
+                Token::Plus
+                    | Token::Minus
+                    | Token::Star
+                    | Token::Slash
+                    | Token::Percent
+                    | Token::EqEq
+                    | Token::NotEq
+                    | Token::Lt
+                    | Token::Gt
+                    | Token::LtEq
+                    | Token::GtEq
+                    | Token::AndAnd
+                    | Token::OrOr
+                    | Token::DotDot
+                    | Token::Pipe
+                    | Token::Eq
+                    | Token::Arrow
+            )
+        )
+    }
+
     /// The comments between the token before `tok` and `tok`.
     pub fn comments_before(&self, tok: &Tok) -> &[Comment] {
         &self.comments[tok.comments.start as usize..tok.comments.end as usize]

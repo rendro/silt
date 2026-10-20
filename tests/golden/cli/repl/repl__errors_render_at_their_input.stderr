@@ -3,11 +3,11 @@ error[type]: type mismatch: expected String, got Int
    |
  2 |   let s: String = a
    |                   ^ type mismatch: expected String, got Int
-error[parse]: expected expression, found EOF
- --> <repl:3>:1:4
+error[parse]: expected expression, found )
+ --> <repl:3>:1:5
    |
- 1 | 1 +
-   |    ^ expected expression, found EOF
+ 1 | 1 + )
+   |     ^ expected expression, found )
 error[runtime]: division by zero
  --> <repl:4>:2:3
    |
