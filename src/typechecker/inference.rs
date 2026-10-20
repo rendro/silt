@@ -999,44 +999,35 @@ impl TypeChecker {
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
         env.pop();
-        let ret_unify_err_count = self.errors.len();
-        self.unify(&body_type, &ret_type, f.body.span);
-        self.retarget_ok_wrap_fixes(ret_unify_err_count, &f.body);
-        self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &ret_type);
+        self.unify_body_result(&f.body, &body_type, &ret_type);
 
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
         self.sig_names = prev_names;
     }
 
-    /// The Ok-wrap fixes of the diagnostics from `from` on that are about
-    /// the whole `body` of a function: a block is wrapped at its tail
-    /// expression, not around its braces, and a block without one gets
-    /// no fix.
-    fn retarget_ok_wrap_fixes(&mut self, from: usize, body: &Expr) {
+    /// Unify the type `body_type` of a function's or closure's `body`
+    /// with its result `ret`, at the value the body gives: a block's tail
+    /// expression, where a mismatch is underlined and the Ok-wrap fix
+    /// wraps. A block without one is underlined whole and gets no fix.
+    fn unify_body_result(&mut self, body: &Expr, body_type: &Type, ret: &Type) {
+        let from = self.errors.len();
         let tail = match &body.kind {
             ExprKind::Block(stmts) => match stmts.last() {
                 Some(Stmt::Expr(e)) => Some(e.span),
                 _ => None,
             },
-            _ => return,
+            _ => Some(body.span),
         };
-        for d in self.errors.iter_mut().skip(from) {
-            if d.span != body.span {
-                continue;
-            }
-            match tail {
-                Some(tail) => {
-                    for fix in &mut d.fixes {
-                        fix.edits = vec![
-                            (Span::point(tail.file, tail.start), "Ok(".to_string()),
-                            (Span::point(tail.file, tail.end), ")".to_string()),
-                        ];
-                    }
+        self.unify(body_type, ret, tail.unwrap_or(body.span));
+        if tail.is_none() {
+            for d in self.errors.iter_mut().skip(from) {
+                if d.span == body.span {
+                    d.fixes.clear();
                 }
-                None => d.fixes.clear(),
             }
         }
+        self.note_qmark_requirement_on_ret_mismatch(from, ret);
     }
 
     /// GAP (round 93): when the body/return-type unify fails AND the
@@ -2396,10 +2387,7 @@ impl TypeChecker {
                 let body_type = self.infer_expr(body, env);
                 self.fn_frames.pop();
                 env.pop();
-                let ret_unify_err_count = self.errors.len();
-                self.unify(&body_type, &lambda_ret, body.span);
-                self.retarget_ok_wrap_fixes(ret_unify_err_count, body);
-                self.note_qmark_requirement_on_ret_mismatch(ret_unify_err_count, &lambda_ret);
+                self.unify_body_result(body, &body_type, &lambda_ret);
 
                 self.current_return_type = prev_return_type;
                 self.current_qmark_spans = prev_qmark_spans;
