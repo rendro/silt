@@ -6,7 +6,7 @@ use super::Server;
 use super::ast_walk::find_field_access_at;
 use super::conversions::position_to_offset;
 use super::local_bindings::nearest_local_binding_for;
-use super::modules::qualifier_at;
+use super::modules::{qualifier_at, type_qualifier_at};
 
 impl Server {
     /// Where the name under the cursor is declared: a local's binder, a
@@ -26,6 +26,11 @@ impl Server {
         if let Some(location) = self.method_declaration_at(uri, cursor) {
             return Some(GotoDefinitionResponse::Scalar(location));
         }
+        // A field of a record pattern, also a shorthand binder
+        // (`Pt { x } ->`): the field's declaration.
+        if let Some(location) = self.pattern_field_declaration_at(uri, cursor) {
+            return Some(GotoDefinitionResponse::Scalar(location));
+        }
         if let Some((_, target)) = self.target_at(uri, cursor) {
             let mut locations = self.declarations_of(uri, &target);
             return match locations.len() {
@@ -42,8 +47,10 @@ impl Server {
         {
             return Some(GotoDefinitionResponse::Scalar(location));
         }
-        // The module before a dot (`helpers` in `helpers.div`): its file.
+        // The module before a dot (`helpers` in `helpers.div`, and in a
+        // type, `helpers.Pt`): its file.
         let module = qualifier_at(program, cursor)
+            .or_else(|| type_qualifier_at(&doc.source.text, cursor))
             .filter(|module| nearest_local_binding_for(&doc.locals, *module, cursor).is_none())?;
         let view = self.imported_module(doc, module)?;
         Some(GotoDefinitionResponse::Scalar(Location::new(

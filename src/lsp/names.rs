@@ -64,6 +64,14 @@ pub(super) struct MethodUse {
     pub(super) selection: Selection,
 }
 
+/// A field name in a record pattern (`x` in `Pt { x }` or `Pt { x: a }`),
+/// with the record type the pattern names.
+pub(super) struct FieldUse {
+    pub(super) span: Span,
+    pub(super) record: DefId,
+    pub(super) field: Symbol,
+}
+
 /// Every name a module writes that has a meaning, apart from the names
 /// its declarations declare (those are the definitions' own spans).
 pub(super) struct Names<'a> {
@@ -72,6 +80,7 @@ pub(super) struct Names<'a> {
     pub(super) defs: Vec<DefUse>,
     pub(super) locals: Vec<LocalName>,
     pub(super) methods: Vec<MethodUse>,
+    pub(super) fields: Vec<FieldUse>,
     /// The names a top-level `let` declares as fields written without a
     /// pattern (`let P { x } = p`): definitions whose declaration is
     /// punned.
@@ -124,6 +133,7 @@ impl<'a> Names<'a> {
             locals: Vec::new(),
             methods: Vec::new(),
             punned_declarations: Vec::new(),
+            fields: Vec::new(),
             declares: false,
         };
         for decl in &program.decls {
@@ -521,6 +531,14 @@ impl<'a> Names<'a> {
                 name_span, fields, ..
             } => {
                 self.name(*name_span, pattern.res);
+                if let Some(Res::Def(record)) = pattern.res {
+                    self.fields
+                        .extend(fields.iter().map(|(field, span, _)| FieldUse {
+                            span: *span,
+                            record,
+                            field: *field,
+                        }));
+                }
                 self.field_patterns(fields);
             }
             PatternKind::AnonRecord { fields, rest } => {

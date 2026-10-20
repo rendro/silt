@@ -10,7 +10,7 @@ use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
 use super::local_bindings::nearest_local_binding_for;
-use super::modules::{qualified_access_at, qualifier_at};
+use super::modules::{qualified_access_at, qualifier_at, type_qualifier_at};
 use super::workspace::Named;
 
 impl Server {
@@ -61,7 +61,8 @@ impl Server {
 
         // The name of an imported module before a dot (`geo` in
         // `geo.mk`): the module, not the member's type.
-        if let Some(module) = qualifier_at(program, cursor)
+        if let Some(module) =
+            qualifier_at(program, cursor).or_else(|| type_qualifier_at(&doc.source.text, cursor))
             && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
             && let Some(view) = self.imported_module(doc, module)
         {
@@ -73,11 +74,13 @@ impl Server {
             return Some(markdown(value));
         }
 
-        // A type the program declares, named (`P` in `p: P`): its
-        // declaration as it is written, and its doc comment.
-        if let Some(text) = self
-            .declared_type_at(uri, cursor)
-            .and_then(|ty| self.type_declaration_text(doc, ty))
+        // A type named (`P` in `p: P`): one the program declares (or an
+        // alias) with its declaration as it is written and its doc
+        // comment; one of silt's own with its docs, if it has any (not
+        // the type of the expression around the annotation).
+        let named_type = self.type_named_at(uri, cursor);
+        if let Some(ty) = named_type
+            && let Some(text) = self.type_declaration_text(doc, ty)
         {
             let mut value = format!("```silt\n{text}\n```");
             if let Named::Definition(info) = self.named_at(uri, cursor)
@@ -86,6 +89,11 @@ impl Server {
                 value.push_str(&format!("\n\n---\n\n{doc}"));
             }
             return Some(markdown(value));
+        }
+        if named_type.is_some() {
+            return find_ident_at_offset(program, cursor)
+                .and_then(|name| self.builtin_docs.get(&resolve(name)))
+                .map(|docs| markdown(docs.clone()));
         }
 
         let ty = find_type_at_offset(program, cursor);

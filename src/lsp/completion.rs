@@ -704,7 +704,8 @@ fn at_import_name(source: &str, pos: &Position) -> bool {
 }
 
 /// The modules the file `uri` may import: silt's own that this build
-/// has, and the other `.silt` files beside it.
+/// has, and the other `.silt` files beside it but a program's entry
+/// file, `main.silt`, which is no module.
 fn import_completions(uri: &Uri) -> Vec<CompletionItem> {
     let item = |label: String| CompletionItem {
         label,
@@ -725,6 +726,7 @@ fn import_completions(uri: &Uri) -> Vec<CompletionItem> {
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|sibling| *sibling != path && sibling.extension().is_some_and(|e| e == "silt"))
         .filter_map(|sibling| Some(sibling.file_stem()?.to_str()?.to_string()))
+        .filter(|stem| stem != "main")
         .filter(|stem| {
             stem.chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')

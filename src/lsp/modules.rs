@@ -232,6 +232,29 @@ pub(super) fn qualified_access_at(program: &Program, cursor: usize) -> Option<(S
 
 /// The receiver `module` of a qualified access `module.member` whose
 /// receiver holds `cursor`, when it is a plain identifier.
+/// The name before a dot at byte `cursor` of `source` when a capitalised
+/// name follows the dot: the module of a qualified type name written in
+/// an annotation (`helpers` in `q: helpers.PtA`), which is no expression.
+pub(super) fn type_qualifier_at(source: &str, cursor: usize) -> Option<Symbol> {
+    let is_name = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = source.as_bytes();
+    if cursor > bytes.len() {
+        return None;
+    }
+    let start = bytes[..cursor]
+        .iter()
+        .rposition(|b| !is_name(*b))
+        .map_or(0, |at| at + 1);
+    let end = cursor
+        + bytes[cursor..]
+            .iter()
+            .position(|b| !is_name(*b))
+            .unwrap_or(bytes.len() - cursor);
+    let (dot, next) = (bytes.get(end)?, bytes.get(end + 1)?);
+    (start < end && *dot == b'.' && next.is_ascii_uppercase())
+        .then(|| crate::intern::intern(&source[start..end]))
+}
+
 pub(super) fn qualifier_at(program: &Program, cursor: usize) -> Option<Symbol> {
     find_qualified_access(program, |receiver, _| receiver.contains(&cursor)).map(|(m, _)| m)
 }

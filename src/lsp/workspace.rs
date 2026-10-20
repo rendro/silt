@@ -229,20 +229,23 @@ impl Server {
         }
     }
 
-    /// The type a program declares that the name at byte `cursor` of
-    /// the open document `uri` names (`P` in `p: P`), if it names one.
-    pub(super) fn declared_type_at(&self, uri: &Uri, cursor: usize) -> Option<crate::defs::TypeId> {
+    /// The type (or alias) that the name at byte `cursor` of the open
+    /// document `uri` names (`P` in `p: P`), if it names one: a type of
+    /// silt's own too (`Int`), which has no declaration in a file.
+    pub(super) fn type_named_at(&self, uri: &Uri, cursor: usize) -> Option<crate::defs::TypeId> {
         let (_, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
             return None;
         };
         let module = self.documents.get(uri)?.module.as_ref()?;
         let session = &self.projects.get(&module.project)?.session;
-        keys.iter().find_map(
-            |key| match session.defs().get(def_of_key(session, key)?).kind {
+        keys.iter().find_map(|key| {
+            let id = def_of_key(session, key)?;
+            match session.defs().get(id).kind {
                 DefKind::Type(ty) => Some(ty),
+                DefKind::TypeAlias => Some(crate::defs::TypeId(id)),
                 _ => None,
-            },
-        )
+            }
+        })
     }
 
     /// The builtin definition the name at byte `cursor` of the open
@@ -473,12 +476,29 @@ impl Server {
         id: crate::defs::TypeId,
         field: Symbol,
     ) -> Option<Location> {
+        // (Through an alias, the record it names.)
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let id = crate::defs::TypeId(session.defs().through_alias(id.0));
         let (session, module, td) = self.type_decl_of(doc, id)?;
         let TypeBody::Record(fields) = &td.body else {
             return None;
         };
         let declared = fields.iter().find(|f| f.name == field)?;
         self.location_in(session, module, declared.name_span)
+    }
+
+    /// The field of a record pattern at byte `cursor` of the open
+    /// document `uri` (`x` in `Pt { x } ->`): its declaration.
+    pub(super) fn pattern_field_declaration_at(
+        &self,
+        uri: &Uri,
+        cursor: usize,
+    ) -> Option<Location> {
+        let doc = self.documents.get(uri)?;
+        let (names, ..) = self.names_of(doc)?;
+        let used = names.fields.iter().find(|f| holds(f.span, cursor))?;
+        self.field_declaration(doc, crate::defs::TypeId(used.record), used.field)
     }
 
     /// The declaration of the type `id` as it is written, for hover.
