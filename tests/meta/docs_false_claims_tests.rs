@@ -80,3 +80,14 @@ fn no_doc_calls_channel_new_without_a_capacity() {
         "a doc says channel.new can be called without a capacity",
     );
 }
+
+/// The failure `task.join` raises points at where the task failed, and
+/// its call stack goes on with the calls that led to the join: it is
+/// not reported at the join.
+#[test]
+fn no_doc_places_a_joined_failure_at_the_join() {
+    assert_no_doc_says(
+        &["`joined task failed: <msg>` at the call site"],
+        "a doc says a joined failure is reported at the join",
+    );
+}

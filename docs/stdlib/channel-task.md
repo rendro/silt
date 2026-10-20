@@ -462,9 +462,12 @@ while waiting, allowing other tasks to run.
 
 If the joined task panicked, errored, or was cancelled, `task.join` does
 **not** surface the failure as an `Err` value. It raises a runtime error of
-the form `joined task failed: <msg>` at the call site (e.g. `joined task
+the form `joined task failed: <msg>` in the joining task (e.g. `joined task
 failed: cancelled` for a cancelled handle, `joined task failed: division by
-zero` for a panicking task body). Silt has no `try`/`catch`, so a joined
+zero` for a panicking task body). The error points at where the task failed,
+and its call stack goes on, below the task's own calls, with the calls that
+led to the `task.join`; the error of a cancelled task points at the join.
+Silt has no `try`/`catch`, so a joined
 failure is terminal for the joining task — when cancellation or task
 failure is an expected outcome, use a channel handshake or sentinel value
 instead of relying on `task.join` for the signal.

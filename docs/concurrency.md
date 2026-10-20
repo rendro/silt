@@ -348,8 +348,11 @@ returns its result -- the value of the last expression in the spawned function's
 body. While waiting, the OS thread runs other tasks.
 
 If the spawned task panicked, errored, or was cancelled, `task.join` does
-**not** return an `Err` value. It raises the failure as a runtime error of
-the form `joined task failed: <msg>` at the call site. Silt has no
+**not** return an `Err` value. It raises the failure in the joining task as
+a runtime error of the form `joined task failed: <msg>`. The error points at
+where the task failed, and its call stack goes on, below the task's own
+calls, with the calls that led to the `task.join` (a cancelled task failed
+nowhere: its error points at the join). Silt has no
 `try`/`catch`, so a joined failure is terminal for the joining task — design
 cancellation-aware code to signal completion through a channel handshake or
 sentinel value when cancellation is an expected outcome rather than an error.
