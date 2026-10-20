@@ -1,0 +1,1 @@
+pub type Maybe { Some(a), None }

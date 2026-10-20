@@ -9,7 +9,7 @@
 //! and the doc is the mirror.
 //!
 //! The README row looks like (line ~200):
-//!   | **keywords** | `as else fn import let loop match mod pub return trait type when where` |
+//!   | **keywords** | `as else fn import let loop match pub return trait type when where` |
 //!
 //! Strategy: include the README at compile time, scan for the
 //! `**keywords**` table row, extract the backtick-quoted body, split
@@ -29,7 +29,7 @@ const README: &str = include_str!("../../README.md");
 
 /// Extract the backtick-quoted content of the `**keywords**` row in
 /// the Reference table. Returns the inner string, e.g.
-/// `"as else fn import let loop match mod pub return trait type when where"`.
+/// `"as else fn import let loop match pub return trait type when where"`.
 fn extract_readme_keyword_row() -> String {
     for line in README.lines() {
         let trimmed = line.trim_start();

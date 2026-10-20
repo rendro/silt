@@ -483,12 +483,12 @@ pub enum TypeExprKind {
     },
     /// Anonymous structural record type, optionally row-polymorphic:
     /// `{name: String, age: Int}` (closed) or `{name: String, ...r}`
-    /// (open, where `r` is a row variable name). Multiple annotations
-    /// in the same scope sharing a row name `r` refer to the same
+    /// (open, where `r` is a row variable name; its span is that of
+    /// `...r`). Multiple annotations in the same scope sharing a row name `r` refer to the same
     /// row variable, so `fn id(p: {name: String, ...r}) -> {name: String, ...r}` threads it.
     AnonRecord {
         fields: Vec<(Symbol, TypeExpr)>,
-        tail: Option<Symbol>,
+        tail: Option<(Symbol, Span)>,
     },
 }
 

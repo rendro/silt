@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A spread over a declared record extends and never overwrites, as
+-- over an anonymous one: the field the record has is refused, also
+-- when a closure's parameter is the base.
+import list
+
+type Person {
+  name: String,
+  age: Int,
+}
+
+fn older(people: List(Person)) -> List({name: String, age: Int}) {
+  people |> list.map { x -> { ...x, age: 1 } }
+}
+
+fn main() {
+  let p = Person { name: "Bob", age: 42 }
+  let r = { ...p, name: "Al" }
+  println(r)
+  println(older([p]))
+}

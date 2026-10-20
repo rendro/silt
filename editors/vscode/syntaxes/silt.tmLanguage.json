@@ -64,7 +64,11 @@
           "patterns": [
             {
               "name": "constant.character.escape.silt",
-              "match": "\\\\[nt\\\\\"{}]"
+              "match": "\\\\[nrt0\\\\\"{}]"
+            },
+            {
+              "name": "constant.character.escape.silt",
+              "match": "\\\\u\\{[0-9A-Fa-f]{1,6}\\}"
             },
             {
               "name": "meta.interpolation.silt",
@@ -110,7 +114,7 @@
     },
     "keywords": {
       "name": "keyword.control.silt",
-      "match": "\\b(as|else|fn|import|let|loop|match|mod|pub|return|trait|type|when|where)\\b"
+      "match": "\\b(as|else|fn|import|let|loop|match|pub|return|trait|type|when|where)\\b"
     },
     "booleans": {
       "name": "constant.language.boolean.silt",

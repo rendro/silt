@@ -356,9 +356,11 @@ ext({ age: 1 })
 A spread always makes a new anonymous record: its value never carries
 the name of a declared type. Over a value of a declared record type it
 is the conversion, written out: `{...person}` is the anonymous record
-with `Person`'s fields, and a field written after the spread is added,
-or replaces the record's by name. The type of the base may be decided
-anywhere in the function, before the spread or after it:
+with `Person`'s fields, and a field written after the spread is added.
+It extends, never overwrites, as over any record: `{...person, name:
+"Al"}` is an error, and `person.{ name: "Al" }` is the update. The type
+of the base may be decided anywhere in the function, before the spread
+or after it:
 
 ```silt
 type Person {

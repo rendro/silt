@@ -1,4 +1,0 @@
--- cmd: check
--- exit: 1
--- stderr-contains: unknown escape
-"\r"

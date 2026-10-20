@@ -61,9 +61,12 @@ type Tree(a) {
 }
 ```
 
-Parameters are lowercase. They are in scope throughout the declaration
-body, including in constructor argument types, record fields, and
-recursive self-references.
+Parameters are lowercase and distinct. They are in scope throughout the
+declaration body, including in constructor argument types, record
+fields, and recursive self-references. Every type variable of the body
+is one of them: `type Maybe { Some(a), None }` is an error ("type
+variable 'a' is not a parameter of 'Maybe'"), and so is `type Cell(T)`.
+A record type in a declaration is closed: it has no `...r` row.
 
 At use sites, types are applied positionally: `Option(Int)`,
 `Result(String, ParseError)`, `Pair(User, List(Role))`.
@@ -389,8 +392,8 @@ constraints on the parameters. See the [Traits](traits.md) guide for
 the full specification:
 
 ```silt
-type Box(T) {
-  Box(T),
+type Box(a) {
+  Box(a),
 }
 
 trait Display for Box(a) where a: Display {

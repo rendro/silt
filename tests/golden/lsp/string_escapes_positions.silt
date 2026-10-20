@@ -1,0 +1,8 @@
+-- cmd: lsp
+-- The places of a wrong escape and of a diagnostic behind escapes are
+-- counted in characters of the source (the escapes as written).
+
+fn main() {
+  let s = "é\u{1F600}😀\u{D800}"
+  let n: Int = "\u{e9}\r"
+}

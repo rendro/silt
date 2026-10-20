@@ -1,7 +1,7 @@
 -- One diagnostic per missing name.
 -- cmd: check
 -- exit: 1
--- stderr-contains: undeclared type parameter 'k'
--- stderr-contains: undeclared type parameter 'v'
+-- stderr-contains: type variable 'k' is not a parameter of 'Pairish'
+-- stderr-contains: type variable 'v' is not a parameter of 'Pairish'
 type Pairish = Map(k, v)
 fn main() {}
