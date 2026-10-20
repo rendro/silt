@@ -1,0 +1,10 @@
+timestamptz 2026-10-19 12:00:00+00: read 2026-10-19T12:00:00, back [Back {same: true, back: 2026-10-19 12:00:00}]
+timestamp 2026-10-19 12:00:00.25: read 2026-10-19T12:00:00.250000000, back [Back {same: true, back: 2026-10-19 12:00:00.25}]
+date 2026-10-19: read 2026-10-19, back [Back {same: true, back: 2026-10-19}]
+time 01:02:03.25: read 01:02:03.250000000, back [Back {same: true, back: 01:02:03.25}]
+date 0044-03-15 BC: read -043-03-15, back [Back {same: true, back: 0044-03-15 BC}]
+date 0001-12-31 BC: read 0000-12-31, back [Back {same: true, back: 0001-12-31 BC}]
+timestamptz 0044-03-15 12:00:00+00 BC: read -043-03-15T12:00:00, back [Back {same: true, back: 0044-03-15 12:00:00 BC}]
+timestamp 0044-03-15 12:00:00 BC: read -043-03-15T12:00:00, back [Back {same: true, back: 0044-03-15 12:00:00 BC}]
+a list into timestamptz[]: [Back {same: true, back: {"2026-10-19 08:00:00-04"}}]
+done: Ok(())

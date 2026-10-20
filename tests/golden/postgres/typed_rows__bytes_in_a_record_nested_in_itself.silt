@@ -1,0 +1,18 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.query` cannot decode `Tree`: field `blob` of `Tree`, a record type nested in it, has type `Bytes`, which has no decoder
+-- A row's `Bytes` field is filled from a bytea column; the trees in
+-- its `kids` field only from a json document, which has no bytes: the
+-- same field of the same type is no field a column fills there.
+import postgres
+
+type Tree { blob: Bytes, kids: List(Tree) }
+
+fn trees(db: postgres.PgPool) -> Result(List(Tree), postgres.PostgresError) {
+  postgres.query(db, "SELECT blob, kids FROM trees", (), Tree)
+}
+
+fn main() {
+  println(1)
+}

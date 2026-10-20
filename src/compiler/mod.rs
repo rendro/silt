@@ -77,8 +77,18 @@ const STATEMENT_BUILTINS: &[&str] = &[
     "postgres.cursor",
 ];
 
+/// The postgres functions whose first argument, the connection, may be
+/// a pool or a transaction: its type is a variable in their
+/// signatures, and the compiler checks it.
+const CONNECTION_BUILTINS: &[&str] = &[
+    "postgres.query",
+    "postgres.execute",
+    "postgres.stream",
+    "postgres.notify",
+];
+
 /// A family of decoding builtins: they decode the same field types.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Decoder {
     Json,
     Toml,
@@ -117,15 +127,38 @@ impl Decoder {
         }
     }
 
+    /// What the help adds where the part that has no decoder is
+    /// `Bytes`, which postgres decodes in some places only.
+    fn bytes_help(self) -> &'static str {
+        match self {
+            Decoder::Postgres => {
+                "; Bytes only as a field, in an Option or in a List (a bytea column), \
+                 not in a Map, a tuple or a nested record"
+            }
+            _ => "",
+        }
+    }
+
+    /// The decoder of what a map, a tuple or a nested record of a field
+    /// holds: a column fills those only with a json document, so for
+    /// postgres it is json's.
+    fn nested(self) -> Decoder {
+        match self {
+            Decoder::Postgres => Decoder::Json,
+            other => other,
+        }
+    }
+
     /// The part of `field_type` that this decoder, unlike another one,
     /// has no decoder for: `json.Value` for toml, `Bytes` for json and
-    /// toml.
+    /// toml, and for postgres in a map or a tuple.
     fn lacks(self, field_type: &FieldType) -> Option<&'static str> {
         match field_type {
             FieldType::JsonValue if self == Decoder::Toml => Some("json.Value"),
             FieldType::Bytes if self != Decoder::Postgres => Some("Bytes"),
-            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => self.lacks(t),
-            FieldType::Tuple(ts) => ts.iter().find_map(|t| self.lacks(t)),
+            FieldType::List(t) | FieldType::Option(t) => self.lacks(t),
+            FieldType::Map(t) => self.nested().lacks(t),
+            FieldType::Tuple(ts) => ts.iter().find_map(|t| self.nested().lacks(t)),
             _ => None,
         }
     }
@@ -155,6 +188,9 @@ struct UndecodableField {
     field_type: String,
     /// The part of the field's type that has no decoder.
     part: String,
+    /// The record type is nested in the one given to the decoder (it
+    /// may be that one itself, in a field of its own).
+    nested: bool,
 }
 
 // ── Reading a field ──────────────────────────────────────────────────
@@ -2014,6 +2050,7 @@ impl<'a> Compiler<'a> {
         } else if let Some(builtin_name) = self.builtin_module_function(callee) {
             // A builtin module's function: `list.map(...)`.
             self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+            self.check_connection(&builtin_name, args)?;
             self.check_statement_params(&builtin_name, args)?;
             self.compile_operands(args.iter().copied())?;
             let argc = args.len();
@@ -2056,6 +2093,7 @@ impl<'a> Compiler<'a> {
             // `json.parse(..)`.
             if let Some(builtin_name) = self.builtin_function(callee.res) {
                 self.check_decode_target(&builtin_name, args.last().copied(), span)?;
+                self.check_connection(&builtin_name, args)?;
                 self.check_statement_params(&builtin_name, args)?;
             }
             self.compile_operands(std::iter::once(callee).chain(args.iter().copied()))?;
@@ -2696,14 +2734,15 @@ impl<'a> Compiler<'a> {
     }
 
     /// The first field that `decoder` cannot decode, in the record type
-    /// `record` or in a record type nested in it. `None` if there is none.
+    /// `record` or in a record type nested in it (which
+    /// `decoder.nested()` decodes). `None` if there is none.
     fn undecodable_field(
         &self,
         record: crate::defs::TypeId,
         decoder: Decoder,
-        seen: &mut HashSet<crate::defs::TypeId>,
+        seen: &mut HashSet<(crate::defs::TypeId, Decoder)>,
     ) -> Option<UndecodableField> {
-        if !seen.insert(record) {
+        if !seen.insert((record, decoder)) {
             return None;
         }
         let def = *self.units.defs.get(record.0);
@@ -2719,11 +2758,16 @@ impl<'a> Compiler<'a> {
                     field: resolve(field),
                     field_type: shown(&ty),
                     part,
+                    nested: false,
                 });
             }
             for nested_record in nested {
+                let decoder = decoder.nested();
                 if let Some(found) = self.undecodable_field(nested_record, decoder, seen) {
-                    return Some(found);
+                    return Some(UndecodableField {
+                        nested: true,
+                        ..found
+                    });
                 }
             }
         }
@@ -2798,10 +2842,10 @@ impl<'a> Compiler<'a> {
             let Some(found) = self.undecodable_field(ty.id, decoder, &mut HashSet::new()) else {
                 return Ok(());
             };
-            let owner = if found.record == resolve(def.name) {
-                String::new()
-            } else {
+            let owner = if found.nested {
                 format!(" of `{}`, a record type nested in it,", found.record)
+            } else {
+                String::new()
             };
             let part = if found.part == found.field_type {
                 "which has no decoder".to_string()
@@ -2816,7 +2860,10 @@ impl<'a> Compiler<'a> {
                     found.field, found.field_type
                 ),
             )
-            .with_help(decodable_types_help));
+            .with_help(match found.part.as_str() {
+                "Bytes" => format!("{decodable_types_help}{}", decoder.bytes_help()),
+                _ => decodable_types_help.to_string(),
+            }));
         }
         if ty.id == crate::typeinfo::ty::JSON_VALUE {
             if decoder != Decoder::Toml {
@@ -2881,6 +2928,36 @@ impl<'a> Compiler<'a> {
             .with_help(help));
         }
         Ok(())
+    }
+
+    /// Check the connection of a call of a postgres function that takes
+    /// a pool or a transaction (`postgres.query(db, ..)`): a `PgPool` or
+    /// a `PgTx`. When the type is a variable (a parameter of a generic
+    /// function) the function checks it where it runs.
+    fn check_connection(&self, builtin_name: &str, args: &[&Expr]) -> Result<(), Diagnostic> {
+        if !CONNECTION_BUILTINS.contains(&builtin_name) {
+            return Ok(());
+        }
+        let Some(conn) = args.first() else {
+            return Ok(());
+        };
+        let Some(ty) = &conn.ty else {
+            return Ok(());
+        };
+        let ty = crate::types::canonical::canonicalize(self.resolver(), ty);
+        match ty {
+            Type::Generic(t, _)
+                if t.id == crate::typeinfo::ty::PG_POOL || t.id == crate::typeinfo::ty::PG_TX =>
+            {
+                Ok(())
+            }
+            Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => Ok(()),
+            _ => Err(Diagnostic::error(
+                Code::TypeMismatch,
+                conn.span,
+                format!("the connection of `{builtin_name}` must be a PgPool or a PgTx"),
+            )),
+        }
     }
 
     /// Check the parameters of a call of a postgres function that runs a

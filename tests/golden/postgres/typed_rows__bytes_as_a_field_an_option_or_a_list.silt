@@ -1,0 +1,28 @@
+-- cmd: check
+-- requires-feature: postgres
+-- A bytea column fills a `Bytes` field, and an Option of it; a bytea[]
+-- fills a list of `Bytes`, of `Option(Bytes)`, and of lists for more
+-- dimensions; a json column fills a map, a tuple or a nested record
+-- that holds no `Bytes`. Each of these is a row field.
+import postgres
+
+type Meta { tags: List(String) }
+
+type Blob {
+  data: Bytes,
+  thumb: Option(Bytes),
+  parts: List(Bytes),
+  holes: Option(List(Option(Bytes))),
+  grid: List(List(Bytes)),
+  names: Map(String, Int),
+  pair: (Int, String),
+  meta: Meta,
+}
+
+fn blobs(db: postgres.PgPool) -> Result(List(Blob), postgres.PostgresError) {
+  postgres.query(db, "SELECT * FROM blobs", (), Blob)
+}
+
+fn main() {
+  println(1)
+}

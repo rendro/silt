@@ -26,7 +26,7 @@ use crate::builtins::json;
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
-use crate::value::{Float, Value};
+use crate::value::{Float, Record, Value};
 use crate::vm::{Runtime, VmError};
 
 // ── Parameters ──────────────────────────────────────────────────────
@@ -132,7 +132,8 @@ pub(super) fn params(
 }
 
 /// The parameter `value`. `None` is NULL and `Some(x)` is `x`; a date,
-/// a time and a datetime are written as silt shows them, `Bytes` as
+/// a time and a datetime are written as silt shows them (a datetime
+/// with the offset `+00`, a year before 1 as a year BC), `Bytes` as
 /// `bytea`'s hex text; a list is an array or JSON (see [`TextParam`]),
 /// and every other value that is no scalar (a record, a map, a variant)
 /// is written as `json.stringify` writes it. A value JSON has no form
@@ -166,13 +167,41 @@ fn scalar_text(caller: &str, value: &Value) -> Result<String, VmError> {
         Value::Bool(b) => b.to_string(),
         Value::String(s) => s.to_string(),
         Value::Bytes(bytes) => hex(bytes),
-        Value::Record(record)
-            if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
-        {
-            value.to_string()
+        Value::Record(record) if record.type_id() == ty::DATE => {
+            let (date, era) = date_text(record);
+            format!("{date}{era}")
+        }
+        Value::Record(record) if record.type_id() == ty::TIME => value.to_string(),
+        // In UTC, as a `timestamptz` is read: a `timestamp` ignores
+        // the offset.
+        Value::Record(record) if record.type_id() == ty::DATE_TIME => {
+            match (record.get("date"), record.get("time")) {
+                (Some(Value::Record(date)), Some(time)) => {
+                    let (date, era) = date_text(date);
+                    format!("{date}T{time}+00{era}")
+                }
+                _ => value.to_string(),
+            }
         }
         _ => json::value_to_json(caller, value, 0)?.to_string(),
     })
+}
+
+/// The text of the `Date` `date` as Postgres reads it, and its era: a
+/// year before 1 is a year BC (year 0 is 1 BC), `0044-03-15` and
+/// `" BC"` for -43.
+fn date_text(date: &Record) -> (String, &'static str) {
+    let part = |name| match date.get(name) {
+        Some(Value::Int(n)) => *n,
+        _ => 0,
+    };
+    let (year, month, day) = (part("year"), part("month"), part("day"));
+    let (year, era) = if year < 1 {
+        (1 - year, " BC")
+    } else {
+        (year, "")
+    };
+    (format!("{year:04}-{month:02}-{day:02}"), era)
 }
 
 /// The list `list` as the text of a Postgres array (`{"1","2",NULL}`),
@@ -1083,5 +1112,25 @@ mod tests {
             array_literal("postgres.query", &Value::list(Vec::new())).expect("written"),
             "{}"
         );
+    }
+
+    /// A datetime goes out in UTC, with its offset; a year before 1 as
+    /// a year BC (year 0 is 1 BC).
+    #[test]
+    fn dates_are_written_as_postgres_reads_them() {
+        let text = |value: Value| scalar_text("postgres.query", &value).expect("written");
+        let day = |y, m, d| make_date(NaiveDate::from_ymd_opt(y, m, d).expect("a date"));
+        let at = |y, m, d| {
+            let date = NaiveDate::from_ymd_opt(y, m, d).expect("a date");
+            make_datetime(date.and_hms_milli_opt(12, 0, 0, 250).expect("a time"))
+        };
+        assert_eq!(text(day(2026, 10, 19)), "2026-10-19");
+        assert_eq!(text(day(10000, 1, 1)), "10000-01-01");
+        assert_eq!(text(day(-43, 3, 15)), "0044-03-15 BC");
+        assert_eq!(text(day(0, 12, 31)), "0001-12-31 BC");
+        assert_eq!(text(at(2026, 10, 19)), "2026-10-19T12:00:00.250000000+00");
+        assert_eq!(text(at(-43, 3, 15)), "0044-03-15T12:00:00.250000000+00 BC");
+        let time = make_time(NaiveTime::from_hms_opt(1, 2, 3).expect("a time"));
+        assert_eq!(text(time), "01:02:03");
     }
 }

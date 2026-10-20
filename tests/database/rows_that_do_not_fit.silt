@@ -12,7 +12,9 @@
 -- list has levels is named with its dimensions. The message of a
 -- mismatch says to cast the column in SQL, but not for a NULL, and not
 -- for what a json or jsonb column holds (its actual part begins with
--- the column's type).
+-- the column's type). A record that holds `Bytes` nested in a field,
+-- which no column fills, is refused by the compiler where the type is
+-- named; given through a type variable, it is the column's mismatch.
 import env
 import json
 import postgres
@@ -58,6 +60,12 @@ fn said(e: postgres.PostgresError) -> String {
   "{variant}\n  {e.message()}"
 }
 
+-- The rows of `sql`, decoded into `r`, which the compiler does not
+-- know here.
+fn rows_of(db: postgres.PgPool, sql: String, type r) -> Result(List(r), postgres.PostgresError) {
+  postgres.query(db, sql, (), r)
+}
+
 fn show(what: String, answer: Result(List(a), postgres.PostgresError)) where a: Display {
   match answer {
     Ok(rows) -> println("{what}: {rows}")
@@ -87,7 +95,7 @@ fn main() {
       show("a document null for an Option", postgres.query(db, "SELECT 'null'::jsonb AS doc", (), MaybeDoc))
       show(
         "a document for a record that holds Bytes, no rows",
-        postgres.query(db, """SELECT '{}'::jsonb AS v WHERE false""", (), Stored),
+        rows_of(db, """SELECT '{}'::jsonb AS v WHERE false""", Stored),
       )
       show("an array of 1 dimension for a list of lists", postgres.query(db, "SELECT ARRAY[1, 2] AS g", (), Grid))
       show("an array of 2 dimensions for a list", postgres.query(db, "SELECT ARRAY[[1], [2]] AS x", (), Xs))

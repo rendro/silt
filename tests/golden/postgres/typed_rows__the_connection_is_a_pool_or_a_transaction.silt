@@ -1,0 +1,17 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: the connection of `postgres.query` must be a PgPool or a PgTx
+-- The connection of a postgres function that takes a pool or a
+-- transaction is checked where it is written, as its parameters are.
+import postgres
+
+type V { v: Int }
+
+fn rows() -> Result(List(V), postgres.PostgresError) {
+  postgres.query(42, "SELECT 1 AS v", (), V)
+}
+
+fn main() {
+  println(rows())
+}

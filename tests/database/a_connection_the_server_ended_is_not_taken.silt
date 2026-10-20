@@ -1,0 +1,74 @@
+-- The server ends the session of a pooled connection while the
+-- connection is idle in the pool (here a second pool of the program
+-- terminates it, 20 times over). The next statement on the pool does
+-- not get that connection, whose end it would answer with an error: the
+-- pool checks the connection it takes with a round trip, finds it
+-- closed, and opens another.
+import env
+import list
+import postgres
+import string
+import time
+
+type Pid { pid: Int }
+
+type Gone { gone: Bool }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- Wait until the session `pid` has ended in the server.
+fn wait_gone(observer: postgres.PgPool, pid: Int) -> Result((), postgres.PostgresError) {
+  loop tries = 0 {
+    let sql = "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1::int4) AS gone"
+    match postgres.query(observer, sql, (pid,), Gone)? {
+      [row] when row.gone -> Ok(())
+      _ -> match tries < 1000 {
+        true -> {
+          time.sleep(time.ms(5))
+          loop(tries + 1)
+        }
+        false -> Err(postgres.Other("the session {pid} did not end"))
+      }
+    }
+  }
+}
+
+-- One round: the session of the pool's one connection is ended while
+-- the connection is idle, and the pool is asked for a statement.
+fn round(db: postgres.PgPool, observer: postgres.PgPool) -> Result(String, postgres.PostgresError) {
+  let pid = match postgres.query(db, "SELECT pg_backend_pid()::int8 AS pid", (), Pid)? {
+    [row] -> row.pid
+    _ -> 0
+  }
+  let _ = postgres.execute(observer, "SELECT pg_terminate_backend($1::int4)", (pid,))?
+  wait_gone(observer, pid)?
+  match postgres.query(db, "SELECT pg_backend_pid()::int8 AS pid", (), Pid) {
+    Ok([row]) when row.pid != pid -> Ok("a new connection")
+    Ok(_) -> Ok("the same connection")
+    Err(e) -> Ok("the statement failed: {e.message()}")
+  }
+}
+
+fn main() {
+  match (postgres.connect_with(url(), #{"max_pool_size": 1}), postgres.connect(url())) {
+    (Ok(db), Ok(observer)) -> {
+      let answers = 1..20 |> list.map { _ ->
+        match round(db, observer) {
+          Ok(answer) -> answer
+          Err(e) -> "the round failed: {e.message()}"
+        }
+      }
+      let other = answers |> list.filter { a -> a != "a new connection" }
+      println("rounds: {list.length(answers)}, a new connection in each: {other == []}")
+      other |> list.each { a -> println(a) }
+      postgres.close(db)
+      postgres.close(observer)
+    }
+    _ -> println("connect failed")
+  }
+}
