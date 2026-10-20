@@ -143,14 +143,8 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
             "the decoders of {} are of one family",
             module.name
         );
-        let Some((_, section)) = module.page.split_once("## Decodable types") else {
-            continue;
-        };
-        let Some((_, after)) = section.split_once("these types:") else {
-            panic!(
-                "{}: its Decodable types section lists no field types",
-                module.page_file
-            );
+        let Some((_, after)) = module.page.split_once("these types:") else {
+            panic!("{}: its page lists no field types", module.page_file);
         };
         let list: Vec<&str> = after
             .lines()
@@ -180,6 +174,50 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
                 module.page_file
             );
         }
+        // The leaves a table of column types names in the column of the
+        // field types each fills (postgres's) are the family's.
+        let mut in_table = Vec::new();
+        let mut column = None;
+        for line in module.page.lines() {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            if cells.get(2) == Some(&"Field types it fills") {
+                column = Some(2);
+                continue;
+            }
+            match column {
+                Some(k) if line.starts_with('|') => {
+                    // (What follows a `but` is what the column does not fill.)
+                    let cell = cells.get(k).copied().unwrap_or("");
+                    let cell = cell.split(" but ").next().unwrap_or(cell);
+                    in_table.extend(
+                        cell.split('`')
+                            .skip(1)
+                            .step_by(2)
+                            .filter(|name| Leaf::ALL.iter().any(|leaf| leaf.name() == *name)),
+                    );
+                }
+                _ => column = None,
+            }
+        }
+        if !in_table.is_empty() {
+            for leaf in &in_table {
+                assert!(
+                    family.leaves().iter().any(|l| l.name() == *leaf),
+                    "{}: its column table names {leaf}",
+                    module.page_file
+                );
+            }
+            for leaf in family.leaves() {
+                // (Every column fills a `json.Value`: the table's last
+                // column says how.)
+                assert!(
+                    *leaf == Leaf::JsonValue || in_table.contains(&leaf.name()),
+                    "{}: its column table names no {}",
+                    module.page_file,
+                    leaf.name()
+                );
+            }
+        }
         // Enum types, where the family decodes them: an item of the list
         // and a section of the page.
         let enums = list
@@ -199,5 +237,5 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
         );
         checked.push(module.name);
     }
-    assert_eq!(checked, ["json", "toml"]);
+    assert_eq!(checked, ["json", "toml", "postgres"]);
 }

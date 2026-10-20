@@ -121,6 +121,22 @@ error. A record nested in a field is filled from a json document by
 | `postgres.stream` | a record type or `json.Value` |
 | `postgres.cursor` | a record type or `json.Value` |
 
+Each filled from the columns the table below names, the fields of the record
+type may have these types:
+
+- `Int`, `Float`, `String`, `Bool`
+- `Bytes`, as the field, in an `Option` or in a `List` (a `bytea` column)
+- `Date`, `Time`, `DateTime`
+- `json.Value`, any column as the table's last column says
+- `List(T)`, `Option(T)`, `Map(String, T)`
+- tuples, such as `(Int, String)`
+- non-generic record types, from a `json` or `jsonb` column by `json.parse`'s
+  rules (an enum in them too)
+- type aliases of any of these
+
+where `T` is again one of these types. An enum, a `Set`, a generic record, a
+function or a type parameter has no decoder.
+
 Each field of the record is read from the column of its exact name;
 Postgres folds a name it is not given in quotes to lower case, so a
 column created as `"Id"` is read through `AS`: `SELECT "Id" AS id`. A
@@ -168,7 +184,7 @@ the call's `Err`.
 | `date` | `Date` | `json.String`, as silt shows a `Date` |
 | `time` | `Time` | `json.String`, as silt shows a `Time` |
 | `timestamp`, `timestamptz` | `DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
-| `json`, `jsonb` | any field type but `Bytes`, decoded by `json.parse`'s rules | the document |
+| `json`, `jsonb` | any field type but `Bytes` and an enum, decoded by `json.parse`'s rules | the document |
 | an array | `List(T)` of a `T` its elements fill, `List(Option(T))` where an element may be `NULL`, `List(List(T))` for two dimensions | `json.Array` |
 | `void` (what `pg_sleep(1)` gives) | none | `json.Null` |
 

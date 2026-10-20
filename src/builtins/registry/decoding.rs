@@ -14,6 +14,10 @@ use crate::typeinfo::FieldType;
 /// into that is no record type and no `json.Value`.
 pub const ROW_TYPE_HELP: &str = "declare a record type with a field for each column";
 
+/// What the compile error says of `json.Value` given to a family that
+/// does not decode it.
+pub const JSON_VALUE_ELSEWHERE: &str = "a type of the json decoders";
+
 /// A family of decoding builtins: they decode the same field types.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Family {
@@ -126,6 +130,28 @@ impl Family {
     /// Whether the type argument is the type of a row of a result.
     pub fn rows(self) -> bool {
         self == Family::Postgres
+    }
+
+    /// What to decode into instead of a type the family has no decoder
+    /// for (an enum, a builtin enum), as the help of the compile error
+    /// says: a row is decoded into a record of its columns.
+    pub fn record_help(self) -> &'static str {
+        match self.rows() {
+            true => ROW_TYPE_HELP,
+            false => "decode into a record type",
+        }
+    }
+
+    /// What to do instead of giving the family a type argument it does
+    /// not take (a container type such as `List`, a primitive type), as
+    /// the help of the compile error says.
+    pub fn type_argument_help(self) -> &'static str {
+        match self.rows() {
+            true => ROW_TYPE_HELP,
+            false => {
+                "declare a record type with a field of the type you want, and decode into the record"
+            }
+        }
     }
 
     /// The part of `field_type` that this family has no decoder for,

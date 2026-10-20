@@ -20,7 +20,7 @@ use crate::ast::{
     Stmt, StringPart, TypeBody, UnaryOp,
 };
 use crate::builtins::registry::Row;
-use crate::builtins::registry::decoding::{Decoding, Family, ROW_TYPE_HELP};
+use crate::builtins::registry::decoding::{Decoding, Family, JSON_VALUE_ELSEWHERE, ROW_TYPE_HELP};
 use crate::bytecode::emit::limit_diagnostic;
 use crate::bytecode::ops::Limit;
 use crate::bytecode::{
@@ -2768,9 +2768,10 @@ impl<'a> Compiler<'a> {
         let decodable_types_help = family.help();
         // What to decode into instead of a type that is no record. A row
         // is decoded into a record of its columns.
-        let (record_help, generic_help) = match family.rows() {
-            true => (ROW_TYPE_HELP, ROW_TYPE_HELP),
-            false => ("decode into a record type", decodable_types_help.as_str()),
+        let record_help = family.record_help();
+        let generic_help = match family.rows() {
+            true => ROW_TYPE_HELP,
+            false => decodable_types_help.as_str(),
         };
         let type_name = match &type_arg.kind {
             ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => resolve(*name),
@@ -2852,9 +2853,9 @@ impl<'a> Compiler<'a> {
             return Err(Diagnostic::error(
                 Code::InvalidConstruct,
                 span,
-                format!("`{builtin_name}` cannot decode `json.Value`, a type of the json decoders"),
+                format!("`{builtin_name}` cannot decode `json.Value`, {JSON_VALUE_ELSEWHERE}"),
             )
-            .with_help("decode into a record type"));
+            .with_help(record_help));
         }
         if !crate::typeinfo::builtin_type(ty.id).variants().is_empty() {
             let why = match family.decodes_enums() {
@@ -2877,13 +2878,7 @@ impl<'a> Compiler<'a> {
         let is_container = module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&builtin);
         if is_container || (is_primitive && !decoding.primitives) {
             let accepted = decoding.type_arguments(str::to_string);
-            // A row is a record of its columns.
-            let help = match family.rows() {
-                true => ROW_TYPE_HELP,
-                false => {
-                    "declare a record type with a field of the type you want, and decode into the record"
-                }
-            };
+            let help = family.type_argument_help();
             return Err(Diagnostic::error(
                 Code::InvalidConstruct,
                 span,
