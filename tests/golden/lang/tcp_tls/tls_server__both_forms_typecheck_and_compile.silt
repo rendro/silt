@@ -1,0 +1,26 @@
+-- requires-feature: tcp-tls
+-- cmd: disasm
+-- exit: 0
+-- Feature tcp-tls: the typechecker and compiler accept tcp.tls_server
+-- and tcp.tls_server_mtls on a connection of tcp.accept (disasm
+-- typechecks and compiles).
+import bytes
+import tcp
+fn main() {
+  match tcp.listen("127.0.0.1:0") {
+    Ok(l) -> match tcp.accept(l) {
+      Ok(conn) -> {
+        match tcp.tls_server(conn, bytes.empty(), bytes.empty()) {
+          Ok(_) -> ()
+          Err(_) -> ()
+        }
+        match tcp.tls_server_mtls(conn, bytes.empty(), bytes.empty(), bytes.empty()) {
+          Ok(_) -> ()
+          Err(_) -> ()
+        }
+      }
+      Err(_) -> ()
+    }
+    Err(_) -> ()
+  }
+}

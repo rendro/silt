@@ -55,14 +55,14 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 }
 
 #[cfg(feature = "tcp-tls")]
-pub(crate) use tls::{accept_tls, accept_tls_mtls, connect_tls};
+pub(crate) use tls::{connect_tls, tls_server, tls_server_mtls};
 
 #[cfg(feature = "tcp-tls")]
 mod tls {
     //! TLS extension for the tcp module — gated by the `tcp-tls` feature.
     //!
-    //! Both `connect_tls` and `accept_tls` return regular `Value::TcpStream`
-    //! handles. The `Box<dyn ReadWrite>` inside the handle now carries a
+    //! `connect_tls`, `tls_server` and `tls_server_mtls` return regular
+    //! `Value::TcpStream` handles. The `Box<dyn ReadWrite>` inside the handle now carries a
     //! `rustls::StreamOwned<...>` instead of a bare `TcpStream`; from the
     //! caller's perspective `tcp.read` / `tcp.write` / `tcp.close` work
     //! identically. This is the payoff of PR 2's trait-object design.
@@ -78,11 +78,10 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        Accepted, Doing, GiveUp, SERVED, Step, TcpListenerHandle, TcpStreamHandle, Value, Vm,
-        VmError, err, served, tcp_io_err, tcp_timeout_err,
+        Doing, Step, TcpStreamHandle, Value, Vm, VmError, err_closed, tcp_io_err, tcp_timeout_err,
     };
     use crate::builtins::typed::{self, Bytes, builtins};
-    use crate::runtime::handle::ReadWrite;
+    use crate::runtime::handle::{HandOver, ReadWrite};
 
     builtins! {
         /// Opens a TCP connection then performs the TLS client handshake
@@ -96,84 +95,138 @@ mod tls {
                 match do_connect_tls(&addr, &hostname, next_id) {
                     Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                     Err(NoTls::Connection(e)) => tcp_io_err(Doing::Connecting, &e),
-                    Err(NoTls::Tls(e)) => Value::variant(
-                        bv::ERR,
-                        vec![Value::variant(bv::TCP_TLS, vec![Value::String(e.into())])],
-                    ),
+                    Err(NoTls::Tls(e)) => tls_err(e),
                 }
             })
         }
 
-        /// Waits for an incoming TCP connection then performs the TLS
-        /// server handshake using the supplied PEM-encoded cert chain +
-        /// private key. Returned stream is the same opaque `TcpStream`
-        /// handle as plain TCP.
-        fn accept_tls(
+        /// Runs the TLS server handshake on `conn` with the PEM-encoded
+        /// cert chain and private key; the stream it returns wraps a
+        /// `rustls::StreamOwned<ServerConnection, TcpStream>`. `conn` is
+        /// taken ([`TcpStreamHandle::hand_over`]).
+        fn tls_server(
             vm,
-            listener: typed::TcpListener,
+            conn: typed::TcpStream,
             cert_pem: Bytes,
             key_pem: Bytes,
         ) -> Result<Step, VmError> {
-            if let Some(served) = served(listener) {
-                return Ok(Step::Done(served));
-            }
-            let (listener, cert_pem, key_pem) = (listener.clone(), cert_pem.clone(), key_pem.clone());
-            let next_id = vm.next_tcp_id();
-            let (giving_up, stop) = GivingUp::of(vm, &listener);
-            vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-                accepted(do_accept_tls(
-                    &listener, &giving_up, &cert_pem, &key_pem, next_id,
-                ))
+            let (cert_pem, key_pem) = (cert_pem.clone(), key_pem.clone());
+            handshake(vm, conn, move || {
+                ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(parse_cert_chain(&cert_pem)?, parse_private_key(&key_pem)?)
+                    .map_err(|e| format!("server config: {e}"))
             })
         }
 
-        /// Like `accept_tls` but also requires the connecting client to
-        /// present a certificate chaining to one of the CAs in
-        /// `client_ca_pem`. Built using
-        /// `rustls::server::WebPkiClientVerifier::builder(roots).build()`.
-        /// If the client does not present a cert, or the presented cert
-        /// does not chain to the supplied CA bundle, the handshake fails
-        /// and the call returns `Err(msg)`.
-        fn accept_tls_mtls(
+        /// Like `tls_server`, but the client must present a certificate
+        /// chaining to one of the CAs in `client_ca_pem`
+        /// (`rustls::server::WebPkiClientVerifier`): without one, or with
+        /// one that does not chain, the handshake fails.
+        fn tls_server_mtls(
             vm,
-            listener: typed::TcpListener,
+            conn: typed::TcpStream,
             cert_pem: Bytes,
             key_pem: Bytes,
             client_ca_pem: Bytes,
         ) -> Result<Step, VmError> {
-            if let Some(served) = served(listener) {
-                return Ok(Step::Done(served));
-            }
-            let listener = listener.clone();
             let (cert_pem, key_pem) = (cert_pem.clone(), key_pem.clone());
             let client_ca_pem = client_ca_pem.clone();
-            let next_id = vm.next_tcp_id();
-            let (giving_up, stop) = GivingUp::of(vm, &listener);
-            vm.io_stoppable("tcp", tcp_timeout_err, stop, move || {
-                accepted(do_accept_tls_mtls(
-                    &listener,
-                    &giving_up,
-                    &cert_pem,
-                    &key_pem,
-                    &client_ca_pem,
-                    next_id,
-                ))
+            handshake(vm, conn, move || {
+                let certs = parse_cert_chain(&cert_pem)?;
+                let key = parse_private_key(&key_pem)?;
+                let ca_certs = parse_cert_chain(&client_ca_pem)
+                    .map_err(|e| format!("client CA bundle: {e}"))?;
+                let mut roots = RootCertStore::empty();
+                for ca in ca_certs {
+                    roots
+                        .add(ca)
+                        .map_err(|e| format!("client CA trust anchor: {e}"))?;
+                }
+                // `build()` requires a client certificate
+                // (`allow_unauthenticated()` would let anonymous clients
+                // in).
+                let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+                    .build()
+                    .map_err(|e| format!("client verifier: {e}"))?;
+                ServerConfig::builder()
+                    .with_client_cert_verifier(verifier)
+                    .with_single_cert(certs, key)
+                    .map_err(|e| format!("server config: {e}"))
             })
         }
     }
 
-    /// The value of a TLS accept: the connection, or why there is
-    /// none. A server that has taken the listener is the same error
-    /// here as for a plain accept.
-    fn accepted(result: Result<Arc<TcpStreamHandle>, String>) -> Value {
-        match result {
-            Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-            Err(e) if e == SERVED => err(e),
-            Err(e) => Value::variant(
-                bv::ERR,
-                vec![Value::variant(bv::TCP_TLS, vec![Value::String(e.into())])],
-            ),
-        }
+    /// `Err(Tls(why))`.
+    fn tls_err(why: impl Into<Arc<str>>) -> Value {
+        Value::variant(
+            bv::ERR,
+            vec![Value::variant(bv::TCP_TLS, vec![Value::String(why.into())])],
+        )
+    }
+
+    /// The step of `tcp.tls_server` and `tcp.tls_server_mtls`: `conn`
+    /// is taken, and the server handshake with `config` runs over its
+    /// socket on the I/O pool, as one operation that the task waits
+    /// for, like a read.
+    ///
+    /// A handshake that nobody waits for any more (its time was over,
+    /// its task was cancelled or dropped with the program) shuts its
+    /// connection down, wherever it stood, as a read's does: a client
+    /// that connects and sends nothing holds no thread. So does a
+    /// handshake that fails: `conn`'s handle still holds the socket,
+    /// which dropping the TLS side alone would not close.
+    fn handshake(
+        vm: &mut Vm,
+        conn: &TcpStreamHandle,
+        config: impl FnOnce() -> Result<ServerConfig, String> + Send + 'static,
+    ) -> Result<Step, VmError> {
+        let sock = match conn.hand_over() {
+            Ok(sock) => sock,
+            Err(HandOver::Closed) => return Ok(Step::Done(err_closed())),
+            Err(HandOver::Tls) => {
+                return Ok(Step::Done(tls_err("the connection speaks TLS already")));
+            }
+            Err(HandOver::Io(e)) => return Ok(Step::Done(tcp_io_err(Doing::Using, &e))),
+        };
+        let socket = match sock.try_clone() {
+            Ok(socket) => socket,
+            Err(e) => {
+                let _ = sock.shutdown(std::net::Shutdown::Both);
+                return Ok(Step::Done(tcp_io_err(Doing::Using, &e)));
+            }
+        };
+        let next_id = vm.next_tcp_id();
+        let unheard = {
+            let socket = socket.try_clone().ok();
+            move || {
+                if let Some(socket) = socket {
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                }
+            }
+        };
+        let op = vm.start_io(tcp_timeout_err, move || {
+            let wrapped = config().and_then(|config| {
+                let conn = ServerConnection::new(Arc::new(config))
+                    .map_err(|e| format!("server connection setup: {e}"))?;
+                TcpStreamHandle::whole(next_id, &socket, move || {
+                    let stream = rustls::StreamOwned::new(conn, sock);
+                    let mut wrapper = ServerStreamWrapper { inner: stream };
+                    // The handshake fails here rather than at the first read.
+                    wrapper.complete_io_handshake()?;
+                    Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
+                })
+            });
+            match wrapped {
+                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                Err(why) => {
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                    tls_err(why)
+                }
+            }
+        });
+        let op = op.stop_unless_taken(unheard);
+        vm.io_wait("tcp", tcp_timeout_err, op)
     }
 
     /// Why `tcp.connect_tls` made no connection: none at all, or none
@@ -222,139 +275,6 @@ mod tls {
         Ok(whole)
     }
 
-    fn do_accept_tls(
-        listener: &TcpListenerHandle,
-        giving_up: &GivingUp,
-        cert_pem: &[u8],
-        key_pem: &[u8],
-        next_id: usize,
-    ) -> Result<Arc<TcpStreamHandle>, String> {
-        let certs = parse_cert_chain(cert_pem)?;
-        let key = parse_private_key(key_pem)?;
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .map_err(|e| format!("server config: {e}"))?;
-        let sock = giving_up.accepted(listener)?;
-        let conn = ServerConnection::new(Arc::new(config))
-            .map_err(|e| format!("server connection setup: {e}"))?;
-        // See `do_connect_tls`: clone the fd before handing it to rustls
-        // so `tcp.close` can `shutdown(Both)` the underlying socket even
-        // while a concurrent read is parked inside `StreamOwned::read`.
-        let socket = sock.try_clone().map_err(|e| format!("tcp accept: {e}"))?;
-        TcpStreamHandle::whole(next_id, &socket, move || {
-            let stream = rustls::StreamOwned::new(conn, sock);
-            let mut wrapper = ServerStreamWrapper { inner: stream };
-            // The handshake fails here rather than at the first read.
-            wrapper.complete_io_handshake()?;
-            giving_up.handshake_done();
-            Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
-        })
-    }
-
-    fn do_accept_tls_mtls(
-        listener: &TcpListenerHandle,
-        giving_up: &GivingUp,
-        cert_pem: &[u8],
-        key_pem: &[u8],
-        client_ca_pem: &[u8],
-        next_id: usize,
-    ) -> Result<Arc<TcpStreamHandle>, String> {
-        let certs = parse_cert_chain(cert_pem)?;
-        let key = parse_private_key(key_pem)?;
-        let ca_certs =
-            parse_cert_chain(client_ca_pem).map_err(|e| format!("client CA bundle: {e}"))?;
-        let mut roots = RootCertStore::empty();
-        for ca in ca_certs {
-            roots
-                .add(ca)
-                .map_err(|e| format!("client CA trust anchor: {e}"))?;
-        }
-        // Build a WebPkiClientVerifier that *requires* a client cert
-        // chaining to the supplied CA bundle. `builder(...).build()`
-        // defaults to required-auth (use `allow_unauthenticated()` on
-        // the builder if anonymous clients should be accepted). If no
-        // cert is offered, or the offered cert does not chain, the
-        // handshake fails and `complete_io_handshake` surfaces the
-        // error via `Err`.
-        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
-            .build()
-            .map_err(|e| format!("client verifier: {e}"))?;
-        let config = ServerConfig::builder()
-            .with_client_cert_verifier(verifier)
-            .with_single_cert(certs, key)
-            .map_err(|e| format!("server config: {e}"))?;
-        let sock = giving_up.accepted(listener)?;
-        let conn = ServerConnection::new(Arc::new(config))
-            .map_err(|e| format!("server connection setup: {e}"))?;
-        let socket = sock.try_clone().map_err(|e| format!("tcp accept: {e}"))?;
-        TcpStreamHandle::whole(next_id, &socket, move || {
-            let stream = rustls::StreamOwned::new(conn, sock);
-            let mut wrapper = ServerStreamWrapper { inner: stream };
-            // The handshake fails here rather than at the first read.
-            wrapper.complete_io_handshake()?;
-            giving_up.handshake_done();
-            Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
-        })
-    }
-
-    /// How a TLS accept is given up when nobody waits for it any more:
-    /// while it waits for a connection, as a plain accept is; while it
-    /// is in the handshake with a client that sends nothing, by
-    /// shutting that connection down. Either way its thread ends. A
-    /// connection that is given up in its handshake is closed: it was
-    /// no task's yet, and it is not one the next accept could take
-    /// over.
-    #[derive(Clone)]
-    pub(super) struct GivingUp {
-        give_up: GiveUp,
-        /// The connection, while the handshake runs.
-        handshaking: Arc<parking_lot::Mutex<Option<TcpStream>>>,
-    }
-
-    impl GivingUp {
-        fn of(
-            vm: &Vm,
-            listener: &Arc<TcpListenerHandle>,
-        ) -> (GivingUp, impl FnOnce() + Send + 'static) {
-            let giving_up = GivingUp {
-                give_up: GiveUp::of_task(vm.nothing_new_flags()),
-                handshaking: Arc::default(),
-            };
-            let (listener, mine) = (listener.clone(), giving_up.clone());
-            (giving_up, move || {
-                // The flag first: an accept that returns now reads it
-                // under the lock below.
-                listener.stop(&mine.give_up);
-                if let Some(socket) = mine.handshaking.lock().take() {
-                    let _ = socket.shutdown(std::net::Shutdown::Both);
-                }
-            })
-        }
-
-        /// The next connection of `listener`, noted as in its
-        /// handshake; an error if the accept was given up.
-        fn accepted(&self, listener: &TcpListenerHandle) -> Result<TcpStream, String> {
-            let sock = match listener.accept(&self.give_up, false) {
-                Ok(Accepted::Conn(sock)) => sock,
-                Ok(Accepted::GivenUp) => return Err("tcp accept: given up".into()),
-                Ok(Accepted::Served) => return Err(SERVED.into()),
-                Err(e) => return Err(format!("tcp accept: {e}")),
-            };
-            let mut handshaking = self.handshaking.lock();
-            if self.give_up.is_set() {
-                let _ = sock.shutdown(std::net::Shutdown::Both);
-                return Err("tcp accept: given up".into());
-            }
-            *handshaking = sock.try_clone().ok();
-            Ok(sock)
-        }
-
-        fn handshake_done(&self) {
-            self.handshaking.lock().take();
-        }
-    }
-
     fn parse_cert_chain(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
         let mut reader = std::io::BufReader::new(pem);
         let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut reader).collect();
@@ -393,7 +313,7 @@ mod tls {
                 fn complete_io_handshake(&mut self) -> Result<(), String> {
                     // rustls::StreamOwned negotiates lazily on first
                     // read/write. Force handshake completion now so
-                    // connect_tls / accept_tls failures are reported
+                    // connect_tls / tls_server failures are reported
                     // synchronously rather than at the first I/O call.
                     while self.inner.conn.is_handshaking() {
                         self.inner

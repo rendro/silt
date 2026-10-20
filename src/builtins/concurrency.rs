@@ -533,11 +533,7 @@ impl Native for Deadline {
 }
 
 /// The result of a task for the one that joins it.
-fn joined(
-    vm: &Vm,
-    handle: &TaskHandle,
-    result: Result<Value, VmError>,
-) -> Result<Step, VmError> {
+fn joined(vm: &Vm, handle: &TaskHandle, result: Result<Value, VmError>) -> Result<Step, VmError> {
     // The joiner has the result now. If the task failed, the error is
     // the joiner's to handle and is not reported as an unjoined
     // failure.

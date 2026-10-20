@@ -17,7 +17,7 @@ fn run(input: &str) -> Value {
 
 /// Generate a self-signed cert + key for `localhost` and return them as
 /// PEM-encoded strings. The same `cert_pem` is used by both server (via
-/// accept_tls) and as a trust anchor — but the silt-side `connect_tls`
+/// tls_server) and as a trust anchor — but the silt-side `connect_tls`
 /// uses webpki-roots only, so we avoid the trust-anchor mismatch by NOT
 /// running connect_tls against this cert in the same process. Tests that
 /// need the full handshake roundtrip use a separate server binary or a
@@ -29,7 +29,7 @@ fn generate_self_signed_cert() -> (String, String) {
 }
 
 #[test]
-fn test_accept_tls_rejects_invalid_cert_pem() {
+fn test_tls_server_rejects_invalid_cert_pem() {
     let src = r#"
 import bytes
 import tcp
@@ -42,13 +42,16 @@ fn main() {
       let server = task.spawn({ ->
         let bad_cert = bytes.from_string("not a real cert")
         let bad_key = bytes.from_string("not a real key")
-        match tcp.accept_tls(listener, bad_cert, bad_key) {
-          Ok(_) -> "wrong: should error"
-          Err(_) -> "errored"
+        match tcp.accept(listener) {
+          Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
+            Ok(_) -> "wrong: should error"
+            Err(_) -> "errored"
+          }
+          Err(e) -> "accept-err:{e.message()}"
         }
       })
       time.sleep(time.ms(50))
-      -- Trigger the accept by attempting a connect (which will fail).
+      -- Trigger the accept with a connect; the handshake then fails.
       let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
       task.join(server)
     }
@@ -66,12 +69,14 @@ fn test_tls_handshake_succeeds_with_valid_cert() {
     // We can't easily run client + server in one process and have rustls
     // trust our self-signed cert (rustls' webpki-roots-based ClientConfig
     // rejects unknown CAs). Instead, verify the SERVER side works: the
-    // accept_tls call performs the handshake and returns Err if the
+    // tls_server call performs the handshake and returns Err if the
     // client doesn't speak TLS. We connect with a plain TCP write of
-    // garbage; accept_tls should reject it (handshake failure). The
-    // success path of accept_tls is locked indirectly by:
-    //   1. accept_tls accepting valid cert PEM (no parse error).
-    //   2. accept_tls correctly producing a TcpStream handle when the
+    // garbage; tls_server should reject it (handshake failure). The
+    // success path of tls_server is locked by
+    // tcp_mtls_tests::a_silent_client_does_not_hold_up_the_next_handshake
+    // (a rustls client) and indirectly by:
+    //   1. tls_server accepting valid cert PEM (no parse error).
+    //   2. tls_server correctly producing a TcpStream handle when the
     //      handshake completes (verified by the no-parse-error path here
     //      reaching the handshake step).
     let (cert_pem, key_pem) = generate_self_signed_cert();
@@ -90,9 +95,12 @@ fn main() {{
       let server = task.spawn({{ ->
         match bytes.from_hex("{cert_hex}") {{
           Ok(cert) -> match bytes.from_hex("{key_hex}") {{
-            Ok(key) -> match tcp.accept_tls(listener, cert, key) {{
-              Ok(_) -> "ok"
-              Err(e) -> "handshake-failed:{{e.message()}}"
+            Ok(key) -> match tcp.accept(listener) {{
+              Ok(conn) -> match tcp.tls_server(conn, cert, key) {{
+                Ok(_) -> "ok"
+                Err(e) -> "handshake-failed:{{e.message()}}"
+              }}
+              Err(e) -> "accept:{{e.message()}}"
             }}
             Err(e) -> "key-parse:{{e.message()}}"
           }}
@@ -124,7 +132,7 @@ fn main() {{
     };
     // Either the handshake-failed path (most likely with garbage client)
     // or a clean cert/key parse path. Both indicate the cert PEM was
-    // accepted — that's the key invariant for accept_tls.
+    // accepted — that's the key invariant for tls_server.
     assert!(
         s.starts_with("handshake-failed:") || s == "ok".into(),
         "expected handshake-failed or ok, got: {s:?}"
@@ -133,8 +141,8 @@ fn main() {{
 
 #[test]
 fn test_typechecker_accepts_tls_signatures() {
-    // Smoke test: the typechecker registers connect_tls and accept_tls
-    // when tcp-tls is enabled.
+    // Smoke test: the typechecker registers connect_tls, tls_server and
+    // tls_server_mtls when tcp-tls is enabled.
     let src = r#"
 import bytes
 import tcp
@@ -144,8 +152,21 @@ fn main() {
     Err(_) -> ()
   }
   match tcp.listen("127.0.0.1:0") {
-    Ok(l) -> match tcp.accept_tls(l, bytes.empty(), bytes.empty()) {
-      Ok(_) -> ()
+    Ok(l) -> match tcp.accept(l) {
+      Ok(conn) -> match tcp.tls_server(conn, bytes.empty(), bytes.empty()) {
+        Ok(_) -> ()
+        Err(_) -> ()
+      }
+      Err(_) -> ()
+    }
+    Err(_) -> ()
+  }
+  match tcp.listen("127.0.0.1:0") {
+    Ok(l) -> match tcp.accept(l) {
+      Ok(conn) -> match tcp.tls_server_mtls(conn, bytes.empty(), bytes.empty(), bytes.empty()) {
+        Ok(_) -> ()
+        Err(_) -> ()
+      }
       Err(_) -> ()
     }
     Err(_) -> ()
@@ -178,12 +199,11 @@ mod hex {
     }
 }
 
-/// A TLS accept whose client is connected and says nothing is given up
-/// (its deadline passes): the handshake it waits in is ended by
-/// shutting that connection down, so its thread ends too. Before, the
-/// thread and the connection stayed for as long as the client did.
+/// A TLS handshake whose client is connected and says nothing is given
+/// up (its deadline passes): it is ended by shutting that connection
+/// down, so its thread ends too.
 #[test]
-fn a_given_up_tls_accept_ends_in_its_handshake() {
+fn a_given_up_tls_handshake_ends_its_thread() {
     let (cert_pem, key_pem) = generate_self_signed_cert();
     let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
     let source = format!(
@@ -197,12 +217,12 @@ fn main() {{
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
   when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
   when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
-  -- The client is connected before the accept starts, and stays
-  -- silent: the accept gets it at once and waits in the handshake.
+  -- The client connects and stays silent: the handshake waits for it.
   when let Ok(silent) = tcp.connect("127.0.0.1:{{tcp.local_port(listener)}}") else {{
     panic("cannot connect")
   }}
-  match task.deadline(time.ms(100), {{ -> tcp.accept_tls(listener, cert, key) }}) {{
+  when let Ok(conn) = tcp.accept(listener) else {{ panic("cannot accept") }}
+  match task.deadline(time.ms(100), {{ -> tcp.tls_server(conn, cert, key) }}) {{
     Ok(Ok(_)) -> println("a handshake with a silent client")
     Err(task.Timeout) -> println("given up")
     Ok(Err(e)) -> println("another error: {{e.message()}}")
@@ -234,7 +254,7 @@ fn main() {{
         while silt::vm::io_pool_live_threads(&vm) != silt::vm::io_pool_threads(&vm) {
             assert!(
                 Instant::now() < limit,
-                "the thread of the given-up accept is still there"
+                "the thread of the given-up handshake is still there"
             );
             std::thread::sleep(Duration::from_millis(5));
         }

@@ -450,6 +450,18 @@ enum Turn {
     EndsWrites,
 }
 
+/// Why a connection's socket was not handed over
+/// ([`TcpStreamHandle::hand_over`]).
+#[derive(Debug)]
+pub enum HandOver {
+    /// The connection is closed (or was handed over before).
+    Closed,
+    /// It is a TLS connection already.
+    Tls,
+    /// The socket could not be duplicated.
+    Io(std::io::Error),
+}
+
 /// A connection.
 ///
 /// A plain TCP connection is read and written at the same time: a
@@ -462,6 +474,8 @@ pub struct TcpStreamHandle {
     pub id: usize,
     io: TcpIo,
     closed: AtomicBool,
+    /// Its socket was handed over ([`TcpStreamHandle::hand_over`]).
+    handed_over: AtomicBool,
     /// The OS socket that a blocked read or write uses (`SOCKET as
     /// usize` on Windows, where `CancelIoEx` on it ends what blocks on
     /// it; the file descriptor on Unix, unused).
@@ -504,6 +518,7 @@ impl TcpStreamHandle {
                 switching: Mutex::new(()),
             },
             closed: AtomicBool::new(false),
+            handed_over: AtomicBool::new(false),
         })
     }
 
@@ -523,8 +538,29 @@ impl TcpStreamHandle {
                 socket: other,
             },
             closed: AtomicBool::new(false),
+            handed_over: AtomicBool::new(false),
             io_socket,
         }))
+    }
+
+    /// The socket of a plain connection, handed over to what speaks
+    /// over it from now on (`tcp.tls_server`). The connection is closed
+    /// for every other use: it counts as closed, a read or a write of
+    /// it that has not begun gives `NotConnected`, and
+    /// [`TcpStreamHandle::shut_down`] leaves the socket alone.
+    pub fn hand_over(&self) -> Result<std::net::TcpStream, HandOver> {
+        if self.is_closed() {
+            return Err(HandOver::Closed);
+        }
+        let TcpIo::Plain { socket, .. } = &self.io else {
+            return Err(HandOver::Tls);
+        };
+        let socket = socket.try_clone().map_err(HandOver::Io)?;
+        if self.closed.swap(true, AtomicOrdering::SeqCst) {
+            return Err(HandOver::Closed);
+        }
+        self.handed_over.store(true, AtomicOrdering::SeqCst);
+        Ok(socket)
     }
 
     /// Another handle to the socket of a plain connection that no
@@ -579,6 +615,9 @@ impl TcpStreamHandle {
                 ..
             } => {
                 let _turn = reading.lock();
+                if self.handed_over.load(AtomicOrdering::SeqCst) {
+                    return Err(std::io::ErrorKind::NotConnected.into());
+                }
                 loop {
                     match (&*socket).read(buf) {
                         Err(e) if switched_meanwhile(&e) => drop(switching.lock()),
@@ -603,6 +642,9 @@ impl TcpStreamHandle {
                 socket, reading, ..
             } => {
                 let _turn = reading.lock();
+                if self.handed_over.load(AtomicOrdering::SeqCst) {
+                    return Err(std::io::ErrorKind::NotConnected.into());
+                }
                 Read::take(socket, most).read_to_end(&mut buf)?;
             }
             TcpIo::Tls { both, .. } => {
@@ -626,6 +668,9 @@ impl TcpStreamHandle {
                 ..
             } => {
                 let _turn = writing.lock();
+                if self.handed_over.load(AtomicOrdering::SeqCst) {
+                    return Err(std::io::ErrorKind::NotConnected.into());
+                }
                 let mut rest = buf;
                 while !rest.is_empty() {
                     match (&*socket).write(rest) {

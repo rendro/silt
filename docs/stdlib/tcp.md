@@ -113,16 +113,16 @@ is lower), 128 elsewhere. A client beyond that is not refused; its system
 tries again, a second or more later.
 
 A listener is also what [`http.serve`](http.md#httpserve) serves on.
-While it does, the listener is the server's alone: `tcp.accept`,
-`tcp.accept_tls` and `tcp.accept_tls_mtls` on it return
-`Err(Other("the listener is served by http.serve"))` at once, and
+While it does, the listener is the server's alone: `tcp.accept` on it
+returns `Err(Other("the listener is served by http.serve"))` at once, and
 so does an accept that was waiting on it when the server started. When
 the task that serves has been cancelled, the listener is the program's
 again: the next `tcp.accept` gets the next client.
 
 ## Cooperative I/O
 
-`accept`, `connect`, `read`, `read_exact`, and `write` wait without
+`accept`, `connect`, `read`, `read_exact`, and `write` (and, with TLS,
+`connect_tls`, `tls_server` and `tls_server_mtls`) wait without
 holding up the scheduler: the operation runs on a thread of the I/O pool
 and the task (or `main`) waits for its value while other tasks run. From
 silt's perspective the call looks synchronous.
@@ -161,9 +161,8 @@ moment in which its task stops waiting: what the read had taken is gone
 with the connection. The same holds for the
 `stream.tcp_*` sources and sink when their pipeline is cut short. A
 `tcp.accept` that nobody waits
-for is woken and gives up; the listener stays usable. A `tcp.accept_tls` that
-is given up while its client has connected but not finished the handshake
-closes that connection.
+for is woken and gives up; the listener stays usable. A `tcp.tls_server`
+handshake that nobody waits for any more ends its connection the same way.
 
 ## Notes
 
@@ -178,9 +177,9 @@ The `tcp-tls` Cargo feature adds TLS support via `rustls`. Build silt with
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `accept_tls` | `(TcpListener, Bytes, Bytes) -> Result(TcpStream, TcpError)` | Accept a connection and complete the TLS server handshake using the supplied PEM cert chain + key |
-| `accept_tls_mtls` | `(TcpListener, Bytes, Bytes, Bytes) -> Result(TcpStream, TcpError)` | Like `accept_tls`, but also requires the client to present a cert chaining to the supplied CA PEM bundle (mutual TLS) |
 | `connect_tls` | `(String, String) -> Result(TcpStream, TcpError)` | Open a TCP connection then complete the TLS client handshake against `hostname` |
+| `tls_server` | `(TcpStream, Bytes, Bytes) -> Result(TcpStream, TcpError)` | Run the TLS server handshake on an accepted connection with the PEM cert chain + key; `conn` is taken (cooperative I/O) |
+| `tls_server_mtls` | `(TcpStream, Bytes, Bytes, Bytes) -> Result(TcpStream, TcpError)` | Like `tls_server`, but the client must present a cert chaining to the CA PEM bundle (mutual TLS) |
 
 Returned `TcpStream` handles are interchangeable with plain TCP streams —
 `tcp.read`, `tcp.write`, and `tcp.close` work identically. Trust anchors
@@ -188,7 +187,7 @@ for `connect_tls` come from the `webpki-roots` crate (Mozilla CA bundle).
 Authentication is delegated to your system: silt does not add a separate
 credential layer.
 
-```text
+```silt
 import bytes
 import tcp
 
@@ -205,10 +204,75 @@ fn main() {
 }
 ```
 
+### A TLS server
+
+A TLS server accepts plain connections with `tcp.accept` and runs the
+handshake with `tcp.tls_server(conn, cert, key)`, which returns the TLS
+connection. The handshake is an operation like a read: it waits on the
+client, so run it in the connection's own task, and the accept loop takes
+the next client at once, whatever the last one does. A client that
+connects and says nothing holds up its own task only.
+
+`tcp.tls_server` takes the connection it is given: from the call on, that
+handle is closed (a `tcp.read` or `tcp.write` of it gives `Err(Closed)`,
+and `tcp.close` of it does nothing to the TLS connection), whether the
+handshake succeeds or not. Do not read or write it from another task
+meanwhile. The result is the only connection to the client:
+
+- `Ok(stream)`: the handshake is done; read and write `stream`.
+- `Err(Tls(msg))`: the cert chain or key does not parse, or the handshake
+  failed (the client speaks no TLS, or gave up). The connection is shut
+  down. A connection that speaks TLS already (from `tcp.connect_tls` or
+  `tcp.tls_server`) gives `Err(Tls("the connection speaks TLS already"))`.
+- `Err(Closed)`: the connection was closed before the call.
+- `Err(Timeout)`: `SILT_IO_TIMEOUT` passed during the handshake.
+
+A handshake that nobody waits for any more (its task was cancelled, or
+was the function of a `task.deadline` whose time is up) shuts its
+connection down, as a read does: its thread ends.
+
+```silt
+import bytes
+import io
+import task
+import tcp
+import time
+
+fn serve(conn, cert, key) {
+  -- A client gets 10 seconds to complete the handshake.
+  match task.deadline(time.seconds(10), { -> tcp.tls_server(conn, cert, key) }) {
+    Ok(Ok(tls)) -> {
+      let _ = tcp.write(tls, bytes.from_string("hello over TLS\n"))
+      tcp.close(tls)
+    }
+    Ok(Err(e)) -> println("handshake failed: {e.message()}")
+    Err(_) -> println("the client took too long")
+  }
+}
+
+fn main() {
+  -- (Build silt with `--features tcp-tls` for this function.)
+  when let Ok(cert_text) = io.read_file("server.crt") else { panic("no cert") }
+  when let Ok(key_text) = io.read_file("server.key") else { panic("no key") }
+  when let Ok(listener) = tcp.listen("0.0.0.0:8443") else { panic("cannot listen") }
+  let cert = bytes.from_string(cert_text)
+  let key = bytes.from_string(key_text)
+  loop _ = () {
+    match tcp.accept(listener) {
+      Ok(conn) -> {
+        let _ = task.spawn { -> serve(conn, cert, key) }
+        loop(())
+      }
+      Err(e) -> println("accept failed: {e.message()}")
+    }
+  }
+}
+```
+
 ### Mutual TLS (mTLS)
 
-`accept_tls_mtls` adds client-certificate verification on top of
-`accept_tls`. The fourth argument is a PEM-encoded bundle of CA
+`tls_server_mtls` adds client-certificate verification on top of
+`tls_server`. The fourth argument is a PEM-encoded bundle of CA
 certificates — every connecting client must present a certificate that
 chains to one of those CAs, or the TLS handshake fails and the call
 returns `Err(Tls(msg))`. This is appropriate for service-to-service
@@ -219,7 +283,7 @@ Under the hood the server uses rustls'
 `WebPkiClientVerifier::builder(roots).build()`, which requires
 authentication by default (anonymous clients are rejected).
 
-```text
+```silt
 import bytes
 import io
 import tcp
@@ -227,25 +291,23 @@ import tcp
 fn main() {
   -- Load the server identity and the CA bundle that signs your
   -- clients. (Build silt with `--features tcp-tls` for this function.)
-  match io.read_file("server.crt") {
-    Ok(cert) -> match io.read_file("server.key") {
-      Ok(key) -> match io.read_file("clients-ca.crt") {
-        Ok(client_ca) -> match tcp.listen("0.0.0.0:8443") {
-          Ok(listener) -> match tcp.accept_tls_mtls(listener, cert, key, client_ca) {
-            Ok(conn) -> {
-              -- Peer is authenticated by cert at this point.
-              let _ = tcp.write(conn, bytes.from_string("hello, authenticated client"))
-              tcp.close(conn)
-            }
-            Err(e) -> println("mTLS handshake failed: {e.message()}")
-          }
-          Err(e) -> println("listen err: {e.message()}")
-        }
-        Err(e) -> println("ca load err: {e.message()}")
-      }
-      Err(e) -> println("key load err: {e.message()}")
+  when let Ok(cert) = io.read_file("server.crt") else { panic("no cert") }
+  when let Ok(key) = io.read_file("server.key") else { panic("no key") }
+  when let Ok(client_ca) = io.read_file("clients-ca.crt") else { panic("no CA bundle") }
+  when let Ok(listener) = tcp.listen("0.0.0.0:8443") else { panic("cannot listen") }
+  when let Ok(conn) = tcp.accept(listener) else { panic("accept failed") }
+  match tcp.tls_server_mtls(
+    conn,
+    bytes.from_string(cert),
+    bytes.from_string(key),
+    bytes.from_string(client_ca),
+  ) {
+    Ok(tls) -> {
+      -- Peer is authenticated by cert at this point.
+      let _ = tcp.write(tls, bytes.from_string("hello, authenticated client"))
+      tcp.close(tls)
     }
-    Err(e) -> println("cert load err: {e.message()}")
+    Err(e) -> println("mTLS handshake failed: {e.message()}")
   }
 }
 ```

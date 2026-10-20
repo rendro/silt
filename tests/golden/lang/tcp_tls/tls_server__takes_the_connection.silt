@@ -1,0 +1,46 @@
+-- requires-feature: tcp-tls
+-- tcp.tls_server takes the connection it is given, whatever its result:
+-- after a handshake that could not begin (the cert does not parse) the
+-- connection passed in is closed for every other use, and the client's
+-- end of it is shut down. A connection closed before the call is
+-- Err(Closed).
+import bytes
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let addr = "127.0.0.1:{tcp.local_port(listener)}"
+  when let Ok(client) = tcp.connect(addr) else { panic("cannot connect") }
+  when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
+  let cert = bytes.from_string("not a cert")
+  let key = bytes.from_string("not a key")
+  match tcp.tls_server(conn, cert, key) {
+    Ok(_) -> println("a TLS connection")
+    Err(e) -> println("tls_server: {e.message()}")
+  }
+  match tcp.read(conn, 1) {
+    Ok(_) -> println("the taken connection reads")
+    Err(e) -> println("read of the taken connection: {e.message()}")
+  }
+  match tcp.write(conn, bytes.from_string("x")) {
+    Ok(_) -> println("the taken connection writes")
+    Err(e) -> println("write of the taken connection: {e.message()}")
+  }
+  match tcp.tls_server(conn, cert, key) {
+    Ok(_) -> println("a TLS connection")
+    Err(e) -> println("tls_server again: {e.message()}")
+  }
+  match tcp.read(client, 1) {
+    Ok(data) -> println("the client reads {bytes.length(data)} bytes")
+    Err(e) -> println("the client's read fails: {e.message()}")
+  }
+  -- A connection closed before the call.
+  when let Ok(other) = tcp.connect(addr) else { panic("cannot connect") }
+  when let Ok(closed) = tcp.accept(listener) else { panic("cannot accept") }
+  tcp.close(closed)
+  match tcp.tls_server(closed, cert, key) {
+    Ok(_) -> println("a TLS connection")
+    Err(e) -> println("tls_server of a closed connection: {e.message()}")
+  }
+  tcp.close(other)
+}
