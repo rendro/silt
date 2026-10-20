@@ -155,12 +155,14 @@ impl TypeChecker {
     pub(super) fn enter_level(&mut self) {
         self.tables.vars.level += 1;
         self.wanted_marks.push(self.wanted.len());
+        self.given_marks.push(self.given_waiting.len());
     }
 
     /// Leave the scope `enter_level` entered.
     pub(super) fn exit_level(&mut self) {
         self.tables.vars.level -= 1;
         self.closed_mark = self.wanted_marks.pop().expect("a level is open");
+        self.given_closed = self.given_marks.pop().expect("a level is open");
     }
 
     /// Decide what the scope `exit_level` just left can decide: what it

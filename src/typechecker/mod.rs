@@ -114,11 +114,18 @@ pub struct TypeChecker {
     /// signatures for the builtins they give them to (`Pred::Builtin`),
     /// each by the variable's representative (`rigid_rep_var`).
     pub(super) builtin_needs: HashMap<TyVar, Vec<BuiltinCheck>>,
-    /// The types given to an annotation variable of a signature whose
-    /// body may not be checked yet, with the alias a use names one by
-    /// (`Pred::Given`): checked when the module's bodies are
-    /// (`settle_builtin_needs`).
+    /// The types given to an annotation variable of a signature, with
+    /// the alias a use names one by (`Pred::Given`): checked when the
+    /// module's bodies are (`settle_builtin_needs`). They are not
+    /// `wanted`: nothing about them is decided before then, and a type
+    /// still unknown would be looked at again and again.
     pub(super) given_waiting: Vec<(TyVar, Type, Option<Symbol>, Origin)>,
+    /// Where each open scope's `given_waiting` begins (as
+    /// `wanted_marks`), and where the scope just left began
+    /// (`given_closed`): what a definition is generalised over is the
+    /// subject of only those.
+    pub(super) given_marks: Vec<usize>,
+    pub(super) given_closed: usize,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -308,6 +315,8 @@ impl TypeChecker {
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             given_waiting: Vec::new(),
+            given_marks: Vec::new(),
+            given_closed: 0,
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),

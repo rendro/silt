@@ -156,6 +156,22 @@ impl TypeChecker {
                     preds.push(pred);
                 }
             }
+            // A type the scope gives a function's annotation variable,
+            // if the definition is general in it.
+            for k in self.given_closed..self.given_waiting.len() {
+                let (given, subject, ..) = &self.given_waiting[k];
+                let Type::Var(subject) = self.apply(subject) else {
+                    continue;
+                };
+                let pred = Pred::Given {
+                    subject: Type::Var(subject),
+                    given: *given,
+                    written: None,
+                };
+                if vars.contains(&subject) && !preds.contains(&pred) {
+                    preds.push(pred);
+                }
+            }
             // A variable only a predicate's trait arguments mention is
             // the scheme's as well.
             for pred in &preds {

@@ -1316,6 +1316,7 @@ impl TypeChecker {
             return self.fresh_var();
         }
         let owed_before = self.wanted.len();
+        let given_before = self.given_waiting.len();
         // Reset the method-dispatch flag so a stale value from an
         // earlier field access does not leak into this call, and read it
         // before the arguments are checked (they may overwrite it).
@@ -1384,16 +1385,31 @@ impl TypeChecker {
                         // A type argument the call names by an alias:
                         // what a decoder's refusal calls it.
                         let alias = self.alias_named(arg);
-                        if let Goal::Pred(
-                            Pred::Builtin {
-                                check: BuiltinCheck::Decodes { written, .. },
-                                ..
-                            }
-                            | Pred::Given { written, .. },
-                        ) = &mut self.wanted[k].goal
+                        if let Goal::Pred(Pred::Builtin {
+                            check: BuiltinCheck::Decodes { written, .. },
+                            ..
+                        }) = &mut self.wanted[k].goal
                         {
                             *written = alias;
                         }
+                    }
+                }
+                // The same for a type given to an annotation variable of
+                // the callee's signature.
+                for k in given_before..self.given_waiting.len() {
+                    let Type::Var(v) = self.given_waiting[k].1 else {
+                        continue;
+                    };
+                    let at = params
+                        .iter()
+                        .skip(implicit_self)
+                        .position(|param| free_vars_in(param).contains(&v))
+                        .and_then(|i| args.get(i));
+                    if let (Some(arg), CallForm::Call) = (at, form) {
+                        let alias = self.alias_named(arg);
+                        let (_, _, written, origin) = &mut self.given_waiting[k];
+                        origin.span = arg.span;
+                        *written = alias;
                     }
                 }
                 let mut mismatched = false;
@@ -1432,6 +1448,7 @@ impl TypeChecker {
                     for wanted in &mut self.wanted[owed_before..] {
                         wanted.solved = true;
                     }
+                    self.given_waiting.truncate(given_before);
                 }
                 // A call supplies exactly as many arguments as the callee
                 // has parameters, the piped value and the receiver of a
