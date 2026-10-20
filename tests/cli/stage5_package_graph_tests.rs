@@ -942,12 +942,12 @@ fn a_lock_checksum_that_is_not_the_commit_s_is_refused() {
     let _ = fs::remove_dir_all(&ws);
 }
 
-/// `silt update` does not pin a cached checkout that was changed: it
-/// compares it with the lock it replaces. Without the checkout it
-/// fetches the commit and pins what it finds. FAILS on the base: the
-/// changed checkout's checksum was written into the lock.
+/// `silt update` takes nothing from the cache: it fetches the commit
+/// afresh, pins what it fetched, and the changed checkout is replaced.
+/// FAILS on the base: the changed checkout's checksum was pinned and
+/// its code ran.
 #[test]
-fn silt_update_refuses_a_changed_checkout_in_the_cache() {
+fn silt_update_fetches_every_git_dependency_afresh() {
     let ws = fresh_workspace("checksum_update");
     if !git_installed() {
         return;
@@ -960,12 +960,75 @@ fn silt_update_refuses_a_changed_checkout_in_the_cache() {
     .unwrap();
 
     let out = silt(&ws, &app, &["update"]);
-    assert_checksum_error(&out, &expected, &checkout);
+    assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(locked_checksum(&app), expected);
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
+    let _ = fs::remove_dir_all(&ws);
+}
 
+/// The way out that E0611's help gives always leads out: after a
+/// hand-edited checksum, deleting the checkout gives the same error
+/// (silt.lock was changed), and `silt update` pins the commit again.
+/// FAILED before `silt update` fetched afresh: it compared the fresh
+/// checkout in the cache with the edited lock, and refused.
+#[test]
+fn the_help_of_a_checksum_error_leads_out() {
+    let ws = fresh_workspace("checksum_help");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    let wrong = format!("sha256:{}", "0".repeat(64));
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    fs::write(app.join("silt.lock"), lock.replace(&expected, &wrong)).unwrap();
+
+    let out = silt(&ws, &app, &["run"]);
+    assert_checksum_error(&out, &wrong, &checkout);
     fs::remove_dir_all(&checkout).unwrap();
+    let out = silt(&ws, &app, &["run"]);
+    assert_checksum_error(&out, &wrong, &checkout);
+    assert!(
+        stderr(&out).contains("run `silt update`"),
+        "{}",
+        stderr(&out)
+    );
     let out = silt(&ws, &app, &["update"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(locked_checksum(&app), expected);
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// The checksum covers the dependency's silt.toml: a cached checkout
+/// whose manifest was edited (here: a dependency added that points at a
+/// path) is refused, and the lock is not written again. FAILS on the
+/// base: the edited manifest was read and the lock rewritten with it.
+#[test]
+fn a_changed_manifest_in_a_cached_checkout_is_refused() {
+    let ws = fresh_workspace("checksum_manifest");
+    if !git_installed() {
+        return;
+    }
+    let (app, checkout, expected) = app_with_a_cached_git_dependency(&ws);
+    let other = ws.join("other");
+    write_package(&other, "other", &[], "lib.silt", "pub fn o() { 1 }\n");
+    let manifest = fs::read_to_string(checkout.join("silt.toml")).unwrap();
+    fs::write(
+        checkout.join("silt.toml"),
+        format!(
+            "{manifest}\n[dependencies]\nother = {{ path = {} }}\n",
+            toml_path(&other)
+        ),
+    )
+    .unwrap();
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+
+    let out = silt(&ws, &app, &["run"]);
+    assert_checksum_error(&out, &expected, &checkout);
+    assert_eq!(fs::read_to_string(app.join("silt.lock")).unwrap(), lock);
     let _ = fs::remove_dir_all(&ws);
 }

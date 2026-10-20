@@ -52,13 +52,13 @@
 //!   lives next to the project's `silt.toml`.
 //! - A symbolic link in a dependency's `silt.toml` or `src/` is
 //!   `SymlinkInDependency`; a git checkout that holds one is not cached.
-//! - The checkout of a git dependency must have the checksum the lock
-//!   pins for its URL and commit, or it is `LockfileChecksum`: under
-//!   [`LockPolicy::Update`] and [`LockPolicy::ReadOnly`] whether it came
-//!   from the cache or was just fetched; under [`LockPolicy::Refresh`]
-//!   (which pins what it finds) a checkout that was in the cache before
-//!   is compared with the lock that is being replaced. Path dependencies
-//!   are not compared: their sources change by design.
+//! - Under [`LockPolicy::Update`] and [`LockPolicy::ReadOnly`], the
+//!   checkout of a git dependency must have the checksum the lock pins
+//!   for its URL and commit, whether it came from the cache or was just
+//!   fetched, or it is `LockfileChecksum`. [`LockPolicy::Refresh`]
+//!   fetches every git dependency afresh (a checkout in the cache is
+//!   not taken) and pins what it fetched. Path dependencies are not
+//!   compared: their sources change by design.
 //!
 //! Every problem is a [`Diagnostic`] in the `silt.toml` (or `silt.lock`)
 //! it is about, a dependency's own manifest included. Nothing here
@@ -163,20 +163,11 @@ pub fn resolve_packages(
             Lockfile::load(&lock_path, sources).map_err(|d| vec![d])?
         }
     };
-    // The lock `silt update` replaces, for the checksums of the
-    // checkouts it finds in the cache; one that does not load has none.
-    let replaced = match policy {
-        LockPolicy::Refresh => Lockfile::load(&lock_path, &mut SourceMap::new())
-            .ok()
-            .flatten(),
-        LockPolicy::Update | LockPolicy::ReadOnly => None,
-    };
 
     let mut resolver = Resolver {
         sources,
         policy,
         existing,
-        replaced,
         nodes: Vec::new(),
         manifests: Vec::new(),
         locked: Vec::new(),
@@ -259,8 +250,6 @@ struct Resolver<'a> {
     sources: &'a mut SourceMap,
     policy: LockPolicy,
     existing: Option<Lockfile>,
-    /// Under [`LockPolicy::Refresh`], the lock that is replaced.
-    replaced: Option<Lockfile>,
     /// Indexed by `PackageId`, as are the three below.
     nodes: Vec<PackageNode>,
     manifests: Vec<Manifest>,
@@ -383,15 +372,27 @@ impl Resolver<'_> {
                         }
                     },
                 };
-                // A checkout that is in the cache already is compared
-                // with the lock under every policy; one fetched now is
-                // the commit itself, which `silt update` pins as found.
-                let cached = git::cache_for(&url, &commit).is_ok_and(|dir| dir.is_dir());
-                let expected = match self.policy {
-                    LockPolicy::Refresh if !cached => None,
-                    _ => self.locked_checksum(&url, &commit),
+                // A source met before is that package (not fetched
+                // again: under `silt update` that would remove the
+                // checkout the package was read from).
+                let source = SourceKey::Git(url.clone(), commit.clone());
+                if let Some(id) = self.by_source.get(&source) {
+                    return Some(*id);
+                }
+                if self.failed.contains(&source) {
+                    return None;
+                }
+                // `silt update` takes nothing from the cache and pins
+                // what it fetched; everything else compares the
+                // checkout with the lock.
+                let (fetched, expected) = match self.policy {
+                    LockPolicy::Refresh => (git::fetch_afresh(&url, &commit), None),
+                    LockPolicy::Update | LockPolicy::ReadOnly => (
+                        git::fetch_to_cache(&url, &commit),
+                        self.locked_checksum(&url, &commit),
+                    ),
                 };
-                let root = match git::fetch_to_cache(&url, &commit) {
+                let root = match fetched {
                     Ok(root) => crate::source::canonical_path(&root),
                     Err(e) => {
                         let d = match &e {
@@ -415,15 +416,7 @@ impl Resolver<'_> {
                     ref_spec,
                     resolved_sha: commit.clone(),
                 };
-                self.enter(
-                    SourceKey::Git(url, commit),
-                    root,
-                    locked,
-                    expected,
-                    from,
-                    &key_name,
-                    entry,
-                )
+                self.enter(source, root, locked, expected, from, &key_name, entry)
             }
         }
     }
@@ -518,11 +511,10 @@ impl Resolver<'_> {
         ))
     }
 
-    /// The checksum the lock pins the checkout of `url` at `commit` to:
-    /// the existing lock's, or under [`LockPolicy::Refresh`] the
-    /// replaced one's.
+    /// The checksum the existing lock pins the checkout of `url` at
+    /// `commit` to.
     fn locked_checksum(&self, url: &str, commit: &str) -> Option<String> {
-        let lock = self.existing.as_ref().or(self.replaced.as_ref())?;
+        let lock = self.existing.as_ref()?;
         lock.packages.iter().find_map(|p| match &p.source {
             LockedSource::Git {
                 url: locked_url,

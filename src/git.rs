@@ -810,6 +810,25 @@ pub fn fetch_to_cache(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     fetch_rev(url, commit).map(|(_, dir)| dir)
 }
 
+/// [`fetch_to_cache`] that does not take a checkout already in the
+/// cache: it is removed first, and the commit is cloned again.
+/// `silt update` fetches this way, so what it pins is the commit's own
+/// content, whatever was done to the cache.
+pub fn fetch_afresh(url: &str, commit: &str) -> Result<PathBuf, GitError> {
+    let dest = cache_for(url, commit)?;
+    match fs::remove_dir_all(&dest) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(GitError::Io {
+                context: format!("remove cached checkout {}", dest.display()),
+                error: e,
+            });
+        }
+    }
+    fetch_to_cache(url, commit)
+}
+
 /// Fetch the commit `rev` names into the cache: returns its full id and
 /// the checkout directory.
 ///
