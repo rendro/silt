@@ -357,10 +357,12 @@ pub struct Lexer {
     source: Vec<char>,
     pos: usize,
     byte_offset: usize,
-    /// Stack of brace depths at which string interpolations began.
+    /// Stack of brace depths at which string interpolations began, each
+    /// with the string's opening quote and the `{` of its first
+    /// interpolation.
     /// When we encounter `}` and brace_depth matches the top of this stack,
     /// we resume scanning a string instead of emitting RBrace.
-    interp_stack: Vec<usize>,
+    interp_stack: Vec<(usize, Span, Span)>,
     brace_depth: usize,
     /// Every comment read so far, in source order.
     comments: Vec<Comment>,
@@ -610,18 +612,51 @@ impl Lexer {
         true
     }
 
-    fn scan_string(&mut self, is_continuation: bool, start: Span) -> Scanned {
+    /// The string, or the rest of one behind an interpolation, that
+    /// starts at `start`; `opened` is where its opening quote is, and
+    /// `brace` the `{` of its first interpolation, for a rest.
+    fn scan_string(&mut self, start: Span, opened: Span, brace: Option<Span>) -> Scanned {
+        let is_continuation = brace.is_some();
         let mut text = String::new();
 
         loop {
             match self.peek() {
                 None => {
-                    let message = if !self.interp_stack.is_empty() {
-                        "unterminated string interpolation; use \\{ for a literal brace".to_string()
-                    } else {
-                        "unterminated string".to_string()
-                    };
-                    return self.unterminated(start, message);
+                    if !self.interp_stack.is_empty() {
+                        return self.unterminated(
+                            start,
+                            "unterminated string interpolation; use \\{ for a literal brace",
+                        );
+                    }
+                    // A string not closed is reported at its opening
+                    // quote; the rest behind an interpolation runs on
+                    // from the interpolation's `}`.
+                    self.cut_short = true;
+                    // An interpolation that starts on a later line than
+                    // the quote most likely is a `{` of the code the
+                    // string ran into: the note names it.
+                    let quote_line = self.line_col(opened.start as usize).0;
+                    let note = brace
+                        .map(|brace| self.line_col(brace.start as usize))
+                        .filter(|(line, _)| *line != quote_line)
+                        .map(|(line, col)| {
+                            format!(
+                                "the string goes on behind the `{{` at {line}:{col}, which \
+                                 starts an interpolation: write `\\{{` for a literal brace"
+                            )
+                        });
+                    self.error(|| {
+                        let d = Diagnostic::error(
+                            Code::UnterminatedString,
+                            opened,
+                            "unterminated string",
+                        );
+                        match note {
+                            Some(note) => d.with_note(note),
+                            None => d,
+                        }
+                    });
+                    return (Token::Error, start);
                 }
                 Some('\\') => {
                     // Capture the backslash's position BEFORE consuming
@@ -667,8 +702,11 @@ impl Lexer {
                     }
                 }
                 Some('{') => {
+                    // (The first interpolation's `{` is the one the
+                    // note of a string not closed names.)
+                    let first = brace.unwrap_or_else(|| self.span());
                     self.advance_char(); // consume `{`
-                    self.interp_stack.push(self.brace_depth);
+                    self.interp_stack.push((self.brace_depth, opened, first));
                     self.brace_depth += 1; // track interpolation brace
                     let tok = if is_continuation {
                         Token::StringMiddle(text)
@@ -729,8 +767,15 @@ impl Lexer {
     /// 3. Strip that prefix from each content line
     /// 4. Remove the first line if it is blank (after opening `"""`)
     /// 5. Remove the last line if it is blank (before closing `"""`)
+    ///
+    /// A line ends at a line feed, and a carriage return in front of it
+    /// is part of the line end: a file with CRLF line ends gives the
+    /// string it gives with LF.
     fn strip_triple_string_indentation(raw: &str) -> String {
-        let lines: Vec<&str> = raw.split('\n').collect();
+        let lines: Vec<&str> = raw
+            .split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line))
+            .collect();
 
         if lines.is_empty() {
             return String::new();
@@ -790,6 +835,24 @@ impl Lexer {
 
     /// The error `message` for the string that starts at `start` and is
     /// not closed where the text ends.
+    /// The 1-based line and column (in characters) of the byte `at`.
+    fn line_col(&self, at: usize) -> (usize, usize) {
+        let (mut line, mut col, mut byte) = (1, 1, 0);
+        for &ch in &self.source {
+            if byte >= at {
+                break;
+            }
+            byte += ch.len_utf8();
+            if ch == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
     fn unterminated(&mut self, start: Span, message: impl Into<String>) -> Scanned {
         self.cut_short = true;
         self.error(|| Diagnostic::error(Code::UnterminatedString, start, message));
@@ -998,6 +1061,28 @@ impl Lexer {
                     self.skip_whitespace();
                     continue;
                 }
+                // A semicolon, and those directly behind it. One that is
+                // written again is the same mistake. It stands where a
+                // line break was meant, and is read as one: what follows
+                // is still read and checked.
+                (Some(';'), _) => {
+                    let start = self.span();
+                    self.advance_char();
+                    let span = self.since(start);
+                    while self.peek() == Some(';') {
+                        self.advance_char();
+                    }
+                    self.repeatable_error("a semicolon".to_string(), || {
+                        Diagnostic::error(
+                            Code::UnexpectedChar,
+                            span,
+                            "semicolons are not used in silt — use a newline to separate statements",
+                        )
+                    });
+                    self.gap_newlines = (self.gap_newlines + 1).min(2);
+                    self.skip_whitespace();
+                    continue;
+                }
                 _ => break,
             }
         }
@@ -1017,7 +1102,7 @@ impl Lexer {
                     self.advance_char(); // consume third "
                     self.scan_triple_string(start)
                 } else {
-                    self.scan_string(false, start)
+                    self.scan_string(start, start, None)
                 }
             }
 
@@ -1070,14 +1155,14 @@ impl Lexer {
 
             '}' => {
                 // Check if this closes a string interpolation
-                if let Some(&interp_depth) = self.interp_stack.last()
+                if let Some(&(interp_depth, opened, brace)) = self.interp_stack.last()
                     && self.brace_depth == interp_depth + 1
                 {
                     self.interp_stack.pop();
                     self.brace_depth -= 1;
                     // Resume scanning the string
                     let cont_start = self.span();
-                    return self.scan_string(true, cont_start);
+                    return self.scan_string(cont_start, opened, Some(brace));
                 }
                 self.brace_depth = self.brace_depth.saturating_sub(1);
                 (Token::RBrace, start)
@@ -1173,22 +1258,6 @@ impl Lexer {
                 }
             }
 
-            // A semicolon, and those directly behind it. One that is
-            // written again is the same mistake.
-            ';' => {
-                let span = self.since(start);
-                self.repeatable_error("a semicolon".to_string(), || {
-                    Diagnostic::error(
-                        Code::UnexpectedChar,
-                        span,
-                        "semicolons are not used in silt — use a newline to separate statements",
-                    )
-                });
-                while self.peek() == Some(';') {
-                    self.advance_char();
-                }
-                (Token::Error, start)
-            }
             // A letter or digit outside ASCII, at the start of a name or
             // inside one (`café` ends at the `f`). The letters and digits
             // that follow it are of the same word: one error, and the
@@ -1811,19 +1880,24 @@ mod tests {
     fn test_the_lexer_goes_on_behind_an_error() {
         let name = |s: &str| Token::Ident(intern::intern(s));
         // Text that is no token is an Error token, and what follows it
-        // is read.
-        let (tokens, errors) = lex_all("1 @ 2 ; 3");
+        // is read. A semicolon is read as a line break.
+        let lexed = Lexer::new(crate::source::FileId::default(), "1 @ 2 ; 3").tokenize();
+        let kinds: Vec<(Token, u8)> = lexed
+            .tokens
+            .iter()
+            .map(|tok| (tok.kind.clone(), tok.newlines_before))
+            .filter(|(tok, _)| !matches!(tok, Token::Eof))
+            .collect();
         assert_eq!(
-            tokens,
+            kinds,
             vec![
-                Token::Int(1),
-                Token::Error,
-                Token::Int(2),
-                Token::Error,
-                Token::Int(3)
+                (Token::Int(1), 0),
+                (Token::Error, 0),
+                (Token::Int(2), 0),
+                (Token::Int(3), 1)
             ]
         );
-        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert_eq!(lexed.errors.len(), 2, "{:?}", lexed.errors);
         // Numbers that are none.
         let (tokens, errors) = lex_all("0x 1e 5 99999999999999999999");
         assert_eq!(
@@ -1906,13 +1980,14 @@ mod tests {
                 ),
             ]
         );
-        // Each place is an Error token all the same.
+        // Each place is an Error token all the same; a semicolon is read
+        // as a line break.
         let invalid = lexed
             .tokens
             .iter()
             .filter(|tok| tok.kind == Token::Error)
             .count();
-        assert_eq!(invalid, 7);
+        assert_eq!(invalid, 5);
         // A name written once has no note.
         let lexed = Lexer::new(crate::source::FileId::default(), "größe").tokenize();
         assert!(lexed.errors[0].notes.is_empty());
@@ -2056,9 +2131,7 @@ mod tests {
                 Token::Int(1),
                 Token::Error,
                 Token::Int(2),
-                Token::Error,
                 Token::Int(3),
-                Token::Error,
                 Token::Int(4)
             ]
         );

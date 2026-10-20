@@ -447,6 +447,12 @@ impl<'a> Cursor<'a> {
             // The span of the rest of a string starts behind the brace
             // that closes the interpolation.
             Token::StringMiddle(_) | Token::StringEnd(_) => Doc::text(format!("}}{text}")),
+            // A triple-quoted string's line ends are line feeds, as the
+            // file's are: a carriage return before one is no part of
+            // its value.
+            Token::StringLit(_) if text.starts_with("\"\"\"") => {
+                Doc::text(text.replace("\r\n", "\n"))
+            }
             _ => Doc::text(text),
         }
     }

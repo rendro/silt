@@ -1,0 +1,16 @@
+-- cmd: lsp
+-- lsp: hover 13:7
+-- lsp: definition 13:11
+-- A semicolon is read as a line break: the function it is in is checked,
+-- its type errors are reported, and hover and go-to-definition answer
+-- in it.
+
+fn helper(n: Int) -> Int {
+  n * 2
+}
+
+fn main() {
+  let v = helper(3);
+  let w: String = v
+  println("{v} {w}")
+}
