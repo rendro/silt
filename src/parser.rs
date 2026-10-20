@@ -365,6 +365,8 @@ pub struct Parser<'src> {
     /// What the lexer found wrong with the text; reported with the
     /// parser's own errors.
     lex_errors: Vec<Diagnostic>,
+    /// Where the semicolons of the text stand (`Lexed::semicolons`).
+    semicolons: Vec<u32>,
     /// The errors that are counted and not kept: the lexer's
     /// (`Lexed::more_errors`), and the parser's own behind its first
     /// `MAX_SYNTAX_ERRORS`.
@@ -446,6 +448,7 @@ impl<'src> Parser<'src> {
         let delim_depth = delimiter_depths(&tokens);
         Self {
             comments: lexed.comments,
+            semicolons: lexed.semicolons,
             lex_errors: lexed.errors,
             more_errors: lexed.more_errors,
             cut_short,
@@ -849,6 +852,9 @@ impl<'src> Parser<'src> {
                 self.advance();
             } else if self.at(close) {
                 break;
+            } else if self.semicolon_before() {
+                // A semicolon where the comma belongs (`f(1; 2)`): the
+                // lexer reported it; it is read as that comma.
             } else if matches!(end, ListEnd::BeforeOrNothing(_)) {
                 return Ok(items);
             } else {
@@ -859,6 +865,17 @@ impl<'src> Parser<'src> {
             self.advance();
         }
         Ok(items)
+    }
+
+    /// Whether a semicolon stands between the previous token and the
+    /// current one.
+    fn semicolon_before(&self) -> bool {
+        let Some(prev) = self.pos.checked_sub(1).and_then(|at| self.tokens.get(at)) else {
+            return false;
+        };
+        let (from, to) = (prev.span.end, self.span().start);
+        let at = self.semicolons.partition_point(|s| *s < from);
+        self.semicolons.get(at).is_some_and(|s| *s < to)
     }
 
     /// The error for a comma-separated list that is not closed; see

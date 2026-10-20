@@ -215,8 +215,9 @@ pub struct Lexed {
     /// A mistake that is made again (a name with a letter outside ASCII
     /// that is used again, another semicolon) is one error, at its
     /// first place, with a note that counts the others: their tokens
-    /// are `Token::Error`s without an error of their own. A text with
-    /// an error is never run or formatted.
+    /// are `Token::Error`s without an error of their own (a semicolon
+    /// has no token: see `semicolons`). A text with an error is never
+    /// run or formatted.
     pub errors: Vec<Diagnostic>,
     /// The errors behind those of `errors`, which are counted and not
     /// kept. With the first of them the tokens end: the rest of the
@@ -231,6 +232,11 @@ pub struct Lexed {
     /// somewhere in front), and what was read as a string is code and
     /// the other way round (see `is_cut_short`).
     pub quotes_off: bool,
+    /// Where each run of semicolons starts (a byte offset). A semicolon
+    /// is reported and read as the line break it stands for, so it is
+    /// no token; where a comma belongs (between the elements of a
+    /// list), the parser reads it as that comma.
+    pub semicolons: Vec<u32>,
 }
 
 impl Lexed {
@@ -382,6 +388,8 @@ pub struct Lexer {
     /// was written (for the note), the index in `errors` of its first
     /// error, and the places it is written again.
     repeats: std::collections::HashMap<String, (usize, usize)>,
+    /// See `Lexed::semicolons`.
+    semicolons: Vec<u32>,
 }
 
 impl Lexer {
@@ -402,6 +410,7 @@ impl Lexer {
             cut_short: false,
             quotes_off: false,
             repeats: std::collections::HashMap::new(),
+            semicolons: Vec::new(),
         };
         // Skip a single leading UTF-8 BOM (U+FEFF) — Windows tools
         // (Notepad, PowerShell `>` redirects) prepend one by default,
@@ -471,6 +480,7 @@ impl Lexer {
             more_errors: self.more_errors,
             cut_short: self.cut_short,
             quotes_off: self.quotes_off,
+            semicolons: std::mem::take(&mut self.semicolons),
         }
     }
 
@@ -1073,6 +1083,7 @@ impl Lexer {
                 // is still read and checked.
                 (Some(';'), _) => {
                     let start = self.span();
+                    self.semicolons.push(start.start);
                     self.advance_char();
                     let span = self.since(start);
                     while self.peek() == Some(';') {
