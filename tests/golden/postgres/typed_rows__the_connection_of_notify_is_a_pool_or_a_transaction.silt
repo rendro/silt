@@ -1,0 +1,11 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: the connection of `postgres.notify` must be a PgPool or a PgTx
+-- `postgres.notify`, like `query`, `execute` and `stream`, takes a pool
+-- or a transaction, and nothing else.
+import postgres
+
+fn main() {
+  println(postgres.notify("not a pool", "jobs", "go"))
+}

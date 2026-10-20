@@ -1,0 +1,86 @@
+-- The server ends every idle session of a pool (a second pool of the
+-- program terminates them), and a statement on the pool follows at
+-- once, 40 times over: the first time without waiting for anything,
+-- then once the sessions have left pg_stat_activity. Each statement
+-- runs: the round trip with which the pool checks the connection it
+-- takes finds the session ended, also where the end is still on its
+-- way to the client, and the pool opens another. (A check that only
+-- read what had come failed about one statement in three here.)
+-- Probes of the verifier f1v.
+import env
+import list
+import postgres
+import string
+import time
+
+type N { n: Int }
+
+fn url(name: String) -> String {
+  let url = match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+  match string.contains(url, "?") {
+    true -> "{url}&application_name={name}"
+    false -> "{url}?application_name={name}"
+  }
+}
+
+-- End every session of the pool under test; the number ended.
+fn end_all(observer: postgres.PgPool) -> Int {
+  let sql = "SELECT count(pg_terminate_backend(pid))::int8 AS n FROM pg_stat_activity WHERE application_name = 'silt_ended_sessions_case'"
+  match postgres.query(observer, sql, (), N) {
+    Ok([row]) -> row.n
+    _ -> -1
+  }
+}
+
+-- Wait until the sessions of the pool under test have left
+-- pg_stat_activity.
+fn wait_gone(observer: postgres.PgPool) {
+  let sql = "SELECT count(*)::int8 AS n FROM pg_stat_activity WHERE application_name = 'silt_ended_sessions_case'"
+  loop tries = 0 {
+    match postgres.query(observer, sql, (), N) {
+      Ok([row]) when row.n == 0 -> ()
+      _ -> match tries < 1000 {
+        true -> {
+          time.sleep(time.ms(1))
+          loop(tries + 1)
+        }
+        false -> println("the sessions did not end")
+      }
+    }
+  }
+}
+
+-- 40 rounds; `then` runs between the end and the statement. The
+-- errors of the statements.
+fn rounds(db: postgres.PgPool, observer: postgres.PgPool, then: Fn() -> ()) -> List(String) {
+  (1..40)
+    |> list.map { _ ->
+      let _ = end_all(observer)
+      then()
+      match postgres.query(db, "SELECT 1::int8 AS n", (), N) {
+        Ok(_) -> "ok"
+        Err(e) -> e.message()
+      }
+    }
+    |> list.filter { answer -> answer != "ok" }
+}
+
+fn main() {
+  match (
+    postgres.connect_with(url("silt_ended_sessions_case"), #{"max_pool_size": 2}),
+    postgres.connect(url("silt_ended_sessions_observer")),
+  ) {
+    (Ok(db), Ok(observer)) -> {
+      let at_once = rounds(db, observer) { -> () }
+      println("at once: {list.length(at_once)} failed {list.unique(at_once)}")
+      let gone = rounds(db, observer) { -> wait_gone(observer) }
+      println("once gone: {list.length(gone)} failed {list.unique(gone)}")
+      postgres.close(db)
+      postgres.close(observer)
+    }
+    _ -> println("connect failed")
+  }
+}

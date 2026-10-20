@@ -1,0 +1,47 @@
+-- A statement of a transaction waits for the connection while another
+-- statement of the transaction runs (a task's `pg_sleep`). Its
+-- `task.deadline` passes before it gets the connection: it gives up.
+-- Nothing is sent for it, no cancel request either, so the statement
+-- that runs is not cancelled, the transaction is not aborted, and it
+-- commits. (A statement the deadline ends while it runs is cancelled,
+-- and aborts the transaction: deadline_over_a_statement_in_a_transaction.)
+import env
+import postgres
+import task
+import time
+
+type N { n: Int }
+
+type Slept { slept: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let done = postgres.transact(db) { tx ->
+        let sleeper = task.spawn { -> postgres.query(tx, "SELECT pg_sleep(1)::text AS slept", (), Slept) }
+        -- (Time for the sleeper to take the connection.)
+        time.sleep(time.ms(300))
+        let late = task.deadline(time.ms(200)) { -> postgres.query(tx, "SELECT 1::int8 AS n", (), N) }
+        match late {
+          Ok(answer) -> println("the waiting statement answered: {answer}")
+          Err(e) -> println("the waiting statement: {e.message()}")
+        }
+        match task.join(sleeper) {
+          Ok(_) -> println("the running statement: Ok")
+          Err(e) -> println("the running statement: {e.message()}")
+        }
+        postgres.query(tx, "SELECT 2::int8 AS n", (), N)
+      }
+      println("transact: {done}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

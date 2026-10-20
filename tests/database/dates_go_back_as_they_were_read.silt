@@ -1,0 +1,94 @@
+-- A date, a time or a datetime that a row brings is sent back as a
+-- parameter as the same value: a `timestamptz` is read in UTC, and a
+-- `DateTime` goes out with the offset `+00`, so the instant is the
+-- same whatever the session's TimeZone (here New York's); a
+-- `timestamp` ignores the offset. A year before 1 is read as silt
+-- counts years (44 BC is -43) and goes out as a year BC.
+import env
+import list
+import postgres
+import time
+
+type D { v: time.Date }
+
+type T { v: time.Time }
+
+type DT { v: time.DateTime }
+
+type Back { same: Bool, back: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- The one value of the rows `rows`.
+fn one(rows: List(a)) -> Result(a, postgres.PostgresError) {
+  match rows {
+    [row] -> Ok(row)
+    _ -> Err(postgres.Other("not one row"))
+  }
+}
+
+-- Send `value`, which the row of `literal` (of type `pg`) brought,
+-- back as `$1::pg`, and say whether the server finds it the same.
+fn back(tx: postgres.PgTx, literal: String, pg: String, value: a) -> Result((), postgres.PostgresError) where a: Display {
+  -- (A timestamptz is shown in UTC: New York's offset in 44 BC is
+  -- whatever the server's zone data says.)
+  let text = match pg {
+    "timestamptz" -> "($1::timestamptz AT TIME ZONE 'UTC')::text"
+    _ -> "$1::{pg}::text"
+  }
+  let sql = "SELECT $1::{pg} = '{literal}'::{pg} AS same, {text} AS back"
+  let answer = postgres.query(tx, sql, (value,), Back)?
+  println("{pg} {literal}: read {value}, back {answer}")
+  Ok(())
+}
+
+fn date(tx: postgres.PgTx, literal: String) -> Result((), postgres.PostgresError) {
+  let row = one(postgres.query(tx, "SELECT '{literal}'::date AS v", (), D)?)?
+  back(tx, literal, "date", row.v)
+}
+
+fn time_of_day(tx: postgres.PgTx, literal: String) -> Result((), postgres.PostgresError) {
+  let row = one(postgres.query(tx, "SELECT '{literal}'::time AS v", (), T)?)?
+  back(tx, literal, "time", row.v)
+}
+
+fn date_time(tx: postgres.PgTx, literal: String, pg: String) -> Result((), postgres.PostgresError) {
+  let row = one(postgres.query(tx, "SELECT '{literal}'::{pg} AS v", (), DT)?)?
+  back(tx, literal, pg, row.v)
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let done = postgres.transact(db) { tx ->
+        let _ = postgres.execute(tx, "SET LOCAL TimeZone = 'America/New_York'", ())?
+        date_time(tx, "2026-10-19 12:00:00+00", "timestamptz")?
+        date_time(tx, "2026-10-19 12:00:00.25", "timestamp")?
+        date(tx, "2026-10-19")?
+        time_of_day(tx, "01:02:03.25")?
+        date(tx, "0044-03-15 BC")?
+        date(tx, "0001-12-31 BC")?
+        date_time(tx, "0044-03-15 12:00:00+00 BC", "timestamptz")?
+        date_time(tx, "0044-03-15 12:00:00 BC", "timestamp")?
+        let read = postgres.query(tx, "SELECT '2026-10-19 12:00:00+00'::timestamptz AS v", (), DT)?
+        let days = read |> list.map { row -> row.v }
+        let answer = postgres.query(
+          tx,
+          "SELECT ($1::timestamptz[])[1] = '2026-10-19 12:00:00+00'::timestamptz AS same, $1::timestamptz[]::text AS back",
+          (days,),
+          Back,
+        )?
+        println("a list into timestamptz[]: {answer}")
+        Ok(())
+      }
+      println("done: {done}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

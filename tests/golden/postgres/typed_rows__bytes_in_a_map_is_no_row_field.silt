@@ -1,0 +1,19 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.query` cannot decode `Blobs`: field `parts` has type `Map(String, Bytes)`, and `Bytes` has no decoder
+-- stderr-contains: Bytes only as a field, in an Option or in a List (a bytea column)
+-- A bytea column fills a `Bytes` field, an Option of it and a list of
+-- it (a bytea[]); a map is filled only from a json document, which has
+-- no bytes, so `Bytes` in a map is a field no column fills.
+import postgres
+
+type Blobs { id: Int, parts: Map(String, Bytes) }
+
+fn blobs(db: postgres.PgPool) -> Result(List(Blobs), postgres.PostgresError) {
+  postgres.query(db, "SELECT id, parts FROM blobs", (), Blobs)
+}
+
+fn main() {
+  println(1)
+}

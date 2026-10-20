@@ -43,6 +43,13 @@ its result are decoded into a record type the program declares (or into
 | `listen` | `(PgPool, String) -> Result(Channel(Notification), PostgresError)` | LISTEN on a channel; delivers async notifications |
 | `notify` | `(a, String, String) -> Result((), PostgresError)` | NOTIFY a channel with a payload |
 
+The first argument of `query`, `execute`, `stream` and `notify` (`a`
+above) is the connection: a `PgPool`, or the `PgTx` of a transaction.
+The compiler refuses any other type where the call is written:
+``the connection of `postgres.query` must be a PgPool or a PgTx``. A
+function that takes the connection as a type variable is checked where
+it runs: `Err(Other("postgres requires PgPool or PgTx, got Int"))`.
+
 ## Parameters and rows
 
 ```text
@@ -76,9 +83,13 @@ value:
 | `None` | `NULL` (`Some(x)` is sent as `x`) |
 | `Int`, `Float`, `Bool`, `String` | its text (a `Float` keeps its point: `2.0`, which no integer column takes) |
 | `Bytes` | `bytea`'s hex text, `\x00ff` |
-| `Date`, `Time`, `DateTime` | silt's text of it: `2026-10-13`, `01:02:03`, `2026-10-13T01:02:03` |
+| `Date`, `Time`, `DateTime` | silt's text of it: `2026-10-13`, `01:02:03`; a `DateTime` in UTC, `2026-10-13T01:02:03+00`; a year before 1 as a year BC, `0044-03-15 BC` |
 | a `List` | an array (`{"1","2"}`) where the statement's parameter is an array (`id = ANY($1)`), and JSON anywhere else |
 | a record, a `Map`, a tuple, a variant, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
+
+A `DateTime` read from a `timestamptz` (in UTC, see the table of
+[Rows](#rows)) and sent back is the same instant whatever the session's
+`TimeZone`; a `timestamp` column ignores the offset.
 
 A value that JSON has no form for (a function, a set, a channel, or
 `Bytes` inside a record) is an error of the program, as it is for
@@ -118,7 +129,10 @@ the fields once per result, before the statement runs:
 
 So a statement whose rows do not fit is not run: an `INSERT ...
 RETURNING` into a record that does not fit inserts nothing. A cell is
-checked as it is read: a `NULL` fills an `Option` field with `None`, and
+checked as it is read, after the statement has run: an `INSERT ...
+RETURNING` whose returned cell does not fit is `Err`, and its rows were
+inserted all the same (on a pool they stay; in a transaction the
+callback decides). A `NULL` fills an `Option` field with `None`, and
 any other field with nothing, `Err(TypeMismatch(column, field type,
 "NULL"))`; a `NaN`, an `Infinity` or a date's `infinity` is
 `TypeMismatch(column, field type, "NaN")` (or `"Infinity"`,
@@ -178,8 +192,14 @@ A `connect_timeout=N` in the connection string (whole seconds, more than
 sets that time instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
 its other connections when it needs them, each bounded the same way: an
 attempt that gets no answer in that time is given up, and nothing of it
-is left behind. A statement that finds no free connection in the pool
-waits 30 seconds for one, and is then `Timeout`.
+is left behind. Each statement on the pool checks the connection it
+takes with a round trip to the server (an empty query), so that a
+connection whose session the server has ended is not used: it is
+closed, and another is opened. A connection that has been idle for 10
+minutes, or open for 30, is closed while it is idle, and opened again
+only when a statement needs it. A statement that finds no free connection in the
+pool, which has opened as many as `max_pool_size` allows, waits 30
+seconds for one, and is then `Timeout`.
 
 ## Cooperative I/O
 
@@ -234,6 +254,11 @@ alike. What becomes of the statement in the server differs:
   for it (a request that reaches the server late would cancel the
   connection's next statement).
 
+  This is for a statement that has the transaction's connection. One
+  that still waits for it, while another statement of the transaction
+  runs (from a task the callback started), gives up: it is not sent,
+  nothing is cancelled, and the transaction goes on.
+
 Around the callback `postgres.transact` waits too, and a deadline or a
 cancel ends the task there at once as well. While it waits for a
 connection of the pool or for its `BEGIN`, the transaction is not
@@ -270,17 +295,27 @@ worker is dropped there, as a task that waits to send is. A stream
 opened on a `PgTx` ends with the transaction: its channel is closed
 when the transaction commits or rolls back, and the rows it holds can
 still be received. While it is open it holds the transaction's
-connection: the transaction's other statements wait until its worker
-has sent the last row or has stopped. A stream on a `PgTx` whose
+connection: the transaction's other statements wait while its worker
+fetches rows, until it has sent the last row or has stopped. While the
+worker waits for room in the channel (nobody reads it), a statement of
+the transaction does not wait, which would be for ever where the task
+that would read the stream is the one that waits for the statement:
+it is `Err(Other("postgres: a stream of this transaction is still
+open; read or close it first"))` at once. So is a statement that comes
+while a reader slower than the stream (another task, say) leaves the
+channel full: read the stream to its end, or close it, first. A stream on a `PgTx` whose
 reader is gone (cancelled, say) without closing the channel therefore
-holds the transaction until the transaction ends or the program does.
+holds the connection until the transaction ends or the program does.
 
 `postgres.cursor(tx, sql, params, batch_size, T)` is the lower-level
 primitive: it `DECLARE`s a server-side cursor inside an open
 transaction and returns an opaque `PgCursor(T)` that `cursor_next` can
 repeatedly drain in batches of `List(T)`. Its columns are checked
 against `T` when it is declared, so that is where a mismatch is an
-error. Always call `cursor_close` (or let the transaction
+error. A batch that cannot be decoded (a `NULL` for a field that is no
+`Option`, say), or that the server fails, is `cursor_next`'s `Err`, and
+ends the cursor, as a stream ends after its `Err`: every later
+`cursor_next` is the same error. Always call `cursor_close` (or let the transaction
 commit/rollback, which cleans up).
 
 ## LISTEN / NOTIFY
@@ -293,6 +328,14 @@ connections until its channel is closed: while it is open, the pool has
 one connection fewer for statements (with `max_pool_size` 1, a
 statement waits the pool's 30 seconds and is `Timeout`).
 `postgres.notify(target, channel, payload)` sends a single NOTIFY.
+
+A channel name is used as it is written: its case is kept (`"Orders"`
+and `"orders"` are two channels), and it may be a keyword or hold any
+character but NUL. Both functions take a name of 1 to 63 bytes, the
+most PostgreSQL keeps, without a NUL, and refuse any other before
+anything is sent: `Err(Other("postgres.listen: a channel name cannot be
+empty"))`, `"... is longer than 63 bytes, the longest PostgreSQL
+keeps"`, `"... a channel name cannot hold a NUL character"`.
 
 ## Example
 

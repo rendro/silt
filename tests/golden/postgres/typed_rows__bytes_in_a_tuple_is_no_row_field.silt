@@ -1,0 +1,17 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.stream` cannot decode `Pair`: field `pair` has type `Option((Int, Bytes))`, and `Bytes` has no decoder
+-- A tuple is filled only from a json document, which has no bytes, so
+-- `Bytes` in a tuple (in an Option too) is a field no column fills.
+import postgres
+
+type Pair { pair: Option((Int, Bytes)) }
+
+fn pairs(db: postgres.PgPool) {
+  postgres.stream(db, "SELECT pair FROM pairs", (), Pair)
+}
+
+fn main() {
+  println(1)
+}

@@ -1,0 +1,25 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- stderr-contains: `postgres.cursor` cannot decode `Upload`: field `data` of `File`, a record type nested in it, has type `Bytes`, which has no decoder
+-- A row's `File` field is filled only from a json document, which has
+-- no bytes: a `Bytes` field of `File` is fine where `File` is the row,
+-- and no column fills it where `File` is nested (in a list of them
+-- too).
+import postgres
+
+type File { name: String, data: Bytes }
+
+type Upload { id: Int, files: List(File) }
+
+fn uploads(tx: postgres.PgTx) -> Result(postgres.PgCursor(Upload), postgres.PostgresError) {
+  postgres.cursor(tx, "SELECT id, files FROM uploads", (), 100, Upload)
+}
+
+fn files(db: postgres.PgPool) -> Result(List(File), postgres.PostgresError) {
+  postgres.query(db, "SELECT name, data FROM files", (), File)
+}
+
+fn main() {
+  println(1)
+}
