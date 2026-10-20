@@ -65,8 +65,8 @@ The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
 An alias of one of these is the type it names (`type Member = User`, then
 `json.parse(text, Member)`).
 
-The fields of a record type (and of every record type nested in it) may have
-these types:
+The fields of a record type, and of each variant of an enum type (and of every
+record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `Date`, `Time`, `DateTime`
@@ -74,11 +74,12 @@ these types:
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - non-generic record types
+- non-generic enum types (see [Enums](#enums))
 - type aliases of any of these
 
-where `T` is again one of these types. Anything else (a `Set`, an enum, a
-generic record, a function, a `Map` whose key is not `String`, a type
-parameter) has no decoder.
+where `T` is again one of these types. Anything else (a `Set`, a generic
+record or enum, a builtin enum such as `time.Weekday`, a function, a `Map`
+whose key is not `String`, a type parameter) has no decoder.
 
 A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
@@ -86,8 +87,10 @@ that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 
 When the type is written at the call, `json.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile
-error that names the field and its type; so is an enum, or a type the function
-does not take (such as `json.parse(text, List)`). The check applies
+error that names the field and its type, and so is an enum with a variant
+whose field has none (the error names the variant); so is a generic record or
+enum, or a type the function does not take (such as
+`json.parse(text, List)`). The check applies
 equally to a decoder imported by name (`import json.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
@@ -95,6 +98,65 @@ decoder gives an `Err(Other(msg))` whose message names the field and its
 record (or the field of a record type it names that has no decoder),
 whatever the document holds there (an `Option` field whose key is
 left out too), and a type the function does not take is a run-time error.
+
+
+## Enums
+
+An enum type the program declares, without type parameters, is decoded from
+the object `json.stringify` writes of a variant, so a variant written with
+`json.stringify` reads back as the same variant:
+
+| Variant | JSON |
+|---------|------|
+| without fields, `Active` | `{"variant":"Active"}` |
+| with fields, `Moved("x", Some(2))` | `{"fields":["x",2],"variant":"Moved"}` |
+
+`"variant"` names the variant; `"fields"` lists its fields in the order the
+variant declares them, each decoded as a record field of its type is (a
+record, a list, an option, another enum). A variant without fields may also
+be written with `"fields": []`; other keys of the object are ignored. Only
+this object is read: a bare string such as `"Active"` is no variant.
+
+An enum type may be decoded at the top (`json.parse(text, Status)`), as the
+elements of `json.parse_list` and the values of `json.parse_map`, and as the
+type of a field anywhere in a record or in another enum's variant. A document
+that is no variant of the enum is an `Err`, which ends with the path, as
+the error of a record does (here of an enum at the top):
+
+| Document | Error |
+|----------|-------|
+| no object (a string, a number) | `TypeMismatch("object", "string")` |
+| no `"variant"` key | `MissingField("variant")` |
+| a `"variant"` that is no string | `TypeMismatch("String", "number at variant")` |
+| a name the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant")`` |
+| `"fields"` that is no array | `TypeMismatch("array", "number at fields")` |
+| the wrong number of fields | ``Other("variant `Paused` of `Status` has 1 field, got 2 at fields")`` |
+| a field of the wrong type | the error of a value of that type, such as `TypeMismatch("Int", "string at fields[0]")` |
+
+```silt
+import json
+
+type Status {
+  Active,
+  Paused(Int),
+}
+
+type Job {
+  name: String,
+  status: Status,
+}
+
+fn main() {
+  let job = Job { name: "build", status: Paused(3) }
+  let text = json.stringify(job)
+  println(text) -- {"name":"build","status":{"fields":[3],"variant":"Paused"}}
+  println(json.parse(text, Job)) -- Ok(Job {name: build, status: Paused(3)})
+  println(json.parse("""{"variant": "Gone"}""", Status))
+  -- Err(`Status` has no variant `Gone` at variant)
+}
+```
+
+The toml decoders have no decoder for an enum.
 
 
 ## Nesting limits
@@ -290,8 +352,8 @@ json.parse_list(s: String, type a) -> Result(List(a), JsonError)
 
 Parses a JSON array into a list of `a`, each element decoded as
 `json.parse` decodes a document into `a`. The type is passed as a `type`
-parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, or a record
-type), as for `json.parse_map`.
+parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or
+an enum type, see [Enums](#enums)), as for `json.parse_map`.
 
 ```silt
 import json
@@ -319,7 +381,8 @@ json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError)
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
-parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type).
+parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or
+an enum type).
 
 ```silt
 import json
@@ -378,8 +441,9 @@ written as follows:
 
 The keys of a map, and so of a `json.Object`, are written in sorted order;
 the fields of a record in the order its type declares them. `json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
-the same type, and a record into its record type; a variant and `()` are
-written but not read back (an enum has no decoder).
+the same type, a record into its record type, and a variant into its enum
+type when the program declares it (see [Enums](#enums)); a variant of a
+builtin enum and `()` are written but not read back.
 
 `json.stringify` and `json.pretty` write the same values. A value JSON has no
 form for is a runtime error that names its kind, wherever in the value it is:

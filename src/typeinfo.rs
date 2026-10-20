@@ -61,6 +61,11 @@ pub enum Shape {
 pub struct VariantInfo {
     pub name: String,
     pub arity: u16,
+    /// The type of each of its fields, as for a record's fields: what
+    /// `json.parse` decodes them as. A builtin enum's variants have
+    /// none a decoder reads (`FieldType::undecoded`): the decoders
+    /// refuse such a type before they read a field.
+    pub fields: Vec<FieldType>,
 }
 
 impl TypeInfo {
@@ -76,6 +81,7 @@ impl TypeInfo {
                     .map(|(name, arity)| VariantInfo {
                         name: (*name).to_string(),
                         arity: *arity,
+                        fields: vec![FieldType::undecoded(); *arity as usize],
                     })
                     .collect(),
             ),
@@ -144,6 +150,10 @@ pub enum FieldType {
     Tuple(Vec<FieldType>),
     /// A record type of the program without type parameters.
     Record(TypeId),
+    /// An enum type of the program without type parameters. Only the
+    /// json decoders have it; to the toml decoders it is a type without
+    /// a decoder.
+    Enum(TypeId),
     Date,
     Time,
     DateTime,
@@ -166,7 +176,7 @@ impl FieldType {
         FieldType::Unsupported(String::new())
     }
 
-    /// The type as silt writes it, a record type by the name
+    /// The type as silt writes it, a record or an enum type by the name
     /// `record_name` gives its id.
     pub fn shown(&self, record_name: &dyn Fn(TypeId) -> String) -> String {
         let shown = |t: &FieldType| t.shown(record_name);
@@ -187,16 +197,16 @@ impl FieldType {
                 let parts: Vec<String> = ts.iter().map(shown).collect();
                 format!("({})", parts.join(", "))
             }
-            FieldType::Record(id) => record_name(*id),
+            FieldType::Record(id) | FieldType::Enum(id) => record_name(*id),
             FieldType::Unsupported(declared) => declared.clone(),
         }
     }
 
-    /// The record types the type names (not those named by the fields
-    /// of those record types), added to `out`.
+    /// The record and enum types the type names (not those named by the
+    /// fields of those types), added to `out`.
     pub fn records(&self, out: &mut Vec<TypeId>) {
         match self {
-            FieldType::Record(id) => out.push(*id),
+            FieldType::Record(id) | FieldType::Enum(id) => out.push(*id),
             FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.records(out),
             FieldType::Tuple(ts) => ts.iter().for_each(|t| t.records(out)),
             _ => {}
@@ -613,6 +623,7 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                             .map(|(name, arity)| VariantInfo {
                                 name: (*name).to_string(),
                                 arity: *arity as u16,
+                                fields: vec![FieldType::undecoded(); *arity],
                             })
                             .collect(),
                     ),
@@ -649,6 +660,7 @@ fn marker_types() -> &'static [Arc<TypeInfo>] {
             shape: Shape::Enum(vec![VariantInfo {
                 name: name.to_string(),
                 arity: 0,
+                fields: Vec::new(),
             }]),
         })]
     })

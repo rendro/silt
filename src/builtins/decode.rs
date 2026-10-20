@@ -15,7 +15,7 @@ use super::time::{
 };
 use super::typed::Type;
 use crate::defs::TypeId;
-use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
+use crate::typeinfo::{BuiltinVariant, FieldType, Shape, Tag, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
@@ -185,7 +185,13 @@ pub(crate) fn decodable_record<'t>(
     }
 }
 
-/// `field_type` as silt writes it, a record type by its name.
+/// Whether `ty` is an enum type a decoder builds: one of the program's
+/// (a builtin enum, such as `Weekday`, has no decoder).
+pub(crate) fn decodable_enum(ty: &TypeInfo) -> bool {
+    matches!(ty.shape, Shape::Enum(_)) && !ty.is_builtin()
+}
+
+/// `field_type` as silt writes it, a record or an enum type by its name.
 pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String {
     field_type.shown(&|id| {
         rt.type_info(id)
@@ -204,6 +210,13 @@ struct Lacking {
     declared: std::string::String,
 }
 
+/// Whether `field_type`, not counting the fields of the record types it
+/// names, holds a part that `family` has no decoder for: it is a type no
+/// decoder has, or it holds a leaf the family does not decode.
+fn lacks_here(family: Family, field_type: &FieldType) -> bool {
+    matches!(field_type, FieldType::Unsupported(_)) || family.lacks(field_type).is_some()
+}
+
 /// The first part of `field_type` that `family` has no decoder for: a
 /// type no decoder has, a leaf the family does not decode, or such a
 /// part of a field of a record type it names (which `family.nested()`
@@ -214,7 +227,7 @@ fn lacking(
     field_type: &FieldType,
     seen: &mut Vec<(TypeId, Family)>,
 ) -> Option<Lacking> {
-    if matches!(field_type, FieldType::Unsupported(_)) || family.lacks(field_type).is_some() {
+    if lacks_here(family, field_type) {
         let declared = shown(rt, field_type);
         return Some(Lacking {
             nested: None,
@@ -229,7 +242,12 @@ fn lacking(
             continue;
         }
         seen.push((id, family));
-        let Some(info) = rt.type_info(id) else {
+        // (The fields of an enum type's variants are looked at as a
+        // variant is decoded.)
+        let Some(info) = rt
+            .type_info(id)
+            .filter(|info| matches!(info.shape, Shape::Record(_)))
+        else {
             continue;
         };
         for (name, field) in info.fields() {
@@ -468,6 +486,9 @@ pub(crate) fn target<'a>(caller: &str, ty: Type<'a>) -> Result<Target<'a>, VmErr
         Type::Named(ty) if ty.id == ty::JSON_VALUE && decoding.json_value() => {
             Ok(Target::Value(FieldType::JsonValue))
         }
+        Type::Named(ty) if decoding.family.decodes_enums() && decodable_enum(ty) => {
+            Ok(Target::Value(FieldType::Enum(ty.id)))
+        }
         Type::Named(ty) => match decodable_record(caller, ty) {
             Ok(fields) => Ok(Target::Record(ty, fields)),
             Err(_) if decoding.family.rows() => Err(not_a_row(&ty.name)),
@@ -696,7 +717,81 @@ pub(crate) fn value<D: Document>(
             let ty = field_record_type(rt, rules.caller, *id)?;
             record(rt, &ty, decodable_record(rules.caller, &ty)?, doc, at)
         }
+        FieldType::Enum(id) if rules.family.decodes_enums() => {
+            let ty = field_record_type(rt, rules.caller, *id)?;
+            variant(rt, &ty, doc, at)
+        }
+        FieldType::Enum(_) => Err(Error::Unsupported(shown(rt, expected))),
     }
+}
+
+/// The variant of the enum type `ty` that `doc`, which is `at` a path,
+/// is: an object as `json.stringify` writes a variant,
+/// `{"variant":"Name"}` for one without fields and
+/// `{"fields":[...],"variant":"Name"}` for one with them (`"fields"` may
+/// be absent or `[]` for one without), each field decoded as the variant
+/// declares it. Other keys are ignored.
+pub(crate) fn variant<D: Document>(
+    rt: &Runtime,
+    ty: &Arc<TypeInfo>,
+    doc: &D,
+    at: &At,
+) -> Result<Value, Error> {
+    let Node::Table(table) = doc.node() else {
+        return Err(Error::mismatch(D::RULES.table, doc.kind(), at));
+    };
+    let at_name = at.key("variant");
+    let name = match D::get(table, "variant").map(|name| (name, name.node())) {
+        Some((_, Node::String(name))) => name,
+        Some((name, _)) => return Err(Error::mismatch("String", name.kind(), &at_name)),
+        None => return Err(Error::MissingField(at_name.to_string())),
+    };
+    let Some(tag) = Tag::named(ty, name) else {
+        let message = format_args!("`{}` has no variant `{name}`", ty.name);
+        return Err(Error::other(message, &at_name));
+    };
+    let at_fields = at.key("fields");
+    let items = match D::get(table, "fields").map(|items| (items, items.node())) {
+        Some((_, Node::Array(items))) => items,
+        Some((items, _)) => return Err(Error::mismatch("array", items.kind(), &at_fields)),
+        None => &[],
+    };
+    let declared = &ty.variants()[tag.ordinal() as usize].fields;
+    if items.len() != declared.len() {
+        let count = |n: usize| match n {
+            1 => "1 field".to_string(),
+            n => format!("{n} fields"),
+        };
+        let message = format_args!(
+            "variant `{name}` of `{}` has {}, got {}",
+            ty.name,
+            count(declared.len()),
+            items.len()
+        );
+        return Err(Error::other(message, &at_fields));
+    }
+    let mut fields = Vec::with_capacity(items.len());
+    let refused = |declared: &str| {
+        Error::Other(format!(
+            "cannot decode a field of variant `{name}` of `{}`: a value of type \
+             {declared} cannot be decoded",
+            ty.name
+        ))
+    };
+    for (index, (item, field)) in items.iter().zip(declared).enumerate() {
+        // A field no decoder exists for is the error whatever the
+        // document holds there. (The fields of a record type it names
+        // are looked at as that record is decoded.)
+        if lacks_here(D::RULES.family, field) {
+            return Err(refused(&shown(rt, field)));
+        }
+        let decoded = value(rt, item, field, &at_fields.index(index));
+        fields.push(decoded.map_err(|e| match e {
+            Error::Unsupported(declared) => refused(&declared),
+            e => e,
+        })?);
+    }
+    Ok(Value::variant(tag, fields))
 }
 
 /// The `json.Value` that holds `doc`: a number an `Int` when it is held

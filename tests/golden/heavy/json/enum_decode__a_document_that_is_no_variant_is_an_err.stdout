@@ -1,0 +1,15 @@
+Err(`Status` has no variant `Gone` at variant)
+Err(variant `Paused` of `Status` has 1 field, got 0 at fields)
+Err(variant `Paused` of `Status` has 1 field, got 2 at fields)
+Err(variant `Active` of `Status` has 0 fields, got 1 at fields)
+Err(json type mismatch: expected Int, got string at fields[0])
+Err(json missing field: variant)
+Err(json type mismatch: expected String, got number at variant)
+Err(json type mismatch: expected array, got number at fields)
+Err(json type mismatch: expected object, got string)
+Err(`Status` has no variant `Gone` at status.variant)
+Err(json type mismatch: expected Int, got a number with a fraction at [1].fields[0])
+Err(json type mismatch: expected array, got object)
+Other: `Status` has no variant `Gone` at variant
+TypeMismatch: Int, string at fields[0]
+MissingField: variant

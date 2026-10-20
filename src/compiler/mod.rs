@@ -42,9 +42,10 @@ mod patterns;
 //
 // Each record and enum type a program builds values of is described to
 // the VM by a `TypeInfo` (see `crate::typeinfo`): its id, its name, its
-// variants or its fields. A record's fields carry their types as far as
-// `json.parse(text, T)`, `toml.parse(text, T)` and `postgres.query(db,
-// sql, params, T)` need them to build a value of `T`. Type aliases are
+// variants or its fields. A record's fields, and the fields of an enum's
+// variants, carry their types as far as `json.parse(text, T)`,
+// `toml.parse(text, T)` and `postgres.query(db, sql, params, T)` need
+// them to build a value of `T`. Type aliases are
 // replaced by their target. A type no decoder exists for is
 // `FieldType::Unsupported`, which makes the decoders return `Err`; it is
 // never mapped to some other type. A direct call of a decoder whose type
@@ -57,11 +58,16 @@ fn shown(ty: &Type) -> String {
     Type::show_all(&[ty], |_, _| None).remove(0)
 }
 
-/// A record field that `json.parse` / `toml.parse` cannot decode.
+/// A record field, or a field of an enum's variant, that `json.parse` /
+/// `toml.parse` cannot decode.
 struct UndecodableField {
-    /// The record type that declares the field.
+    /// The record type that declares the field, or the enum type that
+    /// declares the variant.
     record: String,
+    /// The field's name, or the name of the variant whose field it is.
     field: String,
+    /// The field is one of a variant's: `record` is an enum type.
+    in_variant: bool,
     /// The field's type.
     field_type: String,
     /// The part of the field's type that has no decoder.
@@ -2135,6 +2141,7 @@ impl<'a> Compiler<'a> {
         let variants = defs.variants(id.0);
         let mut nested = Vec::new();
         let shape = if !variants.is_empty() {
+            let variant_fields = self.variant_fields(id);
             Shape::Enum(
                 variants
                     .iter()
@@ -2144,9 +2151,24 @@ impl<'a> Compiler<'a> {
                             crate::defs::DefKind::Variant { arity, .. } => arity,
                             _ => 0,
                         };
+                        let declared = variant_fields
+                            .iter()
+                            .find(|(name, _)| *name == variant.name)
+                            .map_or(&[][..], |(_, types)| types.as_slice());
+                        let fields = declared
+                            .iter()
+                            .map(|ty| {
+                                let field_type = self
+                                    .describe_field_type(ty, &mut Vec::new())
+                                    .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
+                                field_type.records(&mut nested);
+                                field_type
+                            })
+                            .collect();
                         VariantInfo {
                             name: resolve(variant.name),
                             arity,
+                            fields,
                         }
                     })
                     .collect(),
@@ -2172,7 +2194,8 @@ impl<'a> Compiler<'a> {
             shape,
         });
         self.types.borrow_mut().insert(info.clone());
-        // The record types of its fields, which a decoder builds too.
+        // The record and enum types of its fields, which a decoder builds
+        // too.
         for record in nested {
             self.type_info(record);
         }
@@ -2566,6 +2589,23 @@ impl<'a> Compiler<'a> {
             .collect()
     }
 
+    /// The variants of the enum type `id`, each with the types of its
+    /// fields as the checker inferred them (an alias is the type it
+    /// stands for).
+    fn variant_fields(&self, id: crate::defs::TypeId) -> Vec<(Symbol, Vec<Type>)> {
+        let ty = TypeRef {
+            id,
+            name: self.units.defs.get(id.0).name,
+        };
+        (self.units.tables.variant_fields_of(ty).into_iter())
+            .map(|(name, types)| {
+                let types = types.iter();
+                let canonical = |ty| crate::types::canonical::canonicalize(self.resolver(), ty);
+                (name, types.map(canonical).collect())
+            })
+            .collect()
+    }
+
     /// The type `ty` of a record field as the decoders see it.
     ///
     /// `Err` carries the part of `ty` no decoder exists for. The record
@@ -2606,8 +2646,8 @@ impl<'a> Compiler<'a> {
     }
 
     /// A named type with no arguments as the decoders see it: Date, Time,
-    /// DateTime, json.Value, Bytes, or a non-generic record type of the
-    /// program.
+    /// DateTime, json.Value, Bytes, or a non-generic record or enum type
+    /// of the program.
     fn describe_named_type(
         &self,
         t: TypeRef,
@@ -2631,13 +2671,23 @@ impl<'a> Compiler<'a> {
                 records.push(id);
                 Ok(FieldType::Record(id))
             }
-            // Enums, the other builtin types.
+            // A non-generic enum type of the program.
+            id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
+                && !self.units.defs.variants(id.0).is_empty()
+                && self
+                    .type_declaration(self.units.defs.get(id.0).span)
+                    .is_some_and(|decl| decl.params.is_empty()) =>
+            {
+                records.push(id);
+                Ok(FieldType::Enum(id))
+            }
+            // Builtin enums, the other builtin types.
             _ => Err(shown(ty)),
         }
     }
 
-    /// The first field that `family` cannot decode, in the record type
-    /// `record` or in a record type nested in it (which
+    /// The first field that `family` cannot decode, in the record or
+    /// enum type `record` or in a record or enum type nested in it (which
     /// `family.nested()` decodes). `None` if there is none.
     fn undecodable_field(
         &self,
@@ -2649,16 +2699,29 @@ impl<'a> Compiler<'a> {
             return None;
         }
         let def = *self.units.defs.get(record.0);
-        for (field, ty) in self.record_fields(record) {
+        let is_enum = |id: &crate::defs::TypeId| !self.units.defs.variants(id.0).is_empty();
+        let fields = match is_enum(&record) {
+            // (Each field of each variant, by the variant's name.)
+            true => (self.variant_fields(record).into_iter())
+                .flat_map(|(name, types)| types.into_iter().map(move |ty| (name, ty)))
+                .collect(),
+            false => self.record_fields(record),
+        };
+        for (field, ty) in fields {
             let mut nested = Vec::new();
             let lacking = match self.describe_field_type(&ty, &mut nested) {
                 Err(part) => Some(part),
-                Ok(field_type) => family.lacks(&field_type).map(str::to_string),
+                Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
+                    let enum_type = nested.iter().find(|id| is_enum(id))?;
+                    (!family.decodes_enums())
+                        .then(|| resolve(self.units.defs.get(enum_type.0).name))
+                }),
             };
             if let Some(part) = lacking {
                 return Some(UndecodableField {
                     record: resolve(def.name),
                     field: resolve(field),
+                    in_variant: is_enum(&record),
                     field_type: shown(&ty),
                     part,
                     nested: false,
@@ -2681,11 +2744,13 @@ impl<'a> Compiler<'a> {
     /// (`json.parse(text, T)`, `toml.parse(text, T)` and their `_list` /
     /// `_map` forms, `postgres.query(db, sql, params, T)` and the other
     /// postgres functions that read rows), as the resolver resolved it. If `T` is a record type
-    /// of the program, every field the decoder would have to fill must
-    /// have a decoder; otherwise the call is a compile error that names
-    /// the field and its type. An enum, a builtin container type, or a
-    /// primitive type given to a decoder that only decodes records is a
-    /// compile error as well. When the type argument is a variable (a
+    /// of the program, or for json an enum type of the program, every
+    /// field the decoder would have to fill must have a decoder;
+    /// otherwise the call is a compile error that names the field and
+    /// its type. A generic type, an enum given to a decoder that is not
+    /// json's, a builtin enum, a builtin container type, or a primitive
+    /// type given to a decoder that only decodes records is a compile
+    /// error as well. When the type argument is a variable (a
     /// `type a` parameter) the type is only known at run time, where the
     /// decoders report the same problems. What the builtin decodes is
     /// `decoding`, its registry row's.
@@ -2717,7 +2782,7 @@ impl<'a> Compiler<'a> {
         let def = *self.units.defs.get(ty.id.0);
         if !def.module.is_builtin() {
             let enum_type = !self.units.defs.variants(ty.id.0).is_empty();
-            if enum_type {
+            if enum_type && !family.decodes_enums() {
                 return Err(Diagnostic::error(
                     Code::InvalidConstruct,
                     span,
@@ -2731,18 +2796,19 @@ impl<'a> Compiler<'a> {
                 .type_declaration(def.span)
                 .is_some_and(|decl| !decl.params.is_empty())
             {
-                // Through an alias that gives the record its arguments
+                // Through an alias that gives the type its arguments
                 // (`type BI = Box(Int)`) the type is one instance; the
-                // decoders read the fields as the record declares them.
+                // decoders read the fields as the type declares them.
+                let kind = if enum_type { "enum" } else { "record" };
                 let message = match self.alias_target(type_arg.res) {
                     Some(target) => format!(
                         "`{builtin_name}` cannot decode `{type_name}`: it names `{target}`, \
-                         an instance of the generic record type `{}`, and a decoder reads \
-                         the fields of a record type without parameters",
+                         an instance of the generic {kind} type `{}`, and a decoder reads \
+                         the fields of a {kind} type without parameters",
                         def.name
                     ),
                     None => format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: it is a generic record \
+                        "`{builtin_name}` cannot decode `{type_name}`: it is a generic {kind} \
                          type, and a decoder builds a value of one type"
                     ),
                 };
@@ -2752,8 +2818,12 @@ impl<'a> Compiler<'a> {
             let Some(found) = self.undecodable_field(ty.id, family, &mut HashSet::new()) else {
                 return Ok(());
             };
+            let (place, has, kind) = match found.in_variant {
+                true => ("variant", "a field of type", "an enum"),
+                false => ("field", "type", "a record"),
+            };
             let owner = if found.nested {
-                format!(" of `{}`, a record type nested in it,", found.record)
+                format!(" of `{}`, {kind} type nested in it,", found.record)
             } else {
                 String::new()
             };
@@ -2766,7 +2836,7 @@ impl<'a> Compiler<'a> {
                 Code::InvalidConstruct,
                 span,
                 format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: field `{}`{owner} has type `{}`, {part}",
+                    "`{builtin_name}` cannot decode `{type_name}`: {place} `{}`{owner} has {has} `{}`, {part}",
                     found.field, found.field_type
                 ),
             )
@@ -2787,12 +2857,14 @@ impl<'a> Compiler<'a> {
             .with_help("decode into a record type"));
         }
         if !crate::typeinfo::builtin_type(ty.id).variants().is_empty() {
+            let why = match family.decodes_enums() {
+                true => "it is a builtin enum type, which has no decoder",
+                false => "it is an enum type, and enums have no decoder",
+            };
             return Err(Diagnostic::error(
                 Code::InvalidConstruct,
                 span,
-                format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
-                ),
+                format!("`{builtin_name}` cannot decode `{type_name}`: {why}"),
             )
             .with_help(record_help));
         }

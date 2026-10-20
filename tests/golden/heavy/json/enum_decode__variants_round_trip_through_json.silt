@@ -1,0 +1,77 @@
+-- An enum the program declares (without type parameters) is decoded from
+-- the object json.stringify writes of a variant: {"variant":"Name"} for
+-- one without fields, {"fields":[...],"variant":"Name"} for one with them.
+-- Each field is decoded as the variant declares it: a record, a list, an
+-- option, another enum, the enum itself. It is decoded at the top, in a
+-- record field, in a List, an Option and a Map, by json.parse,
+-- json.parse_list, json.parse_map and json.decode, and through a
+-- `type a` parameter.
+import json
+import list
+
+type Point { x: Int, y: Int }
+
+type Status {
+  Active,
+  Paused(Int),
+  Moved(String, Option(Int)),
+  At(Point, List(Int)),
+}
+
+type Shape {
+  Dot,
+  Tagged(Status, List(Status)),
+}
+
+type Tree {
+  Leaf(Int),
+  Node(Tree, Tree),
+}
+
+type Job {
+  name: String,
+  status: Status,
+  history: List(Status),
+  next: Option(Status),
+  by_host: Map(String, Status),
+}
+
+fn round_trip(text: String, type a) -> Result(a, json.JsonError) {
+  json.parse(text, a)
+}
+
+fn main() {
+  let values = [Active, Paused(3), Moved("x", None), Moved("y", Some(2)), At(Point { x: 1, y: 2 }, [3])]
+  list.each(values) { v ->
+    let text = json.stringify(v)
+    println(text)
+    println(json.parse(text, Status))
+  }
+  let job = Job {
+    name: "build",
+    status: Paused(1),
+    history: [Active, Paused(2)],
+    next: Some(Active),
+    by_host: #{ "h": Moved("z", Some(1)) },
+  }
+  let text = json.stringify(job)
+  println(text)
+  println(json.parse(text, Job) == Ok(job))
+  let none = Job { name: "idle", status: Active, history: [], next: None, by_host: #{} }
+  println(json.parse(json.stringify(none), Job) == Ok(none))
+  let shape = Tagged(Moved("q", None), [Active, Paused(4)])
+  println(json.parse(json.stringify(shape), Shape))
+  println(json.parse(json.stringify(Dot), Shape))
+  let tree = Node(Leaf(1), Node(Leaf(2), Leaf(3)))
+  println(json.parse(json.stringify(tree), Tree))
+  println(json.parse_list(json.stringify(values), Status))
+  println(json.parse_map(json.stringify(#{ "a": Active, "b": Paused(5) }), Status))
+  match json.parse(json.stringify(Paused(9)), json.Value) {
+    Ok(value) -> println(json.decode(value, Status))
+    Err(e) -> println("unexpected: {e}")
+  }
+  println(round_trip(json.stringify(Moved("t", Some(7))), Status))
+  println(round_trip(text, Job) == Ok(job))
+  -- A variant without fields may say so with an empty list.
+  println(json.parse("""{"variant": "Active", "fields": []}""", Status))
+}

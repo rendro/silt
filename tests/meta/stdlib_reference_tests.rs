@@ -180,6 +180,23 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
                 module.page_file
             );
         }
+        // Enum types, where the family decodes them: an item of the list
+        // and a section of the page.
+        let enums = list
+            .iter()
+            .any(|line| line.contains("non-generic enum types"));
+        assert_eq!(
+            enums,
+            family.decodes_enums(),
+            "{}: its list names enum types",
+            module.page_file
+        );
+        assert_eq!(
+            module.page.contains("\n## Enums\n"),
+            family.decodes_enums(),
+            "{}: its section on enums",
+            module.page_file
+        );
         checked.push(module.name);
     }
     assert_eq!(checked, ["json", "toml"]);

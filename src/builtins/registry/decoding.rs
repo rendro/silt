@@ -106,6 +106,13 @@ impl Family {
         self.leaves().contains(&leaf)
     }
 
+    /// Whether the family decodes a non-generic enum type of the
+    /// program, from the object `json.stringify` writes of a variant: as
+    /// the type argument, as an element and as a field, at any depth.
+    pub fn decodes_enums(self) -> bool {
+        self == Family::Json
+    }
+
     /// The family of what a map, a tuple or a nested record of a field
     /// holds: a column fills those only with a json document, so for
     /// postgres it is json's.
@@ -138,9 +145,13 @@ impl Family {
     /// The field types it decodes, as shown in compile errors.
     pub fn help(self) -> String {
         let leaves: Vec<&str> = self.leaves().iter().map(|leaf| leaf.name()).collect();
+        let named = match self.decodes_enums() {
+            true => "record and enum types",
+            false => "record types",
+        };
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             non-generic record types, and aliases of these",
+             non-generic {named}, and aliases of these",
             leaves.join(", ")
         )
     }
@@ -207,7 +218,10 @@ impl Decoding {
                 let mut types: Vec<String> =
                     BUILTIN_PRIMITIVE_NAMES.iter().map(|t| name(t)).collect();
                 types.extend(json_value);
-                types.push("or a record type".to_string());
+                types.push("a record type".to_string());
+                if let Some(last) = types.last_mut() {
+                    *last = format!("or {last}");
+                }
                 types.join(", ")
             }
             false => match json_value {
@@ -221,7 +235,7 @@ impl Decoding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtins::decode::{self, Error};
+    use crate::builtins::decode::{self, At, Error};
     use crate::builtins::registry::{Row, registry};
     use crate::builtins::typed::Type;
     use crate::typeinfo::{TypeInfo, ty};
@@ -243,11 +257,14 @@ mod tests {
     };
 
     /// A program with the record types `R { f: field }` and `Inner { x:
-    /// leaf }`, and `body`.
+    /// leaf }`, the enum types `E`, `GE(t)` and `EB` (a variant with a
+    /// field of `leaf`), a record `RE` of an `EB`, and `body`.
     fn program(leaf: &str, field: &str, body: &str) -> String {
         format!(
-            "{IMPORTS}type Color {{ Red, Blue }}\ntype Gen(t) {{ v: t }}\n\
-             type Inner {{ x: {leaf} }}\ntype R {{ f: {field} }}\n{body}\n"
+            "{IMPORTS}type Gen(t) {{ v: t }}\ntype Inner {{ x: {leaf} }}\n\
+             type E {{ A, B(Int) }}\ntype GE(t) {{ G(t) }}\n\
+             type EB {{ Raw({leaf}), Plain }}\ntype RE {{ e: EB }}\n\
+             type R {{ f: {field} }}\n{body}\n"
         )
     }
 
@@ -292,6 +309,26 @@ mod tests {
         crate::session::testing::compile_decls_str(source)
     }
 
+    /// The TOML document of the JSON document `json` (which has no
+    /// `null`).
+    fn toml_of(json: &serde_json::Value) -> ::toml::Value {
+        use ::toml::Value as T;
+        use serde_json::Value as J;
+        match json {
+            J::Bool(b) => T::Boolean(*b),
+            J::Number(n) => T::Integer(n.as_i64().expect("an integer")),
+            J::String(s) => T::String(s.clone()),
+            J::Array(items) => T::Array(items.iter().map(toml_of).collect()),
+            J::Object(members) => T::Table(
+                members
+                    .iter()
+                    .map(|(key, value)| (key.clone(), toml_of(value)))
+                    .collect(),
+            ),
+            J::Null => panic!("TOML has no null"),
+        }
+    }
+
     /// The leaves a help text of the compiler names: those it lists
     /// before `List(T)`.
     fn helped(help: &str) -> Vec<&str> {
@@ -329,7 +366,11 @@ mod tests {
             .filter(|row| row.decoding.is_some())
             .collect();
         assert!(rows.len() >= 7, "the decoding rows: {}", rows.len());
-        let mut fields: Vec<(&str, String)> = Vec::new();
+        // Each field type with the leaf `Inner` and `EB` hold, and, for a
+        // type that names an enum, a document of a value of it (see the
+        // known cases below).
+        let mut fields: Vec<(&str, String, Option<String>)> = Vec::new();
+        let raw = r#"{"variant": "Raw", "fields": [0]}"#;
         for leaf in Leaf::ALL {
             let l = written(leaf);
             for field in [
@@ -340,16 +381,32 @@ mod tests {
                 "Inner".to_string(),
                 "Option(List(Inner))".to_string(),
             ] {
-                fields.push((l, field));
+                fields.push((l, field, None));
             }
+            // An enum whose variant has a field of the leaf, at the top,
+            // in a list and in a record.
+            fields.push((l, "EB".to_string(), Some(raw.to_string())));
+            fields.push((l, "List(EB)".to_string(), Some("[RAW]".to_string())));
+            fields.push((l, "RE".to_string(), Some(r#"{"e": RAW}"#.to_string())));
         }
-        for field in ["Set(Int)", "Color", "Map(Int, Int)", "Gen(Int)"] {
-            fields.push(("Int", field.to_string()));
+        for field in ["Set(Int)", "Map(Int, Int)", "Gen(Int)", "GE(Int)"] {
+            fields.push(("Int", field.to_string(), None));
+        }
+        let a = r#"{"variant": "A"}"#;
+        for (field, present) in [
+            ("E", a.to_string()),
+            ("Option(E)", a.to_string()),
+            ("List(E)", format!("[{a}]")),
+            ("Map(String, E)", format!(r#"{{"k": {a}}}"#)),
+            ("(Int, E)", format!("[1, {a}]")),
+        ] {
+            fields.push(("Int", field.to_string(), Some(present)));
         }
         let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
         let rt = &vm.runtime;
         let mut compared = 0;
-        for (inner, field) in &fields {
+        let mut known = 0;
+        for (inner, field, present) in &fields {
             // The types as the run time has them: through `type a`, which
             // the compiler does not check.
             let generic = program(
@@ -368,43 +425,87 @@ mod tests {
                 .find(|info| info.name == "R")
                 .expect("R is described");
             let (_, f) = &r.fields()[0];
+            // The document `{}`, and the one whose `f` is `present`.
+            let absent = serde_json::json!({});
+            let present = present.as_ref().map(|value| {
+                let text = format!(r#"{{"f": {}}}"#, value.replace("RAW", raw));
+                serde_json::from_str::<serde_json::Value>(&text).expect("JSON")
+            });
             for row in &rows {
                 let decoding = row.decoding.expect("a decoder");
                 let family = decoding.family;
                 let name = row.qualified();
-                // Accepted at run time: the type argument is taken, and
-                // the field is decoded or found missing, not refused.
+                // Refused at run time: the type argument is taken, and the
+                // field is refused, not decoded or found missing.
                 let target = decode::target(&name, Type::Named(r)).expect("a record type is taken");
-                let decoded = match family {
-                    Family::Json => decode::document(rt, &target, &serde_json::json!({})),
-                    Family::Toml => {
-                        decode::document(rt, &target, &::toml::Value::Table(Default::default()))
+                let refused = |doc: &serde_json::Value| {
+                    let decoded = match family {
+                        Family::Json => decode::document(rt, &target, doc),
+                        Family::Toml => decode::document(rt, &target, &toml_of(doc)),
+                        // The plan's first step; then a json or jsonb
+                        // column, the one that fills an enum, by json's
+                        // rules.
+                        Family::Postgres => match decode::undecodable(rt, family, "R", "f", f) {
+                            Some(message) => Err(Error::Other(message)),
+                            None => match doc.get("f") {
+                                Some(cell) => decode::value(rt, cell, f, &At::Top),
+                                None => Ok(crate::value::Value::Unit),
+                            },
+                        },
+                    };
+                    match decoded {
+                        Err(Error::Other(message)) if message.starts_with("cannot decode") => {
+                            Some(message)
+                        }
+                        _ => None,
                     }
-                    Family::Postgres => match decode::undecodable(rt, family, "R", "f", f) {
-                        Some(message) => Err(Error::Other(message)),
-                        None => Ok(crate::value::Value::Unit),
-                    },
                 };
-                let run_time = !matches!(
-                    &decoded,
-                    Err(Error::Other(message)) if message.starts_with("cannot decode field")
-                );
                 let direct = program(inner, field, &caller(row, "R"));
                 let compile = compiled(&direct);
-                assert_eq!(
-                    compile.is_ok(),
-                    run_time,
-                    "{name}, a field of {field}: the compiler {} it, the run time {}\n{direct}",
-                    if compile.is_ok() {
-                        "accepts"
-                    } else {
-                        "refuses"
-                    },
-                    match &decoded {
-                        Err(Error::Other(message)) => message.clone(),
-                        _ => "decodes it".to_string(),
+                match (&present, refused(&absent)) {
+                    // A field with no decoder is refused whatever the
+                    // document holds.
+                    (_, Some(_)) | (None, None) => assert_eq!(
+                        compile.is_ok(),
+                        refused(&absent).is_none(),
+                        "{name}, a field of {field}: the compiler {} it, the run time {:?}\n{direct}",
+                        if compile.is_ok() {
+                            "accepts"
+                        } else {
+                            "refuses"
+                        },
+                        refused(&absent),
+                    ),
+                    // Known, listed for the owner: an enum's variants are
+                    // looked at as a variant is decoded, so a field that
+                    // names an enum the family does not decode (toml), or
+                    // one with a variant field no decoder fills (json), is
+                    // refused only where the document holds the value; and
+                    // postgres reads an enum from a json column by json's
+                    // rules where the compiler refuses one.
+                    (Some(present), None) => {
+                        let at_run_time = refused(present);
+                        let postgres_reads_it = family == Family::Postgres
+                            && field.as_str() != "RE"
+                            && at_run_time.is_none();
+                        if !postgres_reads_it {
+                            assert_eq!(
+                                compile.is_ok(),
+                                at_run_time.is_none(),
+                                "{name}, a field of {field} holding {present}: the compiler {} it, \
+                                 the run time {at_run_time:?}\n{direct}",
+                                if compile.is_ok() {
+                                    "accepts"
+                                } else {
+                                    "refuses"
+                                },
+                            );
+                        }
+                        if compile.is_err() {
+                            known += 1;
+                        }
                     }
-                );
+                }
                 let help = family.help();
                 let listed = helped(&help);
                 assert_eq!(
@@ -416,12 +517,19 @@ mod tests {
                         .collect::<Vec<_>>(),
                     "{help}"
                 );
+                assert_eq!(
+                    help.contains("record and enum types"),
+                    family.decodes_enums(),
+                    "{help}"
+                );
                 match compile {
                     Ok(_) => {
                         // Every leaf of an accepted field is one the help names.
                         for leaf in Leaf::ALL {
                             let l = written(leaf);
-                            if field.contains(l) || (field.contains("Inner") && l == *inner) {
+                            let holds_inner =
+                                ["Inner", "EB", "RE"].iter().any(|t| field.contains(t));
+                            if field.contains(l) || (holds_inner && l == *inner) {
                                 assert!(listed.contains(&leaf.name()), "{name}, {field}: {help}");
                             }
                         }
@@ -430,14 +538,10 @@ mod tests {
                         let error = &errors[0];
                         let help_text = error.help.join("\n");
                         if let Some(part) = lacking_part(&error.message)
-                            && Leaf::ALL.iter().any(|leaf| leaf.name() == part)
+                            && let Some(leaf) =
+                                Leaf::ALL.into_iter().find(|leaf| leaf.name() == part)
                         {
-                            match family.decodes(
-                                Leaf::ALL
-                                    .into_iter()
-                                    .find(|leaf| leaf.name() == part)
-                                    .expect("a leaf"),
-                            ) {
+                            match family.decodes(leaf) {
                                 // Decoded in some places only: the help says where.
                                 true => assert!(
                                     help_text.contains(family.bytes_help())
@@ -456,8 +560,19 @@ mod tests {
             }
         }
         assert_eq!(compared, fields.len() * rows.len());
-        // A type argument that is a primitive type or `json.Value`: the
-        // compiler takes it where the run time does.
+        assert!(known > 0, "the known enum cases are met");
+        // A type argument that is a primitive type, `json.Value` or an
+        // enum type: the compiler takes it where the run time does.
+        let generic = program(
+            "Int",
+            "Int",
+            "fn go(type a) -> a {\n  panic(\"\")\n}\nfn main() {\n  let _: E = go(E)\n}",
+        );
+        let program_types = compiled(&generic).expect("a program").types;
+        let e = program_types
+            .iter()
+            .find(|info| info.name == "E")
+            .expect("E is described");
         for row in &rows {
             let name = row.qualified();
             for (written, ty) in [
@@ -467,6 +582,7 @@ mod tests {
                     "json.Value",
                     Type::Named(crate::typeinfo::builtin_type(ty::JSON_VALUE)),
                 ),
+                ("E", Type::Named(e)),
             ] {
                 let direct = program("Int", "Int", &caller(row, written));
                 assert_eq!(

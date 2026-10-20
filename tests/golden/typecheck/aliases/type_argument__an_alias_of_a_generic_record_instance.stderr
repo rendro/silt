@@ -3,4 +3,4 @@ error[compile]: `json.parse` cannot decode `IntBox`: it names `Box(Int)`, an ins
     |
  15 |   match json.parse("""{"v": 3}""", IntBox) {
     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `json.parse` cannot decode `IntBox`: it names `Box(Int)`, an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
