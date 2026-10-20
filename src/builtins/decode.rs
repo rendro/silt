@@ -8,15 +8,18 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-use super::time::{LEAP_SECOND, is_leap_second, leap_datetime_message};
+use super::time::{
+    LEAP_SECOND, is_leap_second, leap_datetime_message, make_date, make_datetime, make_time,
+};
+use super::typed::Type;
 use crate::defs::TypeId;
-use crate::typeinfo::{FieldType, Shape, TypeInfo};
+use crate::typeinfo::{BuiltinVariant, FieldType, Shape, TypeInfo, bv, ty};
+use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 /// The message of the error a decoder returns for a field whose declared
 /// type has no decoder. `field` is the field of the record type `record`
-/// whose type is, or contains, `declared`. Shared by the JSON and TOML
-/// decoders.
+/// whose type is, or contains, `declared`.
 pub(crate) fn unsupported_field_type_message(
     record: &str,
     field: &str,
@@ -31,7 +34,6 @@ pub(crate) fn unsupported_field_type_message(
 /// there ends with (`inner.a`, `xs[1]`, `[2]`, `m["a b"]`). A key is
 /// written bare when it is made of letters, digits, `_` and `-`, else as
 /// a JSON string in brackets; the element of an array by its index.
-/// Shared by the JSON and TOML decoders.
 #[derive(Clone, Copy)]
 pub(crate) enum At<'a> {
     /// The document itself.
@@ -101,27 +103,27 @@ fn signed_year(s: &str) -> std::borrow::Cow<'_, str> {
 
 /// The date that the text `s` of a document writes: `YYYY-MM-DD`, the
 /// year with more digits or a sign where it has them, as silt shows it
-/// (`12026-01-01`, `-001-01-01`). Shared by the JSON and TOML decoders.
-pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
+/// (`12026-01-01`, `-001-01-01`).
+fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
     NaiveDate::parse_from_str(&signed_year(s), "%Y-%m-%d")
 }
 
 /// The message of a decoder's error for `s`, the string of a date that
 /// is none, `why`.
-pub(crate) fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
+fn invalid_date_message(s: &str, why: chrono::ParseError) -> std::string::String {
     format!("invalid date '{s}' (expected YYYY-MM-DD): {why}")
 }
 
 /// The message of a decoder's error for `s`, the string of a time of
 /// day that is none, `why`.
-pub(crate) fn invalid_time_message(s: &str, why: &str) -> std::string::String {
+fn invalid_time_message(s: &str, why: &str) -> std::string::String {
     format!("invalid time '{s}' (expected HH:MM:SS): {why}")
 }
 
 /// The time of day that the text `s` of a document writes: `HH:MM:SS`,
 /// with a fraction of a second up to nanoseconds (`13:14:15.25`), or
 /// `HH:MM`. Else why it is none: a second 60 is a leap second, which is
-/// refused. Shared by the JSON and TOML decoders.
+/// refused.
 pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, std::string::String> {
     let t = NaiveTime::parse_from_str(s, "%H:%M:%S%.f")
         .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
@@ -137,7 +139,7 @@ pub(crate) fn parse_time(s: &str) -> Result<NaiveTime, std::string::String> {
 /// or without an offset; seconds with a fraction up to nanoseconds, or
 /// no seconds (`2024-03-09T07:30`); the year as in [`parse_date`]. Else
 /// the message of the decoder's error: a second 60 is a leap second,
-/// which is refused. Shared by the JSON and TOML decoders.
+/// which is refused.
 pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::String> {
     let signed = signed_year(s);
     let read = &*signed;
@@ -168,12 +170,12 @@ pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::Stri
 /// the builtin on whose behalf the type is looked up (`json.parse`,
 /// `toml.parse_list`, ...); it starts the error message. A builtin
 /// record type (`Date`) has no decoder.
-pub(crate) fn decodable_record(
+pub(crate) fn decodable_record<'t>(
     caller: &str,
-    ty: &Arc<TypeInfo>,
-) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
+    ty: &'t TypeInfo,
+) -> Result<&'t [(std::string::String, FieldType)], VmError> {
     match &ty.shape {
-        Shape::Record(fields) if !ty.is_builtin() => Ok(fields.clone()),
+        Shape::Record(fields) if !ty.is_builtin() => Ok(fields),
         _ => Err(VmError::new(format!(
             "{caller}: unknown record type '{}'",
             ty.name
@@ -192,20 +194,404 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
 /// The type a field of `field_type` is decoded as by a decoder of a
 /// format with no bytes (JSON, TOML): a type that holds `Bytes` has no
 /// decoder, whatever the document holds (an empty list too).
-pub(crate) fn without_bytes(rt: &Runtime, field_type: &FieldType) -> Option<FieldType> {
+fn without_bytes(rt: &Runtime, field_type: &FieldType) -> Option<FieldType> {
     field_type
         .holds_bytes()
         .then(|| FieldType::Unsupported(shown(rt, field_type)))
 }
 
 /// The record type `id` a record field names, from the program's types.
-pub(crate) fn field_record_type(
-    rt: &Runtime,
-    caller: &str,
-    id: TypeId,
-) -> Result<Arc<TypeInfo>, VmError> {
+fn field_record_type(rt: &Runtime, caller: &str, id: TypeId) -> Result<Arc<TypeInfo>, VmError> {
     rt.type_info(id)
         .ok_or_else(|| VmError::new(format!("{caller}: unknown record type")))
+}
+
+// ── The document ────────────────────────────────────────────────────
+
+/// A document a decoder reads: the values its parser makes of a text
+/// (`serde_json::Value`, `toml::Value`), each one of a few kinds, and the
+/// rules of its format.
+pub(crate) trait Document: Sized + 'static {
+    /// The table (JSON's object) of the document.
+    type Table;
+    /// The rules of the format.
+    const RULES: &'static Rules;
+    /// What this value of the document is.
+    fn node(&self) -> Node<'_, Self>;
+    /// What the format calls the kind of this value in a type mismatch
+    /// (`number`, `integer`, `object`, `table`).
+    fn kind(&self) -> &'static str;
+    /// The value of `key` in `table`.
+    fn get<'d>(table: &'d Self::Table, key: &str) -> Option<&'d Self>;
+    /// The keys and values of `table`, in its order.
+    fn entries(table: &Self::Table) -> impl ExactSizeIterator<Item = (&str, &Self)>;
+}
+
+/// A value of a document `D`.
+pub(crate) enum Node<'d, D: Document> {
+    Null,
+    Bool(bool),
+    /// A number held as an `Int`: TOML's integer, or a JSON number that is
+    /// a whole number in `Int`'s range.
+    Int(i64),
+    /// Any other number.
+    Float(f64),
+    String(&'d str),
+    /// A date or time literal (TOML's), as its text.
+    Datetime(std::string::String),
+    Array(&'d [D]),
+    Table(&'d D::Table),
+}
+
+/// How a format's documents decode, where formats differ.
+pub(crate) struct Rules {
+    /// The builtin a record type in a document is looked up for: it
+    /// starts the message of a type that is none.
+    pub(crate) caller: &'static str,
+    /// What a record and a map expect, the kind of a table.
+    pub(crate) table: &'static str,
+    /// What a `Date`, a `Time` and a `DateTime` expect.
+    pub(crate) dates: [&'static str; 3],
+    /// How a number that is no `Int` is told from one.
+    pub(crate) numbers: Numbers,
+    /// Whether a `json.Value` is decoded from the document.
+    pub(crate) json_value: bool,
+    /// The variants `TypeMismatch`, `MissingField` and `Other` of the
+    /// format's error (`JsonError`, `TomlError`).
+    pub(crate) errors: [BuiltinVariant; 3],
+}
+
+/// How a number that is no `Int` is told from one.
+#[derive(PartialEq, Eq)]
+pub(crate) enum Numbers {
+    /// By its value (JSON has one kind of number): a number held as no
+    /// `Int` is one with a fraction or out of `Int`'s range.
+    Values,
+    /// By its kind (TOML says which kind a number is): a float is no
+    /// `Int`, whatever its value.
+    Kinds,
+}
+
+/// `i64::MAX` is not exactly an `f64` (it rounds up to 2^63): the
+/// bound of `Int`'s range that an `f64` can hold, exclusive.
+pub(crate) const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
+
+// ── The decoder ─────────────────────────────────────────────────────
+
+/// Why a document is no value of the type it is decoded into: one of the
+/// format's error variants, made of it by [`Error::variant`].
+#[derive(Debug)]
+pub(crate) enum Error {
+    /// `TypeMismatch(expected, actual)`: `actual` ends with the path.
+    TypeMismatch(&'static str, std::string::String),
+    /// `MissingField(path)`: the missing field's own path.
+    MissingField(std::string::String),
+    /// `Other(message)`.
+    Other(std::string::String),
+    /// A value was present for a type no decoder exists for (the type as
+    /// written): [`record`] turns it into an `Other` that names the field
+    /// whose type it is.
+    Unsupported(std::string::String),
+}
+
+impl From<VmError> for Error {
+    fn from(e: VmError) -> Self {
+        Error::Other(e.message)
+    }
+}
+
+impl Error {
+    /// The type mismatch of a value `at` a path that is `actual`.
+    pub(crate) fn mismatch(expected: &'static str, actual: &str, at: &At) -> Error {
+        Error::TypeMismatch(expected, format!("{actual}{}", at.suffix()))
+    }
+
+    /// The `Other` of a value `at` a path: `message` ends with the path.
+    fn other(message: impl std::fmt::Display, at: &At) -> Error {
+        Error::Other(format!("{message}{}", at.suffix()))
+    }
+
+    /// The variant of the error of the format of `rules`.
+    pub(crate) fn variant(self, rules: &Rules) -> Value {
+        let [mismatch, missing, other] = rules.errors;
+        let string = |s: std::string::String| Value::String(s.into());
+        match self {
+            Error::TypeMismatch(expected, actual) => Value::variant(
+                mismatch,
+                vec![Value::String(expected.into()), string(actual)],
+            ),
+            Error::MissingField(path) => Value::variant(missing, vec![string(path)]),
+            Error::Other(message) => Value::variant(other, vec![string(message)]),
+            // (Only a record's field holds such a type, and `record`
+            // names it: this is the fallback.)
+            Error::Unsupported(declared) => Value::variant(
+                other,
+                vec![string(format!(
+                    "a value of type {declared} cannot be decoded"
+                ))],
+            ),
+        }
+    }
+}
+
+/// `Ok` of the value `decoded`, or `Err` of its error in the format of
+/// `rules`.
+pub(crate) fn result(rules: &Rules, decoded: Result<Value, Error>) -> Value {
+    match decoded {
+        Ok(value) => Value::variant(bv::OK, vec![value]),
+        Err(e) => Value::variant(bv::ERR, vec![e.variant(rules)]),
+    }
+}
+
+/// The type of the elements a `parse_list` and of the values a
+/// `parse_map` (`caller`) of the format of `rules` decode, which their
+/// type argument `ty` names: `Int`, `Float`, `String`, `Bool`, a record
+/// type, and `json.Value` where the format decodes one. Any other type
+/// is an error.
+pub(crate) fn element_type(rules: &Rules, caller: &str, ty: Type) -> Result<FieldType, VmError> {
+    Ok(match ty {
+        Type::Primitive(field_type) => field_type,
+        Type::Named(ty) if rules.json_value && ty.id == ty::JSON_VALUE => FieldType::JsonValue,
+        Type::Named(ty) => {
+            decodable_record(caller, ty)?;
+            FieldType::Record(ty.id)
+        }
+    })
+}
+
+/// The record of type `ty` (of the `fields`) that `doc`, which is `at` a
+/// path, is.
+pub(crate) fn record<D: Document>(
+    rt: &Runtime,
+    ty: &Arc<TypeInfo>,
+    fields: &[(std::string::String, FieldType)],
+    doc: &D,
+    at: &At,
+) -> Result<Value, Error> {
+    let Node::Table(table) = doc.node() else {
+        return Err(Error::mismatch(D::RULES.table, doc.kind(), at));
+    };
+    // (In the order the type declares them: the record's own.)
+    let mut values = Vec::with_capacity(fields.len());
+    for (name, field) in fields {
+        let unsupported = without_bytes(rt, field);
+        let field = unsupported.as_ref().unwrap_or(field);
+        let at = at.key(name);
+        values.push(match D::get(table, name) {
+            Some(item) => value(rt, item, field, &at).map_err(|e| match e {
+                Error::Unsupported(declared) => {
+                    Error::Other(unsupported_field_type_message(&ty.name, name, &declared))
+                }
+                e => e,
+            })?,
+            None => match field {
+                FieldType::Option(_) => Value::variant(bv::NONE, Vec::new()),
+                _ => return Err(Error::MissingField(at.to_string())),
+            },
+        });
+    }
+    Ok(Value::record(ty.clone(), values))
+}
+
+/// The list of values of the field type `element` that `doc`, an array
+/// `at` a path, holds.
+pub(crate) fn list<D: Document>(
+    rt: &Runtime,
+    element: &FieldType,
+    doc: &D,
+    at: &At,
+) -> Result<Value, Error> {
+    let Node::Array(items) = doc.node() else {
+        return Err(Error::mismatch("array", doc.kind(), at));
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        values.push(value(rt, item, element, &at.index(index))?);
+    }
+    Ok(Value::list(values))
+}
+
+/// The map of values of the field type `element` that `doc`, a table
+/// `at` a path, holds.
+pub(crate) fn map<D: Document>(
+    rt: &Runtime,
+    element: &FieldType,
+    doc: &D,
+    at: &At,
+) -> Result<Value, Error> {
+    let Node::Table(table) = doc.node() else {
+        return Err(Error::mismatch(D::RULES.table, doc.kind(), at));
+    };
+    let entries = D::entries(table);
+    let mut map = Vec::with_capacity(entries.len());
+    for (key, item) in entries {
+        map.push((
+            Value::String(key.into()),
+            value(rt, item, element, &at.key(key))?,
+        ));
+    }
+    Ok(Value::map(map))
+}
+
+/// The value of the field type `expected` that `doc`, which is `at` a
+/// path, is.
+pub(crate) fn value<D: Document>(
+    rt: &Runtime,
+    doc: &D,
+    expected: &FieldType,
+    at: &At,
+) -> Result<Value, Error> {
+    let rules = D::RULES;
+    let mismatch = |expected: &'static str| Error::mismatch(expected, doc.kind(), at);
+    let node = doc.node();
+    match expected {
+        // (A datetime literal is no string, as a float is no `Int`.)
+        FieldType::String => match node {
+            Node::String(s) => Ok(Value::String(s.into())),
+            _ => Err(mismatch("String")),
+        },
+        // A number is an `Int` when it is held as one; else, where the
+        // format tells numbers apart by their value, one with a fraction
+        // or out of range is no `Int`, and nothing is cut off or
+        // saturated.
+        FieldType::Int => match node {
+            Node::Int(n) => Ok(Value::Int(n)),
+            Node::Float(f) if rules.numbers == Numbers::Values => {
+                let what = match f.abs() < I64_MAX_PLUS_ONE {
+                    true => "a number with a fraction",
+                    false => "a number out of Int's range",
+                };
+                Err(Error::mismatch("Int", what, at))
+            }
+            _ => Err(mismatch("Int")),
+        },
+        // (An integer is a `Float` too. A `Float` is finite, so TOML's
+        // `nan` and `inf` do not decode.)
+        FieldType::Float => match node {
+            Node::Int(n) => Ok(Value::Float(Float::from(n))),
+            Node::Float(f) => match Float::new(f) {
+                Some(f) => Ok(Value::Float(f)),
+                None => Err(Error::mismatch("Float", "a non-finite float", at)),
+            },
+            _ => Err(mismatch("Float")),
+        },
+        FieldType::Bool => match node {
+            Node::Bool(b) => Ok(Value::Bool(b)),
+            _ => Err(mismatch("Bool")),
+        },
+        FieldType::List(inner) => match node {
+            Node::Array(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for (index, item) in items.iter().enumerate() {
+                    values.push(value(rt, item, inner, &at.index(index))?);
+                }
+                Ok(Value::list(values))
+            }
+            _ => Err(mismatch("List")),
+        },
+        // (TOML has no null: a key it leaves out is a `None`, which
+        // `record` decodes.)
+        FieldType::Option(inner) => match node {
+            Node::Null => Ok(Value::variant(bv::NONE, Vec::new())),
+            _ => Ok(Value::variant(bv::SOME, vec![value(rt, doc, inner, at)?])),
+        },
+        FieldType::Map(inner) => match node {
+            Node::Table(table) => {
+                let entries = D::entries(table);
+                let mut map = Vec::with_capacity(entries.len());
+                for (key, item) in entries {
+                    let item = value(rt, item, inner, &at.key(key))?;
+                    map.push((Value::String(key.into()), item));
+                }
+                Ok(Value::map(map))
+            }
+            _ => Err(mismatch("Map")),
+        },
+        FieldType::Tuple(elems) => match node {
+            Node::Array(items) if items.len() == elems.len() => {
+                let mut values = Vec::with_capacity(elems.len());
+                for (index, (item, elem)) in items.iter().zip(elems).enumerate() {
+                    values.push(value(rt, item, elem, &at.index(index))?);
+                }
+                Ok(Value::tuple(values))
+            }
+            Node::Array(items) => Err(Error::other(
+                format_args!(
+                    "expected an array of {} elements for a tuple, got {}",
+                    elems.len(),
+                    items.len()
+                ),
+                at,
+            )),
+            _ => Err(mismatch("Tuple")),
+        },
+        FieldType::Unsupported(declared) => Err(Error::Unsupported(declared.clone())),
+        FieldType::JsonValue if rules.json_value => Ok(json_value(doc)),
+        FieldType::JsonValue => Err(Error::Unsupported("json.Value".into())),
+        FieldType::Bytes => Err(Error::Unsupported("Bytes".into())),
+        // A date and a time are a string of their text, or a literal of
+        // the format.
+        FieldType::Date => match node {
+            Node::String(s) => parse_date(s)
+                .map(make_date)
+                .map_err(|e| Error::other(invalid_date_message(s, e), at)),
+            Node::Datetime(s) => parse_date(&s)
+                .map(make_date)
+                .map_err(|e| Error::other(format_args!("invalid date '{s}': {e}"), at)),
+            _ => Err(mismatch(rules.dates[0])),
+        },
+        FieldType::Time => match node {
+            Node::String(s) => parse_time(s)
+                .map(make_time)
+                .map_err(|e| Error::other(invalid_time_message(s, &e), at)),
+            Node::Datetime(s) => parse_time(&s)
+                .map(make_time)
+                .map_err(|e| Error::other(format_args!("invalid time '{s}': {e}"), at)),
+            _ => Err(mismatch(rules.dates[1])),
+        },
+        FieldType::DateTime => {
+            let text = match &node {
+                Node::String(s) => *s,
+                Node::Datetime(s) => s,
+                _ => return Err(mismatch(rules.dates[2])),
+            };
+            parse_datetime(text)
+                .map(make_datetime)
+                .map_err(|e| Error::other(e, at))
+        }
+        FieldType::Record(id) => {
+            let ty = field_record_type(rt, rules.caller, *id)?;
+            record(rt, &ty, decodable_record(rules.caller, &ty)?, doc, at)
+        }
+    }
+}
+
+/// The `json.Value` that holds `doc`: a number an `Int` when it is held
+/// as one, as for an `Int` field, and a `Float` otherwise.
+pub(crate) fn json_value<D: Document>(doc: &D) -> Value {
+    match doc.node() {
+        Node::Null => Value::variant(bv::JSON_NULL, Vec::new()),
+        Node::Bool(b) => Value::variant(bv::JSON_BOOL, vec![Value::Bool(b)]),
+        Node::Int(n) => Value::variant(bv::JSON_INT, vec![Value::Int(n)]),
+        Node::Float(f) => match Float::new(f) {
+            Some(f) => Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)]),
+            // (A document has no NaN.)
+            None => Value::variant(bv::JSON_NULL, Vec::new()),
+        },
+        Node::String(s) => Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]),
+        // (A format with such literals decodes no `json.Value`.)
+        Node::Datetime(s) => Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]),
+        Node::Array(items) => Value::variant(
+            bv::JSON_ARRAY,
+            vec![Value::list(items.iter().map(json_value).collect())],
+        ),
+        Node::Table(table) => Value::variant(
+            bv::JSON_OBJECT,
+            vec![Value::map(D::entries(table).map(|(key, item)| {
+                (Value::String(key.into()), json_value(item))
+            }))],
+        ),
+    }
 }
 
 #[cfg(test)]

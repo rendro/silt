@@ -12,7 +12,8 @@
 //! before any row is read, however the values would have turned out (an
 //! `Int` field is not filled from a `float8` column even where it holds
 //! `2.0`). A column no field names is not read. A `json` or `jsonb`
-//! column is decoded by json's own decoder into the field's type.
+//! column is decoded into the field's type by the typed decoder, through
+//! json's rules.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -762,7 +763,7 @@ fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value,
         ),
         Col::Json | Col::Jsonb => {
             let in_document = |_| Mismatch::new(rt, &field, of_a_document(c, MALFORMED.into()));
-            json::json_value(&document(col, raw).map_err(in_document)?)
+            decode::json_value(&document(col, raw).map_err(in_document)?)
         }
         Col::Void => Value::variant(bv::JSON_NULL, Vec::new()),
         Col::Array(element) => {
@@ -1056,7 +1057,7 @@ mod tests {
                     false => Vec::new(),
                 };
                 raw.extend_from_slice(text.as_bytes());
-                json::json_value(&document(&col, &raw).expect("a document")).to_string()
+                decode::json_value(&document(&col, &raw).expect("a document")).to_string()
             };
             assert_eq!(cell("9007199254740993.0"), "Int(9007199254740993)");
             assert_eq!(
