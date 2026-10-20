@@ -242,4 +242,5 @@ cases!(
     a_statement_that_never_got_the_connection_gives_up,
     a_statement_behind_its_own_unread_stream_fails,
     a_cursor_ends_at_a_batch_that_fails,
+    a_statement_right_after_the_server_ends_its_sessions_runs,
 );

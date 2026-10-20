@@ -192,9 +192,12 @@ A `connect_timeout=N` in the connection string (whole seconds, more than
 sets that time instead; `connect_timeout=0` or less is `Connect(msg)`. The pool opens
 its other connections when it needs them, each bounded the same way: an
 attempt that gets no answer in that time is given up, and nothing of it
-is left behind. A connection that has been idle for 10 minutes, or open
-for 30, is closed while it is idle, and opened again only when a
-statement needs it. A statement that finds no free connection in the
+is left behind. Each statement on the pool checks the connection it
+takes with a round trip to the server (an empty query), so that a
+connection whose session the server has ended is not used: it is
+closed, and another is opened. A connection that has been idle for 10
+minutes, or open for 30, is closed while it is idle, and opened again
+only when a statement needs it. A statement that finds no free connection in the
 pool, which has opened as many as `max_pool_size` allows, waits 30
 seconds for one, and is then `Timeout`.
 

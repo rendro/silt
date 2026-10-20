@@ -268,11 +268,6 @@ impl Conn {
     }
 }
 
-/// How often `Manager::is_valid` lets the runtime of a connection turn:
-/// the first turn looks at the socket, which wakes the connection's
-/// protocol task, and the next one runs it.
-const SETTLE_TURNS: usize = 2;
-
 struct Manager {
     config: Config,
     tls: Tls,
@@ -295,22 +290,13 @@ impl r2d2::ManageConnection for Manager {
         }
     }
 
-    /// Whether a connection taken from the pool is still open, found
-    /// without a round trip: the connection is driven for a moment, and
-    /// reads what the server sent while it was idle (the error of a
-    /// terminated session, the end of the socket), on which it ends.
+    /// Whether a connection taken from the pool is still open: a round
+    /// trip, which finds a session the server has ended, also one whose
+    /// end is still on its way to the client.
     fn is_valid(&self, conn: &mut Conn) -> Result<(), ConnectFailure> {
-        conn.wait(async {
-            for _ in 0..SETTLE_TURNS {
-                tokio::task::yield_now().await;
-            }
-        });
-        match conn.client.is_closed() {
-            true => Err(ConnectFailure::Broke(
-                "postgres: the server closed the connection".into(),
-            )),
-            false => Ok(()),
-        }
+        conn.wait(conn.client.simple_query(""))
+            .map(|_| ())
+            .map_err(ConnectFailure::Failed)
     }
 
     fn has_broken(&self, conn: &mut Conn) -> bool {
@@ -3263,11 +3249,11 @@ mod tests {
         }
     }
 
-    /// A pool opens its first connection only, and takes a connection
-    /// without a round trip: two statements one after the other run on
-    /// that connection, and the server got no query to check it with.
+    /// A pool opens its first connection only: two statements one after
+    /// the other run on that connection, which is checked with one
+    /// round trip each time it is taken.
     #[test]
-    fn a_pool_takes_its_connection_without_asking_the_server() {
+    fn a_pool_opens_its_first_connection_only() {
         use std::sync::atomic::Ordering;
         let server = Counting::start();
         let config: Config = format!("postgres://u@127.0.0.1:{}/db?sslmode=disable", server.port)
@@ -3294,7 +3280,7 @@ mod tests {
         // (Time for connections the pool would open at once.)
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(server.taken.load(Ordering::SeqCst), 1, "connections");
-        assert_eq!(server.queries.load(Ordering::SeqCst), 0, "queries");
+        assert_eq!(server.queries.load(Ordering::SeqCst), 2, "queries");
     }
 
     /// What a client did with a server without TLS, which answers a

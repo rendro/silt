@@ -2,8 +2,8 @@
 -- connection is idle in the pool (here a second pool of the program
 -- terminates it, 20 times over). The next statement on the pool does
 -- not get that connection, whose end it would answer with an error: the
--- pool finds it closed when it takes it, from what the server sent
--- (without asking the server anything), and opens another.
+-- pool checks the connection it takes with a round trip, finds it
+-- closed, and opens another.
 import env
 import list
 import postgres
@@ -47,8 +47,6 @@ fn round(db: postgres.PgPool, observer: postgres.PgPool) -> Result(String, postg
   }
   let _ = postgres.execute(observer, "SELECT pg_terminate_backend($1::int4)", (pid,))?
   wait_gone(observer, pid)?
-  -- (The session's end reaches the client a moment later.)
-  time.sleep(time.ms(100))
   match postgres.query(db, "SELECT pg_backend_pid()::int8 AS pid", (), Pid) {
     Ok([row]) when row.pid != pid -> Ok("a new connection")
     Ok(_) -> Ok("the same connection")
