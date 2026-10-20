@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: undeclared type parameter 'a' in alias target
--- stderr-contains: type AnyList(a)
+-- stderr-contains: type variable 'a' is not a parameter of 'AnyList'
+-- stderr-contains: `type AnyList(a)`
 type AnyList = List(a)
 fn main() {
     let xs: AnyList = [1, 2, 3]

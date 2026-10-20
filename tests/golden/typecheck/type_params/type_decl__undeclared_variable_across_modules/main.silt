@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- The error is at the declaration, whatever module uses the type
+-- first: no module that uses it is blamed.
+import aa
+import bb
+
+fn main() {
+  println(aa.make())
+  println(bb.read(aa.make()))
+}

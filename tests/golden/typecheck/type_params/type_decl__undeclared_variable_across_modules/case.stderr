@@ -1,0 +1,6 @@
+error[type]: type variable 'a' is not a parameter of 'Maybe'
+ --> shape.silt:1:23
+   |
+ 1 | pub type Maybe { Some(a), None }
+   |                       ^ type variable 'a' is not a parameter of 'Maybe'
+  = help: declare it after the type's name: `type Maybe(a)`

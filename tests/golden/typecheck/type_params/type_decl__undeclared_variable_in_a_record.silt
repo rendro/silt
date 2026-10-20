@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A record's field type names a variable the record does not declare;
+-- the help lists the parameters the record would have.
+type Pair(a) {
+  left: a,
+  right: b,
+}
+
+fn main() {
+  println(Pair { left: 1, right: "x" }.left)
+}

@@ -1577,17 +1577,34 @@ impl<'src> Parser<'src> {
         let (name, name_span) = self.expect_ident()?;
 
         // Optional type parameters: type Result(a, e) { ... } or type Pair(a) = (a, a)
-        let params = if self.peek() == &Token::LParen {
+        let mut params: Vec<Symbol> = Vec::new();
+        if self.peek() == &Token::LParen {
             let open = self.advance().span;
-            self.comma_list(
+            let written = self.comma_list(
                 "type parameter list",
                 open,
                 ListEnd::Close(&Token::RParen),
-                |p| Ok(p.expect_ident()?.0),
-            )?
-        } else {
-            Vec::new()
-        };
+                Self::expect_ident,
+            )?;
+            for (param, param_span) in written {
+                let text = intern::resolve(param);
+                if !text.starts_with(char::is_lowercase) {
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        param_span,
+                        format!("type parameter '{text}' must be a lowercase type variable"),
+                    ));
+                }
+                if params.contains(&param) {
+                    return Err(Diagnostic::error(
+                        Code::InvalidDeclaration,
+                        param_span,
+                        format!("duplicate type variable '{text}' in type declaration"),
+                    ));
+                }
+                params.push(param);
+            }
+        }
 
         // Phase D: distinguish `type Foo = <type>` (alias) from
         // `type Foo { ... }` (record/enum). The lookahead is exact —

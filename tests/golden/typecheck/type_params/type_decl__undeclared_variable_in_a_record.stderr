@@ -1,0 +1,6 @@
+error[type]: type variable 'b' is not a parameter of 'Pair'
+ --> type_decl__undeclared_variable_in_a_record.silt:7:10
+   |
+ 7 |   right: b,
+   |          ^ type variable 'b' is not a parameter of 'Pair'
+  = help: declare it after the type's name: `type Pair(a, b)`
