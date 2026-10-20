@@ -3,9 +3,11 @@
 -- exit: 1
 -- stderr-contains: `postgres.cursor` cannot decode `Tagged`: field `tags` has type `Set(String)`, which has no decoder
 -- stderr-contains: Bool, Bytes, Date, Time, DateTime, json.Value
+-- stderr-not-contains: Bytes only as a field
 -- A field of a type that no column fills is an error where the type is
 -- given to the decoder, as it is for `json.parse`; the help lists the
--- field types postgres decodes.
+-- field types postgres decodes (where a Bytes may be, it says only for
+-- a field that holds Bytes).
 import postgres
 
 type Tagged { id: Int, tags: Set(String) }

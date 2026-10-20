@@ -301,7 +301,9 @@ worker waits for room in the channel (nobody reads it), a statement of
 the transaction does not wait, which would be for ever where the task
 that would read the stream is the one that waits for the statement:
 it is `Err(Other("postgres: a stream of this transaction is still
-open; read or close it first"))` at once. A stream on a `PgTx` whose
+open; read or close it first"))` at once. So is a statement that comes
+while a reader slower than the stream (another task, say) leaves the
+channel full: read the stream to its end, or close it, first. A stream on a `PgTx` whose
 reader is gone (cancelled, say) without closing the channel therefore
 holds the connection until the transaction ends or the program does.
 
@@ -329,10 +331,11 @@ statement waits the pool's 30 seconds and is `Timeout`).
 
 A channel name is used as it is written: its case is kept (`"Orders"`
 and `"orders"` are two channels), and it may be a keyword or hold any
-character. Both functions take a name of 1 to 63 bytes, the most
-PostgreSQL keeps, and refuse an empty or a longer one before anything
-is sent: `Err(Other("postgres.listen: a channel name cannot be
-empty"))`.
+character but NUL. Both functions take a name of 1 to 63 bytes, the
+most PostgreSQL keeps, without a NUL, and refuse any other before
+anything is sent: `Err(Other("postgres.listen: a channel name cannot be
+empty"))`, `"... is longer than 63 bytes, the longest PostgreSQL
+keeps"`, `"... a channel name cannot hold a NUL character"`.
 
 ## Example
 

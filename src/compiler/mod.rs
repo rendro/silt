@@ -122,9 +122,20 @@ impl Decoder {
             Decoder::Postgres => {
                 "decodable field types are Int, Float, String, \
                  Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), \
-                 tuples, non-generic record types, and aliases of these; Bytes only as a field, \
-                 in an Option or in a List (a bytea column), not in a Map, a tuple or a nested record"
+                 tuples, non-generic record types, and aliases of these"
             }
+        }
+    }
+
+    /// What the help adds where the part that has no decoder is
+    /// `Bytes`, which postgres decodes in some places only.
+    fn bytes_help(self) -> &'static str {
+        match self {
+            Decoder::Postgres => {
+                "; Bytes only as a field, in an Option or in a List (a bytea column), \
+                 not in a Map, a tuple or a nested record"
+            }
+            _ => "",
         }
     }
 
@@ -2849,7 +2860,10 @@ impl<'a> Compiler<'a> {
                     found.field, found.field_type
                 ),
             )
-            .with_help(decodable_types_help));
+            .with_help(match found.part.as_str() {
+                "Bytes" => format!("{decodable_types_help}{}", decoder.bytes_help()),
+                _ => decodable_types_help.to_string(),
+            }));
         }
         if ty.id == crate::typeinfo::ty::JSON_VALUE {
             if decoder != Decoder::Toml {

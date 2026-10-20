@@ -353,15 +353,16 @@ impl Drop for PinnedConn {
     /// A broken connection is closed, not given back
     /// (`Manager::has_broken`). The pool keeps no idle connection in
     /// reserve, so it would not open one in its place, and a statement
-    /// that waits for a connection would wait its 30 seconds: one is
-    /// opened for it, as for a checkout that finds no idle one.
+    /// that waits for a connection would wait its 30 seconds: where the
+    /// pool has no idle connection, one is opened for it, as for a
+    /// checkout that finds none. (Where it has one, nobody waits.)
     fn drop(&mut self) {
         let Some(conn) = self.conn.take() else {
             return;
         };
         let broken = conn.is_broken();
         drop(conn);
-        if broken {
+        if broken && self.pool.state().idle_connections == 0 {
             drop(self.pool.get_timeout(Duration::ZERO));
         }
     }
@@ -2175,6 +2176,11 @@ fn refused_channel_name(caller: &str, name: &str) -> Option<Value> {
     if name.is_empty() {
         return Some(other_error(format!(
             "{caller}: a channel name cannot be empty"
+        )));
+    }
+    if name.contains('\0') {
+        return Some(other_error(format!(
+            "{caller}: a channel name cannot hold a NUL character"
         )));
     }
     (name.len() > CHANNEL_NAME_MAX).then(|| {

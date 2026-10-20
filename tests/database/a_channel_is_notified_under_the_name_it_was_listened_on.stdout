@@ -9,3 +9,5 @@ postgres.listen: channel name "éééééééééééééééééééééééé�
 postgres.notify: channel name "éééééééééééééééééééééééééééééééé" is longer than 63 bytes, the longest PostgreSQL keeps
 postgres.listen: a channel name cannot be empty
 postgres.notify: a channel name cannot be empty
+postgres.listen: a channel name cannot hold a NUL character
+postgres.notify: a channel name cannot hold a NUL character

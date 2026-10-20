@@ -1,9 +1,9 @@
 -- A channel name `postgres.listen` takes is notified under the same
 -- spelling: the name keeps its case, and may be a keyword or hold a
 -- space or a quote. `postgres.listen` and `postgres.notify` refuse the
--- same names before anything is sent: an empty one, and one longer
--- than the 63 bytes PostgreSQL keeps (it would cut it in LISTEN and
--- refuse it in a NOTIFY).
+-- same names before anything is sent: an empty one, one longer than
+-- the 63 bytes PostgreSQL keeps (it would cut it in LISTEN and refuse
+-- it in a NOTIFY), and one that holds a NUL.
 --
 -- A notification that never came would end the receive at its
 -- deadline, which the case would print.
@@ -70,6 +70,10 @@ fn main() {
       -- 32 characters, 64 bytes.
       refused(db, string.repeat("é", 32))
       refused(db, "")
+      match string.from_char_code(0) {
+        Some(nul) -> refused(db, "silt{nul}case")
+        None -> println("no NUL")
+      }
       postgres.close(db)
     }
     Err(e) -> println("connect: {e.message()}")
