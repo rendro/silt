@@ -44,14 +44,13 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveTime};
 
-use crate::typeinfo::{TypeInfo, bv};
+use super::registry::decoding::Family;
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
 use super::data::{self, Data, Format};
-use super::decode::{
-    self, At, Document, Node, Numbers, Rules, decodable_record, element_type, shown,
-};
+use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, shown};
 use super::typed::{Type, builtins};
 
 // ── TomlError helpers ────────────────────────────────────────────────
@@ -244,8 +243,7 @@ const RULES: Rules = Rules {
     table: "table",
     dates: ["date", "time", "datetime"],
     numbers: Numbers::Kinds,
-    json_value: false,
-    enums: false,
+    family: Family::Toml,
     errors: [
         bv::TOML_TYPE_MISMATCH,
         bv::TOML_MISSING_FIELD,
@@ -292,15 +290,9 @@ impl Document for ::toml::Value {
 
 // ── The functions ───────────────────────────────────────────────────
 
-/// The record type a `type a` argument of `toml.<name>` is.
-fn record_type<'a>(name: &str, ty: Type<'a>) -> Result<&'a Arc<TypeInfo>, VmError> {
-    match ty {
-        Type::Named(ty) => Ok(ty),
-        Type::Primitive(_) => Err(VmError::new(format!(
-            "toml.{name}: type argument must be a record type"
-        ))),
-    }
-}
+static PARSE: Decoder = Decoder::new("toml.parse");
+static PARSE_LIST: Decoder = Decoder::new("toml.parse_list");
+static PARSE_MAP: Decoder = Decoder::new("toml.parse_map");
 
 /// `value` as TOML text, for `toml.<name>`, `pretty` or not:
 /// `Ok(text)`, or the `TomlError` of a value that TOML has no form for.
@@ -322,16 +314,22 @@ fn written(name: &str, value: &Value, pretty: bool) -> Value {
 
 builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let ty = record_type("parse", ty)?;
-        let fields = decodable_record("toml.parse", ty)?;
+        let target = decode::target(&PARSE, ty)?;
+        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+            return Ok(refused);
+        }
         Ok(match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => decode::result(&RULES, decode::record(&vm.runtime, ty, fields, &tv, &At::Top)),
+            Ok(tv) => decode::result(&RULES, decode::document(&vm.runtime, &target, &tv)),
             Err(e) => toml_de_result_err(&e),
         })
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let element = element_type(&RULES, "toml.parse_list", ty)?;
+        let target = decode::target(&PARSE_LIST, ty)?;
+        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+            return Ok(refused);
+        }
+        let element = target.element();
         let tv = match ::toml::from_str::<::toml::Value>(s) {
             Ok(tv) => tv,
             Err(e) => return Ok(toml_de_result_err(&e)),
@@ -355,7 +353,11 @@ builtins! {
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let element = element_type(&RULES, "toml.parse_map", ty)?;
+        let target = decode::target(&PARSE_MAP, ty)?;
+        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+            return Ok(refused);
+        }
+        let element = target.element();
         Ok(match ::toml::from_str::<::toml::Value>(s) {
             Ok(tv) => decode::result(&RULES, decode::map(&vm.runtime, &element, &tv, &At::Top)),
             Err(e) => toml_de_result_err(&e),
@@ -383,13 +385,15 @@ mod tests {
         use crate::defs::{DefId, TypeId};
         let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
         let fields = vec![("b".to_string(), FieldType::List(Box::new(FieldType::Bytes)))];
-        let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
+        let ty = crate::typeinfo::TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
         for text in ["b = []", "b = [1]", ""] {
             let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
-            let decoded = decode::result(
-                &RULES,
-                decode::record(&vm.runtime, &ty, &fields, &doc, &At::Top),
-            );
+            // As toml.parse decodes it: the type is refused before the
+            // document is read.
+            let target = decode::Target::Record(&ty, &fields);
+            let decoded = decode::refused(&vm.runtime, &RULES, &target).unwrap_or_else(|| {
+                decode::result(&RULES, decode::document(&vm.runtime, &target, &doc))
+            });
             assert_eq!(
                 decoded.to_string(),
                 "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",

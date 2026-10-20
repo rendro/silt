@@ -1,0 +1,34 @@
+-- A type with a field no decoder exists for is refused before the
+-- document is read, so an empty list or map refuses it too: there is no
+-- element to decode, but the type has no decoder all the same. (The
+-- type arrives at run time: written at the call, the compiler refuses
+-- it.)
+import json
+import toml
+
+type Blob { name: String, b: Bytes }
+
+fn list_of(text: String, type a) -> Result(List(a), json.JsonError) {
+  json.parse_list(text, a)
+}
+
+fn map_of(text: String, type a) -> Result(Map(String, a), json.JsonError) {
+  json.parse_map(text, a)
+}
+
+fn toml_list(text: String, type a) -> Result(List(a), toml.TomlError) {
+  toml.parse_list(text, a)
+}
+
+fn show(r: Result(a, e)) where e: Error {
+  match r {
+    Ok(_) -> println("ok")
+    Err(e) -> println(e.message())
+  }
+}
+
+fn main() {
+  show(list_of("[]", Blob))
+  show(map_of("\{}", Blob))
+  show(toml_list("blobs = []", Blob))
+}

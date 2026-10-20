@@ -14,7 +14,8 @@
 -- for what a json or jsonb column holds (its actual part begins with
 -- the column's type). A record that holds `Bytes` nested in a field,
 -- which no column fills, is refused by the compiler where the type is
--- named; given through a type variable, it is the column's mismatch.
+-- named; given through a type variable, the field is refused as it is
+-- in json.parse, whatever the result holds (`Other`).
 import env
 import json
 import postgres

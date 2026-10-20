@@ -7,7 +7,10 @@
 //!   is headed `Signature`), the signature cell and, in a table of three
 //!   columns or more, the last cell (the description) of each row;
 //! - the signature block that opens a function's own section
-//!   (`## \`list.map\``).
+//!   (`## \`list.map\``);
+//! - in a table whose second column is headed `Type argument`, that
+//!   cell of each decoding builtin's row: what its type argument may be
+//!   ([`Decoding::type_arguments`](super::Decoding::type_arguments)).
 //!
 //! `tests/meta/stdlib_reference_tests.rs` renders every page and
 //! compares it with the file (`SILT_BLESS=1` rewrites the files).
@@ -332,8 +335,10 @@ fn table_cells(line: &str) -> Option<Vec<String>> {
 
 /// The page `page` with its generated parts written from the registry:
 /// see the module documentation. `Err` names each function a table of
-/// functions lists that the registry does not have, and each row of a
-/// module that no table of its page lists.
+/// functions lists that the registry does not have, each row of a
+/// module that no table of its page lists, each function a table of
+/// type arguments lists that decodes nothing, and each decoding row of a
+/// module that no table of type arguments of its page lists.
 pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
@@ -342,8 +347,12 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     // `Signature`: a table of the module's functions.
     let mut in_table = false;
     let mut in_summary = false;
+    // Whether the line is in a table whose second column is headed
+    // `Type argument`: a table of what the module's decoders decode.
+    let mut in_type_arguments = false;
     let mut in_fence = false;
     let mut listed: HashSet<(&str, &str)> = HashSet::new();
+    let mut listed_decoders: HashSet<(&str, &str)> = HashSet::new();
     let mut modules: Vec<&'static Module> = Vec::new();
     // The row whose section has just opened: its signature block is
     // the first fence, if a plain one comes before any prose.
@@ -384,9 +393,10 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
             Some(cells) if !in_table => {
                 in_table = true;
                 in_summary = cells.get(1).is_some_and(|cell| cell == "Signature");
+                in_type_arguments = cells.get(1).is_some_and(|cell| cell == "Type argument");
             }
             Some(_) => {}
-            None => (in_table, in_summary) = (false, false),
+            None => (in_table, in_summary, in_type_arguments) = (false, false, false),
         }
         if is_section_break(line) {
             pending = parse_heading_keys(line).and_then(|keys| {
@@ -431,6 +441,27 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                 )),
             }
         }
+        if in_type_arguments
+            && let Some(m) = module
+            && let Some(cells) = table_cells(line)
+            && let Some(name) = cells[0].strip_prefix('`').and_then(|c| c.strip_suffix('`'))
+        {
+            let name = name.strip_prefix(&format!("{}.", m.name)).unwrap_or(name);
+            let row = m.rows.iter().find(|row| row.name == name);
+            match row.and_then(|row| Some((row, row.decoding?))) {
+                Some((row, decoding)) if cells.len() >= 2 => {
+                    listed_decoders.insert((m.name, row.name));
+                    let mut cells = cells.clone();
+                    cells[1] = decoding.type_arguments(|t| format!("`{t}`"));
+                    out.push(format!("| {} |", cells.join(" | ")));
+                    continue;
+                }
+                _ => problems.push(format!(
+                    "a table of type arguments of `{}` lists `{name}`, which decodes nothing",
+                    m.name
+                )),
+            }
+        }
         out.push(line.to_string());
     }
     for m in modules {
@@ -438,6 +469,12 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
             if !listed.contains(&(m.name, row.name)) {
                 problems.push(format!(
                     "no table of functions of the page lists `{}.{}`",
+                    m.name, row.name
+                ));
+            }
+            if row.decoding.is_some() && !listed_decoders.contains(&(m.name, row.name)) {
+                problems.push(format!(
+                    "no table of type arguments of the page lists `{}.{}`",
                     m.name, row.name
                 ));
             }
@@ -512,6 +549,52 @@ mod tests {
         assert_eq!(summary_signature(row), "() -> List(String)");
         let row = registry().row("math", "pi").expect("math.pi");
         assert_eq!(summary_signature(row), "Float");
+    }
+
+    /// A table of type arguments has its cells written from the
+    /// decoders' rows; a function that decodes nothing in it is a
+    /// problem, and so is a decoder that no such table of its page
+    /// lists.
+    #[test]
+    fn a_table_of_type_arguments_is_written_from_the_rows() {
+        let table = |rows: &str| {
+            format!(
+                "# toml\n\n| Function | Type argument |\n|---|---|\n{rows}\n\n\
+                 | Function | Signature |\n|---|---|\n{}\n",
+                registry()
+                    .module("toml")
+                    .expect("toml")
+                    .rows
+                    .iter()
+                    .map(|row| format!("| `{}` | x |", row.name))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
+        let page = render_page(&table(
+            "| `toml.parse` | stale |\n| `toml.parse_list` | stale |\n| `toml.parse_map` | stale |",
+        ))
+        .expect("a page");
+        assert!(page.contains("| `toml.parse` | a record type |"), "{page}");
+        assert!(
+            page.contains(
+                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |"
+            ),
+            "{page}"
+        );
+        let problems = render_page(&table("| `toml.stringify` | x |")).expect_err("problems");
+        assert!(
+            problems.contains(
+                &"a table of type arguments of `toml` lists `stringify`, which decodes nothing"
+                    .to_string()
+            ),
+            "{problems:?}"
+        );
+        assert!(
+            problems
+                .contains(&"no table of type arguments of the page lists `toml.parse`".to_string()),
+            "{problems:?}"
+        );
     }
 
     /// Every variant of every builtin module, as the registry has them,

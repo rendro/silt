@@ -91,8 +91,11 @@ equally to a decoder imported by name (`import toml.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
 decoder gives an `Err(Other(msg))` whose message names the field and its
-record, whatever the document holds there (an `Option` field whose key is
-left out too), and a type the function does not take is a run-time error.
+record (or the field of a record type it names that has no decoder; toml has
+no decoder for an enum). The type is refused before the document is read,
+whatever the document holds (an `Option` field whose key is left out, an
+empty list or map too), and a type the function does not take is a run-time
+error.
 
 
 ## Nesting limits

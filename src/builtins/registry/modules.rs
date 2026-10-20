@@ -7,7 +7,7 @@
 //! cargo feature beyond its module's. A constant is `k("name: Type",
 //! summary, value)`.
 
-use super::{Module, RowSpec, build_module, f, k, module};
+use super::{Decoding, Module, RowSpec, build_module, f, k, module};
 use crate::builtins::collections::{list, map, set};
 use crate::builtins::numeric::{self, float, int, math};
 #[cfg(feature = "postgres")]
@@ -309,10 +309,10 @@ pub(super) fn modules() -> Vec<Module> {
             ",
             error: "JsonError" => json::error_text,
             rows: [
-                f("fn decode(value: Value, type a) -> Result(a, JsonError)", "Decode a json.Value into a typed value", json::decode),
-                f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse),
-                f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse a JSON array into a list", json::parse_list),
-                f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError)", "Parse JSON object into map", json::parse_map),
+                f("fn decode(value: Value, type a) -> Result(a, JsonError)", "Decode a json.Value into a typed value", json::decode).decodes(Decoding::JSON),
+                f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse).decodes(Decoding::JSON),
+                f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse a JSON array into a list", json::parse_list).decodes(Decoding::JSON),
+                f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError)", "Parse JSON object into map", json::parse_map).decodes(Decoding::JSON),
                 f("fn pretty(value: a) -> String", "Pretty-print value as JSON", json::pretty),
                 f("fn stringify(value: a) -> String", "Serialize value as compact JSON", json::stringify),
             ],
@@ -325,9 +325,9 @@ pub(super) fn modules() -> Vec<Module> {
             ",
             error: "TomlError" => toml::error_text,
             rows: [
-                f("fn parse(s: String, type a) -> Result(a, TomlError)", "Parse a TOML document (top-level table) into a record", toml::parse),
-                f("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse the one array of a document (such as a `[[items]]` section) into a list", toml::parse_list),
-                f("fn parse_map(s: String, type a) -> Result(Map(String, a), TomlError)", "Parse a top-level table into a map", toml::parse_map),
+                f("fn parse(s: String, type a) -> Result(a, TomlError)", "Parse a TOML document (top-level table) into a record", toml::parse).decodes(Decoding::TOML_RECORD),
+                f("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse the one array of a document (such as a `[[items]]` section) into a list", toml::parse_list).decodes(Decoding::TOML),
+                f("fn parse_map(s: String, type a) -> Result(Map(String, a), TomlError)", "Parse a top-level table into a map", toml::parse_map).decodes(Decoding::TOML),
                 f("fn pretty(value: a) -> Result(String, TomlError)", "Pretty-print a value as TOML", toml::pretty),
                 f("fn stringify(value: a) -> Result(String, TomlError)", "Serialize a value as TOML", toml::stringify),
             ],
@@ -481,16 +481,16 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn connect(url: String) -> Result(PgPool, PostgresError)", "Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)", postgres::connect),
                 f("fn connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PostgresError)", "Like `connect` with a tunable options bag (see [Connect options](#connect-options))", postgres::connect_with),
-                f("fn query(conn: a, sql: String, params: p, type r) -> Result(List(r), PostgresError)", "Run a statement and decode its rows into a record type (or json.Value)", postgres::query),
-                f("fn execute(conn: a, sql: String, params: p) -> Result(Int, PostgresError)", "Run a statement and return the number of rows it affected", postgres::execute),
+                f("fn query(conn: a, sql: String, params: p, type r) -> Result(List(r), PostgresError)", "Run a statement and decode its rows into a record type (or json.Value)", postgres::query).connection().statement().decodes(Decoding::POSTGRES),
+                f("fn execute(conn: a, sql: String, params: p) -> Result(Int, PostgresError)", "Run a statement and return the number of rows it affected", postgres::execute).connection().statement(),
                 f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
                 f("fn close(pool: PgPool) -> ()", "Drop the pool; future ops on it error", postgres::close),
-                f("fn stream(conn: a, sql: String, params: p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)", "Stream decoded rows through a bounded channel (backpressured)", postgres::stream),
-                f("fn cursor(tx: PgTx, sql: String, params: p, batch_size: Int, type r) -> Result(PgCursor(r), PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor),
+                f("fn stream(conn: a, sql: String, params: p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)", "Stream decoded rows through a bounded channel (backpressured)", postgres::stream).connection().statement().decodes(Decoding::POSTGRES),
+                f("fn cursor(tx: PgTx, sql: String, params: p, batch_size: Int, type r) -> Result(PgCursor(r), PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor).statement().decodes(Decoding::POSTGRES),
                 f("fn cursor_next(cursor: PgCursor(r)) -> Result(List(r), PostgresError)", "Fetch the next batch of decoded rows from a cursor", postgres::cursor_next),
                 f("fn cursor_close(cursor: PgCursor(r)) -> Result((), PostgresError)", "Release a cursor and its underlying connection", postgres::cursor_close),
                 f("fn listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)", "LISTEN on a channel; delivers async notifications", postgres::listen),
-                f("fn notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)", "NOTIFY a channel with a payload", postgres::notify),
+                f("fn notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)", "NOTIFY a channel with a payload", postgres::notify).connection(),
             ],
         },
         module! {

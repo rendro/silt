@@ -24,10 +24,11 @@ use postgres_protocol::types as wire;
 use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
 use crate::builtins::data::{self, Data};
+use crate::builtins::registry::decoding::Family;
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
 use crate::builtins::{decode, json};
-use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
+use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
@@ -245,39 +246,13 @@ pub(super) enum RowType {
 
 impl RowType {
     /// The row type that the type argument `ty` of `caller` names.
-    pub(super) fn of(caller: &str, ty: Type) -> Result<RowType, VmError> {
-        match ty {
-            Type::Named(info) if info.id == ty::JSON_VALUE => Ok(RowType::Value),
-            Type::Named(info) if !info.is_builtin() && matches!(info.shape, Shape::Record(_)) => {
-                Ok(RowType::Record(info.clone()))
-            }
-            Type::Named(info) => Err(refused(caller, &info.name)),
-            Type::Primitive(field) => Err(refused(caller, &shown_primitive(&field))),
-        }
+    pub(super) fn of(caller: &decode::Decoder, ty: Type) -> Result<RowType, VmError> {
+        Ok(match decode::target(caller, ty)? {
+            decode::Target::Record(ty, _) => RowType::Record(ty.clone()),
+            // (`json.Value`: a postgres function takes no primitive type.)
+            decode::Target::Value(_) => RowType::Value,
+        })
     }
-}
-
-/// The error of `caller` given the type `name` to decode rows into,
-/// which is no record type and no `json.Value`. (The compiler says the
-/// same where the type is written; this is for a type argument that is
-/// a type variable.)
-fn refused(caller: &str, name: &str) -> VmError {
-    VmError::new(format!(
-        "{caller}: a row decodes into a record type or json.Value, not {name}; {}",
-        crate::compiler::ROW_TYPE_HELP
-    ))
-}
-
-/// The name of a primitive type argument.
-fn shown_primitive(field: &FieldType) -> String {
-    match field {
-        FieldType::Int => "Int",
-        FieldType::Float => "Float",
-        FieldType::String => "String",
-        FieldType::Bool => "Bool",
-        _ => "a primitive type",
-    }
-    .to_string()
 }
 
 // ── Columns ─────────────────────────────────────────────────────────
@@ -351,9 +326,9 @@ impl Col {
             (Col::Array(element), F::JsonValue) => element.fills(rt, field),
             (_, F::JsonValue) => true,
             (Col::Void, _) => false,
-            // json's decoder decodes every field type but `Bytes`, in
-            // the records the field holds too.
-            (Col::Json | Col::Jsonb, _) => !holds_bytes(rt, field, &mut Vec::new()),
+            // A json document fills a field of every type json's decoders
+            // decode, in the record types the field names too.
+            (Col::Json | Col::Jsonb, _) => decode::decodes(rt, Family::Json, field),
             (Col::Bool, F::Bool)
             | (Col::Int2 | Col::Int4 | Col::Int8, F::Int)
             | (Col::Float4 | Col::Float8 | Col::Numeric, F::Float)
@@ -369,23 +344,6 @@ impl Col {
             }
             _ => false,
         }
-    }
-}
-
-/// Whether `field` is, or holds, `Bytes`, in a record type it names
-/// too; `seen` are the record types looked into.
-fn holds_bytes(rt: &Runtime, field: &FieldType, seen: &mut Vec<crate::defs::TypeId>) -> bool {
-    match field {
-        FieldType::Bytes => true,
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => holds_bytes(rt, t, seen),
-        FieldType::Tuple(ts) => ts.iter().any(|t| holds_bytes(rt, t, seen)),
-        FieldType::Record(id) if !seen.contains(id) => {
-            seen.push(*id);
-            let info = rt.type_info(*id);
-            let fields = info.as_ref().map(|info| info.fields()).unwrap_or_default();
-            fields.iter().any(|(_, t)| holds_bytes(rt, t, seen))
-        }
-        _ => false,
     }
 }
 
@@ -512,13 +470,16 @@ impl Plan {
                 let Shape::Record(declared) = &ty.shape else {
                     return Err(super::other_error(format!("{}: no record type", ty.name)));
                 };
+                // A field no decoder fills (in a record or enum type it
+                // names too) is refused whatever the result holds, before
+                // any column is matched. (A type reached only through a
+                // type argument that is a type variable: the compiler
+                // refuses the others.)
+                if let Some(message) = decode::record_refusal(rt, Family::Postgres, ty) {
+                    return Err(super::other_error(message));
+                }
                 let mut fields = Vec::with_capacity(declared.len());
                 for (name, field) in declared {
-                    if let Some(declared) = unsupported(field) {
-                        return Err(super::other_error(decode::unsupported_field_type_message(
-                            &ty.name, name, declared,
-                        )));
-                    }
                     let mut named = columns.iter().enumerate().filter(|(_, c)| c.name() == name);
                     let Some((column, found)) = named.next() else {
                         return Err(no_such_column(name));
@@ -581,18 +542,6 @@ impl Plan {
                 Ok(Value::variant(bv::JSON_OBJECT, vec![Value::map(entries)]))
             }
         }
-    }
-}
-
-/// The type a field's type holds that no decoder has, as the record
-/// declares it (a field reached only through a type argument that is a
-/// type variable; the compiler refuses the others).
-fn unsupported(field: &FieldType) -> Option<&str> {
-    match field {
-        FieldType::Unsupported(declared) => Some(declared),
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => unsupported(t),
-        FieldType::Tuple(ts) => ts.iter().find_map(unsupported),
-        _ => None,
     }
 }
 

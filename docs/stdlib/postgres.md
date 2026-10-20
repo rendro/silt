@@ -106,7 +106,36 @@ unsupported value kind Bytes"))`.
 a row is decoded into as their last argument: a record type, or
 `json.Value`, or an alias of one (the type it names). The compiler checks it where it is written, as it does
 for `json.parse`: any other type, or a record with a field of a type no
-column can fill, is an error there.
+column can fill, is an error there. When the type only arrives at run
+time, through a `type a` parameter, a field of a type no column can fill
+(`Bytes` in a `Map`, a tuple or a nested record, which only a json
+document could fill; an enum, which postgres has no decoder for) is
+`Err(Other(msg))` naming the field and its record, before any column is
+matched and whatever the result holds, and any other type is a run-time
+error. A record nested in a field is filled from a json document by
+`json.parse`'s rules, an enum in it too.
+
+| Function | Type argument |
+|----------|---------------|
+| `postgres.query` | a record type or `json.Value` |
+| `postgres.stream` | a record type or `json.Value` |
+| `postgres.cursor` | a record type or `json.Value` |
+
+Each filled from the columns the table below names, the fields of the record
+type may have these types:
+
+- `Int`, `Float`, `String`, `Bool`
+- `Bytes`, as the field, in an `Option` or in a `List` (a `bytea` column)
+- `Date`, `Time`, `DateTime`
+- `json.Value`, any column as the table's last column says
+- `List(T)`, `Option(T)`, `Map(String, T)`
+- tuples, such as `(Int, String)`
+- non-generic record types, from a `json` or `jsonb` column by `json.parse`'s
+  rules (an enum in them too)
+- type aliases of any of these
+
+where `T` is again one of these types. An enum, a `Set`, a generic record, a
+function or a type parameter has no decoder.
 
 Each field of the record is read from the column of its exact name;
 Postgres folds a name it is not given in quotes to lower case, so a
@@ -155,7 +184,7 @@ the call's `Err`.
 | `date` | `Date` | `json.String`, as silt shows a `Date` |
 | `time` | `Time` | `json.String`, as silt shows a `Time` |
 | `timestamp`, `timestamptz` | `DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
-| `json`, `jsonb` | any field type but `Bytes`, decoded by `json.parse`'s rules | the document |
+| `json`, `jsonb` | any field type but `Bytes` and an enum, decoded by `json.parse`'s rules | the document |
 | an array | `List(T)` of a `T` its elements fill, `List(Option(T))` where an element may be `NULL`, `List(List(T))` for two dimensions | `json.Array` |
 | `void` (what `pg_sleep(1)` gives) | none | `json.Null` |
 

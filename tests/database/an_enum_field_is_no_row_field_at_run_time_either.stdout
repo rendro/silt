@@ -1,0 +1,4 @@
+cannot decode field `state` of `Job`: a value of type Status cannot be decoded
+cannot decode field `state` of `Job`: a value of type Status cannot be decoded
+cannot decode field `states` of `Jobs`: a value of type List(Status) cannot be decoded
+1 rows

@@ -29,8 +29,11 @@
 //! checker does not enter them, and `import` of the module is an error
 //! that names the feature.
 
+pub mod decoding;
 pub mod docs;
 mod modules;
+
+pub use decoding::Decoding;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -96,6 +99,15 @@ pub struct Row {
     pub feature: Option<&'static str>,
     /// Whether the row's feature and its module's are built.
     pub enabled: bool,
+    /// What a decoding builtin decodes into: the type its last
+    /// argument names.
+    pub decoding: Option<Decoding>,
+    /// Whether the row runs a statement: its third argument is the
+    /// statement's parameters, a tuple.
+    pub statement: bool,
+    /// Whether the row's first argument is a connection: a `PgPool` or
+    /// a `PgTx`, whose type is a variable in its signature.
+    pub connection: bool,
     pub id: BuiltinId,
     pub(crate) body: Body,
 }
@@ -200,6 +212,9 @@ pub struct RowSpec {
     typed: Option<TypedCall>,
     constant: Option<Value>,
     feature: Option<(&'static str, bool)>,
+    decoding: Option<Decoding>,
+    statement: bool,
+    connection: bool,
 }
 
 /// A function row with its typed body (see [`super::typed`]).
@@ -218,19 +233,19 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
         typed: None,
         constant: None,
         feature: None,
+        decoding: None,
+        statement: false,
+        connection: false,
     }
 }
 
 /// A constant row, `name: Type`, with its value.
 fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
     RowSpec {
-        signature,
-        summary,
-        typed: None,
         constant: Some(Value::Float(
             crate::value::Float::new(value).expect("a constant of the registry is a finite number"),
         )),
-        feature: None,
+        ..off(signature, summary)
     }
 }
 
@@ -239,6 +254,26 @@ impl RowSpec {
     /// `.feature("tcp-tls", cfg!(feature = "tcp-tls"))`.
     fn feature(mut self, name: &'static str, built: bool) -> RowSpec {
         self.feature = Some((name, built));
+        self
+    }
+
+    /// The row decodes into the type its last argument names, as
+    /// `decoding` says.
+    fn decodes(mut self, decoding: Decoding) -> RowSpec {
+        self.decoding = Some(decoding);
+        self
+    }
+
+    /// The row runs a statement whose parameters are its third argument.
+    fn statement(mut self) -> RowSpec {
+        self.statement = true;
+        self
+    }
+
+    /// The row's first argument is a connection, a pool or a
+    /// transaction.
+    fn connection(mut self) -> RowSpec {
+        self.connection = true;
         self
     }
 }
@@ -410,18 +445,24 @@ macro_rules! module {
     (@rows $slot:ident, [$feature:literal], [$({ $($row:tt)* })*]) => {
         $slot = vec![$(module!(@row [$feature] $($row)*)),*];
     };
-    // A function row, `f(signature, summary, body)`: alone, or with
-    // `.feature("name")`, the cargo feature the row needs beyond its
-    // module's.
-    (@row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr) []) => {
-        module!(@typed [$($of)?] [] $signature, $summary, $body)
-    };
+    // A function row, `f(signature, summary, body)`: alone, or first
+    // with `.feature("name")`, the cargo feature the row needs beyond
+    // its module's; then what the row is besides (`.decodes(..)`,
+    // `.statement()`, `.connection()`).
     (
         @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
-        [. feature ($own:literal)]
+        [. feature ($own:literal) $(. $with:ident ($($with_arg:tt)*))*]
     ) => {
         module!(@typed [$($of)?] [$own] $signature, $summary, $body)
             .feature($own, cfg!(feature = $own))
+            $(. $with ($($with_arg)*))*
+    };
+    (
+        @row [$($of:literal)?] f ($signature:expr, $summary:expr, $body:expr)
+        [$(. $with:ident ($($with_arg:tt)*))*]
+    ) => {
+        module!(@typed [$($of)?] [] $signature, $summary, $body)
+            $(. $with ($($with_arg)*))*
     };
     // Any other row: a constant.
     (@row [$($of:literal)?] $row:ident ($($arg:expr),*) [$($with:tt)*]) => {
@@ -560,6 +601,9 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
                 params: Vec::new(),
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
+                decoding: spec.decoding,
+                statement: spec.statement,
+                connection: spec.connection,
                 // (Its place among all rows: the registry's to say.)
                 id: BuiltinId(0),
                 body: match (spec.constant, spec.typed) {

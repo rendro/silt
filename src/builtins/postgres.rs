@@ -38,6 +38,7 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Config, NoTls, Notification};
 
 use super::common::ok;
+use super::decode::Decoder;
 use super::typed::{Arg, Map, Ret, Type, builtins};
 use crate::runtime::sync::{Arm, Fired, Wait};
 use crate::runtime::sync::{Channel, Close, TrySend};
@@ -1234,13 +1235,18 @@ impl<'a> Arg<'a> for Opts<'a> {
 /// into: the error of the program if `params` is no tuple or `ty` no
 /// type a row is decoded into.
 fn statement_args(
-    caller: &str,
+    caller: &Decoder,
     params: &Value,
     ty: Type,
 ) -> Result<(Vec<TextParam>, Option<Unsendable>, RowType), VmError> {
-    let (params, unsendable) = rows::params(caller, params)?;
+    let (params, unsendable) = rows::params(caller.name, params)?;
     Ok((params, unsendable, RowType::of(caller, ty)?))
 }
+
+/// The postgres functions that decode rows.
+static QUERY: Decoder = Decoder::new("postgres.query");
+static STREAM: Decoder = Decoder::new("postgres.stream");
+static CURSOR: Decoder = Decoder::new("postgres.cursor");
 
 /// The `PostgresError` a function ends with before its operation starts: a
 /// body's `Err`, which is the function's `Err(error)`.
@@ -2402,7 +2408,7 @@ builtins! {
     }
 
     fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Started {
-        let (params, unsendable, row) = match statement_args("postgres.query", params, ty) {
+        let (params, unsendable, row) = match statement_args(&QUERY, params, ty) {
             Ok(args) => args,
             Err(e) => return Ok(Err(e)),
         };
@@ -2485,7 +2491,7 @@ builtins! {
     // bounded capacity; cancellation is via `channel.close` (checked
     // between rows).
     fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Result<Value, VmError>, Failed> {
-        let (params, unsendable, row) = match statement_args("postgres.stream", params, ty) {
+        let (params, unsendable, row) = match statement_args(&STREAM, params, ty) {
             Ok(args) => args,
             Err(e) => return Ok(Err(e)),
         };
@@ -2530,7 +2536,7 @@ builtins! {
 
     // (A cursor lives inside a transaction: `tx` is a `PgTx`.)
     fn cursor(vm, tx: TxHandle, sql: &str, params: &Value, batch_size: i64, ty: Type) -> Started {
-        let (params, unsendable, row) = match statement_args("postgres.cursor", params, ty) {
+        let (params, unsendable, row) = match statement_args(&CURSOR, params, ty) {
             Ok(args) => args,
             Err(e) => return Ok(Err(e)),
         };
