@@ -382,10 +382,44 @@ fn test_fs_glob_goes_into_no_linked_directory() {
         sorted_paths(&format!("fs.glob(\"{tree}/**\")")),
         String::new()
     );
-    // A link written in the pattern is followed, as the system does.
+    // A link written in the pattern with no wildcard before it is
+    // followed, as the system does; the root among them.
     assert_eq!(
         sorted_paths(&format!("fs.glob(\"{tree}/dir/*.txt\")")),
         format!("{tree}/dir/keep.txt"),
+    );
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/dir/keep.txt\")")),
+        format!("{tree}/dir/keep.txt"),
+    );
+    std::os::unix::fs::symlink("tree", dir.path().join("alias")).unwrap();
+    let alias = format!("{}/alias", dir.as_silt_str());
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{alias}/*.txt\")")),
+        format!("{alias}/own.txt"),
+    );
+    // A link a wildcard matched is not gone into, also when what
+    // follows is no wildcard.
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/d*/keep.txt\")")),
+        String::new(),
+    );
+    // Nor is a link named after a wildcard: `*` matches the real
+    // directory `real`, and its `inner` leads outside.
+    std::fs::create_dir(format!("{tree}/real")).unwrap();
+    std::os::unix::fs::symlink("../../outside", format!("{tree}/real/inner")).unwrap();
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/*/inner/keep.txt\")")),
+        String::new(),
+    );
+    // `*/` and `**/` list real directories only.
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/*/\")")),
+        format!("{tree}/real"),
+    );
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/**/\")")),
+        format!("{tree}/real"),
     );
 }
 

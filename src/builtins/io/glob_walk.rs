@@ -1,12 +1,14 @@
 //! The walk `fs.glob` matches its pattern by: the glob crate's
-//! (`glob::glob`, whose order and rules it keeps), except that an entry
-//! found by listing a directory is a directory only when it is one
-//! itself, not a symlink to one. So neither `**` nor `*` goes into a
+//! (`glob::glob`, whose order and rules it keeps), except that a
+//! symlink is gone into only where the pattern names the path to it
+//! with no wildcard before it (`link/x.txt`, `<root>/link/*`), which the
+//! system resolves as it does any path. Past the first wildcard a path
+//! is a directory only when it is one itself, not a link to one: an
+//! entry a wildcard matched in a listing (`l*/x.txt`, `*/`, `**`) or a
+//! part named after it is never gone into. So `fs.glob` goes into no
 //! linked directory, as `fs.walk` does not, and a link to `.` makes no
-//! loop; a link is matched by its own name. A part of the pattern with
-//! no wildcard (`link/x.txt`) names a path, which the system resolves
-//! through a link as it does any path. (The crate follows every link
-//! and has no option not to.)
+//! loop; a link is matched by its own name. (The crate follows every
+//! link and has no option not to.)
 
 use std::fs;
 use std::path::{self, Component, Path, PathBuf};
@@ -17,20 +19,45 @@ use glob::{MatchOptions, Pattern, PatternError};
 struct Found {
     path: PathBuf,
     is_dir: bool,
+    /// The pattern names it with no wildcard before it: the system
+    /// follows a link in it.
+    resolved: bool,
 }
 
 impl Found {
-    /// A path the pattern names (its root, or one without wildcards):
-    /// the system follows a link in it.
-    fn named(path: PathBuf) -> Found {
-        let is_dir = fs::metadata(&path).is_ok_and(|md| md.is_dir());
-        Found { path, is_dir }
+    /// The path of the part `name` below `self` (the path `name` itself
+    /// when `self` is `.`): a link to a directory is one only where no
+    /// wildcard came before.
+    fn named(&self, name: &str, here: bool) -> Found {
+        let path = match here {
+            true => PathBuf::from(name),
+            false => self.path.join(name),
+        };
+        Found::at(path, self.resolved)
+    }
+
+    /// `path`, followed through a link when `resolved`.
+    fn at(path: PathBuf, resolved: bool) -> Found {
+        let md = match resolved {
+            true => fs::metadata(&path),
+            false => fs::symlink_metadata(&path),
+        };
+        let is_dir = md.is_ok_and(|md| md.is_dir());
+        Found {
+            path,
+            is_dir,
+            resolved,
+        }
     }
 
     /// An entry of a directory's listing: a symlink is no directory.
     fn listed(path: PathBuf, entry: &fs::DirEntry) -> Found {
         let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
-        Found { path, is_dir }
+        Found {
+            path,
+            is_dir,
+            resolved: false,
+        }
     }
 }
 
@@ -87,7 +114,10 @@ pub(super) fn matches(pattern: &str) -> Result<Matches, PatternError> {
             scope: None,
         });
     }
-    let scope = Found::named(root.map_or_else(|| PathBuf::from("."), Path::to_path_buf));
+    let scope = Found::at(
+        root.map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+        true,
+    );
     let mut parts = Vec::new();
     for text in pattern[root_len.min(pattern.len())..].split_terminator(path::is_separator) {
         parts.push(Part {
@@ -197,16 +227,15 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
     let part = &parts[index];
     let here = found.path == Path::new(".");
     match (part.wild, found.is_dir) {
-        (false, _) => {
+        // (Below what is no directory to go into, nothing is found.)
+        (_, false) => {}
+        (false, true) => {
             let name = part.pattern.as_str();
             let special = name == "." || name == "..";
-            let next = Found::named(match here {
-                true => PathBuf::from(name),
-                false => found.path.join(name),
-            });
+            let next = found.named(name, here);
             let exists =
                 || fs::metadata(&next.path).is_ok() || fs::symlink_metadata(&next.path).is_ok();
-            if (special && found.is_dir) || (!special && exists()) {
+            if special || exists() {
                 add(todo, next);
             }
         }
@@ -233,7 +262,7 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
                     if part.pattern.as_str().starts_with('.') {
                         for special in [".", ".."] {
                             if part.pattern.matches_with(special, OPTIONS) {
-                                add(todo, Found::named(found.path.join(special)));
+                                add(todo, found.named(special, false));
                             }
                         }
                     }
@@ -241,6 +270,5 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
                 Err(e) => todo.push(Err(e)),
             }
         }
-        (true, false) => {}
     }
 }

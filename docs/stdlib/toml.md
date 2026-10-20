@@ -268,7 +268,8 @@ follows:
 | `()` | nothing: `Err(Other("toml.stringify: TOML cannot represent Unit"))` |
 
 The keys of every table, the fields of a record among them, are written in
-sorted order, not in the order the record declares its fields. `toml.parse`
+sorted order, plain keys before sub-tables (as TOML requires), not in the
+order the record declares its fields. `toml.parse`
 reads a `Date`, a `Time` and a `DateTime` back into a field of the same type.
 A date whose year has no literal (one before the year 0 or past 9999) is
 written as a string of the text silt shows of it, which `toml.parse` reads

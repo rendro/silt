@@ -630,11 +630,12 @@ start with `/` (or a drive prefix on Windows). Syntax mirrors the
 - `**` matches any number of directories recursively
 
 **Symlinks are not followed** while matching, as by `fs.walk`: a symlink
-is matched by its own name, and neither `*` nor `**` goes into a
-symlinked directory, so a `link -> .` makes no loop. A part of the
-pattern without wildcards names a path, which goes through a link as
-any path does (`out/link/*.txt` lists the directory `out/link` leads
-to).
+is matched by its own name and is gone into only where the start of the
+pattern, with no wildcard before it, names the path through it
+(`out/link/*.txt` lists the directory `out/link` leads to, but
+`out/l*/x.txt` and `out/*/link/x.txt` find nothing through a link), so a
+`link -> .` makes no loop, and `*/` and `**/` do not list a link to a
+directory.
 
 Returns `Err(InvalidInput(msg))` if the pattern itself is malformed. The result
 is subject to the same `1_000_000`-entry cap as `fs.walk`.
