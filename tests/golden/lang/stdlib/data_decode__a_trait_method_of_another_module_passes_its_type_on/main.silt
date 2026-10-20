@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A trait of one module whose default method gives its `type a` to a
+-- decoder, an impl of it in another module with a method of its own
+-- that does the same, and calls in a third: each call is checked, the
+-- default's too.
+import src
+import loader.{ Loader }
+
+type Blob { data: Bytes }
+
+fn main() {
+  let s = src.Src { s: "\{}" }
+  println(s.load(Blob))
+  println(s.own(Blob))
+  println(src.Src.own(s, Blob))
+}

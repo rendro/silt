@@ -661,8 +661,12 @@ impl TypeChecker {
         // of the method's own type variables is owed, and checked once
         // the receiver is unified with the method's `self` below.
         let owed_before = self.wanted.len();
+        let given_before = self.given_waiting.len();
         let scheme = self.method_scheme(entry);
         let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
+        if let Some(head) = head {
+            self.name_the_method(owed_before, given_before, head, method_name);
+        }
         // A method without `self` has no place for the receiver.
         let on = self
             .type_name_for_impl(&self.apply(receiver_ty))
@@ -804,8 +808,10 @@ impl TypeChecker {
                     return Some(self.structural_type_method(name, &inner, field, span));
                 }
                 self.method_trait = self.entry_trait(&entry, field);
+                let (owed_before, given_before) = (self.wanted.len(), self.given_waiting.len());
                 let scheme = self.method_scheme(&entry);
                 let instantiated = self.instantiate_method(&scheme, field, span);
+                self.name_the_method(owed_before, given_before, name, field);
                 Some(self.apply(&instantiated))
             }
         }
@@ -1212,6 +1218,18 @@ impl TypeChecker {
         }
     }
 
+    /// The name of the callee, as a message writes it, if it is a
+    /// function of the program (or a local that holds one), not a
+    /// builtin.
+    fn user_callee(&self, callee: &Expr) -> Option<Symbol> {
+        if let Some(crate::defs::Res::Def(id)) = callee.res
+            && (self.defs.as_ref()).is_some_and(|defs| defs.get(id).module.is_builtin())
+        {
+            return None;
+        }
+        Self::callee_label(callee)
+    }
+
     /// The alias `arg` names, if it is a type written as a value by an
     /// alias's name (`IntBox`, `m.IntBox`).
     fn alias_named(&self, arg: &Expr) -> Option<Symbol> {
@@ -1413,6 +1431,9 @@ impl TypeChecker {
                     }
                 }
                 let mut mismatched = false;
+                // Each argument's place, the alias it names a type by,
+                // and its type.
+                let mut given: Vec<(Span, Option<Symbol>, Type)> = Vec::new();
                 for (i, arg) in args.iter_mut().enumerate() {
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
@@ -1422,6 +1443,7 @@ impl TypeChecker {
                     }
                     let arg_ty = self.infer_expr(arg, env);
                     self.expected_closure = None;
+                    given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {
                         let at = match form {
                             CallForm::Call => arg.span,
@@ -1449,6 +1471,9 @@ impl TypeChecker {
                         wanted.solved = true;
                     }
                     self.given_waiting.truncate(given_before);
+                } else if let CallForm::Call = form {
+                    let passer = self.user_callee(callee);
+                    self.point_at_type_arguments(&given, owed_before, passer);
                 }
                 // A call supplies exactly as many arguments as the callee
                 // has parameters, the piped value and the receiver of a
@@ -1926,8 +1951,11 @@ impl TypeChecker {
                             return ty;
                         }
                         self.method_trait = self.entry_trait(&entry, field);
+                        let owed_before = self.wanted.len();
+                        let given_before = self.given_waiting.len();
                         let scheme = self.method_scheme(&entry);
                         let ty = self.instantiate_method(&scheme, field, span);
+                        self.name_the_method(owed_before, given_before, key.0, field);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;
@@ -3336,7 +3364,10 @@ impl TypeChecker {
                     PatternKind::Ident(name) => {
                         let scheme = if is_value {
                             self.exit_level();
-                            self.generalize_let(&val_ty, &own)
+                            self.passing_on = matches!(value.kind, ExprKind::Lambda { .. });
+                            let scheme = self.generalize_let(&val_ty, &own);
+                            self.passing_on = false;
+                            scheme
                         } else {
                             Scheme::mono(self.apply(&val_ty))
                         };

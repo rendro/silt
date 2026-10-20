@@ -126,6 +126,10 @@ pub struct TypeChecker {
     /// subject of only those.
     pub(super) given_marks: Vec<usize>,
     pub(super) given_closed: usize,
+    /// Whether the definition being generalised is a function (a `fn`,
+    /// or a `let` of a closure): one that passes a type its parameters
+    /// give on to a builtin, which a use of it then names in a note.
+    pub(super) passing_on: bool,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -317,6 +321,7 @@ impl TypeChecker {
             given_waiting: Vec::new(),
             given_marks: Vec::new(),
             given_closed: 0,
+            passing_on: false,
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -973,7 +978,8 @@ impl TypeChecker {
         }
 
         // The `let`s of the group, with whether each is generalised.
-        let mut lets: Vec<(Vec<Symbol>, bool, Span)> = Vec::new();
+        // (And whether its value is a closure.)
+        let mut lets: Vec<(Vec<Symbol>, bool, Span, bool)> = Vec::new();
         for &i in &component.members {
             match (&mut decls[i], &sigs[i]) {
                 // Parser-recovery stubs are skipped: their empty body is
@@ -1005,7 +1011,8 @@ impl TypeChecker {
                             self.unify(&bound.ty, awaited_ty, *span);
                         }
                     }
-                    lets.push((names, is_value, *span));
+                    let closure = matches!(value.kind, ExprKind::Lambda { .. });
+                    lets.push((names, is_value, *span, closure));
                 }
                 _ => {}
             }
@@ -1017,7 +1024,7 @@ impl TypeChecker {
         // Generalise. What a `let` that is not a value leaves unknown
         // stays unknown for everything that mentions it.
         self.exit_level();
-        for (names, is_value, span) in &lets {
+        for (names, is_value, span, _) in &lets {
             for name in names {
                 let Some(bound) = env.lookup(*name).cloned() else {
                     continue;
@@ -1095,11 +1102,13 @@ impl TypeChecker {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
                 && !sig.complete
             {
+                self.passing_on = true;
                 let scheme = self.generalize_fn(&sig.ty(), &bounds);
+                self.passing_on = false;
                 env.define(f.name, scheme);
             }
         }
-        for (names, is_value, _) in &lets {
+        for (names, is_value, _, closure) in &lets {
             if *is_value {
                 for name in names {
                     // (A name the pattern failed to bind may be bound
@@ -1107,7 +1116,9 @@ impl TypeChecker {
                     if let Some(bound) = env.lookup(*name).cloned()
                         && bound.vars.is_empty()
                     {
+                        self.passing_on = *closure;
                         let scheme = self.generalize_fn(&bound.ty, &bounds);
+                        self.passing_on = false;
                         env.define(*name, scheme);
                     }
                 }

@@ -9,7 +9,7 @@
 //! decoders decode by at run time (`Tables::decoded_field_type`).
 
 use super::decodable::shown;
-use super::solve::Origin;
+use super::solve::{Goal, Origin};
 use super::*;
 use crate::builtins::registry::decoding::{Decoding, Family, JSON_VALUE_ELSEWHERE, ROW_TYPE_HELP};
 use crate::defs::TypeId;
@@ -91,6 +91,108 @@ impl TypeChecker {
         self.errors.push(diagnostic);
     }
 
+    /// Point what a decoder asks of its type argument, still owed in the
+    /// scope, at the argument of this call that gives the type (`given`:
+    /// each argument's place, alias and type): a decoder held in a list,
+    /// a record or an Option, returned by a function, or given to a
+    /// function the call passes the type to (`apply(json.parse, s,
+    /// Blob)`). A decoder that is an argument of this call (owed since
+    /// `owed_before`) gets the type from the callee, `passer`, which the
+    /// note names.
+    pub(super) fn point_at_type_arguments(
+        &mut self,
+        given: &[(Span, Option<Symbol>, Type)],
+        owed_before: usize,
+        passer: Option<Symbol>,
+    ) {
+        let type_of = |checker: &Self, ty: &Type| match checker.apply(ty) {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                args.first().map(|arg| checker.apply(arg))
+            }
+            _ => None,
+        };
+        let types: Vec<(Span, Option<Symbol>, Type)> = (given.iter())
+            .filter_map(|(span, alias, ty)| Some((*span, *alias, type_of(self, ty)?)))
+            .collect();
+        if types.is_empty() {
+            return;
+        }
+        let scope = self.wanted_marks.last().copied().unwrap_or(0);
+        for k in scope..self.wanted.len() {
+            if self.wanted[k].solved {
+                continue;
+            }
+            let Goal::Pred(Pred::Builtin {
+                check: BuiltinCheck::Decodes { .. },
+                subject,
+                ..
+            }) = &self.wanted[k].goal
+            else {
+                continue;
+            };
+            let subject = self.apply(subject);
+            if matches!(subject, Type::Error) {
+                continue;
+            }
+            let Some((span, alias, _)) = types.iter().find(|(_, _, ty)| *ty == subject) else {
+                continue;
+            };
+            let (span, alias) = (*span, *alias);
+            let wanted = &mut self.wanted[k];
+            if wanted.origin.span == span {
+                continue;
+            }
+            let passed_on = k >= owed_before && passer.is_some();
+            wanted.origin.span = span;
+            if passed_on {
+                wanted.origin.callee = passer;
+            }
+            if let Goal::Pred(Pred::Builtin {
+                check: BuiltinCheck::Decodes { written, .. },
+                through,
+                ..
+            }) = &mut wanted.goal
+            {
+                *written = alias;
+                *through |= passed_on;
+            }
+            // Decided here: a later call that gives a decoder the same
+            // type is no place of this one.
+            if !matches!(subject, Type::Var(_))
+                && let Goal::Pred(Pred::Builtin {
+                    check,
+                    subject,
+                    through,
+                }) = self.wanted[k].goal.clone()
+            {
+                self.wanted[k].solved = true;
+                let origin = self.wanted[k].origin;
+                self.check_builtin_argument(check, &subject, through, origin);
+            }
+        }
+    }
+
+    /// The use of the method `method` of the type `owner` just owed,
+    /// since `owed_before` and `given_before`, what its body passes on to
+    /// builtins: a note names it `Src.load`.
+    pub(super) fn name_the_method(
+        &mut self,
+        owed_before: usize,
+        given_before: usize,
+        owner: TypeRef,
+        method: Symbol,
+    ) {
+        let passer = Some(intern(&format!("{owner}.{method}")));
+        for wanted in &mut self.wanted[owed_before..] {
+            if let Goal::Pred(Pred::Builtin { through: true, .. }) = wanted.goal {
+                wanted.origin.callee = passer;
+            }
+        }
+        for (.., origin) in &mut self.given_waiting[given_before..] {
+            origin.callee = passer;
+        }
+    }
+
     /// What the body of its function asks of the annotation variable
     /// `var` for the builtins it gives it to.
     pub(super) fn builtin_needs_of(&self, var: TyVar) -> Vec<BuiltinCheck> {
@@ -122,6 +224,33 @@ impl TypeChecker {
             }
             if !news {
                 break;
+            }
+        }
+        // What another module, or a later REPL entry, reads of this
+        // module's impls and traits: the needs, decided.
+        for key in self.tables.impl_methods.own_keys() {
+            let Some(entry) = self.tables.impl_methods.get(key.0, key.1, key.2) else {
+                continue;
+            };
+            let settled = self.settled_preds(&entry.preds);
+            if let Some(entry) = self.tables.impl_methods.own_mut(&key) {
+                entry.preds = settled;
+            }
+        }
+        let own_traits: Vec<TraitKey> = (self.tables.traits.keys())
+            .filter(|key| self.tables.traits.is_own(key))
+            .copied()
+            .collect();
+        for key in own_traits {
+            let Some(info) = self.tables.traits.get(&key) else {
+                continue;
+            };
+            let needs: HashMap<TyVar, Vec<BuiltinCheck>> = (info.var_names.iter())
+                .map(|(var, _)| (*var, self.builtin_needs_of(*var)))
+                .filter(|(_, needs)| !needs.is_empty())
+                .collect();
+            if let Some(info) = self.tables.traits.get_mut(&key) {
+                info.builtin_needs = needs;
             }
         }
         for (given, subject, written, origin) in waiting {

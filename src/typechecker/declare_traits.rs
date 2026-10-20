@@ -340,6 +340,7 @@ impl TypeChecker {
                 default_method_bodies: HashMap::new(),
                 assoc_types: pre_assoc_types,
                 private_to,
+                builtin_needs: HashMap::new(),
             },
         );
 
@@ -532,6 +533,7 @@ impl TypeChecker {
                 default_method_bodies,
                 assoc_types,
                 private_to,
+                builtin_needs: HashMap::new(),
             },
         );
     }
@@ -1732,7 +1734,9 @@ impl TypeChecker {
                     structural: false,
                     trait_name: Some(trait_key),
                     receiver: declared_receiver.unwrap_or_else(|| writes_self(method)),
-                    preds: method_constraints.clone(),
+                    preds: (method_constraints.iter().cloned())
+                        .chain(self.given_to(&method_rigid))
+                        .collect(),
                 },
             );
 
@@ -1786,6 +1790,7 @@ impl TypeChecker {
                 }
                 let mut method_constraints = impl_level_constraints.clone();
                 method_constraints.extend(Self::bounds_under(info, *name, &mapping));
+                method_constraints.extend(self.given_to_default(trait_key, info, &mapping));
                 self.register_method_entry(
                     target_type,
                     *name,
@@ -1985,6 +1990,58 @@ impl TypeChecker {
     /// Enter a method of an impl among the impls' methods, by its type,
     /// its name and its trait: the row is the module's that writes the
     /// impl.
+    /// What a use of an impl's method owes for the annotation variables
+    /// `rigid` of its body: what the body asks of each for the builtins
+    /// it gives it to (`Pred::Given`).
+    fn given_to(&self, rigid: &[RigidId]) -> Vec<Pred> {
+        if self.registry_rows {
+            return Vec::new();
+        }
+        (rigid.iter())
+            .map(|r| Pred::Given {
+                subject: Type::Var(r.var),
+                given: r.var,
+                written: None,
+            })
+            .collect()
+    }
+
+    /// What a use of the default method of the trait `info` (`key`) that
+    /// an impl takes owes, its variables as `mapping` makes them the
+    /// impl's: what the trait's body asks of each. The trait of another
+    /// module is checked: what it asks is known.
+    fn given_to_default(
+        &self,
+        key: TraitKey,
+        info: &TraitInfo,
+        mapping: &HashMap<TyVar, Type>,
+    ) -> Vec<Pred> {
+        if self.registry_rows {
+            return Vec::new();
+        }
+        let own = self.tables.traits.is_own(&key);
+        let mut preds = Vec::new();
+        for (var, _) in &info.var_names {
+            let subject = substitute_vars(&Type::Var(*var), mapping);
+            if own {
+                preds.push(Pred::Given {
+                    subject,
+                    given: *var,
+                    written: None,
+                });
+                continue;
+            }
+            for check in info.builtin_needs.get(var).into_iter().flatten() {
+                preds.push(Pred::Builtin {
+                    check: *check,
+                    subject: subject.clone(),
+                    through: true,
+                });
+            }
+        }
+        preds
+    }
+
     fn register_method_entry(&mut self, target_type: TypeRef, method: Symbol, entry: MethodEntry) {
         let trait_key = entry.trait_name.expect("an impl's method has its trait");
         self.tables
