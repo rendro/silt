@@ -656,4 +656,271 @@ mod tests {
         }
         assert!(parse_datetime("2016-12-31T23:59:59").is_ok());
     }
+
+    /// The TOML document of the same shape as the JSON document `json`:
+    /// a member that is `null` is left out, as TOML has no null.
+    fn toml_of(json: &serde_json::Value) -> Option<::toml::Value> {
+        use ::toml::Value as T;
+        use serde_json::Value as J;
+        Some(match json {
+            J::Null => return None,
+            J::Bool(b) => T::Boolean(*b),
+            J::Number(n) => match n.as_i64() {
+                Some(n) => T::Integer(n),
+                None => T::Float(n.as_f64()?),
+            },
+            J::String(s) => T::String(s.clone()),
+            J::Array(items) => T::Array(items.iter().filter_map(toml_of).collect()),
+            J::Object(members) => T::Table(
+                members
+                    .iter()
+                    .filter_map(|(key, value)| Some((key.clone(), toml_of(value)?)))
+                    .collect(),
+            ),
+        })
+    }
+
+    /// What a decoder made of a document, as far as two formats agree on
+    /// it: the value; or the kind of the error, with the path it ends
+    /// with (and the whole message of an `Other`).
+    fn outcome(decoded: Result<Value, Error>) -> String {
+        let path = |text: &str| match text.rsplit_once(" at ") {
+            Some((_, path)) => path.to_string(),
+            None => "(top)".to_string(),
+        };
+        match decoded {
+            Ok(value) => format!("{value}"),
+            Err(Error::TypeMismatch(_, actual)) => format!("TypeMismatch at {}", path(&actual)),
+            Err(Error::MissingField(at)) => format!("MissingField {at}"),
+            Err(Error::Other(message)) => format!("Other {message}"),
+            Err(Error::Unsupported(declared)) => format!("Unsupported {declared}"),
+        }
+    }
+
+    /// A document written in JSON and the same document in TOML decode
+    /// alike into a record, a list and a map: to the same value, or to an
+    /// error of the same kind at the same path. Where the formats differ
+    /// on purpose (a whole float, a datetime literal, null, `json.Value`)
+    /// each does what its documentation says.
+    #[test]
+    fn json_and_toml_decode_a_document_of_one_shape_alike() {
+        use crate::defs::DefId;
+        use FieldType as F;
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        let rt = &vm.runtime;
+        let inner = TypeInfo::new_record(
+            TypeId(DefId(9001)),
+            "Inner",
+            vec![
+                ("n".into(), F::Int),
+                ("tag".into(), F::Option(Box::new(F::String))),
+            ],
+        );
+        let cfg = TypeInfo::new_record(
+            TypeId(DefId(9002)),
+            "Cfg",
+            vec![
+                ("name".into(), F::String),
+                ("inner".into(), F::Record(inner.id)),
+                ("xs".into(), F::List(Box::new(F::Int))),
+                ("m".into(), F::Map(Box::new(F::Float))),
+                ("t".into(), F::Tuple(vec![F::Int, F::String])),
+                ("d".into(), F::Date),
+                ("tm".into(), F::Time),
+                ("at".into(), F::DateTime),
+                ("o".into(), F::Option(Box::new(F::Bool))),
+                ("rows".into(), F::List(Box::new(F::Record(inner.id)))),
+            ],
+        );
+        let bytes = TypeInfo::new_record(
+            TypeId(DefId(9003)),
+            "B",
+            vec![("b".into(), F::List(Box::new(F::Bytes)))],
+        );
+        rt.types.lock().insert(inner.clone());
+        rt.types.lock().insert(cfg.clone());
+        // Each document as JSON, with what both decoders make of it (a
+        // value that is not the whole record by the fields it shows).
+        let whole = r#"{"name": "x", "inner": {"n": 2}, "xs": [1, 2],
+            "m": {"a": 1, "b c": 2.5}, "t": [1, "s"], "d": "2026-10-19",
+            "tm": "12:30:00.25", "at": "2026-10-19T12:30:00+02:00",
+            "rows": [{"n": 1, "tag": "a"}, {"n": 2}]}"#;
+        // The whole document with the members of `change` in its place,
+        // a member that is null left out.
+        let with = |change: &str| {
+            let object = |text: &str| match serde_json::from_str(text).expect("JSON") {
+                serde_json::Value::Object(members) => members,
+                other => panic!("{other}"),
+            };
+            let mut doc = object(whole);
+            for (key, value) in object(change) {
+                match value {
+                    serde_json::Value::Null => doc.remove(&key),
+                    value => doc.insert(key, value),
+                };
+            }
+            serde_json::Value::Object(doc).to_string()
+        };
+        let records = [
+            (
+                with("{}"),
+                "Cfg {name: x, inner: Inner {n: 2, tag: None}, xs: [1, 2], \
+                 m: #{\"a\": 1.0, \"b c\": 2.5}, t: (1, s), d: 2026-10-19, \
+                 tm: 12:30:00.250000000, at: 2026-10-19T10:30:00, o: None, \
+                 rows: [Inner {n: 1, tag: Some(a)}, Inner {n: 2, tag: None}]}",
+            ),
+            (with(r#"{"o": true}"#), "o: Some(true)"),
+            (
+                with(r#"{"xs": [9223372036854775807, -1]}"#),
+                "xs: [9223372036854775807, -1]",
+            ),
+            (with(r#"{"name": null}"#), "MissingField name"),
+            (with(r#"{"name": true}"#), "TypeMismatch at name"),
+            (with(r#"{"inner": 5}"#), "TypeMismatch at inner"),
+            (with(r#"{"inner": {"n": "x"}}"#), "TypeMismatch at inner.n"),
+            (with(r#"{"inner": {"n": 1.5}}"#), "TypeMismatch at inner.n"),
+            (with(r#"{"inner": {"tag": "a"}}"#), "MissingField inner.n"),
+            (with(r#"{"xs": [1, "a"]}"#), "TypeMismatch at xs[1]"),
+            (with(r#"{"xs": {}}"#), "TypeMismatch at xs"),
+            (with(r#"{"m": {"b c": "x"}}"#), "TypeMismatch at m[\"b c\"]"),
+            (with(r#"{"m": []}"#), "TypeMismatch at m"),
+            (with(r#"{"t": [1, 2]}"#), "TypeMismatch at t[1]"),
+            (
+                with(r#"{"t": [1, "s", 3]}"#),
+                "Other expected an array of 2 elements for a tuple, got 3 at t",
+            ),
+            (
+                with(r#"{"d": "2026-13-01"}"#),
+                "Other invalid date '2026-13-01' (expected YYYY-MM-DD): input is out of range at d",
+            ),
+            (with(r#"{"d": 20261019}"#), "TypeMismatch at d"),
+            (
+                with(r#"{"tm": "25:00"}"#),
+                "Other invalid time '25:00' (expected HH:MM:SS): input is out of range at tm",
+            ),
+            (
+                with(r#"{"at": "2016-12-31T23:59:60Z"}"#),
+                "Other invalid datetime '2016-12-31T23:59:60Z': a leap second (second 60) is not read at at",
+            ),
+            (
+                with(r#"{"rows": [{"n": 1}, {"tag": "a"}]}"#),
+                "MissingField rows[1].n",
+            ),
+            (
+                with(r#"{"rows": [{"n": 1, "tag": 5}]}"#),
+                "TypeMismatch at rows[0].tag",
+            ),
+        ];
+        let records = records
+            .iter()
+            .map(|(text, expected)| (&cfg, text.as_str(), *expected));
+        // A field whose type holds `Bytes`, which neither format has.
+        let no_bytes = [
+            (
+                r#"{"b": []}"#,
+                "Other cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded",
+            ),
+            (r#"{}"#, "MissingField b"),
+        ];
+        let no_bytes = no_bytes
+            .iter()
+            .map(|(text, expected)| (&bytes, *text, *expected));
+        for (ty, text, expected) in records.chain(no_bytes) {
+            let Shape::Record(fields) = &ty.shape else {
+                unreachable!()
+            };
+            let json = crate::builtins::json::parse_document(text.as_bytes()).expect("JSON");
+            let toml = toml_of(&json).expect("a table");
+            let decoded = [
+                outcome(record(rt, ty, fields, &json, &At::Top)),
+                outcome(record(rt, ty, fields, &toml, &At::Top)),
+            ];
+            assert_eq!(decoded[0], decoded[1], "{text}");
+            assert!(
+                decoded[0] == expected || decoded[0].contains(&format!(", {expected}")),
+                "{text}: {}",
+                decoded[0]
+            );
+        }
+        // A list and a map of records.
+        let rows = [
+            (
+                r#"[{"n": 1}, {"n": 2, "tag": "b"}]"#,
+                "[Inner {n: 1, tag: None}, Inner {n: 2, tag: Some(b)}]",
+            ),
+            (r#"[{"n": 1}, {"n": "2"}]"#, "TypeMismatch at [1].n"),
+            (r#"{"n": 1}"#, "TypeMismatch at (top)"),
+        ];
+        let maps = [
+            (r#"{"a": {"n": 1}}"#, "#{\"a\": Inner {n: 1, tag: None}}"),
+            (r#"{"a": {"n": 1}, "b": {}}"#, "MissingField b.n"),
+            (r#"[1]"#, "TypeMismatch at (top)"),
+        ];
+        let element = F::Record(inner.id);
+        for (shape, cases) in [("list", rows), ("map", maps)] {
+            for (text, expected) in cases {
+                let json = crate::builtins::json::parse_document(text.as_bytes()).expect("JSON");
+                let toml = toml_of(&json).expect("a document");
+                let decoded = match shape {
+                    "list" => [
+                        outcome(list(rt, &element, &json, &At::Top)),
+                        outcome(list(rt, &element, &toml, &At::Top)),
+                    ],
+                    _ => [
+                        outcome(map(rt, &element, &json, &At::Top)),
+                        outcome(map(rt, &element, &toml, &At::Top)),
+                    ],
+                };
+                assert_eq!(decoded, [expected; 2].map(String::from), "{shape} {text}");
+            }
+        }
+        // Where the formats differ on purpose.
+        let json = |text: &str, expected: &FieldType| {
+            let doc = crate::builtins::json::parse_document(text.as_bytes()).expect("JSON");
+            let decoded = value(rt, &doc, expected, &At::Top.key("v"));
+            decoded.map_err(|e| format!("{:?}", e.variant(serde_json::Value::RULES)))
+        };
+        let toml = |text: &str, expected: &FieldType| {
+            let doc: ::toml::Value = ::toml::from_str(text).expect("TOML");
+            let doc = doc.get("v").expect("v").clone();
+            let decoded = value(rt, &doc, expected, &At::Top.key("v"));
+            decoded.map_err(|e| format!("{:?}", e.variant(::toml::Value::RULES)))
+        };
+        let shown = |r: Result<Value, std::string::String>| match r {
+            Ok(value) => format!("Ok({value})"),
+            Err(e) => format!("Err({e})"),
+        };
+        // A whole float: an `Int` by its value to JSON, a float to TOML.
+        assert_eq!(shown(json("2.0", &F::Int)), "Ok(2)");
+        assert_eq!(
+            shown(toml("v = 2.0", &F::Int)),
+            "Err(TypeMismatch(\"Int\", \"float at v\"))"
+        );
+        // A datetime literal: a `Date` as its string is, no `String`.
+        assert_eq!(shown(json(r#""2026-10-19""#, &F::Date)), "Ok(2026-10-19)");
+        assert_eq!(shown(toml("v = 2026-10-19", &F::Date)), "Ok(2026-10-19)");
+        assert_eq!(shown(json(r#""2026-10-19""#, &F::String)), "Ok(2026-10-19)");
+        assert_eq!(
+            shown(toml("v = 2026-10-19", &F::String)),
+            "Err(TypeMismatch(\"String\", \"datetime at v\"))"
+        );
+        // A null: JSON's is a `None`, and no `String`.
+        assert_eq!(
+            shown(json("null", &F::Option(Box::new(F::Int)))),
+            "Ok(None)"
+        );
+        assert_eq!(
+            shown(json("null", &F::String)),
+            "Err(TypeMismatch(\"String\", \"null at v\"))"
+        );
+        // A `json.Value` is decoded from JSON only.
+        assert_eq!(
+            shown(json("[1, 2.5]", &F::JsonValue)),
+            "Ok(Array([Int(1), Float(2.5)]))"
+        );
+        assert_eq!(
+            shown(toml("v = [1, 2.5]", &F::JsonValue)),
+            "Err(Other(\"a value of type json.Value cannot be decoded\"))"
+        );
+    }
 }
