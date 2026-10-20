@@ -31,6 +31,7 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::layers::Layers;
 use crate::module;
 use crate::source::Span;
+use crate::typechecker::decodable::shown;
 use crate::typeinfo::{FieldType, Shape, Tag, TypeInfo, TypeTable, VariantInfo};
 use crate::types::canonical::{Resolver, canonical_head};
 use crate::types::{Type, TypeRef};
@@ -45,18 +46,14 @@ mod patterns;
 // variants or its fields. A record's fields, and the fields of an enum's
 // variants, carry their types as far as `json.parse(text, T)`,
 // `toml.parse(text, T)` and `postgres.query(db, sql, params, T)` need
-// them to build a value of `T`. Type aliases are
+// them to build a value of `T`, as the checker's tables describe them
+// (`Tables::decoded_field_type`). Type aliases are
 // replaced by their target. A type no decoder exists for is
 // `FieldType::Unsupported`, which makes the decoders return `Err`; it is
 // never mapped to some other type. A direct call of a decoder whose type
 // argument names such a record is rejected at compile time (see
 // `Compiler::check_decode_target`). What each decoder decodes is its
 // registry row's `Decoding` (`crate::builtins::registry::decoding`).
-
-/// A type as messages write it, a record type by its name.
-fn shown(ty: &Type) -> String {
-    Type::show_all(&[ty], |_, _| None).remove(0)
-}
 
 /// A record field, or a field of an enum's variant, that `json.parse` /
 /// `toml.parse` cannot decode.
@@ -2141,7 +2138,7 @@ impl<'a> Compiler<'a> {
         let variants = defs.variants(id.0);
         let mut nested = Vec::new();
         let shape = if !variants.is_empty() {
-            let variant_fields = self.variant_fields(id);
+            let variant_fields = self.units.tables.decoded_variant_fields(ty);
             Shape::Enum(
                 variants
                     .iter()
@@ -2158,8 +2155,8 @@ impl<'a> Compiler<'a> {
                         let fields = declared
                             .iter()
                             .map(|ty| {
-                                let field_type = self
-                                    .describe_field_type(ty, &mut Vec::new())
+                                let field_type = (self.units.tables)
+                                    .decoded_field_type(ty, &mut Vec::new())
                                     .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
                                 field_type.records(&mut nested);
                                 field_type
@@ -2174,13 +2171,13 @@ impl<'a> Compiler<'a> {
                     .collect(),
             )
         } else {
-            let fields = self.record_fields(id);
+            let fields = self.units.tables.decoded_record_fields(ty);
             Shape::Record(
                 fields
                     .iter()
                     .map(|(name, ty)| {
-                        let field_type = self
-                            .describe_field_type(ty, &mut Vec::new())
+                        let field_type = (self.units.tables)
+                            .decoded_field_type(ty, &mut Vec::new())
                             .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
                         field_type.records(&mut nested);
                         (resolve(*name), field_type)
@@ -2572,120 +2569,6 @@ impl<'a> Compiler<'a> {
 
     // ── Record field types for the json / toml decoders ──────────
 
-    /// The fields of the record type `id`, with their types as the
-    /// checker inferred them (an alias is the type it stands for).
-    fn record_fields(&self, id: crate::defs::TypeId) -> Vec<(Symbol, Type)> {
-        let ty = TypeRef {
-            id,
-            name: self.units.defs.get(id.0).name,
-        };
-        (self.units.tables.record_fields_of(ty).iter())
-            .map(|(name, ty)| {
-                (
-                    *name,
-                    crate::types::canonical::canonicalize(self.resolver(), ty),
-                )
-            })
-            .collect()
-    }
-
-    /// The variants of the enum type `id`, each with the types of its
-    /// fields as the checker inferred them (an alias is the type it
-    /// stands for).
-    fn variant_fields(&self, id: crate::defs::TypeId) -> Vec<(Symbol, Vec<Type>)> {
-        let ty = TypeRef {
-            id,
-            name: self.units.defs.get(id.0).name,
-        };
-        (self.units.tables.variant_fields_of(ty).into_iter())
-            .map(|(name, types)| {
-                let types = types.iter();
-                let canonical = |ty| crate::types::canonical::canonicalize(self.resolver(), ty);
-                (name, types.map(canonical).collect())
-            })
-            .collect()
-    }
-
-    /// The type `ty` of a record field as the decoders see it.
-    ///
-    /// `Err` carries the part of `ty` no decoder exists for. The record
-    /// types the field type refers to are added to `records`.
-    fn describe_field_type(
-        &self,
-        ty: &Type,
-        records: &mut Vec<crate::defs::TypeId>,
-    ) -> Result<FieldType, String> {
-        use crate::typeinfo::ty as bt;
-        let unsupported = || Err(shown(ty));
-        match ty {
-            Type::Int => Ok(FieldType::Int),
-            Type::Float => Ok(FieldType::Float),
-            Type::String => Ok(FieldType::String),
-            Type::Bool => Ok(FieldType::Bool),
-            Type::List(elem) => Ok(FieldType::List(Box::new(
-                self.describe_field_type(elem, records)?,
-            ))),
-            // The keys of a JSON object or a TOML table are strings.
-            Type::Map(key, value) if matches!(**key, Type::String) => Ok(FieldType::Map(Box::new(
-                self.describe_field_type(value, records)?,
-            ))),
-            Type::Tuple(elems) if !elems.is_empty() => {
-                let mut parts = Vec::with_capacity(elems.len());
-                for elem in elems {
-                    parts.push(self.describe_field_type(elem, records)?);
-                }
-                Ok(FieldType::Tuple(parts))
-            }
-            Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => Ok(
-                FieldType::Option(Box::new(self.describe_field_type(&args[0], records)?)),
-            ),
-            Type::Generic(t, args) if args.is_empty() => self.describe_named_type(*t, ty, records),
-            // Set, Channel, functions, generic records, ...
-            _ => unsupported(),
-        }
-    }
-
-    /// A named type with no arguments as the decoders see it: Date, Time,
-    /// DateTime, json.Value, Bytes, or a non-generic record or enum type
-    /// of the program.
-    fn describe_named_type(
-        &self,
-        t: TypeRef,
-        ty: &Type,
-        records: &mut Vec<crate::defs::TypeId>,
-    ) -> Result<FieldType, String> {
-        use crate::typeinfo::ty as bt;
-        match t.id {
-            id if id == bt::DATE => Ok(FieldType::Date),
-            id if id == bt::TIME => Ok(FieldType::Time),
-            id if id == bt::DATE_TIME => Ok(FieldType::DateTime),
-            id if id == bt::JSON_VALUE => Ok(FieldType::JsonValue),
-            id if id == TypeRef::builtin("Bytes").id => Ok(FieldType::Bytes),
-            // A non-generic record type of the program.
-            id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
-                && self.units.defs.variants(id.0).is_empty()
-                && self
-                    .type_declaration(self.units.defs.get(id.0).span)
-                    .is_some_and(|decl| decl.params.is_empty()) =>
-            {
-                records.push(id);
-                Ok(FieldType::Record(id))
-            }
-            // A non-generic enum type of the program.
-            id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
-                && !self.units.defs.variants(id.0).is_empty()
-                && self
-                    .type_declaration(self.units.defs.get(id.0).span)
-                    .is_some_and(|decl| decl.params.is_empty()) =>
-            {
-                records.push(id);
-                Ok(FieldType::Enum(id))
-            }
-            // Builtin enums, the other builtin types.
-            _ => Err(shown(ty)),
-        }
-    }
-
     /// The first field that `family` cannot decode, in the record or
     /// enum type `record` or in a record or enum type nested in it (which
     /// `family.nested()` decodes). `None` if there is none.
@@ -2699,17 +2582,21 @@ impl<'a> Compiler<'a> {
             return None;
         }
         let def = *self.units.defs.get(record.0);
+        let ty = TypeRef {
+            id: record,
+            name: def.name,
+        };
         let is_enum = |id: &crate::defs::TypeId| !self.units.defs.variants(id.0).is_empty();
         let fields = match is_enum(&record) {
             // (Each field of each variant, by the variant's name.)
-            true => (self.variant_fields(record).into_iter())
+            true => (self.units.tables.decoded_variant_fields(ty).into_iter())
                 .flat_map(|(name, types)| types.into_iter().map(move |ty| (name, ty)))
                 .collect(),
-            false => self.record_fields(record),
+            false => self.units.tables.decoded_record_fields(ty),
         };
         for (field, ty) in fields {
             let mut nested = Vec::new();
-            let lacking = match self.describe_field_type(&ty, &mut nested) {
+            let lacking = match self.units.tables.decoded_field_type(&ty, &mut nested) {
                 Err(part) => Some(part),
                 Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
                     let enum_type = nested.iter().find(|id| is_enum(id))?;

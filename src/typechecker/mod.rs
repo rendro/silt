@@ -13,6 +13,7 @@ mod builtin_traits;
 mod declare_fns;
 mod declare_traits;
 mod declare_types;
+pub(crate) mod decodable;
 mod env;
 mod exhaustiveness;
 mod infer;
