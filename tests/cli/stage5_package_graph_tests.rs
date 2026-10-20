@@ -862,14 +862,10 @@ fn locked_checksum(app: &Path) -> String {
 fn assert_checksum_error(out: &Output, expected: &str, checkout: &Path) {
     let err = stderr(out);
     // The checkout as silt shows it from the app: its URL's directory
-    // of the cache and its commit.
+    // of the cache and its commit, with `/` between them on every
+    // platform (the display rule of package paths).
     let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
-    let separator = std::path::MAIN_SEPARATOR;
-    let checkout_shown = format!(
-        "{}{separator}{}",
-        name(checkout.parent().unwrap()),
-        name(checkout)
-    );
+    let checkout_shown = format!("{}/{}", name(checkout.parent().unwrap()), name(checkout));
     assert_eq!(out.status.code(), Some(1), "{err}");
     assert!(
         err.starts_with(
