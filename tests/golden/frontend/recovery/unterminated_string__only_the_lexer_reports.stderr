@@ -3,3 +3,4 @@ error[lex]: unterminated string
    |
  9 |   println("the value is {n}
    |           ^ unterminated string
+  = note: the string goes on behind the `{` at 12:20, which starts an interpolation: write `\{` for a literal brace

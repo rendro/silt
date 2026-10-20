@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- The note of a string not closed names the first interpolation on a
+-- later line than the quote: one on the quote's own line (`{n}`) is the
+-- string's, the `{` of the `match` the one the string ran into.
+fn main() {
+  let n = 1
+  println("abc {n} def)
+  match n {
+    _ -> println(n)
+  }
+}

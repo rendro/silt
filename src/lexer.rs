@@ -364,11 +364,13 @@ pub struct Lexer {
     pos: usize,
     byte_offset: usize,
     /// Stack of brace depths at which string interpolations began, each
-    /// with the string's opening quote and the `{` of its first
-    /// interpolation.
+    /// with the string's opening quote.
     /// When we encounter `}` and brace_depth matches the top of this stack,
     /// we resume scanning a string instead of emitting RBrace.
-    interp_stack: Vec<(usize, Span, Span)>,
+    interp_stack: Vec<(usize, Span)>,
+    /// The `{` of every interpolation read, with its string's opening
+    /// quote (byte offsets), for the note of a string not closed.
+    interpolations: Vec<(u32, u32)>,
     brace_depth: usize,
     /// Every comment read so far, in source order.
     comments: Vec<Comment>,
@@ -401,6 +403,7 @@ impl Lexer {
             pos: 0,
             byte_offset: 0,
             interp_stack: Vec::new(),
+            interpolations: Vec::new(),
             brace_depth: 0,
             comments: Vec::new(),
             gap_newlines: 0,
@@ -622,11 +625,10 @@ impl Lexer {
         true
     }
 
-    /// The string, or the rest of one behind an interpolation, that
-    /// starts at `start`; `opened` is where its opening quote is, and
-    /// `brace` the `{` of its first interpolation, for a rest.
-    fn scan_string(&mut self, start: Span, opened: Span, brace: Option<Span>) -> Scanned {
-        let is_continuation = brace.is_some();
+    /// The string, or the rest of one behind an interpolation
+    /// (`is_continuation`), that starts at `start`; `opened` is where its
+    /// opening quote is.
+    fn scan_string(&mut self, start: Span, opened: Span, is_continuation: bool) -> Scanned {
         let mut text = String::new();
 
         loop {
@@ -642,13 +644,16 @@ impl Lexer {
                     // quote; the rest behind an interpolation runs on
                     // from the interpolation's `}`.
                     self.cut_short = true;
-                    // An interpolation that starts on a later line than
-                    // the quote most likely is a `{` of the code the
+                    // The first interpolation that starts on a later line
+                    // than the quote most likely is a `{` of the code the
                     // string ran into: the note names it.
                     let quote_line = self.line_col(opened.start as usize).0;
-                    let note = brace
-                        .map(|brace| self.line_col(brace.start as usize))
-                        .filter(|(line, _)| *line != quote_line)
+                    let note = self
+                        .interpolations
+                        .iter()
+                        .filter(|(quote, _)| *quote == opened.start)
+                        .map(|(_, brace)| self.line_col(*brace as usize))
+                        .find(|(line, _)| *line != quote_line)
                         .map(|(line, col)| {
                             format!(
                                 "the string goes on behind the `{{` at {line}:{col}, which \
@@ -712,11 +717,9 @@ impl Lexer {
                     }
                 }
                 Some('{') => {
-                    // (The first interpolation's `{` is the one the
-                    // note of a string not closed names.)
-                    let first = brace.unwrap_or_else(|| self.span());
+                    self.interpolations.push((opened.start, self.span().start));
                     self.advance_char(); // consume `{`
-                    self.interp_stack.push((self.brace_depth, opened, first));
+                    self.interp_stack.push((self.brace_depth, opened));
                     self.brace_depth += 1; // track interpolation brace
                     let tok = if is_continuation {
                         Token::StringMiddle(text)
@@ -1119,7 +1122,7 @@ impl Lexer {
                     self.advance_char(); // consume third "
                     self.scan_triple_string(start)
                 } else {
-                    self.scan_string(start, start, None)
+                    self.scan_string(start, start, false)
                 }
             }
 
@@ -1172,14 +1175,14 @@ impl Lexer {
 
             '}' => {
                 // Check if this closes a string interpolation
-                if let Some(&(interp_depth, opened, brace)) = self.interp_stack.last()
+                if let Some(&(interp_depth, opened)) = self.interp_stack.last()
                     && self.brace_depth == interp_depth + 1
                 {
                     self.interp_stack.pop();
                     self.brace_depth -= 1;
                     // Resume scanning the string
                     let cont_start = self.span();
-                    return self.scan_string(cont_start, opened, Some(brace));
+                    return self.scan_string(cont_start, opened, true);
                 }
                 self.brace_depth = self.brace_depth.saturating_sub(1);
                 (Token::RBrace, start)
