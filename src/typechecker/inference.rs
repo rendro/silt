@@ -1851,7 +1851,16 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         if entry.structural {
-                            let ty = match self.type_instance(key.0) {
+                            // Written through an alias, the instance is the
+                            // alias's (`Ints` for `type Ints = List(Int)` is
+                            // a `List(Int)`), with its arguments.
+                            let instance = self.type_instance(ty).map(|instance| {
+                                crate::types::canonical::canonicalize(
+                                    &self.tables.resolver,
+                                    &instance,
+                                )
+                            });
+                            let ty = match instance {
                                 Some(inner) => {
                                     self.structural_type_method(key.0, &inner, field, span)
                                 }
