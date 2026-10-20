@@ -520,6 +520,17 @@ pub enum Pred {
         subject: Type,
         through: bool,
     },
+    /// `subject` is given to the annotation variable `given` of a
+    /// function's signature (`type a`, `db: a`): what that function's
+    /// body asks of `given` for the builtins it gives it to
+    /// (`Pred::Builtin`), it asks of `subject`. Which that is is known
+    /// once the bodies of the function's module are checked. `written`
+    /// is the alias the use names the type by, if it names it by one.
+    Given {
+        subject: Type,
+        given: TyVar,
+        written: Option<Symbol>,
+    },
 }
 
 /// What a builtin asks of the type of one of its arguments beyond its
@@ -600,13 +611,24 @@ impl Pred {
                 subject: substitute_vars(subject, mapping),
                 through: *through,
             },
+            Pred::Given {
+                subject,
+                given,
+                written,
+            } => Pred::Given {
+                subject: substitute_vars(subject, mapping),
+                given: *given,
+                written: *written,
+            },
         }
     }
 
     /// The type the predicate is about.
     pub fn subject(&self) -> &Type {
         match self {
-            Pred::Trait { subject, .. } | Pred::Builtin { subject, .. } => subject,
+            Pred::Trait { subject, .. }
+            | Pred::Builtin { subject, .. }
+            | Pred::Given { subject, .. } => subject,
             Pred::Anon { row, .. } | Pred::Lacks { row, .. } => row,
         }
     }
@@ -615,7 +637,9 @@ impl Pred {
     pub fn args(&self) -> &[Type] {
         match self {
             Pred::Trait { args, .. } => args,
-            Pred::Anon { .. } | Pred::Lacks { .. } | Pred::Builtin { .. } => &[],
+            Pred::Anon { .. } | Pred::Lacks { .. } | Pred::Builtin { .. } | Pred::Given { .. } => {
+                &[]
+            }
         }
     }
 }

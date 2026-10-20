@@ -1,8 +1,11 @@
+-- cmd: check
+-- exit: 1
 -- A field whose type holds json.Value has no decoder in toml, so toml
--- refuses it whatever the document holds there: its key left out (an
--- Option too), an empty array, and in a record type the field names.
--- json decodes the same records. (The type arrives at run time: written
--- at the call, the compiler refuses it.)
+-- refuses it whatever the document would hold there: its key left out
+-- (an Option too), an empty array, and in a record type the field
+-- names. json decodes the same records.
+-- (Through a `type a` parameter: the checker asks of each type a call
+-- gives it what the decoder the function gives it to asks.)
 import json
 import toml
 

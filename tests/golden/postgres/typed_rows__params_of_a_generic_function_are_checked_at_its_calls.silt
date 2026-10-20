@@ -1,11 +1,9 @@
 -- requires-feature: postgres
+-- cmd: check
 -- exit: 1
--- stdout-contains: a tuple: postgres requires PgPool or PgTx, got Int
--- stderr-contains: postgres.query: params must be a tuple, got Int; write (id,)
--- In a function that takes the parameters as a type variable, the
--- compiler does not know their type, and `postgres.query` checks it
--- where it runs, before anything else (here, before it looks at the
--- connection, which is no pool).
+-- A function that takes the connection and the parameters as type
+-- variables asks of the types each call gives them what
+-- `postgres.query` asks: a pool or a transaction, and a tuple.
 import postgres
 
 type User { id: Int }

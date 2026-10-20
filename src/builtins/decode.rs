@@ -569,8 +569,8 @@ impl Decoder {
 
 /// What the type argument `ty` of the decoding builtin `decoder` names:
 /// a type its registry row's [`Decoding`] says it decodes into, or the
-/// error of the program. (The compiler refuses the others where the type
-/// is written; this is for a type argument that is a type variable.)
+/// error of the program. (The checker refuses the others wherever a
+/// program gives one, `Pred::Builtin`: this is the decoders' guard.)
 ///
 /// [`Decoding`]: super::registry::Decoding
 pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, VmError> {

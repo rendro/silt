@@ -1,0 +1,16 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A function that takes the type of its rows as a type parameter, and
+-- its connection as a type variable, asks of the types each call gives
+-- them what `postgres.query` asks: a row type and a pool or a
+-- transaction.
+import postgres
+
+fn rows(db: a, type r) -> Result(List(r), postgres.PostgresError) {
+  postgres.query(db, "SELECT 1 AS n", (), r)
+}
+
+fn main() {
+  println(rows(0, Int))
+}

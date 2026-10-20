@@ -47,10 +47,17 @@ impl TypeChecker {
         origin: Origin,
     ) {
         let ty = canonicalize(self.tables.resolver(), &self.apply(subject));
-        if matches!(
-            ty,
-            Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never
-        ) {
+        // An annotation variable: what the body asks of it, each use of
+        // its function asks of the type it gives (`settle_builtin_needs`).
+        if let Type::Rigid(r) = ty {
+            let needs = self.builtin_needs.entry(self.rigid_rep_var(r.var));
+            let needs = needs.or_default();
+            if !needs.contains(&check.unwritten()) {
+                needs.push(check.unwritten());
+            }
+            return;
+        }
+        if matches!(ty, Type::Var(_) | Type::Error | Type::Never) {
             return;
         }
         let span = origin.span;
@@ -82,6 +89,59 @@ impl TypeChecker {
                 diagnostic.with_note(format!("`{callee}` passes it to `{}`", check.builtin()));
         }
         self.errors.push(diagnostic);
+    }
+
+    /// What the body of its function asks of the annotation variable
+    /// `var` for the builtins it gives it to.
+    pub(super) fn builtin_needs_of(&self, var: TyVar) -> Vec<BuiltinCheck> {
+        (self.builtin_needs.get(&self.rigid_rep_var(var)))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Decide what waited for the bodies of the module's functions: what
+    /// each type given to an annotation variable of a signature must be.
+    /// A body that gives its own annotation variable to another function
+    /// asks of it what that function asks.
+    pub(super) fn settle_builtin_needs(&mut self) {
+        let waiting = std::mem::take(&mut self.given_waiting);
+        loop {
+            let mut news = false;
+            for (given, subject, ..) in &waiting {
+                let Type::Rigid(r) = self.apply(subject) else {
+                    continue;
+                };
+                let to = self.rigid_rep_var(r.var);
+                for check in self.builtin_needs_of(*given) {
+                    let needs = self.builtin_needs.entry(to).or_default();
+                    if !needs.contains(&check) {
+                        needs.push(check);
+                        news = true;
+                    }
+                }
+            }
+            if !news {
+                break;
+            }
+        }
+        for (given, subject, written, origin) in waiting {
+            if matches!(self.apply(&subject), Type::Rigid(_)) {
+                continue;
+            }
+            for check in self.builtin_needs_of(given) {
+                let check = match check {
+                    BuiltinCheck::Decodes {
+                        builtin, decoding, ..
+                    } => BuiltinCheck::Decodes {
+                        builtin,
+                        decoding,
+                        written,
+                    },
+                    other => other,
+                };
+                self.check_builtin_argument(check, &subject, true, origin);
+            }
+        }
     }
 
     /// The error of the decoder `builtin`, which decodes as `decoding`

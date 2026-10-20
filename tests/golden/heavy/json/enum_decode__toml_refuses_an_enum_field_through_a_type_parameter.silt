@@ -1,7 +1,8 @@
--- toml has no decoder for an enum: a record with an enum field that
--- arrives through a `type a` parameter, which the compiler cannot
--- check, is an Err that names the field, as for any field without a
--- decoder.
+-- cmd: check
+-- exit: 1
+-- toml has no decoder for an enum: a record with an enum field given
+-- through a `type a` parameter is refused at the call that gives it,
+-- naming the field, as for any field without a decoder.
 import toml
 
 type Status {

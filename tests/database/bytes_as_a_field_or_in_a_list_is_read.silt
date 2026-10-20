@@ -1,0 +1,35 @@
+-- A row's field fills Bytes from a bytea column: as the field, and in a
+-- List (of a bytea[] column), through a type parameter too.
+import env
+import list
+import postgres
+
+type Plain { b: Bytes, bs: List(Bytes) }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn rows(db: postgres.PgPool, sql: String, type a) -> Result(List(a), postgres.PostgresError) {
+  postgres.query(db, sql, (), a)
+}
+
+fn show(r: Result(List(a), postgres.PostgresError)) {
+  match r {
+    Ok(rows) -> println("{list.length(rows)} rows")
+    Err(e) -> println(e.message())
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      show(rows(db, "SELECT '\\x00ff'::bytea AS b, ARRAY['\\x01'::bytea] AS bs", Plain))
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

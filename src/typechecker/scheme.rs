@@ -146,6 +146,11 @@ impl TypeChecker {
                         subject: Type::Var(subject),
                         through: true,
                     },
+                    Pred::Given { given, .. } => Pred::Given {
+                        subject: Type::Var(subject),
+                        given: *given,
+                        written: None,
+                    },
                 };
                 if !preds.contains(&pred) {
                     preds.push(pred);
@@ -218,7 +223,7 @@ impl TypeChecker {
                 | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
                 // A type nothing decides is no type a builtin is given:
                 // nothing to check.
-                Goal::Pred(Pred::Builtin { .. }) => continue,
+                Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. }) => continue,
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(

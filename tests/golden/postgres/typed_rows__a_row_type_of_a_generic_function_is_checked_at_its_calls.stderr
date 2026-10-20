@@ -1,0 +1,14 @@
+error[type]: the connection of `postgres.query` must be a PgPool or a PgTx
+ --> typed_rows__a_row_type_of_a_generic_function_is_checked_at_its_calls.silt:15:16
+    |
+ 15 |   println(rows(0, Int))
+    |                ^ the connection of `postgres.query` must be a PgPool or a PgTx
+  = note: `rows` passes it to `postgres.query`
+
+error[type]: `postgres.query` cannot decode `Int`: its type argument must be a record type or json.Value
+ --> typed_rows__a_row_type_of_a_generic_function_is_checked_at_its_calls.silt:15:19
+    |
+ 15 |   println(rows(0, Int))
+    |                   ^^^ `postgres.query` cannot decode `Int`: its type argument must be a record type or json.Value
+  = note: `rows` passes it to `postgres.query`
+  = help: declare a record type with a field for each column

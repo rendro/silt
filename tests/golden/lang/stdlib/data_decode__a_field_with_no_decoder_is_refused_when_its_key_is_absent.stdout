@@ -1,7 +1,0 @@
-cannot decode field `b` of `B`: a value of type Option(List(Bytes)) cannot be decoded
-cannot decode field `b` of `B`: a value of type Option(List(Bytes)) cannot be decoded
-cannot decode field `b` of `B`: a value of type Option(List(Bytes)) cannot be decoded
-cannot decode field `b` of `B`: a value of type Option(List(Bytes)) cannot be decoded
-cannot decode field `s` of `S`: a value of type Option(Set(Int)) cannot be decoded
-cannot decode field `s` of `S`: a value of type Option(Set(Int)) cannot be decoded
-cannot decode field `s` of `S`: a value of type Option(Set(Int)) cannot be decoded

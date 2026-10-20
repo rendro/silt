@@ -1,0 +1,32 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A row's field fills Bytes only from a bytea column: as the field, in
+-- an Option or in a List. Bytes in a Map, a tuple or a record type the
+-- field names would come from a json document, which has no bytes, so
+-- such a row type given through a type parameter is refused at the call
+-- that gives it, naming the field (of the nested record type).
+import postgres
+
+type Blob { b: Bytes }
+type InMap { m: Map(String, Bytes) }
+type InTuple { t: (Int, Bytes) }
+type Nested { blob: Option(Blob) }
+type Listed { blobs: List(Blob) }
+type Plain { b: Bytes, bs: List(Bytes) }
+
+fn rows(db: postgres.PgPool, sql: String, type a) -> Result(List(a), postgres.PostgresError) {
+  postgres.query(db, sql, (), a)
+}
+
+fn refused(db: postgres.PgPool) {
+  let _ = rows(db, "SELECT 1 AS m", InMap)
+  let _ = rows(db, "SELECT 1 AS t", InTuple)
+  let _ = rows(db, "SELECT 1 AS blob", Nested)
+  let _ = rows(db, "SELECT 1 AS blobs", Listed)
+  let _ = rows(db, "SELECT 1 AS b", Plain)
+}
+
+fn main() {
+  println("checked")
+}

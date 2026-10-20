@@ -1,0 +1,7 @@
+error[type]: `toml.parse_map` cannot decode `Color`: it is an enum type, and enums have no decoder
+ --> data_decode__a_refused_type_through_a_parameter_is_refused_at_the_call.silt:18:37
+    |
+ 18 |   println(decode_map("a = \"Red\"", Color))
+    |                                     ^^^^^ `toml.parse_map` cannot decode `Color`: it is an enum type, and enums have no decoder
+  = note: `decode_map` passes it to `toml.parse_map`
+  = help: decode into a record type

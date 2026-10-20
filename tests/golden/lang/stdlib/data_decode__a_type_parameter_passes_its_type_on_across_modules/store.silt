@@ -1,0 +1,9 @@
+import json
+
+pub fn load(text: String, type a) -> Result(a, json.JsonError) {
+  json.parse(text, a)
+}
+
+pub fn via(text: String, type b) -> Result(b, json.JsonError) {
+  load(text, b)
+}

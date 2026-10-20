@@ -1384,10 +1384,13 @@ impl TypeChecker {
                         // A type argument the call names by an alias:
                         // what a decoder's refusal calls it.
                         let alias = self.alias_named(arg);
-                        if let Goal::Pred(Pred::Builtin {
-                            check: BuiltinCheck::Decodes { written, .. },
-                            ..
-                        }) = &mut self.wanted[k].goal
+                        if let Goal::Pred(
+                            Pred::Builtin {
+                                check: BuiltinCheck::Decodes { written, .. },
+                                ..
+                            }
+                            | Pred::Given { written, .. },
+                        ) = &mut self.wanted[k].goal
                         {
                             *written = alias;
                         }

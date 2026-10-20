@@ -1,9 +1,6 @@
--- postgres has no decoder for an enum: a row type with an enum field
--- (or an Option, List or Map of one) is refused before any column is
--- matched, whatever the result holds, a json or jsonb column holding a
--- variant too. (The type arrives at run time: written at the call, the
--- compiler refuses it.) A record nested in a field is filled from a json
--- document by json's rules, which decode an enum.
+-- A record nested in a row's field is filled from a json document by
+-- json's rules, which decode an enum (postgres has no decoder for an
+-- enum field of the row itself).
 import env
 import list
 import postgres
@@ -12,10 +9,6 @@ type Status {
   Active,
   Paused(Int),
 }
-
-type Job { state: Status }
-
-type Jobs { states: List(Status) }
 
 type Inner { state: Status }
 
@@ -42,9 +35,6 @@ fn show(r: Result(List(a), postgres.PostgresError)) {
 fn main() {
   match postgres.connect(url()) {
     Ok(db) -> {
-      show(rows(db, """SELECT '{"variant": "Active"}'::jsonb AS state""", Job))
-      show(rows(db, "SELECT 1 AS other", Job))
-      show(rows(db, """SELECT '[]'::jsonb AS states""", Jobs))
       show(rows(db, """SELECT '{"state": {"variant": "Active"}}'::jsonb AS inner""", Wrapped))
       postgres.close(db)
     }

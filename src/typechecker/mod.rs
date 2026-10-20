@@ -110,6 +110,15 @@ pub struct TypeChecker {
     /// signature: what stands for the row has none of them
     /// (`Pred::Lacks`).
     pub(super) row_adds: HashMap<TyVar, Vec<Symbol>>,
+    /// What the bodies ask of the annotation variables of their
+    /// signatures for the builtins they give them to (`Pred::Builtin`),
+    /// each by the variable's representative (`rigid_rep_var`).
+    pub(super) builtin_needs: HashMap<TyVar, Vec<BuiltinCheck>>,
+    /// The types given to an annotation variable of a signature whose
+    /// body may not be checked yet, with the alias a use names one by
+    /// (`Pred::Given`): checked when the module's bodies are
+    /// (`settle_builtin_needs`).
+    pub(super) given_waiting: Vec<(TyVar, Type, Option<Symbol>, Origin)>,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -297,6 +306,8 @@ impl TypeChecker {
             anon_rows: std::collections::HashSet::new(),
             anon_waiting: Vec::new(),
             row_adds: HashMap::new(),
+            builtin_needs: HashMap::new(),
+            given_waiting: Vec::new(),
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -1059,6 +1070,15 @@ impl TypeChecker {
                         subject: rep(subject),
                         through,
                     },
+                    Pred::Given {
+                        subject,
+                        given,
+                        written,
+                    } => Pred::Given {
+                        subject: rep(subject),
+                        given: self.rigid_rep_var(given),
+                        written,
+                    },
                 }
             })
             .collect();
@@ -1445,6 +1465,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         checker.leave_waiting(program);
     }
     checker.settle_rows();
+    checker.settle_builtin_needs();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

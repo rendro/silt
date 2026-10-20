@@ -1,3 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- The refusal of a record given through a `type a` parameter names
+-- the field of the record type nested in it that has no decoder.
 import json
 import toml
 

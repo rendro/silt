@@ -83,19 +83,17 @@ which kind a number is. In the same way a datetime literal (`1990-01-01`,
 `String` field `s` it is `Err(TypeMismatch("String", "datetime at s"))`, and the
 text in quotes (`"1990-01-01"`) is a string.
 
-When the type is written at the call, `toml.parse(text, Config)`, the
-compiler checks it. A record with a field no decoder exists for is a compile
-error that names the field and its type; so is an enum, or a type the function
-does not take (such as `toml.parse(text, Int)`). The check applies
-equally to a decoder imported by name (`import toml.{ parse }`) and to one
-called through a module alias. When the type only arrives at run time, through
-a `type a` parameter, the same problems are reported then: a field without a
-decoder gives an `Err(Other(msg))` whose message names the field and its
-record (or the field of a record type it names that has no decoder; toml has
-no decoder for an enum). The type is refused before the document is read,
-whatever the document holds (an `Option` field whose key is left out, an
-empty list or map too), and a type the function does not take is a run-time
-error.
+The type a decoder is given is checked where it is known, as for
+`json.parse`: written at the call (`toml.parse(text, Config)`), held in a
+variable, given to a decoder used as a value, or given to a function that
+passes it on to the decoder (each call of that function is checked). A
+record with a field no decoder exists for is a compile error that names the
+field and its type (or the field of a record type it names that has none);
+so is an enum, which toml has no decoder for, or a type the function does
+not take (such as `toml.parse(text, Int)`). The check applies equally to a
+decoder imported by name (`import toml.{ parse }`) and to one called through
+a module alias, and a type is refused whatever a document would hold (an
+`Option` field whose key is left out, an empty list or map too).
 
 
 ## Nesting limits

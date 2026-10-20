@@ -1,0 +1,31 @@
+error[type]: `postgres.query` cannot decode `InMap`: field `m` has type `Map(String, Bytes)`, and `Bytes` has no decoder
+ --> typed_rows__bytes_a_document_would_hold_is_refused_through_a_type_parameter.silt:23:37
+    |
+ 23 |   let _ = rows(db, "SELECT 1 AS m", InMap)
+    |                                     ^^^^^ `postgres.query` cannot decode `InMap`: field `m` has type `Map(String, Bytes)`, and `Bytes` has no decoder
+  = note: `rows` passes it to `postgres.query`
+  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these; Bytes only as a field, in an Option or in a List (a bytea column), not in a Map, a tuple or a nested record
+
+error[type]: `postgres.query` cannot decode `InTuple`: field `t` has type `(Int, Bytes)`, and `Bytes` has no decoder
+ --> typed_rows__bytes_a_document_would_hold_is_refused_through_a_type_parameter.silt:24:37
+    |
+ 24 |   let _ = rows(db, "SELECT 1 AS t", InTuple)
+    |                                     ^^^^^^^ `postgres.query` cannot decode `InTuple`: field `t` has type `(Int, Bytes)`, and `Bytes` has no decoder
+  = note: `rows` passes it to `postgres.query`
+  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these; Bytes only as a field, in an Option or in a List (a bytea column), not in a Map, a tuple or a nested record
+
+error[type]: `postgres.query` cannot decode `Nested`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
+ --> typed_rows__bytes_a_document_would_hold_is_refused_through_a_type_parameter.silt:25:40
+    |
+ 25 |   let _ = rows(db, "SELECT 1 AS blob", Nested)
+    |                                        ^^^^^^ `postgres.query` cannot decode `Nested`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
+  = note: `rows` passes it to `postgres.query`
+  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these; Bytes only as a field, in an Option or in a List (a bytea column), not in a Map, a tuple or a nested record
+
+error[type]: `postgres.query` cannot decode `Listed`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
+ --> typed_rows__bytes_a_document_would_hold_is_refused_through_a_type_parameter.silt:26:41
+    |
+ 26 |   let _ = rows(db, "SELECT 1 AS blobs", Listed)
+    |                                         ^^^^^^ `postgres.query` cannot decode `Listed`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
+  = note: `rows` passes it to `postgres.query`
+  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these; Bytes only as a field, in an Option or in a List (a bytea column), not in a Map, a tuple or a nested record

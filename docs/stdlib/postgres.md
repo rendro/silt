@@ -45,10 +45,9 @@ its result are decoded into a record type the program declares (or into
 
 The first argument of `query`, `execute`, `stream` and `notify` (`a`
 above) is the connection: a `PgPool`, or the `PgTx` of a transaction.
-The compiler refuses any other type where the call is written:
-``the connection of `postgres.query` must be a PgPool or a PgTx``. A
-function that takes the connection as a type variable is checked where
-it runs: `Err(Other("postgres requires PgPool or PgTx, got Int"))`.
+Any other type is a compile error, where the call is written and at each
+call of a function that passes its own parameter on as the connection:
+``the connection of `postgres.query` must be a PgPool or a PgTx``.
 
 ## Parameters and rows
 
@@ -65,11 +64,9 @@ let ids   = postgres.query(db, "INSERT INTO users (name) VALUES ($1) RETURNING i
 ### Parameters
 
 The parameters of a statement are a tuple, `$1` its first element:
-`(id, name)`, `(id,)` for one (`(id)` is `id` itself, and the compiler
-says to write `(id,)`), `()` for none. In a function that takes the
-parameters as a type variable, a value that is no tuple is an error
-where the statement runs: `postgres.query: params must be a tuple, got
-Int; write (id,)`.
+`(id, name)`, `(id,)` for one (`(id)` is `id` itself, and the compile
+error says to write `(id,)`), `()` for none. A function that passes its
+own parameter on as the parameters is checked the same way at each call.
 
 Each parameter goes to the server as text, and the server reads it as
 the type the statement needs at its place, so an `Int` goes into an
@@ -104,16 +101,14 @@ unsupported value kind Bytes"))`.
 
 `postgres.query`, `postgres.stream` and `postgres.cursor` take the type
 a row is decoded into as their last argument: a record type, or
-`json.Value`, or an alias of one (the type it names). The compiler checks it where it is written, as it does
-for `json.parse`: any other type, or a record with a field of a type no
-column can fill, is an error there. When the type only arrives at run
-time, through a `type a` parameter, a field of a type no column can fill
-(`Bytes` in a `Map`, a tuple or a nested record, which only a json
-document could fill; an enum, which postgres has no decoder for) is
-`Err(Other(msg))` naming the field and its record, before any column is
-matched and whatever the result holds, and any other type is a run-time
-error. A record nested in a field is filled from a json document by
-`json.parse`'s rules, an enum in it too.
+`json.Value`, or an alias of one (the type it names). It is checked where
+it is known, as for `json.parse` (written at the call, or given to a
+function that passes it on, at each call of that function): any other
+type, or a record with a field of a type no column can fill (`Bytes` in a
+`Map`, a tuple or a nested record, which only a json document could fill;
+an enum, which postgres has no decoder for), is a compile error that names
+the field and its record. A record nested in a field is filled from a json
+document by `json.parse`'s rules, an enum in it too.
 
 | Function | Type argument |
 |----------|---------------|

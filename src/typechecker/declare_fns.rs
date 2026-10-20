@@ -216,6 +216,14 @@ impl TypeChecker {
                     row: Type::Var(*var),
                     given: Some(*var),
                 });
+            } else if !self.registry_rows {
+                // What the body asks of the variable for the builtins it
+                // gives it to, each use asks of the type it gives.
+                bounds.push(Pred::Given {
+                    subject: Type::Var(*var),
+                    given: *var,
+                    written: None,
+                });
             }
             rigid.push(id);
             names.insert(*name, Type::Rigid(id));

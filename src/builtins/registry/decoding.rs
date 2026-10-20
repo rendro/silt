@@ -343,6 +343,23 @@ mod tests {
         format!("fn call({params}) {{\n  {}\n}}", call(row, ty))
     }
 
+    /// The function that gives `row` its type through a `type t`
+    /// parameter, and the one that calls it with the type `ty`.
+    fn through_a_parameter(row: &Row, ty: &str) -> String {
+        let (params, args) = match row.module {
+            "postgres" => ("db: postgres.PgPool, tx: postgres.PgTx", "db, tx, "),
+            _ => ("", ""),
+        };
+        let given = match params {
+            "" => "type t".to_string(),
+            _ => format!("{params}, type t"),
+        };
+        format!(
+            "fn pass({given}) {{\n  {}\n}}\nfn call({params}) {{\n  pass({args}{ty})\n}}",
+            call(row, "t")
+        )
+    }
+
     /// The compile errors of `source`, none if it compiles.
     fn compiled(
         source: &str,
@@ -370,7 +387,7 @@ mod tests {
         }
     }
 
-    /// The leaves a help text of the compiler names: those it lists
+    /// The leaves a help text of the checker names: those it lists
     /// before `List(T)`.
     fn helped(help: &str) -> Vec<&str> {
         let list = help
@@ -393,7 +410,7 @@ mod tests {
     /// Every decoding builtin of the registry, for field types made of
     /// each leaf (the leaf, a list, a map and a tuple of it, a record
     /// type that has a field of it and a list of that record) and of
-    /// types no decoder has: the compiler accepts a record with a field
+    /// types no decoder has: the checker accepts a record with a field
     /// of the type exactly when the run time decodes it (json's and
     /// toml's decoders reading a document; postgres's plan, which needs
     /// no server, by its first step), and the help of a refusal names the
@@ -449,8 +466,8 @@ mod tests {
             // same id, and a runtime decides a type's decoder once.)
             let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
             let rt = &vm.runtime;
-            // The types as the run time has them: through `type a`, which
-            // the compiler does not check.
+            // The types as the run time has them: through a `type a`
+            // that reaches no decoder, which the checker asks nothing of.
             let generic = program(
                 inner,
                 field,
@@ -512,6 +529,14 @@ mod tests {
                 };
                 let direct = program(inner, field, &caller(row, "R"));
                 let compile = compiled(&direct);
+                // Given through a `type t` parameter, the type is checked
+                // at the call that gives it, as where it is written.
+                let through = program(inner, field, &through_a_parameter(row, "R"));
+                assert_eq!(
+                    compiled(&through).is_ok(),
+                    compile.is_ok(),
+                    "{name}, a field of {field} through a type parameter\n{through}"
+                );
                 // A field with no decoder is refused whatever the document
                 // holds: one without the field, and one with a value there.
                 for doc in std::iter::once(&absent).chain(present.as_ref()) {
@@ -519,7 +544,7 @@ mod tests {
                     assert_eq!(
                         compile.is_ok(),
                         at_run_time.is_none(),
-                        "{name}, a field of {field} in {doc}: the compiler {} it, the run time \
+                        "{name}, a field of {field} in {doc}: the checker {} it, the run time \
                          {at_run_time:?}\n{direct}",
                         if compile.is_ok() {
                             "accepts"
@@ -583,7 +608,7 @@ mod tests {
         }
         assert_eq!(compared, fields.len() * rows.len());
         // A type argument that is a primitive type, `json.Value` or an
-        // enum type: the compiler takes it where the run time does.
+        // enum type: the checker takes it where the run time does.
         let generic = program(
             "Int",
             "Int",

@@ -33,7 +33,7 @@ JsonError` is wired in):
 | `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes, or a number beyond `Float`'s range (`1e400`: `number out of range`) |
 | `TypeMismatch(expected, actual)` | `String`, `String` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path |
 | `MissingField(name)` | `String` | A required (non-`Option`) field was absent; `name` is its path |
-| `Other(msg)` | `String` | Anything else: a tuple's array of the wrong length, a field without a decoder (when the type arrives at run time), a value too deep for `json.decode` |
+| `Other(msg)` | `String` | Anything else: a tuple's array of the wrong length, a value too deep for `json.decode` |
 
 An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
@@ -85,21 +85,19 @@ A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
 that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 
-When the type is written at the call, `json.parse(text, Config)`, the
-compiler checks it. A record with a field no decoder exists for is a compile
-error that names the field and its type, and so is an enum with a variant
-whose field has none (the error names the variant); so is a generic record or
-enum, or a type the function does not take (such as
-`json.parse(text, List)`). The check applies
+The type a decoder is given is checked where it is known: written at the
+call (`json.parse(text, Config)`), held in a variable, given to a decoder
+used as a value, or given to a function that passes it on to the decoder
+(`fn load(text, type a) { json.parse(text, a) }`: each call of `load` is
+checked, and the error notes that `load` passes it to `json.parse`). A
+record with a field no decoder exists for is a compile error that names the
+field and its type, and so is an enum with a variant whose field has none
+(the error names the variant); so is a generic record or enum, or a type the
+function does not take (such as `json.parse(text, List)`). The check applies
 equally to a decoder imported by name (`import json.{ parse }`) and to one
-called through a module alias. When the type only arrives at run time, through
-a `type a` parameter, the same problems are reported then: a field without a
-decoder gives an `Err(Other(msg))` whose message names the field and its
-record (or the field of a record type, or of an enum's variant, that it names
-and that has no decoder). The type is refused before the document is read,
-whatever the document holds (an `Option` field whose key is left out, another
-variant of the enum, an empty list or map too), and a type the function does
-not take is a run-time error.
+called through a module alias, and a type is refused whatever a document
+would hold (an `Option` field whose key is left out, another variant of the
+enum, an empty list or map too).
 
 
 ## Enums
