@@ -1,0 +1,12 @@
+import time
+-- A year is any Int: whether it is a leap year, and how long its
+-- February is, is the calendar's arithmetic, past chrono's range too.
+fn main() {
+  println(time.is_leap_year(4294967300))
+  println(time.is_leap_year(4294967296))
+  println(time.is_leap_year(-4))
+  println(time.is_leap_year(9223372036854775807))
+  println(time.days_in_month(4294967296, 2))
+  println(time.days_in_month(-9223372036854775808, 2))
+  println(time.days_in_month(-1, 2))
+}

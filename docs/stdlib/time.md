@@ -142,7 +142,9 @@ fn main() {
 time.date(year: Int, month: Int, day: Int) -> Result(Date, TimeError)
 ```
 
-Creates a validated `Date`. Returns `Err` for invalid dates.
+Creates a validated `Date`. Returns `Err(OutOfRange(msg))` for every
+part that makes no date, a negative one or one too large for any date
+included.
 
 ```silt
 import time
@@ -161,7 +163,8 @@ fn main() {
 time.time(hour: Int, min: Int, sec: Int) -> Result(Time, TimeError)
 ```
 
-Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
+Creates a validated `Time` with `ns` set to 0. Returns `Err(OutOfRange(msg))`
+for every part that makes no time of day, a negative one included.
 
 ```silt
 import time
@@ -497,7 +500,8 @@ fn main() -> Result(Unit, time.TimeError) {
 time.days_in_month(year: Int, month: Int) -> Int
 ```
 
-Returns the number of days in the given month.
+Returns the number of days in the given month of any year. A month
+outside `1..=12` is a runtime error.
 
 ```silt
 import time
@@ -515,7 +519,8 @@ fn main() {
 time.is_leap_year(year: Int) -> Bool
 ```
 
-Returns true if the year is a leap year.
+Returns true if the year is a leap year, by the Gregorian rule, for any
+year.
 
 ```silt
 import time
