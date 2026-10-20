@@ -2822,7 +2822,7 @@ impl TypeChecker {
                             let arm_ty = self.infer_expr(&mut arm.body, env);
                             env.pop();
                             every_arm_diverges &= matches!(arm_ty, Type::Never);
-                            self.unify(&result_ty, &arm_ty, body_span);
+                            self.unify(&arm_ty, &result_ty, body_span);
                         }
 
                         // Check exhaustiveness after pattern checking, so the
@@ -2905,7 +2905,7 @@ impl TypeChecker {
                             let arm_ty = self.infer_expr(&mut arm.body, env);
                             env.pop();
                             every_arm_diverges &= matches!(arm_ty, Type::Never);
-                            self.unify(&result_ty, &arm_ty, body_span);
+                            self.unify(&arm_ty, &result_ty, body_span);
                         }
 
                         if every_arm_diverges {
