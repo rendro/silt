@@ -37,7 +37,7 @@ JsonError` is wired in):
 
 An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
-that is not made of letters, digits, `_` and `-` as a JSON string in
+that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
 brackets (`tags["a b"]`), and the elements of a list or a tuple by index
 (`xs[1]`; `[2]` for an element of the list that `json.parse_list`
 reads).

@@ -34,7 +34,7 @@ TomlError` is wired in):
 
 An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
-that is not made of letters, digits, `_` and `-` as a JSON string in
+that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
 brackets (`tags["a b"]`), and the elements of a list or a tuple by index
 (`xs[1]`; the list that `toml.parse_list` reads is under its one key, so
 its elements are `points[2]`).
@@ -75,10 +75,10 @@ parameter) has no decoder.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
-field is `Err(TypeMismatch("Int", "float"))`, because TOML says
+field is `Err(TypeMismatch("Int", "float at x"))`, because TOML says
 which kind a number is. In the same way a datetime literal (`1990-01-01`,
 `07:32:00`) goes into a `Date`, `Time` or `DateTime` field only: for a
-`String` field it is `Err(TypeMismatch("String", "datetime"))`, and the
+`String` field `s` it is `Err(TypeMismatch("String", "datetime at s"))`, and the
 text in quotes (`"1990-01-01"`) is a string.
 
 When the type is written at the call, `toml.parse(text, Config)`, the
