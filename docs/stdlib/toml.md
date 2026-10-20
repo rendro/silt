@@ -208,9 +208,16 @@ toml.pretty(value: a) -> Result(String, TomlError)
 
 Serialises a silt record or map to a multi-line, human-friendly TOML document.
 TOML's default output is already readable (one key per line, nested tables as
-`[section]` headers), so `toml.pretty` differs only slightly from `toml.stringify`
-— nested arrays of tables render as `[[section]]` blocks instead of inline
-arrays.
+`[section]` headers, arrays of tables as `[[section]]` blocks), so
+`toml.pretty` differs from `toml.stringify` only in writing an array of plain
+values one element per line:
+
+```text
+p = [
+    1,
+    2,
+]
+```
 
 Note: the top-level value must be a record or a map; TOML cannot represent a
 bare scalar or array at top level.
@@ -244,14 +251,29 @@ toml.stringify(value: a) -> Result(String, TomlError)
 ```
 
 Serialises a silt record or map to a TOML document. Like `toml.pretty`, the
-top-level value must be table-shaped. A map is written as a table; a key of
-it that is no `String` is written as its shown text (so the `Float` key `1.0`
-reads `"1.0"`). A `Date`, a `Time` and a `DateTime` (from the `time` module) are
-written as TOML's own literals, which `toml.parse` reads back into a field of
-the same type: `2026-10-19`, `12:30:00` (with a fractional second only when
-the value has one: `12:30:00.25`) and `2026-10-19T12:30:00`. A date whose year
-has no literal (one before the year 0 or past 9999) is written as a string of
-the text silt shows of it, which `toml.parse` reads back as well.
+top-level value must be table-shaped. Each kind of value is written as
+follows:
+
+| Value | Written as |
+|-------|------------|
+| `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false` |
+| `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
+| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
+| a record | a table of its fields; a field that is `None` is left out (TOML has no null), and reads back as `None` |
+| `Some(x)` | `x`, as `x` is written |
+| `None` anywhere else (in a list, as a map's value) | `""` |
+| any other variant (of `Result` and of `json.Value` too) | a table with the keys `variant` (its name) and `fields` (an array, only when it has fields) |
+| `Date`, `Time`, `DateTime` | TOML's own literals: `2026-10-19`, `12:30:00` (with a fractional second only when the value has one: `12:30:00.25`) and `2026-10-19T12:30:00` |
+| `Duration`, `Instant` | as the records they are: a table with `ns` or `epoch_ns` |
+| `()` | nothing: `Err(Other("toml.stringify: TOML cannot represent Unit"))` |
+
+The keys of every table, the fields of a record among them, are written in
+sorted order, not in the order the record declares its fields. `toml.parse`
+reads a `Date`, a `Time` and a `DateTime` back into a field of the same type.
+A date whose year has no literal (one before the year 0 or past 9999) is
+written as a string of the text silt shows of it, which `toml.parse` reads
+back as well. A variant is written but not read back (an enum has no
+decoder).
 
 ```silt
 import toml

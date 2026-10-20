@@ -16,9 +16,8 @@
 //!   value to compact TOML. Unlike `json.stringify` this is fallible because
 //!   TOML requires a table at the top level.
 //! - `toml.pretty(v) -> Result(String, TomlError)` — serialize a silt value
-//!   to TOML; the `toml` crate's default output is already multi-line and
-//!   human-friendly, so `pretty` is an alias for ergonomic symmetry with
-//!   `json.pretty`.
+//!   to TOML as `stringify` does, except that an array of plain values is
+//!   written one element per line.
 //!
 //! ## TOML-specific types
 //!

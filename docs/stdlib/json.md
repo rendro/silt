@@ -30,10 +30,10 @@ JsonError` is wired in):
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes |
+| `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes, or a number beyond `Float`'s range (`1e400`: `number out of range`) |
 | `TypeMismatch(expected, actual)` | `String`, `String` | A field's JSON type did not match the target field type |
 | `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
-| `Other(msg)` | `String` | Anything else (out-of-range numbers, internal failures) |
+| `Other(msg)` | `String` | Anything else: a tuple's array of the wrong length, a field without a decoder (when the type arrives at run time), a value too deep for `json.decode` |
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
@@ -341,14 +341,27 @@ fn main() {
 json.stringify(value: a) -> String
 ```
 
-Serializes a value to a compact JSON string. A map is written as an
-object; a key of it that is no `String` is written as its shown text (so the
-`Float` key `1.0` reads `"1.0"`). A `json.Value` is written as the JSON it
-holds. A `Date`, a `Time` and a `DateTime` (from the `time` module) are
-written as the text silt shows of them, which `json.parse` reads back into a
-field of the same type: `"2026-10-19"`, `"12:30:00"` (with a fractional second
-only when the value has one: `"12:30:00.250000000"`) and
-`"2026-10-19T12:30:00"`.
+Serializes a value to a compact JSON string. Each kind of value is
+written as follows:
+
+| Value | Written as |
+|-------|------------|
+| `Int`, `Float`, `String`, `Bool` | a number, a string, `true` or `false` |
+| `List(a)`, a tuple | an array: `(1, "a")` is `[1,"a"]` |
+| `Map(k, v)` | an object; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
+| a record | an object of its fields: `{"age":36,"name":"Ada"}` |
+| `Some(x)` | `x`, as `x` is written |
+| `None`, `()` | `null` |
+| any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is `{"variant":"Name"}` |
+| `json.Value` | the JSON it holds: `json.Int(1)` is `1`, `json.Null` is `null` |
+| `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250000000"`) and `"2026-10-19T12:30:00"` |
+| `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |
+
+The keys of every object, the fields of a record among them, are written
+in sorted order, not in the order the record declares its fields.
+`json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
+the same type, and a record into its record type; a variant and `()` are
+written but not read back (an enum has no decoder).
 
 `json.stringify` and `json.pretty` write the same values. A value JSON has no
 form for is a runtime error that names its kind, wherever in the value it is:

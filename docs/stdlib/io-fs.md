@@ -199,6 +199,10 @@ env.set(key: String, value: String) -> ()
 ```
 
 Sets the environment variable `key` to `value` for the current process.
+It may only be called from the main task: a spawned task that changes the
+process-wide environment would race with any other task reading it
+(libc's `setenv` is not synchronized), so the VM rejects the call from a
+spawned task with an error.
 
 ```silt
 import env
@@ -232,10 +236,8 @@ fn main() {
 }
 ```
 
-Like `env.set`, `env.remove` may only be called from the main task.
-Mutating the process-wide environment from a spawned task races with
-any other task reading it (libc's `setenv`/`unsetenv` are not
-synchronized), so the VM rejects it with an error.
+Like `env.set`, `env.remove` may only be called from the main task, for
+the same reason (libc's `unsetenv` is not synchronized either).
 
 
 ## `env.vars`

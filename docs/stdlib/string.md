@@ -423,8 +423,10 @@ Input containing `\r\n` sequences (Windows line endings) has the trailing
 string.pad_left(s: String, width: Int, pad: String) -> String
 ```
 
-Pads `s` on the left with the first character of `pad` until it reaches
-`width`. Returns `s` unchanged if already at or beyond `width`.
+Pads `s` on the left with `pad`, which must be exactly one character,
+until it is `width` characters long. Returns `s` unchanged if already at or
+beyond `width`. A `pad` of any other length, a negative `width` and a
+`width` over 10,000,000 are runtime errors.
 
 ```silt
 import string
@@ -441,8 +443,10 @@ fn main() {
 string.pad_right(s: String, width: Int, pad: String) -> String
 ```
 
-Pads `s` on the right with the first character of `pad` until it reaches
-`width`. Returns `s` unchanged if already at or beyond `width`.
+Pads `s` on the right with `pad`, which must be exactly one character,
+until it is `width` characters long. Returns `s` unchanged if already at or
+beyond `width`. A `pad` of any other length, a negative `width` and a
+`width` over 10,000,000 are runtime errors.
 
 ```silt
 import string

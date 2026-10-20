@@ -25,7 +25,7 @@ Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
 | `map` | `(Map(a, b), Fn(a, b) -> (c, d)) -> Map(c, d) where c: Hash` | Transform all entries |
 | `merge` | `(Map(a, b), Map(a, b)) -> Map(a, b) where a: Hash` | Merge two maps (right wins) |
 | `set` | `(Map(a, b), a, b) -> Map(a, b) where a: Hash` | Insert or update a key |
-| `update` | `(Map(a, b), a, b, Fn(b) -> b) -> Map(a, b) where a: Hash` | Update existing or insert default |
+| `update` | `(Map(a, b), a, b, Fn(b) -> b) -> Map(a, b) where a: Hash` | Apply `f` to the existing value, or to `default` when the key is absent, and insert the result |
 | `values` | `(Map(a, b)) -> List(b)` | All values as a list |
 
 
