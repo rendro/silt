@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
+use super::registry::decoding::{Family, Leaf, ROW_TYPE_HELP};
+use super::registry::registry;
 use super::time::{
     LEAP_SECOND, is_leap_second, leap_datetime_message, make_date, make_datetime, make_time,
 };
@@ -254,8 +256,9 @@ pub(crate) struct Rules {
     pub(crate) dates: [&'static str; 3],
     /// How a number that is no `Int` is told from one.
     pub(crate) numbers: Numbers,
-    /// Whether a `json.Value` is decoded from the document.
-    pub(crate) json_value: bool,
+    /// The family of decoders of the format, which says the field types
+    /// it decodes.
+    pub(crate) family: Family,
     /// The variants `TypeMismatch`, `MissingField` and `Other` of the
     /// format's error (`JsonError`, `TomlError`).
     pub(crate) errors: [BuiltinVariant; 3],
@@ -343,20 +346,73 @@ pub(crate) fn result(rules: &Rules, decoded: Result<Value, Error>) -> Value {
     }
 }
 
-/// The type of the elements a `parse_list` and of the values a
-/// `parse_map` (`caller`) of the format of `rules` decode, which their
-/// type argument `ty` names: `Int`, `Float`, `String`, `Bool`, a record
-/// type, and `json.Value` where the format decodes one. Any other type
-/// is an error.
-pub(crate) fn element_type(rules: &Rules, caller: &str, ty: Type) -> Result<FieldType, VmError> {
-    Ok(match ty {
-        Type::Primitive(field_type) => field_type,
-        Type::Named(ty) if rules.json_value && ty.id == ty::JSON_VALUE => FieldType::JsonValue,
-        Type::Named(ty) => {
-            decodable_record(caller, ty)?;
-            FieldType::Record(ty.id)
+/// What the type argument of a decoding builtin names, as its decoder
+/// decodes it.
+pub(crate) enum Target<'a> {
+    /// A primitive type, or `json.Value`: decoded as a field of the type
+    /// is.
+    Value(FieldType),
+    /// A record type of the program, with its fields.
+    Record(&'a Arc<TypeInfo>, &'a [(std::string::String, FieldType)]),
+}
+
+impl Target<'_> {
+    /// The type of the elements a `parse_list` decodes, and of the
+    /// values a `parse_map` decodes.
+    pub(crate) fn element(&self) -> FieldType {
+        match self {
+            Target::Value(field_type) => field_type.clone(),
+            Target::Record(ty, _) => FieldType::Record(ty.id),
         }
-    })
+    }
+}
+
+/// What the type argument `ty` of the decoding builtin `caller` names:
+/// a type its registry row's [`Decoding`] says it decodes into, or the
+/// error of the program. (The compiler refuses the others where the type
+/// is written; this is for a type argument that is a type variable.)
+///
+/// [`Decoding`]: super::registry::Decoding
+pub(crate) fn target<'a>(caller: &str, ty: Type<'a>) -> Result<Target<'a>, VmError> {
+    let decoding = registry()
+        .named(caller)
+        .and_then(|row| row.decoding)
+        .ok_or_else(|| VmError::new(format!("{caller} decodes no type")))?;
+    let accepted = decoding.type_arguments(str::to_string);
+    // A row is decoded into a record of its columns: the error says what
+    // the type is not.
+    let not_a_row = |name: &str| {
+        VmError::new(format!(
+            "{caller}: a row decodes into {accepted}, not {name}; {ROW_TYPE_HELP}"
+        ))
+    };
+    match ty {
+        Type::Primitive(field_type) if decoding.primitives => Ok(Target::Value(field_type)),
+        Type::Primitive(field_type) => Err(match decoding.family.rows() {
+            true => not_a_row(&field_type.shown(&|_| std::string::String::new())),
+            false => VmError::new(format!("{caller}: type argument must be {accepted}")),
+        }),
+        Type::Named(ty) if ty.id == ty::JSON_VALUE && decoding.json_value() => {
+            Ok(Target::Value(FieldType::JsonValue))
+        }
+        Type::Named(ty) => match decodable_record(caller, ty) {
+            Ok(fields) => Ok(Target::Record(ty, fields)),
+            Err(_) if decoding.family.rows() => Err(not_a_row(&ty.name)),
+            Err(e) => Err(e),
+        },
+    }
+}
+
+/// The value of `target` that `doc`, the whole document, is.
+pub(crate) fn document<D: Document>(
+    rt: &Runtime,
+    target: &Target,
+    doc: &D,
+) -> Result<Value, Error> {
+    match target {
+        Target::Value(field_type) => value(rt, doc, field_type, &At::Top),
+        Target::Record(ty, fields) => record(rt, ty, fields, doc, &At::Top),
+    }
 }
 
 /// The record of type `ty` (of the `fields`) that `doc`, which is `at` a
@@ -532,7 +588,7 @@ pub(crate) fn value<D: Document>(
             _ => Err(mismatch("Tuple")),
         },
         FieldType::Unsupported(declared) => Err(Error::Unsupported(declared.clone())),
-        FieldType::JsonValue if rules.json_value => Ok(json_value(doc)),
+        FieldType::JsonValue if rules.family.decodes(Leaf::JsonValue) => Ok(json_value(doc)),
         FieldType::JsonValue => Err(Error::Unsupported("json.Value".into())),
         FieldType::Bytes => Err(Error::Unsupported("Bytes".into())),
         // A date and a time are a string of their text, or a literal of

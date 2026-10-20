@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use super::data::{self, Data, Format};
-use super::decode::{
-    self, At, Document, I64_MAX_PLUS_ONE, Numbers, Rules, decodable_record, element_type,
-};
+use super::decode::{self, At, Document, I64_MAX_PLUS_ONE, Numbers, Rules};
+use super::registry::decoding::Family;
 use super::typed::{Type, builtins};
-use crate::typeinfo::{FieldType, bv, ty};
+#[cfg(feature = "postgres")]
+use crate::typeinfo::FieldType;
+use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Runtime, VmError};
 
@@ -339,7 +340,7 @@ const RULES: Rules = Rules {
     table: "object",
     dates: ["date string", "time string", "datetime string"],
     numbers: Numbers::Values,
-    json_value: true,
+    family: Family::Json,
     errors: [
         bv::JSON_TYPE_MISMATCH,
         bv::JSON_MISSING_FIELD,
@@ -422,15 +423,8 @@ fn decode_document(
         Ok(json) => json,
         Err(e) => return Ok(json_result_err(&e)),
     };
-    let decoded = match ty {
-        // A primitive type: a JSON scalar, decoded as it is.
-        Type::Primitive(field_type) => decode::value(rt, &json, &field_type, &At::Top),
-        Type::Named(ty) if ty.id == ty::JSON_VALUE => {
-            decode::value(rt, &json, &FieldType::JsonValue, &At::Top)
-        }
-        Type::Named(ty) => decode::record(rt, ty, decodable_record(caller, ty)?, &json, &At::Top),
-    };
-    Ok(decode::result(&RULES, decoded))
+    let target = decode::target(caller, ty)?;
+    Ok(decode::result(&RULES, decode::document(rt, &target, &json)))
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -454,7 +448,7 @@ builtins! {
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let element = element_type(&RULES, "json.parse_list", ty)?;
+        let element = decode::target("json.parse_list", ty)?.element();
         Ok(match parse_document(s.as_bytes()) {
             Ok(json) => decode::result(&RULES, decode::list(&vm.runtime, &element, &json, &At::Top)),
             Err(e) => json_result_err(&e),
@@ -462,7 +456,7 @@ builtins! {
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let element = element_type(&RULES, "json.parse_map", ty)?;
+        let element = decode::target("json.parse_map", ty)?.element();
         Ok(match parse_document(s.as_bytes()) {
             Ok(json) => decode::result(&RULES, decode::map(&vm.runtime, &element, &json, &At::Top)),
             Err(e) => json_result_err(&e),
@@ -483,7 +477,7 @@ mod tests {
     use super::*;
     use crate::builtins::data::MAX_ENCODE_DEPTH;
     use crate::builtins::decode::shown;
-    use crate::typeinfo::TypeInfo;
+    use crate::typeinfo::{FieldType, TypeInfo};
 
     /// A field whose type holds `Bytes` has no decoder, whatever the
     /// document holds there: an empty list, a `null` for an `Option`,

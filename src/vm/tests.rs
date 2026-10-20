@@ -2776,6 +2776,9 @@ fn test_builtin_panic_converted_to_vm_error() {
         params: Vec::new(),
         feature: None,
         enabled: true,
+        decoding: None,
+        statement: false,
+        connection: false,
         id: println.id,
         body: Body::Typed(boom),
     };
@@ -3843,6 +3846,9 @@ mod builtin_args {
             params: Vec::new(),
             feature: None,
             enabled: true,
+            decoding: None,
+            statement: false,
+            connection: false,
             id: registry().named("println").expect("println").id,
             body: Body::Typed(body),
         }

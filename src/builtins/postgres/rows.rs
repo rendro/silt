@@ -27,7 +27,7 @@ use crate::builtins::data::{self, Data};
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
 use crate::builtins::{decode, json};
-use crate::typeinfo::{FieldType, Shape, TypeInfo, bv, ty};
+use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
@@ -246,38 +246,12 @@ pub(super) enum RowType {
 impl RowType {
     /// The row type that the type argument `ty` of `caller` names.
     pub(super) fn of(caller: &str, ty: Type) -> Result<RowType, VmError> {
-        match ty {
-            Type::Named(info) if info.id == ty::JSON_VALUE => Ok(RowType::Value),
-            Type::Named(info) if !info.is_builtin() && matches!(info.shape, Shape::Record(_)) => {
-                Ok(RowType::Record(info.clone()))
-            }
-            Type::Named(info) => Err(refused(caller, &info.name)),
-            Type::Primitive(field) => Err(refused(caller, &shown_primitive(&field))),
-        }
+        Ok(match decode::target(caller, ty)? {
+            decode::Target::Record(ty, _) => RowType::Record(ty.clone()),
+            // (`json.Value`: a postgres function takes no primitive type.)
+            decode::Target::Value(_) => RowType::Value,
+        })
     }
-}
-
-/// The error of `caller` given the type `name` to decode rows into,
-/// which is no record type and no `json.Value`. (The compiler says the
-/// same where the type is written; this is for a type argument that is
-/// a type variable.)
-fn refused(caller: &str, name: &str) -> VmError {
-    VmError::new(format!(
-        "{caller}: a row decodes into a record type or json.Value, not {name}; {}",
-        crate::compiler::ROW_TYPE_HELP
-    ))
-}
-
-/// The name of a primitive type argument.
-fn shown_primitive(field: &FieldType) -> String {
-    match field {
-        FieldType::Int => "Int",
-        FieldType::Float => "Float",
-        FieldType::String => "String",
-        FieldType::Bool => "Bool",
-        _ => "a primitive type",
-    }
-    .to_string()
 }
 
 // ── Columns ─────────────────────────────────────────────────────────
