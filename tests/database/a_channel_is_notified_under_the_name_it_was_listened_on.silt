@@ -1,0 +1,77 @@
+-- A channel name `postgres.listen` takes is notified under the same
+-- spelling: the name keeps its case, and may be a keyword or hold a
+-- space or a quote. `postgres.listen` and `postgres.notify` refuse the
+-- same names before anything is sent: an empty one, and one longer
+-- than the 63 bytes PostgreSQL keeps (it would cut it in LISTEN and
+-- refuse it in a NOTIFY).
+--
+-- A notification that never came would end the receive at its
+-- deadline, which the case would print.
+import channel
+import env
+import postgres
+import string
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- Listen on `name`, notify it, and say what came.
+fn round_trip(db: postgres.PgPool, name: String) {
+  match postgres.listen(db, name) {
+    Ok(ch) -> {
+      match postgres.notify(db, name, "to {name}") {
+        Ok(_) -> {
+          let got = task.deadline(time.ms(5000)) { -> channel.receive(ch) }
+          match got {
+            Ok(Some(n)) -> println("{name}: got {n.payload} on {n.channel}")
+            Ok(None) -> println("{name}: the listener ended")
+            Err(e) -> println("{name}: nothing came ({e.message()})")
+          }
+        }
+        Err(e) -> println("notify {name}: {e.message()}")
+      }
+      channel.close(ch)
+    }
+    Err(e) -> println("listen {name}: {e.message()}")
+  }
+}
+
+-- What `postgres.listen` and `postgres.notify` say of `name`.
+fn refused(db: postgres.PgPool, name: String) {
+  match postgres.listen(db, name) {
+    Ok(ch) -> {
+      println("listen took it")
+      channel.close(ch)
+    }
+    Err(e) -> println(e.message())
+  }
+  match postgres.notify(db, name, "x") {
+    Ok(_) -> println("notify took it")
+    Err(e) -> println(e.message())
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      round_trip(db, "silt_case_lower")
+      round_trip(db, "Silt_Case_Mixed")
+      round_trip(db, "select")
+      round_trip(db, "silt case \"quoted\"")
+      -- 63 bytes: the longest name.
+      round_trip(db, string.repeat("n", 63))
+      refused(db, string.repeat("n", 64))
+      -- 32 characters, 64 bytes.
+      refused(db, string.repeat("é", 32))
+      refused(db, "")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

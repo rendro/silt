@@ -237,4 +237,5 @@ cases!(
     a_parameter_that_cannot_be_sent,
     dates_go_back_as_they_were_read,
     a_pool_opens_connections_when_it_needs_them,
+    a_channel_is_notified_under_the_name_it_was_listened_on,
 );

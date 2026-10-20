@@ -1908,15 +1908,15 @@ fn do_cursor_close(cursor_id: u64) -> Value {
 //
 // `listen(pool, channel_name)` pins a single pool connection for the
 // listener's lifetime, attaches a listener to it, runs `LISTEN
-// <channel_name>`, and returns a bounded silt `Channel` of
-// `Notification` records. The connection's protocol task hands each
-// notification to the listener as it comes; the worker waits for one a
-// tick (200 ms) at a time, so that `channel.close(ch)` is observed
-// within one tick.
+// "<channel_name>"` (quoted, so that it keeps its case), and returns a
+// bounded silt `Channel` of `Notification` records. The connection's
+// protocol task hands each notification to the listener as it comes;
+// the worker waits for one a tick (200 ms) at a time, so that
+// `channel.close(ch)` is observed within one tick.
 //
 // `notify(executor, channel_name, payload)` runs `SELECT pg_notify($1, $2)`
-// against either a pool or tx executor. `pg_notify` handles identifier
-// escaping internally and accepts dynamic channel names via bind params.
+// against either a pool or tx executor: the channel name is a bind
+// parameter, which `pg_notify` takes as it is written.
 
 /// Bounded capacity for listener channels. Notifications are tiny
 /// (three short strings) so 64 is a generous buffer without costing
@@ -1931,23 +1931,32 @@ const LISTEN_CHANNEL_CAPACITY: usize = 64;
 /// pinned connection back into the pool.
 const LISTEN_POLL_TICK_MS: u64 = 200;
 
-/// Regex-free validator for LISTEN/UNLISTEN identifiers. Matches a
-/// standard SQL unquoted identifier: `[A-Za-z_][A-Za-z0-9_]*`.
-/// The `LISTEN <name>` / `UNLISTEN <name>` forms cannot be parameter-
-/// bound, so we refuse anything that could break out of the identifier
-/// slot. Names that need arbitrary bytes should use `pg_notify`'s
-/// channel-name argument instead (which does accept parameters) — but
-/// the listener side still has to emit an identifier, so for symmetry
-/// we reject on both sides.
-fn is_valid_ident(s: &str) -> bool {
-    let mut iter = s.chars();
-    let Some(first) = iter.next() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return false;
+/// The most bytes of a channel name PostgreSQL keeps: it cuts a longer
+/// name in `LISTEN`, and refuses it in a notification.
+const CHANNEL_NAME_MAX: usize = 63;
+
+/// Why `caller` (`postgres.listen`, `postgres.notify`) refuses the
+/// channel name `name`, if it does: listen and notify take the same
+/// names, so that every name listened on can be notified.
+fn refused_channel_name(caller: &str, name: &str) -> Option<Value> {
+    if name.is_empty() {
+        return Some(other_error(format!(
+            "{caller}: a channel name cannot be empty"
+        )));
     }
-    iter.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    (name.len() > CHANNEL_NAME_MAX).then(|| {
+        other_error(format!(
+            "{caller}: channel name {name:?} is longer than {CHANNEL_NAME_MAX} bytes, \
+             the longest PostgreSQL keeps"
+        ))
+    })
+}
+
+/// The channel name `name` as the identifier of `LISTEN` / `UNLISTEN`:
+/// in double quotes, a quote in it doubled, so that the server keeps
+/// its case, as `pg_notify` does, and takes a keyword.
+fn quoted_channel(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// Build a silt `Notification` record from a notification of the server.
@@ -2002,7 +2011,7 @@ fn do_listen_worker(
     // back into the pool, and r2d2 will recycle a broken conn on next
     // checkout anyway. The notifications that come before its answer
     // are dropped meanwhile, so that none holds the connection up.
-    let unlisten_sql = format!("UNLISTEN {channel_name}");
+    let unlisten_sql = format!("UNLISTEN {}", quoted_channel(&channel_name));
     let unlisten = conn.client().batch_execute(&unlisten_sql);
     let mut unlisten = std::pin::pin!(unlisten);
     let _ = conn.wait(std::future::poll_fn(|cx| {
@@ -2318,19 +2327,14 @@ builtins! {
     // caller calls `channel.close`.
     //
     // The LISTEN statement is issued synchronously inside this function (on
-    // the io_pool) so LISTEN errors — e.g. an invalid channel name that
-    // somehow slipped past the identifier validator, or a pool checkout
+    // the io_pool) so LISTEN errors — e.g. a pool checkout
     // failure — surface as an immediate `Err(PostgresError)` rather than a
     // channel that silently closes. The long-lived worker is spawned only
     // after LISTEN succeeds.
     fn listen(vm, pool: PoolHandle, channel: &str) -> Started {
         let pool = pool.open()?;
-        if !is_valid_ident(channel) {
-            return Err(other_error(format!(
-                "postgres.listen: channel name {channel:?} must be a valid SQL identifier \
-                 (letters, digits, underscore; cannot start with digit)"
-            ))
-            .into());
+        if let Some(refused) = refused_channel_name("postgres.listen", channel) {
+            return Err(refused.into());
         }
 
         // Mint the silt-side channel up front so we can hand the caller an
@@ -2358,7 +2362,7 @@ builtins! {
             // now on.
             let (listener, told) = tokio::sync::mpsc::channel(LISTEN_CHANNEL_CAPACITY);
             *conn.told.lock().unwrap_or_else(|e| e.into_inner()) = Some(listener);
-            let listen_sql = format!("LISTEN {channel_name}");
+            let listen_sql = format!("LISTEN {}", quoted_channel(&channel_name));
             if let Err(e) = conn.wait(conn.client().batch_execute(&listen_sql)) {
                 conn.told.lock().unwrap_or_else(|e| e.into_inner()).take();
                 return err(pg_error_to_variant(&e));
@@ -2388,6 +2392,9 @@ builtins! {
     // safe.
     fn notify(vm, conn: &Value, channel: &str, payload: &str) -> Started {
         let target = resolve_executor(conn)?;
+        if let Some(refused) = refused_channel_name("postgres.notify", channel) {
+            return Err(refused.into());
+        }
         let (channel, payload) = (channel.to_string(), payload.to_string());
         let tx = TxHandle::take(conn).and_then(tx_canceller);
         Ok(statement(vm, tx, None, move || do_notify(target, channel, payload)))

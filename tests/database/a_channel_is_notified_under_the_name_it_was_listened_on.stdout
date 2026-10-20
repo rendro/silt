@@ -1,0 +1,11 @@
+silt_case_lower: got to silt_case_lower on silt_case_lower
+Silt_Case_Mixed: got to Silt_Case_Mixed on Silt_Case_Mixed
+select: got to select on select
+silt case "quoted": got to silt case "quoted" on silt case "quoted"
+nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn: got to nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn on nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+postgres.listen: channel name "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn" is longer than 63 bytes, the longest PostgreSQL keeps
+postgres.notify: channel name "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn" is longer than 63 bytes, the longest PostgreSQL keeps
+postgres.listen: channel name "éééééééééééééééééééééééééééééééé" is longer than 63 bytes, the longest PostgreSQL keeps
+postgres.notify: channel name "éééééééééééééééééééééééééééééééé" is longer than 63 bytes, the longest PostgreSQL keeps
+postgres.listen: a channel name cannot be empty
+postgres.notify: a channel name cannot be empty

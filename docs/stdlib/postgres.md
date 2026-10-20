@@ -301,6 +301,13 @@ one connection fewer for statements (with `max_pool_size` 1, a
 statement waits the pool's 30 seconds and is `Timeout`).
 `postgres.notify(target, channel, payload)` sends a single NOTIFY.
 
+A channel name is used as it is written: its case is kept (`"Orders"`
+and `"orders"` are two channels), and it may be a keyword or hold any
+character. Both functions take a name of 1 to 63 bytes, the most
+PostgreSQL keeps, and refuse an empty or a longer one before anything
+is sent: `Err(Other("postgres.listen: a channel name cannot be
+empty"))`.
+
 ## Example
 
 ```text
