@@ -1,0 +1,28 @@
+-- cmd: lsp
+-- lsp: hover 18:6
+-- lsp: hover 22:11
+-- lsp: hover 23:18
+-- lsp: hover 23:10
+-- lsp: hover 21:14
+-- lsp: definition 23:10
+-- lsp: definition 25:10
+-- Aliases navigate as the types they name: hover on an alias shows its
+-- declaration (in an annotation, qualified, and its own name), a module
+-- qualifier in a type goes to the module, a shorthand field binder of a
+-- record pattern to the field.
+import helpers
+import helpers.{ Pt }
+
+type Box(a) { v: a }
+
+type BA = Box(Int)
+
+fn main() {
+  let b: Box(Int) = Box { v: 1 }
+  let ba: BA = b
+  let q: helpers.PtA = Pt { x: 2, y: 3 }
+  match q {
+    Pt { x, y } -> println(x + y)
+  }
+  println(ba.v)
+}

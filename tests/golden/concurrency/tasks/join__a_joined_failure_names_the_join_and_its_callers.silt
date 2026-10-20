@@ -1,0 +1,20 @@
+-- exit: 1
+-- The failure that task.join raises points at where the task failed,
+-- and its call stack goes on, below the task's own calls, with the
+-- calls that led to the join: wait_for's task.join and main's call
+-- of wait_for.
+import task
+
+fn work(n) {
+  100 / n
+}
+
+fn wait_for(h) {
+  task.join(h)
+}
+
+fn main() {
+  let h = task.spawn { -> work(0) }
+  let v = wait_for(h)
+  println(v)
+}

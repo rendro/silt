@@ -109,6 +109,39 @@ fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
 }
 
+/// The field access whose field name holds byte `cursor` (`p.age` with
+/// the cursor on `age`), as the receiver's type and the field: one the
+/// checker selected as a field, not a method.
+pub(super) fn find_field_access_at(program: &Program, cursor: usize) -> Option<(Type, Symbol)> {
+    fn walk(expr: &Expr, cursor: usize, found: &mut Option<(Type, Symbol)>) {
+        if let ExprKind::FieldAccess(receiver, field, field_span) = &expr.kind
+            && (field_span.start as usize..=field_span.end as usize).contains(&cursor)
+            && matches!(expr.sel, Some(Selection::Field | Selection::FieldCall))
+            && let Some(ty) = &receiver.ty
+        {
+            *found = Some((ty.clone(), *field));
+        }
+        visit_expr_children(expr, |child| walk(child, cursor, found));
+    }
+    let mut found = None;
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
+            Decl::Let { value, .. } => walk(value, cursor, &mut found),
+            Decl::TraitImpl(ti) => ti
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            Decl::Trait(t) => t
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            _ => {}
+        }
+    }
+    found
+}
+
 /// The span of the head name of a constructor or record pattern.
 fn pattern_head_span(pattern: &Pattern) -> Option<crate::source::Span> {
     match &pattern.kind {

@@ -2397,16 +2397,43 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The type a resolution names, if it names a record or enum type.
+    /// The type a resolution names, if it names a record or enum type,
+    /// or an alias, which is only another name: the type it stands for.
     fn res_type(&self, res: Option<crate::defs::Res>) -> Option<TypeRef> {
         let Some(crate::defs::Res::Def(id)) = res else {
             return None;
         };
         let def = self.units.defs.get(id);
-        matches!(def.kind, crate::defs::DefKind::Type(_)).then_some(TypeRef {
+        let ty = TypeRef {
             id: crate::defs::TypeId(id),
             name: def.name,
-        })
+        };
+        match def.kind {
+            crate::defs::DefKind::Type(_) => Some(ty),
+            crate::defs::DefKind::TypeAlias => Some(canonical_head(self.resolver(), ty)),
+            _ => None,
+        }
+    }
+
+    /// The type the alias a resolution names stands for, if it names an
+    /// alias.
+    fn alias_target(&self, res: Option<crate::defs::Res>) -> Option<Type> {
+        let Some(crate::defs::Res::Def(id)) = res else {
+            return None;
+        };
+        let def = self.units.defs.get(id);
+        if def.kind != crate::defs::DefKind::TypeAlias {
+            return None;
+        }
+        let alias = TypeRef {
+            id: crate::defs::TypeId(id),
+            name: def.name,
+        };
+        let info = self.resolver().lookup_alias(alias)?;
+        Some(crate::types::canonical::canonicalize(
+            self.resolver(),
+            &info.target,
+        ))
     }
 
     /// The value of a type used as a value, if the resolution names a
@@ -2829,15 +2856,23 @@ impl<'a> Compiler<'a> {
                 .type_declaration(def.span)
                 .is_some_and(|decl| !decl.params.is_empty())
             {
-                return Err(Diagnostic::error(
-                    Code::InvalidConstruct,
-                    span,
-                    format!(
+                // Through an alias that gives the record its arguments
+                // (`type BI = Box(Int)`) the type is one instance; the
+                // decoders read the fields as the record declares them.
+                let message = match self.alias_target(type_arg.res) {
+                    Some(target) => format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it names `{target}`, \
+                         an instance of the generic record type `{}`, and a decoder reads \
+                         the fields of a record type without parameters",
+                        def.name
+                    ),
+                    None => format!(
                         "`{builtin_name}` cannot decode `{type_name}`: it is a generic record \
                          type, and a decoder builds a value of one type"
                     ),
-                )
-                .with_help(generic_help));
+                };
+                return Err(Diagnostic::error(Code::InvalidConstruct, span, message)
+                    .with_help(generic_help));
             }
             let Some(found) = self.undecodable_field(ty.id, decoder, &mut HashSet::new()) else {
                 return Ok(());

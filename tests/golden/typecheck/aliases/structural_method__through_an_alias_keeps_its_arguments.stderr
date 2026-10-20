@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__through_an_alias_keeps_its_arguments.silt:9:24
+   |
+ 9 |   println(Ints.display(["s"]))
+   |                        ^^^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> structural_method__through_an_alias_keeps_its_arguments.silt:12:26
+    |
+ 12 |   println(t.compare([1], ["t"]))
+    |                          ^^^^^ type mismatch: expected Int, got String

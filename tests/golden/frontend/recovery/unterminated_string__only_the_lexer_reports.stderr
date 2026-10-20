@@ -1,5 +1,6 @@
 error[lex]: unterminated string
- --> unterminated_string__only_the_lexer_reports.silt:14:2
-    |
- 14 | }
-    |  ^ unterminated string
+ --> unterminated_string__only_the_lexer_reports.silt:9:11
+   |
+ 9 |   println("the value is {n}
+   |           ^ unterminated string
+  = note: the string goes on behind the `{` at 12:20, which starts an interpolation: write `\{` for a literal brace

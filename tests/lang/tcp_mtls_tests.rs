@@ -1,5 +1,6 @@
-//! End-to-end tests for the mTLS variant of the `tcp-tls` feature
-//! (`tcp.accept_tls_mtls`).
+//! End-to-end tests of the TLS server of the `tcp-tls` feature with a
+//! real TLS client: the mTLS variant (`tcp.tls_server_mtls`), and a
+//! `tcp.tls_server` handshake per connection.
 //!
 //! Hermetic — generates a CA, server cert, and client cert in-process
 //! using `rcgen` (already in `[dev-dependencies]`), runs a loopback
@@ -146,7 +147,7 @@ fn rustls_client_handshake(
     Ok(())
 }
 
-/// Spawn a silt `tcp.accept_tls_mtls` server. It listens on a port the
+/// Spawn a silt `tcp.tls_server_mtls` server. It listens on a port the
 /// system chooses and writes the port to `port_path`: the listener is
 /// bound when the test has read it, so the one connection the test
 /// makes is the mTLS peer (the server accepts exactly one). Returns a
@@ -183,9 +184,12 @@ fn main() -> String {{
     Ok(listener) -> match bytes.from_hex("{cert_hex}") {{
       Ok(cert) -> match bytes.from_hex("{key_hex}") {{
         Ok(key) -> match bytes.from_hex("{ca_hex}") {{
-          Ok(ca) -> match tcp.accept_tls_mtls(listener, cert, key, ca) {{
-            Ok(_) -> "ok"
-            Err(e) -> "err:{{e.message()}}"
+          Ok(ca) -> match tcp.accept(listener) {{
+            Ok(conn) -> match tcp.tls_server_mtls(conn, cert, key, ca) {{
+              Ok(_) -> "ok"
+              Err(e) -> "err:{{e.message()}}"
+            }}
+            Err(e) -> "accept:{{e.message()}}"
           }}
           Err(e) -> "ca-parse:{{e.message()}}"
         }}
@@ -242,7 +246,7 @@ fn mtls_accept_rejects_client_without_cert() {
     // rustls 0.23 defaults `WebPkiClientVerifier::builder(...).build()`
     // to *requiring* client auth. If the client does not present a
     // cert, the server aborts the handshake with `certificate_required`
-    // and `accept_tls_mtls` returns `Err`.
+    // and `tls_server_mtls` returns `Err`.
     let pki = generate_pki();
     let port_file = PortFile::new();
     let server = spawn_mtls_server(
@@ -327,4 +331,94 @@ fn mtls_accept_rejects_client_with_wrong_ca_cert() {
         server_result.starts_with("err:"),
         "expected server Err(...), got: {server_result:?}"
     );
+}
+
+/// The handshake runs in the connection's own task: a client that
+/// connects and sends nothing holds up that task only. The accept loop
+/// takes the next client at once, and that client's handshake
+/// completes while the silent one's still waits. (With the handshake
+/// inside the accept, the second client waited behind the first.) A
+/// connection that speaks TLS already is refused by `tcp.tls_server`
+/// and stays usable.
+#[test]
+fn a_silent_client_does_not_hold_up_the_next_handshake() {
+    let pki = generate_pki();
+    let port_file = PortFile::new();
+    let port_path = port_file.path();
+    let server = thread::spawn(move || {
+        let src = format!(
+            r#"
+import bytes
+import channel
+import io
+import task
+import tcp
+
+fn serve(conn, cert, key, done) {{
+  match tcp.tls_server(conn, cert, key) {{
+    Ok(tls) -> {{
+      -- A TLS connection is not handed to tls_server again.
+      let again = match tcp.tls_server(tls, cert, key) {{
+        Ok(_) -> "a second handshake"
+        Err(e) -> e.message()
+      }}
+      let _ = tcp.write(tls, bytes.from_string("hello over TLS"))
+      tcp.close(tls)
+      channel.send(done, "served; {{again}}")
+    }}
+    Err(e) -> channel.send(done, "err:{{e.message()}}")
+  }}
+}}
+
+fn main() -> String {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
+  when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
+  let done = channel.new(2)
+  -- The silent client first, then the real one: each gets a task.
+  when let Ok(silent) = tcp.accept(listener) else {{ panic("no first client") }}
+  let first = task.spawn {{ -> serve(silent, cert, key, done) }}
+  when let Ok(real) = tcp.accept(listener) else {{ panic("no second client") }}
+  let _ = task.spawn {{ -> serve(real, cert, key, done) }}
+  -- The real client's handshake ends while the silent one's waits.
+  let outcome = match channel.receive(done) {{
+    Some(what) -> what
+    None -> "closed"
+  }}
+  task.cancel(first)
+  outcome
+}}
+"#,
+            cert_hex = hex_encode(pki.server_cert_pem.as_bytes()),
+            key_hex = hex_encode(pki.server_key_pem.as_bytes()),
+        );
+        match run(&src) {
+            Value::String(s) => s.to_string(),
+            other => format!("unexpected:{other:?}"),
+        }
+    });
+    let addr = format!("127.0.0.1:{}", port_file.wait());
+    // Connected and silent until the test ends.
+    let silent = TcpStream::connect(&addr).expect("the silent client connects");
+    let config = build_client_config(&pki.ca_cert_pem, None);
+    let name = ServerName::try_from("localhost".to_string()).expect("server name");
+    let mut conn = ClientConnection::new(Arc::new(config), name).expect("client connection");
+    let mut sock = TcpStream::connect(&addr).expect("the real client connects");
+    sock.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    let mut tls = rustls::Stream::new(&mut conn, &mut sock);
+    let mut greeting = [0u8; 14];
+    let read = std::io::Read::read_exact(&mut tls, &mut greeting);
+    assert!(
+        read.is_ok(),
+        "the real client's handshake waited behind the silent client: {read:?}"
+    );
+    assert_eq!(&greeting, b"hello over TLS");
+    assert_eq!(
+        server.join().expect("server thread"),
+        "served; tcp TLS error: the connection speaks TLS already"
+    );
+    drop(silent);
 }

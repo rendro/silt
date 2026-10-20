@@ -246,23 +246,6 @@ impl Vm {
         self.io_wait(name, timeout_err, op)
     }
 
-    /// [`Vm::io`] for an operation that can be made to return:
-    /// `stop` is called if the task stops waiting while the operation
-    /// runs (its time was over, it was cancelled, it was dropped at
-    /// the end of the program), so that the thread of the operation
-    /// ends.
-    #[cfg(feature = "tcp-tls")]
-    pub(crate) fn io_stoppable(
-        &mut self,
-        name: &'static str,
-        timeout_err: ErrFactory,
-        stop: impl FnOnce() + Send + 'static,
-        op: impl FnOnce() -> Value + Send + 'static,
-    ) -> Result<Step, VmError> {
-        let op = self.start_io(timeout_err, op).stop_with(stop);
-        self.io_wait(name, timeout_err, op)
-    }
-
     /// Wait for `op`.
     pub(crate) fn io_wait(
         &mut self,

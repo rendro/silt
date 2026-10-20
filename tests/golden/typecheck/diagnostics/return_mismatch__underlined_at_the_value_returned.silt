@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A body whose value is not of the declared return type is underlined
+-- at that value, the block's last expression, not at its `{`.
+fn bad() -> String {
+  let x = 1
+  x + 41
+}
+
+fn worse() -> Result(Int, String) {
+  let y = 2
+  y * 2
+}
+
+fn main() {
+  println("{bad()} {worse()}")
+}

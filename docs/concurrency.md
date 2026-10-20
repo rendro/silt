@@ -81,10 +81,10 @@ let ch = channel.new(0)
 let ch = channel.new(10)
 ```
 
-`channel.new(0)` takes zero or one argument. With no argument, it creates a
-rendezvous channel (capacity 0) where the sender blocks until a receiver is
-ready and vice versa. With an integer argument, it creates a buffered channel
-with that capacity.
+`channel.new(n)` takes the channel's capacity. `channel.new(0)` creates a
+rendezvous channel, where the sender blocks until a receiver is ready and
+vice versa. A capacity above 0 creates a buffered channel that holds that
+many values.
 
 Channels carry any value type -- integers, strings, lists, tuples, records,
 even other channels. The type is inferred from usage.
@@ -208,8 +208,8 @@ behind round-robin fan-out (see Section 5).
 
 ### Unbuffered channels (true rendezvous)
 
-`channel.new(0)` with no arguments creates a true rendezvous channel with
-capacity 0. The sender blocks until a receiver is ready, and the receiver
+`channel.new(0)` creates a true rendezvous channel, with capacity 0. The
+sender blocks until a receiver is ready, and the receiver
 blocks until a sender is ready. The value is handed off directly -- it is
 never buffered. When `channel.send` returns, the value has been handed to a
 receiver that was waiting for it; the receiver may not have run yet. Use a
@@ -348,8 +348,11 @@ returns its result -- the value of the last expression in the spawned function's
 body. While waiting, the OS thread runs other tasks.
 
 If the spawned task panicked, errored, or was cancelled, `task.join` does
-**not** return an `Err` value. It raises the failure as a runtime error of
-the form `joined task failed: <msg>` at the call site. Silt has no
+**not** return an `Err` value. It raises the failure in the joining task as
+a runtime error of the form `joined task failed: <msg>`. The error points at
+where the task failed, and its call stack goes on, below the task's own
+calls, with the calls that led to the `task.join` (a cancelled task failed
+nowhere: its error points at the join). Silt has no
 `try`/`catch`, so a joined failure is terminal for the joining task — design
 cancellation-aware code to signal completion through a channel handshake or
 sentinel value when cancellation is an expected outcome rather than an error.

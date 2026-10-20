@@ -1,0 +1,24 @@
+> hover 18:6
+```silt
+type BA = Box(Int)
+```
+> hover 22:11
+```silt
+type BA = Box(Int)
+```
+> hover 23:18
+```silt
+pub type PtA = Pt
+```
+> hover 23:10
+```silt
+module helpers
+```
+
+helpers.silt
+> hover 21:14
+(nothing)
+> definition 23:10
+helpers.silt:1:1-1:1
+> definition 25:10
+helpers.silt:1:15-1:16

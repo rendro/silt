@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A string that is never closed is reported at its opening quote, also
+-- when a `{` further on started an interpolation and the string runs on
+-- behind the interpolation's `}`; the note says where.
+fn main() {
+  let s = "abc
+  let n = 1
+  match n {
+    _ -> println(s)
+  }
+}
+
+fn other() {
+  println("x")
+}

@@ -1,0 +1,30 @@
+17:1 error cannot load module 'li': no such file\nnote: looked for `li.silt`\nhelp: if 'li' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add li`)
+> definition 27:13
+main.silt:19:24-19:27
+> definition 28:11
+helpers.silt:1:1-1:1
+> hover 21:13
+```silt
+type P { name: String, age: Int }
+```
+> hover 16:8
+```silt
+module list
+```
+
+Functions for working with ordered, immutable lists (`List(a)`). Lists use
+`[...]` literal syntax and support the range operator `1..5`.
+> type-definition 21:10
+main.silt:19:6-19:7
+> type-definition 26:7
+main.silt:19:6-19:7
+> type-definition 29:7
+main.silt:19:6-19:7
+> completion 17:10
+list
+> hover 15:8
+```silt
+module helpers
+```
+
+helpers.silt

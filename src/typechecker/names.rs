@@ -327,12 +327,18 @@ pub fn resolve_module(
         previous: HashMap::new(),
         named_closures: Vec::new(),
         bound_now: Vec::new(),
+        own_aliases: HashMap::new(),
         diagnostics,
     };
+    resolver.alias_heads(program);
     for decl in &mut program.decls {
         resolver.decl(decl);
     }
+    let own_aliases = std::mem::take(&mut resolver.own_aliases);
     let mut diagnostics = resolver.diagnostics;
+    for (alias, ty) in own_aliases {
+        defs.set_alias_type(alias, ty);
+    }
     if kind == ModuleKind::File {
         report_private_in_public(program, module, defs, &mut diagnostics);
     }
@@ -1008,6 +1014,9 @@ struct Resolver<'a> {
     /// The names of the local `let`s whose value, not a closure, is
     /// being resolved: a name there is not yet bound.
     bound_now: Vec<Symbol>,
+    /// The type each alias the module declares names by its head (see
+    /// `DefTable::through_alias`, which has those of other modules).
+    own_aliases: HashMap<DefId, DefId>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1970,8 +1979,65 @@ impl Resolver<'_> {
         }
     }
 
-    /// The variant `name` of the type `ty`, written `written`.
+    /// The type each alias the module declares names by its head, for
+    /// the variants written through it (`C.Red` for `type C = Color`).
+    /// What is wrong with a target is reported where the declaration is
+    /// resolved.
+    fn alias_heads(&mut self, program: &Program) {
+        let reported = self.diagnostics.len();
+        for decl in &program.decls {
+            let Decl::Type(td) = decl else {
+                continue;
+            };
+            let TypeBody::Alias(target) = &td.body else {
+                continue;
+            };
+            let (TypeExprKind::Named {
+                module,
+                name,
+                name_span,
+            }
+            | TypeExprKind::Generic {
+                module,
+                name,
+                name_span,
+                ..
+            }) = &target.kind
+            else {
+                continue;
+            };
+            let Some(Binding::Def(alias)) = self.scope.types.get(&td.name).cloned() else {
+                continue;
+            };
+            if let Some(Res::Def(ty)) = self.type_name(*module, *name, *name_span) {
+                self.own_aliases.insert(alias, ty);
+            }
+        }
+        self.diagnostics.truncate(reported);
+    }
+
+    /// The type `id` names: through an alias, the type the alias names.
+    fn through_alias(&self, id: DefId) -> DefId {
+        let mut at = id;
+        for _ in 0..64 {
+            match self.own_aliases.get(&at) {
+                Some(next) => at = *next,
+                None => {
+                    let next = self.defs.through_alias(at);
+                    if next == at {
+                        break;
+                    }
+                    at = next;
+                }
+            }
+        }
+        at
+    }
+
+    /// The variant `name` of the type `ty` (an alias: of the type it
+    /// names), written `written`.
     fn enum_variant(&mut self, ty: DefId, written: &str, name: Symbol, span: Span) -> Option<Res> {
+        let ty = self.through_alias(ty);
         if let Some(v) = self
             .defs
             .variants(ty)
@@ -2573,7 +2639,9 @@ impl Resolver<'_> {
             }
             Some(Binding::Def(d)) if self.defs.get(d).is_type() => {
                 obj.res = Some(Res::Def(d));
-                if resolve(field).starts_with(char::is_uppercase) && self.enum_like(d) {
+                if resolve(field).starts_with(char::is_uppercase)
+                    && self.enum_like(self.through_alias(d))
+                {
                     self.enum_variant(d, &resolve(head_name), field, span)
                 } else {
                     None

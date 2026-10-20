@@ -1,0 +1,3 @@
+pub type Pt { x: Int, y: Int }
+
+pub type PtA = Pt

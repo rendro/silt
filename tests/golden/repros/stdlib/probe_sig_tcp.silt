@@ -2,8 +2,6 @@
 import tcp
 fn main() {
   let v_tcp_accept: Int = tcp.accept
-  let v_tcp_accept_tls: Int = tcp.accept_tls
-  let v_tcp_accept_tls_mtls: Int = tcp.accept_tls_mtls
   let v_tcp_close: Int = tcp.close
   let v_tcp_connect: Int = tcp.connect
   let v_tcp_connect_tls: Int = tcp.connect_tls
@@ -13,5 +11,7 @@ fn main() {
   let v_tcp_read: Int = tcp.read
   let v_tcp_read_exact: Int = tcp.read_exact
   let v_tcp_set_nodelay: Int = tcp.set_nodelay
+  let v_tcp_tls_server: Int = tcp.tls_server
+  let v_tcp_tls_server_mtls: Int = tcp.tls_server_mtls
   let v_tcp_write: Int = tcp.write
 }

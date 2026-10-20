@@ -242,9 +242,10 @@ let todo = json.parse(body, Todo)
 let n = try_from("42", Int)
 ```
 
-The type passed must be a concrete type (or a type expression in terms
-of types already in scope). Passing a lowercase type variable only works
-when that variable is in scope at the call site.
+The type passed is a type name, or an alias of one, which stands for
+the type it names: to pass `List(Int)`, name it with an alias
+(`type Ints = List(Int)`, then `make(Ints)`). Passing a lowercase type
+variable only works when that variable is in scope at the call site.
 
 ### Why `type` parameters come last
 

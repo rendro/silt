@@ -75,13 +75,15 @@ fn unparseable(message: &str, span: Span, output: &str) -> Refusal {
     }
 }
 
-/// At most the first 60 characters of `text`.
+/// At most the first 60 characters of `text`, of its first line (a
+/// message is one line).
 fn excerpt(text: &str) -> String {
     const LIMIT: usize = 60;
-    if text.chars().count() <= LIMIT {
-        text.to_string()
+    let line = text.lines().next().unwrap_or("").trim_end_matches('\r');
+    if line.chars().count() <= LIMIT && line.len() == text.len() {
+        line.to_string()
     } else {
-        let head: String = text.chars().take(LIMIT).collect();
+        let head: String = line.chars().take(LIMIT).collect();
         format!("{head}...")
     }
 }
@@ -226,10 +228,16 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
             | Token::StringLit(..)
             | Token::StringStart(_)
             | Token::StringMiddle(_)
-            | Token::StringEnd(_) => decls[decl].literals.push(Note {
-                text: source[tok.span.start as usize..tok.span.end as usize].to_string(),
-                span: tok.span,
-            }),
+            | Token::StringEnd(_) => {
+                // A string's line ends are written as line feeds: a
+                // carriage return before one is no part of it.
+                let text =
+                    source[tok.span.start as usize..tok.span.end as usize].replace("\r\n", "\n");
+                decls[decl].literals.push(Note {
+                    text,
+                    span: tok.span,
+                })
+            }
             Token::Fn | Token::Pub | Token::Type | Token::Trait | Token::Let => {
                 // The comments above the token that are not the header:
                 // the last one stands on a line of its own if a line
@@ -1339,6 +1347,14 @@ mod tests {
             "-- header\n-- about f\nfn f() {\n}\n",
         );
         assert!(message.contains("the top of the file"), "{message}");
+    }
+
+    #[test]
+    fn a_refusal_names_a_literal_by_its_first_line() {
+        // A message is one line: a triple-quoted string is named by the
+        // start of its first line.
+        assert_eq!(excerpt("\"\"\"\r\n  a\r\n  \"\"\""), "\"\"\"...");
+        assert_eq!(excerpt("0x10"), "0x10");
     }
 
     #[test]

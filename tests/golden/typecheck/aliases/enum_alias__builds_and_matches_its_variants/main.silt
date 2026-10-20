@@ -1,0 +1,24 @@
+-- An alias of an enum is only another name: its variants are written
+-- through it, built and matched, also through an alias another module
+-- exports and an alias with arguments.
+import colors
+import colors.{ C, Q }
+
+type O = Option(Int)
+
+fn main() {
+  let a = colors.C.Green(1)
+  match a {
+    colors.C.Green(n) -> println(n)
+    C.Red -> println("red")
+  }
+  println(C.Red)
+  let q = colors.Q { x: 3 }
+  match q {
+    Q { x } -> println(x)
+  }
+  match O.Some(4) {
+    O.Some(n) -> println(n)
+    O.None -> println("none")
+  }
+}

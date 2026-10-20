@@ -1,0 +1,15 @@
+-- exit: 1
+-- A cancelled task's failure has no place of its own: task.join
+-- raises it at the join, with the joiner's calls.
+import task
+import time
+
+fn wait_for(h) {
+  task.join(h)
+}
+
+fn main() {
+  let h = task.spawn { -> time.sleep(time.ms(1000)) }
+  task.cancel(h)
+  wait_for(h)
+}

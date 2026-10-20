@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A semicolon is reported and read as the line break it stands for:
+-- the rest of the function is still checked.
+fn helper(n: Int) -> Int {
+  n * 2
+}
+
+fn main() {
+  let v = helper(3);
+  let w: String = v
+  println("{v} {w}");;
+}

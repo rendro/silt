@@ -98,6 +98,58 @@ impl Server {
         self.module_view(doc, module_name)
     }
 
+    /// The hover of the module `module` of the program: its name and
+    /// file.
+    pub(super) fn module_hover(view: &ModuleView, module: Symbol) -> String {
+        let file = view
+            .uri
+            .path()
+            .as_str()
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        format!(
+            "```silt\nmodule {}\n```\n\n{file}",
+            crate::intern::resolve(module)
+        )
+    }
+
+    /// The hover of the module an import of the open document `doc`
+    /// names at byte `cursor` (`list` in `import list`): a module of the
+    /// program as `module_hover` shows it, one of silt's own with the
+    /// first paragraph of its reference page.
+    pub(super) fn imported_module_hover(&self, doc: &Document, cursor: usize) -> Option<String> {
+        let program = doc.program.as_ref()?;
+        let text = &doc.source.text;
+        let module = program.decls.iter().find_map(|decl| {
+            let Decl::Import(target, span) = decl else {
+                return None;
+            };
+            let module = target.module();
+            let rest = text
+                .get(span.start as usize..span.end as usize)?
+                .strip_prefix("import")?;
+            let start = span.start as usize + "import".len() + rest.len() - rest.trim_start().len();
+            let end = start + crate::intern::resolve(module).len();
+            (start..=end).contains(&cursor).then_some(module)
+        })?;
+        if let Some(view) = self.module_view(doc, module) {
+            return Some(Self::module_hover(&view, module));
+        }
+        let name = crate::intern::resolve(module);
+        let page = crate::builtins::registry::registry()
+            .enabled_modules()
+            .find(|m| m.name == name)?
+            .page;
+        let about = crate::builtins::registry::docs::strip_frontmatter(page)
+            .split("\n\n")
+            .map(str::trim)
+            .find(|paragraph| !paragraph.is_empty() && !paragraph.starts_with('#'))
+            .unwrap_or_default();
+        Some(format!("```silt\nmodule {name}\n```\n\n{about}"))
+    }
+
     /// The module that binds `name` bare in the open document `doc`
     /// through `import m.{ name }` (of two, the first in the one order
     /// of imports, as the checker binds it).
@@ -180,6 +232,29 @@ pub(super) fn qualified_access_at(program: &Program, cursor: usize) -> Option<(S
 
 /// The receiver `module` of a qualified access `module.member` whose
 /// receiver holds `cursor`, when it is a plain identifier.
+/// The name before a dot at byte `cursor` of `source` when a capitalised
+/// name follows the dot: the module of a qualified type name written in
+/// an annotation (`helpers` in `q: helpers.PtA`), which is no expression.
+pub(super) fn type_qualifier_at(source: &str, cursor: usize) -> Option<Symbol> {
+    let is_name = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = source.as_bytes();
+    if cursor > bytes.len() {
+        return None;
+    }
+    let start = bytes[..cursor]
+        .iter()
+        .rposition(|b| !is_name(*b))
+        .map_or(0, |at| at + 1);
+    let end = cursor
+        + bytes[cursor..]
+            .iter()
+            .position(|b| !is_name(*b))
+            .unwrap_or(bytes.len() - cursor);
+    let (dot, next) = (bytes.get(end)?, bytes.get(end + 1)?);
+    (start < end && *dot == b'.' && next.is_ascii_uppercase())
+        .then(|| crate::intern::intern(&source[start..end]))
+}
+
 pub(super) fn qualifier_at(program: &Program, cursor: usize) -> Option<Symbol> {
     find_qualified_access(program, |receiver, _| receiver.contains(&cursor)).map(|(m, _)| m)
 }

@@ -105,6 +105,52 @@ impl TypeChecker {
             .is_some_and(|ty| self.rejected_types.contains(&ty))
     }
 
+    /// The type `ty` written bare, with a fresh type variable for each
+    /// of its parameters, so that distinct uses do not share the
+    /// template variables (T1 audit fix): `List` is `List(a)`, `Box`
+    /// `Box(a)`. An alias is a `Type::Generic(alias, args)` head the
+    /// canonicaliser expands. `None` for a type with no such instance
+    /// (`Tuple`, `Fn`).
+    pub(super) fn type_instance(&mut self, ty: TypeRef) -> Option<Type> {
+        if let Some(builtin) = builtin_type_name(ty) {
+            match builtin {
+                "Int" => return Some(Type::Int),
+                "Float" => return Some(Type::Float),
+                "Bool" => return Some(Type::Bool),
+                "String" => return Some(Type::String),
+                "Unit" => return Some(Type::Unit),
+                "List" => return Some(Type::List(Box::new(self.fresh_var()))),
+                "Map" => {
+                    return Some(Type::Map(
+                        Box::new(self.fresh_var()),
+                        Box::new(self.fresh_var()),
+                    ));
+                }
+                "Set" => return Some(Type::Set(Box::new(self.fresh_var()))),
+                "Channel" => return Some(Type::Channel(Box::new(self.fresh_var()))),
+                // Opaque resource / value types from builtin
+                // modules: the shape the builtin schemes produce
+                // (round 72 GAP G1).
+                _ if let Some(arity) = opaque_arity(builtin) => {
+                    let args = (0..arity).map(|_| self.fresh_var()).collect();
+                    return Some(Type::Generic(ty, args));
+                }
+                _ => {}
+            }
+        }
+        let known = self.tables.records.contains_key(&ty)
+            || self.tables.enums.contains_key(&ty)
+            || self.tables.type_aliases.contains(&ty);
+        if !known {
+            return None;
+        }
+        let arity = self.type_arity(ty).unwrap_or(0);
+        Some(Type::Generic(
+            ty,
+            (0..arity).map(|_| self.fresh_var()).collect(),
+        ))
+    }
+
     /// The number of type parameters of a record, enum or alias type;
     /// `None` for a type that is none of these.
     pub(super) fn type_arity(&self, ty: TypeRef) -> Option<usize> {
@@ -267,55 +313,17 @@ impl TypeChecker {
                     );
                     return Type::Error;
                 };
-                if let Some(builtin) = builtin_type_name(ty) {
-                    match builtin {
-                        "Int" => return Type::Int,
-                        "Float" => return Type::Float,
-                        "Bool" => return Type::Bool,
-                        "String" => return Type::String,
-                        "Unit" => return Type::Unit,
-                        // A container without explicit type params gets
-                        // a fresh variable for each.
-                        "List" => return Type::List(Box::new(self.fresh_var())),
-                        "Map" => {
-                            return Type::Map(
-                                Box::new(self.fresh_var()),
-                                Box::new(self.fresh_var()),
-                            );
-                        }
-                        "Set" => return Type::Set(Box::new(self.fresh_var())),
-                        "Channel" => return Type::Channel(Box::new(self.fresh_var())),
-                        // Opaque resource / value types from builtin
-                        // modules: the shape the builtin schemes produce
-                        // (round 72 GAP G1).
-                        _ if let Some(arity) = opaque_arity(builtin) => {
-                            let args = (0..arity).map(|_| self.fresh_var()).collect();
-                            return Type::Generic(ty, args);
-                        }
-                        _ => {}
+                match self.type_instance(ty) {
+                    Some(t) => t,
+                    None => {
+                        self.error(
+                            Code::UnknownType,
+                            self.unknown_type_message(&name_str, false),
+                            te.span,
+                        );
+                        Type::Error
                     }
                 }
-                // A record, enum or alias type. If the type is
-                // parameterized and the user wrote it bare (no type
-                // args), instantiate a fresh type variable for each
-                // parameter so distinct uses don't cross-pollute
-                // through the shared template TyVars (T1 audit fix).
-                // Aliases resolve to a `Type::Generic(alias, args)`
-                // head that the canonicaliser will expand.
-                let known = self.tables.records.contains_key(&ty)
-                    || self.tables.enums.contains_key(&ty)
-                    || self.tables.type_aliases.contains(&ty);
-                if !known {
-                    self.error(
-                        Code::UnknownType,
-                        self.unknown_type_message(&name_str, false),
-                        te.span,
-                    );
-                    return Type::Error;
-                }
-                let arity = self.type_arity(ty).unwrap_or(0);
-                let args: Vec<Type> = (0..arity).map(|_| self.fresh_var()).collect();
-                Type::Generic(ty, args)
             }
             TypeExprKind::Generic { name, args, .. } => {
                 // A type the resolver resolved to nothing takes any

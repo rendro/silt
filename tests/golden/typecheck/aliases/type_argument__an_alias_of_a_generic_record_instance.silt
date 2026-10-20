@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- An alias that gives a generic record its arguments names one instance
+-- of it; the decoders read a record's fields as its declaration writes
+-- them, which a generic record's do not say.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type IntBox = Box(Int)
+
+fn main() {
+  match json.parse("""{"v": 3}""", IntBox) {
+    Ok(b) -> println(b.v)
+    Err(e) -> println(e)
+  }
+}
