@@ -28,9 +28,22 @@ TomlError` is wired in):
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(msg, offset)` | `String`, `Int` | Malformed TOML at `offset` bytes |
-| `TypeMismatch(expected, actual)` | `String`, `String` | A field's TOML type did not match the target field type |
-| `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `TypeMismatch(expected, actual)` | `String`, `String` | A value's TOML type did not match the type it decodes into; `actual` ends with the value's path |
+| `MissingField(name)` | `String` | A required (non-`Option`) field was absent; `name` is its path |
 | `Other(msg)` | `String` | Anything else (serialization failures, document-shape violations) |
+
+An error about a value of the document ends with the path of that value:
+the fields of a record and the keys of a map by name (`inner.a`), a key
+that is not made of letters, digits, `_` and `-` as a JSON string in
+brackets (`tags["a b"]`), and the elements of a list or a tuple by index
+(`xs[1]`; the list that `toml.parse_list` reads is under its one key, so
+its elements are `points[2]`).
+`TypeMismatch("Int", "string at inner.a")` reads `toml type mismatch: expected
+Int, got string at inner.a`; a missing field is `MissingField("inner.a")`;
+an `Other` about a value (a tuple of the wrong length, a date that is none)
+ends with ` at <path>`. An error about the document itself, such as a
+`Syntax` error or a document `toml.parse_list` finds no one array in, has
+no path.
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 

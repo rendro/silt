@@ -31,9 +31,21 @@ JsonError` is wired in):
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes, or a number beyond `Float`'s range (`1e400`: `number out of range`) |
-| `TypeMismatch(expected, actual)` | `String`, `String` | A field's JSON type did not match the target field type |
-| `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `TypeMismatch(expected, actual)` | `String`, `String` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path |
+| `MissingField(name)` | `String` | A required (non-`Option`) field was absent; `name` is its path |
 | `Other(msg)` | `String` | Anything else: a tuple's array of the wrong length, a field without a decoder (when the type arrives at run time), a value too deep for `json.decode` |
+
+An error about a value of the document ends with the path of that value:
+the fields of a record and the keys of a map by name (`inner.a`), a key
+that is not made of letters, digits, `_` and `-` as a JSON string in
+brackets (`tags["a b"]`), and the elements of a list or a tuple by index
+(`xs[1]`; `[2]` for an element of the list that `json.parse_list`
+reads).
+`TypeMismatch("Int", "string at inner.a")` reads `json type mismatch: expected
+Int, got string at inner.a`; a missing field is `MissingField("inner.a")`;
+an `Other` about a value (a tuple of the wrong length, a date that is none)
+ends with ` at <path>`. An error about the document itself, such as a
+`Syntax` error or an array where a record is expected, has no path.
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 

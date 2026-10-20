@@ -1,0 +1,58 @@
+-- A json or toml decode error ends with the path of the value that
+-- failed: fields and map keys by name (`inner.a`), a key that is no bare
+-- word as a JSON string in brackets (`m["a b"]`), list and tuple elements
+-- by index (`xs[1]`, `[2]` at the top). An error of the document itself
+-- has no path, and the variant keeps its fields: the path ends the text
+-- of the last one.
+import json
+import time
+import toml
+
+type Inner {
+  a: Int,
+}
+
+type Outer {
+  inner: Inner,
+  xs: List(Int),
+  m: Map(String, Inner),
+  pair: (Int, String),
+  day: Option(time.Date),
+}
+
+fn main() {
+  let good = """"inner": {"a": 1}, "xs": [1], "m": {}, "pair": [1, "s"]"""
+  println(json.parse("""{"inner": {"a": "x"}, "xs": [], "m": {}, "pair": [1, "s"]}""", Outer))
+  println(json.parse("""{"inner": {}, "xs": [], "m": {}, "pair": [1, "s"]}""", Outer))
+  println(json.parse("""{"inner": 5, "xs": [], "m": {}, "pair": [1, "s"]}""", Outer))
+  println(json.parse("""{"inner": {"a": 1}, "xs": [1, "b"], "m": {}, "pair": [1, "s"]}""", Outer))
+  println(json.parse("""{"inner": {"a": 1}, "xs": [], "m": {"k": {"a": true}}, "pair": [1, "s"]}""", Outer))
+  println(json.parse("""{"inner": {"a": 1}, "xs": [], "m": {"a b": {}}, "pair": [1, "s"]}""", Outer))
+  println(json.parse("""{"inner": {"a": 1}, "xs": [], "m": {}, "pair": [1, 2]}""", Outer))
+  println(json.parse("""{"inner": {"a": 1}, "xs": [], "m": {}, "pair": [1, "s", 3]}""", Outer))
+  println(json.parse("\{{good}, \"day\": \"2026-13-01\"}", Outer))
+  println(json.parse("""{"inner": {"a": 1}}""", Outer))
+  println(json.parse("[1]", Outer))
+  println(json.parse("\"x\"", Int))
+  println(json.parse_list("""[1, 2, "c"]""", Int))
+  println(json.parse_list("""[{"a": 1}, {"a": 2.5}]""", Inner))
+  println(json.parse_map("""{"ok": 1, "x.y": "z"}""", Int))
+  println(json.decode(json.Array([json.Int(1), json.Null]), Int))
+  match json.parse_list("""[{"a": 1}, {"a": "x"}]""", Inner) {
+    Err(json.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected} | {actual}")
+    other -> println(other)
+  }
+  match json.parse_list("""[{"a": 1}, {}]""", Inner) {
+    Err(json.MissingField(path)) -> println("MissingField: {path}")
+    other -> println(other)
+  }
+
+  let t = "xs = [1]\npair = [1, \"s\"]\n[m]\n"
+  println(toml.parse("{t}[inner]\na = 1.5\n", Outer))
+  println(toml.parse("{t}[inner]\n", Outer))
+  println(toml.parse("xs = [1, \"b\"]\npair = [1, \"s\"]\n[inner]\na = 1\n[m]\n", Outer))
+  println(toml.parse("{t}[inner]\na = 1\n[m.\"a b\"]\na = \"x\"\n", Outer))
+  println(toml.parse("xs = [1]\npair = [1, \"s\"]\nday = 07:30:00\n[inner]\na = 1\n[m]\n", Outer))
+  println(toml.parse_list("[[points]]\na = 1\n\n[[points]]\na = \"x\"\n", Inner))
+  println(toml.parse_map("ok = 1\nno = \"x\"\n", Int))
+}

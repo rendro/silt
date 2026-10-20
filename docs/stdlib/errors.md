@@ -56,8 +56,8 @@ modules.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
-| `TypeMismatch(String, String)` | expected, actual | wrong JSON type for target |
-| `MissingField(String)` | field name | required field absent |
+| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
+| `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
 
 ### `TomlError` (requires `import toml`)
@@ -65,8 +65,8 @@ modules.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(String, Int)` | message, byte offset | syntactically invalid TOML |
-| `TypeMismatch(String, String)` | expected, actual | wrong TOML type for target |
-| `MissingField(String)` | field name | required field absent |
+| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong TOML type for target |
+| `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
 
 ### `IntError` (requires `import int`)
