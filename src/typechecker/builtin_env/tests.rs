@@ -84,7 +84,8 @@ fn a_row_s_scheme_is_its_signature() {
                 Pred::Anon { .. }
                 | Pred::Lacks { .. }
                 | Pred::Builtin { .. }
-                | Pred::Given { .. } => None,
+                | Pred::Given { .. }
+                | Pred::Via { .. } => None,
             })
             .collect();
         let ty = checker.instantiate(&scheme);

@@ -323,7 +323,7 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
     let pred = |check, subject: &Type| Pred::Builtin {
         check,
         subject: subject.clone(),
-        through: false,
+        passer: None,
     };
     let mut checks = Vec::new();
     if let Some(decoding) = row.decoding {

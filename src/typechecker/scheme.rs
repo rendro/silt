@@ -113,8 +113,12 @@ impl TypeChecker {
         // The variables of a function's parameters: a type one of them
         // gives a builtin, the function passes on.
         let passed: Vec<TyVar> = match (&ty, self.passing_on) {
-            (Type::Fun(params, _), true) => params.iter().flat_map(free_vars_in).collect(),
+            (Type::Fun(params, _), Some(_)) => params.iter().flat_map(free_vars_in).collect(),
             _ => Vec::new(),
+        };
+        let passer_of = |owner: Option<Symbol>, subject: TyVar| match passed.contains(&subject) {
+            true => self.passing_on,
+            false => owner,
         };
         if !vars.is_empty() {
             for i in self.closed_mark..self.wanted.len() {
@@ -147,15 +151,35 @@ impl TypeChecker {
                     },
                     // The definition passes the type on to the builtin;
                     // each use names its own type (`written`).
-                    Pred::Builtin { check, through, .. } => Pred::Builtin {
+                    Pred::Builtin { check, passer, .. } => Pred::Builtin {
                         check: check.unwritten(),
                         subject: Type::Var(subject),
-                        through: *through || passed.contains(&subject),
+                        passer: passer_of(*passer, subject),
                     },
-                    Pred::Given { given, .. } => Pred::Given {
+                    Pred::Via {
+                        tr,
+                        method,
+                        method_ty,
+                        passer,
+                        ..
+                    } => Pred::Via {
+                        tr: *tr,
+                        method: *method,
+                        receiver: Type::Var(subject),
+                        method_ty: self.apply(method_ty),
+                        passer: passer_of(*passer, subject),
+                    },
+                    Pred::Given {
+                        given,
+                        passer,
+                        body,
+                        ..
+                    } => Pred::Given {
                         subject: Type::Var(subject),
                         given: *given,
                         written: None,
+                        passer: passer_of(Some(*passer), subject).unwrap_or(*passer),
+                        body: *body,
                     },
                 };
                 if !preds.contains(&pred) {
@@ -165,14 +189,16 @@ impl TypeChecker {
             // A type the scope gives a function's annotation variable,
             // if the definition is general in it.
             for k in self.given_closed..self.given_waiting.len() {
-                let (given, subject, ..) = &self.given_waiting[k];
-                let Type::Var(subject) = self.apply(subject) else {
+                let use_ = &self.given_waiting[k];
+                let Type::Var(subject) = self.apply(&use_.subject) else {
                     continue;
                 };
                 let pred = Pred::Given {
                     subject: Type::Var(subject),
-                    given: *given,
+                    given: use_.given,
                     written: None,
+                    passer: passer_of(Some(use_.passer), subject).unwrap_or(use_.passer),
+                    body: use_.body,
                 };
                 if vars.contains(&subject) && !preds.contains(&pred) {
                     preds.push(pred);
@@ -245,7 +271,9 @@ impl TypeChecker {
                 | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
                 // A type nothing decides is no type a builtin is given:
                 // nothing to check.
-                Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. }) => continue,
+                Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. } | Pred::Via { .. }) => {
+                    continue;
+                }
                 Goal::Try { .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -320,6 +348,9 @@ impl TypeChecker {
     /// variables (`want`), whatever the use is: a call, a name passed as
     /// a value, a pipe, a pattern.
     pub(super) fn instantiate(&mut self, scheme: &Scheme) -> Type {
+        // (The types this use gives a signature's variables are one use.)
+        self.uses += 1;
+        let use_id = self.uses;
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
@@ -327,6 +358,8 @@ impl TypeChecker {
         if !scheme.preds.is_empty() {
             let origin = self.use_origin();
             for pred in &scheme.preds {
+                // (A predicate decided now may make a use of its own.)
+                self.use_id = use_id;
                 self.want(pred.substitute(&mapping), origin);
             }
         }

@@ -1,0 +1,16 @@
+import json
+
+pub trait Loader {
+  fn load(self, type a) -> Result(a, json.JsonError)
+  fn load_again(self, type a) -> Result(a, json.JsonError) {
+    self.load(a)
+  }
+}
+
+pub type Src { s: String }
+
+trait Loader for Src {
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}

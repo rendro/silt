@@ -87,9 +87,13 @@ that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 
 The type a decoder is given is checked where it is known: written at the
 call (`json.parse(text, Config)`), held in a variable, given to a decoder
-used as a value, or given to a function that passes it on to the decoder
-(`fn load(text, type a) { json.parse(text, a) }`: each call of `load` is
-checked, and the error notes that `load` passes it to `json.parse`). A
+used as a value, or given to a function or method that passes it on to the
+decoder (`fn load(text, type a) { json.parse(text, a) }`: each call of
+`load` is checked, and the error notes that `load` passes it to
+`json.parse`). A trait method passes it on too, also one called on a value
+whose type is a type variable (`fn go(l: l, type b) where l: Loader {
+l.load(b) }`): each call of `go` is checked against the method of the type
+it gives `l`. A
 record with a field no decoder exists for is a compile error that names the
 field and its type, and so is an enum with a variant whose field has none
 (the error names the variant); so is a generic record or enum, or a type the

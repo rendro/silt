@@ -1,0 +1,14 @@
+error[type]: the connection of `postgres.execute` must be a PgPool or a PgTx
+ --> typed_rows__a_trait_method_on_a_type_variable_passes_its_connection_on.silt:26:38
+    |
+ 26 |   println(run_with(Repo { url: "" }, "x", 5))
+    |                                      ^^^ the connection of `postgres.execute` must be a PgPool or a PgTx
+  = note: `run_with` passes it to `postgres.execute`
+
+error[type]: the parameters of `postgres.execute` must be a tuple, got `Int`
+ --> typed_rows__a_trait_method_on_a_type_variable_passes_its_connection_on.silt:26:43
+    |
+ 26 |   println(run_with(Repo { url: "" }, "x", 5))
+    |                                           ^ the parameters of `postgres.execute` must be a tuple, got `Int`
+  = note: `run_with` passes it to `postgres.execute`
+  = help: write (id,)

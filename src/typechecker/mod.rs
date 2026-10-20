@@ -10,6 +10,7 @@
 
 mod builtin_checks;
 mod builtin_env;
+mod builtin_needs;
 mod builtin_traits;
 mod declare_fns;
 mod declare_traits;
@@ -113,23 +114,38 @@ pub struct TypeChecker {
     /// What the bodies ask of the annotation variables of their
     /// signatures for the builtins they give them to (`Pred::Builtin`),
     /// each by the variable's representative (`rigid_rep_var`).
-    pub(super) builtin_needs: HashMap<TyVar, Vec<BuiltinCheck>>,
+    pub(super) builtin_needs: HashMap<(TyVar, Option<Symbol>), Vec<BuiltinCheck>>,
     /// The types given to an annotation variable of a signature, with
     /// the alias a use names one by (`Pred::Given`): checked when the
     /// module's bodies are (`settle_builtin_needs`). They are not
     /// `wanted`: nothing about them is decided before then, and a type
     /// still unknown would be looked at again and again.
-    pub(super) given_waiting: Vec<(TyVar, Type, Option<Symbol>, Origin)>,
+    pub(super) given_waiting: Vec<builtin_needs::GivenUse>,
+    /// The trait methods the bodies call on a value whose type is an
+    /// annotation variable of their signature (`Pred::Via`), each by the
+    /// variable's representative.
+    pub(super) via_needs: HashMap<(TyVar, Option<Symbol>), Vec<builtin_needs::ViaNeed>>,
+    /// The method body being checked, by `builtin_needs::body_key`: the
+    /// needs it finds on a variable its trait's or impl's methods share
+    /// are its own.
+    pub(super) body_owner: Option<Symbol>,
+    /// The trait-method calls looked at, by method, types and place
+    /// (`resolve_via`).
+    pub(super) resolved_vias: std::collections::HashSet<std::string::String>,
+    /// The instantiations made so far, and the one under way: the
+    /// `Pred::Given`s one owes are one use (`GivenUse::use_id`).
+    pub(super) uses: usize,
+    pub(super) use_id: usize,
     /// Where each open scope's `given_waiting` begins (as
     /// `wanted_marks`), and where the scope just left began
     /// (`given_closed`): what a definition is generalised over is the
     /// subject of only those.
     pub(super) given_marks: Vec<usize>,
     pub(super) given_closed: usize,
-    /// Whether the definition being generalised is a function (a `fn`,
-    /// or a `let` of a closure): one that passes a type its parameters
-    /// give on to a builtin, which a use of it then names in a note.
-    pub(super) passing_on: bool,
+    /// The function being generalised (a `fn`, or a `let` of a
+    /// closure), if it is one: it passes a type its parameters give on
+    /// to a builtin, which a use of it then names in a note.
+    pub(super) passing_on: Option<Symbol>,
     /// Whether the expression checked next is the callee of a call:
     /// `x.m` there is a method call, anywhere else a field.
     pub(super) callee_position: bool,
@@ -319,9 +335,14 @@ impl TypeChecker {
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             given_waiting: Vec::new(),
+            via_needs: HashMap::new(),
+            body_owner: None,
+            resolved_vias: std::collections::HashSet::new(),
+            uses: 0,
+            use_id: 0,
             given_marks: Vec::new(),
             given_closed: 0,
-            passing_on: false,
+            passing_on: None,
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
@@ -1080,21 +1101,26 @@ impl TypeChecker {
                     Pred::Builtin {
                         check,
                         subject,
-                        through,
+                        passer,
                     } => Pred::Builtin {
                         check,
                         subject: rep(subject),
-                        through,
+                        passer,
                     },
                     Pred::Given {
                         subject,
                         given,
                         written,
+                        passer,
+                        body,
                     } => Pred::Given {
                         subject: rep(subject),
                         given: self.rigid_rep_var(given),
                         written,
+                        passer,
+                        body,
                     },
+                    via @ Pred::Via { .. } => via,
                 }
             })
             .collect();
@@ -1102,9 +1128,9 @@ impl TypeChecker {
             if let (Decl::Fn(f), Some(sig)) = (&decls[i], &sigs[i])
                 && !sig.complete
             {
-                self.passing_on = true;
+                self.passing_on = Some(f.name);
                 let scheme = self.generalize_fn(&sig.ty(), &bounds);
-                self.passing_on = false;
+                self.passing_on = None;
                 env.define(f.name, scheme);
             }
         }
@@ -1116,9 +1142,9 @@ impl TypeChecker {
                     if let Some(bound) = env.lookup(*name).cloned()
                         && bound.vars.is_empty()
                     {
-                        self.passing_on = *closure;
+                        self.passing_on = closure.then_some(*name);
                         let scheme = self.generalize_fn(&bound.ty, &bounds);
-                        self.passing_on = false;
+                        self.passing_on = None;
                         env.define(*name, scheme);
                     }
                 }
@@ -1224,7 +1250,11 @@ impl TypeChecker {
                         // (A parser-recovery stub's empty body is not
                         // user code, here as for a function.)
                         if !method.is_recovery_stub {
+                            let owner = target.to_string();
+                            self.body_owner =
+                                Some(builtin_needs::body_key(trait_key, &owner, method.name));
                             self.check_method_body(method, &sig, env);
+                            self.body_owner = None;
                         }
                     }
                 }
@@ -1237,7 +1267,10 @@ impl TypeChecker {
                         let Some(sig) = self.default_method_sig(t.name, method.name) else {
                             continue;
                         };
+                        let key = self.own_trait(t.name);
+                        self.body_owner = Some(builtin_needs::body_key(key, "", method.name));
                         self.check_method_body(method, &sig, env);
+                        self.body_owner = None;
                     }
                 }
                 _ => {}

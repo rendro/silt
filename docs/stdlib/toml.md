@@ -85,8 +85,9 @@ text in quotes (`"1990-01-01"`) is a string.
 
 The type a decoder is given is checked where it is known, as for
 `json.parse`: written at the call (`toml.parse(text, Config)`), held in a
-variable, given to a decoder used as a value, or given to a function that
-passes it on to the decoder (each call of that function is checked). A
+variable, given to a decoder used as a value, or given to a function or
+method that passes it on to the decoder (each call of it is checked, a
+trait method's on a value whose type is a type variable too). A
 record with a field no decoder exists for is a compile error that names the
 field and its type (or the field of a record type it names that has none);
 so is an enum, which toml has no decoder for, or a type the function does

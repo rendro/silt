@@ -98,7 +98,12 @@ pub(super) struct TraitInfo {
     /// variables (`var_names`) for the builtins they give them to, once
     /// the trait's module is checked: an impl in another module that
     /// takes a default asks it of the types a call gives.
-    pub(super) builtin_needs: HashMap<TyVar, Vec<BuiltinCheck>>,
+    /// (By each variable and the default method's name.)
+    pub(super) builtin_needs: HashMap<(TyVar, Symbol), Vec<BuiltinCheck>>,
+    /// The trait methods those bodies call on a value whose type is one
+    /// of their annotation variables (`Pred::Via`), as the trait's module
+    /// decided them.
+    pub(super) via_needs: HashMap<(TyVar, Symbol), Vec<super::builtin_needs::ViaNeed>>,
 }
 
 /// Information about a single associated-type declaration inside a

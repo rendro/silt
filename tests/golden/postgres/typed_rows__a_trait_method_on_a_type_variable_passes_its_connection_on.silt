@@ -1,0 +1,27 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A trait method that gives its parameters to a postgres statement,
+-- called on a bounded parameter of a generic function, asks of the types
+-- each call of the function gives what the statement asks.
+import postgres
+
+type Repo { url: String }
+
+trait Runner {
+  fn run(self, c: a, ps: p) -> Result(Int, postgres.PostgresError)
+}
+
+trait Runner for Repo {
+  fn run(self, c: a, ps: p) -> Result(Int, postgres.PostgresError) {
+    postgres.execute(c, "SELECT 1", ps)
+  }
+}
+
+fn run_with(r: r, c: a, ps: p) -> Result(Int, postgres.PostgresError) where r: Runner {
+  r.run(c, ps)
+}
+
+fn main() {
+  println(run_with(Repo { url: "" }, "x", 5))
+}

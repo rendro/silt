@@ -1,0 +1,55 @@
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:63:19
+    |
+ 63 |   let _ = go(src, Blob)
+    |                   ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `go` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:64:20
+    |
+ 64 |   let _ = go2(src, Blob)
+    |                    ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `go2` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:65:20
+    |
+ 65 |   let _ = go3(src, Blob)
+    |                    ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `go3` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:66:29
+    |
+ 66 |   let _ = src.load_via_load(Blob)
+    |                             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `Src.load_via_load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:67:26
+    |
+ 67 |   let _ = src.load_twice(Blob)
+    |                          ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `Src.load_twice` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:68:35
+    |
+ 68 |   let _ = Box { inner: src }.load(Blob)
+    |                                   ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `Box.load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> data_decode__a_trait_method_on_a_type_variable_passes_its_type_on.silt:69:49
+    |
+ 69 |   let _ = go(Box { inner: Box { inner: src } }, Blob)
+    |                                                 ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `go` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these

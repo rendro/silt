@@ -46,7 +46,8 @@ its result are decoded into a record type the program declares (or into
 The first argument of `query`, `execute`, `stream` and `notify` (`a`
 above) is the connection: a `PgPool`, or the `PgTx` of a transaction.
 Any other type is a compile error, where the call is written and at each
-call of a function that passes its own parameter on as the connection:
+call of a function or method that passes its own parameter on as the
+connection:
 ``the connection of `postgres.query` must be a PgPool or a PgTx``.
 
 ## Parameters and rows
@@ -65,8 +66,9 @@ let ids   = postgres.query(db, "INSERT INTO users (name) VALUES ($1) RETURNING i
 
 The parameters of a statement are a tuple, `$1` its first element:
 `(id, name)`, `(id,)` for one (`(id)` is `id` itself, and the compile
-error says to write `(id,)`), `()` for none. A function that passes its
-own parameter on as the parameters is checked the same way at each call.
+error says to write `(id,)`), `()` for none. A function or method that
+passes its own parameter on as the parameters is checked the same way at
+each call.
 
 Each parameter goes to the server as text, and the server reads it as
 the type the statement needs at its place, so an `Int` goes into an
@@ -103,7 +105,7 @@ unsupported value kind Bytes"))`.
 a row is decoded into as their last argument: a record type, or
 `json.Value`, or an alias of one (the type it names). It is checked where
 it is known, as for `json.parse` (written at the call, or given to a
-function that passes it on, at each call of that function): any other
+function or method that passes it on, at each call of it): any other
 type, or a record with a field of a type no column can fill (`Bytes` in a
 `Map`, a tuple or a nested record, which only a json document could fill;
 an enum, which postgres has no decoder for), is a compile error that names

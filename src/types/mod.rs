@@ -512,24 +512,42 @@ pub enum Pred {
     Lacks { row: Type, field: Symbol },
     /// `subject` is a type the builtin of `check` takes where its
     /// signature cannot say so: one the decoder decodes, a connection,
-    /// a statement's parameters. `through`: the predicate is a
-    /// definition's, which passes the type on to the builtin (a use of
-    /// the definition reports that).
+    /// a statement's parameters. `passer`: the function or method that
+    /// passes the type on to the builtin, which a use names in a note;
+    /// none for the builtin's own.
     Builtin {
         check: BuiltinCheck,
         subject: Type,
-        through: bool,
+        passer: Option<Symbol>,
     },
-    /// `subject` is given to the annotation variable `given` of a
-    /// function's signature (`type a`, `db: a`): what that function's
-    /// body asks of `given` for the builtins it gives it to
-    /// (`Pred::Builtin`), it asks of `subject`. Which that is is known
-    /// once the bodies of the function's module are checked. `written`
+    /// `subject` is given to the annotation variable `given` of the
+    /// signature of the function or method `passer` (`type a`, `db: a`):
+    /// what its body asks of `given` for the builtins it gives it to
+    /// (`Pred::Builtin`, `Pred::Via`), it asks of `subject`. Which that
+    /// is is known once the bodies of its module are checked. `written`
     /// is the alias the use names the type by, if it names it by one.
+    /// `body`: the method body the variable is of, for the variables
+    /// an impl's or a trait's methods share (`Self`, an impl's
+    /// parameters); none for a function's own.
     Given {
         subject: Type,
         given: TyVar,
         written: Option<Symbol>,
+        passer: Symbol,
+        body: Option<Symbol>,
+    },
+    /// A call of the method `method` of the trait `tr` on a value of the
+    /// type `receiver`, of the type `method_ty` there: what the method
+    /// of the receiver's impl (or the trait's default) asks of the types
+    /// the call gives it (its `Pred::Given`), the call asks. Decided when
+    /// the receiver's type is known; a receiver that is an annotation
+    /// variable passes it on to the uses of its function.
+    Via {
+        tr: TraitKey,
+        method: Symbol,
+        receiver: Type,
+        method_ty: Type,
+        passer: Option<Symbol>,
     },
 }
 
@@ -605,20 +623,37 @@ impl Pred {
             Pred::Builtin {
                 check,
                 subject,
-                through,
+                passer,
             } => Pred::Builtin {
                 check: *check,
                 subject: substitute_vars(subject, mapping),
-                through: *through,
+                passer: *passer,
             },
             Pred::Given {
                 subject,
                 given,
                 written,
+                passer,
+                body,
             } => Pred::Given {
                 subject: substitute_vars(subject, mapping),
                 given: *given,
                 written: *written,
+                passer: *passer,
+                body: *body,
+            },
+            Pred::Via {
+                tr,
+                method,
+                receiver,
+                method_ty,
+                passer,
+            } => Pred::Via {
+                tr: *tr,
+                method: *method,
+                receiver: substitute_vars(receiver, mapping),
+                method_ty: substitute_vars(method_ty, mapping),
+                passer: *passer,
             },
         }
     }
@@ -629,6 +664,7 @@ impl Pred {
             Pred::Trait { subject, .. }
             | Pred::Builtin { subject, .. }
             | Pred::Given { subject, .. } => subject,
+            Pred::Via { receiver, .. } => receiver,
             Pred::Anon { row, .. } | Pred::Lacks { row, .. } => row,
         }
     }
@@ -637,6 +673,7 @@ impl Pred {
     pub fn args(&self) -> &[Type] {
         match self {
             Pred::Trait { args, .. } => args,
+            Pred::Via { method_ty, .. } => std::slice::from_ref(method_ty),
             Pred::Anon { .. } | Pred::Lacks { .. } | Pred::Builtin { .. } | Pred::Given { .. } => {
                 &[]
             }

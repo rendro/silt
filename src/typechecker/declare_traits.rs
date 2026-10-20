@@ -341,6 +341,7 @@ impl TypeChecker {
                 assoc_types: pre_assoc_types,
                 private_to,
                 builtin_needs: HashMap::new(),
+                via_needs: HashMap::new(),
             },
         );
 
@@ -534,6 +535,7 @@ impl TypeChecker {
                 assoc_types,
                 private_to,
                 builtin_needs: HashMap::new(),
+                via_needs: HashMap::new(),
             },
         );
     }
@@ -1735,7 +1737,7 @@ impl TypeChecker {
                     trait_name: Some(trait_key),
                     receiver: declared_receiver.unwrap_or_else(|| writes_self(method)),
                     preds: (method_constraints.iter().cloned())
-                        .chain(self.given_to(&method_rigid))
+                        .chain(self.given_to(&method_rigid, trait_key, target_type, method.name))
                         .collect(),
                 },
             );
@@ -1790,7 +1792,9 @@ impl TypeChecker {
                 }
                 let mut method_constraints = impl_level_constraints.clone();
                 method_constraints.extend(Self::bounds_under(info, *name, &mapping));
-                method_constraints.extend(self.given_to_default(trait_key, info, &mapping));
+                let passer = intern(&format!("{target_type}.{name}"));
+                method_constraints
+                    .extend(self.given_to_default(trait_key, info, *name, &mapping, passer));
                 self.register_method_entry(
                     target_type,
                     *name,
@@ -1990,18 +1994,29 @@ impl TypeChecker {
     /// Enter a method of an impl among the impls' methods, by its type,
     /// its name and its trait: the row is the module's that writes the
     /// impl.
-    /// What a use of an impl's method owes for the annotation variables
-    /// `rigid` of its body: what the body asks of each for the builtins
-    /// it gives it to (`Pred::Given`).
-    fn given_to(&self, rigid: &[RigidId]) -> Vec<Pred> {
+    /// What a use of the method `method` of an impl for `target` owes
+    /// for the annotation variables `rigid` of its body: what the body
+    /// asks of each for the builtins it gives it to (`Pred::Given`); a
+    /// note names it `Src.load`.
+    fn given_to(
+        &self,
+        rigid: &[RigidId],
+        trait_key: TraitKey,
+        target: TypeRef,
+        method: Symbol,
+    ) -> Vec<Pred> {
         if self.registry_rows {
             return Vec::new();
         }
+        let passer = intern(&format!("{target}.{method}"));
+        let body = super::builtin_needs::body_key(trait_key, &target.to_string(), method);
         (rigid.iter())
             .map(|r| Pred::Given {
                 subject: Type::Var(r.var),
                 given: r.var,
                 written: None,
+                passer,
+                body: Some(body),
             })
             .collect()
     }
@@ -2014,28 +2029,59 @@ impl TypeChecker {
         &self,
         key: TraitKey,
         info: &TraitInfo,
+        method: Symbol,
         mapping: &HashMap<TyVar, Type>,
+        passer: Symbol,
     ) -> Vec<Pred> {
+        let body = super::builtin_needs::body_key(key, "", method);
         if self.registry_rows {
             return Vec::new();
         }
         let own = self.tables.traits.is_own(&key);
+        // The variables of this method's body: `Self`, the trait's
+        // parameters and the method's own.
+        let of_method: Vec<TyVar> = (info.methods.iter())
+            .filter(|(name, _)| *name == method)
+            .flat_map(|(_, ty)| free_vars_in(ty))
+            .chain([info.self_var])
+            .chain(info.param_var_ids.iter().copied())
+            .collect();
         let mut preds = Vec::new();
-        for (var, _) in &info.var_names {
+        for (var, _) in info
+            .var_names
+            .iter()
+            .filter(|(var, _)| of_method.contains(var))
+        {
             let subject = substitute_vars(&Type::Var(*var), mapping);
             if own {
                 preds.push(Pred::Given {
                     subject,
                     given: *var,
                     written: None,
+                    passer,
+                    body: Some(body),
                 });
                 continue;
             }
-            for check in info.builtin_needs.get(var).into_iter().flatten() {
+            for check in info
+                .builtin_needs
+                .get(&(*var, method))
+                .into_iter()
+                .flatten()
+            {
                 preds.push(Pred::Builtin {
                     check: *check,
                     subject: subject.clone(),
-                    through: true,
+                    passer: Some(passer),
+                });
+            }
+            for via in info.via_needs.get(&(*var, method)).into_iter().flatten() {
+                preds.push(Pred::Via {
+                    tr: via.tr,
+                    method: via.method,
+                    receiver: substitute_vars(&via.receiver, mapping),
+                    method_ty: substitute_vars(&via.method_ty, mapping),
+                    passer: Some(passer),
                 });
             }
         }

@@ -147,15 +147,52 @@ impl TypeChecker {
     /// predicate is the scheme's (`generalize`), or it belongs to an
     /// outer binding and waits on.
     pub(super) fn want(&mut self, pred: Pred, origin: Origin) {
-        if let Pred::Given {
-            subject,
-            given,
-            written,
-        } = pred
-        {
-            self.given_waiting.push((given, subject, written, origin));
-            return;
-        }
+        let pred = match pred {
+            Pred::Given {
+                subject,
+                given,
+                written,
+                passer,
+                body,
+            } => {
+                let passer = self.passer_at(passer, &origin);
+                self.given_waiting.push(super::builtin_needs::GivenUse {
+                    given,
+                    subject,
+                    written,
+                    passer,
+                    body,
+                    in_body: self.body_owner,
+                    origin,
+                    placed: false,
+                    use_id: self.use_id,
+                });
+                return;
+            }
+            Pred::Builtin {
+                check,
+                subject,
+                passer: Some(passer),
+            } => Pred::Builtin {
+                check,
+                subject,
+                passer: Some(self.passer_at(passer, &origin)),
+            },
+            Pred::Via {
+                tr,
+                method,
+                receiver,
+                method_ty,
+                passer: Some(passer),
+            } => Pred::Via {
+                tr,
+                method,
+                receiver,
+                method_ty,
+                passer: Some(self.passer_at(passer, &origin)),
+            },
+            other => other,
+        };
         self.want_goal(Goal::Pred(pred), origin);
     }
 
@@ -276,12 +313,31 @@ impl TypeChecker {
                     Goal::Pred(Pred::Builtin {
                         check,
                         subject,
-                        through,
+                        passer,
                     }) => {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
-                            self.check_builtin_argument(check, &subject, through, origin);
+                            self.check_builtin_argument(check, &subject, passer, origin);
+                        }
+                    }
+                    Goal::Pred(Pred::Via {
+                        tr,
+                        method,
+                        receiver,
+                        method_ty,
+                        passer,
+                    }) => {
+                        if !matches!(self.apply(&receiver), Type::Var(_)) {
+                            self.wanted[i].solved = true;
+                            let need = super::builtin_needs::ViaNeed {
+                                tr,
+                                method,
+                                receiver,
+                                method_ty,
+                            };
+                            let in_body = self.body_owner;
+                            self.via_owed(need, passer, origin, &[], in_body);
                         }
                     }
                     // (Never wanted: `given_waiting`.)
@@ -619,7 +675,7 @@ impl TypeChecker {
 
     /// Whether a body makes an anonymous record from the row variable
     /// `var` of its function's signature.
-    fn is_anon_row(&self, var: TyVar) -> bool {
+    pub(super) fn is_anon_row(&self, var: TyVar) -> bool {
         self.anon_rows.contains(&var) || self.anon_rows.contains(&self.rigid_rep_var(var))
     }
 
@@ -630,7 +686,7 @@ impl TypeChecker {
 
     /// The fields a body adds over the row variable `var` of its
     /// function's signature.
-    fn adds_of(&self, var: TyVar) -> Vec<Symbol> {
+    pub(super) fn adds_of(&self, var: TyVar) -> Vec<Symbol> {
         let mut adds = self.row_adds.get(&var).cloned().unwrap_or_default();
         if let Some(more) = self.row_adds.get(&self.rigid_rep_var(var)) {
             adds.extend(
@@ -738,44 +794,6 @@ impl TypeChecker {
                 }
             }
         }
-    }
-
-    /// The predicates of a scheme as another module reads them: what a
-    /// body does to a row variable of its signature is decided.
-    pub(super) fn settled_preds(&self, preds: &[Pred]) -> Vec<Pred> {
-        let mut settled = Vec::new();
-        for pred in preds {
-            match pred {
-                Pred::Anon {
-                    row,
-                    given: Some(given),
-                } => {
-                    if self.is_anon_row(*given) {
-                        settled.push(Pred::Anon {
-                            row: row.clone(),
-                            given: None,
-                        });
-                        for field in self.adds_of(*given) {
-                            settled.push(Pred::Lacks {
-                                row: row.clone(),
-                                field,
-                            });
-                        }
-                    }
-                }
-                Pred::Given { subject, given, .. } => {
-                    for check in self.builtin_needs_of(*given) {
-                        settled.push(Pred::Builtin {
-                            check,
-                            subject: subject.clone(),
-                            through: true,
-                        });
-                    }
-                }
-                other => settled.push(other.clone()),
-            }
-        }
-        settled
     }
 
     /// The variable a `Goal::Rebuild` over `base` waits for: the type
@@ -1205,12 +1223,20 @@ impl TypeChecker {
                     })
                     .collect();
                 let ty = substitute_vars(method_ty, &mapping);
+                // (And what the method of the receiver's impl asks.)
                 let preds: Vec<Pred> = info
                     .method_bounds
                     .get(&name)
                     .into_iter()
                     .flatten()
                     .map(|pred| pred.substitute(&mapping))
+                    .chain([Pred::Via {
+                        tr: *tr,
+                        method: name,
+                        receiver: recv.clone(),
+                        method_ty: ty.clone(),
+                        passer: None,
+                    }])
                     .collect();
                 let own: Vec<TyVar> = free_vars_in(method_ty)
                     .into_iter()

@@ -223,6 +223,8 @@ impl TypeChecker {
                     subject: Type::Var(*var),
                     given: *var,
                     written: None,
+                    passer: f.name,
+                    body: None,
                 });
             }
             rigid.push(id);
