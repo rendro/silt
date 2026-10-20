@@ -308,6 +308,7 @@ impl Vm {
                 steps_left: AtomicU64::new(u64::MAX),
                 newest: Default::default(),
                 types: Default::default(),
+                refusals: Default::default(),
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
             }),
@@ -516,6 +517,9 @@ impl Vm {
     /// the entries before it too, whose values stay.
     pub(crate) fn load(&mut self, program: &crate::session::Program) {
         self.runtime.types.lock().extend(&program.types);
+        // (A description taken in anew may differ from the one a decoder
+        // was decided by.)
+        self.runtime.refusals.write().clear();
         self.view.table = program.globals.clone();
         self.view.entry = program.globals.clone();
         self.settled = program.settled.clone();

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::data::{self, Data, Format};
-use super::decode::{self, At, Document, I64_MAX_PLUS_ONE, Numbers, Rules};
+use super::decode::{self, At, Decoder, Document, I64_MAX_PLUS_ONE, Numbers, Rules};
 use super::registry::decoding::Family;
 use super::typed::{Type, builtins};
 #[cfg(feature = "postgres")]
@@ -410,48 +410,60 @@ pub(crate) fn decode_field(
     })
 }
 
-/// The value of type `ty` that the document `parsed` is, for
+/// The value of type `ty` that the document `read` gives is, for
 /// `json.parse` and `json.decode` (`caller`): `Ok` of it, or `Err` of
-/// the `JsonError` that says why there is none.
+/// the `JsonError` that says why there is none. As every decoder does,
+/// it takes the type and refuses one no decoder fills before the
+/// document is read; `read` gives the document, or the call's result
+/// where there is none.
 fn decode_document(
     rt: &Runtime,
-    caller: &str,
-    parsed: Result<serde_json::Value, serde_json::Error>,
+    caller: &Decoder,
     ty: Type,
+    read: impl FnOnce() -> Result<serde_json::Value, Result<Value, VmError>>,
 ) -> Result<Value, VmError> {
-    let json = match parsed {
-        Ok(json) => json,
-        Err(e) => return Ok(json_result_err(&e)),
-    };
     let target = decode::target(caller, ty)?;
     if let Some(refused) = decode::refused(rt, &RULES, &target) {
         return Ok(refused);
     }
+    let json = match read() {
+        Ok(json) => json,
+        Err(result) => return result,
+    };
     Ok(decode::result(&RULES, decode::document(rt, &target, &json)))
 }
 
 // ── The functions ───────────────────────────────────────────────────
+
+static DECODE: Decoder = Decoder::new("json.decode");
+static PARSE: Decoder = Decoder::new("json.parse");
+static PARSE_LIST: Decoder = Decoder::new("json.parse_list");
+static PARSE_MAP: Decoder = Decoder::new("json.parse_map");
 
 builtins! {
     fn decode(vm, value: &Value, ty: Type) -> Result<Value, VmError> {
         // A `json.Value` holds only what JSON has a form for, so the one
         // way to fail here is a value nested past the limit: an `Err`,
         // as `json.parse` gives one for a document nested too deep.
-        let mut json = match data::data("json.decode", Format::Json, value) {
-            Ok(data) => serde_json::to_value(Json(&data))
-                .map_err(|e| VmError::new(format!("json.decode: {e}")))?,
-            Err(e) => return Ok(json_unknown_err(e.message)),
-        };
-        whole_numbers(&mut json);
-        decode_document(&vm.runtime, "json.decode", Ok(json), ty)
+        decode_document(&vm.runtime, &DECODE, ty, || {
+            let mut json = match data::data("json.decode", Format::Json, value) {
+                Ok(data) => serde_json::to_value(Json(&data))
+                    .map_err(|e| Err(VmError::new(format!("json.decode: {e}"))))?,
+                Err(e) => return Err(Ok(json_unknown_err(e.message))),
+            };
+            whole_numbers(&mut json);
+            Ok(json)
+        })
     }
 
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        decode_document(&vm.runtime, "json.parse", parse_document(s.as_bytes()), ty)
+        decode_document(&vm.runtime, &PARSE, ty, || {
+            parse_document(s.as_bytes()).map_err(|e| Ok(json_result_err(&e)))
+        })
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target("json.parse_list", ty)?;
+        let target = decode::target(&PARSE_LIST, ty)?;
         if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
             return Ok(refused);
         }
@@ -463,7 +475,7 @@ builtins! {
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target("json.parse_map", ty)?;
+        let target = decode::target(&PARSE_MAP, ty)?;
         if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
             return Ok(refused);
         }
@@ -498,7 +510,7 @@ mod tests {
     fn a_field_that_holds_bytes_is_never_decoded() {
         use crate::defs::{DefId, TypeId};
         let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
-        for (field, text) in [
+        for (k, (field, text)) in [
             (FieldType::List(Box::new(FieldType::Bytes)), r#"{"b": []}"#),
             (FieldType::List(Box::new(FieldType::Bytes)), r#"{"b": [1]}"#),
             (
@@ -510,10 +522,14 @@ mod tests {
                 FieldType::Tuple(vec![FieldType::Int, FieldType::Bytes]),
                 r#"{"b": [1, 2]}"#,
             ),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let shown = shown(&vm.runtime, &field);
             let fields = vec![("b".to_string(), field)];
-            let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
+            // (An id of its own: a runtime decides a type's decoder once.)
+            let ty = TypeInfo::new_record(TypeId(DefId(9000 + k as u32)), "B", fields.clone());
             let json: serde_json::Value = serde_json::from_str(text).expect("a document");
             // As json.parse decodes it: the type is refused before the
             // document is read.

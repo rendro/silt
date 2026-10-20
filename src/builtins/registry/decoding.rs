@@ -90,6 +90,9 @@ impl Leaf {
 }
 
 impl Family {
+    /// Every family, in the order of their numbers (`family as usize`).
+    pub const ALL: [Family; 3] = [Family::Json, Family::Toml, Family::Postgres];
+
     /// The leaves the family decodes, in the order of [`Leaf::ALL`].
     /// Every family decodes `List(T)`, `Option(T)`, `Map(String, T)`,
     /// tuples and non-generic record types of what it decodes.
@@ -269,6 +272,15 @@ mod tests {
     use crate::builtins::typed::Type;
     use crate::typeinfo::{TypeInfo, ty};
 
+    /// A family's number is its place in `Family::ALL`, by which a
+    /// runtime keeps what the family decodes.
+    #[test]
+    fn a_family_s_number_is_its_place() {
+        for (at, family) in Family::ALL.into_iter().enumerate() {
+            assert_eq!(family as usize, at, "{family:?}");
+        }
+    }
+
     /// The leaves as a program writes them.
     fn written(leaf: Leaf) -> &'static str {
         match leaf {
@@ -431,10 +443,12 @@ mod tests {
         ] {
             fields.push(("Int", field.to_string(), Some(present)));
         }
-        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
-        let rt = &vm.runtime;
         let mut compared = 0;
         for (inner, field, present) in &fields {
+            // (A VM of its own: each program numbers its types from the
+            // same id, and a runtime decides a type's decoder once.)
+            let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+            let rt = &vm.runtime;
             // The types as the run time has them: through `type a`, which
             // the compiler does not check.
             let generic = program(
@@ -470,7 +484,9 @@ mod tests {
                 // else decoding the document (for postgres, a json or jsonb
                 // cell, the one column that fills a nested type) refuses
                 // nothing.
-                let target = decode::target(&name, Type::Named(r)).expect("a record type is taken");
+                let decoder = decode::Decoder::new(Box::leak(name.clone().into_boxed_str()));
+                let target =
+                    decode::target(&decoder, Type::Named(r)).expect("a record type is taken");
                 let refused = |doc: &serde_json::Value| {
                     let refusal = match family {
                         Family::Postgres => decode::record_refusal(rt, family, r),
@@ -592,7 +608,11 @@ mod tests {
                 let direct = program("Int", "Int", &caller(row, written));
                 assert_eq!(
                     compiled(&direct).is_ok(),
-                    decode::target(&name, ty).is_ok(),
+                    decode::target(
+                        &decode::Decoder::new(Box::leak(name.clone().into_boxed_str())),
+                        ty
+                    )
+                    .is_ok(),
                     "{name}({written})\n{direct}"
                 );
             }

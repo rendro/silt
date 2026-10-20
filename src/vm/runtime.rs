@@ -1197,6 +1197,17 @@ pub struct Runtime {
     /// of record fields here ([`Vm::type_info`]). One table for the VM
     /// and the VMs of its tasks; a REPL entry adds its types to it.
     pub(crate) types: parking_lot::Mutex<crate::typeinfo::TypeTable>,
+    /// Whether the decoders of a family have a value of a type of the
+    /// program, by the type's id and the family: the message of their
+    /// refusal, or `None` (`crate::builtins::decode::refusal`). Decided
+    /// once per type and family, and forgotten when a program is taken in
+    /// (`Vm::load`: a REPL entry's definitions are new ones, with ids of
+    /// their own, but a description taken in anew replaces the old).
+    /// By the type's number, then the family's (`Family as usize`): no
+    /// key is hashed on a call.
+    pub(crate) refusals: parking_lot::RwLock<
+        Vec<[Option<Option<String>>; crate::builtins::registry::decoding::Family::ALL.len()]>,
+    >,
 
     // ── Per-VM generators ───────────────────────────────────────
     /// The state of `math.random`; `None` until the first call seeds it

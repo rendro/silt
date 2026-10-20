@@ -4,7 +4,7 @@
 //! text of a date and a time, and how a record type is looked up are
 //! decided here for every format.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
@@ -319,15 +319,27 @@ fn lacking_in(
     None
 }
 
-/// The message of the error of a decoder of `family` given the record
-/// type `ty` to decode into, if a field no decoder fills is in it (or in
-/// a record or enum type it names): whatever the document holds.
+/// The message of the error of a decoder of `family` given the record or
+/// enum type `ty` to decode into, if a field no decoder fills is in it
+/// (or in a record or enum type it names): whatever the document holds.
 pub(crate) fn record_refusal(
     rt: &Runtime,
     family: Family,
     ty: &TypeInfo,
 ) -> Option<std::string::String> {
-    lacking_in(rt, family, ty, &mut Vec::new()).map(|(place, declared)| place.message(&declared))
+    // (Walked once per type and family: see `Runtime::refusals`.)
+    let (at, of) = (ty.id.0.0 as usize, family as usize);
+    if let Some(Some(found)) = rt.refusals.read().get(at).map(|known| &known[of]) {
+        return found.clone();
+    }
+    let found = lacking_in(rt, family, ty, &mut Vec::new())
+        .map(|(place, declared)| place.message(&declared));
+    let mut refusals = rt.refusals.write();
+    if refusals.len() <= at {
+        refusals.resize(at + 1, Default::default());
+    }
+    refusals[at][of] = Some(found.clone());
+    found
 }
 
 /// The message of the error of a decoder of `family` given `target`, if
@@ -340,6 +352,7 @@ pub(crate) fn refusal(
 ) -> Option<std::string::String> {
     match target {
         Target::Record(ty, _) => record_refusal(rt, family, ty),
+        Target::Value(FieldType::Enum(id)) => record_refusal(rt, family, &*rt.type_info(*id)?),
         Target::Value(field_type) => {
             let (place, declared) = lacking(rt, family, field_type, &mut Vec::new())?;
             // (A type argument that is no record or enum is one the
@@ -527,30 +540,59 @@ impl Target<'_> {
     }
 }
 
-/// What the type argument `ty` of the decoding builtin `caller` names:
+/// A decoding builtin as its body names it: what it decodes is its
+/// registry row's [`Decoding`], looked up once.
+///
+/// [`Decoding`]: super::registry::Decoding
+pub(crate) struct Decoder {
+    /// Its name as a program calls it (`json.parse`), which begins its
+    /// errors.
+    pub(crate) name: &'static str,
+    decoding: OnceLock<Option<super::registry::Decoding>>,
+}
+
+impl Decoder {
+    pub(crate) const fn new(name: &'static str) -> Decoder {
+        Decoder {
+            name,
+            decoding: OnceLock::new(),
+        }
+    }
+
+    /// What its registry row says it decodes.
+    fn decoding(&self) -> Option<super::registry::Decoding> {
+        *self
+            .decoding
+            .get_or_init(|| registry().named(self.name).and_then(|row| row.decoding))
+    }
+}
+
+/// What the type argument `ty` of the decoding builtin `decoder` names:
 /// a type its registry row's [`Decoding`] says it decodes into, or the
 /// error of the program. (The compiler refuses the others where the type
 /// is written; this is for a type argument that is a type variable.)
 ///
 /// [`Decoding`]: super::registry::Decoding
-pub(crate) fn target<'a>(caller: &str, ty: Type<'a>) -> Result<Target<'a>, VmError> {
-    let decoding = registry()
-        .named(caller)
-        .and_then(|row| row.decoding)
+pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, VmError> {
+    let caller = decoder.name;
+    let decoding = decoder
+        .decoding()
         .ok_or_else(|| VmError::new(format!("{caller} decodes no type")))?;
-    let accepted = decoding.type_arguments(str::to_string);
+    // (The texts of the errors are written only for an error.)
+    let accepted = || decoding.type_arguments(str::to_string);
     // A row is decoded into a record of its columns: the error says what
     // the type is not.
     let not_a_row = |name: &str| {
         VmError::new(format!(
-            "{caller}: a row decodes into {accepted}, not {name}; {ROW_TYPE_HELP}"
+            "{caller}: a row decodes into {}, not {name}; {ROW_TYPE_HELP}",
+            accepted()
         ))
     };
     match ty {
         Type::Primitive(field_type) if decoding.primitives => Ok(Target::Value(field_type)),
         Type::Primitive(field_type) => Err(match decoding.family.rows() {
             true => not_a_row(&field_type.shown(&|_| std::string::String::new())),
-            false => VmError::new(format!("{caller}: type argument must be {accepted}")),
+            false => VmError::new(format!("{caller}: type argument must be {}", accepted())),
         }),
         Type::Named(ty) if ty.id == ty::JSON_VALUE && decoding.json_value() => {
             Ok(Target::Value(FieldType::JsonValue))

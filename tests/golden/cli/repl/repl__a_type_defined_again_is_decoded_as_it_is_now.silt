@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: import json\nfn load(text: String, type a) -> Result(a, json.JsonError) { json.parse(text, a) }\ntype R { b: Bytes }\nload("\{}", R)\ntype R { n: Int }\nload("\{\"n\": 1}", R)\ntype R { b: Bytes }\nload("\{}", R)\n:quit\n
+-- The decoders decide once per type whether they have a value of it.
+-- A type defined again in a later entry is a new one, decoded as it is
+-- now; the one before is still refused.

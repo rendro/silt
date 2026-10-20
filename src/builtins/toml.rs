@@ -50,7 +50,7 @@ use crate::value::Value;
 use crate::vm::VmError;
 
 use super::data::{self, Data, Format};
-use super::decode::{self, At, Document, Node, Numbers, Rules, shown};
+use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, shown};
 use super::typed::{Type, builtins};
 
 // ── TomlError helpers ────────────────────────────────────────────────
@@ -290,6 +290,10 @@ impl Document for ::toml::Value {
 
 // ── The functions ───────────────────────────────────────────────────
 
+static PARSE: Decoder = Decoder::new("toml.parse");
+static PARSE_LIST: Decoder = Decoder::new("toml.parse_list");
+static PARSE_MAP: Decoder = Decoder::new("toml.parse_map");
+
 /// `value` as TOML text, for `toml.<name>`, `pretty` or not:
 /// `Ok(text)`, or the `TomlError` of a value that TOML has no form for.
 fn written(name: &str, value: &Value, pretty: bool) -> Value {
@@ -310,7 +314,7 @@ fn written(name: &str, value: &Value, pretty: bool) -> Value {
 
 builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target("toml.parse", ty)?;
+        let target = decode::target(&PARSE, ty)?;
         if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
             return Ok(refused);
         }
@@ -321,7 +325,7 @@ builtins! {
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target("toml.parse_list", ty)?;
+        let target = decode::target(&PARSE_LIST, ty)?;
         if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
             return Ok(refused);
         }
@@ -349,7 +353,7 @@ builtins! {
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target("toml.parse_map", ty)?;
+        let target = decode::target(&PARSE_MAP, ty)?;
         if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
             return Ok(refused);
         }
