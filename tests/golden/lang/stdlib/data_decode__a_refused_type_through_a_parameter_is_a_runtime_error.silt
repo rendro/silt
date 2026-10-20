@@ -1,0 +1,20 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: json.parse_map: unknown record type 'Color'
+-- A type parse_map does not take (an enum), arriving through a `type a`
+-- parameter, is a run-time error, as it is for json.parse and
+-- json.parse_list; written at the call it is a compile error.
+import json
+
+type Color {
+  Red,
+  Green,
+}
+
+fn decode_map(text: String, type a) -> Result(Map(String, a), json.JsonError) {
+  json.parse_map(text, a)
+}
+
+fn main() {
+  println(decode_map("""{"a": "Red"}""", Color))
+}

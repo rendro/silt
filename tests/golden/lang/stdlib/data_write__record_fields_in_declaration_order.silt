@@ -1,0 +1,53 @@
+-- json and toml write the fields of a record in the order its type
+-- declares them; the keys of a map, and so of a json.Object, sorted (a
+-- key that is no String by its text). TOML writes the plain keys of a
+-- table before its sub-tables, each group in that order.
+import json
+import toml
+
+type Point {
+  y: Int,
+  x: Int,
+}
+
+type Shape {
+  name: String,
+  origin: Point,
+  zoom: Float,
+  corners: List(Point),
+  tags: Map(String, Int),
+  alias: Option(String),
+}
+
+fn main() {
+  let shape = Shape {
+    name: "box",
+    origin: Point { y: 2, x: 1 },
+    zoom: 1.5,
+    corners: [Point { y: 0, x: 0 }, Point { y: 4, x: 3 }],
+    tags: #{ "zeta": 1, "alpha": 2 },
+    alias: None,
+  }
+  println(json.stringify(shape))
+  println(json.pretty(Point { y: 2, x: 1 }))
+  match toml.stringify(shape) {
+    Ok(text) -> print(text)
+    Err(e) -> println(e.message())
+  }
+  match toml.pretty(shape) {
+    Ok(text) -> print(text)
+    Err(e) -> println(e.message())
+  }
+  println(json.stringify(#{ 9: "nine", 10: "ten" }))
+  println(json.stringify(json.Object(#{ "b": json.Int(1), "a": json.Int(2) })))
+  println(json.stringify(Ok(Point { y: 2, x: 1 })))
+  println(json.parse(json.stringify(shape), Shape) == Ok(shape))
+  println(toml.parse(toml.stringify(shape) |> result_text, Shape) == Ok(shape))
+}
+
+fn result_text(r: Result(String, toml.TomlError)) -> String {
+  match r {
+    Ok(text) -> text
+    Err(_) -> ""
+  }
+}

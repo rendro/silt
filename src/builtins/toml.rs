@@ -8,8 +8,8 @@
 //! - `toml.parse(T: Type, s: String) -> Result(T, TomlError)` — parse a top-
 //!   level TOML table into a record of type `T`.
 //! - `toml.parse_list(T: Type, s: String) -> Result(List(T), TomlError)` —
-//!   parse a document whose top-level shape is a single `[[items]]` array-of-
-//!   tables section.
+//!   parse a document whose top-level table has one key, an array: a
+//!   `[[items]]` array of tables for a record type, `xs = [1, 2]` for `Int`.
 //! - `toml.parse_map(V: Type, s: String) -> Result(Map(String, V), TomlError)`
 //!   — parse a top-level table as a `Map(String, V)`.
 //! - `toml.stringify(v) -> Result(String, TomlError)` — serialize a silt
@@ -49,9 +49,9 @@ use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
 use super::json::{
-    decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
-    invalid_time_message, parse_date, parse_datetime, parse_time, unsupported_field_type_message,
-    unsupported_kind, without_bytes,
+    At, Written, decodable_record, ensure_encodable_depth, field_record_type, invalid_date_message,
+    invalid_time_message, parse_date, parse_datetime, parse_time, shown,
+    unsupported_field_type_message, unsupported_kind, without_bytes,
 };
 use super::time::{make_date, make_datetime, make_time};
 use super::typed::{Type, builtins};
@@ -89,19 +89,23 @@ pub(crate) fn toml_de_result_err(err: &::toml::de::Error) -> Value {
     toml_err_wrap(toml_de_error_to_variant(err))
 }
 
-/// Build `Err(TypeMismatch(expected, actual))`.
-pub(crate) fn toml_type_mismatch_err(expected: &str, actual: &str) -> Value {
+/// Build `Err(TypeMismatch(expected, actual))` for the value `at` a
+/// path: `actual` ends with the path.
+pub(crate) fn toml_type_mismatch_err(expected: &str, actual: &str, at: &At) -> Value {
     toml_err_wrap(Value::variant(
         bv::TOML_TYPE_MISMATCH,
-        vec![Value::String(expected.into()), Value::String(actual.into())],
+        vec![
+            Value::String(expected.into()),
+            Value::String(format!("{actual}{}", at.suffix()).into()),
+        ],
     ))
 }
 
-/// Build `Err(MissingField(name))`.
-pub(crate) fn toml_missing_field_err(name: &str) -> Value {
+/// Build `Err(MissingField(path))`: `path` is the missing field's own.
+pub(crate) fn toml_missing_field_err(path: &str) -> Value {
     toml_err_wrap(Value::variant(
         bv::TOML_MISSING_FIELD,
-        vec![Value::String(name.into())],
+        vec![Value::String(path.into())],
     ))
 }
 
@@ -151,8 +155,12 @@ fn toml_type_name(v: &::toml::Value) -> &'static str {
 /// 1.0 technically permits `nan`/`inf` but we emit the closest valid
 /// representation and reject ambiguous ones like `Unit`).
 ///
-/// `v` is `level` levels inside the value `caller` writes.
-fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value, VmError> {
+/// `v` is `level` levels inside the value `caller` writes. The fields of
+/// a record are in the order its type declares them, the keys of a map
+/// sorted; the writer puts the plain keys of a table before its
+/// sub-tables, as TOML has them.
+fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<Written<::toml::Value>, VmError> {
+    use ::toml::Value as T;
     ensure_encodable_depth(caller, level)?;
     let inner = |v: &Value| value_to_toml(caller, v, level + 1);
     // `Some(x)` is written as `x` is, and is no level of its own.
@@ -164,37 +172,39 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
         v = content;
     }
     Ok(match v {
-        Value::Int(n) => ::toml::Value::Integer(*n),
-        Value::Float(f) => ::toml::Value::Float(f.get()),
-        Value::Bool(b) => ::toml::Value::Boolean(*b),
-        Value::String(s) => ::toml::Value::String(s.to_string()),
+        Value::Int(n) => Written::Scalar(T::Integer(*n)),
+        Value::Float(f) => Written::Scalar(T::Float(f.get())),
+        Value::Bool(b) => Written::Scalar(T::Boolean(*b)),
+        Value::String(s) => Written::Scalar(T::String(s.to_string())),
         Value::List(xs) => {
             xs.writable()?;
             let items: Result<Vec<_>, _> = xs.iter().map(|x| inner(&x)).collect();
-            ::toml::Value::Array(items?)
+            Written::Array(items?)
         }
         Value::Map(m) => {
-            let mut table = ::toml::map::Map::new();
-            for (k, v) in m.iter() {
-                let key = match k {
-                    Value::String(s) => s.to_string(),
-                    other => other.to_string(),
-                };
-                table.insert(key, inner(v)?);
-            }
-            ::toml::Value::Table(table)
+            let entries: Result<Vec<_>, VmError> = m
+                .iter()
+                .map(|(k, v)| {
+                    let key = match k {
+                        Value::String(s) => s.to_string(),
+                        other => other.to_string(),
+                    };
+                    Ok((key, inner(v)?))
+                })
+                .collect();
+            Written::sorted(entries?)
         }
         Value::Tuple(vs) => {
             let items: Result<Vec<_>, _> = vs.iter().map(inner).collect();
-            ::toml::Value::Array(items?)
+            Written::Array(items?)
         }
         Value::Record(record)
             if matches!(record.type_id(), ty::DATE | ty::TIME | ty::DATE_TIME) =>
         {
-            time_literal(v)
+            Written::Scalar(time_literal(v))
         }
         Value::Record(fields) => {
-            let mut table = ::toml::map::Map::new();
+            let mut table = Vec::new();
             for (k, v) in fields.named() {
                 // TOML has no null. An `Option::None` field is omitted from the
                 // table entirely; on parse-back, a missing Option field decodes
@@ -206,9 +216,9 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
                 {
                     continue;
                 }
-                table.insert(k.to_string(), inner(v)?);
+                table.push((k.to_string(), inner(v)?));
             }
-            ::toml::Value::Table(table)
+            Written::Object(table)
         }
         Value::Variant(variant) if variant.is(bv::NONE) && variant.fields().is_empty() => {
             // TOML has no null and no representation for a freestanding None.
@@ -216,19 +226,18 @@ fn value_to_toml(caller: &str, v: &Value, level: usize) -> Result<::toml::Value,
             // a None reaching here is a bare top-level None, which has no valid
             // TOML rendering. Emit an empty string as a deterministic
             // placeholder so serialization does not fail outright.
-            ::toml::Value::String(String::new())
+            Written::Scalar(T::String(String::new()))
         }
+        // (`fields` before `variant`, as the keys of a table sort.)
         Value::Variant(variant) => {
-            let mut table = ::toml::map::Map::new();
-            table.insert(
-                "variant".into(),
-                ::toml::Value::String(variant.name().into()),
-            );
+            let mut table = Vec::with_capacity(2);
             if !variant.fields().is_empty() {
                 let items: Result<Vec<_>, _> = variant.fields().iter().map(inner).collect();
-                table.insert("fields".into(), ::toml::Value::Array(items?));
+                table.push(("fields".into(), Written::Array(items?)));
             }
-            ::toml::Value::Table(table)
+            let name = Written::Scalar(T::String(variant.name().into()));
+            table.push(("variant".into(), name));
+            Written::Object(table)
         }
         Value::Unit => {
             return Err(VmError::new(format!(
@@ -309,14 +318,15 @@ fn time_literal(v: &Value) -> ::toml::Value {
 /// scalar or array at top level is not a valid document. We therefore only
 /// accept `Record`, `Map`, or `Table`-shaped values here; everything else
 /// returns a descriptive `Err`.
-fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<::toml::Value, VmError> {
-    match value_to_toml(caller, v, 0)? {
-        t @ ::toml::Value::Table(_) => Ok(t),
-        other => Err(VmError::new(format!(
-            "{caller}: top-level value must be a table/record, got {}",
-            toml_type_name(&other)
-        ))),
-    }
+fn value_to_top_level_toml(caller: &str, v: &Value) -> Result<Written<::toml::Value>, VmError> {
+    let kind = match value_to_toml(caller, v, 0)? {
+        table @ Written::Object(_) => return Ok(table),
+        Written::Array(_) => "array",
+        Written::Scalar(other) => toml_type_name(&other),
+    };
+    Err(VmError::new(format!(
+        "{caller}: top-level value must be a table/record, got {kind}"
+    )))
 }
 
 // ── Conversion: toml::Value → silt typed Value ──────────────────────
@@ -352,14 +362,18 @@ fn decode_err_to_silt(e: TomlDecodeErr) -> Value {
     }
 }
 
+/// The record of type `ty` (of the `fields`) that `tv`, which is `at` a
+/// path, is: `Ok` of it, or `Err` of the `TomlError` that says why there
+/// is none.
 fn toml_to_record(
     rt: &Runtime,
     ty: &Arc<TypeInfo>,
     fields: &[(String, FieldType)],
     tv: &::toml::Value,
+    at: &At,
 ) -> Result<Value, VmError> {
     let ::toml::Value::Table(table) = tv else {
-        return Ok(toml_type_mismatch_err("table", toml_type_name(tv)));
+        return Ok(toml_type_mismatch_err("table", toml_type_name(tv), at));
     };
     // (In the order the type declares them: the record's own.)
     let mut record_fields = Vec::with_capacity(fields.len());
@@ -367,7 +381,7 @@ fn toml_to_record(
         let unsupported = without_bytes(rt, field_type);
         let field_type = unsupported.as_ref().unwrap_or(field_type);
         match table.get(field_name) {
-            Some(val) => match toml_to_typed_value(rt, val, field_type) {
+            Some(val) => match toml_to_typed_value(rt, val, field_type, &at.key(field_name)) {
                 Ok(v) => record_fields.push(v),
                 Err(TomlDecodeErr::Unsupported(declared)) => {
                     return Ok(toml_unknown_err(unsupported_field_type_message(
@@ -379,7 +393,7 @@ fn toml_to_record(
             None => match field_type {
                 FieldType::Option(_) => record_fields.push(Value::variant(bv::NONE, Vec::new())),
                 _ => {
-                    return Ok(toml_missing_field_err(field_name));
+                    return Ok(toml_missing_field_err(&at.key(field_name).to_string()));
                 }
             },
         }
@@ -390,86 +404,79 @@ fn toml_to_record(
     ))
 }
 
-fn toml_to_record_list(
-    rt: &Runtime,
-    ty: &Arc<TypeInfo>,
-    fields: &[(String, FieldType)],
-    tv: &::toml::Value,
-) -> Result<Value, VmError> {
-    let ::toml::Value::Array(arr) = tv else {
-        return Ok(toml_type_mismatch_err("array", toml_type_name(tv)));
-    };
-    let mut records = Vec::new();
-    for item in arr.iter() {
-        let result = toml_to_record(rt, ty, fields, item)?;
-        match result {
-            Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
-                records.push(variant.fields()[0].clone());
-            }
-            ref err @ Value::Variant(ref variant) if variant.is(bv::ERR) => {
-                // Already a typed Err(TomlError); forward unchanged.
-                return Ok(err.clone());
-            }
-            _ => {
-                return Ok(toml_unknown_err(format!(
-                    "toml.parse_list({}): unexpected result",
-                    ty.name
-                )));
-            }
-        }
-    }
-    Ok(Value::variant(bv::OK, vec![Value::list(records)]))
-}
-
-fn toml_to_map(rt: &Runtime, value_type: Type, tv: &::toml::Value) -> Result<Value, VmError> {
-    let ::toml::Value::Table(table) = tv else {
-        return Ok(toml_type_mismatch_err("table", toml_type_name(tv)));
-    };
-    let field_type = match value_type {
+/// The type of the elements `toml.parse_list` and of the values
+/// `toml.parse_map` (`caller`) decode, which their type argument `ty`
+/// names: `Int`, `Float`, `String`, `Bool` or a record type. Any other
+/// type is an error.
+fn element_type(caller: &str, ty: Type) -> Result<FieldType, VmError> {
+    Ok(match ty {
         Type::Primitive(field_type) => field_type,
         Type::Named(ty) => {
-            if decodable_record("toml.parse_map", ty).is_err() {
-                return Ok(toml_unknown_err(format!(
-                    "toml.parse_map: unknown value type '{}'",
-                    ty.name
-                )));
-            }
+            decodable_record(caller, ty)?;
             FieldType::Record(ty.id)
         }
+    })
+}
+
+/// The list of values of the field type `element` that `tv`, an array
+/// `at` a path, holds.
+fn toml_to_list(rt: &Runtime, element: &FieldType, tv: &::toml::Value, at: &At) -> Value {
+    let ::toml::Value::Array(items) = tv else {
+        return toml_type_mismatch_err("array", toml_type_name(tv), at);
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        match toml_to_typed_value(rt, item, element, &at.index(index)) {
+            Ok(value) => values.push(value),
+            Err(e) => return decode_err_to_silt(e),
+        }
+    }
+    Value::variant(bv::OK, vec![Value::list(values)])
+}
+
+/// The map of values of the field type `element` that `tv`, a table,
+/// holds.
+fn toml_to_map(rt: &Runtime, element: &FieldType, tv: &::toml::Value) -> Value {
+    let ::toml::Value::Table(table) = tv else {
+        return toml_type_mismatch_err("table", toml_type_name(tv), &At::Top);
     };
     let mut map = Vec::with_capacity(table.len());
     for (key, val) in table.iter() {
-        match toml_to_typed_value(rt, val, &field_type) {
+        match toml_to_typed_value(rt, val, element, &At::Top.key(key)) {
             Ok(v) => map.push((Value::String(key.clone().into()), v)),
-            Err(e) => return Ok(decode_err_to_silt(e)),
+            Err(e) => return decode_err_to_silt(e),
         }
     }
-    Ok(Value::variant(bv::OK, vec![Value::map(map)]))
+    Value::variant(bv::OK, vec![Value::map(map)])
 }
 
 fn toml_to_typed_value(
     rt: &Runtime,
     tv: &::toml::Value,
     expected: &FieldType,
+    at: &At,
 ) -> Result<Value, TomlDecodeErr> {
+    // The `TypeMismatch` and the `Other` of the value here: each ends
+    // with its path.
     let mismatch = |expected: &str, actual: &str| -> TomlDecodeErr {
         TomlDecodeErr::Variant(Value::variant(
             bv::TOML_TYPE_MISMATCH,
-            vec![Value::String(expected.into()), Value::String(actual.into())],
+            vec![
+                Value::String(expected.into()),
+                Value::String(format!("{actual}{}", at.suffix()).into()),
+            ],
         ))
     };
     let unknown = |msg: String| -> TomlDecodeErr {
         TomlDecodeErr::Variant(Value::variant(
             bv::TOML_OTHER,
-            vec![Value::String(msg.into())],
+            vec![Value::String(format!("{msg}{}", at.suffix()).into())],
         ))
     };
     match expected {
         FieldType::String => match tv {
+            // (A datetime literal is no string, as a float is no `Int`.)
             ::toml::Value::String(s) => Ok(Value::String(s.clone().into())),
-            // TOML datetimes have a canonical string form — accept them as
-            // strings so users targeting `String` still receive something.
-            ::toml::Value::Datetime(dt) => Ok(Value::String(dt.to_string().into())),
             _ => Err(mismatch("String", toml_type_name(tv))),
         },
         // (TOML says which kind a number is: a float is no `Int`,
@@ -496,8 +503,8 @@ fn toml_to_typed_value(
         FieldType::List(inner) => match tv {
             ::toml::Value::Array(arr) => {
                 let mut values = Vec::new();
-                for item in arr.iter() {
-                    values.push(toml_to_typed_value(rt, item, inner)?);
+                for (index, item) in arr.iter().enumerate() {
+                    values.push(toml_to_typed_value(rt, item, inner, &at.index(index))?);
                 }
                 Ok(Value::list(values))
             }
@@ -506,14 +513,14 @@ fn toml_to_typed_value(
         FieldType::Option(inner) => {
             // TOML has no null. Non-present keys are handled by toml_to_record
             // via Option default; if the key *is* present, delegate to inner.
-            let val = toml_to_typed_value(rt, tv, inner)?;
+            let val = toml_to_typed_value(rt, tv, inner, at)?;
             Ok(Value::variant(bv::SOME, vec![val]))
         }
         FieldType::Map(inner) => match tv {
             ::toml::Value::Table(table) => {
                 let mut map = Vec::with_capacity(table.len());
                 for (key, item) in table.iter() {
-                    let val = toml_to_typed_value(rt, item, inner)?;
+                    let val = toml_to_typed_value(rt, item, inner, &at.key(key))?;
                     map.push((Value::String(key.clone().into()), val));
                 }
                 Ok(Value::map(map))
@@ -523,8 +530,8 @@ fn toml_to_typed_value(
         FieldType::Tuple(elems) => match tv {
             ::toml::Value::Array(arr) if arr.len() == elems.len() => {
                 let mut values = Vec::with_capacity(elems.len());
-                for (item, elem) in arr.iter().zip(elems) {
-                    values.push(toml_to_typed_value(rt, item, elem)?);
+                for (index, (item, elem)) in arr.iter().zip(elems).enumerate() {
+                    values.push(toml_to_typed_value(rt, item, elem, &at.index(index))?);
                 }
                 Ok(Value::tuple(values))
             }
@@ -574,7 +581,7 @@ fn toml_to_typed_value(
         FieldType::Record(id) => {
             let ty = field_record_type(rt, "toml.parse", *id)?;
             let sub_fields = decodable_record("toml.parse", &ty)?;
-            let result = toml_to_record(rt, &ty, &sub_fields, tv)?;
+            let result = toml_to_record(rt, &ty, &sub_fields, tv, at)?;
             match result {
                 Value::Variant(variant) if variant.is(bv::OK) && variant.fields().len() == 1 => {
                     Ok(variant.fields()[0].clone())
@@ -608,7 +615,7 @@ fn record_type<'a>(name: &str, ty: Type<'a>) -> Result<&'a Arc<TypeInfo>, VmErro
 fn written(
     name: &str,
     value: &Value,
-    write: fn(&::toml::Value) -> Result<String, ::toml::ser::Error>,
+    write: fn(&Written<::toml::Value>) -> Result<String, ::toml::ser::Error>,
 ) -> Value {
     let caller = format!("toml.{name}");
     let tv = match value_to_top_level_toml(&caller, value) {
@@ -626,41 +633,39 @@ builtins! {
         let ty = record_type("parse", ty)?;
         let fields = decodable_record("toml.parse", ty)?;
         match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => toml_to_record(&vm.runtime, ty, &fields, &tv),
+            Ok(tv) => toml_to_record(&vm.runtime, ty, &fields, &tv, &At::Top),
             Err(e) => Ok(toml_de_result_err(&e)),
         }
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let ty = record_type("parse_list", ty)?;
-        let fields = decodable_record("toml.parse_list", ty)?;
+        let element = element_type("toml.parse_list", ty)?;
         let tv = match ::toml::from_str::<::toml::Value>(s) {
             Ok(tv) => tv,
             Err(e) => return Ok(toml_de_result_err(&e)),
         };
-        // TOML's top-level is always a table. For `parse_list` we
-        // expect that table to contain exactly one array-of-tables key,
-        // whose values are the list elements. This matches how
-        // `[[items]]` naturally renders.
+        // TOML's top level is always a table: the list is the array
+        // under its one key (`[[points]]` for records, `xs = [1, 2]`).
         let ::toml::Value::Table(table) = &tv else {
-            return Ok(toml_type_mismatch_err("table", toml_type_name(&tv)));
+            return Ok(toml_type_mismatch_err("table", toml_type_name(&tv), &At::Top));
         };
-        let mut values = table.values();
-        let (Some(only), None) = (values.next(), values.next()) else {
+        let mut entries = table.iter();
+        let (Some((key, only)), None) = (entries.next(), entries.next()) else {
             return Ok(toml_unknown_err(format!(
-                "toml.parse_list({}): expected a document with exactly one top-level array-of-tables key, found {} keys",
-                ty.name,
+                "toml.parse_list({}): expected a document with exactly one top-level key, an array, found {} keys",
+                shown(&vm.runtime, &element),
                 table.len()
             )));
         };
-        toml_to_record_list(&vm.runtime, ty, &fields, only)
+        Ok(toml_to_list(&vm.runtime, &element, only, &At::Top.key(key)))
     }
 
-    fn parse_map(vm, s: &str, value_type: Type) -> Result<Value, VmError> {
-        match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => toml_to_map(&vm.runtime, value_type, &tv),
-            Err(e) => Ok(toml_de_result_err(&e)),
-        }
+    fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
+        let element = element_type("toml.parse_map", ty)?;
+        Ok(match ::toml::from_str::<::toml::Value>(s) {
+            Ok(tv) => toml_to_map(&vm.runtime, &element, &tv),
+            Err(e) => toml_de_result_err(&e),
+        })
     }
 
     fn stringify(value: &Value) -> Value {
@@ -686,7 +691,8 @@ mod tests {
         let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
         for text in ["b = []", "b = [1]"] {
             let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
-            let decoded = toml_to_record(&vm.runtime, &ty, &fields, &doc).expect("a value");
+            let decoded =
+                toml_to_record(&vm.runtime, &ty, &fields, &doc, &At::Top).expect("a value");
             assert_eq!(
                 decoded.to_string(),
                 "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",

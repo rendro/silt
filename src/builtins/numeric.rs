@@ -109,6 +109,49 @@ pub(crate) fn checked_float(f: f64, msg: impl FnOnce() -> String) -> Result<Valu
 }
 
 /// `int.*`
+/// The text of `f` with exactly `decimals` decimal places, rounded to
+/// the nearest, a tie away from zero (`2.5` is `3`, `-0.125` to two
+/// places `-0.13`), as `float.round` rounds one.
+fn decimal_text(f: f64, decimals: usize) -> String {
+    // Rust writes the exact value rounded to the nearest, but a tie to
+    // even. A number is a tie at `decimals` places only when its last
+    // binary digit is worth 2^-(decimals + 1): its text at one place
+    // more is then exact, and ends in the 5 that is half a unit.
+    let bits = f.abs().to_bits();
+    let (mantissa, exponent) = match bits >> 52 {
+        0 => (bits, -1074),
+        biased => ((bits & ((1 << 52) - 1)) | (1 << 52), biased as i64 - 1075),
+    };
+    let tie = mantissa != 0
+        && f.is_finite()
+        && exponent + i64::from(mantissa.trailing_zeros()) == -(decimals as i64) - 1;
+    if !tie {
+        return format!("{f:.decimals$}");
+    }
+    let exact = format!("{f:.prec$}", prec = decimals + 1);
+    let mut text = exact[..exact.len() - 1]
+        .trim_end_matches('.')
+        .as_bytes()
+        .to_vec();
+    // One unit more in the last place, carried leftwards.
+    let mut carry = true;
+    for b in text.iter_mut().rev().filter(|b| b.is_ascii_digit()) {
+        match *b {
+            b'9' => *b = b'0',
+            _ => {
+                *b += 1;
+                carry = false;
+                break;
+            }
+        }
+    }
+    if carry {
+        let first_digit = usize::from(text.first() == Some(&b'-'));
+        text.insert(first_digit, b'1');
+    }
+    String::from_utf8(text).expect("ASCII digits")
+}
+
 pub(crate) mod int {
     use super::*;
 
@@ -245,7 +288,7 @@ pub(crate) mod float {
                     "float.format: decimals {decimals} exceeds maximum precision of 65535"
                 )));
             };
-            let text = format!("{:.prec$}", f, prec = prec as usize);
+            let text = decimal_text(f, prec.into());
             // A number that rounds to zero from below is written as
             // zero is: no Float is `-0.0`, and no text of one is.
             Ok(match text.strip_prefix('-') {

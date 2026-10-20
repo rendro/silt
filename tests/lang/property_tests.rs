@@ -372,13 +372,45 @@ fn arb_to_format() -> impl Strategy<Value = f64> {
     ]
 }
 
+/// `number` (finite) with `decimals` decimal places as `float.format`
+/// writes it: rounded to the nearest, a tie away from zero, judged on the
+/// exact value (Rust's text at 1100 places, which is exact: an `f64` has
+/// at most 1074 of them), with no sign on a zero.
+fn rounded(number: f64, decimals: usize) -> String {
+    let exact = format!("{:.1100}", number.abs());
+    let (whole, fraction) = exact.split_once('.').expect("a point");
+    let mut digits: Vec<u8> = format!("{whole}{}", &fraction[..decimals]).into_bytes();
+    if fraction.as_bytes()[decimals] >= b'5' {
+        let carried = digits.iter_mut().rev().all(|d| match *d {
+            b'9' => {
+                *d = b'0';
+                true
+            }
+            _ => {
+                *d += 1;
+                false
+            }
+        });
+        if carried {
+            digits.insert(0, b'1');
+        }
+    }
+    if decimals > 0 {
+        digits.insert(digits.len() - decimals, b'.');
+    }
+    let text = String::from_utf8(digits).expect("digits");
+    match number < 0.0 && text.bytes().any(|d| d.is_ascii_digit() && d != b'0') {
+        true => format!("-{text}"),
+        false => text,
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
-    /// `float.format` never writes a negative zero: at 0 to 6 decimals
-    /// its text is Rust's, and where that is `-0`, `-0.0`, `-0.00`, ...
-    /// (a negative number that rounds to zero), it is the text without
-    /// the sign.
+    /// `float.format` rounds to the nearest, a tie away from zero, and
+    /// never writes a negative zero: at 0 to 6 decimals its text is
+    /// [`rounded`]'s.
     #[test]
     fn float_format_writes_no_negative_zero(number in arb_to_format()) {
         let calls: Vec<String> = (0..=6)
@@ -402,11 +434,7 @@ proptest! {
                 !text.strip_prefix('-').is_some_and(is_zero),
                 "float.format({number:e}, {decimals}) is {text}"
             );
-            let rust = format!("{number:.decimals$}");
-            let expected = match rust.strip_prefix('-') {
-                Some(digits) if is_zero(digits) => digits,
-                _ => &rust,
-            };
+            let expected = rounded(number, decimals);
             prop_assert_eq!(text, expected, "float.format({:e}, {})", number, decimals);
         }
     }

@@ -1,0 +1,44 @@
+-- json.parse_list and toml.parse_list take the type arguments that
+-- parse_map takes: Int, Float, String, Bool, a record type, and for json
+-- json.Value; written at the call or arriving through a `type a`
+-- parameter. toml.parse_list reads the array under the one top-level key.
+import json
+import toml
+
+type Point {
+  x: Int,
+  y: Int,
+}
+
+fn json_list(text: String, type a) -> Result(List(a), json.JsonError) {
+  json.parse_list(text, a)
+}
+
+fn toml_list(text: String, type a) -> Result(List(a), toml.TomlError) {
+  toml.parse_list(text, a)
+}
+
+fn main() {
+  println(json.parse_list("[1, 2, 3]", Int))
+  println(json.parse_list("[1, 2.5]", Float))
+  println(json.parse_list("""["a", "b"]""", String))
+  println(json.parse_list("[true, false]", Bool))
+  println(json.parse_list("""[1, "a", null]""", json.Value))
+  println(json.parse_list("""[{"x": 1, "y": 2}]""", Point))
+  println(json.parse_list("""[1, "b"]""", Int))
+  println(json.parse_list("""{"a": 1}""", Int))
+  println(json_list("[4, 5]", Int))
+  println(json_list("""[{"x": 3, "y": 4}]""", Point))
+
+  println(toml.parse_list("xs = [1, 2, 3]", Int))
+  println(toml.parse_list("xs = [1.5, 2]", Float))
+  println(toml.parse_list("names = [\"a\", \"b\"]", String))
+  println(toml.parse_list("flags = [true, false]", Bool))
+  println(toml.parse_list("[[points]]\nx = 1\ny = 2\n", Point))
+  println(toml.parse_list("xs = [1, \"b\"]", Int))
+  println(toml.parse_list("xs = 1", Int))
+  println(toml.parse_list("xs = [1]\nys = [2]", Int))
+  println(toml.parse_list("", Int))
+  println(toml_list("xs = [4, 5]", Int))
+  println(toml_list("[[points]]\nx = 3\ny = 4\n", Point))
+}

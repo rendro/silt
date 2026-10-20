@@ -16,7 +16,7 @@ A document whose shape is not known in advance is read into a
 |----------|-----------|-------------|
 | `decode` | `(Value, type a) -> Result(a, JsonError)` | Decode a json.Value into a typed value |
 | `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
-| `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse JSON array into record list |
+| `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse a JSON array into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
 | `pretty` | `(a) -> String` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String` | Serialize value as compact JSON |
@@ -31,9 +31,21 @@ JsonError` is wired in):
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes, or a number beyond `Float`'s range (`1e400`: `number out of range`) |
-| `TypeMismatch(expected, actual)` | `String`, `String` | A field's JSON type did not match the target field type |
-| `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `TypeMismatch(expected, actual)` | `String`, `String` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path |
+| `MissingField(name)` | `String` | A required (non-`Option`) field was absent; `name` is its path |
 | `Other(msg)` | `String` | Anything else: a tuple's array of the wrong length, a field without a decoder (when the type arrives at run time), a value too deep for `json.decode` |
+
+An error about a value of the document ends with the path of that value:
+the fields of a record and the keys of a map by name (`inner.a`), a key
+that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
+brackets (`tags["a b"]`), and the elements of a list or a tuple by index
+(`xs[1]`; `[2]` for an element of the list that `json.parse_list`
+reads).
+`TypeMismatch("Int", "string at inner.a")` reads `json type mismatch: expected
+Int, got string at inner.a`; a missing field is `MissingField("inner.a")`;
+an `Other` about a value (a tuple of the wrong length, a date that is none)
+ends with ` at <path>`. An error about the document itself, such as a
+`Syntax` error or an array where a record is expected, has no path.
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
@@ -46,7 +58,7 @@ The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
 | Function | Type argument |
 |----------|---------------|
 | `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
-| `json.parse_list` | `json.Value` or a record type |
+| `json.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
 | `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
 | `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, or a record type |
 
@@ -75,7 +87,7 @@ that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 When the type is written at the call, `json.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile
 error that names the field and its type; so is an enum, or a type the function
-does not take (such as `json.parse_list(text, Int)`). The check applies
+does not take (such as `json.parse(text, List)`). The check applies
 equally to a decoder imported by name (`import json.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
@@ -274,8 +286,10 @@ fn main() -> Result(Unit, json.JsonError) {
 json.parse_list(s: String, type a) -> Result(List(a), JsonError)
 ```
 
-Parses a JSON array where each element is a record of type `a`, or, for
-`json.Value`, any value.
+Parses a JSON array into a list of `a`, each element decoded as
+`json.parse` decodes a document into `a`. The type is passed as a `type`
+parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, or a record
+type), as for `json.parse_map`.
 
 ```silt
 import json
@@ -352,7 +366,7 @@ written as follows:
 | `Int`, `Float`, `String`, `Bool` | a number, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1,"a"]` |
 | `Map(k, v)` | an object; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
-| a record | an object of its fields: `{"age":36,"name":"Ada"}` |
+| a record | an object of its fields, in the order the type declares them: `{"name":"Ada","age":36}` |
 | `Some(x)` | `x`, as `x` is written |
 | `None`, `()` | `null` |
 | any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is `{"variant":"Name"}` |
@@ -360,9 +374,8 @@ written as follows:
 | `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250000000"`) and `"2026-10-19T12:30:00"` |
 | `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |
 
-The keys of every object, the fields of a record among them, are written
-in sorted order, not in the order the record declares its fields.
-`json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
+The keys of a map, and so of a `json.Object`, are written in sorted order;
+the fields of a record in the order its type declares them. `json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
 the same type, and a record into its record type; a variant and `()` are
 written but not read back (an enum has no decoder).
 

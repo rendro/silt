@@ -271,7 +271,10 @@ float.format(f: Float, decimals: Int) -> String
 ```
 
 The decimal text of a float with exactly `decimals` decimal places, rounded
-to the nearest. A number that rounds to zero is written without a sign.
+to the nearest; a number halfway between two is rounded away from zero, as
+`float.round` rounds it (`2.5` is `3`, `-2.5` is `-3`). Halfway is judged
+on the value the Float holds: `1.005` is held as a little less, so it is
+`1.00` to two places. A number that rounds to zero is written without a sign.
 `decimals` must not be negative. For the text a float is shown as (in
 `println`, in `"{f}"`), use `string.from(f)`.
 
@@ -281,7 +284,8 @@ import float
 fn main() {
   println(float.format(3.14159, 2)) -- 3.14
   println(float.format(42.0, 1)) -- 42.0
-  println(float.format(2.5, 0)) -- 2
+  println(float.format(2.5, 0)) -- 3
+  println(float.format(0.125, 2)) -- 0.13
   println(float.format(-0.04, 1)) -- 0.0
 }
 ```

@@ -13,7 +13,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record |
-| `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse a single `[[items]]` section into a list of records |
+| `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse the one array of a document (such as a `[[items]]` section) into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError)` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, TomlError)` | Pretty-print a value as TOML |
 | `stringify` | `(a) -> Result(String, TomlError)` | Serialize a value as TOML |
@@ -28,9 +28,22 @@ TomlError` is wired in):
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Syntax(msg, offset)` | `String`, `Int` | Malformed TOML at `offset` bytes |
-| `TypeMismatch(expected, actual)` | `String`, `String` | A field's TOML type did not match the target field type |
-| `MissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `TypeMismatch(expected, actual)` | `String`, `String` | A value's TOML type did not match the type it decodes into; `actual` ends with the value's path |
+| `MissingField(name)` | `String` | A required (non-`Option`) field was absent; `name` is its path |
 | `Other(msg)` | `String` | Anything else (serialization failures, document-shape violations) |
+
+An error about a value of the document ends with the path of that value:
+the fields of a record and the keys of a map by name (`inner.a`), a key
+that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
+brackets (`tags["a b"]`), and the elements of a list or a tuple by index
+(`xs[1]`; the list that `toml.parse_list` reads is under its one key, so
+its elements are `points[2]`).
+`TypeMismatch("Int", "string at inner.a")` reads `toml type mismatch: expected
+Int, got string at inner.a`; a missing field is `MissingField("inner.a")`;
+an `Other` about a value (a tuple of the wrong length, a date that is none)
+ends with ` at <path>`. An error about the document itself, such as a
+`Syntax` error or a document `toml.parse_list` finds no one array in, has
+no path.
 
 See [stdlib errors](errors.md) for the shared `Error` trait.
 
@@ -43,7 +56,7 @@ names the type to decode into:
 | Function | Type argument |
 |----------|---------------|
 | `toml.parse` | a record type |
-| `toml.parse_list` | a record type |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, or a record type |
 | `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
 
 An alias of one of these is the type it names.
@@ -64,13 +77,16 @@ parameter) has no decoder.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
-field is `Err(TypeMismatch("Int", "float"))`, because TOML says
-which kind a number is.
+field is `Err(TypeMismatch("Int", "float at x"))`, because TOML says
+which kind a number is. In the same way a datetime literal (`1990-01-01`,
+`07:32:00`) goes into a `Date`, `Time` or `DateTime` field only: for a
+`String` field `s` it is `Err(TypeMismatch("String", "datetime at s"))`, and the
+text in quotes (`"1990-01-01"`) is a string.
 
 When the type is written at the call, `toml.parse(text, Config)`, the
 compiler checks it. A record with a field no decoder exists for is a compile
 error that names the field and its type; so is an enum, or a type the function
-does not take (such as `toml.parse_list(text, Int)`). The check applies
+does not take (such as `toml.parse(text, Int)`). The check applies
 equally to a decoder imported by name (`import toml.{ parse }`) and to one
 called through a module alias. When the type only arrives at run time, through
 a `type a` parameter, the same problems are reported then: a field without a
@@ -153,8 +169,10 @@ toml.parse_list(s: String, type a) -> Result(List(a), TomlError)
 
 TOML's spec requires the top level of every document to be a table, so there is
 no direct equivalent of a JSON top-level array. `toml.parse_list` therefore
-accepts a document whose top-level table contains exactly one key — an array-of-
-tables — and returns the list of records under that key. This is the natural
+accepts a document whose top-level table contains exactly one key, an array,
+and returns the list of values under that key, each decoded into `a`. The type
+is passed as a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record
+type), as for `toml.parse_map`. For a record type the array is the natural
 shape of `[[items]]` sections:
 
 ```silt
@@ -175,8 +193,8 @@ fn main() {
 }
 ```
 
-The key name (`points` in the example above) is not checked — any single
-top-level array-of-tables key works.
+The key name (`points` in the example above) is not checked: any single
+top-level key works, `xs = [1, 2, 3]` for `toml.parse_list(text, Int)` too.
 
 
 ## `toml.parse_map`
@@ -261,7 +279,7 @@ follows:
 | `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
 | `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
-| a record | a table of its fields; a field that is `None` is left out (TOML has no null), and reads back as `None` |
+| a record | a table of its fields, in the order the type declares them; a field that is `None` is left out (TOML has no null), and reads back as `None` |
 | `Some(x)` | `x`, as `x` is written |
 | `None` anywhere else (in a list, as a map's value) | `""` |
 | any other variant (of `Result` and of `json.Value` too) | a table with the keys `variant` (its name) and `fields` (an array, only when it has fields) |
@@ -269,9 +287,9 @@ follows:
 | `Duration`, `Instant` | as the records they are: a table with `ns` or `epoch_ns` |
 | `()` | nothing: `Err(Other("toml.stringify: TOML cannot represent Unit"))` |
 
-The keys of every table, the fields of a record among them, are written in
-sorted order, plain keys before sub-tables (as TOML requires), not in the
-order the record declares its fields. `toml.parse`
+The keys of a map are written in sorted order, the fields of a record in the
+order its type declares them; either way the plain keys of a table come
+before its sub-tables (`[name]`, `[[name]]`), as TOML requires. `toml.parse`
 reads a `Date`, a `Time` and a `DateTime` back into a field of the same type.
 A date whose year has no literal (one before the year 0 or past 9999) is
 written as a string of the text silt shows of it, which `toml.parse` reads
