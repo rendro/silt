@@ -268,6 +268,11 @@ impl Conn {
     }
 }
 
+/// How often `Manager::is_valid` lets the runtime of a connection turn:
+/// the first turn looks at the socket, which wakes the connection's
+/// protocol task, and the next one runs it.
+const SETTLE_TURNS: usize = 2;
+
 struct Manager {
     config: Config,
     tls: Tls,
@@ -290,10 +295,22 @@ impl r2d2::ManageConnection for Manager {
         }
     }
 
+    /// Whether a connection taken from the pool is still open, found
+    /// without a round trip: the connection is driven for a moment, and
+    /// reads what the server sent while it was idle (the error of a
+    /// terminated session, the end of the socket), on which it ends.
     fn is_valid(&self, conn: &mut Conn) -> Result<(), ConnectFailure> {
-        conn.wait(conn.client.simple_query(""))
-            .map(|_| ())
-            .map_err(ConnectFailure::Failed)
+        conn.wait(async {
+            for _ in 0..SETTLE_TURNS {
+                tokio::task::yield_now().await;
+            }
+        });
+        match conn.client.is_closed() {
+            true => Err(ConnectFailure::Broke(
+                "postgres: the server closed the connection".into(),
+            )),
+            false => Ok(()),
+        }
     }
 
     fn has_broken(&self, conn: &mut Conn) -> bool {
@@ -2919,6 +2936,113 @@ mod tests {
         };
         assert!(most <= 2, "{most} attempts were open at once");
         assert!(taken >= 2, "the pool tried {taken} times");
+    }
+
+    /// A server that logs every client in and answers each simple query
+    /// with an empty result: how many connections it took, and how many
+    /// queries came, counted as they come.
+    struct Counting {
+        port: u16,
+        taken: Arc<std::sync::atomic::AtomicUsize>,
+        queries: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Counting {
+        fn start() -> Counting {
+            use std::io::{Read, Write};
+            use std::sync::atomic::Ordering;
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+            let port = listener.local_addr().expect("addr").port();
+            let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let (took, asked) = (taken.clone(), queries.clone());
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { return };
+                    took.fetch_add(1, Ordering::SeqCst);
+                    let asked = asked.clone();
+                    std::thread::spawn(move || {
+                        let mut length = [0; 4];
+                        // The startup message: its length, then the rest.
+                        if stream.read_exact(&mut length).is_err() {
+                            return;
+                        }
+                        let mut startup = vec![0; u32::from_be_bytes(length) as usize - 4];
+                        if stream.read_exact(&mut startup).is_err() {
+                            return;
+                        }
+                        // AuthenticationOk, BackendKeyData, ReadyForQuery.
+                        let ready: &[u8] = b"Z\0\0\0\x05I";
+                        let mut hello =
+                            b"R\0\0\0\x08\0\0\0\0K\0\0\0\x0c\0\0\0\x01\0\0\0\x02".to_vec();
+                        hello.extend_from_slice(ready);
+                        if stream.write_all(&hello).is_err() {
+                            return;
+                        }
+                        loop {
+                            let mut tag = [0; 1];
+                            if stream.read_exact(&mut tag).is_err()
+                                || stream.read_exact(&mut length).is_err()
+                            {
+                                return;
+                            }
+                            let mut body = vec![0; u32::from_be_bytes(length) as usize - 4];
+                            if stream.read_exact(&mut body).is_err() || tag[0] == b'X' {
+                                return;
+                            }
+                            if tag[0] == b'Q' {
+                                asked.fetch_add(1, Ordering::SeqCst);
+                                // EmptyQueryResponse, ReadyForQuery.
+                                let mut answer = b"I\0\0\0\x04".to_vec();
+                                answer.extend_from_slice(ready);
+                                if stream.write_all(&answer).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            Counting {
+                port,
+                taken,
+                queries,
+            }
+        }
+    }
+
+    /// A pool opens its first connection only, and takes a connection
+    /// without a round trip: two statements one after the other run on
+    /// that connection, and the server got no query to check it with.
+    #[test]
+    fn a_pool_takes_its_connection_without_asking_the_server() {
+        use std::sync::atomic::Ordering;
+        let server = Counting::start();
+        let config: Config = format!("postgres://u@127.0.0.1:{}/db?sslmode=disable", server.port)
+            .parse()
+            .expect("config");
+        let limit = Duration::from_secs(10);
+        let first = connect_within(&config, &Tls::Off, limit).expect("the first connection");
+        let manager = Manager {
+            config,
+            tls: Tls::Off,
+            limit,
+            first: Mutex::new(Some(first)),
+        };
+        let pool = pool_of(
+            manager,
+            &ConnectOpts {
+                max_pool_size: Some(5),
+            },
+        );
+        for _ in 0..2 {
+            let conn = PinnedConn::take(&pool).expect("a connection");
+            assert!(!conn.client().is_closed());
+        }
+        // (Time for connections the pool would open at once.)
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(server.taken.load(Ordering::SeqCst), 1, "connections");
+        assert_eq!(server.queries.load(Ordering::SeqCst), 0, "queries");
     }
 
     /// What a client did with a server without TLS, which answers a

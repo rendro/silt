@@ -238,4 +238,5 @@ cases!(
     dates_go_back_as_they_were_read,
     a_pool_opens_connections_when_it_needs_them,
     a_channel_is_notified_under_the_name_it_was_listened_on,
+    a_connection_the_server_ended_is_not_taken,
 );
