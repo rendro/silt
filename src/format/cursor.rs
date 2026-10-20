@@ -445,14 +445,13 @@ impl<'a> Cursor<'a> {
         self.step();
         match tok.kind {
             // The span of the rest of a string starts behind the brace
-            // that closes the interpolation.
-            Token::StringMiddle(_) | Token::StringEnd(_) => Doc::text(format!("}}{text}")),
-            // A triple-quoted string's line ends are line feeds, as the
-            // file's are: a carriage return before one is no part of
-            // its value.
-            Token::StringLit(_) if text.starts_with("\"\"\"") => {
-                Doc::text(text.replace("\r\n", "\n"))
+            // that closes the interpolation. A string's line ends are
+            // line feeds, as the file's are: a carriage return before
+            // one is no part of its value.
+            Token::StringMiddle(_) | Token::StringEnd(_) => {
+                Doc::text(format!("}}{}", text.replace("\r\n", "\n")))
             }
+            Token::StringLit(_) | Token::StringStart(_) => Doc::text(text.replace("\r\n", "\n")),
             _ => Doc::text(text),
         }
     }

@@ -257,13 +257,18 @@ mod tests {
 
     #[test]
     fn a_byte_order_mark_and_carriage_returns() {
-        // The mark stays; line ends become line feeds, except inside a
-        // string, which is written as it is.
+        // The mark stays; line ends become line feeds, inside a string
+        // too, whose value they do not change. A carriage return that
+        // ends no line stays.
         assert_eq!(
             fmt("\u{feff}fn main() {\r\n  1 -- one\r\n}\r\n"),
             "\u{feff}fn main() {\n  1 -- one\n}\n"
         );
-        let text = "fn main() {\n  \"a\r\nb\"\n}\n";
+        assert_eq!(
+            fmt("fn main() {\n  \"a\r\nb{1}c\r\nd\"\n}\n"),
+            "fn main() {\n  \"a\nb{1}c\nd\"\n}\n"
+        );
+        let text = "fn main() {\n  \"a\rb\"\n}\n";
         assert_eq!(fmt(text), text);
     }
 

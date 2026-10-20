@@ -229,14 +229,10 @@ fn decl_shapes(source: &str, lexed: &Lexed, program: &Program) -> Shapes {
             | Token::StringStart(_)
             | Token::StringMiddle(_)
             | Token::StringEnd(_) => {
-                let text = &source[tok.span.start as usize..tok.span.end as usize];
-                // A triple-quoted string's line ends are written as line
-                // feeds: a carriage return before one is no part of it.
-                let text = if text.starts_with("\"\"\"") {
-                    text.replace("\r\n", "\n")
-                } else {
-                    text.to_string()
-                };
+                // A string's line ends are written as line feeds: a
+                // carriage return before one is no part of it.
+                let text =
+                    source[tok.span.start as usize..tok.span.end as usize].replace("\r\n", "\n");
                 decls[decl].literals.push(Note {
                     text,
                     span: tok.span,

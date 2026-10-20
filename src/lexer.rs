@@ -724,6 +724,12 @@ impl Lexer {
                     };
                     return (tok, start);
                 }
+                // A carriage return before a line feed is part of the
+                // line end: a file with CRLF line ends gives the string
+                // it gives with LF.
+                Some('\r') if self.peek_ahead(1) == Some('\n') => {
+                    self.advance_char();
+                }
                 Some(ch) => {
                     self.advance_char();
                     text.push(ch);

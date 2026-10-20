@@ -1,0 +1,16 @@
+-- A string in a file with CRLF line ends is the string it is with LF:
+-- a triple-quoted string has no carriage return and no line break
+-- behind the opening quotes, a string over two lines one line feed.
+import string
+
+fn main() {
+  let s = """
+    a
+    b
+    """
+  println("[{s}] {string.length(s)}")
+  let t = "c
+d{1}e
+f"
+  println("[{t}] {string.length(t)}")
+}

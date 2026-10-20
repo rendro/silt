@@ -1,0 +1,12 @@
+-- cmd: fmt
+-- A file with CRLF line ends is written with LF, inside its strings
+-- too: their values are the same.
+fn main() {
+  let s = """
+    a
+    b
+    """
+  println(s)
+  println("c
+d{1}e")
+}
