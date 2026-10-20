@@ -166,9 +166,10 @@ and `list.contains`. In every other respect it is the list of its
 elements: `println(1..3)` prints `[1, 2, 3]`, and `1..3 == [1, 2, 3]`.
 What needs every element at once (printing the range, `list.reverse`,
 `json.stringify`, a postgres parameter) is a runtime error for a range
-of more than 10,000,000 elements. A range can have more elements than an `Int` counts
-(`0..9223372036854775807`); `list.length` of such a range is a runtime
-error, and so is the range of all the Ints there are.
+of more than 10,000,000 elements. A range can have more elements than
+an `Int` counts (`0..9223372036854775807`); `list.length` of such a
+range is a runtime error, and so is the range of all the Ints there
+are.
 
 Range binds tighter than `|>` so `1..10 |> list.sum()` needs no parens, and looser than arithmetic so `a+1..b-1` works.
 

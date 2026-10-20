@@ -20,8 +20,9 @@ use crate::vm::VmError;
 
 /// The deepest a value may be nested for a writer: each element of a
 /// list or a tuple, field of a record or variant, and value of a map is
-/// a level further in than what holds them (the content of a `Some` or
-/// of a `json.Value` is not: it is written in its place). The writers go
+/// a level further in than what holds them (the content of a `Some` is
+/// not: it is written in its place; nor is a `json.Value`'s, but for
+/// toml, which counts it as it counts a variant's). The writers go
 /// down a value on the native stack, and one nested without bound would
 /// overflow it: a value at the bound takes some 5 MiB of it in a debug
 /// build, a third of the least a thread that runs silt code has
@@ -214,23 +215,27 @@ struct Writer<'c> {
 impl Writer<'_> {
     /// `v`, which is `level` levels inside the value and at `place`.
     fn data(&self, v: &Value, level: usize, place: Place) -> Result<Data, VmError> {
-        if level > MAX_ENCODE_DEPTH {
-            return Err(VmError::new(format!(
-                "{}: the value is nested more than {MAX_ENCODE_DEPTH} levels deep",
-                self.caller
-            )));
-        }
         // `Some(x)` is written as `x` is, and so is a `json.Value` as the
-        // JSON it holds (`json.Int(1)` as `1`); neither is a level of its
-        // own.
-        let mut v = v;
+        // JSON it holds (`json.Int(1)` as `1`). A `Some` is no level of
+        // its own; for toml the content of a `json.Value` is a level
+        // further in, as the content of a variant is.
+        let (mut v, mut level) = (v, level);
         let mut json = false;
         while let Value::Variant(variant) = v
             && (variant.is(bv::SOME) || variant.of(ty::JSON_VALUE))
             && let [content] = variant.fields()
         {
-            json |= variant.of(ty::JSON_VALUE);
+            if variant.of(ty::JSON_VALUE) {
+                json = true;
+                level += usize::from(self.format == Format::Toml);
+            }
             v = content;
+        }
+        if level > MAX_ENCODE_DEPTH {
+            return Err(VmError::new(format!(
+                "{}: the value is nested more than {MAX_ENCODE_DEPTH} levels deep",
+                self.caller
+            )));
         }
         if let Value::Variant(variant) = v {
             json |= variant.is(bv::JSON_NULL);

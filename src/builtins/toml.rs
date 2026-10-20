@@ -29,7 +29,7 @@
 //! `Time` field receives `07:32:00`. This reuses the json code path for
 //! date parsing, keeping the two modules' behavior aligned. The encoder
 //! writes a `Date`, `Time` and `DateTime` as such a literal
-//! (`time_literal`), so each reads back as the value it was.
+//! (`literal`), so each reads back as the value it was.
 //!
 //! ## Semantics
 //!
