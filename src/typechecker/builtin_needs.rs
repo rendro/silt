@@ -33,6 +33,9 @@ pub(crate) struct GivenUse {
     pub(super) placed: bool,
     /// The instantiation that owes it: the uses of one call share it.
     pub(super) use_id: usize,
+    /// Whether a definition took it into its scheme: each use of that
+    /// owes it, not this.
+    pub(super) taken: bool,
 }
 
 /// What a body asks of the type an annotation variable of its signature
@@ -284,12 +287,9 @@ impl TypeChecker {
     ) -> Rc<Vec<Leaf>> {
         let receiver = self.apply(receiver);
         let method_ty = self.apply(method_ty);
-        let key = (
-            method,
-            shape_hash(&receiver) ^ shape_hash(&method_ty).rotate_left(1),
-        );
+        let key = (method, shape_hash(&[&receiver, &method_ty]));
         let same = |at: &(TraitKey, Type, Type, Rc<Vec<Leaf>>)| {
-            at.0 == tr && same_shape(&at.1, &receiver) && same_shape(&at.2, &method_ty)
+            at.0 == tr && same_shape(&[&at.1, &at.2], &[&receiver, &method_ty])
         };
         if let Some(found) = self
             .leaf_memo
@@ -301,7 +301,7 @@ impl TypeChecker {
         // A method that calls itself on the same types: what it asks is
         // what the outer call gathers.
         if (self.leaf_busy.iter()).any(|(t, m, r, ty)| {
-            *t == tr && *m == method && same_shape(r, &receiver) && same_shape(ty, &method_ty)
+            *t == tr && *m == method && same_shape(&[r, ty], &[&receiver, &method_ty])
         }) {
             return Rc::new(Vec::new());
         }
@@ -446,6 +446,9 @@ impl TypeChecker {
         let mut out = Vec::new();
         for k in 0..self.given_waiting.len() {
             let use_ = self.given_waiting[k].clone();
+            if use_.taken {
+                continue;
+            }
             let vias = self.vias_of(use_.given, use_.body);
             if vias.is_empty() {
                 continue;
@@ -469,6 +472,7 @@ impl TypeChecker {
         &mut self,
         given: &CallArguments,
         passer: Option<Symbol>,
+        callee_owes: std::ops::Range<usize>,
     ) {
         let type_of = |checker: &Self, ty: &Type| match checker.apply(ty) {
             Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
@@ -550,8 +554,9 @@ impl TypeChecker {
         // function the scope holds.
         let scope = self.given_marks.last().copied().unwrap_or(0);
         self.unplaced.retain(|&k| !self.given_waiting[k].placed);
+        // (Not the uses this call owes: they are at its arguments.)
         let candidates: Vec<usize> = (self.unplaced.iter().copied())
-            .filter(|&k| k >= scope)
+            .filter(|&k| k >= scope && !callee_owes.contains(&k))
             .collect();
         for k in candidates {
             let subject = self.apply(&self.given_waiting[k].subject);
@@ -571,6 +576,57 @@ impl TypeChecker {
             use_.written = alias;
             if let Some(passer) = passed_on {
                 use_.passer = passer;
+            }
+        }
+    }
+
+    /// The calls of trait methods owed in the scope whose type argument
+    /// is still unknown.
+    pub(super) fn open_vias(&mut self) -> Vec<usize> {
+        let len = self.wanted.len();
+        self.waiting_vias
+            .retain(|&k| k < len && !self.wanted[k].solved);
+        let scope = self.wanted_marks.last().copied().unwrap_or(0);
+        (self.waiting_vias.iter().copied())
+            .filter(|&k| k >= scope)
+            .filter(|&k| match &self.wanted[k].goal {
+                Goal::Pred(Pred::Via { method_ty, .. }) => {
+                    super::inference::type_of_var(&self.apply(method_ty)).is_some()
+                }
+                _ => false,
+            })
+            .collect()
+    }
+
+    /// Point each of the calls `open` of trait methods whose type argument
+    /// this call gave at the argument that gave it (`given`).
+    pub(super) fn point_vias_at_type_arguments(&mut self, given: &CallArguments, open: &[usize]) {
+        for &k in open {
+            let Goal::Pred(Pred::Via {
+                method_ty,
+                at: None,
+                ..
+            }) = &self.wanted[k].goal
+            else {
+                continue;
+            };
+            // The first type argument the method takes, as the call has
+            // it now.
+            let Some(taken) = type_of_first(&self.apply(method_ty)) else {
+                continue;
+            };
+            let taken = self.apply(&taken);
+            if matches!(taken, Type::Var(_)) {
+                continue;
+            }
+            let place = given.iter().find(|(_, _, ty)| match self.apply(ty) {
+                Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                    args.first().is_some_and(|arg| self.apply(arg) == taken)
+                }
+                _ => false,
+            });
+            if let Some((span, ..)) = place {
+                self.wanted[k].origin.span = *span;
             }
         }
     }
@@ -601,6 +657,9 @@ impl TypeChecker {
             while let Some(k) = queue.pop_front() {
                 queued[k] = false;
                 let use_ = self.given_waiting[k].clone();
+                if use_.taken {
+                    continue;
+                }
                 if let Type::Rigid(r) = self.apply(&use_.subject) {
                     for check in self.builtin_needs_of(use_.given, use_.body) {
                         self.add_builtin_need(r, check, use_.in_body);
@@ -715,7 +774,7 @@ impl TypeChecker {
             }
         }
         for use_ in std::mem::take(&mut self.given_waiting) {
-            if matches!(self.apply(&use_.subject), Type::Rigid(_)) {
+            if use_.taken || matches!(self.apply(&use_.subject), Type::Rigid(_)) {
                 continue;
             }
             for check in self.builtin_needs_of(use_.given, use_.body) {
@@ -788,6 +847,7 @@ impl TypeChecker {
                             receiver: substitute_vars(&via.receiver, &given),
                             method_ty: substitute_vars(&via.method_ty, &given),
                             passer: Some(*passer),
+                            at: None,
                         });
                     }
                 }
@@ -816,58 +876,74 @@ fn mentions_type_of(ty: &Type, subject: &Type, apply: &dyn Fn(&Type) -> Type) ->
     }
 }
 
-/// A hash of the shape of `ty`: every type variable is one shape (what a
-/// call leaves general is new at each call).
-fn shape_hash(ty: &Type) -> u64 {
+/// A hash of the shape of `types`: each type variable by the place it
+/// first comes at (what a call leaves general is new at each call; two
+/// variables that are one stay one).
+fn shape_hash(types: &[&Type]) -> u64 {
     use std::hash::{Hash, Hasher};
-    fn walk(ty: &Type, h: &mut std::collections::hash_map::DefaultHasher) {
+    fn walk(ty: &Type, h: &mut std::collections::hash_map::DefaultHasher, vars: &mut Vec<TyVar>) {
         std::mem::discriminant(ty).hash(h);
         match ty {
+            Type::Var(v) => match vars.iter().position(|seen| seen == v) {
+                Some(at) => at.hash(h),
+                None => {
+                    vars.len().hash(h);
+                    vars.push(*v);
+                }
+            },
             Type::Generic(name, args) => {
                 name.id.hash(h);
-                args.iter().for_each(|t| walk(t, h));
+                args.iter().for_each(|t| walk(t, h, vars));
             }
             Type::Rigid(r) => r.var.hash(h),
             Type::Fun(params, ret) => {
-                params.iter().for_each(|t| walk(t, h));
-                walk(ret, h);
+                params.iter().for_each(|t| walk(t, h, vars));
+                walk(ret, h, vars);
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, h),
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, h, vars),
             Type::Map(k, v) => {
-                walk(k, h);
-                walk(v, h);
+                walk(k, h, vars);
+                walk(v, h, vars);
             }
-            Type::Tuple(ts) => ts.iter().for_each(|t| walk(t, h)),
+            Type::Tuple(ts) => ts.iter().for_each(|t| walk(t, h, vars)),
             _ => {}
         }
     }
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    walk(ty, &mut h);
+    let mut vars = Vec::new();
+    for ty in types {
+        walk(ty, &mut h, &mut vars);
+    }
     h.finish()
 }
 
-/// Whether `a` and `b` have one shape: equal, any type variable being
-/// any other.
-fn same_shape(a: &Type, b: &Type) -> bool {
-    match (a, b) {
-        (Type::Var(_), Type::Var(_)) => true,
-        (Type::Generic(x, xs), Type::Generic(y, ys)) => {
-            x == y && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| same_shape(x, y))
+/// Whether `a` and `b` have one shape: equal, with their type variables
+/// renamed one to one.
+fn same_shape(a: &[&Type], b: &[&Type]) -> bool {
+    fn walk(a: &Type, b: &Type, names: &mut Vec<(TyVar, TyVar)>) -> bool {
+        let all = |xs: &[Type], ys: &[Type], names: &mut Vec<(TyVar, TyVar)>| {
+            xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| walk(x, y, names))
+        };
+        match (a, b) {
+            (Type::Var(x), Type::Var(y)) => match names.iter().find(|(p, q)| p == x || q == y) {
+                Some((p, q)) => p == x && q == y,
+                None => {
+                    names.push((*x, *y));
+                    true
+                }
+            },
+            (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, names),
+            (Type::Fun(xs, x), Type::Fun(ys, y)) => all(xs, ys, names) && walk(x, y, names),
+            (Type::List(x), Type::List(y))
+            | (Type::Set(x), Type::Set(y))
+            | (Type::Channel(x), Type::Channel(y)) => walk(x, y, names),
+            (Type::Map(xk, xv), Type::Map(yk, yv)) => walk(xk, yk, names) && walk(xv, yv, names),
+            (Type::Tuple(xs), Type::Tuple(ys)) => all(xs, ys, names),
+            (x, y) => x == y,
         }
-        (Type::Fun(xs, x), Type::Fun(ys, y)) => {
-            xs.len() == ys.len()
-                && xs.iter().zip(ys).all(|(x, y)| same_shape(x, y))
-                && same_shape(x, y)
-        }
-        (Type::List(x), Type::List(y))
-        | (Type::Set(x), Type::Set(y))
-        | (Type::Channel(x), Type::Channel(y)) => same_shape(x, y),
-        (Type::Map(xk, xv), Type::Map(yk, yv)) => same_shape(xk, yk) && same_shape(xv, yv),
-        (Type::Tuple(xs), Type::Tuple(ys)) => {
-            xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| same_shape(x, y))
-        }
-        (x, y) => x == y,
     }
+    let mut names = Vec::new();
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| walk(x, y, &mut names))
 }
 
 /// Bind each of the variables `vars` of `pattern` to the part of `ty` at
@@ -896,5 +972,15 @@ fn match_type(pattern: &Type, ty: &Type, vars: &[TyVar], mapping: &mut HashMap<T
             match_type(xv, yv, vars, mapping);
         }
         _ => {}
+    }
+}
+
+/// The type the first type argument (`TypeOf(t)`) of the function type
+/// `ty` gives: `t`.
+fn type_of_first(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args.first().cloned(),
+        Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(type_of_first),
+        _ => None,
     }
 }

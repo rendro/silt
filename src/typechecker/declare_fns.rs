@@ -225,6 +225,7 @@ impl TypeChecker {
                     written: None,
                     passer: f.name,
                     body: None,
+                    group: None,
                 });
             }
             rigid.push(id);

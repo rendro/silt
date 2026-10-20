@@ -154,6 +154,7 @@ impl TypeChecker {
                 written,
                 passer,
                 body,
+                ..
             } => {
                 let passer = self.passer_at(passer, &origin);
                 self.unplaced.push(self.given_waiting.len());
@@ -167,6 +168,7 @@ impl TypeChecker {
                     origin,
                     placed: false,
                     use_id: self.use_id,
+                    taken: false,
                 });
                 return;
             }
@@ -185,12 +187,14 @@ impl TypeChecker {
                 receiver,
                 method_ty,
                 passer: Some(passer),
+                at,
             } => Pred::Via {
                 tr,
                 method,
                 receiver,
                 method_ty,
                 passer: Some(self.passer_at(passer, &origin)),
+                at,
             },
             other => other,
         };
@@ -205,6 +209,9 @@ impl TypeChecker {
         let k = self.wanted.len() - 1;
         if decoder && !self.wanted[k].solved {
             self.waiting_decoders.push(k);
+        }
+        if let Goal::Pred(Pred::Via { .. }) = self.wanted[k].goal {
+            self.waiting_vias.push(k);
         }
     }
 
@@ -333,28 +340,11 @@ impl TypeChecker {
                             self.check_builtin_argument(check, &subject, passer, origin);
                         }
                     }
-                    Goal::Pred(Pred::Via {
-                        tr,
-                        method,
-                        receiver,
-                        method_ty,
-                        passer,
-                    }) => {
-                        // (On an annotation variable it waits for the
-                        // scope's end: a closure the call is in may be
-                        // general in the type it gives, `generalize`.)
-                        if !matches!(self.apply(&receiver), Type::Var(_) | Type::Rigid(_)) {
-                            self.wanted[i].solved = true;
-                            let need = super::builtin_needs::ViaNeed {
-                                tr,
-                                method,
-                                receiver,
-                                method_ty,
-                            };
-                            let in_body = self.body_owner;
-                            self.via_owed(need, passer, origin, in_body);
-                        }
-                    }
+                    // A trait method's call waits for its scope's end: a
+                    // closure the call is in may be general in the types
+                    // it gives (`generalize`); `settle_bounds` decides the
+                    // rest.
+                    Goal::Pred(Pred::Via { .. }) => {}
                     // (Never wanted: `given_waiting`.)
                     Goal::Pred(Pred::Given { .. }) => self.wanted[i].solved = true,
                     Goal::Pred(Pred::Lacks { row, field }) => {
@@ -1251,6 +1241,7 @@ impl TypeChecker {
                         receiver: recv.clone(),
                         method_ty: ty.clone(),
                         passer: None,
+                        at: None,
                     }])
                     .collect();
                 let own: Vec<TyVar> = free_vars_in(method_ty)

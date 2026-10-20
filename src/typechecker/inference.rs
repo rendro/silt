@@ -439,6 +439,7 @@ impl TypeChecker {
                     receiver: Type::Rigid(r),
                     method_ty: ty.clone(),
                     passer: None,
+                    at: None,
                 }])
                 .collect();
             matches.push((
@@ -1389,7 +1390,12 @@ impl TypeChecker {
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
                     // (A trait method's call is at the type it is given,
-                    // not at its receiver.)
+                    // not at its receiver: where it was given, if that is
+                    // known.)
+                    if let Goal::Pred(Pred::Via { at: Some(at), .. }) = &self.wanted[k].goal {
+                        self.wanted[k].origin.span = *at;
+                        continue;
+                    }
                     let type_given = match &self.wanted[k].goal {
                         Goal::Pred(Pred::Via { method_ty, .. }) => {
                             type_of_var(&self.apply(method_ty))
@@ -1438,7 +1444,6 @@ impl TypeChecker {
                         let alias = self.alias_named(arg);
                         let use_ = &mut self.given_waiting[k];
                         use_.origin.span = arg.span;
-                        use_.placed = true;
                         use_.written = alias;
                     }
                 }
@@ -1446,6 +1451,12 @@ impl TypeChecker {
                 // Each argument's place, the alias it names a type by,
                 // and its type.
                 let mut given: Vec<(Span, Option<Symbol>, Type)> = Vec::new();
+                // The calls of trait methods held in a closure (returned
+                // by a function, kept in a record) whose type argument is
+                // still unknown: this call may be the one that gives it.
+                let open_vias = self.open_vias();
+                // (The uses the callee owes are at this call's arguments.)
+                let callee_owes = given_before..self.given_waiting.len();
                 for (i, arg) in args.iter_mut().enumerate() {
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
@@ -1485,7 +1496,8 @@ impl TypeChecker {
                     self.given_waiting.truncate(given_before);
                 } else if let CallForm::Call = form {
                     let passer = self.user_callee(callee);
-                    self.point_at_type_arguments(&given, passer);
+                    self.point_at_type_arguments(&given, passer, callee_owes);
+                    self.point_vias_at_type_arguments(&given, &open_vias);
                 }
                 // A type this call gives its callee is placed here: no later
                 // call is its place.
@@ -3840,7 +3852,7 @@ mod tests;
 
 /// The first type variable `ty` gives as a type argument (`TypeOf(a)`),
 /// as a type.
-fn type_of_var(ty: &Type) -> Option<Type> {
+pub(super) fn type_of_var(ty: &Type) -> Option<Type> {
     match ty {
         Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args
             .first()

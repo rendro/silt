@@ -2017,6 +2017,7 @@ impl TypeChecker {
                 written: None,
                 passer,
                 body: Some(body),
+                group: None,
             })
             .collect()
     }
@@ -2060,6 +2061,7 @@ impl TypeChecker {
                     written: None,
                     passer,
                     body: Some(body),
+                    group: None,
                 });
                 continue;
             }
@@ -2082,6 +2084,7 @@ impl TypeChecker {
                     receiver: substitute_vars(&via.receiver, mapping),
                     method_ty: substitute_vars(&via.method_ty, mapping),
                     passer: Some(passer),
+                    at: None,
                 });
             }
         }

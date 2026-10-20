@@ -142,6 +142,8 @@ pub struct TypeChecker {
     /// were owed, and the `given_waiting` uses not placed at the argument
     /// of their call: what `point_at_type_arguments` looks at.
     pub(super) waiting_decoders: Vec<usize>,
+    /// The `wanted` calls of trait methods (`Pred::Via`) still owed.
+    pub(super) waiting_vias: Vec<usize>,
     /// The variables (by representative and body) whose needs grew since
     /// `settle_builtin_needs` last looked.
     pub(super) grown_needs: Vec<(TyVar, Option<Symbol>)>,
@@ -356,6 +358,7 @@ impl TypeChecker {
             leaf_busy: Vec::new(),
             via_cache: HashMap::new(),
             waiting_decoders: Vec::new(),
+            waiting_vias: Vec::new(),
             grown_needs: Vec::new(),
             unplaced: Vec::new(),
             uses: 0,
@@ -1133,12 +1136,14 @@ impl TypeChecker {
                         written,
                         passer,
                         body,
+                        group,
                     } => Pred::Given {
                         subject: rep(subject),
                         given: self.rigid_rep_var(given),
                         written,
                         passer,
                         body,
+                        group,
                     },
                     via @ Pred::Via { .. } => via,
                 }
