@@ -470,15 +470,16 @@ impl Plan {
                 let Shape::Record(declared) = &ty.shape else {
                     return Err(super::other_error(format!("{}: no record type", ty.name)));
                 };
+                // A field no decoder fills (in a record or enum type it
+                // names too) is refused whatever the result holds, before
+                // any column is matched. (A type reached only through a
+                // type argument that is a type variable: the compiler
+                // refuses the others.)
+                if let Some(message) = decode::record_refusal(rt, Family::Postgres, ty) {
+                    return Err(super::other_error(message));
+                }
                 let mut fields = Vec::with_capacity(declared.len());
                 for (name, field) in declared {
-                    // (A field reached only through a type argument that
-                    // is a type variable: the compiler refuses the others.)
-                    if let Some(message) =
-                        decode::undecodable(rt, Family::Postgres, &ty.name, name, field)
-                    {
-                        return Err(super::other_error(message));
-                    }
                     let mut named = columns.iter().enumerate().filter(|(_, c)| c.name() == name);
                     let Some((column, found)) = named.next() else {
                         return Err(no_such_column(name));

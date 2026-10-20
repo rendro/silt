@@ -408,7 +408,6 @@ mod tests {
         let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
         let rt = &vm.runtime;
         let mut compared = 0;
-        let mut known = 0;
         for (inner, field, present) in &fields {
             // The types as the run time has them: through `type a`, which
             // the compiler does not check.
@@ -438,22 +437,28 @@ mod tests {
                 let decoding = row.decoding.expect("a decoder");
                 let family = decoding.family;
                 let name = row.qualified();
-                // Refused at run time: the type argument is taken, and the
-                // field is refused, not decoded or found missing.
+                // Refused at run time, as the builtin's body refuses it:
+                // the type argument is taken, and then, before the document
+                // is read, the type is refused (json and toml through
+                // decode::refused, postgres's plan through record_refusal);
+                // else decoding the document (for postgres, a json or jsonb
+                // cell, the one column that fills a nested type) refuses
+                // nothing.
                 let target = decode::target(&name, Type::Named(r)).expect("a record type is taken");
                 let refused = |doc: &serde_json::Value| {
+                    let refusal = match family {
+                        Family::Postgres => decode::record_refusal(rt, family, r),
+                        _ => decode::refusal(rt, family, &target),
+                    };
+                    if refusal.is_some() {
+                        return refusal;
+                    }
                     let decoded = match family {
                         Family::Json => decode::document(rt, &target, doc),
                         Family::Toml => decode::document(rt, &target, &toml_of(doc)),
-                        // The plan's first step; then a json or jsonb
-                        // column, the one that fills an enum, by json's
-                        // rules.
-                        Family::Postgres => match decode::undecodable(rt, family, "R", "f", f) {
-                            Some(message) => Err(Error::Other(message)),
-                            None => match doc.get("f") {
-                                Some(cell) => decode::value(rt, cell, f, &At::Top),
-                                None => Ok(crate::value::Value::Unit),
-                            },
+                        Family::Postgres => match doc.get("f") {
+                            Some(cell) => decode::value(rt, cell, f, &At::Top),
+                            None => Ok(crate::value::Value::Unit),
                         },
                     };
                     match decoded {
@@ -465,49 +470,21 @@ mod tests {
                 };
                 let direct = program(inner, field, &caller(row, "R"));
                 let compile = compiled(&direct);
-                match (&present, refused(&absent)) {
-                    // A field with no decoder is refused whatever the
-                    // document holds.
-                    (_, Some(_)) | (None, None) => assert_eq!(
+                // A field with no decoder is refused whatever the document
+                // holds: one without the field, and one with a value there.
+                for doc in std::iter::once(&absent).chain(present.as_ref()) {
+                    let at_run_time = refused(doc);
+                    assert_eq!(
                         compile.is_ok(),
-                        refused(&absent).is_none(),
-                        "{name}, a field of {field}: the compiler {} it, the run time {:?}\n{direct}",
+                        at_run_time.is_none(),
+                        "{name}, a field of {field} in {doc}: the compiler {} it, the run time \
+                         {at_run_time:?}\n{direct}",
                         if compile.is_ok() {
                             "accepts"
                         } else {
                             "refuses"
                         },
-                        refused(&absent),
-                    ),
-                    // Known, listed for the owner: an enum's variants are
-                    // looked at as a variant is decoded, so a field that
-                    // names an enum the family does not decode (toml), or
-                    // one with a variant field no decoder fills (json), is
-                    // refused only where the document holds the value; and
-                    // postgres reads an enum from a json column by json's
-                    // rules where the compiler refuses one.
-                    (Some(present), None) => {
-                        let at_run_time = refused(present);
-                        let postgres_reads_it = family == Family::Postgres
-                            && field.as_str() != "RE"
-                            && at_run_time.is_none();
-                        if !postgres_reads_it {
-                            assert_eq!(
-                                compile.is_ok(),
-                                at_run_time.is_none(),
-                                "{name}, a field of {field} holding {present}: the compiler {} it, \
-                                 the run time {at_run_time:?}\n{direct}",
-                                if compile.is_ok() {
-                                    "accepts"
-                                } else {
-                                    "refuses"
-                                },
-                            );
-                        }
-                        if compile.is_err() {
-                            known += 1;
-                        }
-                    }
+                    );
                 }
                 let help = family.help();
                 let listed = helped(&help);
@@ -563,7 +540,6 @@ mod tests {
             }
         }
         assert_eq!(compared, fields.len() * rows.len());
-        assert!(known > 0, "the known enum cases are met");
         // A type argument that is a primitive type, `json.Value` or an
         // enum type: the compiler takes it where the run time does.
         let generic = program(

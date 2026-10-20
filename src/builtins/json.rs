@@ -424,6 +424,9 @@ fn decode_document(
         Err(e) => return Ok(json_result_err(&e)),
     };
     let target = decode::target(caller, ty)?;
+    if let Some(refused) = decode::refused(rt, &RULES, &target) {
+        return Ok(refused);
+    }
     Ok(decode::result(&RULES, decode::document(rt, &target, &json)))
 }
 
@@ -448,7 +451,11 @@ builtins! {
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let element = decode::target("json.parse_list", ty)?.element();
+        let target = decode::target("json.parse_list", ty)?;
+        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+            return Ok(refused);
+        }
+        let element = target.element();
         Ok(match parse_document(s.as_bytes()) {
             Ok(json) => decode::result(&RULES, decode::list(&vm.runtime, &element, &json, &At::Top)),
             Err(e) => json_result_err(&e),
@@ -456,7 +463,11 @@ builtins! {
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let element = decode::target("json.parse_map", ty)?.element();
+        let target = decode::target("json.parse_map", ty)?;
+        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+            return Ok(refused);
+        }
+        let element = target.element();
         Ok(match parse_document(s.as_bytes()) {
             Ok(json) => decode::result(&RULES, decode::map(&vm.runtime, &element, &json, &At::Top)),
             Err(e) => json_result_err(&e),
@@ -504,10 +515,12 @@ mod tests {
             let fields = vec![("b".to_string(), field)];
             let ty = TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
             let json: serde_json::Value = serde_json::from_str(text).expect("a document");
-            let decoded = decode::result(
-                &RULES,
-                decode::record(&vm.runtime, &ty, &fields, &json, &At::Top),
-            );
+            // As json.parse decodes it: the type is refused before the
+            // document is read.
+            let target = decode::Target::Record(&ty, &fields);
+            let decoded = decode::refused(&vm.runtime, &RULES, &target).unwrap_or_else(|| {
+                decode::result(&RULES, decode::document(&vm.runtime, &target, &json))
+            });
             assert_eq!(
                 decoded.to_string(),
                 format!(

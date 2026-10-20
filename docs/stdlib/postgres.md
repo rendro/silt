@@ -109,8 +109,11 @@ for `json.parse`: any other type, or a record with a field of a type no
 column can fill, is an error there. When the type only arrives at run
 time, through a `type a` parameter, a field of a type no column can fill
 (`Bytes` in a `Map`, a tuple or a nested record, which only a json
-document could fill) is `Err(Other(msg))` naming the field and its record,
-whatever the result holds, and any other type is a run-time error.
+document could fill; an enum, which postgres has no decoder for) is
+`Err(Other(msg))` naming the field and its record, before any column is
+matched and whatever the result holds, and any other type is a run-time
+error. A record nested in a field is filled from a json document by
+`json.parse`'s rules, an enum in it too.
 
 | Function | Type argument |
 |----------|---------------|

@@ -199,100 +199,169 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
     })
 }
 
-/// A field whose type holds a part that a family of decoders has no
-/// decoder for.
-struct Lacking {
-    /// The record type that declares the field and the field's name, if
-    /// it is a field of a record type nested in the field asked about;
-    /// `None` for that field itself.
-    nested: Option<(std::string::String, std::string::String)>,
-    /// The field's type, as silt writes it.
-    declared: std::string::String,
+// ── Types no decoder fills ──────────────────────────────────────────
+//
+// Whether a decoder has a value of the type it is given is decided once,
+// before the document is read (a call's type argument; the rows of a
+// postgres result once per result), from the family's description in
+// the registry: the type's fields, the fields of each variant of an enum,
+// and the record and enum types they name, at any depth. A type with a
+// field no decoder fills is refused whatever the document holds, and the
+// decoding itself walks no type.
+
+/// Where a field is: of a record type, or of a variant of an enum type.
+enum Place {
+    /// The field of the record type.
+    Field(std::string::String, std::string::String),
+    /// A field of the variant of the enum type.
+    Variant(std::string::String, std::string::String),
 }
 
-/// Whether `field_type`, not counting the fields of the record types it
-/// names, holds a part that `family` has no decoder for: it is a type no
-/// decoder has, or it holds a leaf the family does not decode.
+impl Place {
+    /// The message of the error of a decoder for the field here, whose
+    /// type (as silt writes it, `declared`) has no decoder.
+    fn message(&self, declared: &str) -> std::string::String {
+        match self {
+            Place::Field(record, field) => unsupported_field_type_message(record, field, declared),
+            Place::Variant(ty, variant) => variant_field_message(ty, variant, declared),
+        }
+    }
+}
+
+/// The message of the error of a decoder for a field of the variant
+/// `variant` of the enum type `ty` whose type, `declared`, has no
+/// decoder.
+fn variant_field_message(ty: &str, variant: &str, declared: &str) -> std::string::String {
+    format!(
+        "cannot decode a field of variant `{variant}` of `{ty}`: a value of type {declared} \
+         cannot be decoded"
+    )
+}
+
+/// Whether `field_type` names an enum type (not counting the fields of
+/// the record types it names).
+fn names_enum(field_type: &FieldType) -> bool {
+    match field_type {
+        FieldType::Enum(_) => true,
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(t),
+        FieldType::Tuple(ts) => ts.iter().any(names_enum),
+        _ => false,
+    }
+}
+
+/// Whether `field_type`, not counting the fields of the record and enum
+/// types it names, holds a part that `family` has no decoder for: it is
+/// a type no decoder has, or it holds a leaf the family does not decode,
+/// or an enum type where the family decodes none.
 fn lacks_here(family: Family, field_type: &FieldType) -> bool {
-    matches!(field_type, FieldType::Unsupported(_)) || family.lacks(field_type).is_some()
+    matches!(field_type, FieldType::Unsupported(_))
+        || family.lacks(field_type).is_some()
+        || (!family.decodes_enums() && names_enum(field_type))
 }
 
-/// The first part of `field_type` that `family` has no decoder for: a
-/// type no decoder has, a leaf the family does not decode, or such a
-/// part of a field of a record type it names (which `family.nested()`
-/// decodes). `seen` are the record types looked into.
+/// The first field of a field of type `field_type` that `family` has no
+/// decoder for: the field itself (`None`), or the place of a field of a
+/// record or enum type it names (which `family.nested()` decodes); with
+/// that field's type as silt writes it. `seen` are the types looked into.
 fn lacking(
     rt: &Runtime,
     family: Family,
     field_type: &FieldType,
     seen: &mut Vec<(TypeId, Family)>,
-) -> Option<Lacking> {
+) -> Option<(Option<Place>, std::string::String)> {
     if lacks_here(family, field_type) {
-        let declared = shown(rt, field_type);
-        return Some(Lacking {
-            nested: None,
-            declared,
-        });
+        return Some((None, shown(rt, field_type)));
     }
-    let mut records = Vec::new();
-    field_type.records(&mut records);
-    let family = family.nested();
-    for id in records {
-        if seen.contains(&(id, family)) {
-            continue;
-        }
-        seen.push((id, family));
-        // (The fields of an enum type's variants are looked at as a
-        // variant is decoded.)
-        let Some(info) = rt
-            .type_info(id)
-            .filter(|info| matches!(info.shape, Shape::Record(_)))
-        else {
+    let mut named = Vec::new();
+    field_type.records(&mut named);
+    for id in named {
+        let Some(info) = rt.type_info(id) else {
             continue;
         };
-        for (name, field) in info.fields() {
-            if let Some(found) = lacking(rt, family, field, seen) {
-                let nested = found
-                    .nested
-                    .or_else(|| Some((info.name.clone(), name.clone())));
-                return Some(Lacking { nested, ..found });
-            }
+        if let Some((place, declared)) = lacking_in(rt, family.nested(), &info, seen) {
+            return Some((Some(place), declared));
         }
     }
     None
 }
 
+/// The first field of the record or enum type `ty` (in the order it
+/// declares them, each variant's in turn), or of a type a field names,
+/// that `family` has no decoder for: its place and its type as silt
+/// writes it.
+fn lacking_in(
+    rt: &Runtime,
+    family: Family,
+    ty: &TypeInfo,
+    seen: &mut Vec<(TypeId, Family)>,
+) -> Option<(Place, std::string::String)> {
+    if seen.contains(&(ty.id, family)) {
+        return None;
+    }
+    seen.push((ty.id, family));
+    let fields: Vec<(Place, &FieldType)> = match &ty.shape {
+        Shape::Record(fields) => (fields.iter())
+            .map(|(name, field)| (Place::Field(ty.name.clone(), name.clone()), field))
+            .collect(),
+        Shape::Enum(variants) => (variants.iter())
+            .flat_map(|v| {
+                let place = || Place::Variant(ty.name.clone(), v.name.clone());
+                v.fields.iter().map(move |field| (place(), field))
+            })
+            .collect(),
+        Shape::Opaque => Vec::new(),
+    };
+    for (here, field) in fields {
+        if let Some((place, declared)) = lacking(rt, family, field, seen) {
+            return Some((place.unwrap_or(here), declared));
+        }
+    }
+    None
+}
+
+/// The message of the error of a decoder of `family` given the record
+/// type `ty` to decode into, if a field no decoder fills is in it (or in
+/// a record or enum type it names): whatever the document holds.
+pub(crate) fn record_refusal(
+    rt: &Runtime,
+    family: Family,
+    ty: &TypeInfo,
+) -> Option<std::string::String> {
+    lacking_in(rt, family, ty, &mut Vec::new()).map(|(place, declared)| place.message(&declared))
+}
+
+/// The message of the error of a decoder of `family` given `target`, if
+/// a field no decoder fills is in the type: whatever the document holds,
+/// an empty one too.
+pub(crate) fn refusal(
+    rt: &Runtime,
+    family: Family,
+    target: &Target,
+) -> Option<std::string::String> {
+    match target {
+        Target::Record(ty, _) => record_refusal(rt, family, ty),
+        Target::Value(field_type) => {
+            let (place, declared) = lacking(rt, family, field_type, &mut Vec::new())?;
+            // (A type argument that is no record or enum is one the
+            // family decodes: `target` took it.)
+            place.map(|place| place.message(&declared))
+        }
+    }
+}
+
+/// The error a decoder of the format of `rules` gives for `target`, if
+/// a field no decoder fills is in the type ([`refusal`]).
+pub(crate) fn refused(rt: &Runtime, rules: &Rules, target: &Target) -> Option<Value> {
+    let message = refusal(rt, rules.family, target)?;
+    Some(result(rules, Err(Error::Other(message))))
+}
+
 /// Whether a decoder of `family` decodes a value of `field_type`, in the
-/// record types it names too.
+/// record and enum types it names too.
 #[cfg(feature = "postgres")]
 pub(crate) fn decodes(rt: &Runtime, family: Family, field_type: &FieldType) -> bool {
     lacking(rt, family, field_type, &mut Vec::new()).is_none()
 }
-
-/// The message of the error of a decoder of `family` for the field
-/// `field` of the record type `record`, whose type is `field_type`, if
-/// it has no decoder: whatever the document holds there, its key left
-/// out too. It names the field, or the field of a record type nested in
-/// it whose type has no decoder.
-pub(crate) fn undecodable(
-    rt: &Runtime,
-    family: Family,
-    record: &str,
-    field: &str,
-    field_type: &FieldType,
-) -> Option<std::string::String> {
-    let found = lacking(rt, family, field_type, &mut Vec::new())?;
-    let (record, field) = match &found.nested {
-        Some((record, field)) => (record.as_str(), field.as_str()),
-        None => (record, field),
-    };
-    Some(unsupported_field_type_message(
-        record,
-        field,
-        &found.declared,
-    ))
-}
-
 /// The record type `id` a record field names, from the program's types.
 fn field_record_type(rt: &Runtime, caller: &str, id: TypeId) -> Result<Arc<TypeInfo>, VmError> {
     rt.type_info(id)
@@ -524,12 +593,8 @@ pub(crate) fn record<D: Document>(
     // (In the order the type declares them: the record's own.)
     let mut values = Vec::with_capacity(fields.len());
     for (name, field) in fields {
-        // A field no decoder exists for (in a record type it names too)
-        // is the error whatever the document holds there, its key left
-        // out too.
-        if let Some(message) = undecodable(rt, D::RULES.family, &ty.name, name, field) {
-            return Err(Error::Other(message));
-        }
+        // (A field no decoder fills was refused before the document was
+        // read: see [`refusal`].)
         let at = at.key(name);
         values.push(match D::get(table, name) {
             Some(item) => value(rt, item, field, &at).map_err(|e| match e {
@@ -771,20 +836,10 @@ pub(crate) fn variant<D: Document>(
         return Err(Error::other(message, &at_fields));
     }
     let mut fields = Vec::with_capacity(items.len());
-    let refused = |declared: &str| {
-        Error::Other(format!(
-            "cannot decode a field of variant `{name}` of `{}`: a value of type \
-             {declared} cannot be decoded",
-            ty.name
-        ))
-    };
+    // (A field no decoder fills was refused before the document was
+    // read; this is the fallback.)
+    let refused = |declared: &str| Error::Other(variant_field_message(&ty.name, name, declared));
     for (index, (item, field)) in items.iter().zip(declared).enumerate() {
-        // A field no decoder exists for is the error whatever the
-        // document holds there. (The fields of a record type it names
-        // are looked at as that record is decoded.)
-        if lacks_here(D::RULES.family, field) {
-            return Err(refused(&shown(rt, field)));
-        }
         let decoded = value(rt, item, field, &at_fields.index(index));
         fields.push(decoded.map_err(|e| match e {
             Error::Unsupported(declared) => refused(&declared),
@@ -1062,9 +1117,16 @@ mod tests {
             };
             let json = crate::builtins::json::parse_document(text.as_bytes()).expect("JSON");
             let toml = toml_of(&json).expect("a table");
+            // As json.parse and toml.parse decode it: the type is
+            // refused before the document is read.
+            let target = Target::Record(ty, fields);
+            let whole = |family, decoded: Result<Value, Error>| match refusal(rt, family, &target) {
+                Some(message) => outcome(Err(Error::Other(message))),
+                None => outcome(decoded),
+            };
             let decoded = [
-                outcome(record(rt, ty, fields, &json, &At::Top)),
-                outcome(record(rt, ty, fields, &toml, &At::Top)),
+                whole(Family::Json, record(rt, ty, fields, &json, &At::Top)),
+                whole(Family::Toml, record(rt, ty, fields, &toml, &At::Top)),
             ];
             assert_eq!(decoded[0], decoded[1], "{text}");
             assert!(
