@@ -637,15 +637,23 @@ impl Asked<'_> {
                 .filter(|loc| loc.is_object())
                 .map(|loc| self.location(loc["uri"].as_str().unwrap_or(""), &loc["range"]))
                 .collect(),
-            // The labels offered, sorted.
-            "completion" => result["items"]
-                .as_array()
-                .or_else(|| result.as_array())
-                .map(|a| a.as_slice())
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|item| item["label"].as_str().map(str::to_string))
-                .collect(),
+            // The labels offered that start with the name being typed at
+            // the position, sorted, as an editor shows them. (What else
+            // is offered, such as silt's own modules, depends on the
+            // build's features.)
+            "completion" => {
+                let typed = typed_prefix(entry_text, request.split_whitespace().nth(1));
+                result["items"]
+                    .as_array()
+                    .or_else(|| result.as_array())
+                    .map(|a| a.as_slice())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|item| item["label"].as_str())
+                    .filter(|label| label.starts_with(&typed))
+                    .map(str::to_string)
+                    .collect()
+            }
             "highlight" => result
                 .as_array()
                 .map(|a| a.as_slice())
@@ -727,6 +735,25 @@ impl Asked<'_> {
         lines.sort_by_key(|line| sort_key(line));
         lines.iter().map(|line| format!("{line}\n")).collect()
     }
+}
+
+/// The name being typed in `text` up to the 1-based position `at`
+/// (`L:C`): the letters, digits and `_` right in front of it.
+fn typed_prefix(text: &str, at: Option<&str>) -> String {
+    let Some((line, col)) = at.and_then(|at| at.split_once(':')) else {
+        return String::new();
+    };
+    let (Ok(line), Ok(col)) = (line.parse::<usize>(), col.parse::<usize>()) else {
+        return String::new();
+    };
+    let line_text = text.split('\n').nth(line.saturating_sub(1)).unwrap_or("");
+    let before: String = line_text.chars().take(col.saturating_sub(1)).collect();
+    let typed: Vec<char> = before
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+        .collect();
+    typed.into_iter().rev().collect()
 }
 
 /// `file:line:col...` sorted by file, then by position as numbers.

@@ -21,34 +21,7 @@ main.silt:19:6-19:7
 > type-definition 29:7
 main.silt:19:6-19:7
 > completion 17:10
-bytes
-channel
-crypto
-encoding
-env
-float
-fs
-helpers
-http
-int
-io
-json
 list
-map
-math
-option
-postgres
-regex
-result
-set
-stream
-string
-task
-tcp
-test
-time
-toml
-uuid
 > hover 15:8
 ```silt
 module helpers
