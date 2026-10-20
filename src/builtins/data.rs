@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use crate::typeinfo::{bv, ty};
-use crate::value::Value;
+use crate::value::{Record, Value};
 use crate::vm::VmError;
 
 /// The deepest a value may be nested for a writer: each element of a
@@ -71,7 +71,8 @@ pub(crate) enum Data {
     Json(Box<Data>),
 }
 
-/// A `Date`'s fields. Shown as silt shows a `Date`: `2026-10-19`,
+/// A `Date`'s fields. Shown as the text of a `Date`, the one place it
+/// is decided (a `Date` value displays it too): `2026-10-19`,
 /// `-043-03-15`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Date {
@@ -80,7 +81,8 @@ pub(crate) struct Date {
     pub(crate) day: i64,
 }
 
-/// A `Time`'s fields. Shown as silt shows a `Time`: `12:30:00`, with a
+/// A `Time`'s fields. Shown as the text of a `Time`, the one place it
+/// is decided (a `Time` value displays it too): `12:30:00`, with a
 /// fraction of a second only when it has one, `12:30:00.250000000`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Time {
@@ -92,35 +94,32 @@ pub(crate) struct Time {
 
 /// The `Int` field `name` of `record`, or 0. (A record of a builtin
 /// type of time holds an `Int` in each field.)
-fn int(record: Option<&Value>, name: &str) -> i64 {
-    match record {
-        Some(Value::Record(record)) => match record.get(name) {
-            Some(Value::Int(n)) => *n,
-            _ => 0,
-        },
+fn int(record: &Record, name: &str) -> i64 {
+    match record.get(name) {
+        Some(Value::Int(n)) => *n,
         _ => 0,
     }
 }
 
 impl Date {
-    /// The fields of `date`, a `Date`.
-    pub(crate) fn of(date: Option<&Value>) -> Date {
+    /// The fields of `record`, a `Date`.
+    pub(crate) fn of(record: &Record) -> Date {
         Date {
-            year: int(date, "year"),
-            month: int(date, "month"),
-            day: int(date, "day"),
+            year: int(record, "year"),
+            month: int(record, "month"),
+            day: int(record, "day"),
         }
     }
 }
 
 impl Time {
-    /// The fields of `time`, a `Time`.
-    pub(crate) fn of(time: Option<&Value>) -> Time {
+    /// The fields of `record`, a `Time`.
+    pub(crate) fn of(record: &Record) -> Time {
         Time {
-            hour: int(time, "hour"),
-            minute: int(time, "minute"),
-            second: int(time, "second"),
-            ns: int(time, "ns"),
+            hour: int(record, "hour"),
+            minute: int(record, "minute"),
+            second: int(record, "second"),
+            ns: int(record, "ns"),
         }
     }
 }
@@ -141,9 +140,9 @@ impl std::fmt::Display for Time {
             ns,
         } = self;
         write!(f, "{hour:02}:{minute:02}:{second:02}")?;
-        match ns {
-            0 => Ok(()),
-            ns => write!(f, ".{ns:09}"),
+        match *ns > 0 {
+            true => write!(f, ".{ns:09}"),
+            false => Ok(()),
         }
     }
 }
@@ -273,10 +272,16 @@ impl Writer<'_> {
                     vs.iter().map(|v| inner(v, Place::Element)).collect();
                 Data::Tuple(items?)
             }
-            Value::Record(record) if record.type_id() == ty::DATE => Data::Date(Date::of(Some(v))),
-            Value::Record(record) if record.type_id() == ty::TIME => Data::Time(Time::of(Some(v))),
+            Value::Record(record) if record.type_id() == ty::DATE => Data::Date(Date::of(record)),
+            Value::Record(record) if record.type_id() == ty::TIME => Data::Time(Time::of(record)),
             Value::Record(record) if record.type_id() == ty::DATE_TIME => {
-                Data::DateTime(Date::of(record.get("date")), Time::of(record.get("time")))
+                match (record.get("date"), record.get("time")) {
+                    (Some(Value::Record(date)), Some(Value::Record(time))) => {
+                        Data::DateTime(Date::of(date), Time::of(time))
+                    }
+                    // (A `DateTime` holds a `Date` and a `Time`.)
+                    _ => return Err(refused(self.caller, v)),
+                }
             }
             Value::Record(record) => {
                 let members: Result<Vec<_>, VmError> = record
