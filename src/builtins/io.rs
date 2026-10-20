@@ -10,6 +10,8 @@ use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
 use crate::vm::{Step, VmError};
 
+mod glob_walk;
+
 /// Program arguments forwarded by the CLI for `io.args()`.
 ///
 /// The CLI subcommands (`silt run`, `silt check`, `silt disasm`, plus the
@@ -73,8 +75,7 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
 /// `MAX_RANGE_MATERIALIZE` in `src/value/mod.rs`: keep recursive traversal
-/// bounded so a sprawling filesystem (or an accidental symlink cycle that
-/// the `glob` crate follows) cannot silently OOM the VM. Hitting the cap
+/// bounded so a sprawling filesystem cannot silently OOM the VM. Hitting the cap
 /// surfaces as `Err("fs.walk: exceeded N entries (cap)")` so users can
 /// paginate or narrow their root instead of getting a crash.
 const MAX_FS_WALK_ENTRIES: usize = 1_000_000;
@@ -339,6 +340,14 @@ pub(crate) mod fs {
             // for build tooling (a symlink loop in node_modules should not
             // hang a build).
             let walker = walkdir::WalkDir::new(root).follow_links(false);
+            // Each path is shown absolute, so callers can pass it
+            // straight into other fs.* calls without worrying about cwd
+            // drift: the root with its own links resolved (walkdir goes
+            // into a root that is a link), joined with the entry's path
+            // below it. A link inside the tree is so shown as itself,
+            // never as the path it leads to.
+            let base = std::path::Path::new(root);
+            let shown_root = crate::source::canonical_path(base);
             let mut out: Vec<Value> = Vec::new();
             for entry in walker {
                 let entry = match entry {
@@ -359,23 +368,18 @@ pub(crate) mod fs {
                         "fs.walk: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
                     ));
                 }
-                // Use absolute path where possible so callers can
-                // pass the result straight into other fs.* calls
-                // without worrying about cwd drift. Fall back to
-                // the raw path if canonicalize fails (e.g. the
-                // entry was already removed between the walk and
-                // this call — a classic TOCTOU race — or it lives
-                // in a directory we don't have read access to).
-                let path = entry.path();
-                let absolute = std::fs::canonicalize(path);
-                let shown = absolute.as_deref().unwrap_or(path).to_string_lossy();
-                out.push(Value::String(shown.into_owned().into()));
+                let shown = match entry.path().strip_prefix(base) {
+                    Ok(below) if below.as_os_str().is_empty() => shown_root.clone(),
+                    Ok(below) => shown_root.join(below),
+                    Err(_) => entry.path().to_path_buf(),
+                };
+                out.push(Value::String(shown.to_string_lossy().into_owned().into()));
             }
             fs_ok(Value::list(out))
         }
 
         fn glob(pattern: &str) -> Value {
-            let paths = match glob::glob(pattern) {
+            let paths = match super::glob_walk::matches(pattern) {
                 Ok(paths) => paths,
                 // PatternError (bad glob pattern) is a user-input problem;
                 // route to InvalidInput so callers can distinguish
@@ -396,8 +400,7 @@ pub(crate) mod fs {
                 }
                 match entry {
                     Ok(path) => out.push(Value::String(path.to_string_lossy().into_owned().into())),
-                    // glob's per-entry error wraps std::io::Error.
-                    Err(e) => return io_result_err(e.error(), pattern),
+                    Err(e) => return io_result_err(&e, pattern),
                 }
             }
             fs_ok(Value::list(out))

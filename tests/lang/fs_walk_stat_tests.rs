@@ -274,6 +274,121 @@ fn main() {{
     }
 }
 
+/// The paths `call` (`fs.walk(...)` or `fs.glob(...)`) gives, sorted,
+/// one per line.
+fn sorted_paths(call: &str) -> String {
+    let input = format!(
+        r#"
+import fs
+import list
+import string
+fn main() {{
+    match {call} {{
+        Ok(paths) -> string.join(list.sort(paths), "\n")
+        Err(e) -> "Err: {{e.message()}}"
+    }}
+}}
+"#
+    );
+    match run(&input) {
+        Value::String(s) => s.to_string(),
+        other => panic!("expected a String, got {other:?}"),
+    }
+}
+
+/// A tree with a link to a file outside it, a link to a directory
+/// outside it and a link to itself:
+///   <dir>/tree/own.txt
+///   <dir>/tree/file -> ../outside/keep.txt
+///   <dir>/tree/dir -> ../outside
+///   <dir>/tree/self -> .
+///   <dir>/outside/keep.txt
+#[cfg(unix)]
+fn tree_with_links(dir: &TempDir) -> PathBuf {
+    let tree = dir.path().join("tree");
+    std::fs::create_dir(&tree).unwrap();
+    std::fs::create_dir(dir.path().join("outside")).unwrap();
+    std::fs::write(tree.join("own.txt"), "own").unwrap();
+    std::fs::write(dir.path().join("outside/keep.txt"), "keep").unwrap();
+    std::os::unix::fs::symlink("../outside/keep.txt", tree.join("file")).unwrap();
+    std::os::unix::fs::symlink("../outside", tree.join("dir")).unwrap();
+    std::os::unix::fs::symlink(".", tree.join("self")).unwrap();
+    tree
+}
+
+/// fs.walk lists a link inside the tree as itself, never as the path
+/// it leads to (which lies outside the tree), and goes into no linked
+/// directory.
+#[cfg(unix)]
+#[test]
+fn test_fs_walk_lists_a_link_as_itself() {
+    let dir = TempDir::new("walk_links");
+    let tree = tree_with_links(&dir);
+    let root = std::fs::canonicalize(&tree).unwrap();
+    let root = root.to_string_lossy();
+    let walked = sorted_paths(&format!("fs.walk(\"{}\")", tree.to_string_lossy()));
+    assert_eq!(
+        walked,
+        format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self"),
+    );
+}
+
+/// fs.walk shows every path as the root, its own links resolved, joined
+/// with the path below it: a root given through a link and relative
+/// parts (`tree/../tree`) give the same absolute paths.
+#[cfg(unix)]
+#[test]
+fn test_fs_walk_resolves_only_the_root() {
+    let dir = TempDir::new("walk_root");
+    let tree = tree_with_links(&dir);
+    std::os::unix::fs::symlink("tree", dir.path().join("alias")).unwrap();
+    let root = std::fs::canonicalize(&tree).unwrap();
+    let root = root.to_string_lossy();
+    let expected = format!("{root}\n{root}/dir\n{root}/file\n{root}/own.txt\n{root}/self");
+    let base = dir.as_silt_str();
+    for given in [format!("{base}/alias"), format!("{base}/tree/../tree")] {
+        assert_eq!(
+            sorted_paths(&format!("fs.walk(\"{given}\")")),
+            expected,
+            "{given}"
+        );
+    }
+}
+
+/// fs.glob's `**` and `*` go into no linked directory: a link to the
+/// tree itself does not make `**` loop, and one to a directory outside
+/// does not reach into it. A link is matched by its own name.
+#[cfg(unix)]
+#[test]
+fn test_fs_glob_goes_into_no_linked_directory() {
+    let dir = TempDir::new("glob_links");
+    let tree = tree_with_links(&dir);
+    let tree = tree.to_string_lossy();
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/**/*.txt\")")),
+        format!("{tree}/own.txt"),
+    );
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/*/*.txt\")")),
+        String::new(),
+    );
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/*\")")),
+        format!("{tree}/dir\n{tree}/file\n{tree}/own.txt\n{tree}/self"),
+    );
+    // A pattern ending in `**` matches the directories below, and a
+    // link is none.
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/**\")")),
+        String::new()
+    );
+    // A link written in the pattern is followed, as the system does.
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{tree}/dir/*.txt\")")),
+        format!("{tree}/dir/keep.txt"),
+    );
+}
+
 // ── fs.read_link / fs.is_symlink ───────────────────────────────────
 
 #[cfg(unix)]
