@@ -450,13 +450,13 @@ fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
     }
     if ns >= HOUR {
         write!(f, "{}h", ns / HOUR)?;
-        if ns % HOUR == 0 {
+        if ns.is_multiple_of(HOUR) {
             return Ok(());
         }
     }
     if ns >= MINUTE {
         write!(f, "{}m", ns % HOUR / MINUTE)?;
-        if ns % MINUTE == 0 {
+        if ns.is_multiple_of(MINUTE) {
             return Ok(());
         }
     }
@@ -473,7 +473,7 @@ fn write_fraction(f: &mut fmt::Formatter<'_>, rest: u64, per: u64) -> fmt::Resul
         return Ok(());
     }
     let (mut digits, mut step) = (per.ilog10() as usize, 1);
-    while digits > 3 && rest % (step * 1_000) == 0 {
+    while digits > 3 && rest.is_multiple_of(step * 1_000) {
         digits -= 3;
         step *= 1_000;
     }
