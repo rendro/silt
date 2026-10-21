@@ -26,7 +26,12 @@ impl TypeChecker {
     /// is its own too.
     fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
         Type::show_all(types, |r, clash| {
-            (clash || (session && self.type_name_clashes(r))).then(|| self.qualified_type(r))
+            let of_module = self.qualify_module_types
+                && crate::defs::builtin_types()
+                    .get(r.id.0.0 as usize)
+                    .is_some_and(|(_, module)| module.is_some());
+            (clash || of_module || (session && self.type_name_clashes(r)))
+                .then(|| self.qualified_type(r))
         })
     }
 

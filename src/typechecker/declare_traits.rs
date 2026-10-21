@@ -1630,13 +1630,23 @@ impl TypeChecker {
                     self.impl_method_receiver(ti, method);
                     written
                 }
-                Some(expected) => match self.unify_types(&written, expected) {
-                    Ok(()) => expected.clone(),
-                    Err(mismatch) => {
-                        self.report_mismatch(mismatch, method.span);
-                        written
+                Some(expected) => {
+                    // (The method of a builtin module's trait is written
+                    // with the module's types: a message names them so,
+                    // `json.Value`.)
+                    let of_module = crate::defs::builtin_trait_of_id(trait_key.id.0)
+                        .is_some_and(|(_, module)| module.is_some());
+                    self.qualify_module_types = of_module;
+                    let unified = self.unify_types(&written, expected);
+                    self.qualify_module_types = false;
+                    match unified {
+                        Ok(()) => expected.clone(),
+                        Err(mismatch) => {
+                            self.report_mismatch(mismatch, method.span);
+                            written
+                        }
                     }
-                },
+                }
                 None => written,
             };
             // Callers see the declared type.

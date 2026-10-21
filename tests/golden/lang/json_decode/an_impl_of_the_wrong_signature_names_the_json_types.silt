@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- An impl's method of a json trait of the wrong type is reported with
+-- the json module's types written with the module (`json.Value`,
+-- `json.JsonError`), as the trait declares them, for json.Decode and
+-- json.Encode alike.
+import json
+
+type A { n: Int }
+
+trait json.Encode for A {
+  fn encode(self) -> String { "x" }
+}
+
+type B { n: Int }
+
+trait json.Decode for B {
+  fn decode(value: String) -> Result(Self, json.JsonError) { Ok(B { n: 1 }) }
+}
+
+type C { n: Int }
+
+trait json.Decode for C {
+  fn decode(value: json.Value) -> Result(Self, String) { Ok(C { n: 1 }) }
+}
+
+fn main() {}
