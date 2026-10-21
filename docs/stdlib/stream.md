@@ -143,6 +143,13 @@ fn main() {
   an item that nobody takes any more. (A source that is stopped before
   it has read anything leaves the connection as it is.) Read with
   `tcp.read` if the connection is to be used afterwards.
+- **A read or a write of a source or a sink waits for I/O**, and
+  `SILT_IO_TIMEOUT` ends it as it ends any wait for I/O (see
+  [I/O timeouts](../concurrency.md#io-timeouts-silt_io_timeout)): a
+  source ends with its module's timeout error as its last item
+  (`Err(Timeout)` of a connection, which is shut down then), a sink
+  returns it. So does a read or a write that the I/O pool could not run:
+  the source ends with that error, not as if its input had ended.
 - **A stream that you stop reading goes on.** A stream that is read by
   hand (`channel.receive`, `channel.select`) and then left is still at
   work: its stages run until their outputs are full or the source is at

@@ -23,7 +23,7 @@ use crate::typeinfo::bv;
 use crate::typeinfo::{BuiltinVariant, ty};
 use crate::value::Value;
 #[cfg(feature = "http")]
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::{Leave, Limit, Step, Vm, VmError};
 #[cfg(feature = "http")]
 use parking_lot::Mutex;
 
@@ -963,8 +963,10 @@ impl Conn {
         let (result, announced) = (got.clone(), body_follows.clone());
         let (server, pending) = (self.server.clone(), self.pending.clone());
         let scheduler = vm.scheduler().clone();
-        let op = vm
-            .start_io(not_served, move || {
+        let op = vm.io_op(
+            not_served,
+            Leave::interrupts(move |_| stopped.shut_down()),
+            move |_| {
                 let mut before_body = |waits: bool| {
                     let _ = announced.complete((), scheduler.wake());
                     // The interim response is written like everything
@@ -998,10 +1000,10 @@ impl Conn {
                 let held = Held(server, pending.swap(0, Ordering::AcqRel));
                 *result.lock() = Some(Got::of(next, held));
                 Value::Unit
-            })
-            .stop_with(move || stopped.shut_down());
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone()), Arm::Cell(body_follows)])
-            .deadline(vm.runtime.io.deadline_after(wire::REQUEST_TIME));
+            },
+        );
+        let mut wait = op.wait(vm, Limit::Own(wire::REQUEST_TIME));
+        wait.arms.push(Arm::Cell(body_follows));
         self.state = ConnState::Reading {
             op,
             got,
@@ -1025,13 +1027,12 @@ impl Conn {
             return Conn::END;
         }
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
-        let op = vm
-            .start_io(not_served, move || {
-                Value::Bool(stream.write_all(&bytes[written..]).is_ok())
-            })
-            .stop_with(move || stopped.shut_down());
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-            .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
+        let op = vm.io_op(
+            not_served,
+            Leave::interrupts(move |_| stopped.shut_down()),
+            move |_| Value::Bool(stream.write_all(&bytes[written..]).is_ok()),
+        );
+        let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
         self.state = ConnState::Sending { op, then };
         Go::Step(Step::Park(wait))
     }
@@ -1054,16 +1055,17 @@ impl Conn {
     /// at most [`wire::REFUSAL_TIME`]. Then the connection is closed.
     fn drain(&mut self, vm: &mut Vm) -> Step {
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
-        let op = vm
-            .start_io(not_served, move || {
+        let op = vm.io_op(
+            not_served,
+            Leave::interrupts(move |_| stopped.shut_down()),
+            move |_| {
                 stream.end_writes();
                 let mut dropped = [0u8; 8 * 1024];
                 while matches!(stream.read(&mut dropped), Ok(n) if n > 0) {}
                 Value::Unit
-            })
-            .stop_with(move || stopped.shut_down());
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-            .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
+            },
+        );
+        let wait = op.wait(vm, Limit::Own(wire::REFUSAL_TIME));
         self.state = ConnState::Draining(op);
         Step::Park(wait)
     }
@@ -1130,8 +1132,7 @@ impl Conn {
             ConnState::Reading { op, got, in_body } => match vm.woken()? {
                 // The head is there: the body has its own time.
                 Fired::Arm(1, _) if !in_body => {
-                    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-                        .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
+                    let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
                     self.state = ConnState::Reading {
                         op,
                         got,
@@ -1165,8 +1166,7 @@ impl Conn {
                         // out: the reader reads on, and the client is
                         // heard out.
                         let _ = self.stream.write_last_in_turn(&bytes);
-                        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-                            .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
+                        let wait = op.wait(vm, Limit::Own(wire::REFUSAL_TIME));
                         self.state = ConnState::Draining(op);
                         Go::Step(Step::Park(wait))
                     }
@@ -1180,8 +1180,7 @@ impl Conn {
             }
             ConnState::Answering { bytes, then } => self.send(vm, bytes, then),
             ConnState::Sending { op, then } => {
-                let sent = matches!(vm.woken()?, Fired::Arm(..))
-                    && matches!(op.take(), Some(Value::Bool(true)));
+                let sent = matches!(op.outcome(&vm.woken()?), Some(Value::Bool(true)));
                 drop(op);
                 match sent {
                     true => self.sent(vm, then),
@@ -1364,7 +1363,7 @@ impl crate::vm::Native for Serve {
                 vm.woken()?;
             }
             ServeState::Accepting(op) => {
-                vm.woken()?;
+                let fired = vm.woken()?;
                 // A server whose task was cancelled takes no connection
                 // more, though the task still runs for some steps: the
                 // one its accept was given is left with the operation,
@@ -1375,7 +1374,7 @@ impl crate::vm::Native for Serve {
                     drop(op);
                     return Ok(Step::Park(Vm::no_wait()));
                 }
-                let accepted = op.take();
+                let accepted = op.outcome(&fired);
                 drop(op);
                 let stream = match &accepted {
                     Some(Value::Variant(accepted)) if accepted.is(bv::OK) => {
@@ -1416,7 +1415,7 @@ impl crate::vm::Native for Serve {
             }
         }
         let op = super::tcp::accept_op(vm, &self.listener, true);
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+        let wait = op.wait(vm, Limit::None);
         self.state = ServeState::Accepting(op);
         Ok(Step::Park(wait))
     }
@@ -1460,7 +1459,7 @@ builtins! {
     #[cfg(feature = "http")]
     fn get(vm, url: &str) -> Result<Step, VmError> {
         let url = url.to_string();
-        vm.io("http", http_timeout_err, move || do_http_get(&url))
+        vm.io("http", http_timeout_err, Leave::RunsOut, move |_| do_http_get(&url))
     }
 
     #[cfg(feature = "http")]
@@ -1470,7 +1469,7 @@ builtins! {
             .iter()
             .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
             .collect();
-        vm.io("http", http_timeout_err, move || {
+        vm.io("http", http_timeout_err, Leave::RunsOut, move |_| {
             do_http_request(&method, &url, &body, &headers)
         })
     }

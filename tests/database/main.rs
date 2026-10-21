@@ -245,4 +245,7 @@ cases!(
     a_statement_behind_its_own_unread_stream_fails,
     a_cursor_ends_at_a_batch_that_fails,
     a_statement_right_after_the_server_ends_its_sessions_runs,
+    a_listen_nobody_waits_for_gives_its_connection_back,
+    a_connect_nobody_waits_for_leaves_no_session,
+    a_pool_statement_without_its_connection_is_not_sent,
 );

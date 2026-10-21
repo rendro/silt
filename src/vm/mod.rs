@@ -7,6 +7,7 @@ mod calls;
 pub(crate) mod dispatch;
 pub mod error;
 mod io;
+mod io_op;
 mod iter;
 mod run;
 mod runtime;
@@ -19,10 +20,11 @@ use show::write_plain;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message};
+pub use io_op::IoFailure;
+pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
-pub use runtime::IoFailure;
 pub use runtime::Runtime;
-pub(crate) use runtime::{CallFrame, ErrFactory, Frame, IoOp, Native, Step};
+pub(crate) use runtime::{CallFrame, Frame, Native, Step};
 
 /// Test-only: what a test is told of the writes of a connection that
 /// take their turn, and how it holds one of them in its turn.
@@ -90,10 +92,13 @@ pub fn panic_for_test(vm: &Vm, at: PanicAt) {
 /// callers match on.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value) -> Value {
-    let op = vm.runtime.io_pool.submit(failure, || {
-        panic!("synthetic IO worker panic for round-76 lock");
-    });
-    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+    let op = vm
+        .runtime
+        .io_pool
+        .submit(failure, Vec::new(), io_op::Leave::RunsOut, |_| {
+            panic!("synthetic IO worker panic for round-76 lock");
+        });
+    let wait = op.wait(vm, Limit::None);
     let _ = vm
         .runtime
         .scheduler
@@ -106,10 +111,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::bytecode::{Function, Globals, VmClosure};
-use crate::runtime::sync::{Arm, Fired, Wait};
+use crate::runtime::sync::Fired;
 use crate::scheduler::Scheduler;
 use crate::value::Value;
-use runtime::{IoPool, RegexCache, TailCalls};
+use io_op::IoPool;
+use runtime::{RegexCache, TailCalls};
 
 // ── VM ────────────────────────────────────────────────────────────
 
@@ -230,65 +236,6 @@ impl Drop for Vm {
 }
 
 impl Vm {
-    /// The step of the I/O builtin `name` that runs the blocking
-    /// operation `op` on the I/O pool and waits for its value, which
-    /// is the builtin's: already `Ok(_)` or `Err(_)`.
-    ///
-    /// The wait ends at `SILT_IO_TIMEOUT`, if that is set, with
-    /// `timeout_err`: the typed error the builtin's signature declares.
-    pub(crate) fn io(
-        &mut self,
-        name: &'static str,
-        timeout_err: ErrFactory,
-        op: impl FnOnce() -> Value + Send + 'static,
-    ) -> Result<Step, VmError> {
-        let op = self.start_io(timeout_err, op);
-        self.io_wait(name, timeout_err, op)
-    }
-
-    /// Wait for `op`.
-    pub(crate) fn io_wait(
-        &mut self,
-        name: &'static str,
-        timeout_err: ErrFactory,
-        op: IoOp,
-    ) -> Result<Step, VmError> {
-        self.io_wait_then(name, timeout_err, op, Ok)
-    }
-
-    /// [`Vm::io_wait`] whose value is `then` of the operation's: an
-    /// error of the program that the operation found (a value of the
-    /// program it could not send, say) is `then`'s `Err`.
-    pub(crate) fn io_wait_then(
-        &mut self,
-        name: &'static str,
-        timeout_err: ErrFactory,
-        op: IoOp,
-        then: impl FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
-    ) -> Result<Step, VmError> {
-        let mut then = Some(then);
-        let deadline = self.runtime.scheduler.io_deadline();
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
-        // The frame owns the operation: when the wait is over, however
-        // it ends, the operation has no waiter and no longer counts as
-        // pending for the program (`IoOp`'s `Drop`).
-        Ok(self.park(name, wait, move |_, fired| {
-            // The value is taken only by a wait that it ended: one
-            // that came as the deadline passed stays unheard.
-            let value = match fired {
-                Fired::Arm(..) => op.take(),
-                _ => None,
-            };
-            match (value, then.take()) {
-                (Some(value), Some(then)) => Ok(Step::Done(then(value)?)),
-                (Some(value), None) => Ok(Step::Done(value)),
-                (None, _) => Ok(Step::Done(timeout_err(IoFailure::Timeout(
-                    crate::scheduler::IO_TIMEOUT,
-                )))),
-            }
-        }))
-    }
-
     /// A VM whose programs write to the output of `io` and read its
     /// clock.
     ///

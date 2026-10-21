@@ -1,0 +1,31 @@
+-- requires-feature: tcp-tls
+-- A peer that accepts and never answers holds a TLS handshake of
+-- tcp.connect_tls for ever. Seventy of them are given up at a deadline:
+-- each shuts its socket down when its task no longer waits, as a
+-- handshake of tcp.tls_server does, so its thread ends. A file read
+-- afterwards runs. (Before, the handshakes stayed, 64 of them made every
+-- new I/O operation of the program fail, and the read said so.)
+import io
+import string
+import task
+import tcp
+import time
+
+fn give_up(port: Int, n: Int) {
+  match {
+    n > 0 -> {
+      let _ = task.deadline(time.ms(20)) { -> tcp.connect_tls("127.0.0.1:{port}", "localhost") }
+      give_up(port, n - 1)
+    }
+    _ -> ()
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  give_up(tcp.local_port(listener), 70)
+  match io.read_file("io_op__a_given_up_tls_connect_frees_its_thread.silt") {
+    Ok(text) -> println("read the file: {string.length(text) > 0}")
+    Err(e) -> println("read_file: {e.message()}")
+  }
+}

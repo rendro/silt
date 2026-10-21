@@ -96,3 +96,74 @@ fn main() {
     );
     assert_eq!(code, Some(1), "stderr: {err}");
 }
+
+/// A stream's source waits for I/O like any task: `SILT_IO_TIMEOUT`
+/// ends its wait. The source ends with the module's timeout error as
+/// its last item, and its connection is shut down, as after a
+/// `tcp.read` that timed out: the peer reads the end of it.
+#[test]
+#[cfg(feature = "tcp")]
+fn the_global_io_timeout_ends_the_read_of_a_stream() {
+    let source = r#"import channel
+import bytes
+import stream
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  when let Ok(client) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  when let Ok(peer) = tcp.accept(listener) else { panic("cannot accept") }
+  let lines = stream.tcp_lines(client)
+  match channel.receive(lines) {
+    Some(Err(tcp.Timeout)) -> println("the stream timed out")
+    Some(other) -> println("the stream gave {other}")
+    None -> println("the stream ended")
+  }
+  match channel.receive(lines) {
+    None -> println("and ended")
+    Some(other) -> println("and gave {other}")
+  }
+  match tcp.read(peer, 10) {
+    Ok(got) -> println("the peer read {bytes.length(got)} bytes: the end")
+    Err(e) -> println("the peer: {e.message()}")
+  }
+}
+"#;
+    let (code, out, err) = run_with_io_timeout("stream_source", source, "200ms");
+    assert_eq!(
+        out, "the stream timed out\nand ended\nthe peer read 0 bytes: the end\n",
+        "stderr: {err}"
+    );
+    assert_eq!(code, Some(0), "stderr: {err}");
+}
+
+/// The same for a sink: `stream.write_to_tcp` to a peer that reads
+/// nothing returns the module's timeout error when its write has waited
+/// for `SILT_IO_TIMEOUT`.
+#[test]
+#[cfg(feature = "tcp")]
+fn the_global_io_timeout_ends_the_write_of_a_stream() {
+    let source = r#"import bytes
+import stream
+import string
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  when let Ok(client) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
+  when let Ok(_peer) = tcp.accept(listener) else { panic("cannot accept") }
+  let chunk = bytes.from_string(string.repeat("x", 1048576))
+  let chunks = stream.take(stream.repeat(chunk), 64)
+  match stream.write_to_tcp(chunks, client) {
+    Err(tcp.Timeout) -> println("the write timed out")
+    Ok(_) -> println("all was written")
+    Err(e) -> println("the write: {e.message()}")
+  }
+}
+"#;
+    let (code, out, err) = run_with_io_timeout("stream_sink", source, "200ms");
+    assert_eq!(out, "the write timed out\n", "stderr: {err}");
+    assert_eq!(code, Some(0), "stderr: {err}");
+}

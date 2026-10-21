@@ -513,3 +513,65 @@ fn main() {{
     no_thread_is_left_in_an_operation(&vm);
     drop(vm);
 }
+
+/// A listener whose queue of connections that wait to be accepted is
+/// full: a connect to it waits in the system, for minutes. The
+/// connections that fill it are returned, to be held.
+#[cfg(all(feature = "tcp-tls", target_os = "linux"))]
+fn full_listener() -> (TcpListener, Vec<TcpStream>, String) {
+    let (listener, addr) = listener();
+    let at = listener.local_addr().expect("local_addr");
+    let mut held = Vec::new();
+    while let Ok(conn) = TcpStream::connect_timeout(&at, Duration::from_millis(200)) {
+        held.push(conn);
+        assert!(held.len() < 10_000, "the listener's queue does not fill");
+    }
+    (listener, held, addr)
+}
+
+/// A `tcp.connect_tls` given up while its TCP connect still waits (the
+/// listener's queue is full) has no socket to shut down yet: the
+/// connect runs on, and counts among the operations that nobody waits
+/// for and that cannot be interrupted, of which there may be 64. So the
+/// program does not take a thread for each of a hundred: from the 65th
+/// on an operation is refused, the file read at the end too. (Before,
+/// such a connect stopped counting at once, and every one of them held
+/// a thread for the minutes its connect waited.)
+#[test]
+#[cfg(all(feature = "tcp-tls", target_os = "linux"))]
+fn a_tls_connect_given_up_before_its_socket_counts_until_it_ends() {
+    let (_listener, _held, addr) = full_listener();
+    let file = temp_file("tls_connect_bound.txt", "text");
+    let source = format!(
+        r#"
+import io
+import task
+import tcp
+import time
+
+fn tries(n: Int) {{
+  match {{
+    n > 0 -> {{
+      let _ = task.deadline(time.ms(2)) {{ -> tcp.connect_tls("{addr}", "localhost") }}
+      tries(n - 1)
+    }}
+    _ -> ()
+  }}
+}}
+
+fn main() {{
+  tries(100)
+  match io.read_file("{file}") {{
+    Ok(_) -> println("read the file")
+    Err(e) -> println(e.message())
+  }}
+}}
+"#
+    );
+    let (_vm, out) = run(&source).expect("the program ended");
+    assert_eq!(
+        out,
+        "too many I/O operations that nobody waits for are still running (64); \
+         they cannot be interrupted\n"
+    );
+}

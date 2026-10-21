@@ -1310,18 +1310,26 @@ Setting `SILT_IO_TIMEOUT=5s` makes every I/O
 builtin that blocks longer than that duration return the module's own typed
 timeout variant instead of its normal value:
 
-- `io.*` and `fs.*` surface `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
+- `io.*` surfaces `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`. (The `fs`
+  functions never wait for the I/O pool: they are not ended by it.)
 - `tcp.*` surfaces `Err(Timeout)`.
 - `http.*` surfaces `Err(Timeout)`.
 - `postgres.*` surfaces `Err(Timeout)`: a connect, each statement, and
   in `postgres.transact` the wait for a connection with its `BEGIN`.
   The wait for its `COMMIT` or `ROLLBACK` has no such end, so that an
   `Err` never stands for a transaction that was committed.
+- The `stream` functions that read or write a file or a connection
+  (`stream.file_lines`, `stream.file_chunks`, `stream.write_to_file`,
+  `stream.tcp_lines`, `stream.tcp_chunks`, `stream.write_to_tcp`) wait
+  for I/O too: a source whose read times out ends with its module's error
+  as its last item, a sink returns it.
 
 The timeout is *invisible* at the language surface — no new syntax, no
 colored functions — because every I/O builtin already returns `Result` with
 the matching typed error enum. It is for waits for I/O only: a `time.sleep`
-or a wait on a channel is not I/O and is not ended by it.
+or a wait on a channel is not I/O and is not ended by it. (The connections
+of `http.serve` have the server's own times instead, see
+[http](stdlib/http.md).)
 
 Accepted format: a suffixed duration only — `5s`, `500ms`, `2m`, `1h`.
 A bare integer with no unit (e.g. `SILT_IO_TIMEOUT=5000`) is NOT accepted; it
@@ -1362,36 +1370,42 @@ request or sends a response.)
 
 A task stops waiting for its operation when `SILT_IO_TIMEOUT` passes,
 when it is cancelled by `task.cancel`, when it is the function of a
-`task.deadline` whose time is up, or when it is
-dropped at the end of the program. It resumes, or ends, at that moment.
-What becomes of the operation depends on what it is:
+`task.deadline` whose time is up, or when it is dropped at the end of
+the program. It resumes, or ends, at that moment, and from the moment of
+the cancel or the deadline its operation is not wanted any more: an
+operation that would take something it cannot put back (a client, a
+connection of a database pool) and finds its task gone takes nothing.
+What becomes of the operation is one rule for each kind of operation:
 
-- **On a TCP connection** (`tcp.read`, `tcp.read_exact`, `tcp.write`, the
-  `stream.tcp_*` sources and sink): the connection is **shut down**, as by
-  `tcp.close`, which makes the operation return and frees its thread.
-  The connection cannot be used afterwards: a read that timed out cannot
-  be tried again. Give a read the time the peer may really take, and
-  treat a timeout as the end of the connection. An operation whose
-  result arrives in the very moment its task stops waiting loses it; the
-  connection is shut down all the same.
-- **`tcp.accept`**: the accept is woken and gives up; the listener
-  stays usable, and a client's connection that reached the accept as it
-  was given up is kept by the listener for the next accept (it is closed
-  with the listener if none comes). (An accept that waits costs nothing: its thread sleeps
-  in the system until a connection comes. To wake it the listener
-  connects to its own port on the loopback address; where that is not
-  possible, say a packet filter forbids it, the thread stays until a
-  client connects.)
-- **Everything else** (file I/O, `http.get`, `tcp.connect`,
-  `io.read_line`): the operation cannot be interrupted. It runs to its
-  end in the background and its result is discarded; a write that had
-  started completes. Its thread no longer counts as one of the pool's, so
-  operations that never return (a read of a terminal nobody types at) do
-  not use the pool up. An operation that had not started yet never runs.
-  Such stuck operations have a bound of their own, 64: while that many
-  are still running unheard, every new I/O operation fails at once with
-  an error that says so, instead of the program taking a thread for each
-  without end.
+| Operation | What becomes of it when nobody waits for it |
+|---|---|
+| `tcp.read`, `tcp.read_exact`, `tcp.write`, the TLS handshakes of `tcp.connect_tls`, `tcp.tls_server` and `tcp.tls_server_mtls`, and the `stream.tcp_*` sources and sink | The connection is **shut down**, as by `tcp.close`, which makes the operation return and frees its thread. |
+| `tcp.accept`, and the accept of `http.serve` | The accept is woken and gives up; the listener stays usable. A client's connection that reached it is kept by the listener for the next accept. |
+| `postgres.query`, `postgres.execute`, `postgres.notify` and the cursor functions, the `BEGIN` of `postgres.transact`, the `LISTEN` of `postgres.listen` | One that has no connection yet is **never sent**, and the connection goes back to the pool. One that has it: on a pool it is left to finish; in a transaction the server is asked to cancel it, and the transaction is aborted (see [postgres](stdlib/postgres.md)). |
+| `postgres.connect`, `postgres.listen` that were done all the same | What they made is nobody's and is closed: the pool, the listener (its connection goes back to the pool). |
+| `tcp.connect` and the TCP connect of `tcp.connect_tls` (its handshake has not begun), `http.get`, `http.request`, `io.read_file`, `io.write_file`, `io.read_line`, `stream.file_*`, `stream.write_to_file` | It **cannot be interrupted**: it runs to its end, and its result is dropped. A write that had started completes, and a line that `io.read_line` reads afterwards is nobody's. |
+
+In every case an operation that had not started yet never runs, and an
+operation whose result arrives in the very moment its task stops waiting
+counts as not taken: a connection is shut down all the same, a client
+is kept, a pool is closed.
+
+On a connection the rule means that the connection cannot be used after
+a timeout: a read that timed out cannot be tried again. Give a read the
+time the peer may really take, and treat a timeout as the end of the
+connection.
+
+An accept that waits costs nothing: its thread sleeps in the system
+until a connection comes. To wake it the listener connects to its own
+port on the loopback address; where that is not possible, say a packet
+filter forbids it, the thread stays until a client connects.
+
+An operation that cannot be interrupted no longer counts as one of the
+pool's while it runs on, so operations that never return (a read of a
+terminal nobody types at) do not use the pool up. Such stuck operations
+have a bound of their own, 64: while that many are still running
+unheard, every new I/O operation fails at once with an error that says
+so, instead of the program taking a thread for each without end.
 
 ### Blocking operations
 

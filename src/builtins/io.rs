@@ -8,7 +8,7 @@ use super::typed::builtins;
 use crate::builtins::time::make_datetime;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{Step, VmError};
+use crate::vm::{Leave, Step, VmError};
 
 mod glob_walk;
 
@@ -183,7 +183,7 @@ builtins! {
 
     fn read_file(vm, path: &str) -> Result<Step, VmError> {
         let path = path.to_string();
-        vm.io("io.read_file", io_unknown_err, move || {
+        vm.io("io.read_file", io_unknown_err, Leave::RunsOut, move |_| {
             result(std::fs::read_to_string(&path), &path, |text| {
                 Value::String(text.into())
             })
@@ -192,13 +192,13 @@ builtins! {
 
     fn write_file(vm, path: &str, contents: &str) -> Result<Step, VmError> {
         let (path, contents) = (path.to_string(), contents.to_string());
-        vm.io("io.write_file", io_unknown_err, move || {
+        vm.io("io.write_file", io_unknown_err, Leave::RunsOut, move |_| {
             result(std::fs::write(&path, &contents), &path, unit)
         })
     }
 
     fn read_line(vm) -> Result<Step, VmError> {
-        vm.io("io.read_line", io_unknown_err, move || {
+        vm.io("io.read_line", io_unknown_err, Leave::RunsOut, move |_| {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
                 // Ok(0) means EOF — surface as Err(UnexpectedEof) so

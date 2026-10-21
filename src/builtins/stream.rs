@@ -36,7 +36,7 @@ use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{IoOp, Native, Step, Vm, VmError};
+use crate::vm::{IoOp, Leave, Limit, Native, Step, Vm, VmError};
 
 const DEFAULT_CAPACITY: usize = 16;
 
@@ -69,9 +69,9 @@ enum Next {
     Emit(Value),
     /// Call a function with arguments.
     Call(Value, Vec<Value>),
-    /// Run a blocking operation on the I/O pool. If the pipe is
-    /// dropped while it runs, the second is called to make it return.
-    Io(Box<dyn FnOnce() -> Value + Send>, Option<Stop>),
+    /// Run a blocking operation on the I/O pool, on what `On` says,
+    /// until `SILT_IO_TIMEOUT` at most.
+    Io(Box<dyn FnOnce() -> Value + Send>, On),
     /// It is finished. A sink's value; a stage's is ignored.
     Done(Value),
 }
@@ -81,6 +81,22 @@ enum Next {
 /// What makes the blocking operations of a source or a sink return
 /// when nobody waits for them any more (a connection is shut down).
 type Stop = Arc<dyn Fn() + Send + Sync>;
+
+/// What the blocking operations of a source or a sink work on: the
+/// typed error of its module, for an operation that could not run, and
+/// what makes it return when nobody waits for it any more (`None`: it
+/// runs out).
+#[derive(Clone)]
+struct On {
+    failure: crate::vm::ErrFactory,
+    stop: Option<Stop>,
+}
+
+/// What a source or a sink of a file works on.
+const ON_A_FILE: On = On {
+    failure: io_failure,
+    stop: None,
+};
 
 type Logic = Box<dyn FnMut(Got) -> Result<Next, VmError> + Send>;
 
@@ -216,10 +232,8 @@ impl Native for Pipe {
                     return Ok(Step::Done(Value::Unit));
                 }
             },
-            State::Io(op) => {
-                vm.woken()?;
-                Got::Io(op.cell.get().cloned().unwrap_or(Value::Unit))
-            }
+            // The value, or the module's error at `SILT_IO_TIMEOUT`.
+            State::Io(op) => Got::Io(op.value(&vm.woken()?)),
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
@@ -283,13 +297,22 @@ impl Native for Pipe {
                     self.state = State::Calling;
                     return Ok(vm.call(callee, args));
                 }
-                Next::Io(operation, stop) => {
-                    let mut op = vm.start_io(io_failure, operation);
-                    if let Some(stop) = stop {
-                        self.stop = Some(stop.clone());
-                        op = op.stop_with(move || stop());
-                    }
-                    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+                Next::Io(operation, On { failure, stop }) => {
+                    // An operation on a connection that ends without its
+                    // value reaching the pipe ends the connection, as a
+                    // `tcp.read` does.
+                    let leave = match stop {
+                        Some(stop) => {
+                            self.stop = Some(stop.clone());
+                            Leave::Closes(Box::new(move || {
+                                stop();
+                                true
+                            }))
+                        }
+                        None => Leave::RunsOut,
+                    };
+                    let op = vm.io_op(failure, leave, move |_| operation());
+                    let wait = op.wait(vm, Limit::Io);
                     self.state = State::Io(op);
                     return Ok(Step::Park(wait));
                 }
@@ -425,20 +448,25 @@ fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     )
 }
 
-/// For a source or a sink on `stream`: its operations return when the
-/// connection is shut down.
+/// What a source or a sink on `stream` works on: its errors are
+/// `TcpError`s, and its operations return when the connection is shut
+/// down.
 #[cfg(feature = "tcp")]
-fn stopper(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> Option<Stop> {
+fn on_tcp(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> On {
     let stream = stream.clone();
-    Some(Arc::new(move || stream.shut_down()))
+    On {
+        failure: super::tcp::tcp_timeout_err,
+        stop: Some(Arc::new(move || stream.shut_down())),
+    }
 }
 
 /// A source that reads from something that blocks: `read` gives the
-/// next item, `None` at the end. An `Err(_)` item is the last.
+/// next item, `None` at the end. An `Err(_)` item is the last; so is
+/// the error of a read that could not run (`on`'s failure).
 fn reading(
     vm: &mut Vm,
     name: &'static str,
-    stop: Option<Stop>,
+    on: On,
     read: impl FnMut() -> Option<Value> + Send + 'static,
 ) -> Result<Step, VmError> {
     let read = Arc::new(Mutex::new(read));
@@ -452,13 +480,18 @@ fn reading(
                         Some(item) => Value::variant(bv::SOME, vec![item]),
                         None => Value::variant(bv::NONE, vec![]),
                     }),
-                    stop.clone(),
+                    on.clone(),
                 )
             }
             Got::Io(Value::Variant(read)) if read.is(bv::SOME) => {
                 let item = read.fields().last().cloned().unwrap_or(Value::Unit);
                 failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
                 Next::Emit(item)
+            }
+            // The read could not run.
+            Got::Io(Value::Variant(error)) if error.is(bv::ERR) => {
+                failed = true;
+                Next::Emit(Value::Variant(error))
             }
             _ => Next::Done(Value::Unit),
         })
@@ -517,7 +550,7 @@ fn bytes_to_write(v: Value, name: &str) -> Result<Result<Arc<Vec<u8>>, Value>, V
 fn writing(
     name: &'static str,
     ch: Arc<Channel>,
-    stop: Option<Stop>,
+    on: On,
     write: impl FnMut(Option<&[u8]>) -> Result<(), Value> + Send + 'static,
 ) -> Result<Step, VmError> {
     let write = Arc::new(Mutex::new(write));
@@ -532,7 +565,7 @@ fn writing(
                         Err(e) => e,
                     },
                 ),
-                stop.clone(),
+                on.clone(),
             )
         };
         Ok(match got {
@@ -623,7 +656,7 @@ builtins! {
         };
         let path = path.to_string();
         let mut file: Option<std::fs::File> = None;
-        reading(vm, "stream.file_chunks", None, move || {
+        reading(vm, "stream.file_chunks", ON_A_FILE, move || {
             use std::io::{Read, Seek};
             if file.is_none() {
                 match std::fs::File::open(&path) {
@@ -659,7 +692,7 @@ builtins! {
     fn file_lines(vm, path: &str) -> Result<Step, VmError> {
         let path = path.to_string();
         let mut lines: Option<std::io::Lines<std::io::BufReader<std::fs::File>>> = None;
-        reading(vm, "stream.file_lines", None, move || {
+        reading(vm, "stream.file_lines", ON_A_FILE, move || {
             use std::io::BufRead;
             if lines.is_none() {
                 match std::fs::File::open(&path) {
@@ -683,7 +716,7 @@ builtins! {
         reading(
             vm,
             "stream.tcp_chunks",
-            stopper(&stream_handle),
+            on_tcp(&stream_handle),
             move || {
                 let mut buf = vec![0u8; n.min(READ_AT_ONCE)];
                 let read = stream_handle.read(&mut buf);
@@ -703,7 +736,7 @@ builtins! {
     fn tcp_lines(vm, stream: TcpStream) -> Result<Step, VmError> {
         let stream_handle = stream.clone();
         let mut at_end = false;
-        reading(vm, "stream.tcp_lines", stopper(&stream_handle), move || {
+        reading(vm, "stream.tcp_lines", on_tcp(&stream_handle), move || {
             // The stream is behind a lock and cannot be wrapped in a
             // buffered reader that outlives one call, so a line is read
             // byte by byte: the network buffer dominates the cost.
@@ -1221,8 +1254,8 @@ builtins! {
     #[cfg(feature = "tcp")]
     fn write_to_tcp(ch: Chan, stream: TcpStream) -> Result<Step, VmError> {
         let (ch, stream_handle) = (ch.clone(), stream.clone());
-        let stop = stopper(&stream_handle);
-        writing("stream.write_to_tcp", ch, stop, move |bytes| {
+        let on = on_tcp(&stream_handle);
+        writing("stream.write_to_tcp", ch, on, move |bytes| {
             let Some(bytes) = bytes else {
                 return Ok(());
             };
@@ -1233,7 +1266,7 @@ builtins! {
     fn write_to_file(ch: Chan, path: &str) -> Result<Step, VmError> {
         let (ch, path) = (ch.clone(), path.to_string());
         let mut file: Option<std::fs::File> = None;
-        writing("stream.write_to_file", ch, None, move |bytes| {
+        writing("stream.write_to_file", ch, ON_A_FILE, move |bytes| {
             use std::io::Write;
             if file.is_none() {
                 file = Some(std::fs::File::create(&path).map_err(|e| err_io(&e))?);
@@ -1266,7 +1299,11 @@ mod tests {
         let stopped = Arc::new(AtomicBool::new(false));
         let flag = stopped.clone();
         let stop: Stop = Arc::new(move || flag.store(true, Ordering::SeqCst));
-        let started = reading(&mut vm, "test.source", Some(stop), move || next.recv().ok());
+        let on = On {
+            failure: io_failure,
+            stop: Some(stop),
+        };
+        let started = reading(&mut vm, "test.source", on, move || next.recv().ok());
         let Ok(Step::Done(Value::Channel(out))) = started else {
             panic!("the source did not start");
         };
@@ -1280,6 +1317,33 @@ mod tests {
             assert!(Instant::now() < limit, "{what}");
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// A source whose read could not run (here: it panicked) ends with
+    /// the error of its module as its last item, not as if its input
+    /// had ended: a source on a connection with a `TcpError`.
+    #[test]
+    #[cfg(feature = "tcp")]
+    fn a_source_whose_read_could_not_run_ends_with_its_modules_error() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let stream = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| std::net::TcpStream::connect(l.local_addr()?))
+            .expect("a connection");
+        let conn = crate::runtime::handle::TcpStreamHandle::plain(0, stream);
+        let started = reading(&mut vm, "test.source", on_tcp(&conn), || panic!("no read"));
+        let Ok(Step::Done(Value::Channel(out))) = started else {
+            panic!("the source did not start");
+        };
+        until("no item came", || !out.is_empty() || out.is_closed());
+        let TryReceive::Value(Value::Variant(item)) = out.try_receive(vm.scheduler().wake()) else {
+            panic!("the source ended without its error");
+        };
+        assert!(item.is(bv::ERR));
+        let [Value::Variant(error)] = item.fields() else {
+            panic!("an Err with one field");
+        };
+        assert!(error.is(bv::TCP_OTHER), "{}", error.name());
+        until("the source did not end", || out.is_closed());
     }
 
     /// The reader of a source on a connection is gone when the source

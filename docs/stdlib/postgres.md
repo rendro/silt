@@ -259,10 +259,16 @@ A `task.deadline` that passes, or a `task.cancel`, ends a task that
 waits for a statement at once, on the pool and inside a transaction
 alike. What becomes of the statement in the server differs:
 
-- On the pool, outside a transaction, the statement is left to finish;
-  its connection then goes back to the pool.
-- Inside `postgres.transact`, the server is asked to cancel the
-  statement. When the task that ends is the one that runs `transact`
+- A statement that has no connection yet (it waits for one of the pool,
+  or for the transaction's while another statement of it runs) is never
+  sent: it gives up, nothing is cancelled, and the transaction goes on.
+  The same holds for the `BEGIN` of `postgres.transact` and the `LISTEN`
+  of `postgres.listen`.
+- On the pool, outside a transaction, a statement that has its
+  connection is left to finish; its connection then goes back to the
+  pool.
+- Inside `postgres.transact`, the server is asked to cancel a
+  statement that has the connection. When the task that ends is the one that runs `transact`
   (or the callback fails with an error of the program), the
   transaction is rolled back. When the deadline or the cancel is one
   the callback set around the statement itself, the statement fails
@@ -281,11 +287,6 @@ alike. What becomes of the statement in the server differs:
   closed instead if the rollback fails, or if a cancel request was sent
   for it (a request that reaches the server late would cancel the
   connection's next statement).
-
-  This is for a statement that has the transaction's connection. One
-  that still waits for it, while another statement of the transaction
-  runs (from a task the callback started), gives up: it is not sent,
-  nothing is cancelled, and the transaction goes on.
 
 Around the callback `postgres.transact` waits too, and a deadline or a
 cancel ends the task there at once as well. While it waits for a

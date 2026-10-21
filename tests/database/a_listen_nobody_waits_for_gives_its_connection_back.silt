@@ -1,0 +1,44 @@
+-- `postgres.listen` is given up at deadlines of a few milliseconds,
+-- some of which pass while its LISTEN is on its way to the server. A
+-- listener whose task no longer waits for it is nobody's: its channel
+-- is closed, and its connection goes back to the pool. So the pool of
+-- one connection serves the statement afterwards, and the program ends.
+-- (Before, the listener of a LISTEN that was done after its task had
+-- stopped waiting kept the connection, and the program never ended:
+-- the case failed at its time limit.)
+import channel
+import env
+import json
+import list
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{ "max_pool_size": 1 }) {
+    Ok(db) -> {
+      [1, 1, 2, 2, 3, 3, 4, 5, 6, 8] |> list.each { ms ->
+        let got = task.deadline(time.ms(ms)) { -> postgres.listen(db, "silt_given_up") }
+        match got {
+          -- In time: the program closes its listener itself.
+          Ok(Ok(ch)) -> channel.close(ch)
+          Ok(Err(e)) -> println("listen: {e.message()}")
+          Err(_) -> ()
+        }
+      }
+      match postgres.query(db, "SELECT 1 AS n", (), json.Value) {
+        Ok(rows) -> println("the pool serves: {list.length(rows)} row")
+        Err(e) -> println("query: {e.message()}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}
