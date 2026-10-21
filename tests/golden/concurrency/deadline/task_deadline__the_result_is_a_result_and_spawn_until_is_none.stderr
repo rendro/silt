@@ -4,9 +4,9 @@ error[type]: module 'task' has no member 'spawn_until'
  11 |   let handle = task.spawn_until(time.seconds(1), { -> 1 })
     |                ^^^^^^^^^^^^^^^^ module 'task' has no member 'spawn_until'
 
-error[type]: type mismatch: expected Int, got Result(Int, TaskError)
+error[type]: type mismatch: expected Int, got Result(Int, task.TaskError)
  --> task_deadline__the_result_is_a_result_and_spawn_until_is_none.silt:10:16
     |
  10 |   let n: Int = task.deadline(time.seconds(1), { -> 1 })
-    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got Result(Int, TaskError)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Int, got Result(Int, task.TaskError)
   = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

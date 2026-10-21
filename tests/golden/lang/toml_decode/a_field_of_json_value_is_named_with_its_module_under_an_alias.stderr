@@ -3,11 +3,11 @@ error[type]: `toml.parse_map` cannot decode `Q`: field `q` has type `json.Value`
     |
  13 |   let _ = t.parse_map("", Q)
     |                           ^ `toml.parse_map` cannot decode `Q`: field `q` has type `json.Value`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `P`: field `p` has type `Option(List(json.Value))`, and `json.Value` has no decoder
  --> a_field_of_json_value_is_named_with_its_module_under_an_alias.silt:17:23
     |
  17 |   let _ = t.parse("", P)
     |                       ^ `toml.parse` cannot decode `P`: field `p` has type `Option(List(json.Value))`, and `json.Value` has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

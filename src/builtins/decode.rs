@@ -966,7 +966,7 @@ pub(crate) fn value<D: Document>(
             Node::Datetime(s) => parse_date(&s)
                 .map(make_date)
                 .map_err(|e| Error::other(format_args!("invalid date '{s}': {e}"), at)),
-            _ => Err(mismatch("Date")),
+            _ => Err(mismatch("time.Date")),
         },
         FieldType::Time => match node {
             Node::String(s) => parse_time(s)
@@ -975,13 +975,13 @@ pub(crate) fn value<D: Document>(
             Node::Datetime(s) => parse_time(&s)
                 .map(make_time)
                 .map_err(|e| Error::other(format_args!("invalid time '{s}': {e}"), at)),
-            _ => Err(mismatch("Time")),
+            _ => Err(mismatch("time.Time")),
         },
         FieldType::DateTime => {
             let text = match &node {
                 Node::String(s) => *s,
                 Node::Datetime(s) => s,
-                _ => return Err(mismatch("DateTime")),
+                _ => return Err(mismatch("time.DateTime")),
             };
             parse_datetime(text)
                 .map(make_datetime)

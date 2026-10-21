@@ -128,7 +128,7 @@ type may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `Bytes`, as the field, in an `Option` or in a `List` (a `bytea` column)
-- `Date`, `Time`, `DateTime`
+- `time.Date`, `time.Time`, `time.DateTime`
 - `json.Value`, any column as the table's last column says
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
@@ -191,9 +191,9 @@ the call's `Err`.
 | `text`, `varchar`, `char(n)`, `name`, `"char"`, an enum | `String` | `json.String` |
 | `uuid` | `String` | `json.String` |
 | `bytea` | `Bytes` | `json.String`, the hex text `\x00ff` |
-| `date` | `Date` | `json.String`, as silt shows a `Date` |
-| `time` | `Time` | `json.String`, as silt shows a `Time` |
-| `timestamp`, `timestamptz` | `DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
+| `date` | `time.Date` | `json.String`, as silt shows a `Date` |
+| `time` | `time.Time` | `json.String`, as silt shows a `Time` |
+| `timestamp`, `timestamptz` | `time.DateTime` (a `timestamptz` in UTC) | `json.String`, as silt shows a `DateTime` |
 | `json`, `jsonb` | any field type but `Bytes` and an enum, decoded by `json.parse`'s rules | the document |
 | an array | `List(T)` of a `T` its elements fill, `List(Option(T))` where an element may be `NULL`, `List(List(T))` for two dimensions | `json.Array` |
 | `void` (what `pg_sleep(1)` gives) | none | `json.Null` |

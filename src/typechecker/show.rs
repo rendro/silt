@@ -19,28 +19,44 @@ impl TypeChecker {
         self.show_types(&[ty], true).pop().unwrap_or_default()
     }
 
-    /// The types of one message (see `show_apart`, `show_type`): a named
-    /// type that another type of the message has the name of, or, with
-    /// `session`, another type the session knows, is written with its
-    /// module; a module's own type keeps its bare name unless the other
-    /// is its own too.
+    /// The types of one message (see `show_apart`, `show_type`): a type
+    /// of another module is written as a program writes it, with its
+    /// module (`json.Value`, `time.Date`, `shapes.Shape`); a prelude
+    /// type and the module's own keep their bare names, unless another
+    /// type of the message, or with `session` another type the session
+    /// knows, has the name (`prelude.Option`, `a.Pt` and `b.Pt`).
     fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
         Type::show_all(types, |r, clash| {
-            let of_module = self.qualify_module_types && of_builtin_module(r);
-            (clash || of_module || (session && self.type_name_clashes(r)))
+            (clash || (session && self.type_name_clashes(r)) || self.other_module(r).is_some())
                 .then(|| self.qualified_type(r))
         })
     }
 
-    /// `ty` with each type of a builtin module written with its module
-    /// (`Option(json.Value)`): the field type a decoder's refusal names,
-    /// beside the part of it that has no decoder, which the registry
-    /// writes so.
-    pub(super) fn show_with_builtin_modules(&self, ty: &Type) -> String {
-        Type::show_all(&[ty], |r, _| {
-            of_builtin_module(r).then(|| self.qualified_type(r))
-        })
-        .remove(0)
+    /// The module of `r` if it is another module than the one being
+    /// checked, as a program names it: a builtin module (`json`,
+    /// `time`) or a module of the program's. `None` for a prelude type,
+    /// for one of the module's own, and in a REPL cell for one of an
+    /// earlier cell, which the cell writes by its name.
+    pub(super) fn other_module(&self, r: TypeRef) -> Option<Symbol> {
+        match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, module)) => module.map(intern),
+            None => self
+                .def(r.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+                .filter(|module| !resolve(*module).starts_with('<')),
+        }
+    }
+
+    /// The variant `name` of the enum `enum_ty` as a program writes it:
+    /// with its module where the enum is another module's (`json.Bool`,
+    /// `shapes.Circle`), bare otherwise (`Some`, a variant of the
+    /// module's own).
+    pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
+        match self.other_module(enum_ty) {
+            Some(module) => format!("{module}.{name}"),
+            None => name.to_string(),
+        }
     }
 
     /// Whether another type the session knows has the name of `r`.
@@ -242,12 +258,4 @@ impl TypeChecker {
             None => format!("unknown type '{name}'"),
         }
     }
-}
-
-/// Whether `r` is a type of a builtin module (`json.Value`,
-/// `time.Date`), not of the prelude or of a program's module.
-fn of_builtin_module(r: TypeRef) -> bool {
-    crate::defs::builtin_types()
-        .get(r.id.0.0 as usize)
-        .is_some_and(|(_, module)| module.is_some())
 }

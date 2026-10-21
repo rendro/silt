@@ -4,7 +4,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
  68 |   let _ = both(src, other, Blob)
     |                            ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `both` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:69:28
@@ -12,7 +12,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
  69 |   let _ = both(other, src, Blob)
     |                            ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `both` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:72:13
@@ -20,7 +20,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
  72 |   let _ = p(Blob)
     |             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `p` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:74:13
@@ -28,21 +28,21 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
  74 |   let _ = q(Blob)
     |             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `q` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:76:13
     |
  76 |   let _ = g(Blob)
     |             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:78:15
     |
  78 |   let _ = h.f(Blob)
     |               ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:79:40
@@ -50,4 +50,4 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
  79 |   let _ = apply1({ t -> src.load(t) }, Blob)
     |                                        ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `apply1` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

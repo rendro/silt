@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: ambiguous method 'encode' on type 'T': provided by traits codec.Codec, json.Encode
+-- stderr-contains: ambiguous method 'encode' on type 'codec.T': provided by traits codec.Codec, json.Encode
 -- stderr-contains: --> main.silt:14:11
 -- stderr-not-contains: --> codec.silt
 -- Every type with `json.Encode` has its method `encode` in a module that

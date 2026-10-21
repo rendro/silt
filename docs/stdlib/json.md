@@ -70,7 +70,7 @@ The fields of a record type, and of each variant of an enum type (and of every
 record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
-- `Date`, `Time`, `DateTime`
+- `time.Date`, `time.Time`, `time.DateTime`
 - `json.Value`, which keeps that part of the document as it is
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
@@ -543,7 +543,7 @@ stored as UTC:
 
 A value that is no string is a `TypeMismatch` that names the field's type,
 as for an `Int` field: `{"d": 1}` for a `Date` field `d` is
-`Err(TypeMismatch("Date", "number at d"))`.
+`Err(TypeMismatch("time.Date", "number at d"))`.
 
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an

@@ -4,7 +4,7 @@ error[type]: `json.parse` cannot decode `One`: field `b` of `Blob`, a record typ
  32 |   show(from_json("""{"name": "x"}""", One))
     |                                       ^^^ `json.parse` cannot decode `One`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Maybe`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
  --> data_decode__a_record_type_a_field_names_is_looked_into_for_a_field_with_no_decoder.silt:33:39
@@ -12,7 +12,7 @@ error[type]: `json.parse` cannot decode `Maybe`: field `b` of `Blob`, a record t
  33 |   show(from_json("""{"name": "x"}""", Maybe))
     |                                       ^^^^^ `json.parse` cannot decode `Maybe`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Many`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
  --> data_decode__a_record_type_a_field_names_is_looked_into_for_a_field_with_no_decoder.silt:34:52
@@ -20,7 +20,7 @@ error[type]: `json.parse` cannot decode `Many`: field `b` of `Blob`, a record ty
  34 |   show(from_json("""{"name": "x", "blobs": []}""", Many))
     |                                                    ^^^^ `json.parse` cannot decode `Many`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `One`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
  --> data_decode__a_record_type_a_field_names_is_looked_into_for_a_field_with_no_decoder.silt:35:58
@@ -28,7 +28,7 @@ error[type]: `json.parse` cannot decode `One`: field `b` of `Blob`, a record typ
  35 |   show(from_json("""{"name": "x", "blob": {"b": []}}""", One))
     |                                                          ^^^ `json.parse` cannot decode `One`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `One`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
  --> data_decode__a_record_type_a_field_names_is_looked_into_for_a_field_with_no_decoder.silt:36:34
@@ -36,7 +36,7 @@ error[type]: `toml.parse` cannot decode `One`: field `b` of `Blob`, a record typ
  36 |   show(from_toml("name = \"x\"", One))
     |                                  ^^^ `toml.parse` cannot decode `One`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Maybe`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
  --> data_decode__a_record_type_a_field_names_is_looked_into_for_a_field_with_no_decoder.silt:37:34
@@ -44,7 +44,7 @@ error[type]: `toml.parse` cannot decode `Maybe`: field `b` of `Blob`, a record t
  37 |   show(from_toml("name = \"x\"", Maybe))
     |                                  ^^^^^ `toml.parse` cannot decode `Maybe`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Many`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
  --> data_decode__a_record_type_a_field_names_is_looked_into_for_a_field_with_no_decoder.silt:38:46
@@ -52,4 +52,4 @@ error[type]: `toml.parse` cannot decode `Many`: field `b` of `Blob`, a record ty
  38 |   show(from_toml("name = \"x\"\nblobs = []", Many))
     |                                              ^^^^ `toml.parse` cannot decode `Many`: field `b` of `Blob`, a record type nested in it, has type `Bytes`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

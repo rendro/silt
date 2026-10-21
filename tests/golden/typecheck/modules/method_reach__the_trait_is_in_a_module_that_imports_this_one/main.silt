@@ -2,7 +2,7 @@
 -- exit: 1
 -- verdict: same
 -- stderr-contains: c.silt:4:3
--- stderr-contains: unknown field or method 'area' on type Square
+-- stderr-contains: unknown field or method 'area' on type shapes.Square
 -- stderr-contains: trait 'Area' of module 'main' has a method 'area' for this type, but 'main' imports this module and cannot be imported by it
 -- stderr-not-contains: import 'main' to call it
 -- The trait that has the method is declared in a module that imports

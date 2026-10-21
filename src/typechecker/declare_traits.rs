@@ -1631,14 +1631,7 @@ impl TypeChecker {
                     written
                 }
                 Some(expected) => {
-                    // (The method of a builtin module's trait is written
-                    // with the module's types: a message names them so,
-                    // `json.Value`.)
-                    let of_module = crate::defs::builtin_trait_of_id(trait_key.id.0)
-                        .is_some_and(|(_, module)| module.is_some());
-                    self.qualify_module_types = of_module;
                     let unified = self.unify_types(&written, expected);
-                    self.qualify_module_types = false;
                     match unified {
                         Ok(()) => expected.clone(),
                         Err(mismatch) => {
@@ -1910,9 +1903,16 @@ impl TypeChecker {
             record.field_spans.get(at).copied()
         };
         // The impl as it is written (its target may be an alias of the
-        // record), the record by its name.
-        let (tr, of) = (self.impl_trait_name(ti), ti.target_type);
+        // record; a type of another module with its module), the record
+        // by its name.
+        let tr = self.impl_trait_name(ti);
         let ty = self.show_type(&Type::Generic(target_type, vec![]));
+        let of = match self.other_module(target_type) {
+            Some(module) if ti.target_type == target_type.name => {
+                format!("{module}.{}", ti.target_type)
+            }
+            _ => ti.target_type.to_string(),
+        };
         let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
         let mut written: Vec<Symbol> = Vec::new();
         for method in &ti.methods {

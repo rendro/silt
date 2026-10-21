@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown field or method 'area' on type Square
+-- stderr-contains: unknown field or method 'area' on type shapes.Square
 -- stderr-contains: type 'Square' has no method 'area'
 -- stderr-contains: trait 'Area' of module 'traits' has a method 'area' for this type; import 'traits' to call it
 -- The help names the module to import for a method called on a value

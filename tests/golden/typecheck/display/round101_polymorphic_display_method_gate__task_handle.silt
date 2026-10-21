@@ -1,7 +1,7 @@
 -- Polymorphic `.display()` on a task handle is rejected where the function with the declared `Display` bound is called, with no interpolation suffix.
 -- exit: 1
 -- stderr-contains: does not implement trait 'Display'
--- stderr-contains: 'Handle'
+-- stderr-contains: 'task.Handle'
 -- stderr-not-contains: required for string interpolation
 import task
 fn show(x: a) -> String where a: Display { x.display() }

@@ -3,11 +3,11 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`
     |
  18 |   let _ = p("\{}", Blob)
     |                    ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
  --> data_decode__a_decoder_as_a_value_is_checked_where_it_gets_its_type.silt:19:17
     |
  19 |   let _ = apply(json.parse)
     |                 ^^^^^^^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

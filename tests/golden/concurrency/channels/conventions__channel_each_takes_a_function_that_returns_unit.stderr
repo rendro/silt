@@ -4,9 +4,9 @@ error[type]: type mismatch: expected (), got Int
  12 |   channel.each(numbers) { n -> n * 2 }
     |                         ^^^^^^^^^^^^^^ type mismatch: expected (), got Int
 
-error[type]: type mismatch: expected (), got Result(Int, IntError)
+error[type]: type mismatch: expected (), got Result(Int, int.IntError)
  --> conventions__channel_each_takes_a_function_that_returns_unit.silt:14:23
     |
  14 |   channel.each(texts) { text -> int.parse(text) }
-    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected (), got Result(Int, IntError)
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected (), got Result(Int, int.IntError)
   = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

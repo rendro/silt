@@ -292,7 +292,10 @@ impl TypeChecker {
                 Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
                     let enum_type = (nested.iter().map(|id| type_ref(*id)))
                         .find(|t| self.tables.is_enum(*t) && !self.has_decode_impl(*t))?;
-                    (!family.decodes_enums()).then(|| resolve(enum_type.name))
+                    (!family.decodes_enums()).then(|| match self.other_module(enum_type) {
+                        Some(module) => format!("{module}.{}", enum_type.name),
+                        None => resolve(enum_type.name),
+                    })
                 }),
             };
             if let Some(part) = lacking {
@@ -300,7 +303,7 @@ impl TypeChecker {
                     record: resolve(record.name),
                     field: resolve(field),
                     in_variant,
-                    field_type: self.show_with_builtin_modules(&ty),
+                    field_type: self.show_type(&ty),
                     part,
                     nested: false,
                 });

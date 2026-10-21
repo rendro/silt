@@ -646,7 +646,7 @@ impl TypeChecker {
                         let shown =
                             format!("`{}`", self.show_witness(&Witness::Ctor(ctor, fields), ty));
                         match (matched, told_apart) {
-                            (false, _) => missing.push(variant.name.to_string()),
+                            (false, _) => missing.push(self.written_variant(*name, variant.name)),
                             (true, true) => left_out.push(shown),
                             (true, false) => in_part.push(shown),
                         }
@@ -760,8 +760,9 @@ impl TypeChecker {
                 let Some(variant) = info.variants.get(*i) else {
                     return "_".into();
                 };
+                let written = self.written_variant(*enum_ty, variant.name);
                 if fields.is_empty() {
-                    return variant.name.to_string();
+                    return written;
                 }
                 // The payloads' types at the type's arguments, so that a
                 // record in `Option(R)` is shown as an `R`.
@@ -785,7 +786,7 @@ impl TypeChecker {
                         self.show_witness(field, &field_ty)
                     })
                     .collect();
-                format!("{}({})", variant.name, shown.join(", "))
+                format!("{written}({})", shown.join(", "))
             }
             CtorId::Record(names) => {
                 // A declared record keeps its name, and says `..` when
