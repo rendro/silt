@@ -220,10 +220,15 @@ One data layer, one override: a record or enum type with a written
   are `None`). Any other column is the plan's `TypeMismatch(column,
   "T", "text")` before the statement runs. The `Err` the impl returns
   is the column's mismatch, worded as the decoder's own errors in a
-  document: `TypeMismatch("code", "Code", "jsonb: no code here")`, with
-  the path of the part in the document where it is no whole cell
-  (`at [0]`). The first error in the row, in the order of the type's
-  fields, counts, the impl's or a later cell's.
+  document: `TypeMismatch("code", "Code", "jsonb: no code here")`.
+  Where the part is inside a cell's document (an element of a
+  `List(Code)` field from a `jsonb` column), the message ends with its
+  path there: `TypeMismatch("codes", "List(Code)", "jsonb: no code here
+  at [0]")`. In an array column (`jsonb[]`) each element is a document
+  of its own: the mismatch names the element's type and no index, as the
+  decoder's own errors there do, `TypeMismatch("codes", "Code",
+  "jsonb[]: no code here")`. The first error in the row, in the order
+  of the type's fields, counts, the impl's or a later cell's.
 - A row type with such an impl is decoded by the impl from the
   `json.Object` of the row's columns, as a `json.Value` row is (every
   column, by its name): an enum type is a row type so. The `Err` the impl
