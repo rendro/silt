@@ -503,9 +503,13 @@ fn main() {
 ```
 
 A method without `self` is called on a type, never on a value:
-`5.empty()` is an error that names the call to write (`Int.empty()`). An
-impl writes the parameters its trait declares: one that adds or drops
-`self` (or any other parameter) is an error at the impl.
+`5.empty()` is an error that names the call to write (`Int.empty()`).
+Nor is it ever a candidate for a call on a value, of any trait: where
+another trait gives the type a method of the same name that takes
+`self`, `x.m(..)` calls that one, with no ambiguity; a call on the type
+(`T.m(..)`) has both. An impl writes the parameters its trait declares:
+one that adds or drops `self` (or any other parameter) is an error at
+the impl.
 
 Dispatch is by the descriptor's carried type name — `Int.empty()` resolves
 to the `Monoid` impl for `Int`. Inside a generic function with
@@ -552,10 +556,11 @@ decided by what is written, not by which names happen to exist:
   field `name`, whatever methods traits declare.
 - `r.f(..)` on a record with a field `f` calls the function the field
   holds: a record type has no method named like one of its fields.
-- `x.m(..)` means the one trait in sight that declares a method `m`, and
-  bounds `x` by it: `fn g(x) { x.greet() }` is `fn g(x: a) -> String
-  where a: Greet`. If no trait declares `m`, `x` is a record whose field
-  `m` holds a function. If several traits declare `m`, annotate `x`.
+- `x.m(..)` means the one trait in sight that declares a method `m`
+  taking `self`, and bounds `x` by it: `fn g(x) { x.greet() }` is
+  `fn g(x: a) -> String where a: Greet`. If no trait declares `m`, `x` is
+  a record whose field `m` holds a function. If several traits declare
+  an `m` that takes `self`, annotate `x`.
 
 When the type of `x` is decided later in the same definition (a closure's
 parameter by the call it is passed to), the call is checked against that

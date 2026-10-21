@@ -573,6 +573,7 @@ impl TypeChecker {
         span: Span,
     ) -> Option<(TraitKey, Type)> {
         let matches = self.bound_methods(r, field);
+        let matches = self.on_a_value(matches, |(t, _)| *t, field);
         if matches.len() > 1 {
             let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
             self.ambiguous_method(

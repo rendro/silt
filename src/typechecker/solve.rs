@@ -1181,8 +1181,8 @@ impl TypeChecker {
         self.close_level();
     }
 
-    /// The traits in sight that declare a method `name`, in the order
-    /// of their names.
+    /// The traits in sight that declare a method `name` a call on a
+    /// value may mean (`on_a_value`), in the order of their names.
     fn traits_declaring(&self, name: Symbol) -> Vec<TraitKey> {
         let mut traits: Vec<TraitKey> = self
             .tables
@@ -1193,7 +1193,28 @@ impl TypeChecker {
             .filter(|t| self.sees_trait(*t))
             .collect();
         traits.sort_by_key(|t| self.show_trait(*t));
-        traits
+        self.on_a_value(traits, |t| *t, name)
+    }
+
+    /// Of `candidates` (each of the trait `trait_of` says) for a call of
+    /// `method` on a value, those the call may mean: a method without
+    /// `self` is never one, of any trait. Where none takes `self`, the
+    /// first alone, which the call reports as taking none.
+    pub(super) fn on_a_value<C>(
+        &self,
+        mut candidates: Vec<C>,
+        trait_of: impl Fn(&C) -> TraitKey,
+        method: Symbol,
+    ) -> Vec<C> {
+        let takes_self = |c: &C| {
+            (self.tables.traits.get(&trait_of(c)))
+                .is_none_or(|info| info.receivers.contains(&method))
+        };
+        match candidates.iter().any(takes_self) {
+            true => candidates.retain(takes_self),
+            false => candidates.truncate(1),
+        }
+        candidates
     }
 
     fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
@@ -2223,7 +2244,7 @@ impl TypeChecker {
     /// order of their names: those of the session's impls, and the
     /// structural trait whose method it is when no impl of that trait
     /// is written for the type, for a call through the type (`on_type`,
-    /// `T.method(..)`) or on a value.
+    /// `T.method(..)`) or on a value (`on_a_value`).
     fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
         if let Some(tr) = self.structural_provider(ty, method, on_type)
@@ -2232,7 +2253,10 @@ impl TypeChecker {
             traits.push(tr);
         }
         traits.sort_by_key(|t| self.show_trait(*t));
-        traits
+        match on_type {
+            true => traits,
+            false => self.on_a_value(traits, |t| *t, method),
+        }
     }
 
     /// The structural trait whose method `method` the type `ty` has by

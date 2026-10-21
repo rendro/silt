@@ -1,0 +1,68 @@
+-- A method without `self` is never a candidate for a call on a value,
+-- of any trait: where another trait gives the type a method of the
+-- name that takes `self`, `x.decode(3)` calls that one, no ambiguity.
+-- So on a known type, on a value of a bounded type variable, on a
+-- value whose type is not known where the call is checked, in a
+-- closure whose receiver becomes known later, and beside a written
+-- `json.Decode` impl.
+import json
+
+trait Mk {
+  fn decode(v: Int) -> Self
+}
+
+trait Rd {
+  fn decode(self, n: Int) -> Int
+}
+
+trait Mk for String {
+  fn decode(v: Int) -> Self {
+    "{v}"
+  }
+}
+
+trait Rd for String {
+  fn decode(self, n: Int) -> Int {
+    n + 1
+  }
+}
+
+type P { n: Int }
+
+trait json.Decode for P {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    Ok(P { n: 0 })
+  }
+}
+
+trait Rd for P {
+  fn decode(self, n: Int) -> Int {
+    n + self.n
+  }
+}
+
+fn bounded(x: a) -> Int where a: Mk, a: Rd {
+  x.decode(10)
+}
+
+fn unknown(x) {
+  x.decode(20)
+}
+
+fn first(x: a) -> a {
+  x
+}
+
+fn later(x: a) -> Int where a: Mk + Rd {
+  let f = { y -> first(y).decode(30) }
+  f(x)
+}
+
+fn main() {
+  let s = "a"
+  println(s.decode(3))
+  println(bounded(s))
+  println(unknown(s))
+  println(later(s))
+  println(P { n: 5 }.decode(40))
+}
