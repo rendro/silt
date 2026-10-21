@@ -1,0 +1,30 @@
+-- A top-level `let` that writes a value whose type has a written
+-- `json.Encode` impl needs what the impl reads: it is initialised after
+-- `later`, whether it writes the value with `json.stringify`, `.encode()`,
+-- a function with a `where a: json.Encode`, `toml.stringify` or
+-- `json.encode`, as one that shows a value needs what a `Display` impl
+-- reads.
+import json
+import toml
+
+type T { n: Int }
+
+trait json.Encode for T {
+  fn encode(self) -> json.Value { json.Int(self.n + later) }
+}
+
+fn send(x: a) -> String where a: json.Encode { json.stringify([x]) }
+
+let s = json.stringify(T { n: 1 })
+let e = T { n: 2 }.encode()
+let g = send(T { n: 3 })
+let t = toml.stringify(#{"k": T { n: 4 }})
+let m = json.encode(Some(T { n: 5 }))
+let later = 5
+
+fn main() {
+  println([s, g])
+  println(e)
+  println(t)
+  println(m)
+}

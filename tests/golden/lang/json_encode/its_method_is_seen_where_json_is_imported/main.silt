@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: ambiguous method 'encode' on type 'T': provided by traits codec.Codec, json.Encode
+-- stderr-contains: --> main.silt:14:11
+-- stderr-not-contains: --> codec.silt
+-- Every type with `json.Encode` has its method `encode` in a module that
+-- imports json, so there a method `encode` of the program's own trait is
+-- ambiguous. Where json is not imported (`codec`) it is the only one.
+import codec.{ Codec, T, show }
+import json
+
+fn main() {
+  println(show(T { x: 1 }))
+  println(T { x: 1 }.encode())
+}

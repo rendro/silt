@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type '(Int, Fn(Int) -> Int)' does not implement trait 'json.Encode': part #2 is of type 'Fn(Int) -> Int', which does not
+-- `json.stringify` needs `json.Encode` of what it is given, and a
+-- function has no json form: a function of a builtin module is an `Fn`
+-- too (here in a tuple). The error is the checker's, at the argument.
+import int
+import json
+
+fn main() {
+  println(json.stringify((1, int.abs)))
+}

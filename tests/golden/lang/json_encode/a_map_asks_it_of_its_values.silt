@@ -1,0 +1,10 @@
+-- A map has `json.Encode` when its values have it: the writer writes a
+-- key as its text, so a key of any type is written (a set's text here).
+-- An `Err` type nothing decides is `()`, which has a json form.
+import json
+
+fn main() {
+  println(json.stringify(#{#[1]: "set", #[2, 3]: "other"}))
+  println(json.stringify(Ok(1)))
+  println(json.stringify([]))
+}

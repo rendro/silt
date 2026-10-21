@@ -4,7 +4,9 @@
 
 mod arithmetic;
 mod calls;
+pub(crate) mod decode;
 pub(crate) mod dispatch;
+mod encode;
 pub mod error;
 mod io;
 mod io_op;

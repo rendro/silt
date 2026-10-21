@@ -2,8 +2,8 @@ import json
 
 pub trait Loader {
   fn text(self) -> String
-  fn load(self, type a) -> Result(a, json.JsonError) {
+  fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode {
     json.parse(self.text(), a)
   }
-  fn own(self, type a) -> Result(a, json.JsonError)
+  fn own(self, type a) -> Result(a, json.JsonError) where a: json.Decode
 }

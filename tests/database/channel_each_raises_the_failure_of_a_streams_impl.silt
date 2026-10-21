@@ -1,0 +1,42 @@
+-- exit: 1
+-- An impl of `json.Decode` that fails while a stream's row is finished
+-- ends the stream with its failure, as a failing stream stage does:
+-- `channel.each` on the stream raises it, after the rows before it.
+import channel
+import env
+import json
+import postgres
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> Ok(Code { digits: "{100 / n}" })
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { code: Code }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let sql = "SELECT to_jsonb(3 - g) AS code FROM generate_series(1, 4) g"
+      match postgres.stream(db, sql, (), R) {
+        Ok(rows) -> channel.each(rows) { row -> println(row) }
+        Err(e) -> println(e.message())
+      }
+      println("not reached")
+    }
+    Err(e) -> println(e.message())
+  }
+}

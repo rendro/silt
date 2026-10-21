@@ -1,0 +1,56 @@
+-- cmd: run
+-- exit: 0
+-- An error a `json.Decode` impl gives inside a TOML document is the
+-- `TomlError` of the same variant, with the path of its part as the
+-- decoder's own errors have it: a message ends with " at <path>", a
+-- missing field's path starts with the part's. A `Syntax` error, whose
+-- byte offset is in the impl's JSON text and not in the TOML document,
+-- is an `Other` of json's message of it. At the top it is as the impl
+-- wrote it. The first error the decoder comes to counts, the impl's or
+-- the decoder's.
+import json
+import toml
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Code { digits: text })
+      json.Int(_) -> Err(json.TypeMismatch("String", "an integer"))
+      json.Bool(_) -> Err(json.MissingField("digits"))
+      json.Array(_) -> json.parse("[1,", Code)
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type Cfg { name: String, codes: List(Code), main: Code }
+
+type Counted { codes: List(Code), count: Int }
+
+-- Which variant of `TomlError` a result's error is.
+fn variant(r: Result(a, toml.TomlError)) -> String {
+  match r {
+    Ok(_) -> "Ok"
+    Err(toml.Syntax(_, _)) -> "Syntax"
+    Err(toml.TypeMismatch(_, _)) -> "TypeMismatch"
+    Err(toml.MissingField(_)) -> "MissingField"
+    Err(toml.Other(_)) -> "Other"
+  }
+}
+
+fn main() {
+  println(toml.parse("name = \"a\"\ncodes = [\"1\", 2]\nmain = \"m\"\n", Cfg))
+  println(toml.parse("name = \"a\"\ncodes = [true]\nmain = \"m\"\n", Cfg))
+  let syntax = toml.parse("name = \"a\"\ncodes = []\nmain = [1]\n", Cfg)
+  println("{variant(syntax)}: {syntax}")
+  let other = toml.parse("name = \"a\"\ncodes = []\n[main]\nx = 1\n", Cfg)
+  println("{variant(other)}: {other}")
+  println(toml.parse_map("\"a b\" = 3\n", Code))
+  println(toml.parse_list("xs = [\"1\", false]\n", Code))
+  println(toml.parse("x = 1\n", Code))
+  -- `codes` comes before `count`: the impl's error is the first.
+  println(toml.parse("codes = [5]\ncount = \"x\"\n", Counted))
+  println(toml.parse("codes = [\"5\"]\ncount = \"x\"\n", Counted))
+}

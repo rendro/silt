@@ -2,18 +2,18 @@
 -- exit: 0
 import int
 
-trait Decode {
-    fn decode(body: String) -> Result(Self, int.IntError)
+trait Parse {
+    fn parse(body: String) -> Result(Self, int.IntError)
 }
 
-trait Decode for Int {
-    fn decode(body: String) -> Result(Int, int.IntError) {
+trait Parse for Int {
+    fn parse(body: String) -> Result(Int, int.IntError) {
         int.parse(body)
     }
 }
 
-fn parse(body: String, type a) -> Result(a, int.IntError) where a: Decode {
-    a.decode(body)
+fn parse(body: String, type a) -> Result(a, int.IntError) where a: Parse {
+    a.parse(body)
 }
 
 fn use_it() {

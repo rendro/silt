@@ -1,0 +1,5 @@
+error[type]: 'time.Date' is not a value
+ --> json_value__only_json_value_of_a_module_is_a_value.silt:8:27
+   |
+ 8 |   println(json.parse("1", time.Date))
+   |                           ^^^^^^^^^ 'time.Date' is not a value

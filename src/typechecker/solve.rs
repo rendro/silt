@@ -198,13 +198,14 @@ impl TypeChecker {
             },
             other => other,
         };
-        let decoder = matches!(
-            pred,
+        let decoder = match &pred {
             Pred::Builtin {
                 check: BuiltinCheck::Decodes { .. },
                 ..
-            }
-        );
+            } => true,
+            Pred::Trait { tr, .. } => Self::is_decode(*tr),
+            _ => false,
+        };
         self.want_goal(Goal::Pred(pred), origin);
         let k = self.wanted.len() - 1;
         if decoder && !self.wanted[k].solved {
@@ -237,7 +238,12 @@ impl TypeChecker {
             if !self.wanted[i].solved {
                 let origin = self.wanted[i].origin;
                 match self.wanted[i].goal.clone() {
-                    Goal::Pred(Pred::Trait { tr, args, subject }) => {
+                    Goal::Pred(Pred::Trait {
+                        tr,
+                        args,
+                        subject,
+                        asker,
+                    }) => {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
@@ -245,7 +251,7 @@ impl TypeChecker {
                             // that owes two traits its type has neither
                             // of (`test.assert_eq(f, f)`) says the first.
                             let reported = self.errors.len();
-                            self.verify_trait_obligation(tr, &args, &subject, origin);
+                            self.verify_trait_obligation(tr, &args, &subject, origin, asker);
                             if self.errors.len() > reported {
                                 let key = (origin.span, self.show_type(&subject));
                                 if !self.lacking.insert(key) {
@@ -381,7 +387,7 @@ impl TypeChecker {
         result_ty: &Type,
         span: Span,
     ) -> bool {
-        let Some(entry) = self.method_entry(type_name, field) else {
+        let Some(entry) = self.method_entry(type_name, field, false) else {
             return false;
         };
         let instantiated = self.dispatch_method_entry(&entry, field, obj_ty, span);
@@ -509,7 +515,7 @@ impl TypeChecker {
                 }
                 // A method of a structural trait the type has no entry
                 // for.
-                if let Some(method_ty) = self.structural_method(&obj_ty, field, span) {
+                if let Some(method_ty) = self.structural_method(&obj_ty, field, false, span) {
                     self.last_field_access_was_method = false;
                     if let Some(t) = self.method_trait.take() {
                         self.deferred_method_traits.insert(span, t);
@@ -1263,6 +1269,7 @@ impl TypeChecker {
                         tr: *tr,
                         args: params,
                         subject: recv.clone(),
+                        asker: None,
                     },
                     origin,
                 );
@@ -1424,6 +1431,7 @@ impl TypeChecker {
         bound_trait_args: &[Type],
         ty: &Type,
         origin: Origin,
+        asker: Option<Asker>,
     ) {
         let span = origin.span;
         let resolved = self.apply(ty);
@@ -1432,6 +1440,9 @@ impl TypeChecker {
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
+            if Self::is_decode(trait_name) {
+                self.note_bound_asker(r, asker);
+            }
             self.require_declared_bound(r, trait_name, bound_trait_args, origin);
             return;
         }
@@ -1442,6 +1453,12 @@ impl TypeChecker {
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {
+            // `json.Decode` is what the json decoder decodes: its own
+            // judgement, which names the decoder.
+            if Self::is_decode(trait_name) {
+                self.want_decode(&resolved, origin, asker);
+                return;
+            }
             let mut walk = Walk::default();
             match self.structure_gap(trait_name, &resolved, &mut walk, 0) {
                 Some(gap) => {
@@ -1470,6 +1487,7 @@ impl TypeChecker {
                                 tr: trait_name,
                                 args: Vec::new(),
                                 subject: part,
+                                asker: None,
                             },
                             origin,
                         );
@@ -1486,7 +1504,8 @@ impl TypeChecker {
 
     /// Whether `trait_name` holds of a type with the head `head` by the
     /// type's structure: the sealed `Equal`, `Compare` and `Hash`
-    /// always; `Display` unless an impl of it is written for the head.
+    /// always; `Display` and `json.Encode` unless an impl of it is
+    /// written for the head.
     pub(super) fn by_structure(&self, trait_name: TraitKey, head: TypeRef) -> bool {
         if ["Equal", "Compare", "Hash"]
             .iter()
@@ -1494,18 +1513,21 @@ impl TypeChecker {
         {
             return true;
         }
-        // A `Display` impl is written for the head: in this module
-        // (`display_written`, known before its impls are entered), in
-        // another one or in an earlier REPL cell, or by silt itself (a
-        // builtin error enum's): its method is a row of the impls'
-        // methods. A method `display` of another trait is no `Display`
-        // impl.
-        trait_name.is_builtin("Display")
-            && !self.display_written.contains(&head)
+        // An impl is written for the head: in this module (`written`,
+        // known before its impls are entered), in another one or in an
+        // earlier REPL cell, or by silt itself (a builtin error enum's
+        // `Display`): its method is a row of the impls' methods. A
+        // method `display` of another trait is no `Display` impl.
+        let Some((_, method)) = STRUCTURAL_METHODS.iter().find(|(name, _)| {
+            WRITABLE_STRUCTURAL_TRAITS.contains(name) && trait_name.is_builtin(name)
+        }) else {
+            return false;
+        };
+        !self.written.contains(&(trait_name, head))
             && self
                 .tables
                 .impl_methods
-                .get(head, intern("display"), trait_name)
+                .get(head, intern(method), trait_name)
                 .is_none()
     }
 
@@ -1611,6 +1633,11 @@ impl TypeChecker {
                     Type::List(t) | Type::Set(t) => {
                         vec![("element".to_string(), (**t).clone())]
                     }
+                    // The writer writes a key as its text: of a map,
+                    // `json.Encode` asks its values only.
+                    Type::Map(_, v) if tr.is_builtin("Encode") => {
+                        vec![("value".to_string(), (**v).clone())]
+                    }
                     Type::Map(k, v) => vec![
                         ("key".to_string(), (**k).clone()),
                         ("value".to_string(), (**v).clone()),
@@ -1650,7 +1677,8 @@ impl TypeChecker {
             }
             Type::Generic(name, _) => {
                 let head = canonical_head(&self.tables.resolver, *name);
-                // A written `Display` impl answers for its type.
+                // A written `Display` or `json.Encode` impl answers for
+                // its type.
                 if !self.by_structure(tr, head) {
                     walk.written.push(ty.clone());
                     return None;
@@ -1921,6 +1949,7 @@ impl TypeChecker {
                 callee: None,
                 op: None,
             },
+            None,
         );
         self.wanted.truncate(owed);
     }
@@ -2115,10 +2144,7 @@ impl TypeChecker {
 
     /// The trait the definition `id` is, if it is one.
     pub(super) fn trait_key(&self, id: crate::defs::DefId) -> Option<TraitKey> {
-        let first = crate::defs::builtin_types().len();
-        if let Some(k) = (id.0 as usize).checked_sub(first)
-            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
-        {
+        if let Some((name, _)) = crate::defs::builtin_trait_of_id(id) {
             return Some(TraitKey::builtin(name));
         }
         let def = self.defs.as_ref()?.get(id);
@@ -2140,14 +2166,19 @@ impl TypeChecker {
         })
     }
 
-    /// Whether the module checked sees the trait `t`: a builtin trait, a
-    /// trait it declares, names by an import or reaches through a module
-    /// it imports. Another module's private trait it never sees.
+    /// Whether the module checked sees the trait `t`: a trait of the
+    /// prelude, a trait it declares, names by an import or reaches
+    /// through a module it imports; a trait of a builtin module
+    /// (`json.Encode`) where it imports that module or names the trait.
+    /// Another module's private trait it never sees.
     pub(super) fn sees_trait(&self, t: TraitKey) -> bool {
         let Some(defs) = &self.defs else {
             return true;
         };
         let def = defs.get(t.id.0);
+        if def.module.builtin_name().is_some() {
+            return self.imports_builtin_trait(t, def.module);
+        }
         if def.module == self.module || def.module.is_builtin() {
             return true;
         }
@@ -2163,8 +2194,11 @@ impl TypeChecker {
     /// method of the trait is not called here. (Its impls may or may not
     /// be known to the session by now; what a module means does not
     /// depend on that.)
-    fn unreached(&self, t: TraitKey) -> Option<Symbol> {
+    pub(super) fn unreached(&self, t: TraitKey) -> Option<Symbol> {
         let module = self.defs.as_ref()?.get(t.id.0).module;
+        if let Some(name) = module.builtin_name() {
+            return (!self.imports_builtin_trait(t, module)).then(|| intern(name));
+        }
         let reach = self.reach.as_ref()?;
         if module == self.module || module.is_builtin() || reach.contains(&module) {
             return None;
@@ -2178,13 +2212,21 @@ impl TypeChecker {
         )
     }
 
+    /// Whether the module checked imports `module`, the builtin module
+    /// of the trait `t`, by any import (`import json.{ stringify }`
+    /// too), or names the trait by an import.
+    fn imports_builtin_trait(&self, t: TraitKey, module: crate::session::ModuleId) -> bool {
+        self.builtin_imports.contains(&module) || self.seen_traits.contains(&t.id.0)
+    }
+
     /// The traits that give the type `ty` a method `method`, in the
     /// order of their names: those of the session's impls, and the
     /// structural trait whose method it is when no impl of that trait
-    /// is written for the type.
-    fn method_providers(&self, ty: TypeRef, method: Symbol) -> Vec<TraitKey> {
+    /// is written for the type, for a call through the type (`on_type`,
+    /// `T.method(..)`) or on a value.
+    fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
-        if let Some(tr) = self.structural_provider(ty, method)
+        if let Some(tr) = self.structural_provider(ty, method, on_type)
             && !traits.contains(&tr)
         {
             traits.push(tr);
@@ -2194,14 +2236,24 @@ impl TypeChecker {
     }
 
     /// The structural trait whose method `method` the type `ty` has by
-    /// its structure: one of the four names, of a type that has the
-    /// name (`Tables::has_structural_name`) and no written impl of the
-    /// trait.
-    fn structural_provider(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
-        let method = resolve(method);
-        let (name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == method)?;
-        let tr = TraitKey::builtin(name);
-        (self.tables.has_structural_name(tr, ty) && self.by_structure(tr, ty)).then_some(tr)
+    /// its structure: one of their names, of a type that has the name
+    /// (`Tables::has_structural_name`) and no written impl of the trait.
+    /// A structural method that takes no `self` (`decode`) is no method
+    /// of a call on a value (not `on_type`): such a call means another
+    /// trait's method of the name, if one has it.
+    fn structural_provider(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Option<TraitKey> {
+        let name = resolve(method);
+        let (tr_name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == name)?;
+        let tr = TraitKey::builtin(tr_name);
+        let takes_self =
+            (self.tables.traits.get(&tr)).is_none_or(|info| info.receivers.contains(&method));
+        if !on_type && !takes_self {
+            return None;
+        }
+        (self.tables.has_structural_name(tr, ty)
+            && self.by_structure(tr, ty)
+            && self.unreached(tr).is_none())
+        .then_some(tr)
     }
 
     /// Of the traits that give a type a method (`method_providers`), the
@@ -2234,8 +2286,13 @@ impl TypeChecker {
     /// reach by its imports it has not. It is decided from the impls'
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
-    pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
-        let providers = self.method_providers(ty, method);
+    pub(super) fn method_entry(
+        &self,
+        ty: TypeRef,
+        method: Symbol,
+        on_type: bool,
+    ) -> Option<MethodEntry> {
+        let providers = self.method_providers(ty, method, on_type);
         let tr = match self.meant_provider(&providers) {
             Ok(tr) => tr?,
             Err(candidates) => candidates[0],
@@ -2260,7 +2317,7 @@ impl TypeChecker {
     /// Whether a value of the type `ty` has a method `method`, whatever
     /// the module checked may call.
     pub(super) fn has_method(&self, ty: TypeRef, method: Symbol) -> bool {
-        !self.method_providers(ty, method).is_empty()
+        !self.method_providers(ty, method, false).is_empty()
     }
 
     /// The names of the methods of the type `ty`.
@@ -2274,7 +2331,7 @@ impl TypeChecker {
             .collect();
         for (_, method) in STRUCTURAL_METHODS {
             let method = intern(method);
-            if self.structural_provider(ty, method).is_some() {
+            if self.structural_provider(ty, method, false).is_some() {
                 names.push(method);
             }
         }
@@ -2300,14 +2357,32 @@ impl TypeChecker {
         &mut self,
         ty: TypeRef,
         method: Symbol,
+        on_type: bool,
         span: Span,
     ) -> bool {
-        let providers = self.method_providers(ty, method);
+        let providers = self.method_providers(ty, method, on_type);
         let Err(traits) = self.meant_provider(&providers) else {
             return false;
         };
         let on = format!("type '{}'", self.show_type(&Type::Generic(ty, vec![])));
         self.ambiguous_method(method, &on, &traits, span);
+        // Called through the type (`T.decode(v)`), there is no receiver
+        // to annotate: a function bounded by the trait says which (a
+        // program's trait where one is among them, `Pretty` over `Display`).
+        if on_type {
+            let named = (traits.iter())
+                .find(|t| crate::defs::builtin_trait_of_id(t.id.0).is_none())
+                .or(traits.first())
+                .map(|t| self.show_trait(*t))
+                .unwrap_or_default();
+            let Some(last) = self.errors.last_mut() else {
+                return true;
+            };
+            last.help = vec![format!(
+                "say which is meant: call it through a function bounded by the trait you mean, \
+                 `where a: {named}`"
+            )];
+        }
         true
     }
 }

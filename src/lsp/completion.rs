@@ -495,7 +495,7 @@ impl Server {
         let tables = self.checked_tables(doc)?;
         Some(Checked {
             program: checked.ast.clone(),
-            methods: tables.methods(),
+            methods: tables.methods(&|module| imports(&checked.ast, module)),
             record_fields: tables.record_fields(),
         })
     }
@@ -599,7 +599,7 @@ impl Server {
         let tables = project.session.tables();
         let checked = project.session.module_analysis(id).map(|checked| Checked {
             program: checked.ast.clone(),
-            methods: tables.methods(),
+            methods: tables.methods(&|module| imports(&checked.ast, module)),
             record_fields: tables.record_fields(),
         });
         project.set_text(&path, &original);
@@ -643,6 +643,13 @@ struct Checked {
 }
 
 // ── Method enumeration for dot-completion ──────────────────────────
+
+/// Whether `program` imports the module `module`.
+fn imports(program: &Program, module: &str) -> bool {
+    program.decls.iter().any(|decl| {
+        matches!(decl, crate::ast::Decl::Import(target, _) if resolve(target.module()) == module)
+    })
+}
 
 /// The names of the methods a value of type `receiver_ty` has, from the
 /// checker's `methods` (the type impls key it by, method name): those of
@@ -837,7 +844,7 @@ mod tests {
     fn methods(source: &str) -> Vec<(crate::types::TypeRef, Symbol)> {
         let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
         session.analyze(file);
-        session.tables().methods()
+        session.tables().methods(&|_| true)
     }
 
     const IMPLS: &str = "trait UpperCaser { fn to_upper(self) -> String }\n\

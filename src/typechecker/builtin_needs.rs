@@ -506,13 +506,14 @@ impl TypeChecker {
             if self.wanted[k].solved {
                 continue;
             }
-            let Goal::Pred(Pred::Builtin {
-                check: BuiltinCheck::Decodes { .. },
-                subject,
-                ..
-            }) = &self.wanted[k].goal
-            else {
-                continue;
+            let subject = match &self.wanted[k].goal {
+                Goal::Pred(Pred::Builtin {
+                    check: BuiltinCheck::Decodes { .. },
+                    subject,
+                    ..
+                }) => subject,
+                Goal::Pred(Pred::Trait { tr, subject, .. }) if Self::is_decode(*tr) => subject,
+                _ => continue,
             };
             let subject = self.apply(subject);
             if matches!(subject, Type::Error) {
@@ -527,27 +528,50 @@ impl TypeChecker {
             let passed_on = passer.filter(|_| holds_decoder(self, at, &subject));
             let wanted = &mut self.wanted[k];
             wanted.origin.span = span;
-            if let Goal::Pred(Pred::Builtin {
-                check: BuiltinCheck::Decodes { written, .. },
-                passer: owner,
-                ..
-            }) = &mut wanted.goal
-            {
-                *written = alias;
-                *owner = passed_on.or(*owner);
+            match &mut wanted.goal {
+                Goal::Pred(Pred::Builtin {
+                    check: BuiltinCheck::Decodes { written, .. },
+                    passer: owner,
+                    ..
+                }) => {
+                    *written = alias;
+                    *owner = passed_on.or(*owner);
+                }
+                // (`json.Decode`.)
+                Goal::Pred(Pred::Trait { asker, .. }) => {
+                    if let (Some(asker), Some(passer)) = (asker, passed_on) {
+                        asker.passer = Some(passer);
+                    }
+                    if let Some(alias) = alias {
+                        self.decode_aliases.insert(span, alias);
+                    }
+                }
+                _ => {}
             }
             // Decided here: a later call that gives a decoder the same
             // type is no place of this one.
-            if !matches!(subject, Type::Var(_))
-                && let Goal::Pred(Pred::Builtin {
-                    check,
-                    subject,
-                    passer,
-                }) = self.wanted[k].goal.clone()
-            {
-                self.wanted[k].solved = true;
+            if !matches!(subject, Type::Var(_)) {
                 let origin = self.wanted[k].origin;
-                self.check_builtin_argument(check, &subject, passer, origin);
+                match self.wanted[k].goal.clone() {
+                    Goal::Pred(Pred::Builtin {
+                        check,
+                        subject,
+                        passer,
+                    }) => {
+                        self.wanted[k].solved = true;
+                        self.check_builtin_argument(check, &subject, passer, origin);
+                    }
+                    Goal::Pred(Pred::Trait {
+                        tr,
+                        args,
+                        subject,
+                        asker,
+                    }) => {
+                        self.wanted[k].solved = true;
+                        self.verify_trait_obligation(tr, &args, &subject, origin, asker);
+                    }
+                    _ => {}
+                }
             }
         }
         // The same for a type given to an annotation variable of a
@@ -851,6 +875,18 @@ impl TypeChecker {
                         });
                     }
                 }
+                // What a declared `json.Decode` bound asks for, decided.
+                Pred::Trait {
+                    tr,
+                    args,
+                    subject,
+                    asker: Some(asker),
+                } => settled.push(Pred::Trait {
+                    tr: *tr,
+                    args: args.clone(),
+                    subject: subject.clone(),
+                    asker: self.settled_asker(Some(*asker)),
+                }),
                 other => settled.push(other.clone()),
             }
         }

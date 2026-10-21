@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Option(Fn(Int) -> Int)' does not implement trait 'json.Encode': variant 'Some' payload #1 is of type 'Fn(Int) -> Int', which does not
+-- stderr-not-contains: --> a_value_with_no_json_form_is_a_compile_error__fn.silt:8
+-- JSON has no form for a function, the closure in a `Some` here. A
+-- `()` and a `None` have one, `null` (line 8 is not refused).
+import json
+
+fn main() {
+  println(json.stringify(((), None, Some(1))))
+  println(json.stringify(Some({ x -> x + 1 })))
+}

@@ -329,6 +329,12 @@ pub struct Module {
     pub types: &'static str,
     /// Those types, read from the text.
     pub type_decls: Vec<TypeDecl>,
+    /// The traits the module declares, as silt `pub trait` declarations
+    /// (`json.Encode`): a program names them with the module, and the
+    /// checker registers them as it does the builtin traits.
+    pub traits: &'static str,
+    /// The names of those traits, in the order of the text.
+    pub trait_names: Vec<&'static str>,
     /// The declared types that do not derive all four builtin traits,
     /// each with the traits it does derive: `http.Response` holds a
     /// `Map`, which has no order, so it derives no `Compare`;
@@ -383,6 +389,7 @@ macro_rules! module {
         $(feature: $feature:literal,)?
         page: $page:literal,
         $(types: $types:expr,)?
+        $(traits: $traits:expr,)?
         $(derives: $derives:expr,)?
         $(opaque: $opaque:expr,)?
         $(error: $error:literal => $text:expr,)?
@@ -402,6 +409,9 @@ macro_rules! module {
         let mut types: &'static str = "";
         $(types = $types;)?
         #[allow(unused_mut, unused_assignments)]
+        let mut traits: &'static str = "";
+        $(traits = $traits;)?
+        #[allow(unused_mut, unused_assignments)]
         let mut derives: &'static [(&'static str, &'static [&'static str])] = &[];
         $(derives = &$derives;)?
         #[allow(unused_mut, unused_assignments)]
@@ -419,7 +429,7 @@ macro_rules! module {
             $name,
             (feature, built),
             ($page, include_str!(concat!("../../../docs/stdlib/", $page))),
-            (types, derives, opaque),
+            (types, traits, derives, opaque),
             error,
             rows,
         )
@@ -547,11 +557,24 @@ fn type_decls(
         .collect()
 }
 
+/// The names of the traits `text` declares.
+fn trait_names(text: &str) -> Vec<&'static str> {
+    parse(text)
+        .decls
+        .iter()
+        .map(|decl| match decl {
+            Decl::Trait(td) => leak(resolve(td.name)),
+            _ => panic!("the builtin registry declares something other than a trait:\n{text}"),
+        })
+        .collect()
+}
+
 fn build_module(
     name: &'static str,
     (feature, enabled): (Option<&'static str>, bool),
     (page_file, page): (&'static str, &'static str),
-    (types, derives, opaque): (
+    (types, traits, derives, opaque): (
+        &'static str,
         &'static str,
         &'static [(&'static str, &'static [&'static str])],
         &'static [(&'static str, usize)],
@@ -577,6 +600,8 @@ fn build_module(
         page,
         types,
         type_decls: type_decls(types, derives),
+        traits,
+        trait_names: trait_names(traits),
         derives,
         opaque,
         error: error.map(|(error, _, _)| error),

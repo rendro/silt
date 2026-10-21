@@ -141,6 +141,14 @@ struct Local {
 
 // ── Compiler errors ─────────────────────────────────────────────────
 
+/// Whether the method `method` of the trait `t`, one the VM has for
+/// every type, takes no value of the type: `decode` of `json.Decode`,
+/// called on a type (`T.decode(v)`) with the type's descriptor as the
+/// receiver.
+fn takes_no_self(t: crate::defs::TraitId, method: Symbol) -> bool {
+    crate::defs::builtin_trait_id("Decode") == Some(t) && resolve(method) == "decode"
+}
+
 /// A defect in silt: the program reached the compiler with an error the
 /// typechecker reports (a builtin module used without an import, a
 /// `loop(...)` outside a loop or with the wrong number of arguments). The
@@ -1341,21 +1349,31 @@ impl<'a> Compiler<'a> {
                 let method_name = format!("{ty}.{method}");
                 let names: &[&str] = match resolve(*method).as_str() {
                     "compare" | "equal" => &["__self__", "__other__"],
+                    "decode" => &["__value__"],
                     _ => &["__self__"],
                 };
                 let ident = |name: &str| Expr::new(ExprKind::Ident(intern(name)), span);
-                let mut access = Expr::new(
-                    ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
-                    span,
-                );
-                access.sel = Some(crate::ast::Selection::Native { tr });
-                let call = Expr::new(
-                    ExprKind::Call(
-                        Box::new(access),
-                        names[1..].iter().map(|n| ident(n)).collect(),
+                let call = match takes_no_self(tr, *method) {
+                    // `T.decode` as a value: `{ v -> T.decode(v) }`.
+                    true => Expr::new(
+                        ExprKind::Call(Box::new(expr.clone()), vec![ident(names[0])]),
+                        span,
                     ),
-                    span,
-                );
+                    false => {
+                        let mut access = Expr::new(
+                            ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
+                            span,
+                        );
+                        access.sel = Some(crate::ast::Selection::Native { tr });
+                        Expr::new(
+                            ExprKind::Call(
+                                Box::new(access),
+                                names[1..].iter().map(|n| ident(n)).collect(),
+                            ),
+                            span,
+                        )
+                    }
+                };
                 let lambda = Expr::new(
                     ExprKind::Lambda {
                         params: names
@@ -1911,7 +1929,19 @@ impl<'a> Compiler<'a> {
             self.emit(Asm::CallBuiltin { builtin, argc }, span)?;
         } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
             let member = self.type_member(callee)?;
-            if let Some(TypeMember::Native(t)) = member {
+            if let Some(TypeMember::Native(t)) = member
+                && takes_no_self(t, *method)
+            {
+                // `T.decode(v)`: the VM's method of the type, which takes
+                // no value of it; the type's descriptor chooses it.
+                let Some(descriptor) = self.type_value(receiver.res) else {
+                    return Err(checker_missed(span, "a method of no named type"));
+                };
+                let idx = self.add_constant(descriptor, span)?;
+                self.emit(Asm::Constant { k: idx }, span)?;
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(*method, args.len() + 1, t, tail, span)?;
+            } else if let Some(TypeMember::Native(t)) = member {
                 // `Int.display(1)`, `Pt.compare(a, b)`: a method the VM
                 // has natively for the type, not a global; the first
                 // argument is the receiver.

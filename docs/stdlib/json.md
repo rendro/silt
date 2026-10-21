@@ -14,12 +14,13 @@ A document whose shape is not known in advance is read into a
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `decode` | `(Value, type a) -> Result(a, JsonError)` | Decode a json.Value into a typed value |
-| `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
-| `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse a JSON array into a list |
-| `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
-| `pretty` | `(a) -> String` | Pretty-print value as JSON |
-| `stringify` | `(a) -> String` | Serialize value as compact JSON |
+| `decode` | `(Value, type a) -> Result(a, JsonError) where a: Decode` | Decode a json.Value into a typed value |
+| `encode` | `(a) -> Value where a: Encode` | Encode a value as a json.Value |
+| `parse` | `(String, type a) -> Result(a, JsonError) where a: Decode` | Parse JSON object into record |
+| `parse_list` | `(String, type a) -> Result(List(a), JsonError) where a: Decode` | Parse a JSON array into a list |
+| `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError) where a: Decode` | Parse JSON object into map |
+| `pretty` | `(a) -> String where a: Encode` | Pretty-print value as JSON |
+| `stringify` | `(a) -> String where a: Encode` | Serialize value as compact JSON |
 
 ## Errors
 
@@ -85,23 +86,21 @@ A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
 that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 
-The type a decoder is given is checked where it is known: written at the
-call (`json.parse(text, Config)`), held in a variable, given to a decoder
-used as a value, or given to a function or method that passes it on to the
-decoder (`fn load(text, type a) { json.parse(text, a) }`: each call of
-`load` is checked, and the error notes that `load` passes it to
-`json.parse`). A trait method passes it on too, also one called on a value
-whose type is a type variable (`fn go(l: l, type b) where l: Loader {
-l.load(b) }`): each call of `go` is checked against the method of the type
-it gives `l`. A
-record with a field no decoder exists for is a compile error that names the
-field and its type, and so is an enum with a variant whose field has none
-(the error names the variant); so is a generic record or enum, or a type the
-function does not take (such as `json.parse(text, List)`). The check applies
-equally to a decoder imported by name (`import json.{ parse }`) and to one
-called through a module alias, and a type is refused whatever a document
-would hold (an `Option` field whose key is left out, another variant of the
-enum, an empty list or map too).
+These are the types that have [`json.Decode`](#jsondecode), which
+the four functions need of their type argument. A type is checked where it
+is known: written at the call (`json.parse(text, Config)`), held in a
+variable, given to a decoder used as a value, or given to a function or
+method that passes it on to the decoder (`fn load(text, type a) where a:
+json.Decode { json.parse(text, a) }`: each call of `load` is checked, and
+the error notes that `load` passes it to `json.parse`). A record with a
+field no decoder exists for is a compile error that names the field and its
+type, and so is an enum with a variant whose field has none (the error names
+the variant); so is a generic record or enum, or a type the function does
+not take (such as `json.parse(text, List)`). The check applies equally to a
+decoder imported by name (`import json.{ parse }`) and to one called
+through a module alias, and a type is refused whatever a document would hold
+(an `Option` field whose key is left out, another variant of the enum, an
+empty list or map too).
 
 
 ## Enums
@@ -175,8 +174,7 @@ The toml decoders read an enum in the same forms (see
 deep. The element of a list or of a tuple, the field of a record or of an
 enum variant and the value of a map are each one level further in than what
 holds them; the content of a `Some` is not (it is written in the `Some`'s
-place). A value nested deeper is a runtime error, as is any value they cannot
-write:
+place). A value nested deeper is a runtime error:
 
 ```text
 json.stringify: the value is nested more than 1000 levels deep
@@ -247,15 +245,204 @@ fn main() {
 ```
 
 A record field of type `json.Value` keeps that part of the document as it
-is, for [`json.decode`](#jsondecode) to read once its shape is known. Like
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
 is `json.Null`); a field of type `Option(json.Value)` may be left out.
+
+
+## `json.Encode`
+
+```
+trait Encode {
+  fn encode(self) -> Value
+}
+```
+
+What `json.stringify` and `json.pretty` need of the value they write. A
+type has it by its structure, as it has `Display`: `Int`, `Float`, `String`,
+`Bool`, `()`, a `json.Value`, a `Date`, a `Time` and a `DateTime` have it; a
+list, a tuple, an `Option` and a record or enum type (the program's or a
+builtin module's) have it when their parts do; a map when its values do (a
+key is written as its text). `Bytes`, a set, a function, a channel and a
+handle have none. A function that hands a value of a type variable to
+`json.stringify` says so, as for `Display`; one without annotations is
+inferred to need it:
+
+```silt
+import json
+
+fn send(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn main() {
+  println(send([1, 2])) -- [1,2]
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+```
+
+A program names the trait with its module, `json.Encode`.
+
+Write `trait json.Encode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `Display` impl is written; an impl for
+a builtin type is an error, a builtin type keeps its own form). Its
+`encode` gives the `json.Value` the type is written as, wherever a value of
+the type is inside what is written: at the top, in a list, as a map's
+value, in a record's or a variant's field. A `Some` around it stays
+structural (`Some(x)` is written as `x` is), and a type that holds a
+function may have a written impl. An impl for a generic type is allowed;
+what it asks of the type's arguments it says in a `where` clause.
+
+```silt
+import json
+
+type Money {
+  cents: Int,
+}
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.Int(self.cents)
+  }
+}
+
+type Order {
+  id: Int,
+  total: Money,
+}
+
+fn main() {
+  println(json.stringify(Order { id: 7, total: Money { cents: 1250 } }))
+  -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
+}
+```
+
+
+## `json.Decode`
+
+```
+trait Decode {
+  fn decode(value: Value) -> Result(Self, JsonError)
+}
+```
+
+What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
+need of the type they decode into. A type has it by its structure: the
+types of [Decodable types](#decodable-types) have it, a record or enum
+type of the program when the types of its fields do. A container, a date
+and a time are decoded as the type of a field, not as the type a decoder
+is given (a type written as a value names no list's element type). A
+function with a `type a` parameter (any annotation names the variable)
+that hands it to a decoder writes `where a: json.Decode`; only a function
+with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is
+inferred to need it:
+
+```silt
+import json
+
+type Config {
+  port: Int,
+}
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  println(load("""{"port": 80}""", Config)) -- Ok(Config {port: 80})
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Decode', which 'json.parse' needs
+```
+
+A type that lacks it is refused at the call that gives it, as a decoder
+refuses it, with the function that passes it on in a note:
+
+```text
+`json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `load` passes it to `json.parse`
+```
+
+Write `trait json.Decode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `json.Encode` impl is written; an impl
+for a builtin type is an error, a builtin type keeps its own form, and an
+impl for a generic type is refused: a decoder builds a value of one type).
+Its `decode` gives the value of `T` that a `json.Value` is, wherever a
+value of the type is in the document: at the top, as an element of
+`json.parse_list`, as a value of `json.parse_map`, in a record's or a
+variant's field, in a list or a map in one. The fields of `T` are then not
+looked into, so `T` may hold a type no decoder has. An `Option` around it
+stays structural (`null` is `None`). The `Err` it returns is the decoder's
+error, with the path of its part appended as to the decoder's own errors:
+`Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
+posts[1].tags")`, a `MissingField("name")` there is
+`MissingField("posts[1].tags.name")`. A message is the impl's text, and the
+path is appended to it as it is: an error the impl got from `json.decode` of
+a part of its value, `TypeMismatch("Int", "string at k")`, ends with `at k at
+posts[1].tags`. The first error in the document counts, the impl's or the
+decoder's. The toml decoders and a postgres row honour the impl too (see
+[toml](toml.md#types-with-a-jsondecode-impl) and
+[postgres](postgres.md#types-with-a-jsondecode-impl)).
+
+```silt
+import json
+import list
+import set
+
+type Tags {
+  names: Set(String),
+}
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { names: set.from_list([text]) })
+      json.Array(items) -> {
+        let names = list.filter_map(items) { item ->
+          match item {
+            json.String(name) -> Some(name)
+            _ -> None
+          }
+        }
+        Ok(Tags { names: set.from_list(names) })
+      }
+      _ -> Err(json.Other("tags are a string or a list of strings"))
+    }
+  }
+}
+
+type Post {
+  title: String,
+  tags: Tags,
+}
+
+fn main() {
+  println(json.parse("""{"title": "a", "tags": "x"}""", Post))
+  -- Ok(Post {title: a, tags: Tags {names: #[x]}})
+  println(json.parse("""{"title": "a", "tags": 3}""", Post))
+  -- Err(tags are a string or a list of strings at tags)
+}
+```
+
+`T.decode(value)` decodes a `json.Value` into `T`: by its impl where one is
+written, else as `json.decode(value, T)` does. For a `type a` with the
+bound, `a.decode(value)`. It takes no value of the type: `x.decode(..)` on
+a value is no call of it.
 
 
 ## `json.decode`
 
 ```
-json.decode(value: Value, type a) -> Result(a, JsonError)
+json.decode(value: Value, type a) -> Result(a, JsonError) where a: Decode
 ```
 
 Decodes a `json.Value` into the type `a`, as `json.parse` decodes the
@@ -292,10 +479,51 @@ fn main() {
 ```
 
 
+## `json.encode`
+
+```
+json.encode(value: a) -> Value where a: Encode
+```
+
+The `json.Value` of what `json.stringify` writes of a value: what
+`json.parse` reads of that text. A whole number is a `json.Int` (`1.0` too),
+a record and a map are a `json.Object`, whose keys come out sorted (so
+`json.stringify(json.encode(r))` writes a record's fields in the order of
+their names, `json.stringify(r)` in the order its type declares them), a
+`None` and `()` are `json.Null`. Written [`json.Encode`](#jsonencode) impls
+are used wherever their types are in the value, at the top too: the
+counterpart of [`json.decode`](#jsondecode-1). An impl's `encode` uses it for
+the parts it writes; for its own value (`json.encode(self)`) it would call
+itself without end. In a module that imports json, `x.encode()` is the
+method of the trait: on a value whose type has a written impl it is what
+the impl gives, as it gives it (`json.Float(1.0)` stays a `Float`); on any
+other value it is `json.encode(x)`.
+
+```silt
+import json
+
+type Pair {
+  left: Int,
+  right: Int,
+}
+
+trait json.Encode for Pair {
+  fn encode(self) -> json.Value {
+    json.Array([json.encode(self.left), json.encode(self.right)])
+  }
+}
+
+fn main() {
+  println(json.encode([1, 2])) -- Array([Int(1), Int(2)])
+  println(json.stringify(Pair { left: 1, right: 2 })) -- [1,2]
+}
+```
+
+
 ## `json.parse`
 
 ```
-json.parse(s: String, type a) -> Result(a, JsonError)
+json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
 ```
 
 Parses a JSON string into a record of type `a`. The type is passed as a `type`
@@ -357,7 +585,7 @@ fn main() -> Result(Unit, json.JsonError) {
 ## `json.parse_list`
 
 ```
-json.parse_list(s: String, type a) -> Result(List(a), JsonError)
+json.parse_list(s: String, type a) -> Result(List(a), JsonError) where a: Decode
 ```
 
 Parses a JSON array into a list of `a`, each element decoded as
@@ -387,7 +615,7 @@ fn main() {
 ## `json.parse_map`
 
 ```
-json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError)
+json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError) where a: Decode
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
@@ -411,7 +639,7 @@ fn main() {
 ## `json.pretty`
 
 ```
-json.pretty(value: a) -> String
+json.pretty(value: a) -> String where a: Encode
 ```
 
 Serializes a value to a pretty-printed JSON string (with indentation and
@@ -430,7 +658,7 @@ fn main() {
 ## `json.stringify`
 
 ```
-json.stringify(value: a) -> String
+json.stringify(value: a) -> String where a: Encode
 ```
 
 Serializes a value to a compact JSON string. Each kind of value is
@@ -455,13 +683,14 @@ the same type, a record into its record type, and a variant into its enum
 type when the program declares it (see [Enums](#enums)); a variant of a
 builtin enum and `()` are written but not read back.
 
-`json.stringify` and `json.pretty` write the same values. A value JSON has no
-form for is a runtime error that names its kind, wherever in the value it is:
-`Bytes`, a `Set`, a function (the constructor of a variant, such as `Some`,
-is one), a channel, a task handle, a TCP listener or stream.
+`json.stringify` and `json.pretty` write the same values: those of a type
+that has [`json.Encode`](#jsonencode). A type with no json form is a compile
+error that names the way down to the part that has none, wherever in the
+value it is: `Bytes`, a `Set`, a function (the constructor of a variant,
+such as `Some`, is one), a channel, a task handle, a TCP listener or stream.
 
 ```text
-json.stringify: unsupported value kind Bytes
+type 'List(Reply)' does not implement trait 'json.Encode': element > field 'body' is of type 'Bytes', which does not
 ```
 
 To send bytes as JSON, turn them into text first (`bytes.to_string`,

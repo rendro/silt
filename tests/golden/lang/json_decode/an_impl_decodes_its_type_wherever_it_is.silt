@@ -1,0 +1,45 @@
+-- cmd: run
+-- exit: 0
+-- A record or enum type with a written `json.Decode` impl is decoded by
+-- the impl wherever it is in the document: at the top, as an element of
+-- `json.parse_list`, as a value of `json.parse_map`, in a record's field,
+-- in a list in a field, in a variant's field, through `json.decode`. An
+-- `Option` around it stays structural (`null` is `None`).
+import json
+import list
+import set
+
+type Tags { s: Set(String) }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { s: set.from_list([text]) })
+      json.Array(items) -> {
+        let names = list.filter_map(items) { item ->
+          match item {
+            json.String(name) -> Some(name)
+            _ -> None
+          }
+        }
+        Ok(Tags { s: set.from_list(names) })
+      }
+      _ -> Err(json.TypeMismatch("array", "something else"))
+    }
+  }
+}
+
+type Post { title: String, tags: Tags, more: List(Tags), opt: Option(Tags) }
+
+type Kind { Plain, Tagged(Tags) }
+
+fn main() {
+  println(json.parse("""["a", "b", "a"]""", Tags))
+  println(json.parse_list("""["a", ["b", "c"]]""", Tags))
+  println(json.parse_map("""{"k": "v"}""", Tags))
+  println(json.parse("""{"title": "t", "tags": "x", "more": [["y"], "z"], "opt": null}""", Post))
+  println(json.parse("""{"title": "t", "tags": [], "more": [], "opt": "o"}""", Post))
+  println(json.parse("""{"title": "t", "tags": [], "more": []}""", Post))
+  println(json.parse("""{"fields": ["q"], "variant": "Tagged"}""", Kind))
+  println(json.decode(json.Array([json.String("v")]), Tags))
+}

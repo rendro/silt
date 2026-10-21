@@ -15,7 +15,7 @@ type Many { n: Int, js: List(json.Value) }
 type Inner { j: json.Value }
 type Outer { n: Int, inner: Option(Inner) }
 
-fn from_json(text: String, type a) -> Result(a, json.JsonError) {
+fn from_json(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.parse(text, a)
 }
 

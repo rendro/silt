@@ -8,7 +8,7 @@ import json
 
 type Blob { data: Bytes }
 
-fn load(s: String, type a) -> Result(a, json.JsonError) {
+fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.parse(s, a)
 }
 

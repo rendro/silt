@@ -1,0 +1,6 @@
+Ok([Out {v: 1250}])
+Ok([Out {v: {"n": 1, "total": 1250}}])
+Ok([Out {v: [1250, null]}])
+Ok(1)
+a stream: Some(Ok(Out {v: [1250, "a"]}))
+a cursor: Ok([Out {v: {"price": 1250}}])

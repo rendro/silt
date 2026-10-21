@@ -1,0 +1,21 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: division by zero
+-- stderr-contains: -> Bad.encode  at an_error_of_an_impl_is_the_programs.silt:13:13
+-- stdout-contains: 2
+-- An impl's `encode` is the program's code: its error ends the program
+-- as any other, with the impl in the call stack, and nothing is written.
+import json
+
+type Bad { n: Int }
+
+trait json.Encode for Bad {
+  fn encode(self) -> json.Value {
+    let x = 10 / self.n
+    json.Int(x)
+  }
+}
+
+fn main() {
+  println(json.stringify(Bad { n: 5 }))
+  println(json.stringify([Bad { n: 5 }, Bad { n: 0 }]))
+}

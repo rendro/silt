@@ -1,0 +1,8 @@
+Ok(Point {x: 1, y: 2})
+Ok(7)
+Ok(Code {n: -1})
+Ok(Coded {code: Code {n: -1}})
+Err(not a code at code)
+Ok(Point {x: 1, y: 2})
+Ok(Code {n: -1})
+Ok(Point {x: 1, y: 2})

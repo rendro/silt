@@ -1,0 +1,74 @@
+-- A row type with a written `json.Decode` impl is decoded by the impl,
+-- from the `json.Object` of the row's columns that `postgres.query(db,
+-- sql, params, json.Value)` gives (every column, by its name): a record
+-- type whose fields no decoder fills (a `Set`), and an enum type, are
+-- row types then. The `Err` the impl returns is the row's error, an
+-- `Other` of the `JsonError`'s message.
+import env
+import json
+import list
+import map
+import postgres
+import set
+
+type Names { s: Set(String) }
+
+trait json.Decode for Names {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Object(columns) -> Ok(Names { s: set.from_list(map.keys(columns)) })
+      _ -> Err(json.Other("a row is an object"))
+    }
+  }
+}
+
+type Size { Small, Big }
+
+trait json.Decode for Size {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Object(columns) -> match map.get(columns, "n") {
+        Some(json.Int(n)) -> match n > 1 {
+          true -> Ok(Big)
+          false -> Ok(Small)
+        }
+        Some(_) -> Err(json.TypeMismatch("Int", "something else at n"))
+        None -> Err(json.MissingField("n"))
+      }
+      _ -> Err(json.Other("a row is an object"))
+    }
+  }
+}
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println(postgres.query(db, "SELECT 1 AS a, 'x' AS b, now()::date AS c", (), Names))
+      println(postgres.query(db, "SELECT g AS n FROM generate_series(1, 2) g", (), Size))
+      match postgres.query(db, "SELECT 'x' AS n", (), Size) {
+        Ok(rows) -> println(rows)
+        Err(e) -> println("Err: {e.message()}")
+      }
+      match postgres.query(db, "SELECT 1 AS m", (), Size) {
+        Ok(rows) -> println(rows)
+        Err(e) -> println("Err: {e.message()}")
+      }
+      let read = postgres.transact(db) { tx ->
+        let c = postgres.cursor(tx, "SELECT g AS n FROM generate_series(1, 3) g", (), 2, Size)?
+        let batch = postgres.cursor_next(c)?
+        let _ = postgres.cursor_close(c)?
+        Ok(list.length(batch))
+      }
+      println("a cursor: {read}")
+      postgres.close(db)
+    }
+    Err(e) -> println(e.message())
+  }
+}

@@ -1,0 +1,42 @@
+-- A record or variant of a type with a written `json.Encode` impl is
+-- written as the `json.Value` its `encode` gives, wherever it is in the
+-- value: at the top, in a list, as a map's value, a record's field, a
+-- variant's field, in a `Some` (which stays `x`), in a tuple; for a
+-- generic type too. `Job` holds a function, which has no json form of
+-- its own. A part an impl writes is not looked into (`Box` of `Money`).
+import json
+
+type Money { cents: Int }
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.String("${self.cents / 100}.{self.cents % 100}")
+  }
+}
+
+type Job { name: String, run: Fn(Int) -> Int }
+
+trait json.Encode for Job {
+  fn encode(self) -> json.Value { json.Object(#{"job": json.String(self.name)}) }
+}
+
+type Order { id: Int, total: Money, jobs: List(Job) }
+type Paid { Cash(Money), Card(String, Money), Nothing }
+type Box(a) { v: a }
+
+trait json.Encode for Box(a) where a: json.Encode {
+  fn encode(self) -> json.Value { json.Array([json.String("box")]) }
+}
+
+fn main() {
+  let m = Money { cents: 1234 }
+  println(json.stringify(m))
+  println(json.stringify([m, m]))
+  println(json.stringify(#{"a": m}))
+  println(json.stringify(Order { id: 1, total: m, jobs: [Job { name: "j", run: { x -> x } }] }))
+  println(json.stringify([Cash(m), Card("visa", m), Nothing]))
+  println(json.stringify(Some(m)))
+  println(json.stringify((m, None)))
+  println(json.stringify(Box { v: m }))
+  println(json.pretty({ total: m }))
+}

@@ -777,7 +777,7 @@ impl Server {
             || crate::types::builtins::iter_all().any(|ty| ty.name == new)
             || crate::module::builtin_module_types().contains(&new)
             || crate::module::all_builtin_constructor_names().any(|name| name == new)
-            || crate::defs::BUILTIN_TRAITS.contains(&new)
+            || crate::defs::PRELUDE_TRAITS.contains(&new)
             || self.projects.values().any(|project| {
                 let defs = project.session.defs();
                 defs.of_module(ModuleId::PRELUDE)

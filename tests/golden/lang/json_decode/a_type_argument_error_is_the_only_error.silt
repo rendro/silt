@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A json decoder given something that is no type it takes has the error
+-- of that argument, and no other at its place: the decoder's need of
+-- `json.Decode` asks nothing of a type nothing decides. A decoder held in
+-- a record with a type is refused where the type reaches it, once.
+import json
+import time
+
+type C { x: Int }
+type Blob { data: Bytes }
+type Pack(f, t) { f: f, t: t }
+
+fn main() {
+  let _ = json.parse("1", Bytes)
+  let _ = json.parse("1", time.Date)
+  let _ = json.parse("1", Option(C))
+  let _ = json.parse_list("[1]", List(Int))
+  let k = Pack { f: json.parse, t: Blob }
+  let g = k.f
+  println(g("\{}", k.t))
+}

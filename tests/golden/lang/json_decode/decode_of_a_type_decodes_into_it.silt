@@ -1,0 +1,38 @@
+-- cmd: run
+-- exit: 0
+-- `T.decode(value)` decodes a `json.Value` into `T`: by the impl where one
+-- is written, else as `json.decode(value, T)` does (written impls at any
+-- depth included). For a `type a` with the bound, `a.decode(value)`.
+import json
+
+type Point { x: Int, y: Int }
+
+type Code { n: Int }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(s) -> Ok(Code { n: 0 - 1 })
+      _ -> Err(json.Other("not a code"))
+    }
+  }
+}
+
+type Coded { code: Code }
+
+fn read(value: json.Value, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  a.decode(value)
+}
+
+fn main() {
+  let point = json.Object(#{ "x": json.Int(1), "y": json.Int(2) })
+  println(Point.decode(point))
+  println(Int.decode(json.Int(7)))
+  println(Code.decode(json.String("c")))
+  println(Coded.decode(json.Object(#{ "code": json.String("c") })))
+  println(Coded.decode(json.Object(#{ "code": json.Int(1) })))
+  println(read(point, Point))
+  println(read(json.String("c"), Code))
+  let as_value = Point.decode
+  println(as_value(point))
+}

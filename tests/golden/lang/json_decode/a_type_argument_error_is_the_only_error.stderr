@@ -1,0 +1,30 @@
+error[type]: undefined variable 'Bytes'
+ --> a_type_argument_error_is_the_only_error.silt:15:27
+    |
+ 15 |   let _ = json.parse("1", Bytes)
+    |                           ^^^^^ undefined variable 'Bytes'
+
+error[type]: 'time.Date' is not a value
+ --> a_type_argument_error_is_the_only_error.silt:16:27
+    |
+ 16 |   let _ = json.parse("1", time.Date)
+    |                           ^^^^^^^^^ 'time.Date' is not a value
+
+error[type]: undefined variable 'Option'
+ --> a_type_argument_error_is_the_only_error.silt:17:27
+    |
+ 17 |   let _ = json.parse("1", Option(C))
+    |                           ^^^^^^ undefined variable 'Option'
+
+error[type]: `type List(_)` is not callable
+ --> a_type_argument_error_is_the_only_error.silt:18:34
+    |
+ 18 |   let _ = json.parse_list("[1]", List(Int))
+    |                                  ^^^^^^^^^ `type List(_)` is not callable
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> a_type_argument_error_is_the_only_error.silt:21:20
+    |
+ 21 |   println(g("\{}", k.t))
+    |                    ^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these

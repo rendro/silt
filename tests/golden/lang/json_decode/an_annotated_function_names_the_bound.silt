@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type variable `a` is not known to implement trait 'json.Decode', which 'json.parse' needs
+-- stderr-contains: help: add `where a: json.Decode`
+-- stderr-not-contains: :14:
+-- A function with annotations that gives its `type a` to a json decoder
+-- says that the variable has `json.Decode`, as it says `json.Encode` for
+-- `json.stringify`. With the bound written (`ok`) it checks; without
+-- (`load`) the definition is the error.
+import json
+
+type Config { port: Int }
+
+fn ok(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn load(text: String, type a) -> Result(a, json.JsonError) {
+  json.parse(text, a)
+}
+
+fn main() {
+  println(ok("""{"port": 1}""", Config))
+}

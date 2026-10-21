@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: method 'other' is not declared in trait 'json.Encode'
+-- stderr-contains: duplicate implementation of trait 'json.Encode' for type 'Q'
+-- stderr-contains: trait impl 'json.Encode' for 'R' is missing method 'encode'
+-- stderr-contains: type 'Job' implements 'Ser' but does not implement supertrait 'json.Encode'
+-- Every message names the trait `json.Encode`, as a program writes it.
+import json
+
+type P { x: Int }
+
+trait json.Encode for P {
+  fn encode(self) -> json.Value { json.Null }
+  fn other(self) -> Int { 1 }
+}
+
+type Q { x: Int }
+
+trait json.Encode for Q { fn encode(self) -> json.Value { json.Null } }
+trait json.Encode for Q { fn encode(self) -> json.Value { json.Int(1) } }
+
+type R { x: Int }
+
+trait json.Encode for R {}
+
+trait Ser: json.Encode { fn tag(self) -> String }
+
+type Job { run: Fn(Int) -> Int }
+
+trait Ser for Job { fn tag(self) -> String { "j" } }
+
+fn main() {
+  println(json.stringify(P { x: 1 }))
+}

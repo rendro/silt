@@ -1,0 +1,27 @@
+-- cmd: run
+-- exit: 0
+-- TOML's `nan` and `inf` have no `json.Value` (a `json.Float` is a
+-- number): in a part a `json.Decode` impl decodes, such a float is a
+-- type mismatch at its own path, and the impl of that part is not
+-- called (that of a part before it is, as for any error the decoder
+-- meets after such a part). Outside such a part a `Float` field
+-- refuses it as before.
+import json
+import toml
+
+type Reading { raw: json.Value }
+
+trait json.Decode for Reading {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    println("decode {value}")
+    Ok(Reading { raw: value })
+  }
+}
+
+type Log { readings: List(Reading), level: Float }
+
+fn main() {
+  println(toml.parse("readings = [1.5, [2, nan]]\nlevel = 1.0\n", Log))
+  println(toml.parse("level = 1.0\n[[readings]]\nmax = -inf\n", Log))
+  println(toml.parse("readings = [1.5]\nlevel = inf\n", Log))
+}

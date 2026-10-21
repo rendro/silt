@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type variable `a` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+-- stderr-contains: help: add `where a: json.Encode`
+-- stderr-not-contains: :12:
+-- A function with annotations that hands a value of its type variable to
+-- `json.stringify` says that the variable has `json.Encode`, as it says
+-- `Display` for `println`. With the bound written (`ok`) it checks.
+import json
+
+fn ok(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn send(x: a) -> String {
+  json.stringify(x)
+}
+
+fn main() {
+  println(ok(1))
+  println(send(1))
+}

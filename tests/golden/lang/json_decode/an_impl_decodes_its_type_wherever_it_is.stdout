@@ -1,0 +1,8 @@
+Ok(Tags {s: #[a, b]})
+Ok([Tags {s: #[a]}, Tags {s: #[b, c]}])
+Ok(#{"k": Tags {s: #[v]}})
+Ok(Post {title: t, tags: Tags {s: #[x]}, more: [Tags {s: #[y]}, Tags {s: #[z]}], opt: None})
+Ok(Post {title: t, tags: Tags {s: #[]}, more: [], opt: Some(Tags {s: #[o]})})
+Ok(Post {title: t, tags: Tags {s: #[]}, more: [], opt: None})
+Ok(Tagged(Tags {s: #[q]}))
+Ok(Tags {s: #[v]})
