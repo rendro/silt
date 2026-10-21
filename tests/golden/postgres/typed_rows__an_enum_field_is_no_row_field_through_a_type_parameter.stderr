@@ -4,7 +4,7 @@ error[type]: `postgres.query` cannot decode `Job`: field `state` has type `Statu
  28 |   let _ = rows(db, "SELECT 1 AS state", Job)
     |                                         ^^^ `postgres.query` cannot decode `Job`: field `state` has type `Status`, which has no decoder
   = note: `rows` passes it to `postgres.query`
-  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `postgres.query` cannot decode `Jobs`: field `states` has type `List(Status)`, and `Status` has no decoder
  --> typed_rows__an_enum_field_is_no_row_field_through_a_type_parameter.silt:29:42
@@ -12,4 +12,4 @@ error[type]: `postgres.query` cannot decode `Jobs`: field `states` has type `Lis
  29 |   let _ = rows(db, "SELECT 1 AS states", Jobs)
     |                                          ^^^^ `postgres.query` cannot decode `Jobs`: field `states` has type `List(Status)`, and `Status` has no decoder
   = note: `rows` passes it to `postgres.query`
-  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Bytes, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record types, types with a `json.Decode` impl, and aliases of these

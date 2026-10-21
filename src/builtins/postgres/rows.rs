@@ -5,8 +5,9 @@
 //! `int4` column is an `int4`): an `Int` goes into an `int4` or a
 //! `numeric`, a `String` into a `date`, a `Float` into a `float4`.
 //!
-//! A row is decoded into the type the program names, a record type or
-//! `json.Value`. The record's fields are matched with the result's
+//! A row is decoded into the type the program names, a record type,
+//! `json.Value` or a type with a written `json.Decode` impl (below).
+//! The record's fields are matched with the result's
 //! columns by name once per result ([`Plan::new`]): a field with no
 //! column, or one whose type the column's type cannot fill, is an error
 //! before any row is read, however the values would have turned out (an

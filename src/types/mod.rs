@@ -289,6 +289,28 @@ impl Type {
             .collect()
     }
 
+    /// Whether `self` holds the type of what was already reported as an
+    /// error (`Type::Error`, an unknown type's).
+    pub fn holds_error(&self) -> bool {
+        match self {
+            Type::Error => true,
+            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(Type::holds_error),
+            Type::Fun(params, ret) => params.iter().any(Type::holds_error) || ret.holds_error(),
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => t.holds_error(),
+            Type::Map(k, v) => k.holds_error() || v.holds_error(),
+            Type::AssocProj { receiver, .. } => receiver.holds_error(),
+            Type::AnonRecord { fields, .. } => fields.values().any(Type::holds_error),
+            Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Rigid(_)
+            | Type::Never => false,
+        }
+    }
+
     /// Every named type `self` mentions.
     pub fn collect_refs(&self, out: &mut Vec<TypeRef>) {
         match self {

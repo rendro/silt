@@ -573,11 +573,14 @@ The rules:
   impl exists.
 - **A method without `self` is called on a type, never on a value.**
   `x.default()` on a value `x: a` is an error that names the call to
-  write: `a.default()`, with a `type a` parameter.
+  write: `a.default()`, with a `type a` parameter. Nor is it a candidate
+  for a call on a value: with `where a: Foo, a: Bar`, where only `Bar`'s
+  `build` takes `self`, `x.build()` is `Bar`'s.
 - **Ambiguity across traits is rejected.** If both `Foo` and `Bar`
   declare a method `build` and `a` is constrained to `Foo + Bar`,
   calling `a.build()` errors with "ambiguous method 'build' on `type a`:
-  provided by traits Bar, Foo".
+  provided by traits Bar, Foo", and the help says to call it from a
+  function bounded by only one of them.
 
 This is how `default`, `empty`, and similar constructor-style trait
 methods become directly writable in user code — without silt growing

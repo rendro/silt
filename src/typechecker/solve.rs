@@ -1181,8 +1181,8 @@ impl TypeChecker {
         self.close_level();
     }
 
-    /// The traits in sight that declare a method `name`, in the order
-    /// of their names.
+    /// The traits in sight that declare a method `name` a call on a
+    /// value may mean (`on_a_value`), in the order of their names.
     fn traits_declaring(&self, name: Symbol) -> Vec<TraitKey> {
         let mut traits: Vec<TraitKey> = self
             .tables
@@ -1193,7 +1193,28 @@ impl TypeChecker {
             .filter(|t| self.sees_trait(*t))
             .collect();
         traits.sort_by_key(|t| self.show_trait(*t));
-        traits
+        self.on_a_value(traits, |t| *t, name)
+    }
+
+    /// Of `candidates` (each of the trait `trait_of` says) for a call of
+    /// `method` on a value, those the call may mean: a method without
+    /// `self` is never one, of any trait. Where none takes `self`, the
+    /// first alone, which the call reports as taking none.
+    pub(super) fn on_a_value<C>(
+        &self,
+        mut candidates: Vec<C>,
+        trait_of: impl Fn(&C) -> TraitKey,
+        method: Symbol,
+    ) -> Vec<C> {
+        let takes_self = |c: &C| {
+            (self.tables.traits.get(&trait_of(c)))
+                .is_none_or(|info| info.receivers.contains(&method))
+        };
+        match candidates.iter().any(takes_self) {
+            true => candidates.retain(takes_self),
+            false => candidates.truncate(1),
+        }
+        candidates
     }
 
     fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
@@ -1312,6 +1333,86 @@ impl TypeChecker {
                 "say which is meant: annotate the receiver's type, or bound it with a `where` clause",
             ),
         );
+    }
+
+    /// Report that `method`, called on `on` (a value of type `a`, the
+    /// type `a` of a `type a` parameter), whose type is the annotation
+    /// variable `r`, is a method of each of `traits`, which bound it:
+    /// being bounded already, the call says which it means by being in a
+    /// function bounded by only one of them. The help names the bounds
+    /// that give the method as the program wrote them: a bound whose
+    /// supertrait gives it (`where a: S` with `trait S: Ar`), not the
+    /// supertrait, unless one bound gives it all.
+    pub(super) fn ambiguous_bound_method(
+        &mut self,
+        method: Symbol,
+        on: &str,
+        r: RigidId,
+        traits: &[TraitKey],
+        span: Span,
+    ) {
+        self.ambiguous_method(method, on, traits, span);
+        let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
+        let above = |t: TraitKey| self.supertraits_of(t);
+        // The bounds no other one has as a supertrait: what the `where`
+        // clause says, the supertraits aside.
+        let said: Vec<&(TraitKey, Vec<Type>)> = (in_scope.iter())
+            .filter(|(t, _)| {
+                !in_scope
+                    .iter()
+                    .any(|(o, _)| o != t && above(*o).contains(t))
+            })
+            .collect();
+        let giving: Vec<&(TraitKey, Vec<Type>)> = (said.iter().copied())
+            .filter(|(t, _)| traits.iter().any(|g| g == t || above(*t).contains(g)))
+            .collect();
+        let named: Vec<&(TraitKey, Vec<Type>)> = match giving.len() {
+            0 | 1 => (in_scope.iter())
+                .filter(|(t, _)| traits.contains(t))
+                .collect(),
+            _ => giving,
+        };
+        let mut bounds: Vec<String> = (named.into_iter())
+            .map(|(t, args)| {
+                let args: Vec<String> = (args.iter())
+                    .map(|a| self.show_type(&self.apply(&substitute_vars(a, &self.rigid_of))))
+                    .collect();
+                match args.is_empty() {
+                    true => format!("`{}`", self.written_trait(*t)),
+                    false => format!("`{}({})`", self.written_trait(*t), args.join(", ")),
+                }
+            })
+            .collect();
+        bounds.sort();
+        bounds.dedup();
+        let (all, both) = match bounds.split_last() {
+            Some((last, [one])) => (format!("{one} and {last}"), "both"),
+            Some((last, rest)) if !rest.is_empty() => {
+                (format!("{} and {last}", rest.join(", ")), "all")
+            }
+            _ => return,
+        };
+        if let Some(last) = self.errors.last_mut() {
+            last.help = vec![format!(
+                "the bounds {all} {both} give `{method}`: call it from a function bounded by \
+                 only one of them"
+            )];
+        }
+    }
+
+    /// The supertraits of the trait `t`, theirs too.
+    fn supertraits_of(&self, t: TraitKey) -> Vec<TraitKey> {
+        let mut found: Vec<TraitKey> = Vec::new();
+        let mut next = vec![t];
+        while let Some(t) = next.pop() {
+            for s in (self.tables.traits.get(&t)).map_or(&[][..], |info| &info.supertraits) {
+                if !found.contains(s) {
+                    found.push(*s);
+                    next.push(*s);
+                }
+            }
+        }
+        found
     }
 
     /// The bound `tr(args)` as a message shows it: `Greet`, `Conv(Int)`.
@@ -2223,7 +2324,7 @@ impl TypeChecker {
     /// order of their names: those of the session's impls, and the
     /// structural trait whose method it is when no impl of that trait
     /// is written for the type, for a call through the type (`on_type`,
-    /// `T.method(..)`) or on a value.
+    /// `T.method(..)`) or on a value (`on_a_value`).
     fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
         if let Some(tr) = self.structural_provider(ty, method, on_type)
@@ -2232,7 +2333,10 @@ impl TypeChecker {
             traits.push(tr);
         }
         traits.sort_by_key(|t| self.show_trait(*t));
-        traits
+        match on_type {
+            true => traits,
+            false => self.on_a_value(traits, |t| *t, method),
+        }
     }
 
     /// The structural trait whose method `method` the type `ty` has by

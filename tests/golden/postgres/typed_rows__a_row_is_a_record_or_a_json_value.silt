@@ -1,7 +1,7 @@
 -- cmd: check
 -- requires-feature: postgres
 -- exit: 1
--- stderr-contains: `postgres.query` cannot decode `Int`: its type argument must be a record type or json.Value
+-- stderr-contains: `postgres.query` cannot decode `Int`: its type argument must be a record type, json.Value, or a type with a `json.Decode` impl
 -- stderr-contains: help: declare a record type with a field for each column
 -- A row is decoded into a record type, its fields read from the
 -- columns of their names, or into a `json.Value`: not into an `Int`,

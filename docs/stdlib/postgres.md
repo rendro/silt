@@ -104,8 +104,9 @@ unsupported value kind Bytes"))`.
 ### Rows
 
 `postgres.query`, `postgres.stream` and `postgres.cursor` take the type
-a row is decoded into as their last argument: a record type, or
-`json.Value`, or an alias of one (the type it names). It is checked where
+a row is decoded into as their last argument: a record type,
+`json.Value`, or a type with a `json.Decode` impl, or an alias of one
+(the type it names). It is checked where
 it is known, as for `json.parse` (written at the call, or given to a
 function or method that passes it on, at each call of it): any other
 type, or a record with a field of a type no column can fill (`Bytes` in a
@@ -118,9 +119,9 @@ impl (see [Types with a `json.Decode` impl](#types-with-a-jsondecode-impl)).
 
 | Function | Type argument |
 |----------|---------------|
-| `postgres.query` | a record type or `json.Value` |
-| `postgres.stream` | a record type or `json.Value` |
-| `postgres.cursor` | a record type or `json.Value` |
+| `postgres.query` | a record type, `json.Value`, or a type with a `json.Decode` impl |
+| `postgres.stream` | a record type, `json.Value`, or a type with a `json.Decode` impl |
+| `postgres.cursor` | a record type, `json.Value`, or a type with a `json.Decode` impl |
 
 Each filled from the columns the table below names, the fields of the record
 type may have these types:
@@ -154,8 +155,14 @@ the fields once per result, before the statement runs:
   its values (an `Int` field is not filled from a `float8` column even
   where the value is `2.0`). Its `message()` says how to go on:
   ``postgres type mismatch on column `id`: expected Int, got float8;
-  cast it in SQL, for example id::text``. A `NULL` that has no type of
-  its own (`SELECT NULL AS v`) is a `text` column: cast it, `NULL::int4`;
+  cast it in SQL, for example id::text``. A field that only a json
+  document fills (a record, a map, a tuple, a type with a `json.Decode`
+  impl) says so instead: ``postgres type mismatch on column `meta`:
+  expected Meta, got text; a field of type `Meta` is filled only from a
+  json or jsonb column``; a list of such a type, which an array of
+  `json` or `jsonb` fills too, says ``... or an array of them``. A `NULL` that has
+  no type of its own (`SELECT NULL AS v`) is a `text` column: cast it,
+  `NULL::int4`;
 - two columns of the name a field reads are
   ``Err(Other("postgres: column `id` appears twice in the result; rename one with AS"))``.
 

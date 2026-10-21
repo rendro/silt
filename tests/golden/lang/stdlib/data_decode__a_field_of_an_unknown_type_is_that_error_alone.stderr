@@ -1,0 +1,20 @@
+error[type]: unknown type 'Date'
+ --> data_decode__a_field_of_an_unknown_type_is_that_error_alone.silt:10:30
+    |
+ 10 | type Event { at: List(Option(Date)) }
+    |                              ^^^^ unknown type 'Date'
+  = help: `Date` is in module `time`: write `time.Date` after `import time`, or add `import time.{ Date }`
+
+error[type]: unknown type 'Date'
+ --> data_decode__a_field_of_an_unknown_type_is_that_error_alone.silt:14:18
+    |
+ 14 | type Mixed { at: Date, tags: Set(String) }
+    |                  ^^^^ unknown type 'Date'
+  = help: `Date` is in module `time`: write `time.Date` after `import time`, or add `import time.{ Date }`
+
+error[type]: `json.parse` cannot decode `Mixed`: field `tags` has type `Set(String)`, which has no decoder
+ --> data_decode__a_field_of_an_unknown_type_is_that_error_alone.silt:20:29
+    |
+ 20 |   println(json.parse("\{}", Mixed))
+    |                             ^^^^^ `json.parse` cannot decode `Mixed`: field `tags` has type `Set(String)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

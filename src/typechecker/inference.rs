@@ -573,11 +573,13 @@ impl TypeChecker {
         span: Span,
     ) -> Option<(TraitKey, Type)> {
         let matches = self.bound_methods(r, field);
+        let matches = self.on_a_value(matches, |(t, _)| *t, field);
         if matches.len() > 1 {
             let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-            self.ambiguous_method(
+            self.ambiguous_bound_method(
                 field,
                 &format!("a value of type `{}`", r.name),
+                r,
                 &traits,
                 span,
             );
@@ -820,7 +822,13 @@ impl TypeChecker {
                 }
                 if matches.len() > 1 {
                     let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-                    self.ambiguous_method(field, &format!("`type {inner}`"), &traits, span);
+                    self.ambiguous_bound_method(
+                        field,
+                        &format!("`type {inner}`"),
+                        *r,
+                        &traits,
+                        span,
+                    );
                     return None;
                 }
                 self.method_trait = Some(matches[0].0);
@@ -1536,6 +1544,7 @@ impl TypeChecker {
                         wanted.solved = true;
                     }
                     self.given_waiting.truncate(given_before);
+                    self.unplaced.retain(|&k| k < given_before);
                 } else if let CallForm::Call = form {
                     let passer = self.user_callee(callee);
                     self.point_at_type_arguments(&given, passer, callee_owes);

@@ -12,7 +12,9 @@
 -- list has levels is named with its dimensions. The message of a
 -- mismatch says to cast the column in SQL, but not for a NULL, and not
 -- for what a json or jsonb column holds (its actual part begins with
--- the column's type).
+-- the column's type); a field that only a json document fills (a
+-- record, a map, a tuple) says so, a list of one that an array of them
+-- fills too.
 import env
 import json
 import postgres
@@ -31,6 +33,14 @@ type Meta { level: Int }
 type Doc { doc: Meta }
 
 type MaybeDoc { doc: Option(Meta) }
+
+type Tags { tags: Map(String, Int) }
+
+type Pair { pair: (Int, String) }
+
+type Docs { docs: List(Meta) }
+
+type Ns { ns: List(Option(Int)) }
 
 type Grid { g: List(List(Int)) }
 
@@ -81,6 +91,12 @@ fn main() {
       show("a NaN in a json.Value row", postgres.query(db, "SELECT 'NaN'::float8 AS r", (), json.Value))
       show("a document that does not fit", postgres.query(db, """SELECT '{"level": "high"}'::jsonb AS doc""", (), Doc))
       show("a document null for an Option", postgres.query(db, "SELECT 'null'::jsonb AS doc", (), MaybeDoc))
+      show("text for a record", postgres.query(db, """SELECT '{"level": 1}'::text AS doc""", (), Doc))
+      show("text for an Option of a record", postgres.query(db, "SELECT NULL::text AS doc", (), MaybeDoc))
+      show("text for a map", postgres.query(db, "SELECT 'a'::text AS tags", (), Tags))
+      show("an int4 for a tuple", postgres.query(db, "SELECT 1 AS pair", (), Pair))
+      show("a text[] for a list of records", postgres.query(db, "SELECT ARRAY['a'] AS docs", (), Docs))
+      show("a text[] for a list of Options", postgres.query(db, "SELECT ARRAY['a'] AS ns", (), Ns))
       show("an array of 1 dimension for a list of lists", postgres.query(db, "SELECT ARRAY[1, 2] AS g", (), Grid))
       show("an array of 2 dimensions for a list", postgres.query(db, "SELECT ARRAY[[1], [2]] AS x", (), Xs))
       show("a date that is infinity", postgres.query(db, "SELECT 'infinity'::date AS d", (), Day))

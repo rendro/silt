@@ -182,7 +182,7 @@ impl Family {
         };
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             non-generic {named}, and aliases of these",
+             non-generic {named}, types with a `json.Decode` impl, and aliases of these",
             leaves.join(", ")
         )
     }
@@ -241,35 +241,29 @@ impl Decoding {
     }
 
     /// What the type argument may be, each type as `name` writes it:
-    /// `Int, Float, String, Bool, json.Value, a record type, or an enum
-    /// type`, `a record type or json.Value`, `a record type or an enum
-    /// type`.
+    /// `Int, Float, String, Bool, json.Value, a record type, an enum
+    /// type, or a type with a `json.Decode` impl`, `a record type,
+    /// json.Value, or a type with a `json.Decode` impl`. Every family
+    /// decodes a type with a written impl by the impl.
     pub fn type_arguments(self, name: impl Fn(&str) -> String) -> String {
         let json_value = self.json_value().then(|| name(Leaf::JsonValue.name()));
-        let enums = self
-            .family
-            .decodes_enums()
-            .then(|| "an enum type".to_string());
-        match self.primitives {
-            true => {
-                let mut types: Vec<String> =
-                    BUILTIN_PRIMITIVE_NAMES.iter().map(|t| name(t)).collect();
-                types.extend(json_value);
-                types.push("a record type".to_string());
-                types.extend(enums);
-                if let Some(last) = types.last_mut() {
-                    *last = format!("or {last}");
-                }
-                types.join(", ")
-            }
-            false => {
-                let others: Vec<String> = json_value.into_iter().chain(enums).collect();
-                match others.is_empty() {
-                    true => "a record type".to_string(),
-                    false => format!("a record type or {}", others.join(" or ")),
-                }
-            }
+        let record = "a record type".to_string();
+        // (`json.Value` with the primitive types where they are taken.)
+        let mut types: Vec<String> = match self.primitives {
+            true => (BUILTIN_PRIMITIVE_NAMES.iter().map(|t| name(t)))
+                .chain(json_value)
+                .chain([record])
+                .collect(),
+            false => [record].into_iter().chain(json_value).collect(),
+        };
+        if self.family.decodes_enums() {
+            types.push("an enum type".to_string());
         }
+        types.push("a type with a `json.Decode` impl".to_string());
+        if let Some(last) = types.last_mut() {
+            *last = format!("or {last}");
+        }
+        types.join(", ")
     }
 }
 

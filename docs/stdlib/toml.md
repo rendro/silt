@@ -55,9 +55,9 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `toml.parse` | a record type or an enum type |
-| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |
-| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |
+| `toml.parse` | a record type, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |
 
 An alias of one of these is the type it names.
 
@@ -240,7 +240,8 @@ no direct equivalent of a JSON top-level array. `toml.parse_list` therefore
 accepts a document whose top-level table contains exactly one key, an array,
 and returns the list of values under that key, each decoded into `a`. The type
 is passed as a `type` parameter (`Int`, `Float`, `String`, `Bool`, a record
-type, or an enum type), as for `toml.parse_map`. For a record type the array is the natural
+type, an enum type, or a type with a `json.Decode` impl), as for
+`toml.parse_map`. For a record type the array is the natural
 shape of `[[items]]` sections:
 
 ```silt

@@ -1,0 +1,21 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A call whose argument has the wrong type (a stream's Result given
+-- where its channel is wanted) is that one error: the types it gave its
+-- callee are dropped with it, and a later decoder's call in the same
+-- function is checked as any other (the checker once kept the dropped
+-- uses' places and failed with an internal error).
+import postgres
+
+type Row { n: Int }
+
+fn first(ch: Channel(Result(a, postgres.PostgresError))) {
+}
+
+fn rows(db: postgres.PgPool) -> Result(List(Row), postgres.PostgresError) {
+  first(postgres.stream(db, "SELECT 1 AS n", (), Row))
+  postgres.query(db, "SELECT 1 AS n", (), Row)
+}
+
+fn main() {}

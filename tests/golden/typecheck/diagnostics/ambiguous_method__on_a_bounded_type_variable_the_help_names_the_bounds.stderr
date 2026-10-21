@@ -1,0 +1,34 @@
+error[type]: ambiguous method 'make' on `type a`: provided by traits A, B
+ --> ambiguous_method__on_a_bounded_type_variable_the_help_names_the_bounds.silt:28:3
+    |
+ 28 |   a.make()
+    |   ^^^^^^ ambiguous method 'make' on `type a`: provided by traits A, B
+  = help: the bounds `A` and `B` both give `make`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'show' on a value of type `a`: provided by traits A, B
+ --> ambiguous_method__on_a_bounded_type_variable_the_help_names_the_bounds.silt:32:3
+    |
+ 32 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by traits A, B
+  = help: the bounds `A` and `B` both give `show`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'show' on a value of type `a`: provided by traits A, B
+ --> ambiguous_method__on_a_bounded_type_variable_the_help_names_the_bounds.silt:40:18
+    |
+ 40 |   let f = { y -> first(y).show() }
+    |                  ^^^^^^^^^^^^^ ambiguous method 'show' on a value of type `a`: provided by traits A, B
+  = help: the bounds `A` and `B` both give `show`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'show' on a value of type `a`: provided by traits A, B, C
+ --> ambiguous_method__on_a_bounded_type_variable_the_help_names_the_bounds.silt:45:3
+    |
+ 45 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by traits A, B, C
+  = help: the bounds `A`, `B` and `C` all give `show`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'show' on a value of type `a`: provided by traits A, Conv
+ --> ambiguous_method__on_a_bounded_type_variable_the_help_names_the_bounds.silt:49:3
+    |
+ 49 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by traits A, Conv
+  = help: the bounds `A` and `Conv(Int)` both give `show`: call it from a function bounded by only one of them

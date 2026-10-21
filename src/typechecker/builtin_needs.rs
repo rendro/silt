@@ -797,6 +797,8 @@ impl TypeChecker {
                 info.via_needs = vias;
             }
         }
+        // (`unplaced` holds places in `given_waiting`.)
+        self.unplaced.clear();
         for use_ in std::mem::take(&mut self.given_waiting) {
             if use_.taken || matches!(self.apply(&use_.subject), Type::Rigid(_)) {
                 continue;
