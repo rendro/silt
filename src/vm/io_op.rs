@@ -854,9 +854,12 @@ impl IoOp {
     }
 
     /// Nobody waits for the operation, and it counts as pending no
-    /// longer; its thread stays the pool's ([`IoPool::background`]).
+    /// longer; its thread stays the pool's, and it is not one of those
+    /// that cannot be interrupted ([`IO_POOL_UNHEARD_MAX`]): work that
+    /// ends by itself soon (the end of a transaction) or that goes on
+    /// beside the program ([`IoPool::background`]).
     #[cfg(feature = "postgres")]
-    fn detach(mut self) {
+    pub(crate) fn detach(mut self) {
         let pending = self.in_flight.lock().take();
         drop(pending);
         self.state = OpState::new(Phase::Left);

@@ -2803,7 +2803,7 @@ impl Native for Transact {
             // A statement of the callback may be running.
             Stage::Body(tx_id) => abandon_tx(&vm.runtime, tx_id),
             // COMMIT or ROLLBACK goes on, and finishes in the server.
-            Stage::End(op) => drop(op),
+            Stage::End(op) => op.detach(),
             Stage::Ended => {}
         }
     }
