@@ -290,6 +290,11 @@ pub struct TypeChecker {
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
     pub(super) seen_modules: std::collections::HashSet<crate::session::ModuleId>,
+    /// The builtin modules the module imports, by any import: `import
+    /// json`, `import json as j`, `import json.{ stringify }`. Their
+    /// traits it sees (`json.Encode`), as it sees a `pub` trait of a
+    /// module it imports anything of.
+    pub(super) builtin_imports: std::collections::HashSet<crate::session::ModuleId>,
     /// The modules the module checked imports, and theirs, and so on:
     /// the modules that are initialised before it. `None` for a REPL
     /// cell, which follows every earlier cell and what those imported.
@@ -419,6 +424,7 @@ impl TypeChecker {
             deferred_method_traits: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
+            builtin_imports: std::collections::HashSet::new(),
             reach: None,
             cells: Default::default(),
             defs: None,
@@ -1563,6 +1569,18 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     for binding in scope.values.values() {
         if let names::Binding::Module(id) = binding {
             checker.seen_modules.insert(*id);
+        }
+    }
+    // A builtin module is imported when the module binds a name of it,
+    // or the module itself.
+    for binding in scope.types.values().chain(scope.values.values()) {
+        let module = match binding {
+            names::Binding::Module(id) => Some(*id),
+            names::Binding::Def(id) => checker.defs.as_ref().map(|defs| defs.get(*id).module),
+            _ => None,
+        };
+        if let Some(module) = module.filter(|module| module.builtin_name().is_some()) {
+            checker.builtin_imports.insert(module);
         }
     }
     if checker.is_cell {
