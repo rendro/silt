@@ -337,8 +337,10 @@ types of [Decodable types](#decodable-types) have it, a record or enum
 type of the program when the types of its fields do. A container, a date
 and a time are decoded as the type of a field, not as the type a decoder
 is given (a type written as a value names no list's element type). A
-function that hands a type variable to a decoder says so, as for
-`json.Encode`; one without annotations is inferred to need it:
+function with a `type a` parameter (any annotation names the variable)
+that hands it to a decoder writes `where a: json.Decode`; only a function
+with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is
+inferred to need it:
 
 ```silt
 import json
@@ -383,10 +385,13 @@ stays structural (`null` is `None`). The `Err` it returns is the decoder's
 error, with the path of its part appended as to the decoder's own errors:
 `Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
 posts[1].tags")`, a `MissingField("name")` there is
-`MissingField("posts[1].tags.name")`. The first error in the document
-counts, the impl's or the decoder's. The toml decoders and a postgres
-row honour the impl too (see [toml](toml.md#types-with-a-jsondecode-impl)
-and [postgres](postgres.md#types-with-a-jsondecode-impl)).
+`MissingField("posts[1].tags.name")`. A message is the impl's text, and the
+path is appended to it as it is: an error the impl got from `json.decode` of
+a part of its value, `TypeMismatch("Int", "string at k")`, ends with `at k at
+posts[1].tags`. The first error in the document counts, the impl's or the
+decoder's. The toml decoders and a postgres row honour the impl too (see
+[toml](toml.md#types-with-a-jsondecode-impl) and
+[postgres](postgres.md#types-with-a-jsondecode-impl)).
 
 ```silt
 import json

@@ -1,0 +1,11 @@
+-- A json decoder used as a value and never given a type asks nothing:
+-- a type generic all the way is never checked (as before json.Decode).
+import json
+import option
+
+fn main() {
+  let _ = json.parse
+  let _ = [json.parse_list, json.parse_list]
+  let m = Some(json.parse_map)
+  println(m |> option.is_some())
+}

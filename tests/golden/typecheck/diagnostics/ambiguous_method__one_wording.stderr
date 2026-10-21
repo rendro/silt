@@ -44,4 +44,4 @@ error[type]: ambiguous method 'show' on type 'Int': provided by traits Alpha, Ze
     |
  64 |   Int.show(7)
     |   ^^^^^^^^ ambiguous method 'show' on type 'Int': provided by traits Alpha, Zeta
-  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+  = help: say which is meant: call it through a function bounded by the trait you mean, `where a: Alpha`

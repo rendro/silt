@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A method a program's trait and a builtin trait both give a type,
+-- called through the type, is ambiguous; the help names the program's
+-- trait, not the builtin one (`Pretty`, not `Display`).
+trait Pretty {
+  fn display(self) -> String
+}
+
+type T { n: Int }
+
+trait Pretty for T {
+  fn display(self) -> String { "p" }
+}
+
+trait Pretty for Int {
+  fn display(self) -> String { "p" }
+}
+
+fn main() {
+  println(T.display(T { n: 1 }))
+  println(Int.display(5))
+}
