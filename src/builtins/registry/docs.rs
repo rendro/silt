@@ -575,10 +575,13 @@ mod tests {
             "| `toml.parse` | stale |\n| `toml.parse_list` | stale |\n| `toml.parse_map` | stale |",
         ))
         .expect("a page");
-        assert!(page.contains("| `toml.parse` | a record type |"), "{page}");
+        assert!(
+            page.contains("| `toml.parse` | a record type or an enum type |"),
+            "{page}"
+        );
         assert!(
             page.contains(
-                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |"
+                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |"
             ),
             "{page}"
         );

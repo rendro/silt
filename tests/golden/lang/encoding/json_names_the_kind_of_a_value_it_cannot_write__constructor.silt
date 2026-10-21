@@ -3,8 +3,7 @@
 -- The constructor of a variant with fields is a function, and JSON has
 -- no form for it: `json.stringify` ends the program with the runtime
 -- error it has for every function. The variants themselves are
--- written (the first line). The constructor was written as its name,
--- a string like no other form of a variant.
+-- written (the first line).
 import json
 
 type Shape {

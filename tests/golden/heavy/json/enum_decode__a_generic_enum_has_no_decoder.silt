@@ -10,5 +10,5 @@ type Box(a) {
 }
 
 fn main() {
-  println(json.parse("""{"variant": "Empty"}""", Box))
+  println(json.parse("\"Empty\"", Box))
 }

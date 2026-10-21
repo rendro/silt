@@ -66,7 +66,8 @@ pub(crate) enum Data {
     /// A tuple: an array to json and toml, JSON to postgres where a list
     /// is an array.
     Tuple(Vec<Data>),
-    /// A record, a map, a variant, a `Duration`, an `Instant`.
+    /// A record, a map, a variant with fields, a `Duration`, an
+    /// `Instant`.
     Table(Vec<(String, Data)>),
     /// A `json.Value` at a postgres parameter's place or in an array: the
     /// JSON it holds, which the server gets as JSON text. (For json and
@@ -322,15 +323,18 @@ impl Writer<'_> {
                 }
                 Data::Null
             }
-            // (`fields` before `variant`, as the keys of a table sort.)
+            // A variant without fields is its name; one with fields the
+            // table of them and its name (`fields` before `variant`, as
+            // the keys of a table sort).
+            Value::Variant(variant) if variant.fields().is_empty() => {
+                Data::String(variant.name().into())
+            }
             Value::Variant(variant) => {
-                let mut members = Vec::with_capacity(2);
-                if !variant.fields().is_empty() {
-                    let items = each(variant.fields().iter(), |v| inner(v, Place::Element))?;
-                    members.push(("fields".into(), Data::Array(items)));
-                }
-                members.push(("variant".into(), Data::String(variant.name().into())));
-                Data::Table(members)
+                let items = each(variant.fields().iter(), |v| inner(v, Place::Element))?;
+                Data::Table(vec![
+                    ("fields".into(), Data::Array(items)),
+                    ("variant".into(), Data::String(variant.name().into())),
+                ])
             }
             Value::Unit if self.format == Format::Toml => {
                 return Err(VmError::new(format!(

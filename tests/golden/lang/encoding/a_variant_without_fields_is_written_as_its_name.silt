@@ -1,0 +1,38 @@
+-- A variant without fields is written as the string of its name,
+-- wherever it is: at the top, in a record field, a list, a map, a
+-- tuple, the fields of another variant; of a builtin enum too. A
+-- variant with fields is the object of its fields and its name. toml
+-- writes the same strings, and a variant without fields at the top is
+-- no table.
+import json
+import result
+import time
+import toml
+
+type Status {
+  Active,
+  Paused(Int),
+  Moved(String, Status),
+}
+
+type Job {
+  name: String,
+  status: Status,
+  history: List(Status),
+}
+
+fn main() {
+  let job = Job { name: "build", status: Active, history: [Active, Paused(2), Moved("x", Active)] }
+  println(json.stringify(Active))
+  println(json.stringify(job))
+  println(json.stringify(#{ "a": Active }))
+  println(json.stringify((Active, Paused(1))))
+  println(json.stringify(Some(Active)))
+  println(json.stringify(time.date(2026, 10, 21) |> result.map_ok(time.weekday)))
+  println(json.pretty([Active, Moved("y", Active)]))
+  match toml.stringify(job) {
+    Ok(text) -> print(text)
+    Err(e) -> println("unexpected: {e}")
+  }
+  println(toml.stringify(Active))
+}

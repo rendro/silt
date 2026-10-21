@@ -338,6 +338,7 @@ fn exact_int(text: &[u8]) -> Option<i64> {
 const RULES: Rules = Rules {
     caller: "json.parse",
     table: "object",
+    variant: "String or object",
     dates: ["date string", "time string", "datetime string"],
     numbers: Numbers::Values,
     family: Family::Json,

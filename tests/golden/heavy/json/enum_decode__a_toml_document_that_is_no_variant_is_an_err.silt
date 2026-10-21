@@ -1,0 +1,48 @@
+-- A toml document that is no variant of the enum is an Err with json's
+-- texts, toml's kinds ("table", "integer") and the path: a name the enum
+-- has no variant of, the name alone of a variant with fields, a table
+-- that names a variant without fields, a value that is no string and no
+-- table, the wrong number of fields, a field of the wrong type. At the
+-- top of toml.parse a document is a table, so a variant without fields
+-- is never one there.
+import toml
+
+type Status {
+  Active,
+  Paused(Int),
+}
+
+type Config { status: Status }
+
+fn main() {
+  println(toml.parse("""status = "Gone"
+""", Config))
+  println(toml.parse("""status = "Paused"
+""", Config))
+  println(toml.parse("""status = { variant = "Active" }
+""", Config))
+  println(toml.parse("""status = 1
+""", Config))
+  println(toml.parse("""status = 1979-05-27
+""", Config))
+  println(toml.parse("""status = { variant = "Paused", fields = [1, 2] }
+""", Config))
+  println(toml.parse("""status = { variant = "Paused", fields = [1.5] }
+""", Config))
+  println(toml.parse("""status = { fields = [1] }
+""", Config))
+  println(toml.parse_list("""xs = ["Active", "Gone"]
+""", Status))
+  println(toml.parse("""variant = "Active"
+""", Status))
+  match toml.parse("""status = "Gone"
+""", Config) {
+    Err(toml.Other(why)) -> println("Other: {why}")
+    other -> println("unexpected: {other}")
+  }
+  match toml.parse("""status = true
+""", Config) {
+    Err(toml.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected}, {actual}")
+    other -> println("unexpected: {other}")
+  }
+}

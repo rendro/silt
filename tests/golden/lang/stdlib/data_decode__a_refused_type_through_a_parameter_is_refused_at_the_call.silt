@@ -1,19 +1,15 @@
 -- cmd: check
 -- exit: 1
--- A type parse_map does not take (an enum, for toml), given through a
+-- A type parse_map does not take (json.Value, for toml), given through a
 -- `type a` parameter, is refused at the call that gives it, as it is
 -- where the call of toml.parse_map names it.
+import json
 import toml
-
-type Color {
-  Red,
-  Green,
-}
 
 fn decode_map(text: String, type a) -> Result(Map(String, a), toml.TomlError) {
   toml.parse_map(text, a)
 }
 
 fn main() {
-  println(decode_map("a = \"Red\"", Color))
+  println(decode_map("a = 1", json.Value))
 }

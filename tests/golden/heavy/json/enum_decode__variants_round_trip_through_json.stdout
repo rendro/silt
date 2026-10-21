@@ -1,4 +1,4 @@
-{"variant":"Active"}
+"Active"
 Ok(Active)
 {"fields":[3],"variant":"Paused"}
 Ok(Paused(3))
@@ -8,7 +8,7 @@ Ok(Moved(x, None))
 Ok(Moved(y, Some(2)))
 {"fields":[{"x":1,"y":2},[3]],"variant":"At"}
 Ok(At(Point {x: 1, y: 2}, [3]))
-{"name":"build","status":{"fields":[1],"variant":"Paused"},"history":[{"variant":"Active"},{"fields":[2],"variant":"Paused"}],"next":{"variant":"Active"},"by_host":{"h":{"fields":["z",1],"variant":"Moved"}}}
+{"name":"build","status":{"fields":[1],"variant":"Paused"},"history":["Active",{"fields":[2],"variant":"Paused"}],"next":"Active","by_host":{"h":{"fields":["z",1],"variant":"Moved"}}}
 true
 true
 Ok(Tagged(Moved(q, None), [Active, Paused(4)]))
@@ -19,4 +19,5 @@ Ok(#{"a": Active, "b": Paused(5)})
 Ok(Paused(9))
 Ok(Moved(t, Some(7)))
 true
-Ok(Active)
+{"fields":[{"fields":["q",null],"variant":"Moved"},["Active",{"fields":[4],"variant":"Paused"}]],"variant":"Tagged"}
+Ok(Tagged(Active, [Active]))
