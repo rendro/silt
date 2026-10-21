@@ -32,6 +32,12 @@ impl TypeChecker {
         tr.is_builtin("Decode")
     }
 
+    /// Whether an impl of `tr` for `target` is refused: `json.Decode`
+    /// for a generic type (a decoder builds a value of one type).
+    pub(super) fn decode_impl_refused(&self, tr: TraitKey, target: TypeRef) -> bool {
+        Self::is_decode(tr) && self.tables.is_generic(target)
+    }
+
     /// The use `origin` owes `json.Decode` of `ty`, a type with no
     /// written impl of it, for `asker`: refused, if the decoder has no
     /// value of the type, once the module's bodies are checked.

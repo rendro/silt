@@ -823,6 +823,18 @@ impl TypeChecker {
         if !self.impl_in_its_module(ti, target_type) {
             return;
         }
+        if self.decode_impl_refused(trait_key, target_type) {
+            self.error(
+                Code::InvalidTraitImpl,
+                format!(
+                    "trait `json.Decode` cannot be implemented for the generic type `{}`: \
+                     a decoder builds a value of one type",
+                    target_type.name
+                ),
+                ti.span,
+            );
+            return;
+        }
 
         self.tables.trait_impl_set.insert(impl_key);
         // GAP-2: record the impl block's real span for validate_trait_impls
