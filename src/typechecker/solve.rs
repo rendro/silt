@@ -1585,7 +1585,12 @@ impl TypeChecker {
                         );
                         return;
                     }
-                    let message = self.gap_message(trait_name, &resolved, &gap);
+                    let message = match gap.is_whole() {
+                        true => self.type_value_message(trait_name, &[], &resolved),
+                        false => None,
+                    };
+                    let message =
+                        message.unwrap_or_else(|| self.gap_message(trait_name, &resolved, &gap));
                     self.error(Code::MissingTraitImpl, message, span);
                 }
                 None => {
@@ -1640,6 +1645,44 @@ impl TypeChecker {
                 .impl_methods
                 .get(head, intern(method), trait_name)
                 .is_none()
+    }
+
+    /// What a message says of `ty` that lacks the trait `tr` (at
+    /// `args`) if it is the type of a type given as a value
+    /// (`println(json.Value)`), which has no trait: the type as the
+    /// program writes it, and what cannot be done with it. `None` for
+    /// any other type.
+    pub(super) fn type_value_message(&self, tr: TraitKey, args: &[Type], ty: &Type) -> Option<String> {
+        let Type::Generic(head, given) = ty else {
+            return None;
+        };
+        let [given] = given.as_slice() else {
+            return None;
+        };
+        if !head.is_builtin(crate::defs::TYPE_OF) {
+            return None;
+        }
+        // A type whose arguments the value leaves open (`List`) by its
+        // name alone.
+        let given = self.apply(given);
+        let shown = match &given {
+            _ if free_vars_in(&given).is_empty() => self.show_type(&given),
+            Type::List(_) => "List".to_string(),
+            Type::Set(_) => "Set".to_string(),
+            Type::Map(..) => "Map".to_string(),
+            Type::Channel(_) => "Channel".to_string(),
+            Type::Generic(r, _) => self.show_type(&Type::Generic(*r, Vec::new())),
+            other => self.show_type(other),
+        };
+        let what = match () {
+            _ if tr.is_builtin("Display") => "cannot be shown".to_string(),
+            _ if tr.is_builtin("Equal") => "cannot be compared with `==`".to_string(),
+            _ if tr.is_builtin("Compare") => "cannot be ordered".to_string(),
+            _ if tr.is_builtin("Hash") => "cannot be hashed".to_string(),
+            _ if tr.is_builtin("Encode") => "cannot be encoded as json".to_string(),
+            _ => format!("does not implement trait '{}'", self.show_bound(tr, args)),
+        };
+        Some(format!("`{shown}` is a type, and a type given as a value {what}"))
     }
 
     /// What a message says of a type that lacks the structural trait
@@ -1899,11 +1942,14 @@ impl TypeChecker {
                      statement, so the type is `()`, which does not implement the trait",
                     self.show_bound(trait_name, bound_trait_args)
                 ),
-                _ => format!(
-                    "type '{}' does not implement trait '{}'",
-                    self.show_type(&Type::Generic(type_name, vec![])),
-                    self.show_bound(trait_name, bound_trait_args)
-                ),
+                _ => (self.type_value_message(trait_name, bound_trait_args, &resolved))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "type '{}' does not implement trait '{}'",
+                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_bound(trait_name, bound_trait_args)
+                        )
+                    }),
             };
             self.error(Code::MissingTraitImpl, message, span);
             return;
