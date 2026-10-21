@@ -1,0 +1,8 @@
+[m]
+b = 2
+
+Ok(M {m: #{"b": Some(2)}})
+b = 1
+
+Ok(R {a: None, b: 1})
+Err(toml.stringify: TOML has no null: a None in an array)

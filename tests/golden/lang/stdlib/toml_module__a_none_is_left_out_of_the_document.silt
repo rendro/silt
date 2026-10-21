@@ -1,0 +1,21 @@
+-- TOML has no null: writing a map leaves out a key whose value is
+-- `None`, so the map read back has no such key; a record's field that is
+-- `None` is left out too, and reads back as `None`, the record whole.
+-- A `None` in an array has nowhere to go and is an error.
+import result
+import toml
+
+type R { a: Option(Int), b: Int }
+
+type M { m: Map(String, Option(Int)) }
+
+fn main() {
+  let m: Map(String, Option(Int)) = #{"a": None, "b": Some(2)}
+  let written = toml.stringify(M { m: m }) |> result.unwrap_or("")
+  println(written)
+  println(toml.parse(written, M))
+  let r = toml.stringify(R { a: None, b: 1 }) |> result.unwrap_or("")
+  println(r)
+  println(toml.parse(r, R))
+  println(toml.stringify(#{"xs": [None, Some(1)]}))
+}

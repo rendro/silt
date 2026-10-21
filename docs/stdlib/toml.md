@@ -356,7 +356,7 @@ follows:
 |-------|------------|
 | `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
-| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a key whose value is `None` is left out |
+| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
 | a record | a table of its fields, in the order the type declares them; a field that is `None` is left out (TOML has no null), and reads back as `None` |
 | `Some(x)` | `x`, as `x` is written |
 | `None` in an array (a list, a tuple, the fields of a variant) | nothing: `Err(Other("toml.stringify: TOML has no null: a None in an array"))` |
