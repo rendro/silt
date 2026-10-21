@@ -1335,6 +1335,45 @@ impl TypeChecker {
         );
     }
 
+    /// Report that `method`, called on `on` (a value of type `a`, the
+    /// type `a` of a `type a` parameter), whose type is the annotation
+    /// variable `r`, is a method of each of `traits`, which bound it:
+    /// being bounded already, the call says which it means by being in a
+    /// function bounded by only one of them.
+    pub(super) fn ambiguous_bound_method(
+        &mut self,
+        method: Symbol,
+        on: &str,
+        r: RigidId,
+        traits: &[TraitKey],
+        span: Span,
+    ) {
+        self.ambiguous_method(method, on, traits, span);
+        let mut bounds: Vec<String> = (self.bounds.get(&r.var).cloned().unwrap_or_default())
+            .into_iter()
+            .filter(|(t, _)| traits.contains(t))
+            .map(|(t, args)| {
+                let args: Vec<Type> = (args.iter())
+                    .map(|a| substitute_vars(a, &self.rigid_of))
+                    .collect();
+                format!("`{}`", self.show_bound(t, &args))
+            })
+            .collect();
+        bounds.sort();
+        bounds.dedup();
+        let (all, both) = match bounds.split_last() {
+            Some((last, [one])) => (format!("{one} and {last}"), "both"),
+            Some((last, rest)) => (format!("{} and {last}", rest.join(", ")), "all"),
+            None => return,
+        };
+        if let Some(last) = self.errors.last_mut() {
+            last.help = vec![format!(
+                "the bounds {all} {both} give `{method}`: call it from a function bounded by \
+                 only one of them"
+            )];
+        }
+    }
+
     /// The bound `tr(args)` as a message shows it: `Greet`, `Conv(Int)`.
     pub(super) fn show_bound(&self, tr: TraitKey, args: &[Type]) -> String {
         let name = self.show_trait(tr);

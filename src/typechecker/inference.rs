@@ -576,9 +576,10 @@ impl TypeChecker {
         let matches = self.on_a_value(matches, |(t, _)| *t, field);
         if matches.len() > 1 {
             let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-            self.ambiguous_method(
+            self.ambiguous_bound_method(
                 field,
                 &format!("a value of type `{}`", r.name),
+                r,
                 &traits,
                 span,
             );
@@ -821,7 +822,13 @@ impl TypeChecker {
                 }
                 if matches.len() > 1 {
                     let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-                    self.ambiguous_method(field, &format!("`type {inner}`"), &traits, span);
+                    self.ambiguous_bound_method(
+                        field,
+                        &format!("`type {inner}`"),
+                        *r,
+                        &traits,
+                        span,
+                    );
                     return None;
                 }
                 self.method_trait = Some(matches[0].0);
