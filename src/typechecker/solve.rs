@@ -556,7 +556,7 @@ impl TypeChecker {
     /// Check `operand?` now that the operand's type is known: it is a
     /// Result or an Option, whose payload is `result_ty`, and the
     /// function it is in returns the same wrapper.
-    fn try_operand(
+    pub(super) fn try_operand(
         &mut self,
         resolved: &Type,
         result_ty: &Type,

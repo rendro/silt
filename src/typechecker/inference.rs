@@ -2524,33 +2524,17 @@ impl TypeChecker {
 
                 // ? operator on Result(a,e) returns a, propagates Err(e)
                 // ? operator on Option(a) returns a, propagates None
+                // (The one check, also of an operand known only later:
+                // `try_operand`.)
                 match &inner_ty {
-                    Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
-                        if let Some(expected_ret) = self.current_return_type.clone() {
-                            let err_ty = args[1].clone();
-                            let fresh_ok = self.fresh_var();
-                            let expected_result = Type::builtin("Result", vec![fresh_ok, err_ty]);
-                            self.unify(&expected_ret, &expected_result, span);
-                        } else {
-                            self.error(Code::InvalidQuestion,
-                                "? operator can only be used inside a function that returns Result or Option".to_string(),
-                                span,
-                            );
-                        }
-                        args[0].clone()
-                    }
-                    Type::Generic(name, args) if name.is_builtin("Option") && args.len() == 1 => {
-                        if let Some(expected_ret) = self.current_return_type.clone() {
-                            let fresh_inner = self.fresh_var();
-                            let expected_option = Type::option(fresh_inner);
-                            self.unify(&expected_ret, &expected_option, span);
-                        } else {
-                            self.error(Code::InvalidQuestion,
-                                "? operator can only be used inside a function that returns Result or Option".to_string(),
-                                span,
-                            );
-                        }
-                        args[0].clone()
+                    Type::Generic(name, args)
+                        if (name.is_builtin("Result") && args.len() == 2)
+                            || (name.is_builtin("Option") && args.len() == 1) =>
+                    {
+                        let ok = args[0].clone();
+                        let ret = self.current_return_type.clone();
+                        self.try_operand(&inner_ty, &ok, ret, span);
+                        ok
                     }
                     // An operand already reported (or from a module that
                     // failed to load): nothing more to say.

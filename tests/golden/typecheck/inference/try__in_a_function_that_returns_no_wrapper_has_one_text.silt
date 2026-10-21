@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- `?` in a function that returns neither a Result nor an Option is the
+-- one error, whether the operand's type is known where the `?` is
+-- (`Some(1)?`, `r?`) or only later (`h()?`): it says the rule, and a note
+-- names the operand's type and the function's.
+type Box { v: Int }
+
+fn inline() -> Box {
+  let x = Some(1)?
+  Box { v: x }
+}
+
+fn inline_result(r: Result(Int, String)) -> Int {
+  r? + 1
+}
+
+fn later(h) -> Box {
+  let x = h()?
+  let _ = h() == Some(1)
+  Box { v: x }
+}
+
+fn main() {
+  println(inline().v)
+  println(inline_result(Ok(1)))
+  println(later({ -> Some(1) }).v)
+}
