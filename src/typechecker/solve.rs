@@ -1652,7 +1652,12 @@ impl TypeChecker {
     /// (`println(json.Value)`), which has no trait: the type as the
     /// program writes it, and what cannot be done with it. `None` for
     /// any other type.
-    pub(super) fn type_value_message(&self, tr: TraitKey, args: &[Type], ty: &Type) -> Option<String> {
+    pub(super) fn type_value_message(
+        &self,
+        tr: TraitKey,
+        args: &[Type],
+        ty: &Type,
+    ) -> Option<String> {
         let Type::Generic(head, given) = ty else {
             return None;
         };
@@ -1682,7 +1687,9 @@ impl TypeChecker {
             _ if tr.is_builtin("Encode") => "cannot be encoded as json".to_string(),
             _ => format!("does not implement trait '{}'", self.show_bound(tr, args)),
         };
-        Some(format!("`{shown}` is a type, and a type given as a value {what}"))
+        Some(format!(
+            "`{shown}` is a type, and a type given as a value {what}"
+        ))
     }
 
     /// What a message says of a type that lacks the structural trait
