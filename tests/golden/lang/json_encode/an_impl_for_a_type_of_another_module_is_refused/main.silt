@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: the impl of trait 'json.Encode' for type 'Point' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'geo', which declares the type
+-- stderr-contains: the impl of trait 'json.Encode' for type 'geo.Point' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'geo', which declares the type
 -- A `json.Encode` impl is written beside its type, as a `Display` impl
 -- is: the json module declares the trait, and no program module is it.
 import geo.{ Point }

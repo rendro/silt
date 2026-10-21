@@ -48,7 +48,7 @@ above) is the connection: a `PgPool`, or the `PgTx` of a transaction.
 Any other type is a compile error, where the call is written and at each
 call of a function or method that passes its own parameter on as the
 connection:
-``the connection of `postgres.query` must be a PgPool or a PgTx``.
+``the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx``.
 
 ## Parameters and rows
 

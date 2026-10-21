@@ -2,7 +2,7 @@
 -- legacy "unknown module" warning.
 -- cmd: check
 -- exit: 1
--- stderr-contains: does not implement trait 'Greet'
+-- stderr-contains: does not implement trait 'a.Greet'
 -- stderr-not-contains: unknown module
 import a
 

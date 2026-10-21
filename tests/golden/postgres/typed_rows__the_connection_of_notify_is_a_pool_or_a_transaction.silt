@@ -1,7 +1,7 @@
 -- cmd: check
 -- requires-feature: postgres
 -- exit: 1
--- stderr-contains: the connection of `postgres.notify` must be a PgPool or a PgTx
+-- stderr-contains: the connection of `postgres.notify` must be a postgres.PgPool or a postgres.PgTx
 -- `postgres.notify`, like `query`, `execute` and `stream`, takes a pool
 -- or a transaction, and nothing else.
 import postgres

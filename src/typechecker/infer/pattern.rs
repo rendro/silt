@@ -298,7 +298,7 @@ impl TypeChecker {
     fn refutable_type_reason(&self, ty: &Type) -> String {
         format!(
             "the pattern does not match every value of type '{}'",
-            self.apply(ty)
+            self.show_type(&self.apply(ty))
         )
     }
 

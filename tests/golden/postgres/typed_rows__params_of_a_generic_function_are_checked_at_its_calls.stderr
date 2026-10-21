@@ -1,15 +1,15 @@
-error[type]: the connection of `postgres.query` must be a PgPool or a PgTx
+error[type]: the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx
  --> typed_rows__params_of_a_generic_function_are_checked_at_its_calls.silt:16:14
     |
  16 |   match find(0, (1,)) {
-    |              ^ the connection of `postgres.query` must be a PgPool or a PgTx
+    |              ^ the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx
   = note: `find` passes it to `postgres.query`
 
-error[type]: the connection of `postgres.query` must be a PgPool or a PgTx
+error[type]: the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx
  --> typed_rows__params_of_a_generic_function_are_checked_at_its_calls.silt:20:14
     |
  20 |   match find(0, 1) {
-    |              ^ the connection of `postgres.query` must be a PgPool or a PgTx
+    |              ^ the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx
   = note: `find` passes it to `postgres.query`
 
 error[type]: the parameters of `postgres.query` must be a tuple, got `Int`

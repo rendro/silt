@@ -574,7 +574,10 @@ impl TypeChecker {
             other => {
                 self.error(
                     Code::InvalidQuestion,
-                    format!("'?' operator requires Result or Option type, got '{other}'"),
+                    format!(
+                        "'?' operator requires Result or Option type, got '{}'",
+                        self.show_type(other)
+                    ),
                     span,
                 );
                 return;
@@ -624,7 +627,9 @@ impl TypeChecker {
                         "? operator can only be used inside a function that returns Result or Option",
                     )
                     .with_note(format!(
-                        "the ?-ed expression is {resolved}, but the enclosing function returns {other}"
+                        "the ?-ed expression is {}, but the enclosing function returns {}",
+                        self.show_type(resolved),
+                        self.show_type(other)
                     )),
                 );
             }
@@ -860,7 +865,8 @@ impl TypeChecker {
                     self.error(
                         Code::TypeMismatch,
                         format!(
-                            "spread requires a record base, but '{other}' is not a record type"
+                            "spread requires a record base, but '{}' is not a record type",
+                            self.show_type(other)
                         ),
                         span,
                     );
@@ -1308,8 +1314,8 @@ impl TypeChecker {
 
     /// Report that `method`, called on `on` (`type 'Int'`, `a value
     /// whose type is not known`), is a method of each of `traits`: the
-    /// one wording, the traits by their names in order, each with the
-    /// module that declares it.
+    /// one wording, the traits by their names in order, each as a
+    /// program writes it (`json.Encode`, `Display`).
     pub(super) fn ambiguous_method(
         &mut self,
         method: Symbol,
@@ -1317,10 +1323,7 @@ impl TypeChecker {
         traits: &[TraitKey],
         span: Span,
     ) {
-        let mut shown: Vec<String> = traits
-            .iter()
-            .map(|t| self.show_trait_in_module(*t))
-            .collect();
+        let mut shown: Vec<String> = traits.iter().map(|t| self.show_trait(*t)).collect();
         shown.sort();
         self.errors.push(
             Diagnostic::error(
@@ -1572,7 +1575,12 @@ impl TypeChecker {
                     {
                         self.error(
                             Code::UnsupportedOperation,
-                            operator_message(&resolve(trait_name.name), op, &resolved),
+                            operator_message(
+                                &resolve(trait_name.name),
+                                op,
+                                &resolved,
+                                &self.show_type(&resolved),
+                            ),
                             span,
                         );
                         return;
@@ -1866,7 +1874,12 @@ impl TypeChecker {
             if let Some(op) = origin.op {
                 self.error(
                     Code::UnsupportedOperation,
-                    operator_message(&resolve(trait_name.name), op, &resolved),
+                    operator_message(
+                        &resolve(trait_name.name),
+                        op,
+                        &resolved,
+                        &self.show_type(&resolved),
+                    ),
                     span,
                 );
                 return;

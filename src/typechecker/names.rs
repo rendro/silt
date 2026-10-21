@@ -2495,7 +2495,19 @@ impl Resolver<'_> {
             )),
             None => {
                 let elsewhere = self.elsewhere(name);
-                if !elsewhere.is_empty() {
+                let no_value = |(module, _): &(Symbol, Option<Symbol>)| {
+                    super::builtin_env::is_module_type_no_value(&resolve(*module), &name_str)
+                };
+                if let Some((module, _)) = elsewhere.first()
+                    && elsewhere.iter().all(no_value)
+                {
+                    Some(format!(
+                        "`{name}` is the type `{module}.{name}`, and {}",
+                        super::builtin_env::module_type_is_no_value_help(&format!(
+                            "{module}.{name}"
+                        ))
+                    ))
+                } else if !elsewhere.is_empty() {
                     Some(self.elsewhere_help(name, &elsewhere))
                 } else if let Some(help) = self.alias_help(name) {
                     Some(help)

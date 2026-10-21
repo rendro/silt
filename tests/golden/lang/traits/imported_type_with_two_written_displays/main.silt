@@ -1,6 +1,6 @@
 -- exit: 1
 -- verdict: same
--- stderr-contains: error[type]: duplicate implementation of trait 'Display' for type 'Tag'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Display' for type 'types.Tag'
 -- A second written Display impl for an imported type is a duplicate.
 import types.{ Tag }
 

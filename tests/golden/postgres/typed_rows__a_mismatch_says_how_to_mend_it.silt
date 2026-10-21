@@ -11,7 +11,7 @@ fn main() {
   let mismatches = [
     postgres.TypeMismatch("id", "Int", "float8"),
     postgres.TypeMismatch("ids", "List(Int)", "text[]"),
-    postgres.TypeMismatch("days", "List(Option(Date))", "text[]"),
+    postgres.TypeMismatch("days", "List(Option(time.Date))", "text[]"),
     postgres.TypeMismatch("r", "json.Value", "interval"),
     postgres.TypeMismatch("meta", "Meta", "text"),
     postgres.TypeMismatch("tags", "Map(String, Int)", "text"),

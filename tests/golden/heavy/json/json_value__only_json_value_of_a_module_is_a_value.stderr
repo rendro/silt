@@ -3,3 +3,4 @@ error[type]: 'time.Date' is not a value
    |
  8 |   println(json.parse("1", time.Date))
    |                           ^^^^^^^^^ 'time.Date' is not a value
+  = help: the types of a module are no values but `json.Value`; a decoder decodes a `time.Date` as the type of a record's field: `type R { at: time.Date }`

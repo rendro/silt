@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A type of a builtin module is no value (but json.Value): given to a
+-- decoder as its type argument, the help says how a decoder decodes it,
+-- and never names a spelling that is refused the same way.
+import json
+import time
+import toml
+
+fn main() {
+  let _ = toml.parse_map("a = 1979-05-27T00:32:00", time.DateTime)
+  let _ = json.parse("1", DateTime)
+  let _ = json.parse("1", time.Duration)
+}

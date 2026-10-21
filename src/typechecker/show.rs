@@ -97,23 +97,29 @@ impl TypeChecker {
         }
     }
 
-    /// The name of the trait `t` in a message: written with its module
-    /// when another trait the session knows has its name (`a.Show`),
-    /// and always when a builtin module declares it (`json.Encode`): a
-    /// program names it so.
+    /// The name of the trait `t` in a message, as a program writes it:
+    /// a trait of another module with its module (`json.Encode`,
+    /// `a.Show`); a prelude trait and the module's own bare (`Display`),
+    /// unless another trait the session knows has its name
+    /// (`prelude.Display` beside a program's `Display`).
     pub(super) fn show_trait(&self, t: TraitKey) -> String {
-        if let Some((name, Some(module))) = crate::defs::builtin_trait_of_id(t.id.0) {
-            return format!("{module}.{name}");
-        }
+        let of_another_module = match crate::defs::builtin_trait_of_id(t.id.0) {
+            Some((_, module)) => module.is_some(),
+            None => self
+                .def(t.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module))
+                .is_some_and(|module| !resolve(*module).starts_with('<')),
+        };
         let clashes = self
             .tables
             .traits
             .keys()
             .any(|o| o.name == t.name && o.id != t.id);
-        if !clashes {
-            return t.name.to_string();
+        match of_another_module || clashes {
+            true => self.show_trait_in_module(t),
+            false => t.name.to_string(),
         }
-        self.show_trait_in_module(t)
     }
 
     /// The name of the trait `t` as the module being checked writes it:

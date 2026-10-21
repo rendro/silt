@@ -956,10 +956,14 @@ impl TypeChecker {
     /// for `Int.parse`) is suggested.
     fn no_type_method(&mut self, type_name: &str, field: Symbol, span: Span, ty: Option<TypeRef>) {
         let module = type_name.to_lowercase();
+        let shown = match ty {
+            Some(ty) => self.show_type(&Type::Generic(ty, Vec::new())),
+            None => type_name.to_string(),
+        };
         let mut d = Diagnostic::error(
             Code::UnresolvedName,
             span,
-            format!("type '{type_name}' has no method '{field}'"),
+            format!("type '{shown}' has no method '{field}'"),
         );
         let qualified = intern(&format!("{module}.{field}"));
         if let Some(ty) = ty {
@@ -1634,7 +1638,7 @@ impl TypeChecker {
                         let mut d = Diagnostic::error(
                             Code::TypeMismatch,
                             span,
-                            format!("`{other}` is not callable"),
+                            format!("`{}` is not callable", self.show_type(other)),
                         );
                         // The `self` of an impl for every function.
                         if let Type::Rigid(r) = other
@@ -1973,11 +1977,32 @@ impl TypeChecker {
                                 ExprKind::Ident(m) => format!("{m}."),
                                 _ => String::new(),
                             };
-                            self.error(
-                                Code::UndefinedVariable,
-                                format!("'{module}{field}' is not a value"),
-                                span,
-                            );
+                            let message = format!("'{module}{field}' is not a value");
+                            // (A type of a builtin module: as a program
+                            // writes it, whatever the module's name here.)
+                            let help = self
+                                .res_type(expr.res)
+                                .and_then(|t| self.other_module(t).map(|m| (m, t)))
+                                .filter(|(m, t)| {
+                                    super::builtin_env::is_module_type_no_value(
+                                        &resolve(*m),
+                                        &resolve(t.name),
+                                    )
+                                })
+                                .map(|(m, t)| {
+                                    super::builtin_env::module_type_is_no_value_help(&format!(
+                                        "{m}.{}",
+                                        t.name
+                                    ))
+                                });
+                            match help {
+                                Some(help) => self.error_help(
+                                    Code::UndefinedVariable,
+                                    (message, Some(help)),
+                                    span,
+                                ),
+                                None => self.error(Code::UndefinedVariable, message, span),
+                            }
                             Type::Error
                         }
                     };
@@ -2085,7 +2110,7 @@ impl TypeChecker {
                     // variable's case is reported above).
                     let inner = self.apply(&gargs[0]);
                     if !matches!(inner, Type::Var(_) | Type::Rigid(_) | Type::Error) {
-                        self.no_type_method(&format!("{inner}"), field, span, None);
+                        self.no_type_method(&self.show_type(&inner), field, span, None);
                     }
                     return Type::Error;
                 }
@@ -2535,7 +2560,8 @@ impl TypeChecker {
                         self.error(
                             Code::InvalidQuestion,
                             format!(
-                                "'?' operator requires Result or Option type, got '{inner_ty}'"
+                                "'?' operator requires Result or Option type, got '{}'",
+                                self.show_type(&inner_ty)
                             ),
                             span,
                         );
@@ -2894,7 +2920,8 @@ impl TypeChecker {
                     if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
                         self.error(Code::TypeMismatch,
                             format!(
-                                "record update requires a record base, but '{resolved}' is not a record type"
+                                "record update requires a record base, but '{}' is not a record type",
+                                self.show_type(&resolved)
                             ),
                             base_span,
                         );
@@ -3664,7 +3691,7 @@ impl TypeChecker {
                 let mut d = Diagnostic::error(
                     Code::UnsupportedOperation,
                     offender_span,
-                    operator_message(tr, op, offender),
+                    operator_message(tr, op, offender, &self.show_type(offender)),
                 );
                 d.help.extend(Self::chain_hint(offender, other));
                 self.errors.push(d);
@@ -3697,14 +3724,15 @@ impl TypeChecker {
     }
 }
 
-/// What is said of an operand of the type `ty` that the operator `op`,
-/// of the builtin trait `tr`, is not for.
-pub(super) fn operator_message(tr: &str, op: &str, ty: &Type) -> String {
+/// What is said of an operand of the type `ty`, which a message writes
+/// as `shown`, that the operator `op`, of the builtin trait `tr`, is
+/// not for.
+pub(super) fn operator_message(tr: &str, op: &str, ty: &Type, shown: &str) -> String {
     match tr {
-        "Number" => arith_operand_message(op, ty),
-        "Equal" => format!("operator {op} requires a comparable type, got '{ty}'"),
+        "Number" => arith_operand_message(op, ty, shown),
+        "Equal" => format!("operator {op} requires a comparable type, got '{shown}'"),
         _ => format!(
-            "operator {op} requires Int, Float, String, Bool, List, Tuple, Record, or Variant, got '{ty}'"
+            "operator {op} requires Int, Float, String, Bool, List, Tuple, Record, or Variant, got '{shown}'"
         ),
     }
 }
@@ -3846,10 +3874,10 @@ pub(super) fn resolve_supertrait_arg(
 /// The operand-domain diagnostic for an arithmetic operator (`op_str` is
 /// the quoted operator, e.g. `'+'`). A String operand of `+` also names
 /// the way to build strings: interpolation.
-pub(super) fn arith_operand_message(op_str: &str, ty: &Type) -> String {
+pub(super) fn arith_operand_message(op_str: &str, ty: &Type, shown: &str) -> String {
     let msg = match op_str.starts_with("unary") {
-        true => format!("{op_str} requires Int or Float, got '{ty}'"),
-        false => format!("operator {op_str} requires Int or Float, got '{ty}'"),
+        true => format!("{op_str} requires Int or Float, got '{shown}'"),
+        false => format!("operator {op_str} requires Int or Float, got '{shown}'"),
     };
     if op_str == "'+'" && matches!(ty, Type::String) {
         format!("{msg}; build strings with interpolation, e.g. \"{{a}}{{b}}\"")

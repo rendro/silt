@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: the impl of trait 'Area' for type 'Square' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
+-- stderr-contains: the impl of trait 'traits.Area' for type 'shapes.Square' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
 -- stderr-contains: unknown field or method 'area' on type shapes.Square
 -- An impl written elsewhere is no impl: nothing is called through it.
 import shapes.{ Square }

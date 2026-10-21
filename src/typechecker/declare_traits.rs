@@ -53,9 +53,14 @@ impl TypeChecker {
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
                 if !self.head_has_trait(*supertrait, *type_name) {
+                    let (ty, tr, sup) = (
+                        self.show_type(&Type::Generic(*type_name, Vec::new())),
+                        self.show_trait(*trait_name),
+                        self.show_trait(*supertrait),
+                    );
                     self.error(Code::MissingTraitImpl,
                         format!(
-                            "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
+                            "type '{ty}' implements '{tr}' but does not implement supertrait '{sup}'"
                         ),
                         diag_span,
                     );
@@ -693,7 +698,7 @@ impl TypeChecker {
                     .map_or_else(|| "?".to_string(), |name| resolve(*name))
             })
         };
-        let (tr, ty) = (self.show_trait(tr), resolve(ti.target_type));
+        let (tr, ty) = (self.show_trait(tr), self.impl_target_name(ti, target_type));
         let place = match (named(of_trait), named(of_type)) {
             (Some(t), Some(y)) if t == y => {
                 format!("it may be written in module '{t}', which declares both")
@@ -722,12 +727,25 @@ impl TypeChecker {
         false
     }
 
-    /// The trait the impl `ti` implements, as messages name it: as
-    /// written, but a trait of a builtin module with its module
-    /// (`json.Encode`, whatever the impl wrote).
+    /// The trait the impl `ti` implements, as messages name it: as a
+    /// program writes it, a trait of another module with its module
+    /// (`json.Encode`, `traits.Area`, whatever the impl wrote).
     fn impl_trait_name(&self, ti: &TraitImpl) -> String {
         self.impl_trait(ti)
-            .map_or_else(|| resolve(ti.trait_name), |tr| tr.to_string())
+            .map_or_else(|| resolve(ti.trait_name), |tr| self.show_trait(tr))
+    }
+
+    /// The target of the impl `ti`, for the type `target_type`, as
+    /// messages name it: as the impl writes it (an alias of the type
+    /// keeps its name), a type of another module with its module
+    /// (`time.Date`, `shapes.Square`).
+    fn impl_target_name(&self, ti: &TraitImpl, target_type: TypeRef) -> String {
+        match self.other_module(target_type) {
+            Some(module) if ti.target_type == target_type.name => {
+                format!("{module}.{}", ti.target_type)
+            }
+            _ => ti.target_type.to_string(),
+        }
     }
 
     /// Whether the impl `ti`, for the type `target_type`, is written
@@ -819,7 +837,7 @@ impl TypeChecker {
                     format!(
                         "duplicate implementation of trait '{}' for type '{}'",
                         self.impl_trait_name(ti),
-                        ti.target_type
+                        self.impl_target_name(ti, target_type)
                     ),
                     ti.span,
                 );
@@ -1381,7 +1399,7 @@ impl TypeChecker {
                     format!(
                         "impl of '{}' for '{}' is missing required associated type '{}'",
                         self.impl_trait_name(ti),
-                        resolve(ti.target_type),
+                        self.impl_target_name(ti, target_type),
                         resolve(assoc.name),
                     ),
                     ti.span,
@@ -1907,12 +1925,7 @@ impl TypeChecker {
         // by its name.
         let tr = self.impl_trait_name(ti);
         let ty = self.show_type(&Type::Generic(target_type, vec![]));
-        let of = match self.other_module(target_type) {
-            Some(module) if ti.target_type == target_type.name => {
-                format!("{module}.{}", ti.target_type)
-            }
-            _ => ti.target_type.to_string(),
-        };
+        let of = self.impl_target_name(ti, target_type);
         let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
         let mut written: Vec<Symbol> = Vec::new();
         for method in &ti.methods {

@@ -1327,7 +1327,7 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
         return tx.open().map(ExecutorRef::Tx);
     }
     Err(other_error(format!(
-        "postgres requires PgPool or PgTx, got {}",
+        "postgres requires a postgres.PgPool or a postgres.PgTx, got {}",
         match conn {
             Value::Variant(variant) => variant.name(),
             other => other.kind(),
