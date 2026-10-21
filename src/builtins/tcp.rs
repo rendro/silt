@@ -206,6 +206,7 @@ mod tls {
         let next_id = vm.next_tcp_id();
         let shutter = Shutter::default();
         shutter.set(&sock);
+        let shut = shutter.clone();
         let op = vm.io_op(
             tcp_timeout_err,
             Leave::closes(move || shutter.shut()),
@@ -213,7 +214,7 @@ mod tls {
                 let wrapped = config().and_then(|config| {
                     let conn = ServerConnection::new(Arc::new(config))
                         .map_err(|e| format!("server connection setup: {e}"))?;
-                    TcpStreamHandle::whole(next_id, &socket, move || {
+                    TcpStreamHandle::whole(next_id, &socket, &shut, move || {
                         let stream = rustls::StreamOwned::new(conn, sock);
                         let mut wrapper = ServerStreamWrapper { inner: stream };
                         // The handshake fails here rather than at the first read.
@@ -274,7 +275,7 @@ mod tls {
         let socket = sock
             .try_clone()
             .map_err(|e| format!("tcp connect {addr}: {e}"))?;
-        let whole = TcpStreamHandle::whole(next_id, &socket, move || {
+        let whole = TcpStreamHandle::whole(next_id, &socket, shutter, move || {
             let stream = rustls::StreamOwned::new(conn, sock);
             let mut wrapper = ClientStreamWrapper { inner: stream };
             // The handshake fails here rather than at the first read.

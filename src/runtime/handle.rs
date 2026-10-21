@@ -490,6 +490,11 @@ enum TcpIo {
         /// cloned, or after a shutdown on Windows (where the handle
         /// is closed to end what blocks on the other).
         socket: Mutex<Option<std::net::TcpStream>>,
+        /// What ends a read or a write that blocks in the TLS library:
+        /// it has the socket that the library reads and writes (the
+        /// one `CancelIoEx` must name on Windows), and is the one its
+        /// handshake was ended with.
+        shutter: Shutter,
     },
 }
 
@@ -510,24 +515,27 @@ impl TcpStreamHandle {
         })
     }
 
-    /// A connection that is one object (TLS) over `socket`. Called
-    /// with the socket before it is handed to that object.
+    /// A connection that is one object (TLS) over `socket`, a handle
+    /// of the socket that `wrap` hands to that object; `shutter` was
+    /// set with that socket ([`Shutter::set`]).
     pub fn whole(
         id: usize,
         socket: &std::net::TcpStream,
+        shutter: &Shutter,
         wrap: impl FnOnce() -> Result<Box<dyn ReadWrite>, String>,
     ) -> Result<Arc<Self>, String> {
         let other = Mutex::new(socket.try_clone().ok());
-        let io_socket = socket.raw_socket();
         Ok(Arc::new(TcpStreamHandle {
             id,
             io: TcpIo::Tls {
                 both: Mutex::new(wrap()?),
                 socket: other,
+                shutter: shutter.clone(),
             },
             closed: AtomicBool::new(false),
             handed_over: AtomicBool::new(false),
-            io_socket,
+            // The shutter ends what blocks.
+            io_socket: None,
         }))
     }
 
@@ -827,7 +835,11 @@ impl TcpStreamHandle {
             TcpIo::Plain { socket, .. } => {
                 let _ = socket.shutdown(std::net::Shutdown::Both);
             }
-            TcpIo::Tls { both, socket } => {
+            TcpIo::Tls {
+                both,
+                socket,
+                shutter,
+            } => {
                 // What the TLS writer still buffers, if nobody is in
                 // it: a blocked read or write holds the lock, and
                 // waiting for it here would wait for the very thing
@@ -840,9 +852,13 @@ impl TcpStreamHandle {
                 if let Some(other) = other.as_ref() {
                     let _ = other.shutdown(std::net::Shutdown::Both);
                 }
-                // On Windows the duplicate is closed too (see below).
+                // On Windows the duplicate is closed too, and the call
+                // that blocks on the socket of the TLS library is
+                // cancelled (the shutter).
                 #[cfg(windows)]
                 let _ = other.take();
+                drop(other);
+                shutter.shut();
             }
         }
         cancel_blocked_io(self.io_socket);
@@ -1641,6 +1657,40 @@ mod tests {
             Accepted::Served
         ));
         listener.served_no_more(token);
+    }
+
+    /// A connection that is one object (TLS) is shut down while a read
+    /// blocks in it, on the socket that the object has: the read
+    /// returns. On Windows a shutdown of another handle of the socket
+    /// does not end that read; the shutter cancels it on the object's
+    /// own socket.
+    #[test]
+    fn a_whole_connection_shut_down_ends_the_read_that_blocks_in_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let _peer = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (sock, _) = listener.accept().expect("accept");
+        let other = sock.try_clone().expect("clone");
+        let shutter = Shutter::default();
+        assert!(shutter.set(&sock));
+        let conn = TcpStreamHandle::whole(0, &other, &shutter, move || {
+            Ok(Box::new(sock) as Box<dyn ReadWrite>)
+        })
+        .expect("a connection");
+        let (reader, (tell, told)) = (conn.clone(), std::sync::mpsc::channel());
+        let read = std::thread::spawn(move || {
+            let _ = tell.send(());
+            let mut buf = [0u8; 8];
+            // Whatever the system says: it returns.
+            let _ = reader.read(&mut buf);
+        });
+        told.recv().expect("the reader runs");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        conn.shut_down();
+        let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !read.is_finished() {
+            assert!(std::time::Instant::now() < limit, "the read still blocks");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     /// A task that is cancelled after it started an accept, and
