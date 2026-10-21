@@ -871,6 +871,17 @@ impl Filling {
         }
     }
 
+    /// The rows finished so far, taken out: they are not given again.
+    pub(super) fn take_done(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.done)
+    }
+
+    /// Whether the call [`Filling::next`] just asked for is the first of
+    /// its row.
+    pub(super) fn starts_row(&self) -> bool {
+        matches!(&self.at_hand, Some((_, _, gave)) if gave.is_empty())
+    }
+
     /// What comes next, `given` what the last call returned (`Ok` of
     /// the value, or `Err` of the `JsonError` it returned).
     pub(super) fn next(&mut self, given: Option<Result<Value, Value>>) -> Fill {

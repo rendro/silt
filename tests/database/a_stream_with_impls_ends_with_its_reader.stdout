@@ -1,0 +1,5 @@
+the first row: R {n: 1, code: Code {digits: 1}}
+task.deadline: the function was ended by its deadline
+the next statement: [R {n: 1, code: Code {digits: 1}}]
+the first row: R {n: 1, code: Code {digits: 1}}
+the reader is cancelled, main returns

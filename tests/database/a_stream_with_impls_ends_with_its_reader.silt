@@ -1,0 +1,90 @@
+-- A stream whose rows the program's `json.Decode` impls finish, read by
+-- a function that `task.deadline` ends after one row: the deadline's
+-- `Err`, and the pool answers the next statement. Then a task reads
+-- one row of such a stream and is cancelled, and `main` returns. Nobody
+-- closed either channel; the streams' senders wait for room in them
+-- and are dropped as the program ends, as a task that waits to send
+-- is, and the program ends. With a sender that went on waiting the
+-- program would never exit, and the suite would report that it did not
+-- exit within its 60 seconds.
+import channel
+import env
+import json
+import postgres
+import task
+import time
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Code { digits: text })
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { n: Int, code: Code }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn first(rows: Channel(Result(R, postgres.PostgresError))) -> String {
+  match channel.receive(rows) {
+    Some(Ok(row)) -> "the first row: {row}"
+    Some(Err(e)) -> e.message()
+    None -> "no row"
+  }
+}
+
+fn main() {
+  let sql = "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 300000) g"
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let never: Channel(String) = channel.new(1)
+      let late = task.deadline(time.ms(200)) { ->
+        match postgres.stream(pool, sql, (), R) {
+          Ok(rows) -> {
+            println(first(rows))
+            -- Waits until the deadline ends it.
+            let _ = channel.receive(never)
+            "the function ended"
+          }
+          Err(e) -> e.message()
+        }
+      }
+      match late {
+        Ok(said) -> println(said)
+        Err(e) -> println("task.deadline: {e.message()}")
+      }
+      match postgres.query(pool, "SELECT 1 AS n, to_jsonb('1'::text) AS code", (), R) {
+        Ok(rows) -> println("the next statement: {rows}")
+        Err(e) -> println(e.message())
+      }
+      let got: Channel(String) = channel.new(1)
+      let reader = task.spawn { ->
+        match postgres.stream(pool, sql, (), R) {
+          Ok(rows) -> {
+            channel.send(got, first(rows))
+            -- Waits until it is cancelled.
+            let _ = channel.receive(never)
+            ()
+          }
+          Err(e) -> channel.send(got, e.message())
+        }
+      }
+      match channel.receive(got) {
+        Some(said) -> println(said)
+        None -> println("the reader said nothing")
+      }
+      task.cancel(reader)
+      println("the reader is cancelled, main returns")
+    }
+    Err(e) -> println(e.message())
+  }
+}
