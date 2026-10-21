@@ -21,7 +21,7 @@ pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message};
 pub use io_op::IoFailure;
-pub(crate) use io_op::{IoOp, Leave, Limit, Wanted};
+pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, Frame, Native, Step};

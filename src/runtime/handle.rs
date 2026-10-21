@@ -845,25 +845,85 @@ impl TcpStreamHandle {
                 let _ = other.take();
             }
         }
-        // Winsock's `shutdown(SD_BOTH)` does not end a `recv` or a
-        // `send` that blocks on the socket. `CancelIoEx` on the SOCKET
-        // that the blocked call uses does.
-        #[cfg(windows)]
-        if let Some(sock) = self.io_socket {
-            // SAFETY: `CancelIoEx` may be called on any HANDLE, a
-            // SOCKET included; it fails harmlessly if the handle is
-            // invalid or nothing is pending. A null `lpOverlapped`
-            // cancels all pending I/O on it.
-            use std::ptr;
-            use windows_sys::Win32::Foundation::HANDLE;
-            use windows_sys::Win32::System::IO::CancelIoEx;
-            unsafe {
-                let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
-            }
-        }
-        #[cfg(not(windows))]
-        let _ = self.io_socket;
+        cancel_blocked_io(self.io_socket);
     }
+}
+
+/// End a `recv` or a `send` that blocks on the OS socket `socket` (as
+/// [`ReadWrite::raw_socket`] gives it), after a shutdown of the socket.
+/// Winsock's `shutdown(SD_BOTH)` does not end such a call, also not
+/// one on a duplicate of the socket; `CancelIoEx` on the SOCKET that
+/// the blocked call uses does. Elsewhere the shutdown ends it, and this
+/// does nothing.
+fn cancel_blocked_io(socket: Option<usize>) {
+    #[cfg(windows)]
+    if let Some(sock) = socket {
+        // SAFETY: `CancelIoEx` may be called on any HANDLE, a
+        // SOCKET included; it fails harmlessly if the handle is
+        // invalid or nothing is pending. A null `lpOverlapped`
+        // cancels all pending I/O on it.
+        use std::ptr;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::IO::CancelIoEx;
+        unsafe {
+            let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = socket;
+}
+
+/// What shuts down the socket of an operation that has no connection
+/// handle yet, from another thread: a TLS handshake, in which the
+/// socket is inside the TLS library. A handshake that nobody waits for
+/// any more is ended so (`Leave::Closes`), wherever it stood: the
+/// socket may not be there yet (the connect is still under way), and is
+/// then shut down as soon as it is.
+#[derive(Clone, Default)]
+pub struct Shutter(Arc<Mutex<Shut>>);
+
+#[derive(Default)]
+struct Shut {
+    /// A handle of the socket, and the OS socket that the blocked call
+    /// uses ([`cancel_blocked_io`]).
+    socket: Option<(std::net::TcpStream, Option<usize>)>,
+    /// The shutter was shut.
+    shut: bool,
+}
+
+impl Shutter {
+    /// The operation's socket is `socket`, the one its reads and
+    /// writes block on (before it is handed to the TLS library).
+    /// `false` if the shutter was shut already: the socket is shut down
+    /// here then, and the operation is to give up.
+    pub fn set(&self, socket: &std::net::TcpStream) -> bool {
+        let used = socket.raw_socket();
+        let mut shut = self.0.lock();
+        if shut.shut {
+            shut_socket(socket, used);
+            return false;
+        }
+        if let Ok(handle) = socket.try_clone() {
+            shut.socket = Some((handle, used));
+        }
+        true
+    }
+
+    /// Shut the operation's socket down, now or as soon as it has one:
+    /// a read or a write that blocks on it returns.
+    pub fn shut(&self) {
+        let mut shut = self.0.lock();
+        shut.shut = true;
+        if let Some((socket, used)) = shut.socket.take() {
+            shut_socket(&socket, used);
+        }
+    }
+}
+
+/// Shut `socket` down, and end what blocks on `used`.
+fn shut_socket(socket: &std::net::TcpStream, used: Option<usize>) {
+    let _ = socket.shutdown(std::net::Shutdown::Both);
+    cancel_blocked_io(used);
 }
 
 // ── What a test is told of the writes that take their turn ─────────

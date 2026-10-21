@@ -2341,16 +2341,40 @@ fn parse_connect_opts(opts: &Opts) -> Result<ConnectOpts, String> {
     Ok(out)
 }
 
+/// What becomes of a connect that nobody waits for any more: it runs to
+/// its end, and the pool it made, which nobody has, is closed (on the
+/// pool's thread: its connection says goodbye to the server).
+fn pool_given_back(vm: &Vm) -> Leave {
+    let runtime = vm.runtime.clone();
+    Leave::gives_back(move |made| {
+        if let Value::Variant(made) = made
+            && made.is(bv::OK)
+            && let [handle] = made.fields()
+            && let Some(pool) = PoolHandle::take(handle)
+        {
+            let pool = registry()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pools
+                .remove(&pool.0);
+            runtime.io_pool.background(pg_timeout_err, move || {
+                drop(pool);
+                Value::Unit
+            });
+        }
+    })
+}
+
 builtins! {
     fn connect(vm, url: &str) -> Result<Step, VmError> {
         let url = url.to_string();
-        vm.io("postgres", pg_timeout_err, Leave::RunsOut, move |_| do_connect(url))
+        vm.io("postgres", pg_timeout_err, pool_given_back(vm), move |_| do_connect(url))
     }
 
     fn connect_with(vm, url: &str, opts: Opts) -> Started {
         let opts = parse_connect_opts(&opts).map_err(pg_connect)?;
         let url = url.to_string();
-        Ok(vm.io("postgres", pg_timeout_err, Leave::RunsOut, move |_| {
+        Ok(vm.io("postgres", pg_timeout_err, pool_given_back(vm), move |_| {
             do_connect_with(url, opts)
         }))
     }
@@ -2538,6 +2562,7 @@ builtins! {
         // owned Arc synchronously.
         let ch_id = vm.next_channel_id();
         let worker_channel = Channel::new(ch_id, LISTEN_CHANNEL_CAPACITY);
+        let nobodys = worker_channel.clone();
 
         // LISTEN happens on the io_pool so it doesn't block the VM thread,
         // but we still wait for its completion before returning so LISTEN
@@ -2580,7 +2605,14 @@ builtins! {
             ok(Value::Channel(worker_channel))
         };
 
-        Ok(vm.io("postgres", pg_timeout_err, Leave::RunsOut, work))
+        // A listener that nobody waits for any more, whose LISTEN was
+        // done all the same, is nobody's: its channel is closed, so that
+        // its worker ends, and gives the connection back.
+        let scheduler = vm.scheduler().clone();
+        let leave = Leave::gives_back(move |_| {
+            let _ = nobodys.close(Close::default(), scheduler.wake());
+        });
+        Ok(vm.io("postgres", pg_timeout_err, leave, work))
     }
 
     // Fires a NOTIFY, on a pool or in a transaction. Uses

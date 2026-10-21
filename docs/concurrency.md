@@ -1310,7 +1310,8 @@ Setting `SILT_IO_TIMEOUT=5s` makes every I/O
 builtin that blocks longer than that duration return the module's own typed
 timeout variant instead of its normal value:
 
-- `io.*` and `fs.*` surface `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
+- `io.*` surfaces `Err(Other("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`. (The `fs`
+  functions never wait for the I/O pool: they are not ended by it.)
 - `tcp.*` surfaces `Err(Timeout)`.
 - `http.*` surfaces `Err(Timeout)`.
 - `postgres.*` surfaces `Err(Timeout)`: a connect, each statement, and

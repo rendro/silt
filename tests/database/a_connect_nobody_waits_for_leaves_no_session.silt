@@ -1,0 +1,62 @@
+-- `postgres.connect` is given up at deadlines of a few milliseconds,
+-- some of which pass while the connect is under way. A pool that such a
+-- connect made all the same is nobody's, and is closed: afterwards the
+-- server has no session of those connects. (Before, each
+-- such pool stayed, with its session open, until the process ended.)
+import env
+import json
+import list
+import postgres
+import string
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- The URL of the connects that are given up: their sessions are known
+-- by their application name.
+fn tagged() -> String {
+  let url = url()
+  let joint = match string.contains(url, "?") {
+    true -> "&"
+    false -> "?"
+  }
+  "{url}{joint}application_name=silt_given_up_connect"
+}
+
+-- How many sessions of the connects that are given up the server has.
+fn sessions(db: postgres.PgPool) -> String {
+  let sql = "SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = 'silt_given_up_connect'"
+  match postgres.query(db, sql, (), json.Value) {
+    Ok(rows) -> "{rows}"
+    Err(e) -> e.message()
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println("before: {sessions(db)}")
+      [1, 1, 2, 2, 3, 3, 4, 5, 6, 8] |> list.each { ms ->
+        let got = task.deadline(time.ms(ms)) { -> postgres.connect(tagged()) }
+        match got {
+          -- In time: the program closes the pool itself.
+          Ok(Ok(other)) -> postgres.close(other)
+          Ok(Err(e)) -> println("connect: {e.message()}")
+          Err(_) -> ()
+        }
+      }
+      -- The connects that were given up end within their 10 seconds;
+      -- here they take milliseconds.
+      time.sleep(time.ms(1000))
+      println("after: {sessions(db)}")
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

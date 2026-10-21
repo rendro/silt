@@ -29,7 +29,7 @@ use crate::vm::{Leave, Step, Vm, VmError};
 /// The error of a `tcp` function whose operation has no value of its
 /// own: `Timeout` when its deadline passed, `Other` with the
 /// reason when it could not run or panicked.
-fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
+pub(crate) fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     use crate::vm::IoFailure;
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, vec![]),
@@ -82,18 +82,24 @@ mod tls {
         tcp_timeout_err,
     };
     use crate::builtins::typed::{self, Bytes, builtins};
-    use crate::runtime::handle::{HandOver, ReadWrite};
+    use crate::runtime::handle::{HandOver, ReadWrite, Shutter};
 
     builtins! {
         /// Opens a TCP connection then performs the TLS client handshake
         /// using `webpki-roots` for trust anchors. The returned stream
         /// wraps a `rustls::StreamOwned<ClientConnection, TcpStream>`
         /// behind the same `TcpStreamHandle` as plain TCP.
+        ///
+        /// A connect that nobody waits for any more shuts its socket
+        /// down, as a handshake of `tls_server` does: a server that
+        /// accepts and never answers holds no thread.
         fn connect_tls(vm, addr: &str, hostname: &str) -> Result<Step, VmError> {
             let (addr, hostname) = (addr.to_string(), hostname.to_string());
             let next_id = vm.next_tcp_id();
-            vm.io("tcp", tcp_timeout_err, Leave::RunsOut, move |_| {
-                match do_connect_tls(&addr, &hostname, next_id) {
+            let shutter = Shutter::default();
+            let shut = shutter.clone();
+            vm.io("tcp", tcp_timeout_err, Leave::closes(move || shut.shut()), move |_| {
+                match do_connect_tls(&addr, &hostname, next_id, &shutter) {
                     Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                     Err(NoTls::Connection(e)) => tcp_io_err(Doing::Connecting, &e),
                     Err(NoTls::Tls(e)) => tls_err(e),
@@ -198,34 +204,32 @@ mod tls {
             }
         };
         let next_id = vm.next_tcp_id();
-        let unheard = {
-            let socket = socket.try_clone().ok();
-            move || {
-                if let Some(socket) = socket {
-                    let _ = socket.shutdown(std::net::Shutdown::Both);
+        let shutter = Shutter::default();
+        shutter.set(&sock);
+        let op = vm.io_op(
+            tcp_timeout_err,
+            Leave::closes(move || shutter.shut()),
+            move |_| {
+                let wrapped = config().and_then(|config| {
+                    let conn = ServerConnection::new(Arc::new(config))
+                        .map_err(|e| format!("server connection setup: {e}"))?;
+                    TcpStreamHandle::whole(next_id, &socket, move || {
+                        let stream = rustls::StreamOwned::new(conn, sock);
+                        let mut wrapper = ServerStreamWrapper { inner: stream };
+                        // The handshake fails here rather than at the first read.
+                        wrapper.complete_io_handshake()?;
+                        Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
+                    })
+                });
+                match wrapped {
+                    Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                    Err(why) => {
+                        let _ = socket.shutdown(std::net::Shutdown::Both);
+                        tls_err(why)
+                    }
                 }
-            }
-        };
-        let op = vm.io_op(tcp_timeout_err, Leave::closes(unheard), move |_| {
-            let wrapped = config().and_then(|config| {
-                let conn = ServerConnection::new(Arc::new(config))
-                    .map_err(|e| format!("server connection setup: {e}"))?;
-                TcpStreamHandle::whole(next_id, &socket, move || {
-                    let stream = rustls::StreamOwned::new(conn, sock);
-                    let mut wrapper = ServerStreamWrapper { inner: stream };
-                    // The handshake fails here rather than at the first read.
-                    wrapper.complete_io_handshake()?;
-                    Ok(Box::new(wrapper) as Box<dyn ReadWrite>)
-                })
-            });
-            match wrapped {
-                Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
-                Err(why) => {
-                    let _ = socket.shutdown(std::net::Shutdown::Both);
-                    tls_err(why)
-                }
-            }
-        });
+            },
+        );
         vm.io_wait("tcp", op)
     }
 
@@ -246,6 +250,7 @@ mod tls {
         addr: &str,
         hostname: &str,
         next_id: usize,
+        shutter: &Shutter,
     ) -> Result<Arc<TcpStreamHandle>, NoTls> {
         let mut roots = RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -257,6 +262,10 @@ mod tls {
         let conn = ClientConnection::new(Arc::new(config), server_name)
             .map_err(|e| format!("client connection setup: {e}"))?;
         let sock = TcpStream::connect(addr).map_err(NoTls::Connection)?;
+        // Nobody waits for the connect any more: it ends here.
+        if !shutter.set(&sock) {
+            return Err(NoTls::Connection(std::io::ErrorKind::NotConnected.into()));
+        }
         // Clone the fd for the shutdown side-channel BEFORE handing the
         // socket to rustls. `StreamOwned` takes the socket by value, and
         // once inside rustls we can no longer reach the raw fd through
