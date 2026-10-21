@@ -1,0 +1,18 @@
+-- Any import of json makes `json.Decode` and its method `decode`
+-- visible, a selective one too and one under another name
+-- (decode_is_seen_after_an_import_of_json_as_another_name). Without any
+-- import of json there is no `decode`: decode_needs_import_json.
+import json.{ parse, Value }
+
+type P { x: Int }
+
+fn main() {
+  println(parse("""{"x": 1}""", P))
+  match parse("""{"x": 2}""", Value) {
+    Ok(value) -> {
+      println(P.decode(value))
+      println(Int.decode(value))
+    }
+    Err(e) -> println(e)
+  }
+}

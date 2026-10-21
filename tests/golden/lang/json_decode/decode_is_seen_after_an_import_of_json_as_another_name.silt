@@ -1,0 +1,8 @@
+-- `import json as j` makes `json.Decode` and its method `decode` visible.
+import json as j
+
+type P { x: Int }
+
+fn main() {
+  println(P.decode(j.Object(#{ "x": j.Int(4) })))
+}

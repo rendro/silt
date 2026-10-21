@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stderr-contains: type 'P' has no method 'decode'
+-- stdout-contains: Err(json type mismatch: expected object, got null)
+-- stdin: type P { x: Int }\nP.decode(1)\nimport json.{ parse, Null }\nP.decode(Null)\n:quit\n
+-- In the REPL too, `T.decode` is a type's method once an entry imports
+-- json (a selective import too), and not before.
