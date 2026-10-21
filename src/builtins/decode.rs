@@ -206,9 +206,11 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
 // decoded by the impl, wherever it is in the document: the impl is silt
 // code, so the decoder cannot call it. A decoding of such a document
 // reads it twice (`vm::decode`): first collecting each part of such a
-// type (`Holes::Collect`: its place, the `json.Value` of its document,
-// the impl), then, once the impls have given their values, building the
-// value with them in those places (`Holes::Supply`), in the same order.
+// type (`Holes::Collect`: the `json.Value` of its document, the impl),
+// then, once the impls have given their values, building the value with
+// them in those places (`Holes::Supply`), in the same order. The place
+// of a part matters only to an impl's `Err`, which the second reading
+// meets there.
 
 /// What a decoder reads with: the runtime, and the impls a program wrote
 /// for the types it decodes, if it honours them (json does).
@@ -237,8 +239,6 @@ pub(crate) enum Holes {
 
 /// A part of a document of a type with a written `decode`.
 pub(crate) struct Hole {
-    /// Where it is (`items[2]`, empty for the document itself).
-    pub(crate) at: std::string::String,
     /// Its document, as a `json.Value`.
     pub(crate) json: Value,
     /// The slot of the type's `decode`.
@@ -292,11 +292,7 @@ impl<'a> Reader<'a> {
         let slot = (impls.written)(id)?;
         Some(match &mut *impls.holes.borrow_mut() {
             Holes::Collect(holes) => json_part(doc, at).map(|json| {
-                holes.push(Hole {
-                    at: at.to_string(),
-                    json,
-                    slot,
-                });
+                holes.push(Hole { json, slot });
                 Value::Unit
             }),
             Holes::Supply(values) => match values.next() {

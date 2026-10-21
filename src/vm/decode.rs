@@ -7,12 +7,13 @@
 //! for is decoded by the impl's `decode`, wherever it is in the
 //! document. The impl is silt code, so decoding such a document is a
 //! frame ([`Decoding`]): the decoder reads the document once, collecting
-//! each such part (its place and its `json.Value`); the frame calls the
-//! impl for each, in the order the decoder came to them; then the
-//! decoder reads the document again and puts what the impls gave in
-//! their places. An impl's `Err` is the result, with the place of its
-//! part appended as a decoder's own errors have it, as the format's
-//! error (`Rules::from_impl`). A program with no
+//! each such part (its `json.Value`); the frame calls the impl for
+//! each, in the order the decoder came to them; then the decoder reads
+//! the document again and puts what the impls gave in their places. An
+//! impl's `Err` is the result, with the place of its part appended as a
+//! decoder's own errors have it, as the format's error
+//! (`Rules::from_impl`): the second reading stops there with it. A
+//! program with no
 //! written `json.Decode` impl, and a document with no such part, takes
 //! no frame.
 
@@ -41,8 +42,9 @@ struct Decoding<D: Document> {
     expected: FieldType,
     read: Read<D>,
     holes: Vec<Hole>,
-    /// What the impls gave for the parts so far.
-    decoded: Vec<Value>,
+    /// What the impls gave for the parts so far: a value, or the
+    /// `JsonError` of the last.
+    decoded: Vec<Result<Value, Value>>,
     /// The error the decoder met after the parts, if it met one.
     error: Option<Error>,
     /// Whether a call is under way.
@@ -55,35 +57,40 @@ impl<D: Document + Send> Native for Decoding<D> {
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if self.calling {
-            let at = &self.holes[self.decoded.len()].at;
-            match vm.decode_returned(&input)? {
-                Ok(value) => self.decoded.push(value),
-                Err(error) => {
-                    let error = (D::RULES.from_impl)(&error, at);
-                    return Ok(Step::Done(Value::variant(bv::ERR, vec![error])));
-                }
+        if std::mem::take(&mut self.calling) {
+            let given = vm.decode_returned(&input)?;
+            let failed = given.is_err();
+            self.decoded.push(given);
+            // An impl's `Err` is the result: the document read again to
+            // its part says where that is.
+            if failed {
+                return Ok(Step::Done(self.supplied(vm)));
             }
         }
         let next = self.decoded.len();
-        if let Some(hole) = self.holes.get(next) {
+        if let Some(hole) = self.holes.get_mut(next) {
             self.calling = true;
-            return vm.call_written_decode(hole.slot, hole.json.clone());
+            let json = std::mem::replace(&mut hole.json, Value::Unit);
+            return vm.call_written_decode(hole.slot, json);
         }
         // Every part decoded: the decoder's own error after them, or
         // the value with them.
         if let Some(error) = self.error.take() {
             return Ok(Step::Done(decode::result(D::RULES, Err(error))));
         }
+        Ok(Step::Done(self.supplied(vm)))
+    }
+}
+
+impl<D: Document> Decoding<D> {
+    /// The result of the document read again with what the impls gave
+    /// in the places of its parts.
+    fn supplied(&mut self, vm: &Vm) -> Value {
         let table = self.table.clone();
         let written = move |id| table.decoded(id);
-        let values: Vec<_> = std::mem::take(&mut self.decoded)
-            .into_iter()
-            .map(Ok)
-            .collect();
-        let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(values.into_iter()));
-        let decoded = (self.read)(&reader, &self.doc, &self.expected);
-        Ok(Step::Done(decode::result(D::RULES, decoded)))
+        let given = std::mem::take(&mut self.decoded);
+        let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(given.into_iter()));
+        decode::result(D::RULES, (self.read)(&reader, &self.doc, &self.expected))
     }
 }
 
