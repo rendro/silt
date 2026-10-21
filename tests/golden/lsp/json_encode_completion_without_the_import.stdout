@@ -1,0 +1,6 @@
+13:11 error unknown field or method 'enc' on type Money
+14:11 error unknown field or method 'd' on type Money
+> completion 13:16
+(nothing)
+> completion 14:14
+display

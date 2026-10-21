@@ -250,7 +250,10 @@ impl TypeChecker {
         };
         let tr = TraitKey::builtin(tr);
         let head = self.type_name_for_impl(&self.apply(recv))?;
-        if !self.by_structure(tr, head) {
+        // (A trait of a builtin module, where the module checked does
+        // not import it, gives no method: `.encode()` needs `import
+        // json`.)
+        if !self.by_structure(tr, head) || self.unreached(tr).is_some() {
             return None;
         }
         self.want(

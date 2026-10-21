@@ -513,8 +513,10 @@ impl Tables {
     /// Every method a value has, as (the type impls key the value's type
     /// by, the method's name): those of the impls that take `self`, and those of the
     /// structural traits (of a builtin type, the traits it is stamped
-    /// with; of a type a program declares, all four names).
-    pub fn methods(&self) -> Vec<(TypeRef, Symbol)> {
+    /// with; of a type a program declares, all their names). A
+    /// structural trait of a builtin module (`json.Encode`) gives its
+    /// method only where `imports` says the module is imported.
+    pub fn methods(&self, imports: &dyn Fn(&str) -> bool) -> Vec<(TypeRef, Symbol)> {
         // (A method without `self` is called on the type, not on a
         // value.)
         let mut methods: std::collections::HashSet<(TypeRef, Symbol)> = self
@@ -531,6 +533,11 @@ impl Tables {
             .filter(|ty| builtin_type_name(**ty).is_none());
         for (name, method) in STRUCTURAL_METHODS {
             let tr = TraitKey::builtin(name);
+            if let Some((_, Some(module))) = crate::defs::builtin_trait_of_id(tr.id.0)
+                && !imports(module)
+            {
+                continue;
+            }
             let method = intern(method);
             methods.extend(
                 self.trait_impl_set
