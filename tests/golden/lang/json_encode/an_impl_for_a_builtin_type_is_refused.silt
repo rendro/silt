@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the impl of trait 'json.Encode' for type 'Int' is written in module 'an_impl_for_a_builtin_type_is_refused', which declares neither the trait nor the type; both are builtin, so no module may write it
+-- A builtin type keeps its own json form: no module may write a
+-- `json.Encode` impl for it.
+import json
+
+trait json.Encode for Int {
+  fn encode(self) -> json.Value {
+    json.Null
+  }
+}
+
+fn main() {
+  println(json.stringify(1))
+}

@@ -47,10 +47,7 @@ impl TypeChecker {
     /// The trait of a trait definition. A builtin trait is known by its
     /// id alone (see `def_type`).
     pub(super) fn def_trait(&self, id: crate::defs::DefId) -> Option<TraitKey> {
-        let first = crate::defs::builtin_types().len();
-        if let Some(k) = (id.0 as usize).checked_sub(first)
-            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
-        {
+        if let Some((name, _)) = crate::defs::builtin_trait_of_id(id) {
             return Some(TraitKey::builtin(name));
         }
         let def = self.def(id)?;

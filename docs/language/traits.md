@@ -679,7 +679,12 @@ lacks it.
 The standard library declares what it asks of its arguments the same
 way: `list.sort` needs `Compare` of the elements, `list.contains`
 `Equal`, map keys and set elements `Hash` (so do `#{..}` and `#[..]`
-literals), `println` and `string.from` `Display`.
+literals), `println` and `string.from` `Display`, `json.stringify` and
+`json.pretty` `json.Encode`. That one is a trait of the json module: a
+type has it by its structure when each of its parts has a json form
+(`Bytes`, a set, a function, a channel and a handle have none; a map
+asks it of its values only), and a program names it `json.Encode`
+(see [json](../stdlib/json.md#jsonencode)).
 
 ```silt
 type Job { name: String, run: Fn(Int) -> Int }

@@ -426,10 +426,10 @@ impl TypeChecker {
             // Nothing decides the subject and no definition is general
             // in it. For a trait every type implements by its structure
             // it does not matter which type it is: it is `()`
-            // (`println([])`).
-            if ["Display", "Equal", "Compare", "Hash"]
+            // (`println([])`, `json.stringify(Ok(1))`).
+            if STRUCTURAL_METHODS
                 .iter()
-                .any(|name| tr.is_builtin(name))
+                .any(|(name, _)| tr.is_builtin(name))
             {
                 let _ = self.unify_types(subject, &Type::Unit);
                 continue;

@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'List(Reply)' does not implement trait 'json.Encode': element > field 'body' is of type 'Bytes', which does not
+-- JSON has no form for bytes: the checker refuses them wherever in the
+-- value they are, and names the way down to them (here the field of a
+-- record in a list, as the body of an HTTP response is).
+import bytes
+import json
+
+type Reply {
+  status: Int,
+  body: Bytes,
+}
+
+fn main() {
+  println(json.stringify([Reply { status: 200, body: bytes.from_string("ok") }]))
+}

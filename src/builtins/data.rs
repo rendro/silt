@@ -347,3 +347,51 @@ impl Writer<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Float;
+    use std::collections::BTreeSet;
+
+    /// The checker's `json.Encode` of a builtin type is the writer's: a
+    /// type that is no record or enum has the trait exactly when json
+    /// has a form for its values, each type the builtin registry
+    /// declares has it (by its structure, which the checker walks), and
+    /// a handle has none.
+    #[test]
+    fn a_builtin_type_has_json_encode_when_the_writer_has_a_json_form_for_it() {
+        let (impls, _) = crate::typechecker::__trait_init_fingerprint_check_program();
+        let encode: BTreeSet<&str> = impls
+            .iter()
+            .filter_map(|stamp| stamp.strip_prefix("Encode:"))
+            .collect();
+        let samples = [
+            ("Int", Value::Int(1)),
+            ("Float", Value::Float(Float::new(1.5).expect("finite"))),
+            ("Bool", Value::Bool(true)),
+            ("String", Value::String("s".into())),
+            ("Unit", Value::Unit),
+            ("List", Value::list(vec![Value::Int(1)])),
+            ("Tuple", Value::tuple(vec![Value::Int(1)])),
+            ("Map", Value::map([(Value::Int(1), Value::Int(2))])),
+            ("Set", Value::set([Value::Int(1)])),
+            ("Bytes", Value::Bytes(Arc::new(vec![1]))),
+        ];
+        for (name, value) in samples {
+            let written = data("json.stringify", Format::Json, &value).is_ok();
+            assert_eq!(encode.contains(name), written, "{name}");
+        }
+        assert!(!encode.contains("Channel"));
+        let registry = crate::builtins::registry::registry();
+        for (_, ty) in registry.types() {
+            assert!(encode.contains(ty.name), "{}", ty.name);
+        }
+        let opaque = (registry.modules.iter())
+            .flat_map(|module| module.opaque.iter())
+            .chain(crate::builtins::registry::PRELUDE_OPAQUE);
+        for (name, _) in opaque {
+            assert!(!encode.contains(name), "{name}");
+        }
+    }
+}

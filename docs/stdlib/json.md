@@ -18,8 +18,8 @@ A document whose shape is not known in advance is read into a
 | `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
 | `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse a JSON array into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
-| `pretty` | `(a) -> String` | Pretty-print value as JSON |
-| `stringify` | `(a) -> String` | Serialize value as compact JSON |
+| `pretty` | `(a) -> String where a: Encode` | Pretty-print value as JSON |
+| `stringify` | `(a) -> String where a: Encode` | Serialize value as compact JSON |
 
 ## Errors
 
@@ -174,8 +174,7 @@ The toml decoders have no decoder for an enum.
 deep. The element of a list or of a tuple, the field of a record or of an
 enum variant and the value of a map are each one level further in than what
 holds them; the content of a `Some` is not (it is written in the `Some`'s
-place). A value nested deeper is a runtime error, as is any value they cannot
-write:
+place). A value nested deeper is a runtime error:
 
 ```text
 json.stringify: the value is nested more than 1000 levels deep
@@ -249,6 +248,45 @@ A record field of type `json.Value` keeps that part of the document as it
 is, for [`json.decode`](#jsondecode) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
 is `json.Null`); a field of type `Option(json.Value)` may be left out.
+
+
+## `json.Encode`
+
+```
+trait Encode {
+  fn encode(self) -> Value
+}
+```
+
+What `json.stringify` and `json.pretty` need of the value they write. A
+type has it by its structure, as it has `Display`: `Int`, `Float`, `String`,
+`Bool`, `()`, a `json.Value`, a `Date`, a `Time` and a `DateTime` have it; a
+list, a tuple, an `Option` and a record or enum type (the program's or a
+builtin module's) have it when their parts do; a map when its values do (a
+key is written as its text). `Bytes`, a set, a function, a channel and a
+handle have none. A function that hands a value of a type variable to
+`json.stringify` says so, as for `Display`; one without annotations is
+inferred to need it:
+
+```silt
+import json
+
+fn send(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn main() {
+  println(send([1, 2])) -- [1,2]
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+```
+
+A program names the trait with its module, `json.Encode`.
 
 
 ## `json.decode`
@@ -410,7 +448,7 @@ fn main() {
 ## `json.pretty`
 
 ```
-json.pretty(value: a) -> String
+json.pretty(value: a) -> String where a: Encode
 ```
 
 Serializes a value to a pretty-printed JSON string (with indentation and
@@ -429,7 +467,7 @@ fn main() {
 ## `json.stringify`
 
 ```
-json.stringify(value: a) -> String
+json.stringify(value: a) -> String where a: Encode
 ```
 
 Serializes a value to a compact JSON string. Each kind of value is
@@ -454,13 +492,14 @@ the same type, a record into its record type, and a variant into its enum
 type when the program declares it (see [Enums](#enums)); a variant of a
 builtin enum and `()` are written but not read back.
 
-`json.stringify` and `json.pretty` write the same values. A value JSON has no
-form for is a runtime error that names its kind, wherever in the value it is:
-`Bytes`, a `Set`, a function (the constructor of a variant, such as `Some`,
-is one), a channel, a task handle, a TCP listener or stream.
+`json.stringify` and `json.pretty` write the same values: those of a type
+that has [`json.Encode`](#jsonencode). A type with no json form is a compile
+error that names the way down to the part that has none, wherever in the
+value it is: `Bytes`, a `Set`, a function (the constructor of a variant,
+such as `Some`, is one), a channel, a task handle, a TCP listener or stream.
 
 ```text
-json.stringify: unsupported value kind Bytes
+type 'List(Reply)' does not implement trait 'json.Encode': element > field 'body' is of type 'Bytes', which does not
 ```
 
 To send bytes as JSON, turn them into text first (`bytes.to_string`,

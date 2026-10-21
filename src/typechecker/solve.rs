@@ -1486,7 +1486,8 @@ impl TypeChecker {
 
     /// Whether `trait_name` holds of a type with the head `head` by the
     /// type's structure: the sealed `Equal`, `Compare` and `Hash`
-    /// always; `Display` unless an impl of it is written for the head.
+    /// always; `Display` and `json.Encode` unless an impl of it is
+    /// written for the head.
     pub(super) fn by_structure(&self, trait_name: TraitKey, head: TypeRef) -> bool {
         if ["Equal", "Compare", "Hash"]
             .iter()
@@ -1494,18 +1495,21 @@ impl TypeChecker {
         {
             return true;
         }
-        // A `Display` impl is written for the head: in this module
-        // (`display_written`, known before its impls are entered), in
-        // another one or in an earlier REPL cell, or by silt itself (a
-        // builtin error enum's): its method is a row of the impls'
-        // methods. A method `display` of another trait is no `Display`
-        // impl.
-        trait_name.is_builtin("Display")
-            && !self.display_written.contains(&head)
+        // An impl is written for the head: in this module (`written`,
+        // known before its impls are entered), in another one or in an
+        // earlier REPL cell, or by silt itself (a builtin error enum's
+        // `Display`): its method is a row of the impls' methods. A
+        // method `display` of another trait is no `Display` impl.
+        let Some((_, method)) = STRUCTURAL_METHODS.iter().find(|(name, _)| {
+            WRITABLE_STRUCTURAL_TRAITS.contains(name) && trait_name.is_builtin(name)
+        }) else {
+            return false;
+        };
+        !self.written.contains(&(trait_name, head))
             && self
                 .tables
                 .impl_methods
-                .get(head, intern("display"), trait_name)
+                .get(head, intern(method), trait_name)
                 .is_none()
     }
 
@@ -1611,6 +1615,11 @@ impl TypeChecker {
                     Type::List(t) | Type::Set(t) => {
                         vec![("element".to_string(), (**t).clone())]
                     }
+                    // The writer writes a key as its text: of a map,
+                    // `json.Encode` asks its values only.
+                    Type::Map(_, v) if tr.is_builtin("Encode") => {
+                        vec![("value".to_string(), (**v).clone())]
+                    }
                     Type::Map(k, v) => vec![
                         ("key".to_string(), (**k).clone()),
                         ("value".to_string(), (**v).clone()),
@@ -1650,7 +1659,8 @@ impl TypeChecker {
             }
             Type::Generic(name, _) => {
                 let head = canonical_head(&self.tables.resolver, *name);
-                // A written `Display` impl answers for its type.
+                // A written `Display` or `json.Encode` impl answers for
+                // its type.
                 if !self.by_structure(tr, head) {
                     walk.written.push(ty.clone());
                     return None;
@@ -2115,10 +2125,7 @@ impl TypeChecker {
 
     /// The trait the definition `id` is, if it is one.
     pub(super) fn trait_key(&self, id: crate::defs::DefId) -> Option<TraitKey> {
-        let first = crate::defs::builtin_types().len();
-        if let Some(k) = (id.0 as usize).checked_sub(first)
-            && let Some(name) = crate::defs::BUILTIN_TRAITS.get(k)
-        {
+        if let Some((name, _)) = crate::defs::builtin_trait_of_id(id) {
             return Some(TraitKey::builtin(name));
         }
         let def = self.defs.as_ref()?.get(id);
@@ -2140,14 +2147,19 @@ impl TypeChecker {
         })
     }
 
-    /// Whether the module checked sees the trait `t`: a builtin trait, a
-    /// trait it declares, names by an import or reaches through a module
-    /// it imports. Another module's private trait it never sees.
+    /// Whether the module checked sees the trait `t`: a trait of the
+    /// prelude, a trait it declares, names by an import or reaches
+    /// through a module it imports; a trait of a builtin module
+    /// (`json.Encode`) where it imports that module or names the trait.
+    /// Another module's private trait it never sees.
     pub(super) fn sees_trait(&self, t: TraitKey) -> bool {
         let Some(defs) = &self.defs else {
             return true;
         };
         let def = defs.get(t.id.0);
+        if def.module.builtin_name().is_some() {
+            return self.imports_builtin_trait(t, def.module);
+        }
         if def.module == self.module || def.module.is_builtin() {
             return true;
         }
@@ -2165,6 +2177,9 @@ impl TypeChecker {
     /// depend on that.)
     fn unreached(&self, t: TraitKey) -> Option<Symbol> {
         let module = self.defs.as_ref()?.get(t.id.0).module;
+        if let Some(name) = module.builtin_name() {
+            return (!self.imports_builtin_trait(t, module)).then(|| intern(name));
+        }
         let reach = self.reach.as_ref()?;
         if module == self.module || module.is_builtin() || reach.contains(&module) {
             return None;
@@ -2176,6 +2191,12 @@ impl TypeChecker {
                 .copied()
                 .unwrap_or_else(|| intern("?")),
         )
+    }
+
+    /// Whether the module checked imports `module`, the builtin module
+    /// of the trait `t`, or names the trait by an import.
+    fn imports_builtin_trait(&self, t: TraitKey, module: crate::session::ModuleId) -> bool {
+        self.seen_modules.contains(&module) || self.seen_traits.contains(&t.id.0)
     }
 
     /// The traits that give the type `ty` a method `method`, in the

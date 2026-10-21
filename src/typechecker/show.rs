@@ -69,8 +69,13 @@ impl TypeChecker {
     }
 
     /// The name of the trait `t` in a message: written with its module
-    /// when another trait the session knows has its name (`a.Show`).
+    /// when another trait the session knows has its name (`a.Show`),
+    /// and always when a builtin module declares it (`json.Encode`): a
+    /// program names it so.
     pub(super) fn show_trait(&self, t: TraitKey) -> String {
+        if let Some((name, Some(module))) = crate::defs::builtin_trait_of_id(t.id.0) {
+            return format!("{module}.{name}");
+        }
         let clashes = self
             .tables
             .traits
@@ -85,12 +90,8 @@ impl TypeChecker {
     /// The trait with the module that declares it, where that is not
     /// the module being checked: `a.Show`, `prelude.Display`.
     pub(super) fn show_trait_in_module(&self, t: TraitKey) -> String {
-        let first = crate::defs::builtin_types().len();
-        let module = if (t.id.0.0 as usize)
-            .checked_sub(first)
-            .is_some_and(|k| k < crate::defs::BUILTIN_TRAITS.len())
-        {
-            Some(intern("prelude"))
+        let module = if let Some((_, module)) = crate::defs::builtin_trait_of_id(t.id.0) {
+            Some(intern(module.unwrap_or("prelude")))
         } else {
             self.def(t.id.0)
                 .filter(|def| def.module != self.module)

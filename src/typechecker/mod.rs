@@ -70,8 +70,13 @@ pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Nu
 
 /// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
 /// with no impl (`Display` unless one is written for it). `Error` is
-/// not one: an impl of it is written.
+/// not one: an impl of it is written. (`json.Encode`, a trait of the
+/// json module, is one too: [`WRITABLE_STRUCTURAL_TRAITS`].)
 pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
+
+/// The builtin traits a type has by its structure unless an impl of
+/// the trait is written for it.
+pub(super) const WRITABLE_STRUCTURAL_TRAITS: &[&str] = &["Display", "Encode"];
 
 // ── The type checker ────────────────────────────────────────────────
 
@@ -92,9 +97,10 @@ pub struct TypeChecker {
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// The types of the module being checked that have a written
-    /// `Display` impl, known before the impls are registered: such a
-    /// type has `Display` by that impl, not by its structure.
-    pub(super) display_written: std::collections::HashSet<TypeRef>,
+    /// `Display` or `json.Encode` impl, each with the trait, known
+    /// before the impls are registered: such a type has the trait by
+    /// that impl, not by its structure.
+    pub(super) written: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The (place, type) pairs a missing trait is reported for.
     pub(super) lacking: std::collections::HashSet<(Span, String)>,
     /// The row variables of the signatures of the module's functions
@@ -343,7 +349,7 @@ impl TypeChecker {
             loop_binding_types: None,
             bounds: HashMap::new(),
             current_return_type: None,
-            display_written: std::collections::HashSet::new(),
+            written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),

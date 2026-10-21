@@ -238,6 +238,16 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     for td in builtin_trait_decls() {
         checker.register_trait_decl_inner(&td);
     }
+    // The traits a builtin module declares (`json.Encode`), from the
+    // module's text in the builtin registry.
+    let registry = crate::builtins::registry::registry();
+    for module in &registry.modules {
+        for decl in crate::builtins::registry::parse(module.traits).decls {
+            if let Decl::Trait(td) = decl {
+                checker.register_trait_decl_inner(&td);
+            }
+        }
+    }
 
     // ── The structural traits of the builtin types ──────────────
     // (`Error` is not one: an impl of it is written.)
@@ -284,9 +294,18 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // an ordered key type (`bytes.to_hex` first).
     register_structural_traits_for(checker, &["Bytes"], &["Display"]);
 
+    // `json.Encode`: the types the writer has a json form for
+    // (`builtins::data`). A primitive, `()`, a list, a tuple and a map
+    // (by its values: a key is written as its text), and each type the
+    // builtin registry declares, by its structure. A set, a channel,
+    // `Bytes`, a handle and a function have none.
+    register_structural_traits_for(checker, JSON_FORMS, &["Encode"]);
+    for (_, ty) in registry.types() {
+        register_structural_traits_for(checker, &[ty.name], &["Encode"]);
+    }
+
     // `==` on a value of an opaque type is the value's own equality (a
     // handle's identity, the bytes' content).
-    let registry = crate::builtins::registry::registry();
     let opaque = registry
         .modules
         .iter()
@@ -305,6 +324,12 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // their own impls, but no built-in trait impls are stamped — they remain
     // unprintable opaque resources.
 }
+
+/// The builtin types that are no record or enum and have a json form,
+/// so `json.Encode` by their structure.
+pub(super) const JSON_FORMS: &[&str] = &[
+    "Int", "Float", "Bool", "String", "Unit", "List", "Tuple", "Map",
+];
 
 /// Say that each of `type_names` has each of the structural traits
 /// `trait_names`: a value of the type then has the trait's method as a

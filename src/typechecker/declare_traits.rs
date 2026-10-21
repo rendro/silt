@@ -693,7 +693,7 @@ impl TypeChecker {
                     .map_or_else(|| "?".to_string(), |name| resolve(*name))
             })
         };
-        let (tr, ty) = (resolve(ti.trait_name), resolve(ti.target_type));
+        let (tr, ty) = (self.show_trait(tr), resolve(ti.target_type));
         let place = match (named(of_trait), named(of_type)) {
             (Some(t), Some(y)) if t == y => {
                 format!("it may be written in module '{t}', which declares both")
