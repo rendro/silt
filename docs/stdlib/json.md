@@ -164,7 +164,8 @@ fn main() {
 }
 ```
 
-The toml decoders have no decoder for an enum.
+The toml decoders read an enum in the same forms (see
+[toml](toml.md#enums)).
 
 
 ## Nesting limits

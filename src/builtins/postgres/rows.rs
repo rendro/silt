@@ -106,26 +106,30 @@ impl ToSql for TextParam {
 }
 
 /// The parameters of a statement of `caller`: `params`, a tuple, or
-/// `()` for none; and where the encoder leaves why one of them could not
-/// be sent, if one of them may not be (a list of `Bytes`, which has no
-/// JSON form). (The checker refuses parameters that are no tuple
+/// `()` for none. (The checker refuses parameters that are no tuple
 /// wherever a program gives them: the error is a guard.)
+pub(super) fn param_values(caller: &str, params: &Value) -> Result<Vec<Value>, VmError> {
+    match params {
+        Value::Unit => Ok(Vec::new()),
+        Value::Tuple(values) => Ok(values.to_vec()),
+        other => Err(VmError::new(format!(
+            "{caller}: params must be a tuple, got {}; write (id,)",
+            other.kind()
+        ))),
+    }
+}
+
+/// The parameters of a statement of `caller`, each written as data
+/// (`Vm::encode`, which writes a part of a type with a written
+/// `json.Encode` impl as the impl says); and where the encoder leaves
+/// why one of them could not be sent, if one of them may not be (a list
+/// of `Bytes`, which has no JSON form).
 pub(super) fn params(
     caller: &str,
-    params: &Value,
+    params: Vec<Data>,
 ) -> Result<(Vec<TextParam>, Option<Unsendable>), VmError> {
-    let values: Vec<&Value> = match params {
-        Value::Unit => Vec::new(),
-        Value::Tuple(values) => values.iter().collect(),
-        other => {
-            return Err(VmError::new(format!(
-                "{caller}: params must be a tuple, got {}; write (id,)",
-                other.kind()
-            )));
-        }
-    };
     let unsendable = Unsendable::default();
-    let params = values
+    let params = params
         .into_iter()
         .map(|value| param(caller, value, &unsendable));
     let params: Vec<TextParam> = params.collect::<Result<_, _>>()?;
@@ -142,9 +146,9 @@ pub(super) fn params(
 /// string is; a list is an array or JSON (see [`TextParam`]), and every
 /// other value that is no scalar (a record, a map, a tuple, a variant
 /// with fields, a `json.Value`) is written as `json.stringify` writes
-/// it. A value JSON has no form for is the error `json.stringify` gives.
-fn param(caller: &str, value: &Value, unsendable: &Unsendable) -> Result<TextParam, VmError> {
-    let value = data::data(caller, data::Format::Postgres, value)?;
+/// it. (A value JSON has no form for is the error `json.stringify`
+/// gives: the writer's, in place of the data.)
+fn param(caller: &str, value: Data, unsendable: &Unsendable) -> Result<TextParam, VmError> {
     Ok(match value {
         Data::Null => TextParam::Null,
         Data::Array(_) => TextParam::List {
@@ -1059,7 +1063,7 @@ mod tests {
     #[test]
     fn a_range_too_long_to_write_out_is_no_parameter() {
         let range = Value::List(crate::value::List::ints(1, 10_000_001).expect("a range"));
-        let refused = param("postgres.query", &range, &Unsendable::default()).unwrap_err();
+        let refused = written(&range).unwrap_err();
         assert_eq!(
             refused.message,
             "range 1..10000001 has 10000001 elements; materializing more than 10000000 is not allowed"
@@ -1117,9 +1121,16 @@ mod tests {
         }
     }
 
+    /// The parameter `value`, written as `postgres.query` writes it.
+    fn written(value: &Value) -> Result<TextParam, VmError> {
+        let caller = "postgres.query";
+        let value = data::data(caller, data::Format::Postgres, value)?;
+        param(caller, value, &Unsendable::default())
+    }
+
     /// The text of the parameter `value`, or the message of its refusal.
     fn sent(value: &Value) -> Result<String, String> {
-        match param("postgres.query", value, &Unsendable::default()) {
+        match written(value) {
             Ok(TextParam::Text(text)) => Ok(text),
             Ok(other) => panic!("{other:?}"),
             Err(e) => Err(e.message),

@@ -1,0 +1,25 @@
+-- cmd: lsp
+-- lsp: hover 16:39
+-- lsp: hover 17:8
+-- lsp: hover 22:13
+-- lsp: completion 23:16
+-- lsp: definition 16:39
+-- The editor knows `json.Encode`: a hover on it in a `where` clause, on
+-- `json.stringify` and on a value's `.encode()`, the method among those
+-- offered after a dot, and no definition in a file (it is json's).
+import json
+
+type Money {
+  cents: Int,
+}
+
+fn send(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn main() {
+  let m = Money { cents: 5 }
+  println(m.encode())
+  println(m.enc)
+  println(send(m))
+}

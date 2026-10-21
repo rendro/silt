@@ -225,14 +225,14 @@ impl TypeChecker {
 
     /// `recv.method` where `method` is the method of a builtin
     /// structural trait (`compare`, `equal`, `hash`, `display`,
-    /// `encode`, `decode`) and no impl of the trait is written for the
-    /// receiver's type: the type has the method when it has the trait by
-    /// its structure, which the access owes. The other operand of
-    /// `compare` and `equal` is of the receiver's type; the method of a
-    /// trait of the json module has the type its trait declares, at the
-    /// receiver's type (`decode`, which takes no `self`, is
-    /// `Fn(json.Value) -> Result(T, json.JsonError)`, and a method only
-    /// of a call through the type, `on_type`).
+    /// `encode` of `json.Encode`, `decode` of `json.Decode`) and no
+    /// impl of the trait is written for the receiver's type: the type
+    /// has the method when it has the trait by its structure, which the
+    /// access owes. The other operand of `compare` and `equal` is of
+    /// the receiver's type. `decode` takes no `self`: it is the method
+    /// of a call through the type only (`on_type`), of the type its
+    /// trait declares at the type (`Fn(json.Value) -> Result(T,
+    /// json.JsonError)`).
     pub(super) fn structural_method(
         &mut self,
         recv: &Type,
@@ -247,7 +247,11 @@ impl TypeChecker {
             "equal" => ("Equal", 1, Some(Type::Bool)),
             "hash" => ("Hash", 0, Some(Type::Int)),
             "display" => ("Display", 0, Some(Type::String)),
-            "encode" => ("Encode", 0, None),
+            "encode" => (
+                "Encode",
+                0,
+                Some(Type::Generic(TypeRef::builtin("Value"), vec![])),
+            ),
             "decode" => ("Decode", 0, None),
             _ => return None,
         };

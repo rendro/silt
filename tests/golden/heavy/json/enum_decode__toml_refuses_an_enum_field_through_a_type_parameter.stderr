@@ -1,7 +1,0 @@
-error[type]: `toml.parse` cannot decode `Config`: field `status` has type `Status`, which has no decoder
- --> enum_decode__toml_refuses_an_enum_field_through_a_type_parameter.silt:20:30
-    |
- 20 |   println(read("status = 1", Config))
-    |                              ^^^^^^ `toml.parse` cannot decode `Config`: field `status` has type `Status`, which has no decoder
-  = note: `read` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these

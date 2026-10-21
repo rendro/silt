@@ -1,0 +1,63 @@
+-- toml reads an enum the program declares (without type parameters) as
+-- toml.stringify writes a variant: the string "Name" for one without
+-- fields, the table { fields = [...], variant = "Name" } for one with
+-- them (inline, or a [table] of its own). It is decoded in a record
+-- field, a List, an Option and a Map, by toml.parse, toml.parse_list and
+-- toml.parse_map, at the top of toml.parse (a variant with fields, the
+-- only one that is a table), and through a `type a` parameter.
+import toml
+
+type Status {
+  Active,
+  Paused(Int),
+  Moved(String, Status),
+}
+
+type Config {
+  name: String,
+  status: Status,
+  history: List(Status),
+  next: Option(Status),
+  by_host: Map(String, Status),
+}
+
+fn read(text: String, type a) -> Result(a, toml.TomlError) {
+  toml.parse(text, a)
+}
+
+fn main() {
+  let config = Config {
+    name: "build",
+    status: Moved("a", Active),
+    history: [Active, Paused(2)],
+    next: Some(Paused(1)),
+    by_host: #{ "h": Active },
+  }
+  match toml.stringify(config) {
+    Ok(text) -> {
+      print(text)
+      println(toml.parse(text, Config) == Ok(config))
+      println(read(text, Config) == Ok(config))
+    }
+    Err(e) -> println("unexpected: {e}")
+  }
+  match toml.pretty(config) {
+    Ok(text) -> println(toml.parse(text, Config) == Ok(config))
+    Err(e) -> println("unexpected: {e}")
+  }
+  let idle = Config { name: "idle", status: Active, history: [], next: None, by_host: #{} }
+  match toml.stringify(idle) {
+    Ok(text) -> {
+      print(text)
+      println(toml.parse(text, Config) == Ok(idle))
+    }
+    Err(e) -> println("unexpected: {e}")
+  }
+  println(toml.parse_list("""xs = ["Active", { fields = [1], variant = "Paused" }]""", Status))
+  println(toml.parse_map("""a = "Active"
+b = { fields = ["x", "Active"], variant = "Moved" }
+""", Status))
+  println(toml.parse("""fields = [3]
+variant = "Paused"
+""", Status))
+}

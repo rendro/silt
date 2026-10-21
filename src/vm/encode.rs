@@ -22,8 +22,9 @@ use crate::bytecode::Globals;
 use crate::typeinfo::ty;
 use crate::value::Value;
 
-/// What is done with the data of a value once it is written.
-type Then = Box<dyn FnOnce(&mut Vm, Data) -> Result<Step, VmError> + Send>;
+/// What is done with the data of a value once it is written, or with
+/// why the value has none in the format.
+type Then = Box<dyn FnOnce(&mut Vm, Result<Data, VmError>) -> Result<Step, VmError> + Send>;
 
 /// The frame that writes a value with parts a written `json.Encode`
 /// impl writes.
@@ -68,30 +69,32 @@ impl Native for Encoding {
             return Ok(vm.call(encode, [part.value.clone()]));
         }
         let mut data = std::mem::replace(&mut self.data, Data::Null);
-        data::fill(
+        let filled = data::fill(
             &self.caller,
             self.format,
             &mut data,
             &self.parts,
             &self.encoded,
-        )?;
+        );
         let then = self.then.take().ok_or_else(|| {
             VmError::new("internal VM error: a written value was finished twice".into())
         })?;
-        then(vm, data)
+        then(vm, filled.map(|()| data))
     }
 }
 
 impl Vm {
     /// `value` as data in `format`, for `caller`, and go on with `then`,
-    /// which gets it: at once when no written `json.Encode` impl has a
-    /// part in it, else as a frame that calls the impls first.
+    /// which gets it, or the error of the part the format has no form
+    /// for (`toml.stringify` makes a `TomlError` of it): at once when no
+    /// written `json.Encode` impl has a part in it, else as a frame that
+    /// calls the impls first. An error of an impl is the program's.
     pub(crate) fn encode(
         &mut self,
         caller: &str,
         format: Format,
         value: &Value,
-        then: impl FnOnce(&mut Vm, Data) -> Result<Step, VmError> + Send + 'static,
+        then: impl FnOnce(&mut Vm, Result<Data, VmError>) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
         // The table the value is written by, where it is not this VM's.
         let mut wider = None;
@@ -110,20 +113,24 @@ impl Vm {
                 .then(|| self.wider_table(Globals::any_encoded))
                 .flatten();
             if wider.is_none() {
-                let data = data::data(caller, format, value)?;
+                let data = data::data(caller, format, value);
                 return then(self, data);
             }
         }
         let table = wider.unwrap_or_else(|| self.view.table.clone());
-        let (mut data, mut parts, unwritten) = written_parts(caller, format, &table, value)?;
-        if unwritten
+        let mut written = written_parts(caller, format, &table, value);
+        if let Ok((_, _, true)) = written
             && Arc::ptr_eq(&table, &self.view.table)
             && let Some(table) = self.wider_table(Globals::any_encoded)
         {
-            (data, parts, _) = written_parts(caller, format, &table, value)?;
+            written = written_parts(caller, format, &table, value);
         }
+        let (data, parts) = match written {
+            Ok((data, parts, _)) => (data, parts),
+            Err(error) => return then(self, Err(error)),
+        };
         if parts.is_empty() {
-            return then(self, data);
+            return then(self, Ok(data));
         }
         let impls = parts
             .iter()
@@ -141,6 +148,48 @@ impl Vm {
         })))
     }
 
+    /// Each of `values` as data in `format`, for `caller` (the
+    /// parameters of a postgres statement, each written at a
+    /// parameter's place), as [`Vm::encode`] writes one, and go on with
+    /// `then`, which gets them, or the first error of the writer.
+    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
+    pub(crate) fn encode_each(
+        &mut self,
+        caller: &'static str,
+        format: Format,
+        values: Vec<Value>,
+        then: impl FnOnce(&mut Vm, Result<Vec<Data>, VmError>) -> Result<Step, VmError> + Send + 'static,
+    ) -> Result<Step, VmError> {
+        type Each =
+            Box<dyn FnOnce(&mut Vm, Result<Vec<Data>, VmError>) -> Result<Step, VmError> + Send>;
+        fn next(
+            vm: &mut Vm,
+            (caller, format): (&'static str, Format),
+            mut values: std::vec::IntoIter<Value>,
+            mut written: Vec<Data>,
+            then: Each,
+        ) -> Result<Step, VmError> {
+            let Some(value) = values.next() else {
+                return then(vm, Ok(written));
+            };
+            vm.encode(caller, format, &value, move |vm, data| match data {
+                Ok(data) => {
+                    written.push(data);
+                    next(vm, (caller, format), values, written, then)
+                }
+                Err(error) => then(vm, Err(error)),
+            })
+        }
+        let written = Vec::with_capacity(values.len());
+        next(
+            self,
+            (caller, format),
+            values.into_iter(),
+            written,
+            Box::new(then),
+        )
+    }
+
     /// `value` as a `json.Value`, for `caller` (`json.encode`, a call of
     /// `encode` on a value whose type has no written impl): the
     /// `json.Value` of the data it is written as, written impls
@@ -151,7 +200,7 @@ impl Vm {
         value: &Value,
     ) -> Result<Step, VmError> {
         self.encode(caller, Format::Json, value, move |_, data| {
-            let json = crate::builtins::json::json_value_of(caller, &data)?;
+            let json = crate::builtins::json::json_value_of(caller, &data?)?;
             Ok(Step::Done(json))
         })
     }

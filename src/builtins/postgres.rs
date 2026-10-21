@@ -38,6 +38,7 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Config, NoTls, Notification};
 
 use super::common::ok;
+use super::data;
 use super::decode::Decoder;
 use super::typed::{Arg, Map, Ret, Type, builtins};
 use crate::runtime::sync::{Arm, Fired, Wait};
@@ -1230,17 +1231,78 @@ impl<'a> Arg<'a> for Opts<'a> {
     }
 }
 
-/// The parameters of a statement of `caller` (with where the encoder
-/// leaves why one could not be sent), and the type its rows are decoded
-/// into: the error of the program if `params` is no tuple or `ty` no
-/// type a row is decoded into.
-fn statement_args(
-    caller: &Decoder,
+/// The parameters of a statement of `caller`, and where the encoder
+/// leaves why one could not be sent.
+type Params = (Vec<TextParam>, Option<Unsendable>);
+
+/// Write the parameters of a statement of `caller`, `params`, and go on
+/// with `then`, which gets them; the error of the program if `params`
+/// is no tuple or a parameter has no form. A part of a type with a
+/// written `json.Encode` impl is written as the impl says, which is the
+/// program's code: a step. What `then` starts is the builtin's value.
+fn with_params(
+    vm: &mut Vm,
+    caller: &'static str,
     params: &Value,
-    ty: Type,
-) -> Result<(Vec<TextParam>, Option<Unsendable>, RowType), VmError> {
-    let (params, unsendable) = rows::params(caller.name, params)?;
-    Ok((params, unsendable, RowType::of(caller, ty)?))
+    then: impl FnOnce(&mut Vm, Params) -> Started + Send + 'static,
+) -> Result<Step, VmError> {
+    let values = rows::param_values(caller, params)?;
+    vm.encode_each(
+        caller,
+        data::Format::Postgres,
+        values,
+        move |vm, written| {
+            let params = rows::params(caller, written?)?;
+            then(vm, params).ret()
+        },
+    )
+}
+
+/// Open the stream of the rows of `sql` with `params` on `conn`, decoded
+/// into `row`: the channel they come on.
+fn open_stream(vm: &mut Vm, conn: &Value, sql: String, params: Params, row: RowType) -> Started {
+    let target = resolve_executor(conn)?;
+
+    // Mint the channel up-front so we can hand the caller an owned
+    // Arc while the worker holds its own clone.
+    let ch_id = vm.next_channel_id();
+    let channel = Channel::new(ch_id, STREAM_CHANNEL_CAPACITY);
+    let worker_channel = channel.clone();
+
+    // A stream opened in a transaction ends with it.
+    if let Some(tx) = TxHandle::take(conn) {
+        register_tx_stream(tx.0, &channel);
+    }
+
+    // Fire-and-forget: submit to io_pool. The completion's return
+    // value is unused (we return the channel, not a completion).
+    //
+    // The worker counts as a task of the program (`enter`): one
+    // that runs while it fetches rows, and one that waits while it
+    // waits for room in the channel. So the program is neither
+    // ended nor deadlocked while a row may still come, and when
+    // the program ends, a worker that waits for room is dropped
+    // there, as a task that waits to send is. Until the worker's
+    // thread has begun, `starting` stands in for it.
+    let scheduler = vm.scheduler().clone();
+    let starting = scheduler.external();
+    let decode = (row, vm.runtime.clone());
+    let op = vm.start_io(pg_timeout_err, move || {
+        let _running = scheduler.enter();
+        drop(starting);
+        do_stream_worker(
+            target,
+            sql,
+            params,
+            decode,
+            worker_channel,
+            scheduler.clone(),
+        );
+        Value::Unit
+    });
+    op.detach();
+
+    Ok(Ok(Step::Done(ok(Value::Channel(channel)))))
 }
 
 /// The postgres functions that decode rows.
@@ -2408,27 +2470,24 @@ builtins! {
         Ok(vm.io("postgres", pg_timeout_err, move || do_connect_with(url, opts)))
     }
 
-    fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Started {
-        let (params, unsendable, row) = match statement_args(&QUERY, params, ty) {
-            Ok(args) => args,
-            Err(e) => return Ok(Err(e)),
-        };
-        let target = resolve_executor(conn)?;
-        let sql = sql.to_string();
-        let tx = TxHandle::take(conn).and_then(tx_of);
-        let rt = vm.runtime.clone();
-        Ok(statement(vm, tx, unsendable, move || do_query(target, sql, params, row, rt)))
+    fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
+        let row = RowType::of(&QUERY, ty)?;
+        let (conn, sql) = (conn.clone(), sql.to_string());
+        with_params(vm, QUERY.name, params, move |vm, (params, unsendable)| {
+            let target = resolve_executor(&conn)?;
+            let tx = TxHandle::take(&conn).and_then(tx_of);
+            let rt = vm.runtime.clone();
+            Ok(statement(vm, tx, unsendable, move || do_query(target, sql, params, row, rt)))
+        })
     }
 
-    fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Started {
-        let (params, unsendable) = match rows::params("postgres.execute", params) {
-            Ok(params) => params,
-            Err(e) => return Ok(Err(e)),
-        };
-        let target = resolve_executor(conn)?;
-        let sql = sql.to_string();
-        let tx = TxHandle::take(conn).and_then(tx_of);
-        Ok(statement(vm, tx, unsendable, move || do_execute(target, sql, params)))
+    fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Result<Step, VmError> {
+        let (conn, sql) = (conn.clone(), sql.to_string());
+        with_params(vm, "postgres.execute", params, move |vm, (params, unsendable)| {
+            let target = resolve_executor(&conn)?;
+            let tx = TxHandle::take(&conn).and_then(tx_of);
+            Ok(statement(vm, tx, unsendable, move || do_execute(target, sql, params)))
+        })
     }
 
     // `postgres.transact(pool, callback)` — pins a single pooled
@@ -2491,65 +2550,28 @@ builtins! {
     // without parking the caller. Backpressure is via the channel's
     // bounded capacity; cancellation is via `channel.close` (checked
     // between rows).
-    fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Result<Value, VmError>, Failed> {
-        let (params, unsendable, row) = match statement_args(&STREAM, params, ty) {
-            Ok(args) => args,
-            Err(e) => return Ok(Err(e)),
-        };
-        let target = resolve_executor(conn)?;
-
-        // Mint the channel up-front so we can hand the caller an owned
-        // Arc while the worker holds its own clone.
-        let ch_id = vm.next_channel_id();
-        let channel = Channel::new(ch_id, STREAM_CHANNEL_CAPACITY);
-        let worker_channel = channel.clone();
-
-        // A stream opened in a transaction ends with it.
-        if let Some(tx) = TxHandle::take(conn) {
-            register_tx_stream(tx.0, &channel);
-        }
-
-        // Fire-and-forget: submit to io_pool. The completion's return
-        // value is unused (we return the channel, not a completion).
-        //
-        // The worker counts as a task of the program (`enter`): one
-        // that runs while it fetches rows, and one that waits while it
-        // waits for room in the channel. So the program is neither
-        // ended nor deadlocked while a row may still come, and when
-        // the program ends, a worker that waits for room is dropped
-        // there, as a task that waits to send is. Until the worker's
-        // thread has begun, `starting` stands in for it.
-        let sql = sql.to_string();
-        let scheduler = vm.scheduler().clone();
-        let starting = scheduler.external();
-        let decode = (row, vm.runtime.clone());
-        let op = vm.start_io(pg_timeout_err, move || {
-            let _running = scheduler.enter();
-            drop(starting);
-            let params = (params, unsendable);
-            do_stream_worker(target, sql, params, decode, worker_channel, scheduler.clone());
-            Value::Unit
-        });
-        op.detach();
-
-        Ok(Ok(ok(Value::Channel(channel))))
+    fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
+        let row = RowType::of(&STREAM, ty)?;
+        let (conn, sql) = (conn.clone(), sql.to_string());
+        with_params(vm, STREAM.name, params, move |vm, params| {
+            open_stream(vm, &conn, sql, params, row)
+        })
     }
 
     // (A cursor lives inside a transaction: `tx` is a `PgTx`.)
-    fn cursor(vm, tx: TxHandle, sql: &str, params: &Value, batch_size: i64, ty: Type) -> Started {
-        let (params, unsendable, row) = match statement_args(&CURSOR, params, ty) {
-            Ok(args) => args,
-            Err(e) => return Ok(Err(e)),
-        };
-        let cell = tx.open()?;
-        let Ok(batch_size @ 1..) = u64::try_from(batch_size) else {
-            return Err(other_error("postgres.cursor: batch_size must be >= 1".to_string()).into());
-        };
+    fn cursor(vm, tx: TxHandle, sql: &str, params: &Value, batch_size: i64, ty: Type) -> Result<Step, VmError> {
+        let row = RowType::of(&CURSOR, ty)?;
         let sql = sql.to_string();
-        let decode = (row, vm.runtime.clone());
-        Ok(statement(vm, tx_of(tx), unsendable, move || {
-            do_cursor_open(tx.0, cell, sql, params, batch_size, decode)
-        }))
+        with_params(vm, CURSOR.name, params, move |vm, (params, unsendable)| {
+            let cell = tx.open()?;
+            let Ok(batch_size @ 1..) = u64::try_from(batch_size) else {
+                return Err(other_error("postgres.cursor: batch_size must be >= 1".to_string()).into());
+            };
+            let decode = (row, vm.runtime.clone());
+            Ok(statement(vm, tx_of(tx), unsendable, move || {
+                do_cursor_open(tx.0, cell, sql, params, batch_size, decode)
+            }))
+        })
     }
 
     fn cursor_next(vm, cursor: CursorHandle) -> Result<Step, VmError> {

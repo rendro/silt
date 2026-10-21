@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: `toml.parse_list` cannot decode `List`: its type argument must be Int, Float, String, Bool, or a record type
+-- stderr-contains: `toml.parse_list` cannot decode `List`: its type argument must be Int, Float, String, Bool, a record type, or an enum type
 -- toml.parse_list takes what toml.parse_map takes; a container type is
 -- none of it.
 import toml
