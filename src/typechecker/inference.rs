@@ -1295,6 +1295,109 @@ impl TypeChecker {
         (def.kind == crate::defs::DefKind::TypeAlias).then_some(def.name)
     }
 
+    /// Whether `param`, a parameter of the callee of the call being
+    /// checked, is a `type a` parameter whose type a decoder decodes:
+    /// the callee owes, from the wanted predicates from `owed` on, a
+    /// decoder's check of `a` or `json.Decode` of it.
+    fn asks_decoding(&self, param: &Type, owed: usize) -> bool {
+        let Type::Generic(head, args) = self.apply(param) else {
+            return false;
+        };
+        let [Type::Var(v)] = args.as_slice() else {
+            return false;
+        };
+        if !head.is_builtin(crate::defs::TYPE_OF) {
+            return false;
+        }
+        self.wanted[owed..].iter().any(|wanted| match &wanted.goal {
+            Goal::Pred(Pred::Builtin {
+                check: BuiltinCheck::Decodes { .. },
+                subject,
+                ..
+            }) => *subject == Type::Var(*v),
+            Goal::Pred(Pred::Trait { tr, subject, .. }) => {
+                Self::is_decode(*tr) && *subject == Type::Var(*v)
+            }
+            _ => false,
+        })
+    }
+
+    /// The type `arg` writes as a value if it writes a type of types:
+    /// a type applied to types (`List(Int)`, `Map(String, Int)`,
+    /// `Box(Int)`) or a tuple of types (`(Int, String)`), at any depth.
+    /// `None` for any other expression, a type alone among them (its
+    /// value has its type already), and one whose arguments do not fit
+    /// the type.
+    fn spelled_type(&mut self, arg: &mut Expr, env: &mut TypeEnv) -> Option<Type> {
+        if !matches!(arg.kind, ExprKind::Call(..) | ExprKind::Tuple(_)) || !self.writes_types(arg) {
+            return None;
+        }
+        self.spell(arg, env)
+    }
+
+    /// Whether `e` is made of names of types only, applied to each
+    /// other or in tuples: what `spell` reads.
+    fn writes_types(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => {
+                let Some(crate::defs::Res::Def(id)) = e.res else {
+                    return false;
+                };
+                (self.defs.as_ref()).is_some_and(|defs| {
+                    matches!(
+                        defs.get(id).kind,
+                        crate::defs::DefKind::Type(_) | crate::defs::DefKind::TypeAlias
+                    )
+                })
+            }
+            ExprKind::Call(callee, args) => {
+                self.writes_types(callee) && args.iter().all(|a| self.writes_types(a))
+            }
+            ExprKind::Tuple(elems) => elems.iter().all(|e| self.writes_types(e)),
+            _ => false,
+        }
+    }
+
+    /// The type `e`, which `writes_types`, writes.
+    fn spell(&mut self, e: &mut Expr, env: &mut TypeEnv) -> Option<Type> {
+        match &mut e.kind {
+            ExprKind::Call(callee, args) => {
+                let head = self.spell(callee, env)?;
+                let args: Vec<Type> = (args.iter_mut())
+                    .map(|a| self.spell(a, env))
+                    .collect::<Option<_>>()?;
+                // (A type whose parameters the value leaves open.)
+                let open = |t: &Type| matches!(t, Type::Var(_));
+                match (head, args.as_slice()) {
+                    (Type::List(p), [t]) if open(&p) => Some(Type::List(Box::new(t.clone()))),
+                    (Type::Set(p), [t]) if open(&p) => Some(Type::Set(Box::new(t.clone()))),
+                    (Type::Channel(p), [t]) if open(&p) => Some(Type::Channel(Box::new(t.clone()))),
+                    (Type::Map(pk, pv), [k, v]) if open(&pk) && open(&pv) => {
+                        Some(Type::Map(Box::new(k.clone()), Box::new(v.clone())))
+                    }
+                    (Type::Generic(r, params), _)
+                        if !params.is_empty()
+                            && params.len() == args.len()
+                            && params.iter().all(open) =>
+                    {
+                        Some(Type::Generic(r, args))
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::Tuple(elems) => (elems.iter_mut())
+                .map(|e| self.spell(e, env))
+                .collect::<Option<_>>()
+                .map(Type::Tuple),
+            _ => match self.infer_expr(e, env) {
+                Type::Generic(head, args) if head.is_builtin(crate::defs::TYPE_OF) => {
+                    args.first().map(|t| self.apply(t))
+                }
+                _ => None,
+            },
+        }
+    }
+
     /// The name a callee is written with, for a message about a call of
     /// it: `f`, or `m.f` for a member of a module.
     fn callee_label(callee: &Expr) -> Option<Symbol> {
@@ -1518,7 +1621,19 @@ impl TypeChecker {
                     {
                         self.expected_closure = Some(expected);
                     }
-                    let arg_ty = self.infer_expr(arg, env);
+                    // A decoder's type argument written as a type of
+                    // types (`List(Int)`, `(Int, String)`) is that type,
+                    // which the decoder's own check refuses.
+                    let spelled = match param {
+                        Some(param) if self.asks_decoding(param, owed_before) => {
+                            self.spelled_type(arg, env)
+                        }
+                        _ => None,
+                    };
+                    let arg_ty = match spelled {
+                        Some(ty) => Type::type_of(ty),
+                        None => self.infer_expr(arg, env),
+                    };
                     self.expected_closure = None;
                     given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {

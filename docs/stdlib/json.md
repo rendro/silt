@@ -96,7 +96,10 @@ the error notes that `load` passes it to `json.parse`). A record with a
 field no decoder exists for is a compile error that names the field and its
 type, and so is an enum with a variant whose field has none (the error names
 the variant); so is a generic record or enum, or a type the function does
-not take (such as `json.parse(text, List)`). The check applies equally to a
+not take (such as `json.parse(text, List)`, or `json.parse(text, List(Int))`
+and `json.parse(text, (Int, String))`: a type applied to types, and a tuple of
+types, are the types they write; the error of `json.parse` given a list or a
+map type points to `json.parse_list` or `json.parse_map`). The check applies equally to a
 decoder imported by name (`import json.{ parse }`) and to one called
 through a module alias, and a type is refused whatever a document would hold
 (an `Option` field whose key is left out, another variant of the enum, an

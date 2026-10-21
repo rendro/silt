@@ -95,7 +95,8 @@ record with a field no decoder exists for is a compile error that names the
 field and its type (or the field of a record type it names that has none);
 so is an enum with a variant whose field has none (the error names the
 variant), or a type the function does not take (such as
-`toml.parse(text, Int)`). The check applies equally to a
+`toml.parse(text, Int)`, or `toml.parse(text, List(Int))`, whose error points to
+`toml.parse_list`). The check applies equally to a
 decoder imported by name (`import toml.{ parse }`) and to one called through
 a module alias, and a type is refused whatever a document would hold (an
 `Option` field whose key is left out, an empty list or map too).

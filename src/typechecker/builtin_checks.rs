@@ -122,6 +122,21 @@ impl TypeChecker {
             Type::Map(..) => TypeRef::builtin("Map"),
             Type::Set(_) => TypeRef::builtin("Set"),
             Type::Channel(_) => TypeRef::builtin("Channel"),
+            // A tuple of types (`json.parse(text, (Int, String))`).
+            Type::Tuple(_) => {
+                let accepted = decoding.type_arguments(str::to_string);
+                return Some(
+                    Diagnostic::error(
+                        Code::Undecodable,
+                        span,
+                        format!(
+                            "`{builtin_name}` cannot decode `{}`: its type argument must be {accepted}",
+                            self.show_type(ty)
+                        ),
+                    )
+                    .with_help(decoding.family.type_argument_help()),
+                );
+            }
             _ => return None,
         };
         let family = decoding.family;
@@ -250,12 +265,26 @@ impl TypeChecker {
         let is_container = crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&builtin);
         if is_container || (is_primitive && !decoding.primitives) {
             let accepted = decoding.type_arguments(str::to_string);
+            // A container type the call gives its arguments by its
+            // arguments (`List(Int)`).
+            let type_name = match written.is_none() && free_vars_in(ty).is_empty() {
+                true => self.show_type(ty),
+                false => type_name,
+            };
+            // `json.parse` and `toml.parse` read a list or a map with a
+            // function of their own.
+            let module = (builtin_name.strip_suffix(".parse")).filter(|_| !family.rows());
+            let help = match (module, ty) {
+                (Some(module), Type::List(_)) => format!("use `{module}.parse_list` for a list"),
+                (Some(module), Type::Map(..)) => format!("use `{module}.parse_map` for a map"),
+                _ => family.type_argument_help().to_string(),
+            };
             return refusal(
                 Code::Undecodable,
                 format!(
                     "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"
                 ),
-                family.type_argument_help(),
+                &help,
             );
         }
         None

@@ -1,0 +1,84 @@
+error[type]: `json.parse` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:21:29
+    |
+ 21 |   let _ = json.parse("[1]", List(Int))
+    |                             ^^^^^^^^^ `json.parse` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: use `json.parse_list` for a list
+
+error[type]: `json.parse` cannot decode `Map(String, Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:22:29
+    |
+ 22 |   let _ = json.parse("\{}", Map(String, Int))
+    |                             ^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Map(String, Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: use `json.parse_map` for a map
+
+error[type]: `json.parse` cannot decode `List`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:23:29
+    |
+ 23 |   let _ = json.parse("[1]", List)
+    |                             ^^^^ `json.parse` cannot decode `List`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: use `json.parse_list` for a list
+
+error[type]: `json.parse` cannot decode `(Int, String)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:24:29
+    |
+ 24 |   let _ = json.parse("[1]", (Int, String))
+    |                             ^^^^^^^^^^^^^ `json.parse` cannot decode `(Int, String)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `json.parse` cannot decode `Set(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:25:29
+    |
+ 25 |   let _ = json.parse("[1]", Set(Int))
+    |                             ^^^^^^^^ `json.parse` cannot decode `Set(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `json.parse` cannot decode `Box(Int)`: it is an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:26:29
+    |
+ 26 |   let _ = json.parse("[1]", Box(Int))
+    |                             ^^^^^^^^ `json.parse` cannot decode `Box(Int)`: it is an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse_list` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:27:36
+    |
+ 27 |   let _ = json.parse_list("[[1]]", List(Int))
+    |                                    ^^^^^^^^^ `json.parse_list` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `json.decode` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:28:34
+    |
+ 28 |   let _ = json.decode(json.Null, List(Int))
+    |                                  ^^^^^^^^^ `json.decode` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `toml.parse` cannot decode `List(Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:29:31
+    |
+ 29 |   let _ = toml.parse("a = 1", List(Int))
+    |                               ^^^^^^^^^ `toml.parse` cannot decode `List(Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `Map(String, Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:30:31
+    |
+ 30 |   let _ = toml.parse("a = 1", Map(String, Int))
+    |                               ^^^^^^^^^^^^^^^^ `toml.parse` cannot decode `Map(String, Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = help: use `toml.parse_map` for a map
+
+error[type]: `toml.parse` cannot decode `(Int, Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:31:31
+    |
+ 31 |   let _ = toml.parse("a = 1", (Int, Int))
+    |                               ^^^^^^^^^^ `toml.parse` cannot decode `(Int, Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `json.parse` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> type_argument__a_type_of_types_is_the_decoders_refusal.silt:32:23
+    |
+ 32 |   let _ = load("[1]", List(Int))
+    |                       ^^^^^^^^^ `json.parse` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `load` passes it to `json.parse`
+  = help: use `json.parse_list` for a list
