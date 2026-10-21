@@ -141,6 +141,21 @@ impl Vm {
         })))
     }
 
+    /// `value` as a `json.Value`, for `caller` (`json.encode`, a call of
+    /// `encode` on a value whose type has no written impl): the
+    /// `json.Value` of the data it is written as, written impls
+    /// included.
+    pub(crate) fn encode_json(
+        &mut self,
+        caller: &'static str,
+        value: &Value,
+    ) -> Result<Step, VmError> {
+        self.encode(caller, Format::Json, value, move |_, data| {
+            let json = crate::builtins::json::json_value_of(caller, &data)?;
+            Ok(Step::Done(json))
+        })
+    }
+
     /// The `encode` the program wrote for the type of `part`.
     ///
     /// An impl of `json.Encode` is written in the module that declares

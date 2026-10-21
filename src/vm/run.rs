@@ -1654,6 +1654,16 @@ impl Vm {
             let step = self.shown(&receiver)?;
             return self.enter_step(step);
         }
+        // `encode` of a value whose type has no written `json.Encode`
+        // impl: its structural form, with the impls of its parts.
+        if method_name == "encode"
+            && argc == 1
+            && slots.trait_at(trait_index) == crate::defs::builtin_trait_id("Encode")
+        {
+            self.stack.truncate(receiver_slot);
+            let step = self.encode_json("json.encode", &receiver)?;
+            return self.enter_step(step);
+        }
         // `message` of a builtin error enum (`IoError`, ...): the row
         // of the enum, found by the type's id, called as any builtin.
         if method_name == "message"

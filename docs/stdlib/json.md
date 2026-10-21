@@ -15,6 +15,7 @@ A document whose shape is not known in advance is read into a
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `decode` | `(Value, type a) -> Result(a, JsonError)` | Decode a json.Value into a typed value |
+| `encode` | `(a) -> Value where a: Encode` | Encode a value as a json.Value |
 | `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
 | `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse a JSON array into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
@@ -359,6 +360,45 @@ fn describe(text: String) -> Result(String, json.JsonError) {
 fn main() {
   println(describe("""{"kind": "resize", "data": {"width": 3, "height": 4}}"""))
   -- Ok(resize to 3x4)
+}
+```
+
+
+## `json.encode`
+
+```
+json.encode(value: a) -> Value where a: Encode
+```
+
+The `json.Value` of what `json.stringify` writes of a value: what
+`json.parse` reads of that text. A whole number is a `json.Int` (`1.0` too),
+a record and a map are a `json.Object`, whose keys come out sorted (so
+`json.stringify(json.encode(r))` writes a record's fields in the order of
+their names, `json.stringify(r)` in the order its type declares them), a
+`None` and `()` are `json.Null`. Written [`json.Encode`](#jsonencode) impls
+are used wherever their types are in the value, at the top too: the
+counterpart of [`json.decode`](#jsondecode). An impl's `encode` uses it for
+the parts it writes; for its own value (`json.encode(self)`) it would call
+itself without end. `x.encode()` is the same as `json.encode(x)`, in a
+module that imports json.
+
+```silt
+import json
+
+type Pair {
+  left: Int,
+  right: Int,
+}
+
+trait json.Encode for Pair {
+  fn encode(self) -> json.Value {
+    json.Array([json.encode(self.left), json.encode(self.right)])
+  }
+}
+
+fn main() {
+  println(json.encode([1, 2])) -- Array([Int(1), Int(2)])
+  println(json.stringify(Pair { left: 1, right: 2 })) -- [1,2]
 }
 ```
 

@@ -148,6 +148,16 @@ impl serde::Serialize for Json<'_> {
     }
 }
 
+/// `data` as a `json.Value`: what `json.parse` reads of the text
+/// `json.stringify` writes of it (a whole number in `Int`'s range is a
+/// `json.Int`, a record an object whose keys are sorted).
+pub(crate) fn json_value_of(caller: &str, data: &Data) -> Result<Value, VmError> {
+    let mut json =
+        serde_json::to_value(Json(data)).map_err(|e| VmError::new(format!("{caller}: {e}")))?;
+    whole_numbers(&mut json);
+    Ok(decode::json_value(&json))
+}
+
 /// `data` as the JSON text of `caller`, compact or `pretty`: an object
 /// keeps its members in the order of the data (a record's fields as
 /// its type declares them). `Bytes` in it, which only a postgres
@@ -503,6 +513,10 @@ builtins! {
 
     // (A part of a type with a written `json.Encode` impl is written
     // as the impl says, which is the program's code: a step.)
+    fn encode(vm, value: &Value) -> Result<Step, VmError> {
+        vm.encode_json("json.encode", value)
+    }
+
     fn stringify(vm, value: &Value) -> Result<Step, VmError> {
         written_text(vm, "json.stringify", value, false)
     }

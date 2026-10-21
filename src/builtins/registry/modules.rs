@@ -311,6 +311,7 @@ pub(super) fn modules() -> Vec<Module> {
             error: "JsonError" => json::error_text,
             rows: [
                 f("fn decode(value: Value, type a) -> Result(a, JsonError)", "Decode a json.Value into a typed value", json::decode).decodes(Decoding::JSON),
+                f("fn encode(value: a) -> Value where a: Encode", "Encode a value as a json.Value", json::encode),
                 f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse).decodes(Decoding::JSON),
                 f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse a JSON array into a list", json::parse_list).decodes(Decoding::JSON),
                 f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError)", "Parse JSON object into map", json::parse_map).decodes(Decoding::JSON),
