@@ -847,7 +847,13 @@ impl Lexer {
             match self.peek() {
                 None => return self.unterminated(start, "unterminated triple-quoted string"),
                 Some('"') if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
-                    // Consume closing """
+                    // A run of three or more quotes ends the string: its
+                    // last three close it, the ones before are text
+                    // (`"""v = "s""""` is `v = "s"`).
+                    while self.peek_ahead(3) == Some('"') {
+                        self.advance_char();
+                        raw.push('"');
+                    }
                     self.advance_char();
                     self.advance_char();
                     self.advance_char();
@@ -1793,6 +1799,21 @@ mod tests {
             tokens,
             vec![Token::StringLit("she said \"hi\" to me".into()),]
         );
+    }
+
+    #[test]
+    fn a_run_of_quotes_ends_a_triple_quoted_string_with_its_last_three() {
+        // The quotes before the last three are text: a text that ends
+        // in a quote can be written.
+        assert_eq!(
+            lex(r#""""v = "s"""" 1"#),
+            vec![Token::StringLit("v = \"s\"".into()), Token::Int(1)]
+        );
+        assert_eq!(
+            lex(r#""""a""""" 1"#),
+            vec![Token::StringLit("a\"\"".into()), Token::Int(1)]
+        );
+        assert_eq!(lex(r#"""""""""#), vec![Token::StringLit("\"".into())]);
     }
 
     #[test]

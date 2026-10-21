@@ -55,7 +55,7 @@
         {
           "name": "string.quoted.triple.silt",
           "begin": "\"\"\"",
-          "end": "\"\"\""
+          "end": "\"\"\"(?!\")"
         },
         {
           "name": "string.quoted.double.silt",
