@@ -153,7 +153,8 @@ that silt itself does not read back.
 toml.parse(s: String, type a) -> Result(a, TomlError)
 ```
 
-Parses a TOML document into a record of type `a`. The type is passed as a
+Parses a TOML document into a record, or a variant with fields, of type `a`
+(see [Enums](#enums)). The type is passed as a
 `type` parameter (see [Generics](../language/generics.md) — not a string).
 Fields are matched by name; `Option` fields default to `None` if missing
 from the document.
@@ -204,8 +205,8 @@ TOML's spec requires the top level of every document to be a table, so there is
 no direct equivalent of a JSON top-level array. `toml.parse_list` therefore
 accepts a document whose top-level table contains exactly one key, an array,
 and returns the list of values under that key, each decoded into `a`. The type
-is passed as a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record
-type), as for `toml.parse_map`. For a record type the array is the natural
+is passed as a `type` parameter (`Int`, `Float`, `String`, `Bool`, a record
+type, or an enum type), as for `toml.parse_map`. For a record type the array is the natural
 shape of `[[items]]` sections:
 
 ```silt
@@ -237,7 +238,8 @@ toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError)
 ```
 
 Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
-a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
+a `type` parameter (`Int`, `Float`, `String`, `Bool`, a record type, or an
+enum type).
 
 ```silt
 import map
@@ -272,8 +274,9 @@ p = [
 ]
 ```
 
-Note: the top-level value must be a record or a map; TOML cannot represent a
-bare scalar or array at top level.
+Note: the top-level value must be a record, a map or a variant with fields;
+TOML cannot represent a bare scalar or array at top level (nor a variant
+without fields, which is a string).
 
 A value TOML has no form for, wherever in the value it is, is an
 `Err(Other(message))` whose message names its kind: `Bytes`, a `Set`, a function
@@ -303,7 +306,7 @@ fn main() {
 toml.stringify(value: a) -> Result(String, TomlError)
 ```
 
-Serialises a silt record or map to a TOML document. Like `toml.pretty`, the
+Serialises a silt record, map or variant with fields to a TOML document. Like `toml.pretty`, the
 top-level value must be table-shaped. Each kind of value is written as
 follows:
 
