@@ -242,6 +242,19 @@ fn a_task_shows_a_value_with_the_display_impl_of_a_later_entry() {
     );
 }
 
+/// A `json.Encode` impl of a later entry is used wherever the value is
+/// written, as a `Display` impl is shown: here in a list.
+#[test]
+fn a_task_writes_a_value_with_the_json_encode_impl_of_a_later_entry() {
+    assert_tasks_see(
+        "import json\nfn js(v: a) -> String where a: json.Encode { json.stringify([v]) }",
+        "type Q { q: Int }\n\
+         trait json.Encode for Q { fn encode(self) -> json.Value { json.String(\"Q!\") } }",
+        "js(Q { q: 2 })",
+        "[\"Q!\"]",
+    );
+}
+
 /// A trait of a later entry, its method called on a value whose type
 /// the call does not know. It was `the call of a method names a method
 /// the program does not have`.

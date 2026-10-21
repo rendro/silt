@@ -155,6 +155,7 @@ impl serde::Serialize for Toml<'_> {
             Data::Null | Data::Unit | Data::Bytes(_) => {
                 Err(S::Error::custom("TOML has no form for the value"))
             }
+            Data::Hole(_) => Err(S::Error::custom(data::UNFILLED)),
         }
     }
 }
@@ -225,7 +226,7 @@ fn top_level(caller: &str, data: Data) -> Result<Data, VmError> {
             Ok(_) => "datetime",
             Err(_) => "string",
         },
-        Data::Null | Data::Unit | Data::Bytes(_) | Data::Json(_) => "null",
+        Data::Null | Data::Unit | Data::Bytes(_) | Data::Json(_) | Data::Hole(_) => "null",
     };
     Err(VmError::new(format!(
         "{caller}: top-level value must be a table/record, got {kind}"

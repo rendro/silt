@@ -5,6 +5,7 @@
 mod arithmetic;
 mod calls;
 pub(crate) mod dispatch;
+mod encode;
 pub mod error;
 mod io;
 mod iter;

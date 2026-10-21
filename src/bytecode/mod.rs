@@ -121,11 +121,10 @@ pub struct Globals {
     defaults: Layers<(TraitId, u16), (String, u16)>,
     /// The slot of `display` of each type a program wrote a `Display`
     /// impl for: what showing a value of the type calls.
-    shown: Layers<TypeId, u16>,
-    /// One bit for each type in `shown`, by the low bits of its id: a
-    /// type whose bit is not set has no written `display`, which is
-    /// what showing a value asks of every record and variant in it.
-    shown_bits: u64,
+    shown: Written,
+    /// The slot of `encode` of each type a program wrote a
+    /// `json.Encode` impl for: what writing a value of the type calls.
+    encoded: Written,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
     traits: Rows<(TraitId, String)>,
@@ -140,10 +139,10 @@ impl Globals {
     /// (the names of methods, the traits): code of the entry may still
     /// be about, a closure it sent to a task. Its definitions are taken
     /// back: which slot a definition, an impl's method, a trait's
-    /// default method and a type's `display` has is as in `before`. So
-    /// what the entry had defined (its own impls, a module it imported)
-    /// gets slots of its own when it is defined again, and no slot is
-    /// ever set twice.
+    /// default method and a type's `display` and `encode` has is as in
+    /// `before`. So what the entry had defined (its own impls, a module
+    /// it imported) gets slots of its own when it is defined again, and
+    /// no slot is ever set twice.
     pub fn without_definitions_since(&self, before: &Globals) -> Globals {
         Globals {
             names: self.names.clone(),
@@ -155,7 +154,7 @@ impl Globals {
             methods: before.methods.clone(),
             defaults: before.defaults.clone(),
             shown: before.shown.clone(),
-            shown_bits: before.shown_bits,
+            encoded: before.encoded.clone(),
         }
     }
 
@@ -230,19 +229,22 @@ impl Globals {
 
     /// The slot of the `display` a program wrote for the type `ty`.
     pub fn shown(&self, ty: TypeId) -> Option<u16> {
-        if self.shown_bits & Self::shown_bit(ty) == 0 {
-            return None;
-        }
-        self.shown.get(&ty).copied()
-    }
-
-    fn shown_bit(ty: TypeId) -> u64 {
-        1 << (ty.0.0 & 63)
+        self.shown.get(ty)
     }
 
     /// Whether the program wrote a `Display` impl for any type.
     pub fn any_shown(&self) -> bool {
-        !self.shown.is_empty()
+        self.shown.any()
+    }
+
+    /// The slot of the `encode` a program wrote for the type `ty`.
+    pub fn encoded(&self, ty: TypeId) -> Option<u16> {
+        self.encoded.get(ty)
+    }
+
+    /// Whether the program wrote a `json.Encode` impl for any type.
+    pub fn any_encoded(&self) -> bool {
+        self.encoded.any()
     }
 
     /// The name of the trait a `CallMethod` operand names.
@@ -349,9 +351,45 @@ impl Globals {
         self.methods.insert((t, ty, id), slot);
         if method == "display" && crate::defs::builtin_trait_id("Display") == Some(t) {
             self.shown.insert(ty, slot);
-            self.shown_bits |= Self::shown_bit(ty);
+        }
+        if method == "encode" && crate::defs::builtin_trait_id("Encode") == Some(t) {
+            self.encoded.insert(ty, slot);
         }
         Some(slot)
+    }
+}
+
+/// The slot of the method a program wrote for each type, of a trait
+/// whose method a value is written with at any depth (`display`,
+/// `encode`).
+#[derive(Debug, Clone, Default)]
+struct Written {
+    slots: Layers<TypeId, u16>,
+    /// One bit for each type in `slots`, by the low bits of its id: a
+    /// type whose bit is not set has no written method, which is what
+    /// writing a value asks of every record and variant in it.
+    bits: u64,
+}
+
+impl Written {
+    fn get(&self, ty: TypeId) -> Option<u16> {
+        if self.bits & Self::bit(ty) == 0 {
+            return None;
+        }
+        self.slots.get(&ty).copied()
+    }
+
+    fn any(&self) -> bool {
+        !self.slots.is_empty()
+    }
+
+    fn insert(&mut self, ty: TypeId, slot: u16) {
+        self.slots.insert(ty, slot);
+        self.bits |= Self::bit(ty);
+    }
+
+    fn bit(ty: TypeId) -> u64 {
+        1 << (ty.0.0 & 63)
     }
 }
 

@@ -11,6 +11,12 @@
 //! format then writes the data in its own forms: json its numbers and
 //! strings, toml its literals and its tables, postgres the text the
 //! server reads.
+//!
+//! A record or variant of a type the program wrote a `json.Encode`
+//! impl for is written as the `json.Value` its `encode` gives, wherever
+//! it is in the value. The impl is silt code, which the VM runs
+//! (`vm::encode`): [`data_with_holes`] leaves a hole for each such part,
+//! and once the impls have run [`fill`] writes what they gave there.
 
 use std::sync::Arc;
 
@@ -73,6 +79,9 @@ pub(crate) enum Data {
     /// JSON it holds, which the server gets as JSON text. (For json and
     /// toml, and inside JSON, a `json.Value` is what it holds.)
     Json(Box<Data>),
+    /// The place of the `k`th part a written `json.Encode` impl writes,
+    /// until [`fill`] writes it.
+    Hole(usize),
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -154,6 +163,11 @@ impl std::fmt::Display for Time {
     }
 }
 
+/// What a format says of a hole of data that was never filled (a bug
+/// of silt: [`fill`] fills every hole before data is written).
+pub(crate) const UNFILLED: &str =
+    "internal error: a part a json.Encode impl writes was not written";
+
 /// What is said of a value of the kind `kind` that a format has no
 /// form for.
 pub(crate) fn unsupported(kind: &str) -> String {
@@ -176,9 +190,65 @@ fn refused(caller: &str, v: &Value) -> VmError {
 /// a function (the constructor of a variant among them), a channel, a
 /// handle, `Bytes` where the format has none, a value nested deeper
 /// than [`MAX_ENCODE_DEPTH`], a list too long to write out; for toml
-/// also `()` and a `None` in an array.
+/// also `()` and a `None` in an array. Every record and variant is
+/// written by its structure.
 pub(crate) fn data(caller: &str, format: Format, v: &Value) -> Result<Data, VmError> {
-    Writer { caller, format }.data(v, 0, Place::Value)
+    Writer::new(caller, format, None).data(v, 0, Place::Value)
+}
+
+/// A record or variant in a value whose type has a written
+/// `json.Encode` impl: the value, the global slot of its type's
+/// `encode`, and where in the value it is.
+pub(crate) struct Part {
+    pub(crate) value: Value,
+    pub(crate) slot: u16,
+    level: usize,
+    place: Place,
+}
+
+/// `v` as data, as [`data`] writes it, but with a hole in the place of
+/// each record or variant that `written` gives the slot of an `encode`
+/// for; and those parts, the `k`th the one of `Data::Hole(k)`.
+pub(crate) fn data_with_holes(
+    caller: &str,
+    format: Format,
+    v: &Value,
+    written: &dyn Fn(&Value) -> Option<u16>,
+) -> Result<(Data, Vec<Part>), VmError> {
+    let writer = Writer::new(caller, format, Some(written));
+    let data = writer.data(v, 0, Place::Value)?;
+    Ok((data, writer.parts.into_inner()))
+}
+
+/// Write in each hole of `data` the `json.Value` the `encode` of its
+/// part gave (`encoded`, in the order of `parts`), where the part is,
+/// in `format`: as deep as it is, so that the depth counts on.
+pub(crate) fn fill(
+    caller: &str,
+    format: Format,
+    data: &mut Data,
+    parts: &[Part],
+    encoded: &[Value],
+) -> Result<(), VmError> {
+    match data {
+        Data::Hole(k) => {
+            let (part, value) = (&parts[*k], &encoded[*k]);
+            *data = Writer::new(caller, format, None).data(value, part.level, part.place)?;
+        }
+        Data::Array(items) | Data::Tuple(items) => {
+            for item in items {
+                fill(caller, format, item, parts, encoded)?;
+            }
+        }
+        Data::Table(members) => {
+            for (_, member) in members {
+                fill(caller, format, member, parts, encoded)?;
+            }
+        }
+        Data::Json(content) => fill(caller, format, content, parts, encoded)?,
+        _ => {}
+    }
+    Ok(())
 }
 
 /// `f` of each of `items`, or its first error. (Collecting a `Result`
@@ -211,9 +281,27 @@ enum Place {
 struct Writer<'c> {
     caller: &'c str,
     format: Format,
+    /// The slot of the `encode` of a record or variant's type, if the
+    /// program wrote one: such a part is a hole (`data_with_holes`).
+    written: Option<&'c dyn Fn(&Value) -> Option<u16>>,
+    /// The parts of the holes so far.
+    parts: std::cell::RefCell<Vec<Part>>,
 }
 
-impl Writer<'_> {
+impl<'c> Writer<'c> {
+    fn new(
+        caller: &'c str,
+        format: Format,
+        written: Option<&'c dyn Fn(&Value) -> Option<u16>>,
+    ) -> Writer<'c> {
+        Writer {
+            caller,
+            format,
+            written,
+            parts: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
     /// `v`, which is `level` levels inside the value and at `place`.
     fn data(&self, v: &Value, level: usize, place: Place) -> Result<Data, VmError> {
         // `Some(x)` is written as `x` is, and so is a `json.Value` as the
@@ -240,6 +328,19 @@ impl Writer<'_> {
         }
         if let Value::Variant(variant) = v {
             json |= variant.is(bv::JSON_NULL);
+        }
+        // A part a written `json.Encode` impl writes.
+        if matches!(v, Value::Record(_) | Value::Variant(_))
+            && let Some(slot) = self.written.and_then(|written| written(v))
+        {
+            let mut parts = self.parts.borrow_mut();
+            parts.push(Part {
+                value: v.clone(),
+                slot,
+                level,
+                place,
+            });
+            return Ok(Data::Hole(parts.len() - 1));
         }
         // Postgres sends a `json.Value` at a parameter's place, or in an
         // array, as JSON text.

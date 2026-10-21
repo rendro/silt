@@ -288,6 +288,40 @@ type variable `a` is not known to implement trait 'json.Encode', which 'json.str
 
 A program names the trait with its module, `json.Encode`.
 
+Write `trait json.Encode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `Display` impl is written; an impl for
+a builtin type is an error, a builtin type keeps its own form). Its
+`encode` gives the `json.Value` the type is written as, wherever a value of
+the type is inside what is written: at the top, in a list, as a map's
+value, in a record's or a variant's field. A `Some` around it stays
+structural (`Some(x)` is written as `x` is), and a type that holds a
+function may have a written impl. An impl for a generic type is allowed;
+what it asks of the type's arguments it says in a `where` clause.
+
+```silt
+import json
+
+type Money {
+  cents: Int,
+}
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.Int(self.cents)
+  }
+}
+
+type Order {
+  id: Int,
+  total: Money,
+}
+
+fn main() {
+  println(json.stringify(Order { id: 7, total: Money { cents: 1250 } }))
+  -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
+}
+```
+
 
 ## `json.decode`
 

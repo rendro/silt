@@ -683,8 +683,9 @@ literals), `println` and `string.from` `Display`, `json.stringify` and
 `json.pretty` `json.Encode`. That one is a trait of the json module: a
 type has it by its structure when each of its parts has a json form
 (`Bytes`, a set, a function, a channel and a handle have none; a map
-asks it of its values only), and a program names it `json.Encode`
-(see [json](../stdlib/json.md#jsonencode)).
+asks it of its values only), a `trait json.Encode for T` in the module
+of `T` replaces it as a written `Display` impl does, and a program names
+it `json.Encode` (see [json](../stdlib/json.md#jsonencode)).
 
 ```silt
 type Job { name: String, run: Fn(Int) -> Int }

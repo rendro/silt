@@ -10,7 +10,7 @@ use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Runtime, VmError};
+use crate::vm::{Runtime, Step, Vm, VmError};
 
 // ── JsonError helpers ────────────────────────────────────────────────
 //
@@ -143,6 +143,7 @@ impl serde::Serialize for Json<'_> {
                 map.end()
             }
             Data::Json(content) => Json(content).serialize(to),
+            Data::Hole(_) => Err(S::Error::custom(data::UNFILLED)),
         }
     }
 }
@@ -436,6 +437,19 @@ fn decode_document(
 
 // ── The functions ───────────────────────────────────────────────────
 
+/// The JSON text `caller` writes of `value`, compact or `pretty`.
+fn written_text(
+    vm: &mut Vm,
+    caller: &'static str,
+    value: &Value,
+    pretty: bool,
+) -> Result<Step, VmError> {
+    vm.encode(caller, Format::Json, value, move |_, data| {
+        let text = text(caller, &data, pretty)?;
+        Ok(Step::Done(Value::String(text.into())))
+    })
+}
+
 static DECODE: Decoder = Decoder::new("json.decode");
 static PARSE: Decoder = Decoder::new("json.parse");
 static PARSE_LIST: Decoder = Decoder::new("json.parse_list");
@@ -487,12 +501,14 @@ builtins! {
         })
     }
 
-    fn stringify(value: &Value) -> Result<String, VmError> {
-        text("json.stringify", &data::data("json.stringify", Format::Json, value)?, false)
+    // (A part of a type with a written `json.Encode` impl is written
+    // as the impl says, which is the program's code: a step.)
+    fn stringify(vm, value: &Value) -> Result<Step, VmError> {
+        written_text(vm, "json.stringify", value, false)
     }
 
-    fn pretty(value: &Value) -> Result<String, VmError> {
-        text("json.pretty", &data::data("json.pretty", Format::Json, value)?, true)
+    fn pretty(vm, value: &Value) -> Result<Step, VmError> {
+        written_text(vm, "json.pretty", value, true)
     }
 }
 
