@@ -1,0 +1,71 @@
+-- cmd: lsp
+-- lsp: hover 30:48
+-- lsp: hover 30:57
+-- lsp: hover 30:76
+-- lsp: hover 30:85
+-- lsp: hover 30:95
+-- lsp: hover 57:8
+-- lsp: hover 61:8
+-- lsp: hover 65:13
+-- lsp: hover 40:13
+-- lsp: hover 40:8
+-- lsp: hover 47:8
+-- lsp: definition 30:76
+-- lsp: definition 30:85
+-- lsp: definition 57:8
+-- lsp: definition 61:8
+-- Hover on a trait's name shows the trait's signature, its methods
+-- without their default bodies, and its documentation, as hover on a
+-- type does: in a `where` clause (a builtin trait, a builtin module's
+-- `json.Encode`, a program's trait, one of another module named with
+-- it), in an impl's header, as a supertrait, at its declaration. A
+-- method's signature written on several lines keeps its lines.
+-- Definition goes to a program trait's declaration; one of silt's own
+-- has no file.
+import json
+import shapes
+
+type Box { w: Int }
+
+fn show(x: a, y: b, z: c, w: d) where a: json.Encode + Display, b: shapes.Area, c: Sized, d: Compare {
+  ()
+}
+
+-- Says how big.
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int { self.size() * 2 }
+}
+
+trait Big: Sized {
+  fn big(self) -> Bool
+}
+
+-- Pairs of things.
+--
+-- Two of them.
+trait Pairs(b) {
+  type Item
+  fn pair(
+    self,
+    other: b,
+  ) -> (Self, b) where b: Display {
+    (self, other)
+  }
+}
+
+trait Sized for Box {
+  fn size(self) -> Int { self.w }
+}
+
+trait Display for Box {
+  fn display(self) -> String { "box" }
+}
+
+trait json.Encode for Box {
+  fn encode(self) -> json.Value { json.Int(self.w) }
+}
+
+fn main() {
+  println(Box { w: 1 }.size())
+}

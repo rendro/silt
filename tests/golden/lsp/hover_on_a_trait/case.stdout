@@ -1,0 +1,252 @@
+> hover 30:48
+```silt
+trait Encode {
+  fn encode(self) -> Value
+}
+```
+
+---
+
+What `json.stringify` and `json.pretty` need of the value they write. A
+type has it by its structure, as it has `Display`: `Int`, `Float`, `String`,
+`Bool`, `()`, a `json.Value`, a `Date`, a `Time` and a `DateTime` have it; a
+list, a tuple, an `Option` and a record or enum type (the program's or a
+builtin module's) have it when their parts do; a map when its values do (a
+key is written as its text). `Bytes`, a set, a function, a channel and a
+handle have none. A function that hands a value of a type variable to
+`json.stringify` says so, as for `Display`; one without annotations is
+inferred to need it:
+
+```silt
+import json
+
+fn send(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn main() {
+  println(send([1, 2])) -- [1,2]
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+```
+
+A program names the trait with its module, `json.Encode`.
+
+Write `trait json.Encode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `Display` impl is written; an impl for
+a builtin type is an error, a builtin type keeps its own form). Its
+`encode` gives the `json.Value` the type is written as, wherever a value of
+the type is inside what is written: at the top, in a list, as a map's
+value, in a record's or a variant's field. A `Some` around it stays
+structural (`Some(x)` is written as `x` is), and a type that holds a
+function may have a written impl. An impl for a generic type is allowed;
+what it asks of the type's arguments it says in a `where` clause.
+
+```silt
+import json
+
+type Money {
+  cents: Int,
+}
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.Int(self.cents)
+  }
+}
+
+type Order {
+  id: Int,
+  total: Money,
+}
+
+fn main() {
+  println(json.stringify(Order { id: 7, total: Money { cents: 1250 } }))
+  -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
+}
+```
+> hover 30:57
+```silt
+trait Display {
+  fn display(self) -> String
+}
+```
+
+---
+
+How a value is shown: `println`, `print`, interpolation, `.display()`
+and `string.from` show it so. A type has it by its structure, or by an
+impl written in the module that declares the type.
+> hover 30:76
+```silt
+pub trait Area {
+  fn area(self) -> Float
+}
+```
+
+---
+
+A shape's area.
+> hover 30:85
+```silt
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int
+}
+```
+
+---
+
+Says how big.
+> hover 30:95
+```silt
+trait Compare: Equal {
+  fn compare(self, other: Self) -> Int
+}
+```
+
+---
+
+The order of values: `<`, `>`, `<=` and `>=` need it. A type made of
+types that have it has it by its structure; an impl is an error.
+> hover 57:8
+```silt
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int
+}
+```
+
+---
+
+Says how big.
+> hover 61:8
+```silt
+trait Display {
+  fn display(self) -> String
+}
+```
+
+---
+
+How a value is shown: `println`, `print`, interpolation, `.display()`
+and `string.from` show it so. A type has it by its structure, or by an
+impl written in the module that declares the type.
+> hover 65:13
+```silt
+trait Encode {
+  fn encode(self) -> Value
+}
+```
+
+---
+
+What `json.stringify` and `json.pretty` need of the value they write. A
+type has it by its structure, as it has `Display`: `Int`, `Float`, `String`,
+`Bool`, `()`, a `json.Value`, a `Date`, a `Time` and a `DateTime` have it; a
+list, a tuple, an `Option` and a record or enum type (the program's or a
+builtin module's) have it when their parts do; a map when its values do (a
+key is written as its text). `Bytes`, a set, a function, a channel and a
+handle have none. A function that hands a value of a type variable to
+`json.stringify` says so, as for `Display`; one without annotations is
+inferred to need it:
+
+```silt
+import json
+
+fn send(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn main() {
+  println(send([1, 2])) -- [1,2]
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+```
+
+A program names the trait with its module, `json.Encode`.
+
+Write `trait json.Encode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `Display` impl is written; an impl for
+a builtin type is an error, a builtin type keeps its own form). Its
+`encode` gives the `json.Value` the type is written as, wherever a value of
+the type is inside what is written: at the top, in a list, as a map's
+value, in a record's or a variant's field. A `Some` around it stays
+structural (`Some(x)` is written as `x` is), and a type that holds a
+function may have a written impl. An impl for a generic type is allowed;
+what it asks of the type's arguments it says in a `where` clause.
+
+```silt
+import json
+
+type Money {
+  cents: Int,
+}
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.Int(self.cents)
+  }
+}
+
+type Order {
+  id: Int,
+  total: Money,
+}
+
+fn main() {
+  println(json.stringify(Order { id: 7, total: Money { cents: 1250 } }))
+  -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
+}
+```
+> hover 40:13
+```silt
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int
+}
+```
+
+---
+
+Says how big.
+> hover 40:8
+```silt
+trait Big: Sized {
+  fn big(self) -> Bool
+}
+```
+> hover 47:8
+```silt
+trait Pairs(b) {
+  type Item
+  fn pair(
+    self,
+    other: b,
+  ) -> (Self, b) where b: Display
+}
+```
+
+---
+
+Pairs of things.
+
+Two of them.
+> definition 30:76
+shapes.silt:2:11-2:15
+> definition 30:85
+main.silt:35:7-35:12
+> definition 57:8
+main.silt:35:7-35:12
+> definition 61:8
+(nothing)

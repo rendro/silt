@@ -1,0 +1,4 @@
+-- A shape's area.
+pub trait Area {
+  fn area(self) -> Float
+}
