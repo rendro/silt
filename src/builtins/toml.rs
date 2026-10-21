@@ -244,7 +244,6 @@ const RULES: Rules = Rules {
     caller: "toml.parse",
     table: "table",
     variant: "String or table",
-    dates: ["date", "time", "datetime"],
     numbers: Numbers::Kinds,
     family: Family::Toml,
     errors: [

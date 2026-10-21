@@ -541,6 +541,10 @@ stored as UTC:
 | `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `"14:30:00"`, `"14:30:00.25"` |
 | `DateTime` | `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second, with optional `Z` or `±HH:MM` offset; the year as for `Date` | `"2024-03-15T09:00:00+09:00"` |
 
+A value that is no string is a `TypeMismatch` that names the field's type,
+as for an `Int` field: `{"d": 1}` for a `Date` field `d` is
+`Err(TypeMismatch("Date", "number at d"))`.
+
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an
 `Other` that names the text, such as

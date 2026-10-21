@@ -593,8 +593,6 @@ pub(crate) struct Rules {
     /// What an enum expects: the string of a variant's name, or the
     /// table of a variant with fields.
     pub(crate) variant: &'static str,
-    /// What a `Date`, a `Time` and a `DateTime` expect.
-    pub(crate) dates: [&'static str; 3],
     /// How a number that is no `Int` is told from one.
     pub(crate) numbers: Numbers,
     /// The family of decoders of the format, which says the field types
@@ -968,7 +966,7 @@ pub(crate) fn value<D: Document>(
             Node::Datetime(s) => parse_date(&s)
                 .map(make_date)
                 .map_err(|e| Error::other(format_args!("invalid date '{s}': {e}"), at)),
-            _ => Err(mismatch(rules.dates[0])),
+            _ => Err(mismatch("Date")),
         },
         FieldType::Time => match node {
             Node::String(s) => parse_time(s)
@@ -977,13 +975,13 @@ pub(crate) fn value<D: Document>(
             Node::Datetime(s) => parse_time(&s)
                 .map(make_time)
                 .map_err(|e| Error::other(format_args!("invalid time '{s}': {e}"), at)),
-            _ => Err(mismatch(rules.dates[1])),
+            _ => Err(mismatch("Time")),
         },
         FieldType::DateTime => {
             let text = match &node {
                 Node::String(s) => *s,
                 Node::Datetime(s) => s,
-                _ => return Err(mismatch(rules.dates[2])),
+                _ => return Err(mismatch("DateTime")),
             };
             parse_datetime(text)
                 .map(make_datetime)
