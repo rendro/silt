@@ -5,10 +5,10 @@ error[type]: `json.parse` cannot decode `R`: field `b` has type `Bytes`, which h
    |             ^ `json.parse` cannot decode `R`: field `b` has type `Bytes`, which has no decoder
   = note: `load` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
-error[type]: `json.parse` cannot decode `<repl:7>.R`: field `b` has type `Bytes`, which has no decoder
+error[type]: `json.parse` cannot decode `R`: field `b` has type `Bytes`, which has no decoder
  --> <repl:8>:1:13
    |
  1 | load("\{}", R)
-   |             ^ `json.parse` cannot decode `<repl:7>.R`: field `b` has type `Bytes`, which has no decoder
+   |             ^ `json.parse` cannot decode `R`: field `b` has type `Bytes`, which has no decoder
   = note: `load` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

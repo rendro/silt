@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stdin: import json\nlet v = json.Null\ntype Value { x: Int }\nlet y: Value = v\nlet z: json.Value = Value { x: 1 }\ntype H { n: Int }\nlet old = H { n: 1 }\ntype H { m: Int }\nlet a: H = old\nlet b: Value = H { m: 1 }\n:quit\n
+-- A message names a type as the entry writes it: a type of an earlier
+-- entry that the entry names by its name is written bare, as a module's
+-- own type is (`Value` beside `json.Value`); only a type declared again
+-- since, which the entry cannot name, keeps the entry it is of
+-- (`<repl:6>.H`).

@@ -69,13 +69,20 @@ impl TypeChecker {
 
     /// The name of `r` written with its module: `a.Pt`, `time.Weekday`,
     /// `prelude.Option` for a prelude type; a module's own type keeps its
-    /// bare name.
+    /// bare name, and so in a REPL cell does a type of an earlier cell
+    /// that the cell names by its name (`<repl:1>.H` is the `H` an
+    /// earlier cell declared again).
     fn qualified_type(&self, r: TypeRef) -> String {
         let module = match crate::defs::builtin_types().get(r.id.0.0 as usize) {
             Some((_, module)) => Some(intern(module.unwrap_or("prelude"))),
             None => self
                 .def(r.id.0)
                 .filter(|def| def.module != self.module)
+                .filter(|def| {
+                    !(self.is_cell
+                        && self.cells.contains(&def.module)
+                        && self.named_types.contains(&r.id.0))
+                })
                 .and_then(|def| self.tables.module_names.get(&def.module).copied()),
         };
         match module {

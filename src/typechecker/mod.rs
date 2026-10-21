@@ -346,6 +346,10 @@ pub struct TypeChecker {
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
+    /// The types the module names by their names: in a REPL cell its
+    /// own and those of the earlier cells not declared again since,
+    /// which a message writes by their names.
+    pub(super) named_types: std::collections::HashSet<crate::defs::DefId>,
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
@@ -442,6 +446,7 @@ impl TypeChecker {
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             is_cell: false,
+            named_types: std::collections::HashSet::new(),
             signatures_only: false,
             registry_rows: false,
             tables: Tables::default(),
@@ -1566,6 +1571,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);
+            checker.named_types.insert(*id);
         }
     }
     for binding in scope.values.values() {
