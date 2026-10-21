@@ -497,6 +497,10 @@ pub enum Pred {
         tr: TraitKey,
         args: Vec<Type>,
         subject: Type,
+        /// For `json.Decode` only: what asks it, which a refusal names
+        /// (`json.parse cannot decode ...`, with a note naming the
+        /// function that passes the type on).
+        asker: Option<Asker>,
     },
     /// The row `row` (a row variable, as a type) is not the rest of a
     /// declared record: the definition spreads a record over the row, or
@@ -557,6 +561,39 @@ pub enum Pred {
     },
 }
 
+/// What a `json.Decode` predicate comes from (`Pred::Trait::asker`):
+/// what asks it, and the function or method whose scheme it is of,
+/// which passes the type on (a note names it); none for a decoder's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Asker {
+    pub by: Asked,
+    pub passer: Option<Symbol>,
+}
+
+/// What asks `json.Decode` of a type: the decoder whose signature asks
+/// it, or the declared bound of a function or method on its annotation
+/// variable, which asks what its body asks of that variable (known once
+/// the body is checked).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Asked {
+    Builtin(Symbol),
+    Bound(TyVar),
+    /// A declared bound whose body gives its variable to no decoder, as
+    /// another module reads it.
+    Unknown,
+}
+
+impl Asker {
+    /// The asker of a declared bound `var: tr`: the bound itself, for
+    /// `json.Decode`; none for any other trait.
+    pub fn of_bound(tr: TraitKey, var: TyVar) -> Option<Asker> {
+        tr.is_builtin("Decode").then_some(Asker {
+            by: Asked::Bound(var),
+            passer: None,
+        })
+    }
+}
+
 /// What a builtin asks of the type of one of its arguments beyond its
 /// signature (`Pred::Builtin`); the builtin is named as the registry
 /// names it (`json.parse`).
@@ -607,16 +644,23 @@ impl Pred {
             tr,
             args,
             subject: Type::Var(var),
+            asker: Asker::of_bound(tr, var),
         }
     }
 
     /// The predicate with its type variables replaced as `mapping` says.
     pub fn substitute(&self, mapping: &HashMap<TyVar, Type>) -> Pred {
         match self {
-            Pred::Trait { tr, args, subject } => Pred::Trait {
+            Pred::Trait {
+                tr,
+                args,
+                subject,
+                asker,
+            } => Pred::Trait {
                 tr: *tr,
                 args: args.iter().map(|t| substitute_vars(t, mapping)).collect(),
                 subject: substitute_vars(subject, mapping),
+                asker: *asker,
             },
             Pred::Anon { row, given } => Pred::Anon {
                 row: substitute_vars(row, mapping),

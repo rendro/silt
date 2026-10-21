@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 0
+-- A type with a written `json.Decode` impl has the trait by the impl: its
+-- fields are not looked into (a `Set` has no decoder), at the top, as an
+-- element, as a map's value and as the type of a field of another type,
+-- also through a function that writes the bound.
+import json
+import set
+
+type Tags { s: Set(String) }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array(_) -> Ok(Tags { s: set.new() })
+      _ -> Err(json.TypeMismatch("array", "something else"))
+    }
+  }
+}
+
+type Post { tags: Tags, more: List(Tags) }
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  let _ = json.parse("[]", Tags)
+  let _ = json.parse_list("[]", Tags)
+  let _ = json.parse_map("\{}", Tags)
+  let _ = json.decode(json.Null, Post)
+  let _ = load("[]", Tags)
+}

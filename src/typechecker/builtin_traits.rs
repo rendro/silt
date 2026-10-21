@@ -303,6 +303,19 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     for (_, ty) in registry.types() {
         register_structural_traits_for(checker, &[ty.name], &["Encode"]);
     }
+    // `json.Decode`: the builtin types a json decoder takes as its type
+    // argument (`decode::target`). A record or enum type of the program
+    // has it by its structure; a container, a date and the other
+    // builtin types have none (a type written as a value names no
+    // container's arguments).
+    register_structural_traits_for(checker, JSON_DECODE_FORMS, &["Decode"]);
+    checker.tables.trait_impl_set.insert((
+        TraitKey::builtin("Decode"),
+        TypeRef {
+            id: crate::typeinfo::ty::JSON_VALUE,
+            name: intern("Value"),
+        },
+    ));
 
     // `==` on a value of an opaque type is the value's own equality (a
     // handle's identity, the bytes' content).
@@ -330,6 +343,10 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
 pub(super) const JSON_FORMS: &[&str] = &[
     "Int", "Float", "Bool", "String", "Unit", "List", "Tuple", "Map",
 ];
+
+/// The builtin types besides `json.Value` that are `json.Decode` by
+/// their structure: the primitives a json decoder takes.
+pub(super) const JSON_DECODE_FORMS: &[&str] = &["Int", "Float", "Bool", "String"];
 
 /// Say that each of `type_names` has each of the structural traits
 /// `trait_names`: a value of the type then has the trait's method as a

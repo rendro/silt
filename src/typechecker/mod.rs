@@ -21,6 +21,7 @@ mod exhaustiveness;
 mod infer;
 mod inference;
 mod init_order;
+mod json_decode;
 pub mod names;
 mod order;
 mod resolve;
@@ -70,13 +71,13 @@ pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Nu
 
 /// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
 /// with no impl (`Display` unless one is written for it). `Error` is
-/// not one: an impl of it is written. (`json.Encode`, a trait of the
-/// json module, is one too: [`WRITABLE_STRUCTURAL_TRAITS`].)
+/// not one: an impl of it is written. (`json.Encode` and `json.Decode`,
+/// traits of the json module, are too: [`WRITABLE_STRUCTURAL_TRAITS`].)
 pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 /// The builtin traits a type has by its structure unless an impl of
 /// the trait is written for it.
-pub(super) const WRITABLE_STRUCTURAL_TRAITS: &[&str] = &["Display", "Encode"];
+pub(super) const WRITABLE_STRUCTURAL_TRAITS: &[&str] = &["Display", "Encode", "Decode"];
 
 // ── The type checker ────────────────────────────────────────────────
 
@@ -97,12 +98,26 @@ pub struct TypeChecker {
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// The types of the module being checked that have a written
-    /// `Display` or `json.Encode` impl, each with the trait, known
-    /// before the impls are registered: such a type has the trait by
-    /// that impl, not by its structure.
+    /// `Display`, `json.Encode` or `json.Decode` impl, each with the
+    /// trait, known before the impls are registered: such a type has
+    /// the trait by that impl, not by its structure.
     pub(super) written: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The (place, type) pairs a missing trait is reported for.
     pub(super) lacking: std::collections::HashSet<(Span, String)>,
+    /// The types found to lack `json.Decode`, reported once the
+    /// module's bodies are checked (`settle_decode_gaps`): what asks it
+    /// of a declared bound is known then.
+    pub(super) decode_gaps: Vec<json_decode::DecodeGap>,
+    /// What each body asks `json.Decode` of its annotation variable for
+    /// (`Asked`), by the variable's representative.
+    pub(super) bound_askers: HashMap<TyVar, Asked>,
+    /// The variable of each `json.Decode` bound a trait declares for a
+    /// method, with the variables it is in the module's impls of the
+    /// method: what the trait's bound asks for is what they all ask for.
+    pub(super) bound_impls: HashMap<TyVar, Vec<TyVar>>,
+    /// The alias a use names the type a decoder is given by, at the
+    /// place of the type argument.
+    pub(super) decode_aliases: HashMap<Span, Symbol>,
     /// The row variables of the signatures of the module's functions
     /// (each by the variable it is in the function's scheme).
     pub(super) sig_rows: std::collections::HashSet<TyVar>,
@@ -351,6 +366,10 @@ impl TypeChecker {
             current_return_type: None,
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
+            decode_gaps: Vec::new(),
+            bound_askers: HashMap::new(),
+            bound_impls: HashMap::new(),
+            decode_aliases: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
             anon_waiting: Vec::new(),
@@ -1114,10 +1133,16 @@ impl TypeChecker {
                     other => other,
                 };
                 match pred {
-                    Pred::Trait { tr, args, subject } => Pred::Trait {
+                    Pred::Trait {
+                        tr,
+                        args,
+                        subject,
+                        asker,
+                    } => Pred::Trait {
                         tr,
                         args,
                         subject: rep(subject),
+                        asker,
                     },
                     Pred::Anon { row, given } => Pred::Anon {
                         row: rep(row),
@@ -1550,6 +1575,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     }
     checker.settle_rows();
     checker.settle_builtin_needs();
+    checker.settle_decode_gaps();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

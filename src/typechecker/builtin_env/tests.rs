@@ -102,7 +102,7 @@ fn a_row_s_scheme_is_its_signature() {
         show("json.parse"),
         (
             "Fn(String, type _) -> Result(_, JsonError)".to_string(),
-            vec![]
+            vec!["Decode".to_string()]
         )
     );
     assert_eq!(show("set.new"), ("Fn() -> Set(_)".to_string(), vec![]));

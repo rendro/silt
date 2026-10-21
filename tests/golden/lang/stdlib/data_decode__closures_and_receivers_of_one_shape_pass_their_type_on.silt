@@ -16,7 +16,7 @@ type Box(t) { v: t }
 type H(f) { f: f }
 
 trait Loader {
-  fn load(self, type a) -> Result(a, json.JsonError)
+  fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode
 }
 
 trait Loader for Src {
@@ -46,7 +46,7 @@ fn go(l, t) {
   l.load(t)
 }
 
-fn go_annotated(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+fn go_annotated(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
   l.load(b)
 }
 

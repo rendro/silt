@@ -37,7 +37,7 @@ type Job {
   by_host: Map(String, Status),
 }
 
-fn round_trip(text: String, type a) -> Result(a, json.JsonError) {
+fn round_trip(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.parse(text, a)
 }
 

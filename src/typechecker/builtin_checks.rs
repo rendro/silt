@@ -100,8 +100,10 @@ impl TypeChecker {
     /// error names the field and its type. A generic type, an enum given
     /// to a decoder that is not json's, a builtin enum, a builtin
     /// container type, or a primitive type given to a decoder that only
-    /// decodes records is refused as well.
-    fn decode_refusal(
+    /// decodes records is refused as well. For json (`json.Decode`), a
+    /// record or enum type with a written `json.Decode` impl is decoded
+    /// by the impl, and not looked into.
+    pub(super) fn decode_refusal(
         &self,
         builtin_name: &str,
         decoding: Decoding,
@@ -175,7 +177,8 @@ impl TypeChecker {
                 };
                 return refusal(Code::Undecodable, message, generic_help);
             }
-            let found = self.undecodable_field(head, family, &mut HashSet::new())?;
+            let impls = family == Family::Json;
+            let found = self.undecodable_field(head, family, impls, &mut HashSet::new())?;
             let (place, has, kind) = match found.in_variant {
                 true => ("variant", "a field of type", "an enum"),
                 false => ("field", "type", "a record"),
@@ -246,11 +249,14 @@ impl TypeChecker {
 
     /// The first field that `family` cannot decode, in the record or
     /// enum type `record` or in a record or enum type nested in it (which
-    /// `family.nested()` decodes). `None` if there is none.
+    /// `family.nested()` decodes). `None` if there is none. With
+    /// `impls`, a nested type with a written `json.Decode` impl is the
+    /// impl's to decode.
     fn undecodable_field(
         &self,
         record: TypeRef,
         family: Family,
+        impls: bool,
         seen: &mut HashSet<(TypeId, Family)>,
     ) -> Option<UndecodableField> {
         if !seen.insert((record.id, family)) {
@@ -293,7 +299,11 @@ impl TypeChecker {
             }
             for nested_record in nested {
                 let family = family.nested();
-                if let Some(found) = self.undecodable_field(type_ref(nested_record), family, seen) {
+                let nested_record = type_ref(nested_record);
+                if impls && !self.by_structure(TraitKey::builtin("Decode"), nested_record) {
+                    continue;
+                }
+                if let Some(found) = self.undecodable_field(nested_record, family, impls, seen) {
                     return Some(UndecodableField {
                         nested: true,
                         ..found

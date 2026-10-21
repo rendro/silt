@@ -198,13 +198,14 @@ impl TypeChecker {
             },
             other => other,
         };
-        let decoder = matches!(
-            pred,
+        let decoder = match &pred {
             Pred::Builtin {
                 check: BuiltinCheck::Decodes { .. },
                 ..
-            }
-        );
+            } => true,
+            Pred::Trait { tr, .. } => Self::is_decode(*tr),
+            _ => false,
+        };
         self.want_goal(Goal::Pred(pred), origin);
         let k = self.wanted.len() - 1;
         if decoder && !self.wanted[k].solved {
@@ -237,7 +238,12 @@ impl TypeChecker {
             if !self.wanted[i].solved {
                 let origin = self.wanted[i].origin;
                 match self.wanted[i].goal.clone() {
-                    Goal::Pred(Pred::Trait { tr, args, subject }) => {
+                    Goal::Pred(Pred::Trait {
+                        tr,
+                        args,
+                        subject,
+                        asker,
+                    }) => {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
@@ -245,7 +251,7 @@ impl TypeChecker {
                             // that owes two traits its type has neither
                             // of (`test.assert_eq(f, f)`) says the first.
                             let reported = self.errors.len();
-                            self.verify_trait_obligation(tr, &args, &subject, origin);
+                            self.verify_trait_obligation(tr, &args, &subject, origin, asker);
                             if self.errors.len() > reported {
                                 let key = (origin.span, self.show_type(&subject));
                                 if !self.lacking.insert(key) {
@@ -381,7 +387,7 @@ impl TypeChecker {
         result_ty: &Type,
         span: Span,
     ) -> bool {
-        let Some(entry) = self.method_entry(type_name, field) else {
+        let Some(entry) = self.method_entry(type_name, field, false) else {
             return false;
         };
         let instantiated = self.dispatch_method_entry(&entry, field, obj_ty, span);
@@ -509,7 +515,7 @@ impl TypeChecker {
                 }
                 // A method of a structural trait the type has no entry
                 // for.
-                if let Some(method_ty) = self.structural_method(&obj_ty, field, span) {
+                if let Some(method_ty) = self.structural_method(&obj_ty, field, false, span) {
                     self.last_field_access_was_method = false;
                     if let Some(t) = self.method_trait.take() {
                         self.deferred_method_traits.insert(span, t);
@@ -1263,6 +1269,7 @@ impl TypeChecker {
                         tr: *tr,
                         args: params,
                         subject: recv.clone(),
+                        asker: None,
                     },
                     origin,
                 );
@@ -1424,6 +1431,7 @@ impl TypeChecker {
         bound_trait_args: &[Type],
         ty: &Type,
         origin: Origin,
+        asker: Option<Asker>,
     ) {
         let span = origin.span;
         let resolved = self.apply(ty);
@@ -1432,6 +1440,9 @@ impl TypeChecker {
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
+            if Self::is_decode(trait_name) {
+                self.note_bound_asker(r, asker);
+            }
             self.require_declared_bound(r, trait_name, bound_trait_args, origin);
             return;
         }
@@ -1442,6 +1453,12 @@ impl TypeChecker {
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {
+            // `json.Decode` is what the json decoder decodes: its own
+            // judgement, which names the decoder.
+            if Self::is_decode(trait_name) {
+                self.want_decode(&resolved, origin, asker);
+                return;
+            }
             let mut walk = Walk::default();
             match self.structure_gap(trait_name, &resolved, &mut walk, 0) {
                 Some(gap) => {
@@ -1470,6 +1487,7 @@ impl TypeChecker {
                                 tr: trait_name,
                                 args: Vec::new(),
                                 subject: part,
+                                asker: None,
                             },
                             origin,
                         );
@@ -1931,6 +1949,7 @@ impl TypeChecker {
                 callee: None,
                 op: None,
             },
+            None,
         );
         self.wanted.truncate(owed);
     }
@@ -2202,10 +2221,11 @@ impl TypeChecker {
     /// The traits that give the type `ty` a method `method`, in the
     /// order of their names: those of the session's impls, and the
     /// structural trait whose method it is when no impl of that trait
-    /// is written for the type.
-    fn method_providers(&self, ty: TypeRef, method: Symbol) -> Vec<TraitKey> {
+    /// is written for the type, for a call through the type (`on_type`,
+    /// `T.method(..)`) or on a value.
+    fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
-        if let Some(tr) = self.structural_provider(ty, method)
+        if let Some(tr) = self.structural_provider(ty, method, on_type)
             && !traits.contains(&tr)
         {
             traits.push(tr);
@@ -2215,13 +2235,20 @@ impl TypeChecker {
     }
 
     /// The structural trait whose method `method` the type `ty` has by
-    /// its structure: one of the four names, of a type that has the
-    /// name (`Tables::has_structural_name`) and no written impl of the
-    /// trait.
-    fn structural_provider(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
-        let method = resolve(method);
-        let (name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == method)?;
-        let tr = TraitKey::builtin(name);
+    /// its structure: one of their names, of a type that has the name
+    /// (`Tables::has_structural_name`) and no written impl of the trait.
+    /// A structural method that takes no `self` (`decode`) is no method
+    /// of a call on a value (not `on_type`): such a call means another
+    /// trait's method of the name, if one has it.
+    fn structural_provider(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Option<TraitKey> {
+        let name = resolve(method);
+        let (tr_name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == name)?;
+        let tr = TraitKey::builtin(tr_name);
+        let takes_self =
+            (self.tables.traits.get(&tr)).is_none_or(|info| info.receivers.contains(&method));
+        if !on_type && !takes_self {
+            return None;
+        }
         (self.tables.has_structural_name(tr, ty) && self.by_structure(tr, ty)).then_some(tr)
     }
 
@@ -2255,8 +2282,13 @@ impl TypeChecker {
     /// reach by its imports it has not. It is decided from the impls'
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
-    pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
-        let providers = self.method_providers(ty, method);
+    pub(super) fn method_entry(
+        &self,
+        ty: TypeRef,
+        method: Symbol,
+        on_type: bool,
+    ) -> Option<MethodEntry> {
+        let providers = self.method_providers(ty, method, on_type);
         let tr = match self.meant_provider(&providers) {
             Ok(tr) => tr?,
             Err(candidates) => candidates[0],
@@ -2281,7 +2313,7 @@ impl TypeChecker {
     /// Whether a value of the type `ty` has a method `method`, whatever
     /// the module checked may call.
     pub(super) fn has_method(&self, ty: TypeRef, method: Symbol) -> bool {
-        !self.method_providers(ty, method).is_empty()
+        !self.method_providers(ty, method, false).is_empty()
     }
 
     /// The names of the methods of the type `ty`.
@@ -2295,7 +2327,7 @@ impl TypeChecker {
             .collect();
         for (_, method) in STRUCTURAL_METHODS {
             let method = intern(method);
-            if self.structural_provider(ty, method).is_some() {
+            if self.structural_provider(ty, method, false).is_some() {
                 names.push(method);
             }
         }
@@ -2321,9 +2353,10 @@ impl TypeChecker {
         &mut self,
         ty: TypeRef,
         method: Symbol,
+        on_type: bool,
         span: Span,
     ) -> bool {
-        let providers = self.method_providers(ty, method);
+        let providers = self.method_providers(ty, method, on_type);
         let Err(traits) = self.meant_provider(&providers) else {
             return false;
         };

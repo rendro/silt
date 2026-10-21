@@ -1,5 +1,5 @@
 -- cmd: repl
--- stdin: import json\ntype Src { s: String }\ntrait Loader { fn load(self, type a) -> Result(a, json.JsonError) }\ntrait Loader for Src { fn load(self, type a) -> Result(a, json.JsonError) { json.parse(self.s, a) } }\nfn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader { l.load(b) }\ntype Blob { b: Bytes }\ntype Fine { n: Int }\ngo(Src { s: "\{\"n\": 1}" }, Fine)\ngo(Src { s: "\{}" }, Blob)\n:quit\n
+-- stdin: import json\ntype Src { s: String }\ntrait Loader { fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode }\ntrait Loader for Src { fn load(self, type a) -> Result(a, json.JsonError) { json.parse(self.s, a) } }\nfn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode { l.load(b) }\ntype Blob { b: Bytes }\ntype Fine { n: Int }\ngo(Src { s: "\{\"n\": 1}" }, Fine)\ngo(Src { s: "\{}" }, Blob)\n:quit\n
 -- A trait, its impl and a generic function that calls its method on a
 -- bounded parameter, each in an entry of its own: a later entry that
 -- calls the function is checked with the type it gives.

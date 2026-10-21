@@ -10,11 +10,11 @@ import toml
 
 type Blob { name: String, b: Bytes }
 
-fn from_json(text: String, type a) -> Result(a, json.JsonError) {
+fn from_json(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.parse(text, a)
 }
 
-fn list_of(text: String, type a) -> Result(List(a), json.JsonError) {
+fn list_of(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
   json.parse_list(text, a)
 }
 

@@ -4,12 +4,13 @@
 -- another function of its module too, asks of the type each call gives
 -- it what the decoder asks: in an importing module, and through that
 -- module's own `type c` parameter.
+import json
 import store
 
 type Blob { data: Set(Int) }
 type Fine { n: Int }
 
-fn mine(text: String, type c) -> String {
+fn mine(text: String, type c) -> String where c: json.Decode {
   match store.via(text, c) {
     Ok(_) -> "ok"
     Err(_) -> "err"

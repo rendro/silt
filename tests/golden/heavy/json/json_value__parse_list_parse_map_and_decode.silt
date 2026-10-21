@@ -2,7 +2,7 @@
 -- json.decode takes the primitive types json.parse takes.
 import json
 
-fn as_type(v: json.Value, type a) -> Result(a, json.JsonError) {
+fn as_type(v: json.Value, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.decode(v, a)
 }
 

@@ -169,6 +169,10 @@ impl TypeChecker {
                         tr: trait_name,
                         args,
                         subject: Type::Var(tv),
+                        asker: Asker::of_bound(trait_name, tv).map(|asker| Asker {
+                            passer: Some(f.name),
+                            ..asker
+                        }),
                     });
                 }
             } else {

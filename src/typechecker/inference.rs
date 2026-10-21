@@ -224,22 +224,31 @@ impl TypeChecker {
     }
 
     /// `recv.method` where `method` is the method of a builtin
-    /// structural trait (`compare`, `equal`, `hash`, `display`) and no
-    /// impl of the trait is written for the receiver's type: the type
-    /// has the method when it has the trait by its structure, which the
-    /// access owes. The other operand of `compare` and `equal` is of
-    /// the receiver's type.
+    /// structural trait (`compare`, `equal`, `hash`, `display`,
+    /// `encode`, `decode`) and no impl of the trait is written for the
+    /// receiver's type: the type has the method when it has the trait by
+    /// its structure, which the access owes. The other operand of
+    /// `compare` and `equal` is of the receiver's type; the method of a
+    /// trait of the json module has the type its trait declares, at the
+    /// receiver's type (`decode`, which takes no `self`, is
+    /// `Fn(json.Value) -> Result(T, json.JsonError)`, and a method only
+    /// of a call through the type, `on_type`).
     pub(super) fn structural_method(
         &mut self,
         recv: &Type,
         method: Symbol,
+        on_type: bool,
         span: Span,
     ) -> Option<Type> {
         let (tr, others, result) = match resolve(method).as_str() {
-            "compare" => ("Compare", 1, Type::Int),
-            "equal" => ("Equal", 1, Type::Bool),
-            "hash" => ("Hash", 0, Type::Int),
-            "display" => ("Display", 0, Type::String),
+            // (Called through the type only: it takes no `self`.)
+            "decode" if !on_type => return None,
+            "compare" => ("Compare", 1, Some(Type::Int)),
+            "equal" => ("Equal", 1, Some(Type::Bool)),
+            "hash" => ("Hash", 0, Some(Type::Int)),
+            "display" => ("Display", 0, Some(Type::String)),
+            "encode" => ("Encode", 0, None),
+            "decode" => ("Decode", 0, None),
             _ => return None,
         };
         let tr = TraitKey::builtin(tr);
@@ -247,23 +256,40 @@ impl TypeChecker {
         if !self.by_structure(tr, head) {
             return None;
         }
+        let ty = match result {
+            Some(result) => {
+                let mut params = vec![recv.clone()];
+                params.extend(std::iter::repeat_n(recv.clone(), others));
+                Type::Fun(params, Box::new(result))
+            }
+            None => {
+                let info = self.tables.traits.get(&tr)?;
+                let (_, declared) = info.methods.iter().find(|(name, _)| *name == method)?;
+                let mapping = HashMap::from([(info.self_var, recv.clone())]);
+                substitute_vars(declared, &mapping)
+            }
+        };
+        // (A refusal of `T.decode` names it so.)
+        let callee = match tr.is_builtin("Decode") {
+            true => intern(&format!("{head}.{method}")),
+            false => method,
+        };
         self.want(
             Pred::Trait {
                 tr,
                 args: Vec::new(),
                 subject: recv.clone(),
+                asker: None,
             },
             Origin {
                 span,
-                callee: Some(method),
+                callee: Some(callee),
                 op: None,
             },
         );
         self.last_field_access_was_method = true;
         self.method_trait = Some(tr);
-        let mut params = vec![recv.clone()];
-        params.extend(std::iter::repeat_n(recv.clone(), others));
-        Some(Type::Fun(params, Box::new(result)))
+        Some(ty)
     }
 
     /// The map or set literal at `span` hashes values of the type
@@ -274,6 +300,7 @@ impl TypeChecker {
                 tr: TraitKey::builtin("Hash"),
                 args: Vec::new(),
                 subject: key.clone(),
+                asker: None,
             },
             Origin {
                 span,
@@ -295,6 +322,7 @@ impl TypeChecker {
                 tr: TraitKey::builtin(tr),
                 args: Vec::new(),
                 subject: operand.clone(),
+                asker: None,
             },
             Origin {
                 span,
@@ -653,7 +681,7 @@ impl TypeChecker {
             return Type::Error;
         }
         if let Some(head) = head
-            && self.ambiguous_method_call(head, method_name, span)
+            && self.ambiguous_method_call(head, method_name, false, span)
         {
             return Type::Error;
         }
@@ -661,7 +689,7 @@ impl TypeChecker {
         // the trait by its structure, which the call owes. The entry
         // only says that the name is the trait's.
         if entry.structural
-            && let Some(method_ty) = self.structural_method(receiver_ty, method_name, span)
+            && let Some(method_ty) = self.structural_method(receiver_ty, method_name, false, span)
         {
             return method_ty;
         }
@@ -701,6 +729,7 @@ impl TypeChecker {
                     tr,
                     args: Vec::new(),
                     subject: receiver_ty.clone(),
+                    asker: None,
                 },
                 Origin {
                     span,
@@ -796,14 +825,14 @@ impl TypeChecker {
                 // the effective type name (same path as
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
-                let entry = self.method_entry(name, field)?;
+                let entry = self.method_entry(name, field, true)?;
                 if let Some(trait_name) = entry.trait_name
                     && self.private_owner(trait_name).is_some()
                 {
                     self.private_method(trait_name, field, span);
                     return Some(Type::Error);
                 }
-                if self.ambiguous_method_call(name, field, span) {
+                if self.ambiguous_method_call(name, field, true, span) {
                     return Some(Type::Error);
                 }
                 if self.of_every_shape(name, &entry, field, span) {
@@ -832,7 +861,7 @@ impl TypeChecker {
         field: Symbol,
         span: Span,
     ) -> Type {
-        let method = self.structural_method(inner, field, span);
+        let method = self.structural_method(inner, field, true, span);
         self.last_field_access_was_method = false;
         match method {
             Some(method) => self.apply(&method),
@@ -992,6 +1021,7 @@ impl TypeChecker {
                 tr,
                 args,
                 subject: Type::Var(var),
+                ..
             } = pred
             {
                 self.declare_bound(*var, *tr, args.clone());
@@ -1420,12 +1450,17 @@ impl TypeChecker {
                         // A type argument the call names by an alias:
                         // what a decoder's refusal calls it.
                         let alias = self.alias_named(arg);
-                        if let Goal::Pred(Pred::Builtin {
-                            check: BuiltinCheck::Decodes { written, .. },
-                            ..
-                        }) = &mut self.wanted[k].goal
-                        {
-                            *written = alias;
+                        match &mut self.wanted[k].goal {
+                            Goal::Pred(Pred::Builtin {
+                                check: BuiltinCheck::Decodes { written, .. },
+                                ..
+                            }) => *written = alias,
+                            Goal::Pred(Pred::Trait { tr, .. }) if Self::is_decode(*tr) => {
+                                if let Some(alias) = alias {
+                                    self.decode_aliases.insert(arg.span, alias);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -1687,6 +1722,7 @@ impl TypeChecker {
                                 tr: TraitKey::builtin("Display"),
                                 args: Vec::new(),
                                 subject: resolved,
+                                asker: None,
                             },
                             Origin {
                                 span: expr_span,
@@ -1941,7 +1977,7 @@ impl TypeChecker {
                 };
                 if let Some(ty) = type_ref {
                     let key = (canonical_head(&self.tables.resolver, ty), field);
-                    if let Some(entry) = self.method_entry(key.0, key.1) {
+                    if let Some(entry) = self.method_entry(key.0, key.1, true) {
                         if let Some(trait_name) = entry.trait_name
                             && self.private_owner(trait_name).is_some()
                         {
@@ -1949,7 +1985,7 @@ impl TypeChecker {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
-                        if self.ambiguous_method_call(key.0, field, span) {
+                        if self.ambiguous_method_call(key.0, field, true, span) {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
@@ -2057,7 +2093,8 @@ impl TypeChecker {
                             };
                             self.unify(&obj_ty, &extended, span);
                             result_ty
-                        } else if let Some(method_ty) = self.structural_method(&obj_ty, field, span)
+                        } else if let Some(method_ty) =
+                            self.structural_method(&obj_ty, field, false, span)
                         {
                             // A method every value has that its parts
                             // allow (`{a: 1}.display()`), as on a tuple.
@@ -2118,7 +2155,7 @@ impl TypeChecker {
                             return resolved;
                         }
                         // Check method table (trait methods)
-                        if let Some(entry) = self.method_entry(*type_name, field) {
+                        if let Some(entry) = self.method_entry(*type_name, field, false) {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -2136,7 +2173,8 @@ impl TypeChecker {
                         }
                         // A method of a structural trait the type has
                         // no entry for (`Some(1).compare(Some(2))`).
-                        if let Some(method_ty) = self.structural_method(&obj_ty, field, span) {
+                        if let Some(method_ty) = self.structural_method(&obj_ty, field, false, span)
+                        {
                             expr.ty = Some(method_ty.clone());
                             return method_ty;
                         }
@@ -2177,7 +2215,7 @@ impl TypeChecker {
                         // dispatch_type_for_value(Value::Unit)), `Fn` of a
                         // function.
                         let type_name = head_of(&obj_ty).expect("a primitive head has a type");
-                        if let Some(entry) = self.method_entry(type_name, field) {
+                        if let Some(entry) = self.method_entry(type_name, field, false) {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
@@ -2217,7 +2255,7 @@ impl TypeChecker {
                         let type_name = self
                             .type_name_for_impl(t)
                             .expect("container head has canonical name");
-                        if let Some(entry) = self.method_entry(type_name, field) {
+                        if let Some(entry) = self.method_entry(type_name, field, false) {
                             let instantiated =
                                 self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);

@@ -1,9 +1,9 @@
 import json
 
-pub fn load(text: String, type a) -> Result(a, json.JsonError) {
+pub fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.parse(text, a)
 }
 
-pub fn via(text: String, type b) -> Result(b, json.JsonError) {
+pub fn via(text: String, type b) -> Result(b, json.JsonError) where b: json.Decode {
   load(text, b)
 }

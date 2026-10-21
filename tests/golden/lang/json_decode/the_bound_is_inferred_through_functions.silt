@@ -1,0 +1,15 @@
+-- cmd: run
+-- exit: 0
+-- A function without annotations that gives a type to a json decoder
+-- needs `json.Decode` of what it is given, inferred: no `where` clause.
+import json
+
+type Point { x: Int, y: Int }
+
+fn load(text, t) {
+  json.parse(text, t)
+}
+
+fn main() {
+  println(load("""{"x": 1, "y": 2}""", Point))
+}

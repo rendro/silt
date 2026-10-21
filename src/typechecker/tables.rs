@@ -264,12 +264,13 @@ impl<K: Copy + Eq + std::hash::Hash> Table<std::collections::HashSet<K>, K> {
 }
 
 /// The structural traits, each with its method.
-pub(super) const STRUCTURAL_METHODS: [(&str, &str); 5] = [
+pub(super) const STRUCTURAL_METHODS: [(&str, &str); 6] = [
     ("Display", "display"),
     ("Equal", "equal"),
     ("Compare", "compare"),
     ("Hash", "hash"),
     ("Encode", "encode"),
+    ("Decode", "decode"),
 ];
 
 /// The key of an impl's method: the type the impl is for, the method's

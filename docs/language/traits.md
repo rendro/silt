@@ -685,7 +685,11 @@ type has it by its structure when each of its parts has a json form
 (`Bytes`, a set, a function, a channel and a handle have none; a map
 asks it of its values only), a `trait json.Encode for T` in the module
 of `T` replaces it as a written `Display` impl does, and a program names
-it `json.Encode` (see [json](../stdlib/json.md#jsonencode)).
+it `json.Encode` (see [json](../stdlib/json.md#jsonencode)). Likewise
+`json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
+need `json.Decode` of the type they decode into: a type has it when the
+json decoders decode it (see [json](../stdlib/json.md#jsondecode)), and a
+function that hands a type variable to one writes `where a: json.Decode`.
 
 ```silt
 type Job { name: String, run: Fn(Int) -> Int }

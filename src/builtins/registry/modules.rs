@@ -307,14 +307,17 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type JsonError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
                 pub type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }\n\
             ",
-            traits: "pub trait Encode { fn encode(self) -> Value }",
+            traits: "\
+                pub trait Encode { fn encode(self) -> Value }\n\
+                pub trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }\n\
+            ",
             error: "JsonError" => json::error_text,
             rows: [
-                f("fn decode(value: Value, type a) -> Result(a, JsonError)", "Decode a json.Value into a typed value", json::decode).decodes(Decoding::JSON),
+                f("fn decode(value: Value, type a) -> Result(a, JsonError) where a: Decode", "Decode a json.Value into a typed value", json::decode).decodes(Decoding::JSON),
                 f("fn encode(value: a) -> Value where a: Encode", "Encode a value as a json.Value", json::encode),
-                f("fn parse(s: String, type a) -> Result(a, JsonError)", "Parse JSON object into record", json::parse).decodes(Decoding::JSON),
-                f("fn parse_list(s: String, type a) -> Result(List(a), JsonError)", "Parse a JSON array into a list", json::parse_list).decodes(Decoding::JSON),
-                f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError)", "Parse JSON object into map", json::parse_map).decodes(Decoding::JSON),
+                f("fn parse(s: String, type a) -> Result(a, JsonError) where a: Decode", "Parse JSON object into record", json::parse).decodes(Decoding::JSON),
+                f("fn parse_list(s: String, type a) -> Result(List(a), JsonError) where a: Decode", "Parse a JSON array into a list", json::parse_list).decodes(Decoding::JSON),
+                f("fn parse_map(s: String, type a) -> Result(Map(String, a), JsonError) where a: Decode", "Parse JSON object into map", json::parse_map).decodes(Decoding::JSON),
                 f("fn pretty(value: a) -> String where a: Encode", "Pretty-print value as JSON", json::pretty),
                 f("fn stringify(value: a) -> String where a: Encode", "Serialize value as compact JSON", json::stringify),
             ],

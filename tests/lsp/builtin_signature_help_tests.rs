@@ -135,7 +135,7 @@ fn a_type_parameter_and_a_where_bound_are_shown_as_written() {
     let signature = &help["signatures"][0];
     assert_eq!(
         signature["label"],
-        "fn json.parse(s: String, type a) -> Result(a, JsonError)"
+        "fn json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode"
     );
     assert_eq!(parameters(signature), ["s: String", "type a"]);
     let help = signature_help("map_get", source, 4, 10);

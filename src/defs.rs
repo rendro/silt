@@ -236,6 +236,7 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
         "hash" => "Hash",
         "message" => "Error",
         "encode" => "Encode",
+        "decode" => "Decode",
         _ => return None,
     };
     builtin_trait_id(name)

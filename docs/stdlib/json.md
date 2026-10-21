@@ -14,11 +14,11 @@ A document whose shape is not known in advance is read into a
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `decode` | `(Value, type a) -> Result(a, JsonError)` | Decode a json.Value into a typed value |
+| `decode` | `(Value, type a) -> Result(a, JsonError) where a: Decode` | Decode a json.Value into a typed value |
 | `encode` | `(a) -> Value where a: Encode` | Encode a value as a json.Value |
-| `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
-| `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse a JSON array into a list |
-| `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError)` | Parse JSON object into map |
+| `parse` | `(String, type a) -> Result(a, JsonError) where a: Decode` | Parse JSON object into record |
+| `parse_list` | `(String, type a) -> Result(List(a), JsonError) where a: Decode` | Parse a JSON array into a list |
+| `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError) where a: Decode` | Parse JSON object into map |
 | `pretty` | `(a) -> String where a: Encode` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String where a: Encode` | Serialize value as compact JSON |
 
@@ -86,23 +86,21 @@ A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
 that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
 
-The type a decoder is given is checked where it is known: written at the
-call (`json.parse(text, Config)`), held in a variable, given to a decoder
-used as a value, or given to a function or method that passes it on to the
-decoder (`fn load(text, type a) { json.parse(text, a) }`: each call of
-`load` is checked, and the error notes that `load` passes it to
-`json.parse`). A trait method passes it on too, also one called on a value
-whose type is a type variable (`fn go(l: l, type b) where l: Loader {
-l.load(b) }`): each call of `go` is checked against the method of the type
-it gives `l`. A
-record with a field no decoder exists for is a compile error that names the
-field and its type, and so is an enum with a variant whose field has none
-(the error names the variant); so is a generic record or enum, or a type the
-function does not take (such as `json.parse(text, List)`). The check applies
-equally to a decoder imported by name (`import json.{ parse }`) and to one
-called through a module alias, and a type is refused whatever a document
-would hold (an `Option` field whose key is left out, another variant of the
-enum, an empty list or map too).
+These are the types that have [`json.Decode`](#jsondecode), which
+the four functions need of their type argument. A type is checked where it
+is known: written at the call (`json.parse(text, Config)`), held in a
+variable, given to a decoder used as a value, or given to a function or
+method that passes it on to the decoder (`fn load(text, type a) where a:
+json.Decode { json.parse(text, a) }`: each call of `load` is checked, and
+the error notes that `load` passes it to `json.parse`). A record with a
+field no decoder exists for is a compile error that names the field and its
+type, and so is an enum with a variant whose field has none (the error names
+the variant); so is a generic record or enum, or a type the function does
+not take (such as `json.parse(text, List)`). The check applies equally to a
+decoder imported by name (`import json.{ parse }`) and to one called
+through a module alias, and a type is refused whatever a document would hold
+(an `Option` field whose key is left out, another variant of the enum, an
+empty list or map too).
 
 
 ## Enums
@@ -246,7 +244,7 @@ fn main() {
 ```
 
 A record field of type `json.Value` keeps that part of the document as it
-is, for [`json.decode`](#jsondecode) to read once its shape is known. Like
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
 is `json.Null`); a field of type `Option(json.Value)` may be left out.
 
@@ -324,10 +322,57 @@ fn main() {
 ```
 
 
+## `json.Decode`
+
+```
+trait Decode {
+  fn decode(value: Value) -> Result(Self, JsonError)
+}
+```
+
+What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
+need of the type they decode into. A type has it by its structure: the
+types of [Decodable types](#decodable-types) have it, a record or enum
+type of the program when the types of its fields do. A container, a date
+and a time are decoded as the type of a field, not as the type a decoder
+is given (a type written as a value names no list's element type). A
+function that hands a type variable to a decoder says so, as for
+`json.Encode`; one without annotations is inferred to need it:
+
+```silt
+import json
+
+type Config {
+  port: Int,
+}
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  println(load("""{"port": 80}""", Config)) -- Ok(Config {port: 80})
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Decode', which 'json.parse' needs
+```
+
+A type that lacks it is refused at the call that gives it, as a decoder
+refuses it, with the function that passes it on in a note:
+
+```text
+`json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `load` passes it to `json.parse`
+```
+
 ## `json.decode`
 
 ```
-json.decode(value: Value, type a) -> Result(a, JsonError)
+json.decode(value: Value, type a) -> Result(a, JsonError) where a: Decode
 ```
 
 Decodes a `json.Value` into the type `a`, as `json.parse` decodes the
@@ -377,7 +422,7 @@ a record and a map are a `json.Object`, whose keys come out sorted (so
 their names, `json.stringify(r)` in the order its type declares them), a
 `None` and `()` are `json.Null`. Written [`json.Encode`](#jsonencode) impls
 are used wherever their types are in the value, at the top too: the
-counterpart of [`json.decode`](#jsondecode). An impl's `encode` uses it for
+counterpart of [`json.decode`](#jsondecode-1). An impl's `encode` uses it for
 the parts it writes; for its own value (`json.encode(self)`) it would call
 itself without end. `x.encode()` is the same as `json.encode(x)`, in a
 module that imports json.
@@ -406,7 +451,7 @@ fn main() {
 ## `json.parse`
 
 ```
-json.parse(s: String, type a) -> Result(a, JsonError)
+json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
 ```
 
 Parses a JSON string into a record of type `a`. The type is passed as a `type`
@@ -468,7 +513,7 @@ fn main() -> Result(Unit, json.JsonError) {
 ## `json.parse_list`
 
 ```
-json.parse_list(s: String, type a) -> Result(List(a), JsonError)
+json.parse_list(s: String, type a) -> Result(List(a), JsonError) where a: Decode
 ```
 
 Parses a JSON array into a list of `a`, each element decoded as
@@ -498,7 +543,7 @@ fn main() {
 ## `json.parse_map`
 
 ```
-json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError)
+json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError) where a: Decode
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`

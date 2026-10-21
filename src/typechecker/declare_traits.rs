@@ -1519,6 +1519,25 @@ impl TypeChecker {
                     }
                 }
                 declared_bounds = Self::bounds_under(info, method.name, &mapping);
+                // A `json.Decode` bound asks what this body asks of its
+                // variable; a note names the method `Src.load`.
+                let passer = intern(&format!("{target_type}.{}", method.name));
+                for pred in &mut declared_bounds {
+                    if let Pred::Trait {
+                        subject: Type::Var(var),
+                        asker: Some(asker),
+                        ..
+                    } = pred
+                    {
+                        if let Asked::Bound(declared) = asker.by {
+                            self.bound_impls.entry(declared).or_default().push(*var);
+                        }
+                        *asker = Asker {
+                            by: Asked::Bound(*var),
+                            passer: Some(passer),
+                        };
+                    }
+                }
                 substitute_vars(ty, &mapping)
             });
             let has_declared_type = seeded.is_some();
@@ -1759,6 +1778,7 @@ impl TypeChecker {
                         .cloned()
                         .unwrap_or_default(),
                     subject: self_type.clone(),
+                    asker: None,
                 });
             }
             if let Type::Fun(params, ret) = body_type {
@@ -1791,8 +1811,29 @@ impl TypeChecker {
                     mapping.entry(v).or_insert_with(|| self.fresh_var());
                 }
                 let mut method_constraints = impl_level_constraints.clone();
-                method_constraints.extend(Self::bounds_under(info, *name, &mapping));
                 let passer = intern(&format!("{target_type}.{name}"));
+                // (A `json.Decode` bound asks what the trait's body asks.)
+                method_constraints.extend(
+                    Self::bounds_under(info, *name, &mapping)
+                        .into_iter()
+                        .map(|pred| match pred {
+                            Pred::Trait {
+                                tr,
+                                args,
+                                subject,
+                                asker: Some(asker),
+                            } => Pred::Trait {
+                                tr,
+                                args,
+                                subject,
+                                asker: Some(Asker {
+                                    passer: Some(passer),
+                                    ..asker
+                                }),
+                            },
+                            other => other,
+                        }),
+                );
                 method_constraints
                     .extend(self.given_to_default(trait_key, info, *name, &mapping, passer));
                 self.register_method_entry(
@@ -1960,7 +2001,9 @@ impl TypeChecker {
         // What the declared bounds say of `var`, supertraits included.
         let outer = self.bounds.remove(&var);
         for pred in declared {
-            if let Pred::Trait { tr, args, subject } = pred
+            if let Pred::Trait {
+                tr, args, subject, ..
+            } = pred
                 && *subject == Type::Var(var)
             {
                 self.declare_bound(var, *tr, args.clone());
