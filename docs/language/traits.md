@@ -688,8 +688,9 @@ of `T` replaces it as a written `Display` impl does, and a program names
 it `json.Encode` (see [json](../stdlib/json.md#jsonencode)). Likewise
 `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
 need `json.Decode` of the type they decode into: a type has it when the
-json decoders decode it (see [json](../stdlib/json.md#jsondecode)), and a
-function that hands a type variable to one writes `where a: json.Decode`.
+json decoders decode it (see [json](../stdlib/json.md#jsondecode)). A
+function with a `type a` parameter that hands it to one writes `where a:
+json.Decode`; only a function with no annotation at all has it inferred.
 
 ```silt
 type Job { name: String, run: Fn(Int) -> Int }
