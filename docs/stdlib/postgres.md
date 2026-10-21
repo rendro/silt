@@ -86,6 +86,7 @@ value:
 | a `List` | an array (`{"1","2"}`) where the statement's parameter is an array (`id = ANY($1)`), and JSON anywhere else |
 | a variant without fields | its name, as a `String` is sent (so `Active` goes into a `text` column, or a postgres enum with the label `Active`) |
 | a record, a `Map`, a tuple, a variant with fields, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
+| a value of a type with a written [`json.Encode`](json.md#jsonencode) impl | the `json.Value` its `encode` gives, sent as a `json.Value` is (JSON), wherever the value is in the parameter |
 
 A `DateTime` read from a `timestamptz` (in UTC, see the table of
 [Rows](#rows)) and sent back is the same instant whatever the session's

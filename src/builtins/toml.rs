@@ -47,7 +47,7 @@ use chrono::{NaiveDate, NaiveTime};
 use super::registry::decoding::Family;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::VmError;
+use crate::vm::{Step, Vm, VmError};
 
 use super::data::{self, Data, Format};
 use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, shown};
@@ -298,9 +298,21 @@ static PARSE_MAP: Decoder = Decoder::new("toml.parse_map");
 
 /// `value` as TOML text, for `toml.<name>`, `pretty` or not:
 /// `Ok(text)`, or the `TomlError` of a value that TOML has no form for.
-fn written(name: &str, value: &Value, pretty: bool) -> Value {
+/// (A part of a type with a written `json.Encode` impl is written as
+/// the `json.Value` the impl gives, which is the program's code: a
+/// step.)
+fn written(vm: &mut Vm, name: &str, value: &Value, pretty: bool) -> Result<Step, VmError> {
     let caller = format!("toml.{name}");
-    let data = match data::data(&caller, Format::Toml, value).and_then(|d| top_level(&caller, d)) {
+    vm.encode(&caller.clone(), Format::Toml, value, move |_, data| {
+        Ok(Step::Done(text(&caller, data, pretty)))
+    })
+}
+
+/// The TOML text `caller` writes of `data`, `pretty` or not:
+/// `Ok(text)`, or the `TomlError` of a value that TOML has no form for
+/// (the error the writer gave in place of the data, if it gave one).
+fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Value {
+    let data = match data.and_then(|d| top_level(caller, d)) {
         Ok(data) => data,
         Err(e) => return toml_unknown_err(e.message),
     };
@@ -366,12 +378,12 @@ builtins! {
         })
     }
 
-    fn stringify(value: &Value) -> Value {
-        written("stringify", value, false)
+    fn stringify(vm, value: &Value) -> Result<Step, VmError> {
+        written(vm, "stringify", value, false)
     }
 
-    fn pretty(value: &Value) -> Value {
-        written("pretty", value, true)
+    fn pretty(vm, value: &Value) -> Result<Step, VmError> {
+        written(vm, "pretty", value, true)
     }
 }
 
@@ -425,9 +437,12 @@ mod tests {
                             _ => Value::list(vec![inner]),
                         })
                 };
-                let text = written("stringify", &nested(MAX_ENCODE_DEPTH), false);
-                let pretty = written("pretty", &nested(MAX_ENCODE_DEPTH), true);
-                let refused = written("pretty", &nested(MAX_ENCODE_DEPTH + 1), true);
+                let written = |caller: &str, value: &Value, pretty| {
+                    text(caller, data::data(caller, Format::Toml, value), pretty)
+                };
+                let text = written("toml.stringify", &nested(MAX_ENCODE_DEPTH), false);
+                let pretty = written("toml.pretty", &nested(MAX_ENCODE_DEPTH), true);
+                let refused = written("toml.pretty", &nested(MAX_ENCODE_DEPTH + 1), true);
                 (
                     [text, pretty].map(|v| v.to_string().len()),
                     format!("{refused:?}"),

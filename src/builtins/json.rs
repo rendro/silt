@@ -455,7 +455,7 @@ fn written_text(
     pretty: bool,
 ) -> Result<Step, VmError> {
     vm.encode(caller, Format::Json, value, move |_, data| {
-        let text = text(caller, &data, pretty)?;
+        let text = text(caller, &data?, pretty)?;
         Ok(Step::Done(Value::String(text.into())))
     })
 }

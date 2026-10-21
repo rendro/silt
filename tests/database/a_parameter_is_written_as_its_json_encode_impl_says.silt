@@ -1,0 +1,55 @@
+-- A parameter of a type with a written `json.Encode` impl is sent as the
+-- `json.Value` the impl gives, wherever the value of the type is: at
+-- the parameter's place it is a `json.Value` there, sent as JSON text;
+-- inside a record or a list it is that part of the JSON. So in
+-- `postgres.query`, `postgres.execute`, `postgres.stream` and
+-- `postgres.cursor`.
+import channel
+import env
+import json
+import postgres
+
+type Money {
+  cents: Int,
+}
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.Int(self.cents)
+  }
+}
+
+type Out {
+  v: String,
+}
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  let m = Money { cents: 1250 }
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println(postgres.query(db, "SELECT $1::jsonb::text AS v", (m,), Out))
+      println(postgres.query(db, "SELECT $1::jsonb::text AS v", ({ total: m, n: 1 },), Out))
+      println(postgres.query(db, "SELECT $1::jsonb::text AS v", ([Some(m), None],), Out))
+      println(postgres.execute(db, "SELECT $1::jsonb", (m,)))
+      match postgres.stream(db, "SELECT $1::jsonb::text AS v", ((m, "a"),), Out) {
+        Ok(rows) -> println("a stream: {channel.receive(rows)}")
+        Err(e) -> println("a stream: {e.message()}")
+      }
+      let read = postgres.transact(db) { tx ->
+        let c = postgres.cursor(tx, "SELECT $1::jsonb::text AS v", (#{"price": m},), 2, Out)?
+        let batch = postgres.cursor_next(c)?
+        let _ = postgres.cursor_close(c)?
+        Ok(batch)
+      }
+      println("a cursor: {read}")
+    }
+    Err(e) -> println(e.message())
+  }
+}

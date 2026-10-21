@@ -1,0 +1,27 @@
+-- `toml.stringify` and `toml.pretty` write a value of a type with a
+-- written `json.Encode` impl as the `json.Value` the impl gives, wherever
+-- it is, by TOML's rules: a `json.Null` in an array has no form, and
+-- what the impl gives at the top must be a table.
+import json
+import toml
+
+type Money { cents: Int }
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value { json.String("{self.cents}c") }
+}
+
+type Gap { n: Int }
+
+trait json.Encode for Gap {
+  fn encode(self) -> json.Value { json.Array([json.Null]) }
+}
+
+type Config { name: String, price: Money, extras: List(Money) }
+
+fn main() {
+  println(toml.stringify(Config { name: "x", price: Money { cents: 5 }, extras: [Money { cents: 1 }] }))
+  println(toml.pretty(#{"p": Money { cents: 7 }}))
+  println(toml.stringify(#{"g": Gap { n: 1 }}))
+  println(toml.stringify(Money { cents: 1 }))
+}
