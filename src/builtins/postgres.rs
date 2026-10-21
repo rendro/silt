@@ -2523,9 +2523,16 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("TypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
             let text =
                 format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
-            match cast_mends(act) {
-                true => format!("{text}; cast it in SQL, for example {col}::text"),
-                false => text,
+            match mend(exp, act) {
+                Mend::Cast => format!("{text}; cast it in SQL, for example {col}::text"),
+                Mend::Json => format!(
+                    "{text}; a field of type `{exp}` is filled only from a json or jsonb column"
+                ),
+                Mend::JsonArray => format!(
+                    "{text}; a field of type `{exp}` is filled only from a json or jsonb column \
+                     or an array of them"
+                ),
+                Mend::None => text,
             }
         }
         ("NoSuchColumn", [Value::String(col)]) => {
@@ -2539,15 +2546,56 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// Whether the message of a `TypeMismatch` whose actual part is
-/// `actual` says to cast the column in SQL: not for a NULL, which a
-/// cast leaves NULL, nor for what a `json` or `jsonb` column holds (the
-/// decoder builds those with the column's type at their head, or as the
-/// whole actual part when the plan refuses the column), as casting a
-/// document to text is rarely what mends it.
-fn cast_mends(actual: &str) -> bool {
+/// What the message of a `TypeMismatch` says to do.
+#[derive(Debug, PartialEq)]
+enum Mend {
+    /// Cast the column in SQL.
+    Cast,
+    /// Nothing but a json document fills the field.
+    Json,
+    /// Nothing but a json document, or an array of them, fills the
+    /// field (a list).
+    JsonArray,
+    None,
+}
+
+/// What the message of a `TypeMismatch` of a field of the type
+/// `expected` whose actual part is `actual` says to do. Nothing for a
+/// NULL, which a cast leaves NULL, nor for what a `json` or `jsonb`
+/// column holds (the decoder builds those with the column's type at
+/// their head, or as the whole actual part when the plan refuses the
+/// column), as casting a document to text is rarely what mends it. A
+/// field that only a document fills (a record, a map, a tuple, a type
+/// with a `json.Decode` impl: any type but those a column of another
+/// type holds, and lists of them) says so; any other is cast.
+fn mend(expected: &str, actual: &str) -> Mend {
     let head = actual.split(':').next().unwrap_or(actual);
-    !(actual == "NULL" || matches!(head.trim_end_matches("[]"), "json" | "jsonb"))
+    if actual == "NULL" || matches!(head.trim_end_matches("[]"), "json" | "jsonb") {
+        return Mend::None;
+    }
+    // (The type as `decode::shown` writes it.)
+    fn from_a_column(ty: &str) -> bool {
+        match ty.strip_prefix("List(").and_then(|t| t.strip_suffix(')')) {
+            Some(element) => from_a_column(element),
+            None => matches!(
+                ty,
+                "Int"
+                    | "Float"
+                    | "String"
+                    | "Bool"
+                    | "Bytes"
+                    | "Date"
+                    | "Time"
+                    | "DateTime"
+                    | "json.Value"
+            ),
+        }
+    }
+    match (from_a_column(expected), expected.starts_with("List(")) {
+        (true, _) => Mend::Cast,
+        (false, false) => Mend::Json,
+        (false, true) => Mend::JsonArray,
+    }
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -3130,13 +3178,13 @@ mod tests {
         );
     }
 
-    /// The column an `undefined_column` error names, as the server
-    /// words it.
-    /// The cast hint goes with every mismatch but a NULL and what a
-    /// json or jsonb column holds.
+    /// The cast hint goes with every mismatch of a field a column of
+    /// another type fills but a NULL and what a json or jsonb column
+    /// holds; a field only a document fills says so, whatever the
+    /// column.
     #[test]
-    fn the_cast_hint_is_for_all_but_null_and_documents() {
-        for mended in [
+    fn the_hint_is_a_cast_but_for_null_documents_and_what_only_a_document_fills() {
+        for actual in [
             "float8",
             "int4[] with 2 dimensions",
             "NaN",
@@ -3144,7 +3192,18 @@ mod tests {
             "MyType",
             "24:00:00",
         ] {
-            assert!(cast_mends(mended), "{mended}");
+            for expected in ["Int", "List(List(Int))", "Date", "Bytes", "json.Value"] {
+                assert_eq!(mend(expected, actual), Mend::Cast, "{expected} {actual}");
+            }
+            assert_eq!(mend("Meta", actual), Mend::Json, "{actual}");
+            assert_eq!(mend("Map(String, Int)", actual), Mend::Json, "{actual}");
+            assert_eq!(mend("(Int, String)", actual), Mend::Json, "{actual}");
+            assert_eq!(mend("List(Meta)", actual), Mend::JsonArray, "{actual}");
+            assert_eq!(
+                mend("List(List(Meta))", actual),
+                Mend::JsonArray,
+                "{actual}"
+            );
         }
         for not in [
             "NULL",
@@ -3153,10 +3212,14 @@ mod tests {
             "jsonb: json type mismatch: expected Int, got string",
             "jsonb[]: a value the server sent malformed",
         ] {
-            assert!(!cast_mends(not), "{not}");
+            for expected in ["Int", "Meta", "List(Meta)"] {
+                assert_eq!(mend(expected, not), Mend::None, "{expected} {not}");
+            }
         }
     }
 
+    /// The column an `undefined_column` error names, as the server
+    /// words it.
     #[test]
     fn the_column_of_an_undefined_column_error() {
         assert_eq!(column_named(r#"column "nope" does not exist"#), "nope");

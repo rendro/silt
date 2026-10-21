@@ -154,8 +154,14 @@ the fields once per result, before the statement runs:
   its values (an `Int` field is not filled from a `float8` column even
   where the value is `2.0`). Its `message()` says how to go on:
   ``postgres type mismatch on column `id`: expected Int, got float8;
-  cast it in SQL, for example id::text``. A `NULL` that has no type of
-  its own (`SELECT NULL AS v`) is a `text` column: cast it, `NULL::int4`;
+  cast it in SQL, for example id::text``. A field that only a json
+  document fills (a record, a map, a tuple, a type with a `json.Decode`
+  impl) says so instead: ``postgres type mismatch on column `meta`:
+  expected Meta, got text; a field of type `Meta` is filled only from a
+  json or jsonb column``; a list of such a type, which an array of
+  `json` or `jsonb` fills too, says ``... or an array of them``. A `NULL` that has
+  no type of its own (`SELECT NULL AS v`) is a `text` column: cast it,
+  `NULL::int4`;
 - two columns of the name a field reads are
   ``Err(Other("postgres: column `id` appears twice in the result; rename one with AS"))``.
 

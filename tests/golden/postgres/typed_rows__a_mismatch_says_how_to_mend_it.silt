@@ -1,0 +1,24 @@
+-- requires-feature: postgres
+-- The message of a column's type mismatch says how to go on: a field a
+-- column of another type can fill is cast in SQL; a field that only a
+-- json document fills (a record, a map, a tuple, a type with a
+-- `json.Decode` impl) says so, a list of one that an array of documents
+-- fills too; a NULL, and what a json document holds, say nothing more.
+import list
+import postgres
+
+fn main() {
+  let mismatches = [
+    postgres.TypeMismatch("id", "Int", "float8"),
+    postgres.TypeMismatch("ids", "List(Int)", "text[]"),
+    postgres.TypeMismatch("r", "json.Value", "interval"),
+    postgres.TypeMismatch("meta", "Meta", "text"),
+    postgres.TypeMismatch("tags", "Map(String, Int)", "text"),
+    postgres.TypeMismatch("pair", "(Int, String)", "int4"),
+    postgres.TypeMismatch("metas", "List(Meta)", "text[]"),
+    postgres.TypeMismatch("grid", "List(List(Meta))", "int4[]"),
+    postgres.TypeMismatch("meta", "Meta", "NULL"),
+    postgres.TypeMismatch("meta", "Meta", "jsonb: expected a record at n"),
+  ]
+  mismatches |> list.each { e -> println(e.message()) }
+}

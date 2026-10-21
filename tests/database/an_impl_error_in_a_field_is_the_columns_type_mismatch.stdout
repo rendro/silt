@@ -3,7 +3,7 @@ Err(postgres type mismatch on column `codes`: expected List(Code), got jsonb: js
 Err(postgres type mismatch on column `codes`: expected Code, got jsonb[]: no code here)
 Err(postgres type mismatch on column `codes`: expected List(Code), got jsonb: json type mismatch: expected String, got an integer at [0])
 Err(postgres type mismatch on column `s`: expected String, got NULL)
-Err(postgres type mismatch on column `code`: expected Code, got text; cast it in SQL, for example code::text)
+Err(postgres type mismatch on column `code`: expected Code, got text; a field of type `Code` is filled only from a json or jsonb column)
 batch 1: Err(postgres type mismatch on column `code`: expected Code, got jsonb: json type mismatch: expected String, got an integer)
 batch 2: Err(postgres type mismatch on column `code`: expected Code, got jsonb: json type mismatch: expected String, got an integer)
 transact: Ok(())
