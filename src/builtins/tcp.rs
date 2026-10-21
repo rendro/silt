@@ -24,7 +24,7 @@ use super::typed::{self, Bytes, builtins};
 use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::{Leave, Step, Vm, VmError};
 
 /// The error of a `tcp` function whose operation has no value of its
 /// own: `Timeout` when its deadline passed, `Other` with the
@@ -78,7 +78,8 @@ mod tls {
     use crate::typeinfo::bv;
 
     use super::{
-        Doing, Step, TcpStreamHandle, Value, Vm, VmError, err_closed, tcp_io_err, tcp_timeout_err,
+        Doing, Leave, Step, TcpStreamHandle, Value, Vm, VmError, err_closed, tcp_io_err,
+        tcp_timeout_err,
     };
     use crate::builtins::typed::{self, Bytes, builtins};
     use crate::runtime::handle::{HandOver, ReadWrite};
@@ -91,7 +92,7 @@ mod tls {
         fn connect_tls(vm, addr: &str, hostname: &str) -> Result<Step, VmError> {
             let (addr, hostname) = (addr.to_string(), hostname.to_string());
             let next_id = vm.next_tcp_id();
-            vm.io("tcp", tcp_timeout_err, move || {
+            vm.io("tcp", tcp_timeout_err, Leave::RunsOut, move |_| {
                 match do_connect_tls(&addr, &hostname, next_id) {
                     Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
                     Err(NoTls::Connection(e)) => tcp_io_err(Doing::Connecting, &e),
@@ -205,7 +206,7 @@ mod tls {
                 }
             }
         };
-        let op = vm.start_io(tcp_timeout_err, move |_| {
+        let op = vm.io_op(tcp_timeout_err, Leave::closes(unheard), move |_| {
             let wrapped = config().and_then(|config| {
                 let conn = ServerConnection::new(Arc::new(config))
                     .map_err(|e| format!("server connection setup: {e}"))?;
@@ -225,7 +226,6 @@ mod tls {
                 }
             }
         });
-        let op = op.stop_unless_taken(unheard);
         vm.io_wait("tcp", tcp_timeout_err, op)
     }
 
@@ -433,8 +433,30 @@ pub(crate) fn accept_op(
     server: bool,
 ) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
-    let (accepting, listener) = (listener.clone(), listener.clone());
-    let op = vm.start_io(tcp_timeout_err, move |wanted| {
+    let (accepting, stopping, listener) = (listener.clone(), listener.clone(), listener.clone());
+    let leave = Leave::Returns {
+        // An accept that has claimed its connection is on its way
+        // back.
+        interrupt: Some(Box::new(move |wanted| {
+            if !wanted.claimed() {
+                stopping.stop(wanted)
+            }
+        })),
+        // A connection that came just as the task stopped waiting (it
+        // was cancelled, its deadline passed) reached no task: only the
+        // operation's value holds it. It is a client's, and goes to the
+        // next accept.
+        give_back: Some(Box::new(move |value| {
+            if let Value::Variant(variant) = value
+                && variant.is(bv::OK)
+                && let [Value::TcpStream(conn)] = variant.fields()
+                && let Some(socket) = conn.socket()
+            {
+                listener.keep(socket);
+            }
+        })),
+    };
+    vm.io_op(tcp_timeout_err, leave, move |wanted| {
         match accepting.accept(wanted, server) {
             Ok(Accepted::Conn(stream)) => Value::variant(
                 bv::OK,
@@ -447,26 +469,6 @@ pub(crate) fn accept_op(
             // A server took the listener while the accept waited.
             Ok(Accepted::Served) => err(SERVED),
             Err(e) => tcp_io_err(Doing::Using, &e),
-        }
-    });
-    let (stopping, wanted) = (listener.clone(), op.wanted());
-    // An accept that has claimed its connection is on its way back.
-    op.stop_with(move || {
-        if !wanted.claimed() {
-            stopping.stop(&wanted)
-        }
-    })
-    // A connection that came just as the task stopped waiting (it
-    // was cancelled, its deadline passed) reached no task: only
-    // the operation's value holds it. It is a client's, and goes
-    // to the next accept.
-    .unheard_with(move |value| {
-        if let Value::Variant(variant) = value
-            && variant.is(bv::OK)
-            && let [Value::TcpStream(conn)] = variant.fields()
-            && let Some(socket) = conn.socket()
-        {
-            listener.keep(socket);
         }
     })
 }
@@ -502,9 +504,7 @@ fn on_connection(
     if stream.is_closed() {
         return Ok(Step::Done(err_closed()));
     }
-    let op = vm
-        .start_io(tcp_timeout_err, move |_| op())
-        .stop_unless_taken(unheard);
+    let op = vm.io_op(tcp_timeout_err, Leave::closes(unheard), move |_| op());
     vm.io_wait("tcp", tcp_timeout_err, op)
 }
 
@@ -571,7 +571,7 @@ builtins! {
     fn connect(vm, addr: &str) -> Result<Step, VmError> {
         let addr = addr.to_string();
         let next_id = vm.next_tcp_id();
-        vm.io("tcp", tcp_timeout_err, move || {
+        vm.io("tcp", tcp_timeout_err, Leave::RunsOut, move |_| {
             match TcpStream::connect(&addr) {
                 Ok(stream) => Value::variant(
                     bv::OK,

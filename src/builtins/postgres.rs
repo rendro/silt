@@ -46,7 +46,7 @@ use crate::scheduler::IO_TIMEOUT;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{IoOp, Native, Runtime, Step, Vm, VmError, Wanted};
+use crate::vm::{IoOp, Leave, Native, Runtime, Step, Vm, VmError, Wanted};
 
 mod rows;
 
@@ -2345,13 +2345,15 @@ fn parse_connect_opts(opts: &Opts) -> Result<ConnectOpts, String> {
 builtins! {
     fn connect(vm, url: &str) -> Result<Step, VmError> {
         let url = url.to_string();
-        vm.io("postgres", pg_timeout_err, move || do_connect(url))
+        vm.io("postgres", pg_timeout_err, Leave::RunsOut, move |_| do_connect(url))
     }
 
     fn connect_with(vm, url: &str, opts: Opts) -> Started {
         let opts = parse_connect_opts(&opts).map_err(pg_connect)?;
         let url = url.to_string();
-        Ok(vm.io("postgres", pg_timeout_err, move || do_connect_with(url, opts)))
+        Ok(vm.io("postgres", pg_timeout_err, Leave::RunsOut, move |_| {
+            do_connect_with(url, opts)
+        }))
     }
 
     fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Started {
@@ -2410,19 +2412,18 @@ builtins! {
     fn transact(vm, pool: PoolHandle, f: &Value) -> Result<Step, Failed> {
         let pool = pool.open()?;
         let runtime = vm.runtime.clone();
-        let op = vm
-            .start_io(pg_timeout_err, move |_| begin_tx(&pool))
-            // The task went before it had its transaction: nobody ends
-            // it but this.
-            .unheard_with(move |began| {
-                if let Value::Variant(began) = began
-                    && began.is(bv::OK)
-                    && let [handle] = began.fields()
-                    && let Some(tx) = TxHandle::take(handle)
-                {
-                    abandon_tx(&runtime, tx.0);
-                }
-            });
+        // The task went before it had its transaction: nobody ends it
+        // but this.
+        let leave = Leave::gives_back(move |began| {
+            if let Value::Variant(began) = began
+                && began.is(bv::OK)
+                && let [handle] = began.fields()
+                && let Some(tx) = TxHandle::take(handle)
+            {
+                abandon_tx(&runtime, tx.0);
+            }
+        });
+        let op = vm.io_op(pg_timeout_err, leave, move |_| begin_tx(&pool));
         Ok(Step::Run(Box::new(Transact {
             wait: Some(io_wait(vm, &op)),
             stage: Stage::Begin(op),
@@ -2471,14 +2472,17 @@ builtins! {
         let scheduler = vm.scheduler().clone();
         let starting = scheduler.external();
         let decode = (row, vm.runtime.clone());
-        let op = vm.start_io(pg_timeout_err, move |_| {
-            let _running = scheduler.enter();
-            drop(starting);
-            let params = (params, unsendable);
-            do_stream_worker(target, sql, params, decode, worker_channel, scheduler.clone());
-            Value::Unit
-        });
-        op.detach();
+        // (A task that takes nothing new starts nothing: it is ended
+        // where it waits next.)
+        if !vm.takes_nothing_new() {
+            vm.runtime.io_pool.background(pg_timeout_err, move || {
+                let _running = scheduler.enter();
+                drop(starting);
+                let params = (params, unsendable);
+                do_stream_worker(target, sql, params, decode, worker_channel, scheduler.clone());
+                Value::Unit
+            });
+        }
 
         Ok(Ok(ok(Value::Channel(channel))))
     }
@@ -2547,7 +2551,7 @@ builtins! {
         // itself — `runtime` is an `Arc<Runtime>` so the clone is cheap.
         let runtime = vm.runtime.clone();
         let channel_name = channel.to_string();
-        let work = move || -> Value {
+        let work = move |_: &Wanted| -> Value {
             let conn = match PinnedConn::take(&pool) {
                 Ok(c) => c,
                 Err(e) => return err(pool_error_value(&e)),
@@ -2569,16 +2573,15 @@ builtins! {
             let worker_ch = worker_channel.clone();
             let scheduler = runtime.scheduler.clone();
             let serving = scheduler.external();
-            let op = runtime.io_pool.submit(pg_timeout_err, Vec::new(), move |_| {
+            runtime.io_pool.background(pg_timeout_err, move || {
                 do_listen_worker(conn, channel_name, told, worker_ch, scheduler);
                 drop(serving);
                 Value::Unit
             });
-            op.detach();
             ok(Value::Channel(worker_channel))
         };
 
-        Ok(vm.io("postgres", pg_timeout_err, work))
+        Ok(vm.io("postgres", pg_timeout_err, Leave::RunsOut, work))
     }
 
     // Fires a NOTIFY, on a pool or in a transaction. Uses
@@ -2632,14 +2635,12 @@ fn statement(
     unsendable: Option<Unsendable>,
     f: impl FnOnce(&Wanted) -> Value + Send + 'static,
 ) -> Result<Step, VmError> {
-    let op = vm.start_io(pg_timeout_err, f);
-    let op = match tx {
-        None => op,
+    let leave = match tx {
+        None => Leave::RunsOut,
         Some(StatementTx { canceller, cell }) => {
             let runtime = vm.runtime.clone();
-            let wanted = op.wanted();
             // Called where the waiter goes, which must not wait.
-            op.stop_with(move || {
+            Leave::interrupts(move |wanted| {
                 // One that never had the connection gives up there.
                 if !wanted.claimed() {
                     let _holder = cell.holder();
@@ -2647,16 +2648,14 @@ fn statement(
                     return;
                 }
                 canceller.mark();
-                let request = runtime
-                    .io_pool
-                    .submit(pg_timeout_err, Vec::new(), move |_| {
-                        canceller.cancel();
-                        Value::Unit
-                    });
-                request.detach();
+                runtime.io_pool.background(pg_timeout_err, move || {
+                    canceller.cancel();
+                    Value::Unit
+                });
             })
         }
     };
+    let op = vm.io_op(pg_timeout_err, leave, f);
     vm.io_wait_then(
         "postgres",
         pg_timeout_err,
@@ -2738,10 +2737,12 @@ impl Native for Transact {
                 // callback's answer stands, though the task may not
                 // be there to take the value.
                 let entry = take_tx(tx_id, vm.scheduler().wake());
-                let op = vm
-                    .runtime
-                    .io_pool
-                    .submit(pg_timeout_err, Vec::new(), move |_| end_tx(entry, input));
+                let op = vm.runtime.io_pool.submit(
+                    pg_timeout_err,
+                    Vec::new(),
+                    Leave::RunsOut,
+                    move |_| end_tx(entry, input),
+                );
                 // Not ended at `SILT_IO_TIMEOUT`: an `Err` must never
                 // stand for a transaction that was committed. (A
                 // deadline or a cancel does end it; the task then
@@ -2767,7 +2768,7 @@ impl Native for Transact {
             // A statement of the callback may be running.
             Stage::Body(tx_id) => abandon_tx(&vm.runtime, tx_id),
             // COMMIT or ROLLBACK goes on, and finishes in the server.
-            Stage::End(op) => op.detach(),
+            Stage::End(op) => drop(op),
             Stage::Ended => {}
         }
     }
@@ -2806,13 +2807,10 @@ fn abandon_tx(runtime: &crate::vm::Runtime, tx_id: u64) {
     let Some(entry) = take_tx(tx_id, runtime.scheduler.wake()) else {
         return;
     };
-    let op = runtime
-        .io_pool
-        .submit(pg_timeout_err, Vec::new(), move |_| {
-            roll_back_abandoned(entry);
-            Value::Unit
-        });
-    op.detach();
+    runtime.io_pool.background(pg_timeout_err, move || {
+        roll_back_abandoned(entry);
+        Value::Unit
+    });
 }
 
 /// Roll back a transaction that nobody ends. A statement that runs on

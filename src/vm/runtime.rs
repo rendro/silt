@@ -255,7 +255,7 @@ impl Vm {
     /// the task asks this before it looks, and ends the task where it
     /// holds ([`Vm::end_here`], [`Vm::no_wait`]): a receive in each of
     /// its forms, the take of `channel.each` and of a stream's stage or
-    /// sink, and the start of an I/O operation ([`Vm::start_io`], which
+    /// sink, and the start of an I/O operation ([`Vm::io_op`], which
     /// hands the same flags to the operation: `Wanted`). So
     /// does what would start a task whose one purpose is to take in
     /// its place: a stream's stage, and `task.deadline`, which waits

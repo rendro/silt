@@ -78,7 +78,7 @@ pub struct TcpListenerHandle {
 pub enum Accepted {
     Conn(std::net::TcpStream),
     /// The accept was given up: nobody wants its connection
-    /// ([`Wanted::gone`]).
+    /// (`Wanted::gone`).
     GivenUp,
     /// An `http.serve` has the listener to itself: no other accept
     /// takes a connection from it, also not one that was waiting when
@@ -187,7 +187,7 @@ impl TcpListenerHandle {
     /// client's connection is never lost to an accept that was given
     /// up, or that a server has taken the listener from: it is kept for
     /// the next one. The accept claims the connection it returns
-    /// ([`Wanted::claim`]): one that it cannot claim is kept.
+    /// (`Wanted::claim`): one that it cannot claim is kept.
     ///
     /// `server` says that the accept is the one of the `http.serve`
     /// that has the listener. Such an accept also takes the
@@ -353,7 +353,7 @@ impl TcpListenerHandle {
     }
 
     /// Wake the accept whose waiter `wanted` has gone
-    /// ([`Wanted::gone`]): it returns [`Accepted::GivenUp`], at once if
+    /// (`Wanted::gone`): it returns [`Accepted::GivenUp`], at once if
     /// it waits its turn, and as soon as the connection made here
     /// reaches it if it is in the OS call.
     ///
@@ -403,7 +403,7 @@ impl TcpListenerHandle {
 
 /// The accept that is in the system's call.
 struct Current {
-    /// Its operation ([`Wanted::id`]).
+    /// Its operation (`Wanted::id`).
     op: usize,
     /// Set when a server takes the listener from it
     /// ([`TcpListenerHandle::serve`]).

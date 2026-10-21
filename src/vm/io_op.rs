@@ -22,9 +22,10 @@ impl Vm {
         &mut self,
         name: &'static str,
         timeout_err: ErrFactory,
-        op: impl FnOnce() -> Value + Send + 'static,
+        leave: Leave,
+        op: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
-        let op = self.start_io(timeout_err, move |_| op());
+        let op = self.io_op(timeout_err, leave, op);
         self.io_wait(name, timeout_err, op)
     }
 
@@ -72,22 +73,25 @@ impl Vm {
     }
 
     /// Hand the blocking operation `f` to the I/O pool
-    /// ([`IoPool::submit`]): the one place where a task starts I/O.
+    /// ([`IoPool::submit`]): the one place where a task starts I/O. `f`
+    /// is told whether its value is still wanted ([`Wanted`]); `leave`
+    /// says what becomes of it when its waiter goes.
     ///
     /// A task that takes nothing new ([`Vm::takes_nothing_new`]) starts
     /// none: nothing is handed to the pool, and the operation that
     /// comes back never runs ([`IoPool::withheld`]). The wait for it,
     /// which the caller begins, ends the task.
-    pub(crate) fn start_io(
+    pub(crate) fn io_op(
         &self,
         failure: ErrFactory,
+        leave: Leave,
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
         if self.takes_nothing_new() {
             return self.runtime.io_pool.withheld();
         }
         let task = self.cancelled.iter().chain(&self.over).cloned().collect();
-        self.runtime.io_pool.submit(failure, task, f)
+        self.runtime.io_pool.submit(failure, task, leave, f)
     }
 }
 
@@ -114,7 +118,7 @@ pub(crate) const IO_POOL_THREADS_MAX: usize = 4096;
 /// stays. Beyond the bound new operations fail at once: the stuck
 /// ones must not take a thread each without end.
 ///
-/// An operation that was told to stop ([`IoOp::stop_with`]: its
+/// An operation that was told to stop (its [`Leave`]: its
 /// socket was shut down, its accept woken) does not count: it is on
 /// its way out, and a server that ends with a thousand connections
 /// has a thousand of them for a moment.
@@ -154,7 +158,7 @@ struct OpState {
     phase: parking_lot::Mutex<Phase>,
     /// Completed with the operation's value.
     cell: Arc<Cell<Value>>,
-    /// See [`IoOp::unheard_with`]. Whoever knows first that the waiter
+    /// See [`Leave::Returns`]. Whoever knows first that the waiter
     /// is gone and the value is there calls it: the waiter if the
     /// value was there when it went, the thread otherwise.
     unheard: parking_lot::Mutex<Option<Unheard>>,
@@ -191,13 +195,11 @@ impl OpState {
         })
     }
 
-    /// The waiter goes. `true` if the operation had claimed before.
-    fn leave(&self) -> bool {
+    /// The waiter goes: an operation that has not claimed cannot from
+    /// now on.
+    fn leave(&self) {
         use std::sync::atomic::Ordering::SeqCst;
-        match self.claim.compare_exchange(WAITING, GONE, SeqCst, SeqCst) {
-            Ok(_) => false,
-            Err(now) => now == TOOK,
-        }
+        let _ = self.claim.compare_exchange(WAITING, GONE, SeqCst, SeqCst);
     }
 
     /// The waiter is gone and the value is there: if the waiter did
@@ -302,7 +304,7 @@ impl Wanted {
 /// peer) never hold up one that would not (a file read).
 ///
 /// An operation whose waiter is gone ([`IoOp`]'s `Drop`) is told to
-/// stop if it can be ([`IoOp::stop_with`]: a socket is shut down), and
+/// stop if it can be (its [`Leave`]: a socket is shut down), and
 /// its thread stops counting as the pool's whether or not it can: a
 /// read of the terminal that never returns does not use up the pool.
 pub(crate) struct IoPool {
@@ -467,7 +469,7 @@ impl IoPool {
     /// An operation that is not handed to the pool: it never runs,
     /// its cell is never completed, and nothing is done when its
     /// waiter goes (it is not told to stop: there is nothing to stop).
-    /// See [`Vm::start_io`].
+    /// See [`Vm::io_op`].
     pub(crate) fn withheld(&self) -> IoOp {
         let state = OpState::new(Phase::Left);
         IoOp {
@@ -475,8 +477,8 @@ impl IoPool {
             in_flight: Arc::default(),
             pool: self.shared.clone(),
             state,
-            stop: None,
-            unless_taken: false,
+            interrupt: None,
+            close: None,
             withheld: true,
         }
     }
@@ -491,18 +493,30 @@ impl IoPool {
         &self,
         failure: ErrFactory,
         task: Vec<Arc<std::sync::atomic::AtomicBool>>,
+        leave: Leave,
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
         let state = OpState::new(Phase::Queued);
         let wanted = Wanted::new(state.clone(), task);
         let f = move || f(&wanted);
+        let (interrupt, close) = match leave {
+            Leave::RunsOut => (None, None),
+            Leave::Closes(close) => (None, Some(close)),
+            Leave::Returns {
+                interrupt,
+                give_back,
+            } => {
+                *state.unheard.lock() = give_back;
+                (interrupt, None)
+            }
+        };
         let op = IoOp {
             cell: state.cell.clone(),
             in_flight: Arc::new(parking_lot::Mutex::new(Some(self.scheduler.external()))),
             pool: self.shared.clone(),
             state: state.clone(),
-            stop: None,
-            unless_taken: false,
+            interrupt,
+            close,
             withheld: false,
         };
         let queued = state;
@@ -634,6 +648,30 @@ impl IoPool {
     }
 }
 
+impl IoPool {
+    /// Run `f` on a thread of the pool, for nobody to wait for: it
+    /// counts as pending for nothing, and its thread stays the pool's.
+    /// Its value is dropped. For work that goes on beside the program
+    /// (it feeds a channel that the program reads, or it ends what a
+    /// task left behind) and that counts as what it holds itself for
+    /// that: a task while it runs ([`Scheduler::enter`]), or something
+    /// outside the tasks that can end a wait ([`Scheduler::external`]),
+    /// taken before this is called, so that there is no moment at which
+    /// it counts as nothing; or as nothing, when nothing waits for it.
+    ///
+    /// [`Scheduler::enter`]: crate::scheduler::Scheduler::enter
+    /// [`Scheduler::external`]: crate::scheduler::Scheduler::external
+    #[cfg(feature = "postgres")]
+    pub(crate) fn background(
+        &self,
+        failure: ErrFactory,
+        f: impl FnOnce() -> Value + Send + 'static,
+    ) {
+        self.submit(failure, Vec::new(), Leave::RunsOut, move |_| f())
+            .detach();
+    }
+}
+
 /// Why an I/O operation has no value of its own, with the reason as
 /// text.
 #[derive(Clone, Copy, Debug)]
@@ -671,46 +709,87 @@ pub(crate) struct IoOp {
     pub(crate) in_flight: Arc<parking_lot::Mutex<Option<External>>>,
     pool: Arc<PoolShared>,
     state: Arc<OpState>,
-    /// What makes the operation return when nobody waits for it.
-    stop: Option<Box<dyn FnOnce() + Send>>,
-    /// `stop` is called whenever the waiter goes without the
-    /// operation's value ([`IoOp::stop_unless_taken`]).
-    unless_taken: bool,
+    /// See [`Leave::Returns`].
+    interrupt: Option<Interrupt>,
+    /// See [`Leave::Closes`].
+    close: Option<Box<dyn FnOnce() + Send>>,
     /// It was never handed to the pool ([`IoPool::withheld`]).
     withheld: bool,
 }
 
-impl IoOp {
-    /// `stop` is called if the waiter goes while the operation runs:
-    /// it makes the operation return (it shuts the socket down), so
-    /// that its thread ends.
-    pub(crate) fn stop_with(mut self, stop: impl FnOnce() + Send + 'static) -> IoOp {
-        self.stop = Some(Box::new(stop));
-        self
+/// What becomes of an operation on the pool whose waiter goes without
+/// waiting for it to the end: the wait's deadline passed, the task was
+/// cancelled, its time is over, or it was dropped with the program.
+/// The module that starts the operation says which of these it is
+/// ([`Vm::io_op`]); `IoOp`'s `Drop` does it, in every one of those
+/// cases and wherever the operation stood. (A waiter that has taken the
+/// value goes too, and nothing is done then.)
+pub(crate) enum Leave {
+    /// It cannot be interrupted: it runs to its end, and its value is
+    /// dropped. Its thread is the pool's no longer while it does
+    /// ([`IO_POOL_UNHEARD_MAX`]). A file read, `tcp.connect`, a request
+    /// of the HTTP client.
+    RunsOut,
+    /// It works on something that is of no use to a waiter who did not
+    /// get its value: a connection, where a read that nobody heard has
+    /// taken bytes that are gone with it. The function ends that thing
+    /// (shuts the connection down), which also makes the operation
+    /// return. It is called whenever the waiter goes without having
+    /// taken the value ([`IoOp::take`]), whatever the operation was
+    /// doing then: it had not begun, it ran, or it had ended. What the
+    /// waiter is left with does not depend on the moment at which it
+    /// stopped waiting.
+    #[cfg_attr(not(feature = "tcp"), allow(dead_code))]
+    Closes(Box<dyn FnOnce() + Send>),
+    /// It can be made to return, and what it took must not be lost.
+    ///
+    /// `interrupt` is called if the waiter goes while the operation
+    /// runs, with the operation's [`Wanted`], which says whether it had
+    /// claimed ([`Wanted::claimed`]): it makes the operation return (it
+    /// wakes an accept, asks the server to cancel a statement), so that
+    /// its thread ends.
+    ///
+    /// `give_back` is called with the value if the waiter goes without
+    /// having taken it, once the value is there, in whichever order the
+    /// two come: for a value that must not be lost with a waiter that
+    /// went just as it came (an accepted connection, a transaction that
+    /// has begun).
+    Returns {
+        interrupt: Option<Interrupt>,
+        give_back: Option<Unheard>,
+    },
+}
+
+/// See [`Leave::Returns`].
+pub(crate) type Interrupt = Box<dyn FnOnce(&Wanted) + Send>;
+
+impl Leave {
+    /// [`Leave::Returns`] with `interrupt` alone.
+    pub(crate) fn interrupts(interrupt: impl FnOnce(&Wanted) + Send + 'static) -> Leave {
+        Leave::Returns {
+            interrupt: Some(Box::new(interrupt)),
+            give_back: None,
+        }
     }
 
-    /// [`IoOp::stop_with`] for an operation on something that is of
-    /// no use to a waiter who did not get the operation's value: a
-    /// connection, where a read that nobody heard has taken bytes
-    /// that are gone with it. `stop` is called when the waiter goes
-    /// without having taken the value ([`IoOp::take`]), whatever the
-    /// operation was doing then: it had not begun, it ran, or it had
-    /// ended. What the waiter is left with does not depend on the
-    /// moment at which it stopped waiting.
+    /// [`Leave::Returns`] with `give_back` alone: the operation runs
+    /// out, and a value that nobody took is given back.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn gives_back(give_back: impl FnOnce(&Value) + Send + 'static) -> Leave {
+        Leave::Returns {
+            interrupt: None,
+            give_back: Some(Box::new(give_back)),
+        }
+    }
+
+    /// [`Leave::Closes`].
     #[cfg(feature = "tcp")]
-    pub(crate) fn stop_unless_taken(mut self, stop: impl FnOnce() + Send + 'static) -> IoOp {
-        self.stop = Some(Box::new(stop));
-        self.unless_taken = true;
-        self
+    pub(crate) fn closes(close: impl FnOnce() + Send + 'static) -> Leave {
+        Leave::Closes(Box::new(close))
     }
+}
 
-    /// What the operation knows of this waiter: whether it has claimed
-    /// ([`Wanted::claimed`]).
-    #[cfg(any(feature = "tcp", feature = "postgres"))]
-    pub(crate) fn wanted(&self) -> Wanted {
-        Wanted::new(self.state.clone(), Vec::new())
-    }
-
+impl IoOp {
     /// The operation's value, for the waiter whose wait it ended: the
     /// value has reached the task.
     pub(crate) fn take(&self) -> Option<Value> {
@@ -721,30 +800,10 @@ impl IoOp {
         Some(value)
     }
 
-    /// `unheard` is called with the operation's value if the waiter
-    /// goes without having taken it ([`IoOp::take`]), once the value
-    /// is there, in whichever order the two come. For a value that
-    /// must not be lost with a waiter that was cancelled just as it
-    /// came (an accepted connection, a transaction that has begun).
-    #[cfg(any(feature = "tcp", feature = "postgres"))]
-    pub(crate) fn unheard_with(self, unheard: impl FnOnce(&Value) + Send + 'static) -> IoOp {
-        *self.state.unheard.lock() = Some(Box::new(unheard));
-        self
-    }
-
     /// Nobody waits for the operation, and it counts as pending no
-    /// longer; its thread stays the pool's. It feeds a channel that
-    /// the program reads, and counts as what it holds itself for that:
-    /// a task while it runs ([`Scheduler::enter`]), or something
-    /// outside the tasks that can end a wait ([`Scheduler::external`]).
-    /// The caller takes the one or the other before the operation is
-    /// submitted, so that there is no moment at which it counts as
-    /// nothing.
-    ///
-    /// [`Scheduler::enter`]: crate::scheduler::Scheduler::enter
-    /// [`Scheduler::external`]: crate::scheduler::Scheduler::external
+    /// longer; its thread stays the pool's ([`IoPool::background`]).
     #[cfg(feature = "postgres")]
-    pub(crate) fn detach(mut self) {
+    fn detach(mut self) {
         let pending = self.in_flight.lock().take();
         drop(pending);
         self.state = OpState::new(Phase::Left);
@@ -757,9 +816,8 @@ impl IoOp {
 /// program. If it still runs, it is told to stop where it can be, and
 /// its thread is the pool's no longer: whether or not it can be
 /// stopped (a read of the terminal cannot), it does not use up the
-/// pool. If it has not started, it never does. An operation that is to
-/// be stopped whenever its value did not reach the waiter
-/// ([`IoOp::stop_unless_taken`]) is told in every one of these cases.
+/// pool. If it has not started, it never does. What else becomes of it
+/// is its [`Leave`].
 impl Drop for IoOp {
     fn drop(&mut self) {
         // Nothing was started, so nothing is left to stop or to count.
@@ -785,7 +843,7 @@ impl Drop for IoOp {
                     *phase = Phase::Left;
                     state.threads -= 1;
                     state.busy -= 1;
-                    match self.stop.is_some() {
+                    match self.interrupt.is_some() || self.close.is_some() {
                         true => self
                             .state
                             .stopped
@@ -803,13 +861,14 @@ impl Drop for IoOp {
                 Phase::Left | Phase::Gone => (false, false),
             }
         };
+        if running && let Some(interrupt) = self.interrupt.take() {
+            interrupt(&Wanted::new(self.state.clone(), Vec::new()));
+        }
         // The waiter decides, not where the operation stood.
-        let unheard =
-            self.unless_taken && !self.state.taken.load(std::sync::atomic::Ordering::SeqCst);
-        if (running || unheard)
-            && let Some(stop) = self.stop.take()
+        if !self.state.taken.load(std::sync::atomic::Ordering::SeqCst)
+            && let Some(close) = self.close.take()
         {
-            stop();
+            close();
         }
         if finished {
             self.state.unheard();
@@ -854,14 +913,16 @@ mod tests {
         let pool = pool(0, NEVER_IDLE);
         let here = std::thread::current().id();
 
-        let op = pool.submit(failure, Vec::new(), move |_| {
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
             assert_eq!(std::thread::current().id(), here);
             Value::Int(7)
         });
         assert!(matches!(op.cell.get(), Some(Value::Int(7))));
         assert!(op.in_flight.lock().is_none());
 
-        let op = pool.submit(failure, Vec::new(), |_| panic!("no such file"));
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| {
+            panic!("no such file")
+        });
         match op.cell.get() {
             Some(Value::String(msg)) => assert_eq!(&**msg, "panic: no such file"),
             other => panic!("expected the typed failure, got {other:?}"),
@@ -880,13 +941,13 @@ mod tests {
         let blocked: Vec<IoOp> = (0..8)
             .map(|_| {
                 let held = held.clone();
-                pool.submit(failure, Vec::new(), move |_| {
+                pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
                     let _ = held.lock().recv();
                     Value::Unit
                 })
             })
             .collect();
-        let quick = pool.submit(failure, Vec::new(), |_| Value::Int(1));
+        let quick = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
         until("the ninth operation ran while eight block", || {
             quick.cell.get().is_some()
         });
@@ -904,7 +965,7 @@ mod tests {
     fn a_thread_is_reused() {
         let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
         for n in 0..20 {
-            let op = pool.submit(failure, Vec::new(), move |_| Value::Int(n));
+            let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| Value::Int(n));
             until("the operation ran", || op.cell.get().is_some());
             // The thread that woke the waiter is free for the next.
             assert_eq!(pool.threads(), 1);
@@ -917,11 +978,11 @@ mod tests {
     #[test]
     fn a_thread_is_retired_when_idle() {
         let pool = pool(IO_POOL_THREADS_MAX, Duration::from_millis(1));
-        let op = pool.submit(failure, Vec::new(), |_| Value::Int(1));
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
         until("the operation ran", || op.cell.get().is_some());
         until("the idle thread ended", || pool.live_threads() == 0);
         assert_eq!(pool.threads(), 0);
-        let op = pool.submit(failure, Vec::new(), |_| Value::Int(2));
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(2));
         until("a new thread ran it", || op.cell.get().is_some());
     }
 
@@ -937,7 +998,7 @@ mod tests {
         let blocked: Vec<IoOp> = (0..2)
             .map(|_| {
                 let (held, running) = (held.clone(), running.clone());
-                pool.submit(failure, Vec::new(), move |_| {
+                pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
                     running.fetch_add(1, Ordering::SeqCst);
                     let _ = held.lock().recv();
                     Value::Unit
@@ -945,7 +1006,7 @@ mod tests {
             })
             .collect();
         until("two run", || running.load(Ordering::SeqCst) == 2);
-        let refused = pool.submit(failure, Vec::new(), |_| Value::Int(3));
+        let refused = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(3));
         match refused.cell.get() {
             Some(Value::String(msg)) => {
                 assert_eq!(&**msg, "too many I/O operations in flight (2)")
@@ -960,7 +1021,7 @@ mod tests {
         until("the two end", || {
             blocked.iter().all(|op| op.cell.get().is_some())
         });
-        let next = pool.submit(failure, Vec::new(), |_| Value::Int(4));
+        let next = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(4));
         until("the next runs", || next.cell.get().is_some());
         assert!(matches!(next.cell.get(), Some(Value::Int(4))));
     }
@@ -977,7 +1038,7 @@ mod tests {
         for _ in 0..IO_POOL_UNHEARD_MAX {
             let (held, started) = (held.clone(), running.clone());
             let before = running.load(Ordering::SeqCst);
-            let op = pool.submit(failure, Vec::new(), move |_| {
+            let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
                 started.fetch_add(1, Ordering::SeqCst);
                 let _ = held.lock().recv();
                 Value::Unit
@@ -988,7 +1049,7 @@ mod tests {
         }
         assert_eq!(pool.threads(), 0);
         assert_eq!(pool.live_threads(), IO_POOL_UNHEARD_MAX);
-        let refused = pool.submit(failure, Vec::new(), |_| Value::Int(1));
+        let refused = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
         match refused.cell.get() {
             Some(Value::String(msg)) => assert_eq!(
                 &**msg,
@@ -1003,7 +1064,7 @@ mod tests {
             release.send(()).unwrap();
         }
         until("the stuck threads ended", || pool.live_threads() == 0);
-        let next = pool.submit(failure, Vec::new(), |_| Value::Int(2));
+        let next = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(2));
         until("the next runs", || next.cell.get().is_some());
     }
 
@@ -1024,15 +1085,14 @@ mod tests {
         for _ in 0..many {
             let (held, started, told) = (held.clone(), running.clone(), told.clone());
             let before = running.load(Ordering::SeqCst);
-            let op = pool
-                .submit(failure, Vec::new(), move |_| {
-                    started.fetch_add(1, Ordering::SeqCst);
-                    let _ = held.lock().recv();
-                    Value::Unit
-                })
-                .stop_with(move || {
-                    told.fetch_add(1, Ordering::SeqCst);
-                });
+            let leave = Leave::interrupts(move |_| {
+                told.fetch_add(1, Ordering::SeqCst);
+            });
+            let op = pool.submit(failure, Vec::new(), leave, move |_| {
+                started.fetch_add(1, Ordering::SeqCst);
+                let _ = held.lock().recv();
+                Value::Unit
+            });
             until("it runs", || running.load(Ordering::SeqCst) > before);
             drop(op);
         }
@@ -1040,12 +1100,12 @@ mod tests {
         // All of them are still on their way out.
         assert_eq!(pool.live_threads(), many);
         assert_eq!(pool.threads(), 0);
-        let next = pool.submit(failure, Vec::new(), |_| Value::Int(1));
+        let next = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
         until("the next runs", || next.cell.get().is_some());
         assert!(matches!(next.cell.get(), Some(Value::Int(1))));
         // One that cannot be stopped still counts, beside them.
         let (free, stuck) = mpsc::channel::<()>();
-        let op = pool.submit(failure, Vec::new(), move |_| {
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
             let _ = stuck.recv();
             Value::Unit
         });
@@ -1070,18 +1130,17 @@ mod tests {
         let started = Arc::new(AtomicBool::new(false));
         // One that can be stopped.
         let (flag, begun) = (stopped.clone(), started.clone());
-        let op = pool
-            .submit(failure, Vec::new(), move |_| {
-                begun.store(true, Ordering::SeqCst);
-                while !flag.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                Value::Unit
-            })
-            .stop_with({
-                let stopped = stopped.clone();
-                move || stopped.store(true, Ordering::SeqCst)
-            });
+        let leave = Leave::interrupts({
+            let stopped = stopped.clone();
+            move |_| stopped.store(true, Ordering::SeqCst)
+        });
+        let op = pool.submit(failure, Vec::new(), leave, move |_| {
+            begun.store(true, Ordering::SeqCst);
+            while !flag.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Value::Unit
+        });
         until("it runs", || started.load(Ordering::SeqCst));
         assert_eq!(pool.threads(), 1);
         drop(op);
@@ -1090,14 +1149,14 @@ mod tests {
 
         // One that cannot: the pool of one thread still runs the next.
         let (release, held) = mpsc::channel::<()>();
-        let op = pool.submit(failure, Vec::new(), move |_| {
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
             let _ = held.recv();
             Value::Unit
         });
         until("it runs", || *op.state.phase.lock() == Phase::Running);
         drop(op);
         assert_eq!(pool.threads(), 0);
-        let next = pool.submit(failure, Vec::new(), |_| Value::Int(2));
+        let next = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(2));
         until("the next ran", || next.cell.get().is_some());
         release.send(()).unwrap();
     }
@@ -1108,7 +1167,7 @@ mod tests {
     fn an_operation_that_is_queued_when_its_waiter_goes_never_runs() {
         let pool = pool(1, NEVER_IDLE);
         let (release, held) = mpsc::channel::<()>();
-        let first = pool.submit(failure, Vec::new(), move |_| {
+        let first = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
             let _ = held.recv();
             Value::Unit
         });
@@ -1117,25 +1176,25 @@ mod tests {
         });
         let ran = Arc::new(AtomicBool::new(false));
         let flag = ran.clone();
-        let second = pool.submit(failure, Vec::new(), move |_| {
+        let second = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
             flag.store(true, Ordering::SeqCst);
             Value::Unit
         });
         drop(second);
         release.send(()).unwrap();
         until("the first ends", || first.cell.get().is_some());
-        let third = pool.submit(failure, Vec::new(), |_| Value::Unit);
+        let third = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Unit);
         until("the third ran", || third.cell.get().is_some());
         assert!(!ran.load(Ordering::SeqCst));
     }
 
     /// An operation on something that is of no use to a waiter who
-    /// did not get its value ([`IoOp::stop_unless_taken`]) is told to
-    /// stop whenever its waiter goes without the value: while it was
-    /// queued, while it ran, and when its value was there and nobody
-    /// had taken it. A waiter that took the value leaves it alone, and
-    /// so does one of an operation that is only stopped while it runs
-    /// ([`IoOp::stop_with`]).
+    /// did not get its value ([`Leave::Closes`]) is told to stop
+    /// whenever its waiter goes without the value: while it was queued,
+    /// while it ran, and when its value was there and nobody had taken
+    /// it. A waiter that took the value leaves it alone, and so does
+    /// one of an operation that is only interrupted while it runs
+    /// ([`Leave::Returns`]).
     #[test]
     #[cfg(feature = "tcp")]
     fn a_waiter_that_goes_without_the_value_stops_the_operation_wherever_it_stands() {
@@ -1147,15 +1206,14 @@ mod tests {
                 told.fetch_add(1, Ordering::SeqCst);
             }
         };
+        let closes = || Leave::closes(tell());
         let told = || told.load(Ordering::SeqCst);
         // One runs, in the pool's one thread.
         let (release, held) = mpsc::channel::<()>();
-        let running = pool
-            .submit(failure, Vec::new(), move |_| {
-                let _ = held.recv();
-                Value::Unit
-            })
-            .stop_unless_taken(tell());
+        let running = pool.submit(failure, Vec::new(), closes(), move |_| {
+            let _ = held.recv();
+            Value::Unit
+        });
         until("the first runs", || {
             *running.state.phase.lock() == Phase::Running
         });
@@ -1173,18 +1231,22 @@ mod tests {
             });
             let mut pool_state = pool.shared.state.lock();
             pool_state.queue.push_back((job, state.clone()));
-            let op = IoOp {
+            let (interrupt, close): (Option<Interrupt>, Option<Box<dyn FnOnce() + Send>>) =
+                match stop {
+                    true => (None, Some(Box::new(tell()))),
+                    false => {
+                        let tell = tell();
+                        (Some(Box::new(move |_: &Wanted| tell())), None)
+                    }
+                };
+            IoOp {
                 cell: state.cell.clone(),
                 in_flight: Arc::default(),
                 pool: pool.shared.clone(),
                 state,
-                stop: None,
-                unless_taken: false,
+                interrupt,
+                close,
                 withheld: false,
-            };
-            match stop {
-                true => op.stop_unless_taken(tell()),
-                false => op.stop_with(tell()),
             }
         };
         let (unheard, only_while_it_runs) = (queued(true), queued(false));
@@ -1198,18 +1260,14 @@ mod tests {
         release.send(()).unwrap();
         assert!(!ran.load(Ordering::SeqCst));
         // The value is there, and the waiter goes without it.
-        let unheard = pool
-            .submit(failure, Vec::new(), |_| Value::Int(2))
-            .stop_unless_taken(tell());
+        let unheard = pool.submit(failure, Vec::new(), closes(), |_| Value::Int(2));
         until("its value is there", || {
             *unheard.state.phase.lock() == Phase::Finished
         });
         drop(unheard);
         assert_eq!(told(), 3);
         // The value is there, and the waiter takes it.
-        let heard = pool
-            .submit(failure, Vec::new(), |_| Value::Int(3))
-            .stop_unless_taken(tell());
+        let heard = pool.submit(failure, Vec::new(), closes(), |_| Value::Int(3));
         until("its value is there", || {
             *heard.state.phase.lock() == Phase::Finished
         });
@@ -1255,7 +1313,7 @@ mod tests {
         let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
         let (release, held) = mpsc::channel::<()>();
         let (tell, told) = mpsc::channel::<bool>();
-        let op = pool.submit(failure, Vec::new(), move |wanted| {
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |wanted| {
             let _ = held.recv();
             let _ = tell.send(wanted.claim());
             Value::Unit
@@ -1271,11 +1329,11 @@ mod tests {
     #[test]
     fn a_stopped_pool_fails_its_operations() {
         let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
-        let op = pool.submit(failure, Vec::new(), |_| Value::Int(1));
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
         until("it ran", || op.cell.get().is_some());
         pool.stop();
         until("the thread ended", || pool.threads() == 0);
-        let op = pool.submit(failure, Vec::new(), |_| Value::Int(2));
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(2));
         match op.cell.get() {
             Some(Value::String(msg)) => assert!(msg.contains(VM_GONE), "{msg}"),
             other => panic!("expected the typed failure, got {other:?}"),
