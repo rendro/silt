@@ -182,7 +182,7 @@ impl Family {
         };
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             non-generic {named}, and aliases of these",
+             non-generic {named}, types with a `json.Decode` impl, and aliases of these",
             leaves.join(", ")
         )
     }
