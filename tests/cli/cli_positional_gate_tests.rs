@@ -13,9 +13,10 @@
 //! parsing path is exercised.
 
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -229,20 +230,52 @@ fn silt_fmt_recurses_into_dot_argument() {
     // behavior together with the new directory recursion.
     let ws = fresh_dir("fmt_dot");
     fs::write(ws.join("a.silt"), "fn  a( ) {\n}\n").unwrap();
-    let out = silt_cmd()
-        .args(["fmt", "--check", "."])
-        .current_dir(&ws)
-        .output()
-        .expect("failed to run silt fmt --check .");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    // (Once, on Windows, this run did not end: if it hangs again, the
+    // test says so with what silt wrote, instead of holding the shard
+    // until its cap.)
+    let (status, stderr) = ended_within(
+        silt_cmd().args(["fmt", "--check", "."]).current_dir(&ws),
+        &ws,
+        Duration::from_secs(120),
+    );
     assert!(
         !stderr.contains("Is a directory"),
         "got OS-21 raw error: {stderr}"
     );
     // Drift detected in a.silt.
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(status, Some(1));
     assert!(
         stderr.contains("a.silt"),
         "stderr should reference a.silt; got: {stderr}"
     );
+}
+
+/// Run `command` with its stdout and stderr in files of `dir`, and wait
+/// for it at most `limit`: its status and its stderr. A run that has not
+/// ended by then is killed, and the test fails with what it wrote.
+fn ended_within(command: &mut Command, dir: &Path, limit: Duration) -> (Option<i32>, String) {
+    let (out, err) = (dir.join("silt.out"), dir.join("silt.err"));
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&out).unwrap())
+        .stderr(fs::File::create(&err).unwrap())
+        .spawn()
+        .expect("silt starts");
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("the process is asked") {
+            break status;
+        }
+        if started.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "silt did not end within {limit:?}\nstdout: {}\nstderr: {}",
+                fs::read_to_string(&out).unwrap_or_default(),
+                fs::read_to_string(&err).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    (status.code(), fs::read_to_string(&err).unwrap_or_default())
 }

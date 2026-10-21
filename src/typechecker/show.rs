@@ -37,7 +37,10 @@ impl TypeChecker {
     /// beside the part of it that has no decoder, which the registry
     /// writes so.
     pub(super) fn show_with_builtin_modules(&self, ty: &Type) -> String {
-        Type::show_all(&[ty], |r, _| of_builtin_module(r).then(|| self.qualified_type(r))).remove(0)
+        Type::show_all(&[ty], |r, _| {
+            of_builtin_module(r).then(|| self.qualified_type(r))
+        })
+        .remove(0)
     }
 
     /// Whether another type the session knows has the name of `r`.
