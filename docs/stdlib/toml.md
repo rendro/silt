@@ -154,7 +154,10 @@ variant = "Paused"
 ```
 
 An enum type may be the type argument (at the top of `toml.parse` only a
-variant with fields is a table), the elements of `toml.parse_list`, the
+variant with fields is a table: an enum none of whose variants has fields,
+and that has no `json.Decode` impl, is a compile error, "`toml.parse` cannot
+decode `Status`: a toml document is a table, and no variant of `Status` has
+fields"), the elements of `toml.parse_list`, the
 values of `toml.parse_map`, and the type of a field anywhere in a record or
 in another enum's variant. A document that is no variant of the enum is an
 `Err` with the texts of `json.parse`, toml's names of the kinds of values and

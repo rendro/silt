@@ -207,6 +207,23 @@ impl TypeChecker {
                 };
                 return refusal(Code::Undecodable, message, generic_help);
             }
+            // A toml document is a table: of an enum, only a variant
+            // with fields is one.
+            if enum_type
+                && decoding == Decoding::TOML_RECORD
+                && (self.tables.enums.get(&head))
+                    .is_some_and(|info| info.variants.iter().all(|v| v.field_types.is_empty()))
+            {
+                return refusal(
+                    Code::Undecodable,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: a toml document is a \
+                         table, and no variant of `{}` has fields",
+                        self.show_type(&Type::Generic(head, Vec::new()))
+                    ),
+                    record_help,
+                );
+            }
             let found = self.undecodable_field(head, family, &mut HashSet::new())?;
             let (place, has, kind) = match found.in_variant {
                 true => ("variant", "a field of type", "an enum"),
