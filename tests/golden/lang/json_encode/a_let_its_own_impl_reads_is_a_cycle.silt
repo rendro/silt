@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the top-level `let` 's' needs its own value to be initialised: s -> T.encode -> s
+-- A `let` whose value is written by an impl that reads the `let`.
+import json
+
+type T { n: Int }
+
+trait json.Encode for T {
+  fn encode(self) -> json.Value { json.String(s) }
+}
+
+let s = json.stringify(T { n: 1 })
+
+fn main() {
+  println(s)
+}
