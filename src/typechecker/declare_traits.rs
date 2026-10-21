@@ -722,6 +722,14 @@ impl TypeChecker {
         false
     }
 
+    /// The trait the impl `ti` implements, as messages name it: as
+    /// written, but a trait of a builtin module with its module
+    /// (`json.Encode`, whatever the impl wrote).
+    fn impl_trait_name(&self, ti: &TraitImpl) -> String {
+        self.impl_trait(ti)
+            .map_or_else(|| resolve(ti.trait_name), |tr| tr.to_string())
+    }
+
     /// Whether the impl `ti`, for the type `target_type`, is written
     /// where it may be: in the module of its trait or of its type (the
     /// rule `impl_in_its_module` reports). An impl elsewhere is no impl:
@@ -810,7 +818,8 @@ impl TypeChecker {
                     Code::DuplicateDeclaration,
                     format!(
                         "duplicate implementation of trait '{}' for type '{}'",
-                        ti.trait_name, ti.target_type
+                        self.impl_trait_name(ti),
+                        ti.target_type
                     ),
                     ti.span,
                 );
@@ -1119,7 +1128,7 @@ impl TypeChecker {
                     format!(
                         "unknown trait '{}' in where clause on trait impl '{} for {}'",
                         resolve(wc.trait_name),
-                        resolve(ti.trait_name),
+                        self.impl_trait_name(ti),
                         resolve(ti.target_type)
                     ),
                     ti.span,
@@ -1165,7 +1174,7 @@ impl TypeChecker {
                             "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
                              declare it as a target parameter: `trait {} for {}({}, ...)`",
                             resolve(*type_param),
-                            resolve(ti.trait_name),
+                            self.impl_trait_name(ti),
                             resolve(ti.target_type),
                             resolve(*type_param)
                         ),
@@ -1205,7 +1214,7 @@ impl TypeChecker {
                     Code::ArityMismatch,
                     format!(
                         "trait '{}' expects {} {}, got {} in impl for '{}'",
-                        resolve(ti.trait_name),
+                        self.impl_trait_name(ti),
                         expected,
                         inference::plural(expected, "type argument", "type arguments"),
                         ti.trait_args.len(),
@@ -1282,7 +1291,7 @@ impl TypeChecker {
                     format!(
                         "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
                         resolve(binding.name),
-                        resolve(ti.trait_name),
+                        self.impl_trait_name(ti),
                         resolve(ti.target_type),
                     ),
                     binding.span,
@@ -1303,7 +1312,7 @@ impl TypeChecker {
                     format!(
                         "associated type '{}' is not declared in trait '{}'",
                         resolve(binding.name),
-                        resolve(ti.trait_name),
+                        self.impl_trait_name(ti),
                     ),
                     binding.span,
                 );
@@ -1359,7 +1368,7 @@ impl TypeChecker {
                     Code::InvalidTraitImpl,
                     format!(
                         "impl of '{}' for '{}' is missing required associated type '{}'",
-                        resolve(ti.trait_name),
+                        self.impl_trait_name(ti),
                         resolve(ti.target_type),
                         resolve(assoc.name),
                     ),
@@ -1375,7 +1384,7 @@ impl TypeChecker {
                         format!(
                             "unknown trait '{}' in bound on associated type '{}::{}'",
                             resolve(bound_trait.name),
-                            resolve(ti.trait_name),
+                            self.impl_trait_name(ti),
                             resolve(assoc.name),
                         ),
                         assoc.span,
@@ -1408,7 +1417,9 @@ impl TypeChecker {
                     Code::DuplicateDeclaration,
                     format!(
                         "duplicate method '{}' in trait impl '{} for {}'",
-                        method.name, ti.trait_name, ti.target_type
+                        method.name,
+                        self.impl_trait_name(ti),
+                        ti.target_type
                     ),
                     method.span,
                 );
@@ -1420,7 +1431,8 @@ impl TypeChecker {
                     Code::InvalidTraitImpl,
                     format!(
                         "method '{}' is not declared in trait '{}'",
-                        method.name, ti.trait_name
+                        method.name,
+                        self.impl_trait_name(ti)
                     ),
                     method.span,
                 );
@@ -1690,7 +1702,7 @@ impl TypeChecker {
                                             "method '{}' of the impl of '{}' for '{}' adds the bound \
                                              `{}: {}`, which the trait does not declare for it",
                                             method.name,
-                                            ti.trait_name,
+                                            self.impl_trait_name(ti),
                                             ti.target_type,
                                             type_param,
                                             self.show_bound(*trait_name, &resolved_bound_args)
@@ -1836,7 +1848,7 @@ impl TypeChecker {
         };
         // The impl as it is written (its target may be an alias of the
         // record), the record by its name.
-        let (tr, of) = (ti.trait_name, ti.target_type);
+        let (tr, of) = (self.impl_trait_name(ti), ti.target_type);
         let ty = self.show_type(&Type::Generic(target_type, vec![]));
         let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
         let mut written: Vec<Symbol> = Vec::new();
@@ -1890,7 +1902,7 @@ impl TypeChecker {
     /// Report the impl method `method`, written with a number of
     /// parameters other than the `declared` ones of its trait.
     fn impl_method_arity(&mut self, ti: &TraitImpl, method: &FnDecl, declared: usize) {
-        let (name, tr) = (method.name, ti.trait_name);
+        let (name, tr) = (method.name, self.impl_trait_name(ti));
         let written = method.params.len();
         let takes_self = writes_self(method);
         let mut d = Diagnostic::error(
@@ -1920,7 +1932,7 @@ impl TypeChecker {
     /// trait declares none, or without where it declares one (with as
     /// many parameters as the trait's).
     fn impl_method_receiver(&mut self, ti: &TraitImpl, method: &FnDecl) {
-        let (name, tr) = (method.name, ti.trait_name);
+        let (name, tr) = (method.name, self.impl_trait_name(ti));
         let (message, help) = match writes_self(method) {
             true => (
                 format!(
