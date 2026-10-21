@@ -1252,16 +1252,16 @@ fn open_stream(
     // thread has begun, `starting` stands in for it.
     let scheduler = vm.scheduler().clone();
     let starting = scheduler.external();
-    // Rows of a type that holds parts the program's impls decode are
-    // finished by a task each (`Helper`).
-    let helper = rows::reaches_impl(&decoding.1, &decoding.2, &decoding.0).then(|| Helper {
-        vm: vm.spawn_child(),
-        owner: scheduler.current_owner(),
-    });
-    let decode = (decoding, helper);
     // (A task that takes nothing new starts nothing: it is ended where
     // it waits next.)
     if !vm.takes_nothing_new() {
+        // Rows of a type that holds parts the program's impls decode
+        // are finished by a task each (`Helper`).
+        let helper = rows::reaches_impl(&decoding.1, &decoding.2, &decoding.0).then(|| Helper {
+            vm: vm.spawn_child(),
+            owner: scheduler.current_owner(),
+        });
+        let decode = (decoding, helper);
         vm.runtime.io_pool.background(pg_timeout_err, move || {
             let _running = scheduler.enter();
             drop(starting);
@@ -2924,7 +2924,7 @@ fn statement_then(
         }
     };
     let op = vm.io_op(pg_timeout_err, leave, f);
-    vm.io_wait_step("postgres", op, move |_, value| {
+    vm.io_wait_then("postgres", op, move |value| {
         match unsendable.and_then(|unsendable| unsendable.take()) {
             Some(why) => Err(VmError::new(why)),
             None => then(value),

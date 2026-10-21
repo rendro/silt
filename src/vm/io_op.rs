@@ -31,41 +31,31 @@ impl Vm {
 
     /// Wait for `op`, until `SILT_IO_TIMEOUT` ([`Limit::Io`]).
     pub(crate) fn io_wait(&mut self, name: &'static str, op: IoOp) -> Result<Step, VmError> {
-        self.io_wait_then(name, op, Ok)
-    }
-
-    /// [`Vm::io_wait`] whose value is `then` of the operation's: an
-    /// error of the program that the operation found (a value of the
-    /// program it could not send, say) is `then`'s `Err`.
-    pub(crate) fn io_wait_then(
-        &mut self,
-        name: &'static str,
-        op: IoOp,
-        then: impl FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
-    ) -> Result<Step, VmError> {
-        self.io_wait_step(name, op, move |_, value| then(value).map(Step::Done))
+        self.io_wait_then(name, op, |value| Ok(Step::Done(value)))
     }
 
     /// [`Vm::io_wait`] that goes on as `then` says with the operation's
     /// value: the builtin's value, or a frame that computes it (one
     /// that calls the program's code, as a postgres statement whose
-    /// rows wait for the program's `json.Decode` impls does).
-    pub(crate) fn io_wait_step(
+    /// rows wait for the program's `json.Decode` impls does). An error
+    /// of the program that the operation found (a value of the program
+    /// it could not send, say) is `then`'s `Err`.
+    pub(crate) fn io_wait_then(
         &mut self,
         name: &'static str,
         op: IoOp,
-        then: impl FnOnce(&mut Vm, Value) -> Result<Step, VmError> + Send + 'static,
+        then: impl FnOnce(Value) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
         let mut then = Some(then);
         let wait = op.wait(self, Limit::Io);
         // The frame owns the operation: when the wait is over, however
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
-        Ok(self.park(name, wait, move |vm, fired| {
+        Ok(self.park(name, wait, move |_, fired| {
             // The value is taken only by a wait that it ended: one
             // that came as the deadline passed stays unheard.
             match (op.outcome(&fired), then.take()) {
-                (Some(value), Some(then)) => then(vm, value),
+                (Some(value), Some(then)) => then(value),
                 (Some(value), None) => Ok(Step::Done(value)),
                 (None, _) => Ok(Step::Done(op.value(&fired))),
             }
