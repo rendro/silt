@@ -1544,6 +1544,7 @@ impl TypeChecker {
                         wanted.solved = true;
                     }
                     self.given_waiting.truncate(given_before);
+                    self.unplaced.retain(|&k| k < given_before);
                 } else if let CallForm::Call = form {
                     let passer = self.user_callee(callee);
                     self.point_at_type_arguments(&given, passer, callee_owes);

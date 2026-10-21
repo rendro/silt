@@ -172,6 +172,8 @@ pub struct TypeChecker {
     /// The variables (by representative and body) whose needs grew since
     /// `settle_builtin_needs` last looked.
     pub(super) grown_needs: Vec<(TyVar, Option<Symbol>)>,
+    /// The places in `given_waiting` of the uses `point_at_type_arguments`
+    /// has not placed yet: a use dropped from it leaves this too.
     pub(super) unplaced: Vec<usize>,
     /// The instantiations made so far, and the one under way: the
     /// `Pred::Given`s one owes are one use (`GivenUse::use_id`).
