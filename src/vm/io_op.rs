@@ -719,8 +719,11 @@ pub(crate) enum Limit {
     /// `http.serve`).
     #[cfg_attr(not(feature = "http"), allow(dead_code))]
     Own(std::time::Duration),
-    /// Never: the server's accept, the end of a transaction, a stage
-    /// of a stream.
+    /// Never: the server's accept, the end of a transaction.
+    #[cfg_attr(
+        not(any(feature = "tcp", feature = "postgres", feature = "test-hooks")),
+        allow(dead_code)
+    )]
     None,
 }
 
@@ -761,6 +764,7 @@ pub(crate) enum Leave {
     /// two come: for a value that must not be lost with a waiter that
     /// went just as it came (an accepted connection, a transaction that
     /// has begun).
+    #[cfg_attr(not(any(feature = "tcp", feature = "postgres")), allow(dead_code))]
     Returns {
         interrupt: Option<Interrupt>,
         give_back: Option<Unheard>,
@@ -772,6 +776,7 @@ pub(crate) type Interrupt = Box<dyn FnOnce(&Wanted) + Send>;
 
 impl Leave {
     /// [`Leave::Returns`] with `interrupt` alone.
+    #[cfg(any(test, feature = "tcp", feature = "postgres"))]
     pub(crate) fn interrupts(interrupt: impl FnOnce(&Wanted) + Send + 'static) -> Leave {
         Leave::Returns {
             interrupt: Some(Box::new(interrupt)),

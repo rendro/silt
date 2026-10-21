@@ -1,0 +1,52 @@
+-- A statement on a pool whose one connection a transaction holds waits
+-- for the connection. Its task.deadline passes meanwhile: the statement
+-- is never sent, also not when the connection is free again. (Before,
+-- it ran once the transaction had ended, up to 30 seconds after its
+-- task had stopped waiting for it, and the row was there.) A statement
+-- in a transaction gives up in the same way
+-- (a_statement_that_never_got_the_connection_gives_up).
+import env
+import json
+import postgres
+import task
+import time
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{ "max_pool_size": 1 }) {
+    Ok(pool) -> {
+      let done = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "CREATE TEMP TABLE silt_late_statement (n int)", ())
+        let late = task.deadline(time.ms(200)) { ->
+          postgres.execute(pool, "INSERT INTO silt_late_statement VALUES (1)", ())
+        }
+        println(
+          match late {
+            Ok(_) -> "the insert came back"
+            Err(e) -> "task.deadline: {e.message()}"
+          },
+        )
+        Ok(())
+      }
+      println(
+        match done {
+          Ok(_) -> "main's transaction: Ok"
+          Err(e) -> "main's transaction: {e.message()}"
+        },
+      )
+      time.sleep(time.ms(300))
+      match postgres.query(pool, "SELECT count(*)::int AS n FROM silt_late_statement", (), json.Value) {
+        Ok(rows) -> println("rows: {rows}")
+        Err(e) -> println("count: {e.message()}")
+      }
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {e.message()}")
+  }
+}

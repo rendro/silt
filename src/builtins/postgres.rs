@@ -578,7 +578,7 @@ fn tx_ended() -> Value {
 /// statement that never had it is not cancelled in the server and does
 /// not abort the transaction.
 fn tx_conn<'a>(cell: &'a TxCell, wanted: Option<&Wanted>) -> Result<TxGuard<'a>, Value> {
-    let gave_up = || other_error("postgres: the statement's task stopped waiting for it");
+    let gave_up = not_wanted;
     let mut holder = cell.holder();
     loop {
         if wanted.is_some_and(Wanted::gone) {
@@ -615,6 +615,29 @@ fn tx_conn<'a>(cell: &'a TxCell, wanted: Option<&Wanted>) -> Result<TxGuard<'a>,
     match conn.conn.canceller.was_sent() {
         false => Ok(conn),
         true => Err(Value::variant(bv::PG_TXN_ABORTED, vec![])),
+    }
+}
+
+/// The value of a statement that gave up before it had its connection,
+/// which nobody reads: its task stopped waiting for it.
+fn not_wanted() -> Value {
+    other_error("postgres: the statement's task stopped waiting for it")
+}
+
+/// A connection of `pool`, for a statement (or a `BEGIN`, a `LISTEN`)
+/// whose waiter is `wanted`. One whose task stops waiting for it before
+/// it has the connection gives up, with a value nobody reads: it is
+/// never sent, and the connection goes back to the pool. It claims the
+/// connection when it has it ([`Wanted::claim`]); from then on it is
+/// left to finish.
+fn pool_conn(pool: &PgPool, wanted: &Wanted) -> Result<PinnedConn, Value> {
+    if wanted.gone() {
+        return Err(not_wanted());
+    }
+    let conn = PinnedConn::take(pool).map_err(|e| pool_error_value(&e))?;
+    match wanted.claim() {
+        true => Ok(conn),
+        false => Err(not_wanted()),
     }
 }
 
@@ -1741,9 +1764,9 @@ fn with_conn(
     f: impl FnOnce(&Conn) -> Result<Value, Value>,
 ) -> Value {
     let done = match target {
-        ExecutorRef::Pool(pool) => match PinnedConn::take(&pool) {
+        ExecutorRef::Pool(pool) => match pool_conn(&pool, wanted) {
             Ok(conn) => f(&conn),
-            Err(e) => Err(pool_error_value(&e)),
+            Err(e) => Err(e),
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell, Some(wanted)) {
             Ok(conn) => f(conn.conn()),
@@ -2222,9 +2245,9 @@ fn do_notify(
     let params: [&(dyn ToSql + Sync); 2] = [&channel_name, &payload];
     match target {
         ExecutorRef::Pool(pool) => {
-            let conn = match PinnedConn::take(&pool) {
+            let conn = match pool_conn(&pool, wanted) {
                 Ok(c) => c,
-                Err(e) => return err(pool_error_value(&e)),
+                Err(e) => return err(e),
             };
             match conn.wait(conn.client().execute(sql, &params)) {
                 Ok(_) => ok(Value::Unit),
@@ -2446,7 +2469,7 @@ builtins! {
                 abandon_tx(&runtime, tx.0);
             }
         });
-        let op = vm.io_op(pg_timeout_err, leave, move |_| begin_tx(&pool));
+        let op = vm.io_op(pg_timeout_err, leave, move |wanted| begin_tx(&pool, wanted));
         Ok(Step::Run(Box::new(Transact {
             wait: Some(op.wait(vm, Limit::Io)),
             stage: Stage::Begin(op),
@@ -2575,10 +2598,10 @@ builtins! {
         // itself — `runtime` is an `Arc<Runtime>` so the clone is cheap.
         let runtime = vm.runtime.clone();
         let channel_name = channel.to_string();
-        let work = move |_: &Wanted| -> Value {
-            let conn = match PinnedConn::take(&pool) {
+        let work = move |wanted: &Wanted| -> Value {
+            let conn = match pool_conn(&pool, wanted) {
                 Ok(c) => c,
-                Err(e) => return err(pool_error_value(&e)),
+                Err(e) => return err(e),
             };
             // The notifications of the connection go to the worker from
             // now on.
@@ -2788,10 +2811,10 @@ impl Native for Transact {
 
 /// On the I/O pool: a connection of `pool`, and `BEGIN` on it. The
 /// value is `Ok(PgTx)` of the transaction, or `Err` of what failed.
-fn begin_tx(pool: &PgPool) -> Value {
-    let conn = match PinnedConn::take(pool) {
+fn begin_tx(pool: &PgPool, wanted: &Wanted) -> Value {
+    let conn = match pool_conn(pool, wanted) {
         Ok(conn) => conn,
-        Err(e) => return err(pool_error_value(&e)),
+        Err(e) => return err(e),
     };
     if let Err(e) = conn.wait(conn.client().batch_execute("BEGIN")) {
         return err(pg_error_to_variant(&e));

@@ -69,7 +69,8 @@ enum Next {
     Emit(Value),
     /// Call a function with arguments.
     Call(Value, Vec<Value>),
-    /// Run a blocking operation on the I/O pool, on what `On` says.
+    /// Run a blocking operation on the I/O pool, on what `On` says,
+    /// until `SILT_IO_TIMEOUT` at most.
     Io(Box<dyn FnOnce() -> Value + Send>, On),
     /// It is finished. A sink's value; a stage's is ignored.
     Done(Value),
@@ -231,7 +232,8 @@ impl Native for Pipe {
                     return Ok(Step::Done(Value::Unit));
                 }
             },
-            State::Io(op) => Got::Io(op.outcome(&vm.woken()?).unwrap_or(Value::Unit)),
+            // The value, or the module's error at `SILT_IO_TIMEOUT`.
+            State::Io(op) => Got::Io(op.value(&vm.woken()?)),
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
@@ -296,15 +298,18 @@ impl Native for Pipe {
                     return Ok(vm.call(callee, args));
                 }
                 Next::Io(operation, On { failure, stop }) => {
+                    // An operation on a connection that ends without its
+                    // value reaching the pipe ends the connection, as a
+                    // `tcp.read` does.
                     let leave = match stop {
                         Some(stop) => {
                             self.stop = Some(stop.clone());
-                            Leave::interrupts(move |_| stop())
+                            Leave::Closes(Box::new(move || stop()))
                         }
                         None => Leave::RunsOut,
                     };
                     let op = vm.io_op(failure, leave, move |_| operation());
-                    let wait = op.wait(vm, Limit::None);
+                    let wait = op.wait(vm, Limit::Io);
                     self.state = State::Io(op);
                     return Ok(Step::Park(wait));
                 }
