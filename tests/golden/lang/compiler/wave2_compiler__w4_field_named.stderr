@@ -12,4 +12,4 @@ error[type]: `toml.parse` cannot decode `Outer`: field `tags` of `Inner`, a reco
  24 |   match from_toml("name = \"o\"\n[inner]\ntags = [[1]]\n", Outer) {
     |                                                            ^^^^^ `toml.parse` cannot decode `Outer`: field `tags` of `Inner`, a record type nested in it, has type `List(Set(Int))`, and `Set(Int)` has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these

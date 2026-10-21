@@ -95,10 +95,10 @@ impl TypeChecker {
     /// The error of the decoder `builtin`, which decodes as `decoding`
     /// says, given the type `ty` (a call names it by the alias
     /// `written`, if by one) at `span`, if it has no decoder for it. A
-    /// record type, or for json an enum type, of the program is decoded
-    /// if each field the decoder would have to fill has a decoder; the
-    /// error names the field and its type. A generic type, an enum given
-    /// to a decoder that is not json's, a builtin enum, a builtin
+    /// record type, or for json and toml an enum type, of the program is
+    /// decoded if each field the decoder would have to fill has a
+    /// decoder; the error names the field and its type. A generic type,
+    /// an enum given to postgres, a builtin enum, a builtin
     /// container type, or a primitive type given to a decoder that only
     /// decodes records is refused as well.
     fn decode_refusal(

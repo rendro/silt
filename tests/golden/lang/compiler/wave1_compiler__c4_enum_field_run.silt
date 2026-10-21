@@ -1,9 +1,5 @@
--- exit: 1
--- stderr-contains: error[type]
--- stderr-contains: toml.parse
--- stderr-contains: Pixel
--- stderr-contains: `c`
--- stderr-contains: Color
+-- toml decodes a record with an enum field: a variant without fields
+-- from the string of its name.
 import toml
 
 type Color { Red, Green }
@@ -11,7 +7,7 @@ type Pixel { x: Int, c: Color }
 
 fn main() {
   match toml.parse("x = 1\nc = \"Red\"\n", Pixel) {
-    Ok(v) -> println(v.x)
+    Ok(v) -> println("{v.x} {v.c}")
     Err(e) -> println("err: {e.message()}")
   }
 }
