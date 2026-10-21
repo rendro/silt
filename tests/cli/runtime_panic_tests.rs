@@ -685,7 +685,8 @@ fn main() {
 
 /// The reader of stdout takes one line and closes, while `main`
 /// prints without end and a worker panics. A process whose reader is
-/// gone dies by the signal of the closed pipe, quietly; one that is
+/// gone dies by the signal of the closed pipe (or ends with its status,
+/// 141), quietly; one that is
 /// ending with the internal error does not: it ends with Rust's
 /// lines, the line and status 101. Never Rust's lines and a death by
 /// the signal. (From the moment the process's end is decided, the
@@ -733,8 +734,12 @@ fn main() {
             .lines()
             .any(|line| line.starts_with("silt: internal error: "));
         match status {
-            // Killed by the signal: the reader was gone first.
-            None => assert!(!rusts && !line, "round {round}: {stderr}"),
+            // Ended by the closed pipe: the reader was gone first. It
+            // dies by the signal, or (where the signal is the process's
+            // and lands on another thread, as on macOS) the write that
+            // met the closed pipe ends it with the status 141 of that
+            // death (`ProcessStdout`).
+            None | Some(141) => assert!(!rusts && !line, "round {round}: {stderr}"),
             status => {
                 assert_eq!(status, Some(101), "round {round}: {stderr}");
                 assert!(rusts && line, "round {round}: {stderr}");
