@@ -58,10 +58,10 @@ The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
 
 | Function | Type argument |
 |----------|---------------|
-| `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or an enum type |
-| `json.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or an enum type |
-| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or an enum type |
-| `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or an enum type |
+| `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `json.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
 
 An alias of one of these is the type it names (`type Member = User`, then
 `json.parse(text, Member)`).

@@ -576,12 +576,12 @@ mod tests {
         ))
         .expect("a page");
         assert!(
-            page.contains("| `toml.parse` | a record type or an enum type |"),
+            page.contains("| `toml.parse` | a record type, an enum type, or a type with a `json.Decode` impl |"),
             "{page}"
         );
         assert!(
             page.contains(
-                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |"
+                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |"
             ),
             "{page}"
         );

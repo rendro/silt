@@ -55,9 +55,9 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `toml.parse` | a record type or an enum type |
-| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |
-| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |
+| `toml.parse` | a record type, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |
 
 An alias of one of these is the type it names.
 

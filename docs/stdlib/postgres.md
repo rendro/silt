@@ -118,9 +118,9 @@ impl (see [Types with a `json.Decode` impl](#types-with-a-jsondecode-impl)).
 
 | Function | Type argument |
 |----------|---------------|
-| `postgres.query` | a record type or `json.Value` |
-| `postgres.stream` | a record type or `json.Value` |
-| `postgres.cursor` | a record type or `json.Value` |
+| `postgres.query` | a record type, `json.Value`, or a type with a `json.Decode` impl |
+| `postgres.stream` | a record type, `json.Value`, or a type with a `json.Decode` impl |
+| `postgres.cursor` | a record type, `json.Value`, or a type with a `json.Decode` impl |
 
 Each filled from the columns the table below names, the fields of the record
 type may have these types:
