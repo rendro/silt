@@ -98,6 +98,38 @@ decoder imported by name (`import toml.{ parse }`) and to one called through
 a module alias, and a type is refused whatever a document would hold (an
 `Option` field whose key is left out, an empty list or map too).
 
+A record or enum type with a written [`json.Decode`](json.md#jsondecode)
+impl is decoded by the impl, as `json.parse` decodes it: one data layer,
+one override. See [Types with a `json.Decode` impl](#types-with-a-jsondecode-impl).
+
+
+## Types with a `json.Decode` impl
+
+A type with a written `trait json.Decode for T` impl is decoded by its
+`decode` wherever a value of the type is in the document: at the top, as an
+element of `toml.parse_list`, as a value of `toml.parse_map`, in a record's
+or a variant's field, in a list or a map in one. The impl gets its part of
+the document as a `json.Value`: a table is a `json.Object`, an array a
+`json.Array`, an integer a `json.Int`, a float a `json.Float`, and a date or
+time literal a `json.String` of its text as TOML writes it, offset kept
+(`1979-05-27`, `07:32:00.25`, `1979-05-27T07:32:00`,
+`1979-05-27T07:32:00Z`, `1979-05-27T00:32:00-07:00`), which `json.decode`
+reads back as a `Date`, `Time` or `DateTime`. A float that is no number
+(`nan`, `inf`) has no `json.Value`: in such a part it is
+`Err(TypeMismatch("json.Value", "a non-finite float at readings[1]"))`.
+
+The fields of `T` are not looked into, so `T` may hold a type no decoder
+has (a `Set`). An `Option` around it stays structural (a key left out is
+`None`). The `JsonError` the impl returns is the `TomlError` of the same
+variant, with the path of its part appended as to the decoder's own
+errors: `Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
+posts[1].tags")`, `MissingField("name")` there is
+`MissingField("posts[1].tags.name")`. A `Syntax` error (an impl that
+parses a JSON text of its own) is an `Other` of json's message of it,
+`Other("json syntax error at byte 3: ... at posts[1].tags")`, since its
+offset is in that text and not in the TOML document. The first error the
+decoder comes to counts, the impl's or the decoder's own.
+
 
 ## Enums
 

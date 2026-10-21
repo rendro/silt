@@ -282,12 +282,14 @@ impl TypeChecker {
     /// has a variable its signature asks the trait of; and the value of
     /// `toml.stringify` and `toml.pretty` and the parameters of a
     /// postgres statement, which the writer writes as `json.stringify`
-    /// does, though their signatures ask nothing of them.
+    /// does, though their signatures ask nothing of them; and the type
+    /// argument of every decoder (toml's and postgres's too, whose
+    /// signatures ask nothing of it), which decodes as json's do.
     fn shown_params(&self, def: &crate::defs::Def) -> Vec<(usize, TraitKey)> {
         let Some(scheme) = builtin_scheme(def) else {
             return Vec::new();
         };
-        let Type::Fun(params, _) = &scheme.ty else {
+        let Type::Fun(params, ret) = &scheme.ty else {
             return Vec::new();
         };
         let encode = TraitKey::builtin("Encode");
@@ -320,6 +322,11 @@ impl TypeChecker {
         };
         if let Some(param) = written.and_then(|i| params.get(i)) {
             shown.extend(free_vars_in(param).into_iter().map(|v| (v, encode)));
+        }
+        // (A decoder's type argument is what it gives back.)
+        if row.is_some_and(|row| row.decoding.is_some()) {
+            let decode = TraitKey::builtin("Decode");
+            shown.extend(free_vars_in(ret).into_iter().map(|v| (v, decode)));
         }
         let mut found = Vec::new();
         for (i, param) in params.iter().enumerate() {

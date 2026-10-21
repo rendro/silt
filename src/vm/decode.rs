@@ -1,6 +1,6 @@
-//! Decoding a json document: `json.parse`, `json.parse_list`,
-//! `json.parse_map`, `json.decode`, and `T.decode(value)` of a type with
-//! no written impl.
+//! Decoding a document: `json.parse`, `json.parse_list`,
+//! `json.parse_map`, `json.decode`, `T.decode(value)` of a type with no
+//! written impl, and `toml.parse`, `toml.parse_list`, `toml.parse_map`.
 //!
 //! A document is decoded by the one decoder (`builtins::decode`), but a
 //! part of a record or enum type the program wrote a `json.Decode` impl
@@ -11,7 +11,8 @@
 //! impl for each, in the order the decoder came to them; then the
 //! decoder reads the document again and puts what the impls gave in
 //! their places. An impl's `Err` is the result, with the place of its
-//! part appended as a decoder's own errors have it. A program with no
+//! part appended as a decoder's own errors have it, as the format's
+//! error (`Rules::from_impl`). A program with no
 //! written `json.Decode` impl, and a document with no such part, takes
 //! no frame.
 
@@ -19,25 +20,26 @@ use std::sync::Arc;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::builtins::decode::{self, Error, Hole, Holes, Reader};
-use crate::builtins::json::RULES;
+use crate::builtins::decode::{self, Document, Error, Hole, Holes, Reader};
 use crate::bytecode::Globals;
-use crate::typeinfo::{FieldType, bv, ty};
+use crate::typeinfo::{FieldType, bv};
 use crate::value::Value;
 
-/// How a document is read as a value of a field type: as one value
-/// (`decode::value`), as a list (`decode::list`), or as a map
-/// (`decode::map`) of them.
-pub(crate) type Read = fn(&Reader, &serde_json::Value, &FieldType) -> Result<Value, Error>;
+/// How a document of the format `D` is read as a value of a field
+/// type: as one value (`decode::value`), as a list (`decode::list`), or
+/// as a map (`decode::map`) of them.
+pub(crate) type Read<D> = fn(&Reader, &D, &FieldType) -> Result<Value, Error>;
 
 /// The frame that decodes a document with parts a written
 /// `json.Decode` impl decodes.
-struct Decoding {
+struct Decoding<D: Document> {
+    /// The builtin that decodes.
+    name: &'static str,
     /// The table the parts were found with.
     table: Arc<Globals>,
-    doc: serde_json::Value,
+    doc: D,
     expected: FieldType,
-    read: Read,
+    read: Read<D>,
     holes: Vec<Hole>,
     /// The `decode` of each part's type.
     impls: Vec<Value>,
@@ -49,9 +51,9 @@ struct Decoding {
     calling: bool,
 }
 
-impl Native for Decoding {
+impl<D: Document + Send> Native for Decoding<D> {
     fn name(&self) -> &str {
-        "json.decode"
+        self.name
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
@@ -62,7 +64,7 @@ impl Native for Decoding {
                     self.decoded.push(result.fields()[0].clone());
                 }
                 Value::Variant(result) if result.is(bv::ERR) => {
-                    let error = at_part(&result.fields()[0], at);
+                    let error = (D::RULES.from_impl)(&result.fields()[0], at);
                     return Ok(Step::Done(Value::variant(bv::ERR, vec![error])));
                 }
                 other => {
@@ -84,65 +86,36 @@ impl Native for Decoding {
         // Every part decoded: the decoder's own error after them, or
         // the value with them.
         if let Some(error) = self.error.take() {
-            return Ok(Step::Done(decode::result(&RULES, Err(error))));
+            return Ok(Step::Done(decode::result(D::RULES, Err(error))));
         }
         let table = self.table.clone();
         let written = move |id| table.decoded(id);
         let values = std::mem::take(&mut self.decoded).into_iter();
         let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(values));
         let decoded = (self.read)(&reader, &self.doc, &self.expected);
-        Ok(Step::Done(decode::result(&RULES, decoded)))
+        Ok(Step::Done(decode::result(D::RULES, decoded)))
     }
-}
-
-/// The `JsonError` `error`, which an impl gave for a part `at` a path,
-/// as the decoder's error of a value there: a message ends with the
-/// path, a missing field's path starts with it.
-fn at_part(error: &Value, at: &str) -> Value {
-    let Value::Variant(variant) = error else {
-        return error.clone();
-    };
-    if at.is_empty() || !variant.of(ty::JSON_ERROR) {
-        return error.clone();
-    }
-    let ended = |text: &Value| match text {
-        Value::String(s) => Value::String(format!("{s} at {at}").into()),
-        other => other.clone(),
-    };
-    let mut fields = variant.fields().to_vec();
-    if variant.is(bv::JSON_MISSING_FIELD) {
-        if let Some(Value::String(field)) = fields.first() {
-            fields[0] = Value::String(decode::key_path(at, field).into());
-        }
-    } else if variant.is(bv::JSON_TYPE_MISMATCH) {
-        if let Some(actual) = fields.get_mut(1) {
-            *actual = ended(actual);
-        }
-    } else if let Some(message) = fields.first_mut() {
-        // `Syntax(message, offset)`, `Other(message)`.
-        *message = ended(message);
-    }
-    Value::variant(variant.tag(), fields)
 }
 
 impl Vm {
-    /// The result of decoding the json document `doc` as `read` reads
-    /// it into values of `expected`, honouring the `json.Decode` impls
-    /// the program wrote: `Ok` of the value, or `Err` of the
-    /// `JsonError`. A type a field of which no decoder fills is refused
-    /// before the document is read (`read_doc` gives it, or the result
-    /// of the call where there is none).
-    pub(crate) fn decode_json(
+    /// The result of `name`, decoding the document `read_doc` gives as
+    /// `read` reads it into values of `expected`, honouring the
+    /// `json.Decode` impls the program wrote: `Ok` of the value, or
+    /// `Err` of the format's error. A type a field of which no decoder
+    /// fills is refused before the document is read (`read_doc` gives
+    /// it, or the result of the call where there is none).
+    pub(crate) fn decode_document<D: Document + Send>(
         &mut self,
+        name: &'static str,
         expected: FieldType,
-        read: Read,
-        read_doc: impl FnOnce() -> Result<serde_json::Value, Value>,
+        read: Read<D>,
+        read_doc: impl FnOnce() -> Result<D, Value>,
     ) -> Result<Step, VmError> {
         let table = self.decoding_table();
         let written = |id| table.decoded(id);
         let reader = Reader::with_impls(&self.runtime, &written, Holes::Collect(Vec::new()));
         let target = decode::Target::Value(expected.clone());
-        if let Some(refused) = decode::refused(&reader, &RULES, &target) {
+        if let Some(refused) = decode::refused(&reader, D::RULES, &target) {
             return Ok(Step::Done(refused));
         }
         let doc = match read_doc() {
@@ -152,13 +125,14 @@ impl Vm {
         let decoded = read(&reader, &doc, &expected);
         let holes = reader.into_holes();
         if holes.is_empty() {
-            return Ok(Step::Done(decode::result(&RULES, decoded)));
+            return Ok(Step::Done(decode::result(D::RULES, decoded)));
         }
         let impls = holes
             .iter()
             .map(|hole| self.written_decode(hole))
             .collect::<Result<Vec<Value>, VmError>>()?;
         Ok(Step::Run(Box::new(Decoding {
+            name,
             table,
             doc,
             expected,
@@ -174,7 +148,7 @@ impl Vm {
     /// The table a document is decoded by: this VM's, or, for a task of
     /// an earlier REPL entry, the newest, where a later entry may have
     /// written an impl.
-    fn decoding_table(&mut self) -> Arc<Globals> {
+    pub(crate) fn decoding_table(&mut self) -> Arc<Globals> {
         match self.wider_table(Globals::any_decoded) {
             Some(table) => table,
             None => self.view.table.clone(),

@@ -32,6 +32,13 @@ impl TypeChecker {
         tr.is_builtin("Decode")
     }
 
+    /// Whether the program wrote a `json.Decode` impl for `head`: every
+    /// decoder (json's, toml's, postgres's) decodes it by the impl, and
+    /// does not look into its fields.
+    pub(super) fn has_decode_impl(&self, head: TypeRef) -> bool {
+        !self.by_structure(TraitKey::builtin("Decode"), head)
+    }
+
     /// Whether an impl of `tr` for `target` is refused: `json.Decode`
     /// for a generic type (a decoder builds a value of one type).
     pub(super) fn decode_impl_refused(&self, tr: TraitKey, target: TypeRef) -> bool {

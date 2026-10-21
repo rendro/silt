@@ -359,6 +359,7 @@ pub(crate) const RULES: Rules = Rules {
         bv::JSON_MISSING_FIELD,
         bv::JSON_OTHER,
     ],
+    from_impl: decode::at_part,
 };
 
 impl Document for serde_json::Value {
@@ -435,11 +436,11 @@ fn decoded(
     vm: &mut Vm,
     caller: &Decoder,
     ty: Type,
-    read: crate::vm::decode::Read,
+    read: crate::vm::decode::Read<serde_json::Value>,
     read_doc: impl FnOnce() -> Result<serde_json::Value, Value>,
 ) -> Result<Step, VmError> {
     let expected = decode::target(caller, ty)?.element();
-    vm.decode_json(expected, read, read_doc)
+    vm.decode_document("json.decode", expected, read, read_doc)
 }
 
 /// `json.decode(value, ty)`, and `T.decode(value)` of a type with no
@@ -583,12 +584,17 @@ mod tests {
             let json: serde_json::Value = serde_json::from_str(text).expect("a document");
             // As json.parse decodes it: the type is refused before the
             // document is read.
-            let target = decode::Target::Record(&ty, &fields);
+            let target = decode::Target::Record(&ty);
             let decoded = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target)
                 .unwrap_or_else(|| {
                     decode::result(
                         &RULES,
-                        decode::document(&decode::Reader::new(&vm.runtime), &target, &json),
+                        decode::value(
+                            &decode::Reader::new(&vm.runtime),
+                            &json,
+                            &target.element(),
+                            &At::Top,
+                        ),
                     )
                 });
             assert_eq!(

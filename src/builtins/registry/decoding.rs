@@ -527,8 +527,10 @@ mod tests {
                         return refusal;
                     }
                     let decoded = match family {
-                        Family::Json => decode::document(rt, &target, doc),
-                        Family::Toml => decode::document(rt, &target, &toml_of(doc)),
+                        Family::Json => decode::value(rt, doc, &target.element(), &At::Top),
+                        Family::Toml => {
+                            decode::value(rt, &toml_of(doc), &target.element(), &At::Top)
+                        }
                         Family::Postgres => match doc.get("f") {
                             Some(cell) => decode::value(rt, cell, f, &At::Top),
                             None => Ok(crate::value::Value::Unit),

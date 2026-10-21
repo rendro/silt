@@ -253,6 +253,7 @@ impl std::ops::Deref for Reader<'_> {
 
 impl<'a> Reader<'a> {
     /// A reader that decodes every type by its structure.
+    #[cfg(any(test, feature = "postgres"))]
     pub(crate) fn new(rt: &'a Runtime) -> Reader<'a> {
         Reader { rt, impls: None }
     }
@@ -282,20 +283,21 @@ impl<'a> Reader<'a> {
 
     /// The value of the part `doc`, `at` a path, of the type `id`, if a
     /// written impl decodes it: a stand-in while the parts are
-    /// collected, then what the impl gave.
-    fn hole<D: Document>(&self, id: TypeId, doc: &D, at: &At) -> Option<Value> {
+    /// collected, then what the impl gave. A part with no `json.Value`
+    /// (a TOML float that is no number) is the decoder's error.
+    fn hole<D: Document>(&self, id: TypeId, doc: &D, at: &At) -> Option<Result<Value, Error>> {
         let impls = self.impls.as_ref()?;
         let slot = (impls.written)(id)?;
         Some(match &mut *impls.holes.borrow_mut() {
-            Holes::Collect(holes) => {
+            Holes::Collect(holes) => json_part(doc, at).map(|json| {
                 holes.push(Hole {
                     at: at.to_string(),
-                    json: json_value(doc),
+                    json,
                     slot,
                 });
                 Value::Unit
-            }
-            Holes::Supply(values) => values.next().unwrap_or(Value::Unit),
+            }),
+            Holes::Supply(values) => Ok(values.next().unwrap_or(Value::Unit)),
         })
     }
 
@@ -306,6 +308,37 @@ impl<'a> Reader<'a> {
             _ => Vec::new(),
         }
     }
+}
+
+/// The `JsonError` `error`, which a written impl gave for a part `at` a
+/// path, as the decoder's error of a value there: a message ends with
+/// the path, a missing field's path starts with it. At the top it is as
+/// the impl wrote it.
+pub(crate) fn at_part(error: &Value, at: &str) -> Value {
+    let Value::Variant(variant) = error else {
+        return error.clone();
+    };
+    if at.is_empty() || !variant.of(ty::JSON_ERROR) {
+        return error.clone();
+    }
+    let ended = |text: &Value| match text {
+        Value::String(s) => Value::String(format!("{s} at {at}").into()),
+        other => other.clone(),
+    };
+    let mut fields = variant.fields().to_vec();
+    if variant.is(bv::JSON_MISSING_FIELD) {
+        if let Some(Value::String(field)) = fields.first() {
+            fields[0] = Value::String(key_path(at, field).into());
+        }
+    } else if variant.is(bv::JSON_TYPE_MISMATCH) {
+        if let Some(actual) = fields.get_mut(1) {
+            *actual = ended(actual);
+        }
+    } else if let Some(message) = fields.first_mut() {
+        // `Syntax(message, offset)`, `Other(message)`.
+        *message = ended(message);
+    }
+    Value::variant(variant.tag(), fields)
 }
 
 /// The path of the key `key` of the object at the path `at` (as a
@@ -474,7 +507,7 @@ pub(crate) fn record_refusal(
 /// an empty one too.
 pub(crate) fn refusal(rt: &Reader, family: Family, target: &Target) -> Option<std::string::String> {
     match target {
-        Target::Record(ty, _) => record_refusal(rt, family, ty),
+        Target::Record(ty) => record_refusal(rt, family, ty),
         Target::Value(FieldType::Enum(id)) => record_refusal(rt, family, &*rt.type_info(*id)?),
         Target::Value(field_type) => {
             let (place, declared) = lacking(rt, family, field_type, &mut Vec::new())?;
@@ -561,6 +594,9 @@ pub(crate) struct Rules {
     /// The variants `TypeMismatch`, `MissingField` and `Other` of the
     /// format's error (`JsonError`, `TomlError`).
     pub(crate) errors: [BuiltinVariant; 3],
+    /// The format's error of the `JsonError` that a written
+    /// `json.Decode` impl gave for a part `at` a path ([`at_part`]).
+    pub(crate) from_impl: fn(&Value, &str) -> Value,
 }
 
 /// How a number that is no `Int` is told from one.
@@ -651,8 +687,8 @@ pub(crate) enum Target<'a> {
     /// A primitive type, or `json.Value`: decoded as a field of the type
     /// is.
     Value(FieldType),
-    /// A record type of the program, with its fields.
-    Record(&'a Arc<TypeInfo>, &'a [(std::string::String, FieldType)]),
+    /// A record type of the program.
+    Record(&'a Arc<TypeInfo>),
 }
 
 impl Target<'_> {
@@ -661,7 +697,7 @@ impl Target<'_> {
     pub(crate) fn element(&self) -> FieldType {
         match self {
             Target::Value(field_type) => field_type.clone(),
-            Target::Record(ty, _) => FieldType::Record(ty.id),
+            Target::Record(ty) => FieldType::Record(ty.id),
         }
     }
 }
@@ -727,18 +763,10 @@ pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, 
             Ok(Target::Value(FieldType::Enum(ty.id)))
         }
         Type::Named(ty) => match decodable_record(caller, ty) {
-            Ok(fields) => Ok(Target::Record(ty, fields)),
+            Ok(_) => Ok(Target::Record(ty)),
             Err(_) if decoding.family.rows() => Err(not_a_row(&ty.name)),
             Err(e) => Err(e),
         },
-    }
-}
-
-/// The value of `target` that `doc`, the whole document, is.
-pub(crate) fn document<D: Document>(rt: &Reader, target: &Target, doc: &D) -> Result<Value, Error> {
-    match target {
-        Target::Value(field_type) => value(rt, doc, field_type, &At::Top),
-        Target::Record(ty, fields) => record(rt, ty, fields, doc, &At::Top),
     }
 }
 
@@ -828,7 +856,7 @@ pub(crate) fn value<D: Document>(
     if let FieldType::Record(id) | FieldType::Enum(id) = expected
         && let Some(decoded) = rt.hole(*id, doc, at)
     {
-        return Ok(decoded);
+        return decoded;
     }
     let rules = D::RULES;
     let mismatch = |expected: &'static str| Error::mismatch(expected, doc.kind(), at);
@@ -1036,6 +1064,34 @@ pub(crate) fn variant<D: Document>(
         })?);
     }
     Ok(Value::variant(tag, fields))
+}
+
+/// The `json.Value` that holds `doc`, a part `at` a path that a written
+/// impl decodes, as [`json_value`] makes it; a float that is no number
+/// (TOML's `nan` and `inf`), which no `json.Value` holds, is a type
+/// mismatch at its own path.
+fn json_part<D: Document>(doc: &D, at: &At) -> Result<Value, Error> {
+    Ok(match doc.node() {
+        Node::Float(f) if Float::new(f).is_none() => {
+            return Err(Error::mismatch("json.Value", "a non-finite float", at));
+        }
+        Node::Array(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                values.push(json_part(item, &at.index(index))?);
+            }
+            Value::variant(bv::JSON_ARRAY, vec![Value::list(values)])
+        }
+        Node::Table(table) => {
+            let entries = D::entries(table);
+            let mut members = Vec::with_capacity(entries.len());
+            for (key, item) in entries {
+                members.push((Value::String(key.into()), json_part(item, &at.key(key))?));
+            }
+            Value::variant(bv::JSON_OBJECT, vec![Value::map(members)])
+        }
+        _ => json_value(doc),
+    })
 }
 
 /// The `json.Value` that holds `doc`: a number an `Int` when it is held
@@ -1308,7 +1364,7 @@ mod tests {
             let toml = toml_of(&json).expect("a table");
             // As json.parse and toml.parse decode it: the type is
             // refused before the document is read.
-            let target = Target::Record(ty, fields);
+            let target = Target::Record(ty);
             let whole = |family, decoded: Result<Value, Error>| match refusal(rt, family, &target) {
                 Some(message) => outcome(Err(Error::Other(message))),
                 None => outcome(decoded),

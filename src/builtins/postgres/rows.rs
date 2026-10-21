@@ -254,7 +254,7 @@ impl RowType {
     /// The row type that the type argument `ty` of `caller` names.
     pub(super) fn of(caller: &decode::Decoder, ty: Type) -> Result<RowType, VmError> {
         Ok(match decode::target(caller, ty)? {
-            decode::Target::Record(ty, _) => RowType::Record(ty.clone()),
+            decode::Target::Record(ty) => RowType::Record(ty.clone()),
             // (`json.Value`: a postgres function takes no primitive type.)
             decode::Target::Value(_) => RowType::Value,
         })
