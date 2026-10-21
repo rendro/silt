@@ -9,7 +9,9 @@ use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Runtime, Step, Vm, VmError};
+#[cfg(feature = "postgres")]
+use crate::vm::Runtime;
+use crate::vm::{Step, Vm, VmError};
 
 // ── JsonError helpers ────────────────────────────────────────────────
 //
