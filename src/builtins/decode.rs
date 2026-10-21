@@ -308,60 +308,16 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// The path `inner`, a path from the value at the path `at`, from the
-/// document: `at.k`, `at[0]`, `at["a b"]` (`inner` as a decoder's error
-/// writes a path). An `inner` that is no such path is a key, written as
-/// a decoder writes one (`at["a b"]` for `a b`).
-pub(crate) fn joined_path(at: &str, inner: &str) -> std::string::String {
-    let inner = match is_path(inner) {
-        true => inner.to_string(),
-        false => At::Top.key(inner).to_string(),
-    };
-    match (at.is_empty(), inner.starts_with('[')) {
-        (true, _) => inner,
-        (false, true) => format!("{at}{inner}"),
-        (false, false) => format!("{at}.{inner}"),
+/// The path of the key `key` of the object at the path `at` (as a
+/// decoder's error writes it): `at.key`, `at["a b"]`, or the key alone
+/// at the top.
+pub(crate) fn key_path(at: &str, key: &str) -> std::string::String {
+    let own = At::Top.key(key).to_string();
+    match (at.is_empty(), own.starts_with('[')) {
+        (true, _) => own,
+        (false, true) => format!("{at}{own}"),
+        (false, false) => format!("{at}.{own}"),
     }
-}
-
-/// Whether `text` is a path as a decoder's error writes one: bare keys
-/// (letters, digits, `_`, `-`) joined by `.`, indexes `[0]` and quoted
-/// keys `["a b"]`.
-pub(crate) fn is_path(text: &str) -> bool {
-    let bare = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
-    let mut rest = text;
-    let mut first = true;
-    while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix('[') {
-            let Some(end) = after.find(']') else {
-                return false;
-            };
-            let inside = &after[..end];
-            let quoted = inside.len() >= 2
-                && inside.starts_with('"')
-                && inside.ends_with('"')
-                && serde_json::from_str::<std::string::String>(inside).is_ok();
-            if !quoted && (inside.is_empty() || !inside.bytes().all(|b| b.is_ascii_digit())) {
-                return false;
-            }
-            rest = &after[end + 1..];
-        } else {
-            let key = match first {
-                true => rest,
-                false => match rest.strip_prefix('.') {
-                    Some(key) => key,
-                    None => return false,
-                },
-            };
-            let len = key.find(|c: char| !bare(c)).unwrap_or(key.len());
-            if len == 0 {
-                return false;
-            }
-            rest = &key[len..];
-        }
-        first = false;
-    }
-    !text.is_empty()
 }
 
 // ── Types no decoder fills ──────────────────────────────────────────
@@ -1113,21 +1069,6 @@ pub(crate) fn json_value<D: Document>(doc: &D) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A path as a decoder writes one, joined under another.
-    #[test]
-    fn paths_are_joined_as_a_decoder_writes_them() {
-        for path in ["k", "a.b", "xs[1]", "[2]", "m[\"a b\"].k", "a-b_c"] {
-            assert!(is_path(path), "{path}");
-        }
-        for text in ["", "a b", "a.", "[x]", "[]", "a..b", "[\"a"] {
-            assert!(!is_path(text), "{text}");
-        }
-        assert_eq!(joined_path("w", "k"), "w.k");
-        assert_eq!(joined_path("w", "[0].k"), "w[0].k");
-        assert_eq!(joined_path("w", "a b"), "w[\"a b\"]");
-        assert_eq!(joined_path("", "a b"), "[\"a b\"]");
-    }
 
     /// A time and a datetime are read with a fraction of a second up to
     /// nanoseconds, as silt shows them, and without one.

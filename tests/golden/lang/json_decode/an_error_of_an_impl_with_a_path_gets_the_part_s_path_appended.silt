@@ -1,7 +1,8 @@
 -- An impl that decodes a part of its value with `json.decode` and
--- returns its error gives an error that has a path already: the part's
--- path is joined to it, as a decoder's own error has one path ("at
--- w.k", not "at k at w"), for every kind of error.
+-- returns its error gives an error that has a path already, which is the
+-- program's text: the part's path is appended to it as to any message
+-- ("at k at w"), not joined by guessing that the text ends in a path. A
+-- missing field's text is the key of a field of the part (`w["i.k"]`).
 import json
 import map
 

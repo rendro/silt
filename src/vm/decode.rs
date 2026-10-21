@@ -97,9 +97,7 @@ impl Native for Decoding {
 
 /// The `JsonError` `error`, which an impl gave for a part `at` a path,
 /// as the decoder's error of a value there: a message ends with the
-/// path, a missing field's path starts with it. A path the error has
-/// already (of a value inside the part, from a `json.decode` the impl
-/// called) is joined: `at w.k`, not `at k at w`.
+/// path, a missing field's path starts with it.
 fn at_part(error: &Value, at: &str) -> Value {
     let Value::Variant(variant) = error else {
         return error.clone();
@@ -108,21 +106,13 @@ fn at_part(error: &Value, at: &str) -> Value {
         return error.clone();
     }
     let ended = |text: &Value| match text {
-        Value::String(s) => Value::String(
-            match s.rsplit_once(" at ") {
-                Some((message, inner)) if decode::is_path(inner) => {
-                    format!("{message} at {}", decode::joined_path(at, inner))
-                }
-                _ => format!("{s} at {at}"),
-            }
-            .into(),
-        ),
+        Value::String(s) => Value::String(format!("{s} at {at}").into()),
         other => other.clone(),
     };
     let mut fields = variant.fields().to_vec();
     if variant.is(bv::JSON_MISSING_FIELD) {
         if let Some(Value::String(field)) = fields.first() {
-            fields[0] = Value::String(decode::joined_path(at, field).into());
+            fields[0] = Value::String(decode::key_path(at, field).into());
         }
     } else if variant.is(bv::JSON_TYPE_MISMATCH) {
         if let Some(actual) = fields.get_mut(1) {
