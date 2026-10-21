@@ -346,8 +346,8 @@ enum Of {
 impl Of {
     fn name(self) -> &'static str {
         match self {
-            Of::Date => "Date",
-            Of::DateTime => "DateTime",
+            Of::Date => "time.Date",
+            Of::DateTime => "time.DateTime",
         }
     }
 }

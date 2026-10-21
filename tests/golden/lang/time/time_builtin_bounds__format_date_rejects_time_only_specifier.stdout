@@ -1,1 +1,1 @@
-time format error: a specifier of a time of day in '%H' is not valid for a Date
+time format error: a specifier of a time of day in '%H' is not valid for a time.Date

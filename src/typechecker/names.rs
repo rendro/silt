@@ -2498,14 +2498,14 @@ impl Resolver<'_> {
                 let no_value = |(module, _): &(Symbol, Option<Symbol>)| {
                     super::builtin_env::is_module_type_no_value(&resolve(*module), &name_str)
                 };
-                if let Some((module, _)) = elsewhere.first()
-                    && elsewhere.iter().all(no_value)
-                {
-                    Some(format!(
-                        "`{name}` is the type `{module}.{name}`, and {}",
-                        super::builtin_env::module_type_is_no_value_help(&format!(
-                            "{module}.{name}"
-                        ))
+                let no_value_module = elsewhere
+                    .first()
+                    .filter(|_| elsewhere.iter().all(no_value))
+                    .map(|(module, _)| *module);
+                if let Some(module) = no_value_module {
+                    Some(super::builtin_env::bare_module_type_is_no_value_help(
+                        &name_str,
+                        &format!("{module}.{name}"),
                     ))
                 } else if !elsewhere.is_empty() {
                     Some(self.elsewhere_help(name, &elsewhere))

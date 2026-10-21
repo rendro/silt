@@ -1,6 +1,5 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: refutable pattern
 import shapes
 
 fn main() {

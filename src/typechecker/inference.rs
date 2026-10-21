@@ -1942,8 +1942,25 @@ impl TypeChecker {
                     );
                     Type::Error
                 } else {
-                    let msg = format_undefined_variable_message(name, env, "");
-                    self.error_help(Code::UndefinedVariable, msg, span);
+                    let (message, mut help) = format_undefined_variable_message(name, env, "");
+                    // A type of a builtin module imported by its name
+                    // (`import time.{ DateTime }`): it is no value.
+                    if let Some((module, t)) = self
+                        .res_type(expr.res)
+                        .and_then(|t| self.other_module(t).map(|m| (m, t)))
+                        .filter(|(m, t)| {
+                            super::builtin_env::is_module_type_no_value(
+                                &resolve(*m),
+                                &resolve(t.name),
+                            )
+                        })
+                    {
+                        help = Some(super::builtin_env::bare_module_type_is_no_value_help(
+                            &resolve(name),
+                            &format!("{module}.{}", t.name),
+                        ));
+                    }
+                    self.error_help(Code::UndefinedVariable, (message, help), span);
                     self.fresh_var()
                 }
             }

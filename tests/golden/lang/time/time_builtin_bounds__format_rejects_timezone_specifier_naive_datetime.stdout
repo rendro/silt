@@ -1,1 +1,1 @@
-time format error: a specifier of a time zone in '%z' is not valid for a DateTime: a DateTime has no time zone
+time format error: a specifier of a time zone in '%z' is not valid for a time.DateTime: a time.DateTime has no time zone

@@ -128,6 +128,15 @@ pub(crate) fn module_type_is_no_value_help(qualified: &str) -> String {
     }
 }
 
+/// The same, for the bare `name` of `qualified` used as a value (not
+/// imported, or imported by its name: `import time.{ DateTime }`).
+pub(crate) fn bare_module_type_is_no_value_help(name: &str, qualified: &str) -> String {
+    format!(
+        "`{name}` is the type `{qualified}`, and {}",
+        module_type_is_no_value_help(qualified)
+    )
+}
+
 /// Whether `module.name` is a type of a builtin module that is no value
 /// (every one of them but `json.Value`).
 pub(crate) fn is_module_type_no_value(module: &str, name: &str) -> bool {

@@ -1,0 +1,55 @@
+error[type]: trait impl 'Tr' for 'json.Value' is missing method 'f'
+ --> impl_and_pattern_messages_write_another_modules_names.silt:12:1
+    |
+ 12 | trait Tr for json.Value { fn f2(self) -> Int { 2 } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait impl 'Tr' for 'json.Value' is missing method 'f'
+
+error[type]: method 'f2' is not declared in trait 'Tr'
+ --> impl_and_pattern_messages_write_another_modules_names.silt:12:27
+    |
+ 12 | trait Tr for json.Value { fn f2(self) -> Int { 2 } }
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^ method 'f2' is not declared in trait 'Tr'
+
+error[type]: trait 'Conv' expects 1 type argument, got 0 in impl for 'json.Value'
+ --> impl_and_pattern_messages_write_another_modules_names.silt:14:1
+    |
+ 14 | trait Conv for json.Value { fn conv(self) -> Int { 1 } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Conv' expects 1 type argument, got 0 in impl for 'json.Value'
+
+error[type]: type mismatch: expected a, got Int
+ --> impl_and_pattern_messages_write_another_modules_names.silt:14:29
+    |
+ 14 | trait Conv for json.Value { fn conv(self) -> Int { 1 } }
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected a, got Int
+  = note: `a` is a type variable of the annotation: it stands for any type, so the code must check whichever type that is
+
+error[type]: trait impl 'json.Encode' for 'P' is missing method 'encode'
+ --> impl_and_pattern_messages_write_another_modules_names.silt:16:1
+    |
+ 16 | trait Encode for P { fn nope(self) -> json.Value { json.Null } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait impl 'json.Encode' for 'P' is missing method 'encode'
+
+error[type]: method 'nope' is not declared in trait 'json.Encode'
+ --> impl_and_pattern_messages_write_another_modules_names.silt:16:22
+    |
+ 16 | trait Encode for P { fn nope(self) -> json.Value { json.Null } }
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method 'nope' is not declared in trait 'json.Encode'
+
+error[type]: refutable pattern in `let`: constructor 'json.Int' is only one of 7 variants of enum 'json.Value'; use a `match` or `when let ... else` instead
+ --> impl_and_pattern_messages_write_another_modules_names.silt:20:21
+    |
+ 20 |   let json.Int(x) = v
+    |                     ^ refutable pattern in `let`: constructor 'json.Int' is only one of 7 variants of enum 'json.Value'; use a `match` or `when let ... else` instead
+
+error[type]: constructor 'json.Int' expects 1 field, but pattern has 2
+ --> impl_and_pattern_messages_write_another_modules_names.silt:22:5
+    |
+ 22 |     json.Int(a, b) -> 1
+    |     ^^^^^^^^^^^^^^ constructor 'json.Int' expects 1 field, but pattern has 2
+
+error[type]: undefined variable 'DateTime'
+ --> impl_and_pattern_messages_write_another_modules_names.silt:25:27
+    |
+ 25 |   let _ = json.parse("1", DateTime)
+    |                           ^^^^^^^^ undefined variable 'DateTime'
+  = help: `DateTime` is the type `time.DateTime`, and the types of a module are no values but `json.Value`; a decoder decodes a `time.DateTime` as the type of a record's field: `type R { at: time.DateTime }`

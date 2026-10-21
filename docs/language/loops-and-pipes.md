@@ -144,7 +144,8 @@ let json_text = """
 
 A run of three or more quotes ends the string: its last three close it,
 and the ones before are text, so `"""v = "s""""` is `v = "s"`. (A text
-cannot hold three quotes in a row.)
+cannot hold three quotes in a row, except at its end: `"""a""""""` is
+`a"""`.)
 
 The closing `"""` indentation determines whitespace stripping. Useful for
 regex patterns with `{N}` quantifiers that would conflict with interpolation:

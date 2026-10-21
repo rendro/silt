@@ -102,22 +102,18 @@ impl TypeChecker {
                 if !pos_ok {
                     let fmt_args = |args: &[Type]| -> String {
                         args.iter()
-                            .map(|t| format!("{t}"))
+                            .map(|t| self.show_type(&self.apply(t)))
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
+                    let (tr, sup) = (self.show_trait(*trait_name), self.show_trait(*supertrait));
+                    let ty = self.show_type(&Type::Generic(*type_name, Vec::new()));
                     self.error(Code::InvalidTraitImpl,
                         format!(
-                            "impl {}({}) for {} requires impl {}({}) for {}, but found impl {}({}) for {}",
-                            resolve(trait_name.name),
+                            "impl {tr}({}) for {ty} requires impl {sup}({}) for {ty}, but found impl {sup}({}) for {ty}",
                             fmt_args(&enclosing_args),
-                            type_name,
-                            resolve(supertrait.name),
                             fmt_args(&expected_super_args),
-                            type_name,
-                            resolve(supertrait.name),
                             fmt_args(&actual_super_args),
-                            type_name,
                         ),
                         diag_span,
                     );
@@ -141,7 +137,9 @@ impl TypeChecker {
                         Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
-                            trait_name, type_name, method_name
+                            self.show_trait(*trait_name),
+                            self.show_type(&Type::Generic(*type_name, Vec::new())),
+                            method_name
                         ),
                         diag_span,
                     );
@@ -1248,7 +1246,7 @@ impl TypeChecker {
                         expected,
                         inference::plural(expected, "type argument", "type arguments"),
                         ti.trait_args.len(),
-                        resolve(ti.target_type),
+                        self.impl_target_name(ti, target_type),
                     ),
                     ti.span,
                 );
@@ -1322,7 +1320,7 @@ impl TypeChecker {
                         "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
                         resolve(binding.name),
                         self.impl_trait_name(ti),
-                        resolve(ti.target_type),
+                        self.impl_target_name(ti, target_type),
                     ),
                     binding.span,
                 );
@@ -1755,7 +1753,7 @@ impl TypeChecker {
                                              `{}: {}`, which the trait does not declare for it",
                                             method.name,
                                             self.impl_trait_name(ti),
-                                            ti.target_type,
+                                            self.impl_target_name(ti, target_type),
                                             type_param,
                                             self.show_bound(*trait_name, &resolved_bound_args)
                                         ),
@@ -1763,7 +1761,7 @@ impl TypeChecker {
                                     .with_help(format!(
                                         "a call through the trait would not owe it: declare the \
                                          bound on the method in trait '{}', or on the impl's header",
-                                        ti.trait_name
+                                        self.impl_trait_name(ti)
                                     )),
                                 );
                             }
