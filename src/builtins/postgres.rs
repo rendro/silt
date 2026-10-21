@@ -40,13 +40,12 @@ use tokio_postgres::{Client, Config, NoTls, Notification};
 use super::common::ok;
 use super::decode::Decoder;
 use super::typed::{Arg, Map, Ret, Type, builtins};
-use crate::runtime::sync::{Arm, Fired, Wait};
+use crate::runtime::sync::Wait;
 use crate::runtime::sync::{Channel, Close, TrySend};
-use crate::scheduler::IO_TIMEOUT;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{IoOp, Leave, Native, Runtime, Step, Vm, VmError, Wanted};
+use crate::vm::{IoOp, Leave, Limit, Native, Runtime, Step, Vm, VmError, Wanted};
 
 mod rows;
 
@@ -2425,7 +2424,7 @@ builtins! {
         });
         let op = vm.io_op(pg_timeout_err, leave, move |_| begin_tx(&pool));
         Ok(Step::Run(Box::new(Transact {
-            wait: Some(io_wait(vm, &op)),
+            wait: Some(op.wait(vm, Limit::Io)),
             stage: Stage::Begin(op),
             callback: Some(f.clone()),
         })))
@@ -2656,15 +2655,12 @@ fn statement(
         }
     };
     let op = vm.io_op(pg_timeout_err, leave, f);
-    vm.io_wait_then(
-        "postgres",
-        pg_timeout_err,
-        op,
-        move |value| match unsendable.and_then(|unsendable| unsendable.take()) {
+    vm.io_wait_then("postgres", op, move |value| {
+        match unsendable.and_then(|unsendable| unsendable.take()) {
             Some(why) => Err(VmError::new(why)),
             None => Ok(value),
-        },
-    )
+        }
+    })
 }
 
 /// The frame of `postgres.transact`.
@@ -2687,22 +2683,6 @@ enum Stage {
     Ended,
 }
 
-/// The wait of the frame of `transact` for `op`, until
-/// `SILT_IO_TIMEOUT` if that is set.
-fn io_wait(vm: &Vm, op: &IoOp) -> Wait {
-    Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(vm.scheduler().io_deadline())
-}
-
-/// The value of `op`, which the wait that has ended was for: the
-/// typed `Timeout` if the wait ended at `SILT_IO_TIMEOUT`.
-fn waited_for(vm: &mut Vm, op: &IoOp) -> Result<Value, VmError> {
-    let value = match vm.woken()? {
-        Fired::Arm(..) => op.take(),
-        _ => None,
-    };
-    Ok(value.unwrap_or_else(|| pg_timeout_err(crate::vm::IoFailure::Timeout(IO_TIMEOUT))))
-}
-
 impl Native for Transact {
     fn name(&self) -> &str {
         "postgres.transact"
@@ -2714,7 +2694,7 @@ impl Native for Transact {
         }
         match std::mem::replace(&mut self.stage, Stage::Ended) {
             Stage::Begin(op) => {
-                let began = waited_for(vm, &op)?;
+                let began = op.value(&vm.woken()?);
                 // Not taken, a value that came after the wait's end is
                 // the `unheard` of `transact`'s.
                 drop(op);
@@ -2747,11 +2727,11 @@ impl Native for Transact {
                 // stand for a transaction that was committed. (A
                 // deadline or a cancel does end it; the task then
                 // learns nothing.)
-                let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+                let wait = op.wait(vm, Limit::None);
                 self.stage = Stage::End(op);
                 Ok(Step::Park(wait))
             }
-            Stage::End(op) => Ok(Step::Done(waited_for(vm, &op)?)),
+            Stage::End(op) => Ok(Step::Done(op.value(&vm.woken()?))),
             Stage::Ended => Ok(Step::Done(input)),
         }
     }

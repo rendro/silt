@@ -226,7 +226,7 @@ mod tls {
                 }
             }
         });
-        vm.io_wait("tcp", tcp_timeout_err, op)
+        vm.io_wait("tcp", op)
     }
 
     /// Why `tcp.connect_tls` made no connection: none at all, or none
@@ -505,7 +505,7 @@ fn on_connection(
         return Ok(Step::Done(err_closed()));
     }
     let op = vm.io_op(tcp_timeout_err, Leave::closes(unheard), move |_| op());
-    vm.io_wait("tcp", tcp_timeout_err, op)
+    vm.io_wait("tcp", op)
 }
 
 // ── The functions ──────────────────────────────────────────────────────
@@ -565,7 +565,7 @@ builtins! {
             return Ok(Step::Done(served));
         }
         let op = accept_op(vm, listener, false);
-        vm.io_wait("tcp", tcp_timeout_err, op)
+        vm.io_wait("tcp", op)
     }
 
     fn connect(vm, addr: &str) -> Result<Step, VmError> {

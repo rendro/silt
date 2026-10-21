@@ -36,7 +36,7 @@ use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{IoOp, Leave, Native, Step, Vm, VmError};
+use crate::vm::{IoOp, Leave, Limit, Native, Step, Vm, VmError};
 
 const DEFAULT_CAPACITY: usize = 16;
 
@@ -216,10 +216,7 @@ impl Native for Pipe {
                     return Ok(Step::Done(Value::Unit));
                 }
             },
-            State::Io(op) => {
-                vm.woken()?;
-                Got::Io(op.cell.get().cloned().unwrap_or(Value::Unit))
-            }
+            State::Io(op) => Got::Io(op.outcome(&vm.woken()?).unwrap_or(Value::Unit)),
         };
         for _ in 0..BURST {
             match (self.logic)(got)? {
@@ -292,7 +289,7 @@ impl Native for Pipe {
                         None => Leave::RunsOut,
                     };
                     let op = vm.io_op(io_failure, leave, move |_| operation());
-                    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+                    let wait = op.wait(vm, Limit::None);
                     self.state = State::Io(op);
                     return Ok(Step::Park(wait));
                 }

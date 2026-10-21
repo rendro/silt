@@ -21,7 +21,7 @@ pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message};
 pub use io_op::IoFailure;
-pub(crate) use io_op::{IoOp, Leave, Wanted};
+pub(crate) use io_op::{IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
 pub use runtime::Runtime;
 pub(crate) use runtime::{CallFrame, Frame, Native, Step};
@@ -98,8 +98,7 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value
         .submit(failure, Vec::new(), io_op::Leave::RunsOut, |_| {
             panic!("synthetic IO worker panic for round-76 lock");
         });
-    use crate::runtime::sync::{Arm, Wait};
-    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+    let wait = op.wait(vm, Limit::None);
     let _ = vm
         .runtime
         .scheduler

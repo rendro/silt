@@ -26,17 +26,12 @@ impl Vm {
         op: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> Result<Step, VmError> {
         let op = self.io_op(timeout_err, leave, op);
-        self.io_wait(name, timeout_err, op)
+        self.io_wait(name, op)
     }
 
-    /// Wait for `op`.
-    pub(crate) fn io_wait(
-        &mut self,
-        name: &'static str,
-        timeout_err: ErrFactory,
-        op: IoOp,
-    ) -> Result<Step, VmError> {
-        self.io_wait_then(name, timeout_err, op, Ok)
+    /// Wait for `op`, until `SILT_IO_TIMEOUT` ([`Limit::Io`]).
+    pub(crate) fn io_wait(&mut self, name: &'static str, op: IoOp) -> Result<Step, VmError> {
+        self.io_wait_then(name, op, Ok)
     }
 
     /// [`Vm::io_wait`] whose value is `then` of the operation's: an
@@ -45,29 +40,21 @@ impl Vm {
     pub(crate) fn io_wait_then(
         &mut self,
         name: &'static str,
-        timeout_err: ErrFactory,
         op: IoOp,
         then: impl FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
         let mut then = Some(then);
-        let deadline = self.runtime.scheduler.io_deadline();
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
+        let wait = op.wait(self, Limit::Io);
         // The frame owns the operation: when the wait is over, however
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
         Ok(self.park(name, wait, move |_, fired| {
             // The value is taken only by a wait that it ended: one
             // that came as the deadline passed stays unheard.
-            let value = match fired {
-                Fired::Arm(..) => op.take(),
-                _ => None,
-            };
-            match (value, then.take()) {
+            match (op.outcome(&fired), then.take()) {
                 (Some(value), Some(then)) => Ok(Step::Done(then(value)?)),
                 (Some(value), None) => Ok(Step::Done(value)),
-                (None, _) => Ok(Step::Done(timeout_err(IoFailure::Timeout(
-                    crate::scheduler::IO_TIMEOUT,
-                )))),
+                (None, _) => Ok(Step::Done(op.value(&fired))),
             }
         }))
     }
@@ -88,7 +75,7 @@ impl Vm {
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
         if self.takes_nothing_new() {
-            return self.runtime.io_pool.withheld();
+            return self.runtime.io_pool.withheld(failure);
         }
         let task = self.cancelled.iter().chain(&self.over).cloned().collect();
         self.runtime.io_pool.submit(failure, task, leave, f)
@@ -470,10 +457,11 @@ impl IoPool {
     /// its cell is never completed, and nothing is done when its
     /// waiter goes (it is not told to stop: there is nothing to stop).
     /// See [`Vm::io_op`].
-    pub(crate) fn withheld(&self) -> IoOp {
+    pub(crate) fn withheld(&self, failure: ErrFactory) -> IoOp {
         let state = OpState::new(Phase::Left);
         IoOp {
             cell: state.cell.clone(),
+            failure,
             in_flight: Arc::default(),
             pool: self.shared.clone(),
             state,
@@ -512,6 +500,7 @@ impl IoPool {
         };
         let op = IoOp {
             cell: state.cell.clone(),
+            failure,
             in_flight: Arc::new(parking_lot::Mutex::new(Some(self.scheduler.external()))),
             pool: self.shared.clone(),
             state: state.clone(),
@@ -701,6 +690,9 @@ pub(crate) type ErrFactory = fn(IoFailure<'_>) -> Value;
 pub(crate) struct IoOp {
     /// Completed with the operation's value.
     pub(crate) cell: Arc<Cell<Value>>,
+    /// The typed error of the module, for a wait that ends without the
+    /// value ([`IoOp::value`]).
+    failure: ErrFactory,
     /// What keeps the program from being called deadlocked, or ended,
     /// while the operation is in flight and somebody waits for it.
     /// Whoever is done with it first drops it: the thread when the
@@ -715,6 +707,21 @@ pub(crate) struct IoOp {
     close: Option<Box<dyn FnOnce() + Send>>,
     /// It was never handed to the pool ([`IoPool::withheld`]).
     withheld: bool,
+}
+
+/// Where the wait of a task for an operation ends if the value does
+/// not come ([`IoOp::wait`]).
+#[derive(Clone, Copy)]
+pub(crate) enum Limit {
+    /// At `SILT_IO_TIMEOUT`, if that is set: a wait for I/O.
+    Io,
+    /// After this long: a time of the protocol's own (the server of
+    /// `http.serve`).
+    #[cfg_attr(not(feature = "http"), allow(dead_code))]
+    Own(std::time::Duration),
+    /// Never: the server's accept, the end of a transaction, a stage
+    /// of a stream.
+    None,
 }
 
 /// What becomes of an operation on the pool whose waiter goes without
@@ -790,9 +797,40 @@ impl Leave {
 }
 
 impl IoOp {
+    /// The wait of a task for the operation: it ends with the value,
+    /// or at the deadline that `limit` says. Every wait for an
+    /// operation on the pool is this one; one that waits for something
+    /// else besides adds its arms after the operation's, which is arm
+    /// 0.
+    pub(crate) fn wait(&self, vm: &Vm, limit: Limit) -> Wait {
+        let deadline = match limit {
+            Limit::Io => vm.runtime.scheduler.io_deadline(),
+            Limit::Own(time) => vm.runtime.io.deadline_after(time),
+            Limit::None => None,
+        };
+        Wait::new(vec![Arm::Cell(self.cell.clone())]).deadline(deadline)
+    }
+
+    /// What the wait for the operation ([`IoOp::wait`]), which ended as
+    /// `fired`, gave the task: the operation's value, which the task
+    /// has from then on, or `None` if the wait ended without it.
+    pub(crate) fn outcome(&self, fired: &Fired) -> Option<Value> {
+        match fired {
+            Fired::Arm(0, _) => self.take(),
+            _ => None,
+        }
+    }
+
+    /// [`IoOp::outcome`], or the module's typed timeout error if the
+    /// wait ended at its deadline.
+    pub(crate) fn value(&self, fired: &Fired) -> Value {
+        self.outcome(fired)
+            .unwrap_or_else(|| (self.failure)(IoFailure::Timeout(crate::scheduler::IO_TIMEOUT)))
+    }
+
     /// The operation's value, for the waiter whose wait it ended: the
     /// value has reached the task.
-    pub(crate) fn take(&self) -> Option<Value> {
+    fn take(&self) -> Option<Value> {
         let value = self.cell.get()?.clone();
         self.state
             .taken
@@ -1241,6 +1279,7 @@ mod tests {
                 };
             IoOp {
                 cell: state.cell.clone(),
+                failure,
                 in_flight: Arc::default(),
                 pool: pool.shared.clone(),
                 state,

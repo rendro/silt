@@ -23,7 +23,7 @@ use crate::typeinfo::bv;
 use crate::typeinfo::{BuiltinVariant, ty};
 use crate::value::Value;
 #[cfg(feature = "http")]
-use crate::vm::{Leave, Step, Vm, VmError};
+use crate::vm::{Leave, Limit, Step, Vm, VmError};
 #[cfg(feature = "http")]
 use parking_lot::Mutex;
 
@@ -1002,8 +1002,8 @@ impl Conn {
                 Value::Unit
             },
         );
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone()), Arm::Cell(body_follows)])
-            .deadline(vm.runtime.io.deadline_after(wire::REQUEST_TIME));
+        let mut wait = op.wait(vm, Limit::Own(wire::REQUEST_TIME));
+        wait.arms.push(Arm::Cell(body_follows));
         self.state = ConnState::Reading {
             op,
             got,
@@ -1032,8 +1032,7 @@ impl Conn {
             Leave::interrupts(move |_| stopped.shut_down()),
             move |_| Value::Bool(stream.write_all(&bytes[written..]).is_ok()),
         );
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-            .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
+        let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
         self.state = ConnState::Sending { op, then };
         Go::Step(Step::Park(wait))
     }
@@ -1066,8 +1065,7 @@ impl Conn {
                 Value::Unit
             },
         );
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-            .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
+        let wait = op.wait(vm, Limit::Own(wire::REFUSAL_TIME));
         self.state = ConnState::Draining(op);
         Step::Park(wait)
     }
@@ -1134,8 +1132,7 @@ impl Conn {
             ConnState::Reading { op, got, in_body } => match vm.woken()? {
                 // The head is there: the body has its own time.
                 Fired::Arm(1, _) if !in_body => {
-                    let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-                        .deadline(vm.runtime.io.deadline_after(wire::TRANSFER_TIME));
+                    let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
                     self.state = ConnState::Reading {
                         op,
                         got,
@@ -1169,8 +1166,7 @@ impl Conn {
                         // out: the reader reads on, and the client is
                         // heard out.
                         let _ = self.stream.write_last_in_turn(&bytes);
-                        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())])
-                            .deadline(vm.runtime.io.deadline_after(wire::REFUSAL_TIME));
+                        let wait = op.wait(vm, Limit::Own(wire::REFUSAL_TIME));
                         self.state = ConnState::Draining(op);
                         Go::Step(Step::Park(wait))
                     }
@@ -1184,8 +1180,7 @@ impl Conn {
             }
             ConnState::Answering { bytes, then } => self.send(vm, bytes, then),
             ConnState::Sending { op, then } => {
-                let sent = matches!(vm.woken()?, Fired::Arm(..))
-                    && matches!(op.take(), Some(Value::Bool(true)));
+                let sent = matches!(op.outcome(&vm.woken()?), Some(Value::Bool(true)));
                 drop(op);
                 match sent {
                     true => self.sent(vm, then),
@@ -1368,7 +1363,7 @@ impl crate::vm::Native for Serve {
                 vm.woken()?;
             }
             ServeState::Accepting(op) => {
-                vm.woken()?;
+                let fired = vm.woken()?;
                 // A server whose task was cancelled takes no connection
                 // more, though the task still runs for some steps: the
                 // one its accept was given is left with the operation,
@@ -1379,7 +1374,7 @@ impl crate::vm::Native for Serve {
                     drop(op);
                     return Ok(Step::Park(Vm::no_wait()));
                 }
-                let accepted = op.take();
+                let accepted = op.outcome(&fired);
                 drop(op);
                 let stream = match &accepted {
                     Some(Value::Variant(accepted)) if accepted.is(bv::OK) => {
@@ -1420,7 +1415,7 @@ impl crate::vm::Native for Serve {
             }
         }
         let op = super::tcp::accept_op(vm, &self.listener, true);
-        let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]);
+        let wait = op.wait(vm, Limit::None);
         self.state = ServeState::Accepting(op);
         Ok(Step::Park(wait))
     }
