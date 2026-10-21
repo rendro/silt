@@ -224,7 +224,8 @@ impl TypeChecker {
     }
 
     /// `recv.method` where `method` is the method of a builtin
-    /// structural trait (`compare`, `equal`, `hash`, `display`) and no
+    /// structural trait (`compare`, `equal`, `hash`, `display`,
+    /// `encode` of `json.Encode`) and no
     /// impl of the trait is written for the receiver's type: the type
     /// has the method when it has the trait by its structure, which the
     /// access owes. The other operand of `compare` and `equal` is of
@@ -240,6 +241,11 @@ impl TypeChecker {
             "equal" => ("Equal", 1, Type::Bool),
             "hash" => ("Hash", 0, Type::Int),
             "display" => ("Display", 0, Type::String),
+            "encode" => (
+                "Encode",
+                0,
+                Type::Generic(TypeRef::builtin("Value"), vec![]),
+            ),
             _ => return None,
         };
         let tr = TraitKey::builtin(tr);
