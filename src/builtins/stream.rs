@@ -304,7 +304,10 @@ impl Native for Pipe {
                     let leave = match stop {
                         Some(stop) => {
                             self.stop = Some(stop.clone());
-                            Leave::Closes(Box::new(move || stop()))
+                            Leave::Closes(Box::new(move || {
+                                stop();
+                                true
+                            }))
                         }
                         None => Leave::RunsOut,
                     };

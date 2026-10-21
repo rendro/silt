@@ -485,9 +485,12 @@ pub(crate) fn accept_op(
 
 /// What makes an operation on `stream` return when nobody waits for
 /// it any more: the connection is shut down.
-fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() + Send + 'static {
+fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() -> bool + Send + 'static {
     let stream = stream.clone();
-    move || stream.shut_down()
+    move || {
+        stream.shut_down();
+        true
+    }
 }
 
 /// The step of a read or a write on `stream`: `op` runs on the I/O

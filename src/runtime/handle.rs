@@ -858,7 +858,7 @@ impl TcpStreamHandle {
                 #[cfg(windows)]
                 let _ = other.take();
                 drop(other);
-                shutter.shut();
+                let _ = shutter.shut();
             }
         }
         cancel_blocked_io(self.io_socket);
@@ -926,12 +926,17 @@ impl Shutter {
     }
 
     /// Shut the operation's socket down, now or as soon as it has one:
-    /// a read or a write that blocks on it returns.
-    pub fn shut(&self) {
+    /// a read or a write that blocks on it returns. `false` if it has
+    /// none yet (and none was shut before).
+    pub fn shut(&self) -> bool {
         let mut shut = self.0.lock();
-        shut.shut = true;
-        if let Some((socket, used)) = shut.socket.take() {
-            shut_socket(&socket, used);
+        let before = std::mem::replace(&mut shut.shut, true);
+        match shut.socket.take() {
+            Some((socket, used)) => {
+                shut_socket(&socket, used);
+                true
+            }
+            None => before,
         }
     }
 }

@@ -704,7 +704,7 @@ pub(crate) struct IoOp {
     /// See [`Leave::Returns`].
     interrupt: Option<Interrupt>,
     /// See [`Leave::Closes`].
-    close: Option<Box<dyn FnOnce() + Send>>,
+    close: Option<Close>,
     /// It was never handed to the pool ([`IoPool::withheld`]).
     withheld: bool,
 }
@@ -749,8 +749,14 @@ pub(crate) enum Leave {
     /// doing then: it had not begun, it ran, or it had ended. What the
     /// waiter is left with does not depend on the moment at which it
     /// stopped waiting.
+    ///
+    /// The function says whether it reached that thing. One that did
+    /// not (the socket of a TLS connect is not there yet: the connect
+    /// is still under way) leaves the operation to run on, counted as
+    /// one that cannot be interrupted ([`IO_POOL_UNHEARD_MAX`]) until it
+    /// ends, which it does at once when its socket comes.
     #[cfg_attr(not(feature = "tcp"), allow(dead_code))]
-    Closes(Box<dyn FnOnce() + Send>),
+    Closes(Close),
     /// It can be made to return, and what it took must not be lost.
     ///
     /// `interrupt` is called if the waiter goes while the operation
@@ -774,6 +780,10 @@ pub(crate) enum Leave {
 /// See [`Leave::Returns`].
 pub(crate) type Interrupt = Box<dyn FnOnce(&Wanted) + Send>;
 
+/// See [`Leave::Closes`]: `true` if it reached what the operation works
+/// on.
+pub(crate) type Close = Box<dyn FnOnce() -> bool + Send>;
+
 impl Leave {
     /// [`Leave::Returns`] with `interrupt` alone.
     #[cfg(any(test, feature = "tcp", feature = "postgres"))]
@@ -796,7 +806,7 @@ impl Leave {
 
     /// [`Leave::Closes`].
     #[cfg(feature = "tcp")]
-    pub(crate) fn closes(close: impl FnOnce() + Send + 'static) -> Leave {
+    pub(crate) fn closes(close: impl FnOnce() -> bool + Send + 'static) -> Leave {
         Leave::Closes(Box::new(close))
     }
 }
@@ -872,6 +882,13 @@ impl Drop for IoOp {
         // Before the operation is told: one that claims after this
         // finds its value unwanted.
         self.state.leave();
+        // The waiter decides, not where the operation stood. (Before
+        // the operation's place is changed: one that the close makes
+        // return finishes as usual.)
+        let closed = match self.close.take() {
+            Some(close) if !self.state.taken.load(std::sync::atomic::Ordering::SeqCst) => close(),
+            _ => false,
+        };
         let (running, finished) = {
             let mut state = self.pool.state.lock();
             let mut phase = self.state.phase.lock();
@@ -886,7 +903,10 @@ impl Drop for IoOp {
                     *phase = Phase::Left;
                     state.threads -= 1;
                     state.busy -= 1;
-                    match self.interrupt.is_some() || self.close.is_some() {
+                    // One whose close reached nothing (its socket is
+                    // not there yet) runs on like one that cannot be
+                    // interrupted.
+                    match self.interrupt.is_some() || closed {
                         true => self
                             .state
                             .stopped
@@ -906,12 +926,6 @@ impl Drop for IoOp {
         };
         if running && let Some(interrupt) = self.interrupt.take() {
             interrupt(&Wanted::new(self.state.clone(), Vec::new()));
-        }
-        // The waiter decides, not where the operation stood.
-        if !self.state.taken.load(std::sync::atomic::Ordering::SeqCst)
-            && let Some(close) = self.close.take()
-        {
-            close();
         }
         if finished {
             self.state.unheard();
@@ -1247,6 +1261,7 @@ mod tests {
             let told = told.clone();
             move || {
                 told.fetch_add(1, Ordering::SeqCst);
+                true
             }
         };
         let closes = || Leave::closes(tell());
@@ -1274,14 +1289,18 @@ mod tests {
             });
             let mut pool_state = pool.shared.state.lock();
             pool_state.queue.push_back((job, state.clone()));
-            let (interrupt, close): (Option<Interrupt>, Option<Box<dyn FnOnce() + Send>>) =
-                match stop {
-                    true => (None, Some(Box::new(tell()))),
-                    false => {
-                        let tell = tell();
-                        (Some(Box::new(move |_: &Wanted| tell())), None)
-                    }
-                };
+            let (interrupt, close): (Option<Interrupt>, Option<Close>) = match stop {
+                true => (None, Some(Box::new(tell()))),
+                false => {
+                    let tell = tell();
+                    (
+                        Some(Box::new(move |_: &Wanted| {
+                            tell();
+                        })),
+                        None,
+                    )
+                }
+            };
             IoOp {
                 cell: state.cell.clone(),
                 failure,
@@ -1318,6 +1337,30 @@ mod tests {
         assert!(matches!(heard.take(), Some(Value::Int(3))));
         drop(heard);
         assert_eq!(told(), 3);
+    }
+
+    /// An operation whose close reached nothing (its socket was not
+    /// there yet) runs on as one that cannot be interrupted: it counts
+    /// among the stuck ones until it ends. One whose close reached its
+    /// socket is on its way out and does not.
+    #[test]
+    fn an_operation_whose_close_reached_nothing_counts_as_stuck() {
+        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
+        for reached in [true, false] {
+            let (release, held) = mpsc::channel::<()>();
+            let leave = Leave::Closes(Box::new(move || reached));
+            let op = pool.submit(failure, Vec::new(), leave, move |_| {
+                let _ = held.recv();
+                Value::Unit
+            });
+            until("it runs", || *op.state.phase.lock() == Phase::Running);
+            drop(op);
+            assert_eq!(pool.shared.state.lock().unheard, usize::from(!reached));
+            release.send(()).unwrap();
+            until("it ended", || {
+                pool.shared.state.lock().unheard == 0 && pool.live_threads() == pool.threads()
+            });
+        }
     }
 
     /// An operation's claim and its waiter's going are one decision:
