@@ -1,0 +1,6 @@
+error[type]: ambiguous method 'decode' on type 'Fine': provided by traits Mk, json.Decode
+ --> a_static_decode_of_a_program_trait_on_a_type_is_ambiguous.silt:22:11
+    |
+ 22 |   println(Fine.decode(json.Object(#{ "n": json.Int(3) })))
+    |           ^^^^^^^^^^^ ambiguous method 'decode' on type 'Fine': provided by traits Mk, json.Decode
+  = help: say which is meant: call it through a function bounded by the trait you mean, `where a: Mk`

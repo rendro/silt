@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A program's trait with a `decode` that takes no `self`, called through
+-- a type in a module that imports json, is ambiguous with json.Decode's
+-- (as two traits' methods of one name are): the help says how to say
+-- which is meant where there is no receiver to annotate.
+import json
+
+trait Mk {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError)
+}
+
+type Fine { n: Int }
+
+trait Mk for Fine {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    Ok(Fine { n: 99 })
+  }
+}
+
+fn main() {
+  println(Fine.decode(json.Object(#{ "n": json.Int(3) })))
+}
