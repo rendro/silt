@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type '(Shape, Shape, Fn(Int, Int) -> Shape)' does not implement trait 'json.Encode': part #3 is of type 'Fn(Int, Int) -> Shape', which does not
+-- stderr-not-contains: --> a_value_with_no_json_form_is_a_compile_error__constructor.silt:14
+-- The constructor of a variant with fields is a function, and JSON has
+-- no form for it. The variants themselves have one (line 14 is not
+-- refused).
+import json
+
+type Shape {
+  Dot,
+  Box(Int, Int),
+}
+
+fn main() {
+  println(json.stringify((Dot, Box(1, 2))))
+  println(json.stringify((Dot, Box(1, 2), Box)))
+}

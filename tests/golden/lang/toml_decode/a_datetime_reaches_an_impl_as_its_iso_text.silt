@@ -1,0 +1,43 @@
+-- cmd: run
+-- exit: 0
+-- A TOML date or time literal in a part a `json.Decode` impl decodes
+-- reaches the impl as a `json.String` of its ISO text, as TOML wrote
+-- it (an offset kept): a date, a time of day, a local datetime, one in
+-- UTC and one with an offset, with a fraction of a second. json's
+-- decoders read each back as a `Date`, a `Time` or a `DateTime`.
+import json
+import time
+import toml
+
+type Stamps { raw: json.Value }
+
+trait json.Decode for Stamps {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    Ok(Stamps { raw: value })
+  }
+}
+
+type Back {
+  d: time.Date,
+  t: time.Time,
+  local: time.DateTime,
+  utc: time.DateTime,
+  offset: time.DateTime,
+}
+
+fn main() {
+  let text = """
+d = 1979-05-27
+t = 07:32:00.25
+local = 1979-05-27T07:32:00
+utc = 1979-05-27 07:32:00Z
+offset = 1979-05-27T00:32:00.5-07:00
+"""
+  match toml.parse(text, Stamps) {
+    Ok(stamps) -> {
+      println(stamps.raw)
+      println(json.decode(stamps.raw, Back))
+    }
+    Err(e) -> println(e)
+  }
+}

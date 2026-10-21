@@ -1,0 +1,15 @@
+import json
+import list
+import set
+
+pub type Tags { s: Set(String) }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { s: set.from_list([text]) })
+      json.Array(items) -> Ok(Tags { s: set.from_list(list.map(items) { item -> "{item}" }) })
+      _ -> Err(json.Other("no tags"))
+    }
+  }
+}

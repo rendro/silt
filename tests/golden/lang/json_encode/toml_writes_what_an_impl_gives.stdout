@@ -1,0 +1,8 @@
+Ok(name = "x"
+price = "5c"
+extras = ["1c"]
+)
+Ok(p = "7c"
+)
+Err(toml.stringify: TOML has no null: a json.Null in an array)
+Err(toml.stringify: top-level value must be a table/record, got string)

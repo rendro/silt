@@ -188,10 +188,18 @@ impl TypeChecker {
                 }
                 self.wanted[i].in_scheme = true;
                 let pred = match pred {
-                    Pred::Trait { tr, args, .. } => Pred::Trait {
+                    // (The definition passes a `json.Decode` it owes of
+                    // a parameter's type on.)
+                    Pred::Trait {
+                        tr, args, asker, ..
+                    } => Pred::Trait {
                         tr: *tr,
                         args: args.iter().map(|t| self.apply(t)).collect(),
                         subject: Type::Var(subject),
+                        asker: asker.map(|asker| Asker {
+                            passer: passer_of(asker.passer, subject),
+                            ..asker
+                        }),
                     },
                     Pred::Anon { given, .. } => Pred::Anon {
                         row: Type::Var(subject),
@@ -360,7 +368,9 @@ impl TypeChecker {
                 continue;
             }
             let (tr, args, subject) = match &wanted.goal {
-                Goal::Pred(Pred::Trait { tr, args, subject }) => (tr, args, subject),
+                Goal::Pred(Pred::Trait {
+                    tr, args, subject, ..
+                }) => (tr, args, subject),
                 // (A row nothing gives fields to has none to clash, and
                 // is no declared record.)
                 Goal::Listed { .. }
@@ -426,10 +436,15 @@ impl TypeChecker {
             // Nothing decides the subject and no definition is general
             // in it. For a trait every type implements by its structure
             // it does not matter which type it is: it is `()`
-            // (`println([])`).
-            if ["Display", "Equal", "Compare", "Hash"]
+            // (`println([])`, `json.stringify(Ok(1))`). A type nothing
+            // decides is no type a decoder is given (`let _ =
+            // json.parse`): `json.Decode` of it asks nothing.
+            if tr.is_builtin("Decode") {
+                continue;
+            }
+            if STRUCTURAL_METHODS
                 .iter()
-                .any(|name| tr.is_builtin(name))
+                .any(|(name, _)| tr.is_builtin(name))
             {
                 let _ = self.unify_types(subject, &Type::Unit);
                 continue;

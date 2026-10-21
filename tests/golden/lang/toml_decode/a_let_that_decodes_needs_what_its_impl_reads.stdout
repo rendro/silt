@@ -1,0 +1,3 @@
+Ok(T {n: 10})
+Ok([T {n: 12}])
+Ok(Holder {t: T {n: 16}})

@@ -275,6 +275,19 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                 scheme = Scheme::mono(*value);
             }
             scheme.preds.extend(argument_checks(row, &scheme.ty));
+            // A json decoder's `where a: Decode` is asked by the decoder.
+            for pred in &mut scheme.preds {
+                if let Pred::Trait {
+                    asker: asker @ Some(_),
+                    ..
+                } = pred
+                {
+                    *asker = Some(Asker {
+                        by: Asked::Builtin(intern(&row.qualified())),
+                        passer: None,
+                    });
+                }
+            }
             env.define(intern(&format!("{}.{name}", module.name)), scheme);
         }
         // The module's error enum implements `Error` natively
@@ -312,9 +325,11 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
 }
 
 /// What the builtin of `row`, of the type `ty`, asks of its arguments
-/// beyond its signature (`Pred::Builtin`): a decoder, that its type
-/// argument is one it decodes; a postgres function, that its connection
-/// is a pool or a transaction and a statement's parameters a tuple.
+/// beyond its signature (`Pred::Builtin`): a decoder of toml or postgres,
+/// that its type argument is one it decodes; a postgres function, that
+/// its connection is a pool or a transaction and a statement's
+/// parameters a tuple. (A json decoder says what it asks in its
+/// signature: `where a: Decode`.)
 fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred> {
     let Type::Fun(params, _) = ty else {
         return Vec::new();
@@ -326,7 +341,10 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
         passer: None,
     };
     let mut checks = Vec::new();
-    if let Some(decoding) = row.decoding {
+    if let Some(decoding) = row
+        .decoding
+        .filter(|d| d.family != crate::builtins::registry::decoding::Family::Json)
+    {
         // The `type a` parameter, of the type `TypeOf(a)`.
         let type_argument = params.iter().find_map(|param| match param {
             Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args.first(),
@@ -385,7 +403,7 @@ pub fn __trait_init_fingerprint_check_program() -> (
         .collect();
     let method_keys: BTreeSet<String> = checker
         .tables
-        .methods()
+        .methods(&|_| true)
         .iter()
         .map(|(ty, m)| format!("{}.{}", resolve(ty.name), resolve(*m)))
         .collect();

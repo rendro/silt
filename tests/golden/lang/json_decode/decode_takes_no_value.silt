@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: unknown field or method 'decode' on type P
+-- `decode` takes no value of the type: it is no method of a call on a
+-- value (`p.decode(..)`), only of one through the type, so a program's
+-- own `decode` method on a value is not ambiguous with it.
+import json
+
+type P { x: Int }
+
+trait Load { fn decode(self, text: String) -> Int }
+
+trait Load for String {
+  fn decode(self, text: String) -> Int { 1 }
+}
+
+fn main() {
+  let _ = "x".decode("y")
+  let p = P { x: 1 }
+  println(p.decode(json.Null))
+}

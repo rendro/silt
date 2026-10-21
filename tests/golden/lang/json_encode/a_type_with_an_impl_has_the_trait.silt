@@ -1,0 +1,49 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'json.Encode'
+-- stderr-contains: --> a_type_with_an_impl_has_the_trait.silt:48:26
+-- stderr-not-contains: :46:
+-- stderr-not-contains: :47:
+-- A type with a written `json.Encode` impl has the trait by the impl,
+-- whatever its fields hold (`Job` holds a function). An impl for a
+-- generic type is allowed; its `where` clause is asked of the type's
+-- arguments where the impl is used (`Cell` of a function is refused,
+-- `Box` of one is not, its impl asks nothing).
+import json
+
+type Job {
+  name: String,
+  run: Fn(Int) -> Int,
+}
+
+trait json.Encode for Job {
+  fn encode(self) -> json.Value {
+    json.String(self.name)
+  }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Encode for Box(a) {
+  fn encode(self) -> json.Value {
+    json.Null
+  }
+}
+
+type Cell(a) {
+  v: a,
+}
+
+trait json.Encode for Cell(a) where a: json.Encode {
+  fn encode(self) -> json.Value {
+    json.Null
+  }
+}
+
+fn main() {
+  println(json.stringify([Job { name: "j", run: { x -> x } }]))
+  println(json.stringify(Box { v: { x -> x } }))
+  println(json.stringify(Cell { v: { x -> x } }))
+}

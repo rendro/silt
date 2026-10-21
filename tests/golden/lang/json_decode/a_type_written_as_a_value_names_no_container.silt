@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `L`: its type argument must be Int, Float, String, Bool, json.Value, a record type, or an enum type
+-- stderr-contains: note: `load` passes it to `json.parse`
+-- A list is decoded as the type of a field, not as the type a decoder is
+-- given: a type written as a value names no list's element type, so an
+-- alias of `List(Int)` has no `json.Decode`, also through a function.
+import json
+
+type L = List(Int)
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  println(load("[1]", L))
+}

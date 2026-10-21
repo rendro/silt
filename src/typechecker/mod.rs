@@ -21,6 +21,7 @@ mod exhaustiveness;
 mod infer;
 mod inference;
 mod init_order;
+mod json_decode;
 pub mod names;
 mod order;
 mod resolve;
@@ -70,8 +71,13 @@ pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Nu
 
 /// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
 /// with no impl (`Display` unless one is written for it). `Error` is
-/// not one: an impl of it is written.
+/// not one: an impl of it is written. (`json.Encode` and `json.Decode`,
+/// traits of the json module, are too: [`WRITABLE_STRUCTURAL_TRAITS`].)
 pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
+
+/// The builtin traits a type has by its structure unless an impl of
+/// the trait is written for it.
+pub(super) const WRITABLE_STRUCTURAL_TRAITS: &[&str] = &["Display", "Encode", "Decode"];
 
 // ── The type checker ────────────────────────────────────────────────
 
@@ -92,11 +98,30 @@ pub struct TypeChecker {
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// The types of the module being checked that have a written
-    /// `Display` impl, known before the impls are registered: such a
-    /// type has `Display` by that impl, not by its structure.
-    pub(super) display_written: std::collections::HashSet<TypeRef>,
+    /// `Display`, `json.Encode` or `json.Decode` impl, each with the
+    /// trait, known before the impls are registered: such a type has
+    /// the trait by that impl, not by its structure.
+    pub(super) written: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The (place, type) pairs a missing trait is reported for.
     pub(super) lacking: std::collections::HashSet<(Span, String)>,
+    /// The types found to lack `json.Decode`, reported once the
+    /// module's bodies are checked (`settle_decode_gaps`): what asks it
+    /// of a declared bound is known then.
+    pub(super) decode_gaps: Vec<json_decode::DecodeGap>,
+    /// What each body asks `json.Decode` of its annotation variable for
+    /// (`Asked`), by the variable's representative.
+    pub(super) bound_askers: HashMap<TyVar, Asked>,
+    /// The variable of each `json.Decode` bound a trait declares for a
+    /// method, with the variables it is in the module's impls of the
+    /// method: what the trait's bound asks for is what they all ask for.
+    pub(super) bound_impls: HashMap<TyVar, Vec<TyVar>>,
+    /// Whether a message writes a type of a builtin module with its
+    /// module (`json.Value`): while an impl's method of a builtin
+    /// module's trait is matched against the trait's.
+    pub(super) qualify_module_types: bool,
+    /// The alias a use names the type a decoder is given by, at the
+    /// place of the type argument.
+    pub(super) decode_aliases: HashMap<Span, Symbol>,
     /// The row variables of the signatures of the module's functions
     /// (each by the variable it is in the function's scheme).
     pub(super) sig_rows: std::collections::HashSet<TyVar>,
@@ -269,6 +294,11 @@ pub struct TypeChecker {
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
     pub(super) seen_modules: std::collections::HashSet<crate::session::ModuleId>,
+    /// The builtin modules the module imports, by any import: `import
+    /// json`, `import json as j`, `import json.{ stringify }`. Their
+    /// traits it sees (`json.Encode`), as it sees a `pub` trait of a
+    /// module it imports anything of.
+    pub(super) builtin_imports: std::collections::HashSet<crate::session::ModuleId>,
     /// The modules the module checked imports, and theirs, and so on:
     /// the modules that are initialised before it. `None` for a REPL
     /// cell, which follows every earlier cell and what those imported.
@@ -343,8 +373,13 @@ impl TypeChecker {
             loop_binding_types: None,
             bounds: HashMap::new(),
             current_return_type: None,
-            display_written: std::collections::HashSet::new(),
+            written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
+            decode_gaps: Vec::new(),
+            bound_askers: HashMap::new(),
+            bound_impls: HashMap::new(),
+            qualify_module_types: false,
+            decode_aliases: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
             anon_waiting: Vec::new(),
@@ -394,6 +429,7 @@ impl TypeChecker {
             deferred_method_traits: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
+            builtin_imports: std::collections::HashSet::new(),
             reach: None,
             cells: Default::default(),
             defs: None,
@@ -1108,10 +1144,16 @@ impl TypeChecker {
                     other => other,
                 };
                 match pred {
-                    Pred::Trait { tr, args, subject } => Pred::Trait {
+                    Pred::Trait {
+                        tr,
+                        args,
+                        subject,
+                        asker,
+                    } => Pred::Trait {
                         tr,
                         args,
                         subject: rep(subject),
+                        asker,
                     },
                     Pred::Anon { row, given } => Pred::Anon {
                         row: rep(row),
@@ -1534,6 +1576,18 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             checker.seen_modules.insert(*id);
         }
     }
+    // A builtin module is imported when the module binds a name of it,
+    // or the module itself.
+    for binding in scope.types.values().chain(scope.values.values()) {
+        let module = match binding {
+            names::Binding::Module(id) => Some(*id),
+            names::Binding::Def(id) => checker.defs.as_ref().map(|defs| defs.get(*id).module),
+            _ => None,
+        };
+        if let Some(module) = module.filter(|module| module.builtin_name().is_some()) {
+            checker.builtin_imports.insert(module);
+        }
+    }
     if checker.is_cell {
         checker.take_up_waiting(program, earlier);
     }
@@ -1544,6 +1598,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     }
     checker.settle_rows();
     checker.settle_builtin_needs();
+    checker.settle_decode_gaps();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

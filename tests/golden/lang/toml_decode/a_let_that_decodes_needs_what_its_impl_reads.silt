@@ -1,0 +1,32 @@
+-- A top-level `let` that decodes a TOML document into a type with a
+-- written `json.Decode` impl needs what the impl reads, as one that
+-- decodes JSON does: it is initialised after `later`, whether the type
+-- is at the top, an element of `toml.parse_list`, or the type of a
+-- field.
+import json
+import toml
+
+type T { n: Int }
+
+trait json.Decode for T {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Object(_) -> Ok(T { n: later })
+      json.Int(n) -> Ok(T { n: n + later })
+      _ -> Err(json.Other("no"))
+    }
+  }
+}
+
+type Holder { t: T }
+
+let p = toml.parse("a = 1\n", T)
+let l = toml.parse_list("xs = [2]\n", T)
+let h = toml.parse("t = 6\n", Holder)
+let later = 10
+
+fn main() {
+  println(p)
+  println(l)
+  println(h)
+}

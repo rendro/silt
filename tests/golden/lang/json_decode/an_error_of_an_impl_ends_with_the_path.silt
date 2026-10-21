@@ -1,0 +1,38 @@
+-- cmd: run
+-- exit: 0
+-- The `Err` a `decode` impl returns is the decoder's, with the path of
+-- its part appended as to a decoder's own error: a message ends with
+-- ` at <path>`, a missing field's path starts with the part's. At the top
+-- it is as the impl wrote it. The first error in the document counts,
+-- the impl's or the decoder's.
+import json
+
+type Code { n: Int }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> Ok(Code { n: n })
+      json.String("other") -> Err(json.Other("not a code"))
+      json.String("missing") -> Err(json.MissingField("digits"))
+      json.String("spaced") -> Err(json.MissingField("a b"))
+      json.String("syntax") -> Err(json.Syntax("bad digits", 3))
+      _ -> Err(json.TypeMismatch("Int", "something else"))
+    }
+  }
+}
+
+type Row { name: String, codes: List(Code) }
+
+fn main() {
+  println(json.parse("\"other\"", Code))
+  println(json.parse("""{"name": "a", "codes": [1, "other"]}""", Row))
+  println(json.parse("""{"name": "a", "codes": ["missing"]}""", Row))
+  println(json.parse("""{"name": "a", "codes": ["spaced"]}""", Row))
+  println(json.parse("""{"name": "a", "codes": ["syntax"]}""", Row))
+  println(json.parse("""{"name": "a", "codes": [true]}""", Row))
+  println(json.parse("""{"name": 1, "codes": ["other"]}""", Row))
+  println(json.parse("""{"name": "a", "codes": ["other", 1.5]}""", Row))
+  println(json.parse("""[{"name": "a", "codes": [2]}, {"name": "b"}]""", Row))
+  println(json.parse_list("""[{"name": "a", "codes": [2]}, {"name": "b", "codes": ["other"]}]""", Row))
+}

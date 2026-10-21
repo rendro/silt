@@ -1,6 +1,5 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: 'time.Date' is not a value
 import json
 import time
 

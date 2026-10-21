@@ -1,0 +1,20 @@
+-- cmd: run
+-- exit: 0
+-- A type with a `json.Decode` impl in its own module is decoded by the
+-- impl where another module gives it to `toml.parse`, which imports no
+-- json: the checker does not look into its fields (a `Set`), through a
+-- function that passes its `type a` on too.
+import tags.{ Tags }
+import toml
+
+type Post { title: String, tags: Tags }
+
+fn load(text: String, type a) -> Result(a, toml.TomlError) {
+  toml.parse(text, a)
+}
+
+fn main() {
+  println(toml.parse("title = \"t\"\ntags = \"x\"\n", Post))
+  println(load("title = \"t\"\ntags = [1, 2]\n", Post))
+  println(load("title = \"t\"\ntags = 3\n", Post))
+}

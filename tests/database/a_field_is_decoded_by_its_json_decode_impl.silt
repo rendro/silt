@@ -1,0 +1,94 @@
+-- A field whose type has a written `json.Decode` impl is filled from a
+-- `json` or `jsonb` column (or an array of them) by the impl, which gets
+-- the cell's document as a `json.Value`, wherever the type is in the
+-- field's type: the field itself, an element of a list, a field of a
+-- record in the document. Its fields are not looked into (`Tags` holds a `Set`), and an
+-- enum type with an impl is a field too. An `Option` around it stays
+-- structural (NULL and `null` are `None`). So in `postgres.query`,
+-- `postgres.cursor` and `postgres.stream`.
+import channel
+import env
+import json
+import list
+import postgres
+import set
+
+type Tags { s: Set(String) }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { s: set.from_list([text]) })
+      json.Array(items) -> Ok(Tags { s: set.from_list(list.map(items) { item -> "{item}" }) })
+      _ -> Err(json.Other("tags are a string or an array"))
+    }
+  }
+}
+
+type Level { Low, High }
+
+trait json.Decode for Level {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> match n > 5 {
+        true -> Ok(High)
+        false -> Ok(Low)
+      }
+      _ -> Err(json.TypeMismatch("a level", "no number"))
+    }
+  }
+}
+
+type Wrap { t: Tags }
+
+type Row {
+  id: Int,
+  tags: Tags,
+  level: Level,
+  more: List(Tags),
+  each: List(Tags),
+  wrap: Wrap,
+  opt: Option(Tags),
+  none: Option(Tags),
+}
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  let sql = """
+SELECT g AS id, '"x"'::jsonb AS tags, (g * 4)::text::json AS level,
+  '["a", ["b", "c"]]'::jsonb AS more,
+  ARRAY['"d"'::jsonb, '["e"]'::jsonb] AS each,
+  '{"t": "k"}'::json AS wrap,
+  CASE WHEN g = 1 THEN '"o"'::jsonb ELSE 'null'::jsonb END AS opt,
+  NULL::jsonb AS none
+FROM generate_series(1, 2) g
+"""
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      match postgres.query(db, sql, (), Row) {
+        Ok(rows) -> list.each(rows) { r -> println(r) }
+        Err(e) -> println("query: {e.message()}")
+      }
+      let read = postgres.transact(db) { tx ->
+        let c = postgres.cursor(tx, sql, (), 1, Row)?
+        let first = postgres.cursor_next(c)?
+        let second = postgres.cursor_next(c)?
+        let _ = postgres.cursor_close(c)?
+        Ok([first, second])
+      }
+      println("a cursor: {read}")
+      match postgres.stream(db, sql, (), Row) {
+        Ok(rows) -> channel.each(rows) { r -> println("a stream: {r}") }
+        Err(e) -> println("a stream: {e.message()}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println(e.message())
+  }
+}

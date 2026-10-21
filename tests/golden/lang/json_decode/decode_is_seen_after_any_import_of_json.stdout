@@ -1,0 +1,3 @@
+Ok(P {x: 1})
+Ok(P {x: 2})
+Err(json type mismatch: expected Int, got object)

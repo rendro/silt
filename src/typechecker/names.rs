@@ -211,13 +211,23 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         types.push((id, module_id, name));
     }
     // The traits, so that their ids are those of
-    // `defs::builtin_trait_id`.
+    // `defs::builtin_trait_id`: the prelude's, then a module's
+    // (`json.Encode`), which its module exports.
     let mut traits = Vec::new();
-    for name in crate::defs::BUILTIN_TRAITS {
+    for (name, module) in crate::defs::builtin_traits() {
         let name = intern(name);
         let trait_id = TraitId(DefId(defs.defs.len() as u32));
-        let id = add(&mut defs, ModuleId::PRELUDE, name, DefKind::Trait(trait_id));
-        traits.push((id, name));
+        let module_id = module.map_or(ModuleId::PRELUDE, |m| {
+            ModuleId::builtin(m).expect("a builtin module")
+        });
+        let id = add(&mut defs, module_id, name, DefKind::Trait(trait_id));
+        match module {
+            None => traits.push((id, name)),
+            Some(_) => {
+                let exports = module_exports.entry(module_id).or_default();
+                exports.types.insert(name, Binding::Def(id));
+            }
+        }
     }
     for (id, module_id, name) in types {
         let Some(variants) = enums.get(resolve(name).as_str()) else {

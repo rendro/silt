@@ -4,6 +4,7 @@
 //! text of a date and a time, and how a record type is looked up are
 //! decided here for every format.
 
+use std::cell::RefCell;
 use std::sync::{Arc, OnceLock};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -199,6 +200,167 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
     })
 }
 
+// ── Parts a written impl decodes ────────────────────────────────────
+//
+// A record or enum type the program wrote a `json.Decode` impl for is
+// decoded by the impl, wherever it is in the document: the impl is silt
+// code, so the decoder cannot call it. A decoding of such a document
+// reads it twice (`vm::decode`): first collecting each part of such a
+// type (`Holes::Collect`: its place, the `json.Value` of its document,
+// the impl), then, once the impls have given their values, building the
+// value with them in those places (`Holes::Supply`), in the same order.
+
+/// What a decoder reads with: the runtime, and the impls a program wrote
+/// for the types it decodes, if it honours them (json does).
+pub(crate) struct Reader<'a> {
+    rt: &'a Runtime,
+    impls: Option<Impls<'a>>,
+}
+
+/// The `decode` impls a decoding honours, and what it does at a part of
+/// a type with one.
+struct Impls<'a> {
+    /// The slot of the `decode` the program wrote for a type.
+    written: &'a dyn Fn(TypeId) -> Option<u16>,
+    holes: RefCell<Holes>,
+}
+
+/// What a decoding does at a part of a type with a written impl.
+pub(crate) enum Holes {
+    /// Keep the part, in the order the decoder comes to it.
+    Collect(Vec<Hole>),
+    /// Put there the next of what the impls gave: the value, or the
+    /// `JsonError` an impl returned, which is the decoder's error there
+    /// (the format's, with the part's path: `Rules::from_impl`).
+    Supply(std::vec::IntoIter<Result<Value, Value>>),
+}
+
+/// A part of a document of a type with a written `decode`.
+pub(crate) struct Hole {
+    /// Where it is (`items[2]`, empty for the document itself).
+    pub(crate) at: std::string::String,
+    /// Its document, as a `json.Value`.
+    pub(crate) json: Value,
+    /// The slot of the type's `decode`.
+    pub(crate) slot: u16,
+}
+
+impl std::ops::Deref for Reader<'_> {
+    type Target = Runtime;
+
+    fn deref(&self) -> &Runtime {
+        self.rt
+    }
+}
+
+impl<'a> Reader<'a> {
+    /// A reader that decodes every type by its structure.
+    #[cfg(test)]
+    pub(crate) fn new(rt: &'a Runtime) -> Reader<'a> {
+        Reader { rt, impls: None }
+    }
+
+    /// A reader that honours the impls `written` says, doing `holes` at
+    /// a part of a type with one.
+    pub(crate) fn with_impls(
+        rt: &'a Runtime,
+        written: &'a dyn Fn(TypeId) -> Option<u16>,
+        holes: Holes,
+    ) -> Reader<'a> {
+        Reader {
+            rt,
+            impls: Some(Impls {
+                written,
+                holes: RefCell::new(holes),
+            }),
+        }
+    }
+
+    /// Whether a written impl decodes values of the type `id`.
+    fn written(&self, id: TypeId) -> bool {
+        self.impls
+            .as_ref()
+            .is_some_and(|impls| (impls.written)(id).is_some())
+    }
+
+    /// The value of the part `doc`, `at` a path, of the type `id`, if a
+    /// written impl decodes it: a stand-in while the parts are
+    /// collected, then what the impl gave. A part with no `json.Value`
+    /// (a TOML float that is no number) is the decoder's error.
+    fn hole<D: Document>(&self, id: TypeId, doc: &D, at: &At) -> Option<Result<Value, Error>> {
+        let impls = self.impls.as_ref()?;
+        let slot = (impls.written)(id)?;
+        Some(match &mut *impls.holes.borrow_mut() {
+            Holes::Collect(holes) => json_part(doc, at).map(|json| {
+                holes.push(Hole {
+                    at: at.to_string(),
+                    json,
+                    slot,
+                });
+                Value::Unit
+            }),
+            Holes::Supply(values) => match values.next() {
+                Some(Ok(value)) => Ok(value),
+                Some(Err(error)) => {
+                    Err(Error::Given((D::RULES.from_impl)(&error, &at.to_string())))
+                }
+                None => Ok(Value::Unit),
+            },
+        })
+    }
+
+    /// The holes collected.
+    pub(crate) fn into_holes(self) -> Vec<Hole> {
+        match self.impls.map(|impls| impls.holes.into_inner()) {
+            Some(Holes::Collect(holes)) => holes,
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// The `JsonError` `error`, which a written impl gave for a part `at` a
+/// path, as the decoder's error of a value there: a message ends with
+/// the path, a missing field's path starts with it. At the top it is as
+/// the impl wrote it.
+pub(crate) fn at_part(error: &Value, at: &str) -> Value {
+    let Value::Variant(variant) = error else {
+        return error.clone();
+    };
+    if at.is_empty() || !variant.of(ty::JSON_ERROR) {
+        return error.clone();
+    }
+    let ended = |text: &Value| match text {
+        Value::String(s) => Value::String(format!("{s} at {at}").into()),
+        other => other.clone(),
+    };
+    let mut fields = variant.fields().to_vec();
+    if variant.is(bv::JSON_MISSING_FIELD) {
+        if let Some(Value::String(field)) = fields.first() {
+            fields[0] = Value::String(key_path(at, field).into());
+        }
+    } else if variant.is(bv::JSON_TYPE_MISMATCH) {
+        if let Some(actual) = fields.get_mut(1) {
+            *actual = ended(actual);
+        }
+    } else if let Some(message) = fields.first_mut() {
+        // `Syntax(message, offset)`, `Other(message)`.
+        *message = ended(message);
+    }
+    Value::variant(variant.tag(), fields)
+}
+
+/// The path of the key `key` of the object at the path `at` (as a
+/// decoder's error writes it): `at.key`, `at["a b"]`, or the key alone
+/// at the top.
+pub(crate) fn key_path(at: &str, key: &str) -> std::string::String {
+    let own = At::Top.key(key).to_string();
+    match (at.is_empty(), own.starts_with('[')) {
+        (true, _) => own,
+        (false, true) => format!("{at}{own}"),
+        (false, false) => format!("{at}.{own}"),
+    }
+}
+
 // ── Types no decoder fills ──────────────────────────────────────────
 //
 // Whether a decoder has a value of the type it is given is decided once,
@@ -238,13 +400,13 @@ fn variant_field_message(ty: &str, variant: &str, declared: &str) -> std::string
     )
 }
 
-/// Whether `field_type` names an enum type (not counting the fields of
-/// the record types it names).
-fn names_enum(field_type: &FieldType) -> bool {
+/// Whether `field_type` names an enum type that no written impl decodes
+/// (not counting the fields of the record types it names).
+fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
     match field_type {
-        FieldType::Enum(_) => true,
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(t),
-        FieldType::Tuple(ts) => ts.iter().any(names_enum),
+        FieldType::Enum(id) => !rt.written(*id),
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(rt, t),
+        FieldType::Tuple(ts) => ts.iter().any(|t| names_enum(rt, t)),
         _ => false,
     }
 }
@@ -252,11 +414,12 @@ fn names_enum(field_type: &FieldType) -> bool {
 /// Whether `field_type`, not counting the fields of the record and enum
 /// types it names, holds a part that `family` has no decoder for: it is
 /// a type no decoder has, or it holds a leaf the family does not decode,
-/// or an enum type where the family decodes none.
-fn lacks_here(family: Family, field_type: &FieldType) -> bool {
+/// or an enum type where the family decodes none (one with a written
+/// impl is the impl's).
+fn lacks_here(rt: &Reader, family: Family, field_type: &FieldType) -> bool {
     matches!(field_type, FieldType::Unsupported(_))
         || family.lacks(field_type).is_some()
-        || (!family.decodes_enums() && names_enum(field_type))
+        || (!family.decodes_enums() && names_enum(rt, field_type))
 }
 
 /// The first field of a field of type `field_type` that `family` has no
@@ -264,12 +427,12 @@ fn lacks_here(family: Family, field_type: &FieldType) -> bool {
 /// record or enum type it names (which `family.nested()` decodes); with
 /// that field's type as silt writes it. `seen` are the types looked into.
 fn lacking(
-    rt: &Runtime,
+    rt: &Reader,
     family: Family,
     field_type: &FieldType,
     seen: &mut Vec<(TypeId, Family)>,
 ) -> Option<(Option<Place>, std::string::String)> {
-    if lacks_here(family, field_type) {
+    if lacks_here(rt, family, field_type) {
         return Some((None, shown(rt, field_type)));
     }
     let mut named = Vec::new();
@@ -290,12 +453,12 @@ fn lacking(
 /// that `family` has no decoder for: its place and its type as silt
 /// writes it.
 fn lacking_in(
-    rt: &Runtime,
+    rt: &Reader,
     family: Family,
     ty: &TypeInfo,
     seen: &mut Vec<(TypeId, Family)>,
 ) -> Option<(Place, std::string::String)> {
-    if seen.contains(&(ty.id, family)) {
+    if seen.contains(&(ty.id, family)) || rt.written(ty.id) {
         return None;
     }
     seen.push((ty.id, family));
@@ -323,11 +486,17 @@ fn lacking_in(
 /// enum type `ty` to decode into, if a field no decoder fills is in it
 /// (or in a record or enum type it names): whatever the document holds.
 pub(crate) fn record_refusal(
-    rt: &Runtime,
+    rt: &Reader,
     family: Family,
     ty: &TypeInfo,
 ) -> Option<std::string::String> {
-    // (Walked once per type and family: see `Runtime::refusals`.)
+    // (Walked once per type and family: see `Runtime::refusals`. With
+    // the impls a program wrote, a type with one is not looked into,
+    // which the cache does not say.)
+    if rt.impls.is_some() {
+        return lacking_in(rt, family, ty, &mut Vec::new())
+            .map(|(place, declared)| place.message(&declared));
+    }
     let (at, of) = (ty.id.0.0 as usize, family as usize);
     if let Some(Some(found)) = rt.refusals.read().get(at).map(|known| &known[of]) {
         return found.clone();
@@ -345,13 +514,9 @@ pub(crate) fn record_refusal(
 /// The message of the error of a decoder of `family` given `target`, if
 /// a field no decoder fills is in the type: whatever the document holds,
 /// an empty one too.
-pub(crate) fn refusal(
-    rt: &Runtime,
-    family: Family,
-    target: &Target,
-) -> Option<std::string::String> {
+pub(crate) fn refusal(rt: &Reader, family: Family, target: &Target) -> Option<std::string::String> {
     match target {
-        Target::Record(ty, _) => record_refusal(rt, family, ty),
+        Target::Record(ty) => record_refusal(rt, family, ty),
         Target::Value(FieldType::Enum(id)) => record_refusal(rt, family, &*rt.type_info(*id)?),
         Target::Value(field_type) => {
             let (place, declared) = lacking(rt, family, field_type, &mut Vec::new())?;
@@ -364,7 +529,7 @@ pub(crate) fn refusal(
 
 /// The error a decoder of the format of `rules` gives for `target`, if
 /// a field no decoder fills is in the type ([`refusal`]).
-pub(crate) fn refused(rt: &Runtime, rules: &Rules, target: &Target) -> Option<Value> {
+pub(crate) fn refused(rt: &Reader, rules: &Rules, target: &Target) -> Option<Value> {
     let message = refusal(rt, rules.family, target)?;
     Some(result(rules, Err(Error::Other(message))))
 }
@@ -372,7 +537,7 @@ pub(crate) fn refused(rt: &Runtime, rules: &Rules, target: &Target) -> Option<Va
 /// Whether a decoder of `family` decodes a value of `field_type`, in the
 /// record and enum types it names too.
 #[cfg(feature = "postgres")]
-pub(crate) fn decodes(rt: &Runtime, family: Family, field_type: &FieldType) -> bool {
+pub(crate) fn decodes(rt: &Reader, family: Family, field_type: &FieldType) -> bool {
     lacking(rt, family, field_type, &mut Vec::new()).is_none()
 }
 /// The record type `id` a record field names, from the program's types.
@@ -438,6 +603,9 @@ pub(crate) struct Rules {
     /// The variants `TypeMismatch`, `MissingField` and `Other` of the
     /// format's error (`JsonError`, `TomlError`).
     pub(crate) errors: [BuiltinVariant; 3],
+    /// The format's error of the `JsonError` that a written
+    /// `json.Decode` impl gave for a part `at` a path ([`at_part`]).
+    pub(crate) from_impl: fn(&Value, &str) -> Value,
 }
 
 /// How a number that is no `Int` is told from one.
@@ -471,6 +639,9 @@ pub(crate) enum Error {
     /// written): [`record`] turns it into an `Other` that names the field
     /// whose type it is.
     Unsupported(std::string::String),
+    /// The error a written `json.Decode` impl gave for a part, as the
+    /// format's error variant.
+    Given(Value),
 }
 
 impl From<VmError> for Error {
@@ -501,6 +672,7 @@ impl Error {
             ),
             Error::MissingField(path) => Value::variant(missing, vec![string(path)]),
             Error::Other(message) => Value::variant(other, vec![string(message)]),
+            Error::Given(error) => error,
             // (Only a record's field holds such a type, and `record`
             // names it: this is the fallback.)
             Error::Unsupported(declared) => Value::variant(
@@ -528,8 +700,8 @@ pub(crate) enum Target<'a> {
     /// A primitive type, or `json.Value`: decoded as a field of the type
     /// is.
     Value(FieldType),
-    /// A record type of the program, with its fields.
-    Record(&'a Arc<TypeInfo>, &'a [(std::string::String, FieldType)]),
+    /// A record type of the program.
+    Record(&'a Arc<TypeInfo>),
 }
 
 impl Target<'_> {
@@ -538,7 +710,7 @@ impl Target<'_> {
     pub(crate) fn element(&self) -> FieldType {
         match self {
             Target::Value(field_type) => field_type.clone(),
-            Target::Record(ty, _) => FieldType::Record(ty.id),
+            Target::Record(ty) => FieldType::Record(ty.id),
         }
     }
 }
@@ -604,29 +776,17 @@ pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, 
             Ok(Target::Value(FieldType::Enum(ty.id)))
         }
         Type::Named(ty) => match decodable_record(caller, ty) {
-            Ok(fields) => Ok(Target::Record(ty, fields)),
+            Ok(_) => Ok(Target::Record(ty)),
             Err(_) if decoding.family.rows() => Err(not_a_row(&ty.name)),
             Err(e) => Err(e),
         },
     }
 }
 
-/// The value of `target` that `doc`, the whole document, is.
-pub(crate) fn document<D: Document>(
-    rt: &Runtime,
-    target: &Target,
-    doc: &D,
-) -> Result<Value, Error> {
-    match target {
-        Target::Value(field_type) => value(rt, doc, field_type, &At::Top),
-        Target::Record(ty, fields) => record(rt, ty, fields, doc, &At::Top),
-    }
-}
-
 /// The record of type `ty` (of the `fields`) that `doc`, which is `at` a
 /// path, is.
 pub(crate) fn record<D: Document>(
-    rt: &Runtime,
+    rt: &Reader,
     ty: &Arc<TypeInfo>,
     fields: &[(std::string::String, FieldType)],
     doc: &D,
@@ -660,7 +820,7 @@ pub(crate) fn record<D: Document>(
 /// The list of values of the field type `element` that `doc`, an array
 /// `at` a path, holds.
 pub(crate) fn list<D: Document>(
-    rt: &Runtime,
+    rt: &Reader,
     element: &FieldType,
     doc: &D,
     at: &At,
@@ -678,7 +838,7 @@ pub(crate) fn list<D: Document>(
 /// The map of values of the field type `element` that `doc`, a table
 /// `at` a path, holds.
 pub(crate) fn map<D: Document>(
-    rt: &Runtime,
+    rt: &Reader,
     element: &FieldType,
     doc: &D,
     at: &At,
@@ -700,11 +860,17 @@ pub(crate) fn map<D: Document>(
 /// The value of the field type `expected` that `doc`, which is `at` a
 /// path, is.
 pub(crate) fn value<D: Document>(
-    rt: &Runtime,
+    rt: &Reader,
     doc: &D,
     expected: &FieldType,
     at: &At,
 ) -> Result<Value, Error> {
+    // A record or enum type with a written impl: the impl's.
+    if let FieldType::Record(id) | FieldType::Enum(id) = expected
+        && let Some(decoded) = rt.hole(*id, doc, at)
+    {
+        return decoded;
+    }
     let rules = D::RULES;
     let mismatch = |expected: &'static str| Error::mismatch(expected, doc.kind(), at);
     let node = doc.node();
@@ -842,7 +1008,7 @@ pub(crate) fn value<D: Document>(
 /// decoded as the variant declares it (other keys of the object are
 /// ignored).
 pub(crate) fn variant<D: Document>(
-    rt: &Runtime,
+    rt: &Reader,
     ty: &Arc<TypeInfo>,
     doc: &D,
     at: &At,
@@ -911,6 +1077,34 @@ pub(crate) fn variant<D: Document>(
         })?);
     }
     Ok(Value::variant(tag, fields))
+}
+
+/// The `json.Value` that holds `doc`, a part `at` a path that a written
+/// impl decodes, as [`json_value`] makes it; a float that is no number
+/// (TOML's `nan` and `inf`), which no `json.Value` holds, is a type
+/// mismatch at its own path.
+fn json_part<D: Document>(doc: &D, at: &At) -> Result<Value, Error> {
+    Ok(match doc.node() {
+        Node::Float(f) if Float::new(f).is_none() => {
+            return Err(Error::mismatch("json.Value", "a non-finite float", at));
+        }
+        Node::Array(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                values.push(json_part(item, &at.index(index))?);
+            }
+            Value::variant(bv::JSON_ARRAY, vec![Value::list(values)])
+        }
+        Node::Table(table) => {
+            let entries = D::entries(table);
+            let mut members = Vec::with_capacity(entries.len());
+            for (key, item) in entries {
+                members.push((Value::String(key.into()), json_part(item, &at.key(key))?));
+            }
+            Value::variant(bv::JSON_OBJECT, vec![Value::map(members)])
+        }
+        _ => json_value(doc),
+    })
 }
 
 /// The `json.Value` that holds `doc`: a number an `Int` when it is held
@@ -1041,6 +1235,7 @@ mod tests {
             Err(Error::MissingField(at)) => format!("MissingField {at}"),
             Err(Error::Other(message)) => format!("Other {message}"),
             Err(Error::Unsupported(declared)) => format!("Unsupported {declared}"),
+            Err(Error::Given(error)) => format!("Given {error}"),
         }
     }
 
@@ -1054,7 +1249,7 @@ mod tests {
         use crate::defs::DefId;
         use FieldType as F;
         let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
-        let rt = &vm.runtime;
+        let rt = &Reader::new(&vm.runtime);
         let inner = TypeInfo::new_record(
             TypeId(DefId(9001)),
             "Inner",
@@ -1183,7 +1378,7 @@ mod tests {
             let toml = toml_of(&json).expect("a table");
             // As json.parse and toml.parse decode it: the type is
             // refused before the document is read.
-            let target = Target::Record(ty, fields);
+            let target = Target::Record(ty);
             let whole = |family, decoded: Result<Value, Error>| match refusal(rt, family, &target) {
                 Some(message) => outcome(Err(Error::Other(message))),
                 None => outcome(decoded),

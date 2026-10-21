@@ -60,6 +60,17 @@
 //!    module and code outside it. (`parts_shown` names every form of
 //!    type: one it did not know would be any type too.)
 //!
+//!    Writing a value as data is the same with the module's
+//!    `json.Encode` impls: a builtin whose signature asks `json.Encode`
+//!    of an argument (`json.stringify`), `toml.stringify`, `toml.pretty`
+//!    and the parameters of a postgres statement (whose signatures ask
+//!    nothing of them, but which write them with the same writer), and
+//!    `.encode()` on a type with no impl of its own. Decoding a document
+//!    into a type is the same with the module's `json.Decode` impls of
+//!    the type and of the types of its fields: a builtin whose signature
+//!    asks `json.Decode` of its type argument (`json.parse`), and
+//!    `T.decode(v)` on a type with no impl of its own.
+//!
 //!    A function with type variables of its own (`fn label(x: a) ->
 //!    String where a: Display`) shows values whose types have them.
 //!    Its body runs only through a value of the function, and every
@@ -265,17 +276,24 @@ impl TypeChecker {
         }
     }
 
-    /// The parameters of the builtin function `def` that it shows: the
-    /// ones whose type has a variable its signature asks `Display` of.
-    fn shown_params(&self, def: &crate::defs::Def) -> Vec<usize> {
+    /// The parameters of the builtin function `def` that it shows or
+    /// writes as data, each with the trait whose written impls of its
+    /// parts that calls (`Display`, `json.Encode`): the ones whose type
+    /// has a variable its signature asks the trait of; and the value of
+    /// `toml.stringify` and `toml.pretty` and the parameters of a
+    /// postgres statement, which the writer writes as `json.stringify`
+    /// does, though their signatures ask nothing of them; and the type
+    /// argument of every decoder (toml's and postgres's too, whose
+    /// signatures ask nothing of it), which decodes as json's do.
+    fn shown_params(&self, def: &crate::defs::Def) -> Vec<(usize, TraitKey)> {
         let Some(scheme) = builtin_scheme(def) else {
             return Vec::new();
         };
-        let Type::Fun(params, _) = &scheme.ty else {
+        let Type::Fun(params, ret) = &scheme.ty else {
             return Vec::new();
         };
-        let display = TraitKey::builtin("Display");
-        let shown: Vec<TyVar> = scheme
+        let encode = TraitKey::builtin("Encode");
+        let mut shown: Vec<(TyVar, TraitKey)> = scheme
             .preds
             .iter()
             .filter_map(|pred| match pred {
@@ -283,16 +301,42 @@ impl TypeChecker {
                     tr,
                     subject: Type::Var(v),
                     ..
-                } if *tr == display => Some(*v),
+                } if WRITABLE_STRUCTURAL_TRAITS
+                    .iter()
+                    .any(|name| tr.is_builtin(name)) =>
+                {
+                    Some((*v, *tr))
+                }
                 _ => None,
             })
             .collect();
-        params
-            .iter()
-            .enumerate()
-            .filter(|(_, param)| free_vars_in(param).iter().any(|v| shown.contains(v)))
-            .map(|(i, _)| i)
-            .collect()
+        let row = (def.module.builtin_name())
+            .and_then(|module| crate::builtins::registry::registry().module(module))
+            .and_then(|module| module.row(&resolve(def.name)));
+        let written = match row {
+            Some(row) if row.statement => Some(2),
+            Some(row) if row.module == "toml" && ["stringify", "pretty"].contains(&row.name) => {
+                Some(0)
+            }
+            _ => None,
+        };
+        if let Some(param) = written.and_then(|i| params.get(i)) {
+            shown.extend(free_vars_in(param).into_iter().map(|v| (v, encode)));
+        }
+        // (A decoder's type argument is what it gives back.)
+        if row.is_some_and(|row| row.decoding.is_some()) {
+            let decode = TraitKey::builtin("Decode");
+            shown.extend(free_vars_in(ret).into_iter().map(|v| (v, decode)));
+        }
+        let mut found = Vec::new();
+        for (i, param) in params.iter().enumerate() {
+            for (v, tr) in &shown {
+                if free_vars_in(param).contains(v) && !found.contains(&(i, *tr)) {
+                    found.push((i, *tr));
+                }
+            }
+        }
+        found
     }
 
     /// The module's top-level `let`s, by the span of each, in the order
@@ -425,12 +469,23 @@ impl TypeChecker {
         // several).
         let own_trait = |tr: TraitId| self.own_traits.values().any(|own| own.id == tr);
         let display = TraitKey::builtin("Display");
-        let display_method = intern("display");
+        let encode = TraitKey::builtin("Encode");
+        let decode = TraitKey::builtin("Decode");
+        // The method of each trait whose written impls showing, writing
+        // or decoding a value calls, at any depth.
+        let method_of = |tr: TraitKey| {
+            intern(match tr {
+                _ if tr == encode => "encode",
+                _ if tr == decode => "decode",
+                _ => "display",
+            })
+        };
         let mut named: HashMap<(usize, usize), Symbol> = HashMap::new();
         let mut edges: Vec<Vec<usize>> = Vec::with_capacity(nodes.len());
-        // What showing a value of the type `ty` reaches: the `Display`
-        // impls of its parts.
-        let shows = |ty: &Type, add: &mut dyn FnMut(usize)| {
+        // What showing (`Display`) or writing (`json.Encode`) a value of
+        // the type `ty` reaches: the impls of `tr` of its parts.
+        let shows = |tr: TraitKey, ty: &Type, add: &mut dyn FnMut(usize)| {
+            let method = method_of(tr);
             let mut parts = Parts {
                 own: Vec::new(),
                 outside: false,
@@ -438,16 +493,12 @@ impl TypeChecker {
             self.parts_shown(&self.apply(ty), false, &mut parts);
             for ty in parts.own {
                 let ty = canonical_head(&self.tables.resolver, ty);
-                if let Some(&target) = of_impl.get(&(display.id, ty.id, display_method)) {
+                if let Some(&target) = of_impl.get(&(tr.id, ty.id, method)) {
                     add(target);
                 }
             }
             if parts.outside {
-                for &target in of_trait
-                    .get(&(display.id, display_method))
-                    .into_iter()
-                    .flatten()
-                {
+                for &target in of_trait.get(&(tr.id, method)).into_iter().flatten() {
                     add(target);
                 }
                 add(OUTSIDE);
@@ -461,7 +512,7 @@ impl TypeChecker {
         // showing is not the function's (`shown_at`, by function) but
         // of each node that names it (`uses`: the function, and the
         // type it is named at), below.
-        let mut shown_at: HashMap<usize, Vec<Type>> = HashMap::new();
+        let mut shown_at: HashMap<usize, Vec<(TraitKey, Type)>> = HashMap::new();
         let mut uses: Vec<Vec<(usize, Option<Type>)>> = Vec::with_capacity(nodes.len());
         for (from, node) in nodes.iter().enumerate() {
             let Some(body) = node.body else {
@@ -471,7 +522,8 @@ impl TypeChecker {
             };
             let targets: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
             let own_vars: &[TyVar] = general.get(&from).map_or(&[], |scheme| &scheme.vars);
-            let deferred: std::cell::RefCell<Vec<Type>> = std::cell::RefCell::new(Vec::new());
+            let deferred: std::cell::RefCell<Vec<(TraitKey, Type)>> =
+                std::cell::RefCell::new(Vec::new());
             let used: std::cell::RefCell<Vec<(usize, Option<Type>)>> =
                 std::cell::RefCell::new(Vec::new());
             let mut note = |mention: Mention| {
@@ -510,7 +562,7 @@ impl TypeChecker {
                 // are. Where its type has variables of the function
                 // written here, and no others, the parts they stand for
                 // are for who names the function.
-                let show = |ty: &Type| {
+                let show = |tr: TraitKey, ty: &Type| {
                     let ty = self.apply(ty);
                     let mut vars: Vec<TyVar> = Vec::new();
                     crate::types::map_rigid(&ty, &mut |r| {
@@ -518,11 +570,11 @@ impl TypeChecker {
                         Type::Rigid(r)
                     });
                     if vars.is_empty() || !vars.iter().all(|v| own_vars.contains(v)) {
-                        return shows(&ty, &mut |target| add(target));
+                        return shows(tr, &ty, &mut |target| add(target));
                     }
                     let rest = crate::types::map_rigid(&ty, &mut |_| Type::Unit);
-                    shows(&rest, &mut |target| add(target));
-                    deferred.borrow_mut().push(ty);
+                    shows(tr, &rest, &mut |target| add(target));
+                    deferred.borrow_mut().push((tr, ty));
                 };
                 match mention.expr.map(|expr| (&expr.kind, expr)) {
                     Some((ExprKind::StringInterp(parts), _)) => {
@@ -530,21 +582,22 @@ impl TypeChecker {
                             if let StringPart::Expr(shown) = part
                                 && let Some(ty) = &shown.ty
                             {
-                                show(ty);
+                                show(display, ty);
                             }
                         }
                     }
-                    // A builtin that shows an argument, called or not:
-                    // the type it is used at says what it is given.
+                    // A builtin that shows or writes an argument, called
+                    // or not: the type it is used at says what it is
+                    // given.
                     Some((ExprKind::Ident(_) | ExprKind::FieldAccess(..), expr)) => {
                         if let Some(crate::defs::Res::Def(id)) = expr.res
                             && let Some(def) = self.def(id)
                             && def.module.is_builtin()
                             && let Some(Type::Fun(params, _)) = &expr.ty
                         {
-                            for i in self.shown_params(&def) {
+                            for (i, tr) in self.shown_params(&def) {
                                 if let Some(param) = params.get(i) {
-                                    show(param);
+                                    show(tr, param);
                                 }
                             }
                         }
@@ -584,12 +637,19 @@ impl TypeChecker {
                     // impl of the method in the module, the trait's
                     // default, and, for a trait of another module or a
                     // builtin one, impls and defaults outside it.
-                    // (`display` of such a receiver shows it.)
+                    // (`display` of such a receiver shows it, `encode`
+                    // writes it, `decode` of a type decodes into it.)
                     Some(Selection::Dynamic { tr })
-                        if *tr == display.id && *method == display_method && recv.ty.is_some() =>
+                        if [display, encode, decode]
+                            .iter()
+                            .any(|t| t.id == *tr && *method == method_of(*t))
+                            && recv.ty.is_some() =>
                     {
-                        if let Some(ty) = &recv.ty {
-                            show(ty);
+                        if let Some(ty) = &recv.ty
+                            && let Some(tr) =
+                                [display, encode, decode].into_iter().find(|t| t.id == *tr)
+                        {
+                            show(tr, ty);
                         }
                     }
                     Some(Selection::Dynamic { tr }) => {
@@ -601,13 +661,15 @@ impl TypeChecker {
                         }
                     }
                     // The VM's own method of a builtin trait: `display`
-                    // shows the receiver; the others call no code a
+                    // shows the receiver, `encode` writes it, `decode` of
+                    // a type decodes into it; the others call no code a
                     // program writes.
                     Some(Selection::Native { tr }) => {
-                        if *tr == display.id
-                            && let Some(ty) = &recv.ty
+                        if let Some(ty) = &recv.ty
+                            && let Some(tr) =
+                                [display, encode, decode].into_iter().find(|t| t.id == *tr)
                         {
-                            show(ty);
+                            show(tr, ty);
                         }
                     }
                     Some(Selection::Field | Selection::FieldCall) => {}
@@ -671,7 +733,7 @@ impl TypeChecker {
                 let known = at.as_ref().is_some_and(|at| {
                     crate::types::instance_of(&scheme.ty, &self.apply(at), &mut stands)
                 });
-                for ty in shown {
+                for (tr, ty) in shown {
                     let here = match known {
                         true => crate::types::map_rigid(ty, &mut |r| {
                             stands.get(&r.var).cloned().unwrap_or(Type::Rigid(r))
@@ -683,7 +745,7 @@ impl TypeChecker {
                     if from == *target && here == *ty {
                         continue;
                     }
-                    shows(&here, &mut |target| {
+                    shows(*tr, &here, &mut |target| {
                         if !edges[from].contains(&target) {
                             edges[from].push(target);
                         }

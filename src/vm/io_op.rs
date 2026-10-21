@@ -43,16 +43,29 @@ impl Vm {
         op: IoOp,
         then: impl FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
+        self.io_wait_step(name, op, move |_, value| then(value).map(Step::Done))
+    }
+
+    /// [`Vm::io_wait`] that goes on as `then` says with the operation's
+    /// value: the builtin's value, or a frame that computes it (one
+    /// that calls the program's code, as a postgres statement whose
+    /// rows wait for the program's `json.Decode` impls does).
+    pub(crate) fn io_wait_step(
+        &mut self,
+        name: &'static str,
+        op: IoOp,
+        then: impl FnOnce(&mut Vm, Value) -> Result<Step, VmError> + Send + 'static,
+    ) -> Result<Step, VmError> {
         let mut then = Some(then);
         let wait = op.wait(self, Limit::Io);
         // The frame owns the operation: when the wait is over, however
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
-        Ok(self.park(name, wait, move |_, fired| {
+        Ok(self.park(name, wait, move |vm, fired| {
             // The value is taken only by a wait that it ended: one
             // that came as the deadline passed stays unheard.
             match (op.outcome(&fired), then.take()) {
-                (Some(value), Some(then)) => Ok(Step::Done(then(value)?)),
+                (Some(value), Some(then)) => then(vm, value),
                 (Some(value), None) => Ok(Step::Done(value)),
                 (None, _) => Ok(Step::Done(op.value(&fired))),
             }

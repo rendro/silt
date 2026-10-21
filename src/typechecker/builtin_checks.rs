@@ -100,8 +100,11 @@ impl TypeChecker {
     /// decoder; the error names the field and its type. A generic type,
     /// an enum given to postgres, a builtin enum, a builtin
     /// container type, or a primitive type given to a decoder that only
-    /// decodes records is refused as well.
-    fn decode_refusal(
+    /// decodes records is refused as well. A record or enum type with a
+    /// written `json.Decode` impl is decoded by the impl (toml's and
+    /// postgres's decoders too: one data layer, one override), and not
+    /// looked into, at the top and as the type of a field.
+    pub(super) fn decode_refusal(
         &self,
         builtin_name: &str,
         decoding: Decoding,
@@ -138,6 +141,9 @@ impl TypeChecker {
             .get(head.id.0.0 as usize)
             .is_none()
         {
+            if self.has_decode_impl(head) {
+                return None;
+            }
             let enum_type = self.tables.is_enum(head);
             if enum_type && !family.decodes_enums() {
                 return refusal(
@@ -246,7 +252,10 @@ impl TypeChecker {
 
     /// The first field that `family` cannot decode, in the record or
     /// enum type `record` or in a record or enum type nested in it (which
-    /// `family.nested()` decodes). `None` if there is none.
+    /// `family.nested()` decodes). `None` if there is none. A nested
+    /// type with a written `json.Decode` impl is the impl's to decode:
+    /// it is not looked into, and an enum type with one is decoded
+    /// where a family decodes no enum (a postgres row's field).
     fn undecodable_field(
         &self,
         record: TypeRef,
@@ -277,7 +286,7 @@ impl TypeChecker {
                 Err(part) => Some(part),
                 Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
                     let enum_type = (nested.iter().map(|id| type_ref(*id)))
-                        .find(|t| self.tables.is_enum(*t))?;
+                        .find(|t| self.tables.is_enum(*t) && !self.has_decode_impl(*t))?;
                     (!family.decodes_enums()).then(|| resolve(enum_type.name))
                 }),
             };
@@ -293,7 +302,11 @@ impl TypeChecker {
             }
             for nested_record in nested {
                 let family = family.nested();
-                if let Some(found) = self.undecodable_field(type_ref(nested_record), family, seen) {
+                let nested_record = type_ref(nested_record);
+                if self.has_decode_impl(nested_record) {
+                    continue;
+                }
+                if let Some(found) = self.undecodable_field(nested_record, family, seen) {
                     return Some(UndecodableField {
                         nested: true,
                         ..found

@@ -220,8 +220,8 @@ type DecodeError {
   Malformed(String),
 }
 
-fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode {
-  a.decode(body)
+fn parse(body: String, type a) -> Result(a, DecodeError) where a: Parse {
+  a.parse(body)
 }
 
 fn try_from(x: a, type b) -> b where a: Convertible(b) {
@@ -768,8 +768,8 @@ fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f) { ... }
 ### Type-directed decoding
 
 ```silt
-fn parse(body: String, type a) -> Result(a, DecodeError) where a: Decode { ... }
-fn from_toml(content: String, type a) -> Result(a, DecodeError) where a: Decode { ... }
+fn parse(body: String, type a) -> Result(a, DecodeError) where a: Parse { ... }
+fn from_toml(content: String, type a) -> Result(a, DecodeError) where a: Parse { ... }
 
 -- call sites
 let config = from_toml(raw, AppConfig)?

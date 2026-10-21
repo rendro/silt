@@ -363,8 +363,13 @@ mod tests {
             "" => "type t".to_string(),
             _ => format!("{params}, type t"),
         };
+        // (A json decoder says what it asks of its type: `json.Decode`.)
+        let bound = match row.module {
+            "json" => " where t: json.Decode",
+            _ => "",
+        };
         format!(
-            "fn pass({given}) {{\n  {}\n}}\nfn call({params}) {{\n  pass({args}{ty})\n}}",
+            "fn pass({given}){bound} {{\n  {}\n}}\nfn call({params}) {{\n  pass({args}{ty})\n}}",
             call(row, "t")
         )
     }
@@ -474,7 +479,7 @@ mod tests {
             // (A VM of its own: each program numbers its types from the
             // same id, and a runtime decides a type's decoder once.)
             let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
-            let rt = &vm.runtime;
+            let rt = &decode::Reader::new(&vm.runtime);
             // The types as the run time has them: through a `type a`
             // that reaches no decoder, which the checker asks nothing of.
             let generic = program(
@@ -522,8 +527,10 @@ mod tests {
                         return refusal;
                     }
                     let decoded = match family {
-                        Family::Json => decode::document(rt, &target, doc),
-                        Family::Toml => decode::document(rt, &target, &toml_of(doc)),
+                        Family::Json => decode::value(rt, doc, &target.element(), &At::Top),
+                        Family::Toml => {
+                            decode::value(rt, &toml_of(doc), &target.element(), &At::Top)
+                        }
                         Family::Postgres => match doc.get("f") {
                             Some(cell) => decode::value(rt, cell, f, &At::Top),
                             None => Ok(crate::value::Value::Unit),

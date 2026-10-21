@@ -1,0 +1,27 @@
+-- cmd: run
+-- exit: 0
+-- An error an impl got from `json.decode` of its part, which has a
+-- path of its own, gets the part's path appended as it is, in a TOML
+-- document as in a JSON one: a message ends with `at k at w`; a missing
+-- field's path is joined to the part's, `w.k`.
+import json
+import toml
+
+type In { k: Int }
+type W { i: In }
+
+trait json.Decode for W {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match json.decode(value, In) {
+      Ok(i) -> Ok(W { i: i })
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+type Cfg { w: W }
+
+fn main() {
+  println(toml.parse("[w]\nk = \"s\"\n", Cfg))
+  println(toml.parse("[w]\nj = 1\n", Cfg))
+}

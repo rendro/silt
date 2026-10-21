@@ -1,0 +1,35 @@
+-- An impl that decodes a part of its value with `json.decode` and
+-- returns its error gives an error that has a path already, which is the
+-- program's text: the part's path is appended to it as to any message
+-- ("at k at w"), not joined by guessing that the text ends in a path. A
+-- missing field's text is the key of a field of the part (`w["i.k"]`).
+import json
+import map
+
+type Inner { k: Int }
+type Wrap { inner: Inner }
+
+trait json.Decode for Wrap {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Object(m) -> match map.get(m, "i") {
+        Some(v) -> match json.decode(v, Inner) {
+          Ok(inner) -> Ok(Wrap { inner: inner })
+          Err(e) -> Err(e)
+        }
+        None -> Err(json.MissingField("i.k"))
+      }
+      _ -> Err(json.Other("not an object"))
+    }
+  }
+}
+
+type Holder { w: Wrap, ws: List(Wrap) }
+
+fn main() {
+  println(json.parse("""{"w": {"i": {"k": "s"}}, "ws": []}""", Holder))
+  println(json.parse("""{"w": {"i": {}}, "ws": []}""", Holder))
+  println(json.parse("""{"w": {}, "ws": []}""", Holder))
+  println(json.parse("""{"w": {"i": {"k": 1}}, "ws": [{"i": {"k": 1.5}}]}""", Holder))
+  println(json.parse("""{"w": 1, "ws": []}""", Holder))
+}

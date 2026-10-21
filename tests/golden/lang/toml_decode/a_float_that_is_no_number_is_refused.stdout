@@ -1,0 +1,5 @@
+decode Float(1.5)
+Err(toml type mismatch: expected json.Value, got a non-finite float at readings[1][1])
+Err(toml type mismatch: expected json.Value, got a non-finite float at readings[0].max)
+decode Float(1.5)
+Err(toml type mismatch: expected Float, got a non-finite float at level)

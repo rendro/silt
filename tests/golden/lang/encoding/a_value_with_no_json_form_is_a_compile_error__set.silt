@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Map(String, Set(Int))' does not implement trait 'json.Encode': value is of type 'Set(Int)', which does not
+-- JSON has no form for a set: `json.pretty` needs `json.Encode` as
+-- `json.stringify` does.
+import json
+
+fn main() {
+  println(json.pretty(#{"tags": #[1, 2]}))
+}

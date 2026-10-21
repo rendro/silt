@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Result(Channel(_), _)' does not implement trait 'json.Encode': variant 'Ok' payload #1 is of type 'Channel(_)', which does not
+-- JSON has no form for a channel (here in an `Ok`).
+import channel
+import json
+
+fn main() {
+  println(json.stringify(Ok(channel.new(1))))
+}

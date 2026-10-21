@@ -248,4 +248,10 @@ cases!(
     a_listen_nobody_waits_for_gives_its_connection_back,
     a_connect_nobody_waits_for_leaves_no_session,
     a_pool_statement_without_its_connection_is_not_sent,
+    a_parameter_is_written_as_its_json_encode_impl_says,
+    a_field_is_decoded_by_its_json_decode_impl,
+    an_impl_error_in_a_field_is_the_columns_type_mismatch,
+    a_row_type_with_an_impl_is_decoded_by_it,
+    a_stream_ends_at_an_impls_error,
+    channel_each_raises_the_failure_of_a_streams_impl,
 );

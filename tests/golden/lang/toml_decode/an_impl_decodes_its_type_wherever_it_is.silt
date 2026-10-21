@@ -1,0 +1,56 @@
+-- cmd: run
+-- exit: 0
+-- toml's decoders honour a written `json.Decode` impl as json's do: the
+-- impl gets its part of the document as a `json.Value`, wherever it is:
+-- at the top, as an element of `toml.parse_list`, as a value of
+-- `toml.parse_map`, in a record's field, in a list in a field, in a
+-- variant's field, through a function that passes its `type a` on. An
+-- `Option` around it stays structural (a key left out is `None`). Its
+-- fields are not looked into: `Tags` holds a `Set`, which no decoder
+-- fills.
+import json
+import list
+import map
+import set
+import toml
+
+type Tags { s: Set(String) }
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { s: set.from_list([text]) })
+      json.Array(items) -> {
+        let names = list.filter_map(items) { item ->
+          match item {
+            json.String(name) -> Some(name)
+            _ -> None
+          }
+        }
+        Ok(Tags { s: set.from_list(names) })
+      }
+      json.Object(members) -> Ok(Tags { s: set.from_list(map.keys(members)) })
+      _ -> Err(json.TypeMismatch("tags", "something else"))
+    }
+  }
+}
+
+type Post { title: String, tags: Tags, more: List(Tags), opt: Option(Tags) }
+
+type Kind { Plain, Tagged(Tags) }
+
+type Doc { kind: Kind }
+
+fn load(text: String, type a) -> Result(a, toml.TomlError) {
+  toml.parse(text, a)
+}
+
+fn main() {
+  println(toml.parse("b = 1\na = 2\n", Tags))
+  println(toml.parse_list("xs = [\"a\", [\"b\", \"c\"]]\n", Tags))
+  println(toml.parse_map("k = \"v\"\nw = [\"x\", \"y\"]\n", Tags))
+  println(toml.parse("title = \"t\"\ntags = \"x\"\nmore = [[\"y\"], \"z\"]\n", Post))
+  println(toml.parse("title = \"t\"\ntags = []\nmore = []\nopt = \"o\"\n", Post))
+  println(toml.parse("[kind]\nvariant = \"Tagged\"\nfields = [\"q\"]\n", Doc))
+  println(load("title = \"t\"\ntags = \"l\"\nmore = []\n", Post))
+}

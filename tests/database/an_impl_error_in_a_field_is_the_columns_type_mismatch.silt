@@ -1,0 +1,70 @@
+-- The `Err` a field's `json.Decode` impl returns is the column's
+-- `TypeMismatch`, worded as the decoder's own errors in a document are:
+-- the column's type, then the `JsonError`'s message with the path of
+-- the part in the cell's document. The first error in the row, in the
+-- order of the type's fields, counts: the impl's, or a later cell's
+-- (a NULL for a field that is no `Option`). A column that is no
+-- `json` or `jsonb` does not fill a field of a type with an impl: the
+-- plan refuses it before any row is read. A cursor's batch that fails
+-- so ends the cursor.
+import env
+import json
+import postgres
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Code { digits: text })
+      json.Int(_) -> Err(json.TypeMismatch("String", "an integer"))
+      json.Bool(_) -> Err(json.MissingField("digits"))
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type One { code: Code }
+
+type Many { codes: List(Code), s: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn show(r: Result(a, postgres.PostgresError)) -> String where a: Display {
+  match r {
+    Ok(v) -> "Ok({v})"
+    Err(e) -> "Err({e.message()})"
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println(show(postgres.query(db, "SELECT '1'::jsonb AS code", (), One)))
+      println(show(postgres.query(db, "SELECT '[\"1\", true]'::jsonb AS codes, 'z' AS s", (), Many)))
+      println(show(postgres.query(db, "SELECT ARRAY['\{}'::jsonb] AS codes, 'z' AS s", (), Many)))
+      -- The impl's error comes before the NULL of `s`; without it, the
+      -- NULL is the error.
+      println(show(postgres.query(db, "SELECT '[2]'::jsonb AS codes, NULL::text AS s", (), Many)))
+      println(show(postgres.query(db, "SELECT '[\"2\"]'::jsonb AS codes, NULL::text AS s", (), Many)))
+      -- A text column for a field of a type with an impl.
+      println(show(postgres.query(db, "SELECT '\"1\"' AS code", (), One)))
+      let read = postgres.transact(db) { tx ->
+        let sql = "SELECT CASE WHEN g = 2 THEN '7'::jsonb ELSE '\"x\"'::jsonb END AS code FROM generate_series(1, 3) g"
+        let c = postgres.cursor(tx, sql, (), 2, One)?
+        println("batch 1: {show(postgres.cursor_next(c))}")
+        println("batch 2: {show(postgres.cursor_next(c))}")
+        let _ = postgres.cursor_close(c)?
+        Ok(())
+      }
+      println("transact: {read}")
+      postgres.close(db)
+    }
+    Err(e) -> println(e.message())
+  }
+}

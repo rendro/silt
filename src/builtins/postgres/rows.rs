@@ -14,6 +14,16 @@
 //! `2.0`). A column no field names is not read. A `json` or `jsonb`
 //! column is decoded into the field's type by the typed decoder, through
 //! json's rules.
+//!
+//! A part of a type with a written `json.Decode` impl is decoded by the
+//! impl, which is silt code: the rows are read on a thread of the I/O
+//! pool, which runs none. Such a row is read there as far as it can be
+//! ([`Row::Partial`]: each cell whose document holds such parts, with
+//! the parts), and the task that asked for it calls the impls and
+//! finishes it ([`Filling`]). A field whose type has such an impl is
+//! filled only from a `json` or `jsonb` column, as any record's field
+//! is; a row type with one is decoded by its impl from the
+//! `json.Object` of the row's columns.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -24,10 +34,12 @@ use postgres_protocol::types as wire;
 use tokio_postgres::types::{Format, FromSql, IsNull, Kind, ToSql, Type as PgType};
 
 use crate::builtins::data::{self, Data};
+use crate::builtins::decode::{Hole, Holes, Reader};
 use crate::builtins::registry::decoding::Family;
 use crate::builtins::time::{make_date, make_datetime, make_time};
 use crate::builtins::typed::Type;
 use crate::builtins::{decode, json};
+use crate::bytecode::Globals;
 use crate::typeinfo::{FieldType, Shape, TypeInfo, bv};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
@@ -106,26 +118,30 @@ impl ToSql for TextParam {
 }
 
 /// The parameters of a statement of `caller`: `params`, a tuple, or
-/// `()` for none; and where the encoder leaves why one of them could not
-/// be sent, if one of them may not be (a list of `Bytes`, which has no
-/// JSON form). (The checker refuses parameters that are no tuple
+/// `()` for none. (The checker refuses parameters that are no tuple
 /// wherever a program gives them: the error is a guard.)
+pub(super) fn param_values(caller: &str, params: &Value) -> Result<Vec<Value>, VmError> {
+    match params {
+        Value::Unit => Ok(Vec::new()),
+        Value::Tuple(values) => Ok(values.to_vec()),
+        other => Err(VmError::new(format!(
+            "{caller}: params must be a tuple, got {}; write (id,)",
+            other.kind()
+        ))),
+    }
+}
+
+/// The parameters of a statement of `caller`, each written as data
+/// (`Vm::encode`, which writes a part of a type with a written
+/// `json.Encode` impl as the impl says); and where the encoder leaves
+/// why one of them could not be sent, if one of them may not be (a list
+/// of `Bytes`, which has no JSON form).
 pub(super) fn params(
     caller: &str,
-    params: &Value,
+    params: Vec<Data>,
 ) -> Result<(Vec<TextParam>, Option<Unsendable>), VmError> {
-    let values: Vec<&Value> = match params {
-        Value::Unit => Vec::new(),
-        Value::Tuple(values) => values.iter().collect(),
-        other => {
-            return Err(VmError::new(format!(
-                "{caller}: params must be a tuple, got {}; write (id,)",
-                other.kind()
-            )));
-        }
-    };
     let unsendable = Unsendable::default();
-    let params = values
+    let params = params
         .into_iter()
         .map(|value| param(caller, value, &unsendable));
     let params: Vec<TextParam> = params.collect::<Result<_, _>>()?;
@@ -142,9 +158,9 @@ pub(super) fn params(
 /// string is; a list is an array or JSON (see [`TextParam`]), and every
 /// other value that is no scalar (a record, a map, a tuple, a variant
 /// with fields, a `json.Value`) is written as `json.stringify` writes
-/// it. A value JSON has no form for is the error `json.stringify` gives.
-fn param(caller: &str, value: &Value, unsendable: &Unsendable) -> Result<TextParam, VmError> {
-    let value = data::data(caller, data::Format::Postgres, value)?;
+/// it. (A value JSON has no form for is the error `json.stringify`
+/// gives: the writer's, in place of the data.)
+fn param(caller: &str, value: Data, unsendable: &Unsendable) -> Result<TextParam, VmError> {
     Ok(match value {
         Data::Null => TextParam::Null,
         Data::Array(_) => TextParam::List {
@@ -244,13 +260,27 @@ pub(super) enum RowType {
     Record(Arc<TypeInfo>),
     /// `json.Value`: a row is a `json.Object` of its columns.
     Value,
+    /// A record or enum type with a written `json.Decode` impl, whose
+    /// `decode` (in the global slot) makes a row of the `json.Object`
+    /// of its columns.
+    Decoded(u16),
 }
 
 impl RowType {
-    /// The row type that the type argument `ty` of `caller` names.
-    pub(super) fn of(caller: &decode::Decoder, ty: Type) -> Result<RowType, VmError> {
+    /// The row type that the type argument `ty` of `caller` names, by
+    /// the impls of the table `impls`.
+    pub(super) fn of(
+        caller: &decode::Decoder,
+        ty: Type,
+        impls: &Globals,
+    ) -> Result<RowType, VmError> {
+        if let Type::Named(info) = &ty
+            && let Some(slot) = impls.decoded(info.id)
+        {
+            return Ok(RowType::Decoded(slot));
+        }
         Ok(match decode::target(caller, ty)? {
-            decode::Target::Record(ty, _) => RowType::Record(ty.clone()),
+            decode::Target::Record(ty) => RowType::Record(ty.clone()),
             // (`json.Value`: a postgres function takes no primitive type.)
             decode::Target::Value(_) => RowType::Value,
         })
@@ -319,18 +349,19 @@ impl Col {
     }
 
     /// Whether a value of `field` can be decoded from what the column
-    /// holds (a NULL aside).
-    fn fills(&self, rt: &Runtime, field: &FieldType) -> bool {
+    /// holds (a NULL aside), by `r`, which knows the written impls.
+    fn fills(&self, r: &Reader, field: &FieldType) -> bool {
         use FieldType as F;
         match (self, field) {
-            (_, F::Option(inner)) => self.fills(rt, inner),
+            (_, F::Option(inner)) => self.fills(r, inner),
             (Col::Other, _) => false,
-            (Col::Array(element), F::JsonValue) => element.fills(rt, field),
+            (Col::Array(element), F::JsonValue) => element.fills(r, field),
             (_, F::JsonValue) => true,
             (Col::Void, _) => false,
             // A json document fills a field of every type json's decoders
-            // decode, in the record types the field names too.
-            (Col::Json | Col::Jsonb, _) => decode::decodes(rt, Family::Json, field),
+            // decode, in the record types the field names too, and of a
+            // type with a written impl.
+            (Col::Json | Col::Jsonb, _) => decode::decodes(r, Family::Json, field),
             (Col::Bool, F::Bool)
             | (Col::Int2 | Col::Int4 | Col::Int8, F::Int)
             | (Col::Float4 | Col::Float8 | Col::Numeric, F::Float)
@@ -342,7 +373,7 @@ impl Col {
             | (Col::Timestamp | Col::Timestamptz, F::DateTime) => true,
             // An array of more dimensions fills a list of lists.
             (Col::Array(element), F::List(inner)) => {
-                element.fills(rt, inner) || matches!(&**inner, F::List(_) if self.fills(rt, inner))
+                element.fills(r, inner) || matches!(&**inner, F::List(_) if self.fills(r, inner))
             }
             _ => false,
         }
@@ -408,6 +439,9 @@ impl Mismatch {
 /// any row is read.
 pub(super) struct Plan {
     kind: PlanKind,
+    /// The table of the program's globals: the `json.Decode` impls it
+    /// wrote.
+    impls: Arc<Globals>,
 }
 
 enum PlanKind {
@@ -418,11 +452,16 @@ enum PlanKind {
         /// The type of each field, and its column.
         fields: Vec<(FieldType, ColumnPlan)>,
     },
-    /// Each row a `json.Object` of its columns.
-    Value { columns: Vec<ColumnPlan> },
+    /// Each row a `json.Object` of its columns; with the slot of a
+    /// written `decode`, what that makes of it.
+    Value {
+        columns: Vec<ColumnPlan>,
+        decoded: Option<u16>,
+    },
 }
 
 /// A column a row is read from.
+#[derive(Clone)]
 struct ColumnPlan {
     /// Its name, which is that of the field it fills.
     name: String,
@@ -441,11 +480,14 @@ impl Plan {
     /// (`TypeMismatch`).
     pub(super) fn new(
         rt: &Runtime,
+        impls: Arc<Globals>,
         row: &RowType,
         columns: &[tokio_postgres::Column],
     ) -> Result<Plan, Value> {
+        let written = |id| impls.decoded(id);
+        let r = &Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
         let kind = match row {
-            RowType::Value => {
+            RowType::Value | RowType::Decoded(_) => {
                 let mut seen = std::collections::HashSet::new();
                 let mut plan = Vec::with_capacity(columns.len());
                 for (at, column) in columns.iter().enumerate() {
@@ -456,7 +498,7 @@ impl Plan {
                     // A column silt has no value for is refused at
                     // once, as it is for a record's field.
                     let (col, pg) = (Col::of(column.type_()), pg_name(column.type_()));
-                    if !col.fills(rt, &FieldType::JsonValue) {
+                    if !col.fills(r, &FieldType::JsonValue) {
                         return Err(type_mismatch(column.name(), "json.Value", &pg));
                     }
                     plan.push(ColumnPlan {
@@ -466,7 +508,13 @@ impl Plan {
                         pg,
                     });
                 }
-                PlanKind::Value { columns: plan }
+                PlanKind::Value {
+                    columns: plan,
+                    decoded: match row {
+                        RowType::Decoded(slot) => Some(*slot),
+                        _ => None,
+                    },
+                }
             }
             RowType::Record(ty) => {
                 let Shape::Record(declared) = &ty.shape else {
@@ -477,7 +525,7 @@ impl Plan {
                 // any column is matched. (The checker refuses such a
                 // type wherever a program gives one: the decoders'
                 // guard.)
-                if let Some(message) = decode::record_refusal(rt, Family::Postgres, ty) {
+                if let Some(message) = decode::record_refusal(r, Family::Postgres, ty) {
                     return Err(super::other_error(message));
                 }
                 let mut fields = Vec::with_capacity(declared.len());
@@ -490,7 +538,7 @@ impl Plan {
                         return Err(twice(name));
                     }
                     let (col, pg) = (Col::of(found.type_()), pg_name(found.type_()));
-                    if !col.fills(rt, field) {
+                    if !col.fills(r, field) {
                         let expected = match field {
                             FieldType::Option(inner) => inner,
                             _ => field,
@@ -513,35 +561,346 @@ impl Plan {
                 }
             }
         };
-        Ok(Plan { kind })
+        Ok(Plan { kind, impls })
     }
 
-    /// The value of `row`, or the `PostgresError` of a cell that has
-    /// none (a NULL for a field that is no `Option`, a `NaN` for a
-    /// `Float`).
-    pub(super) fn row(&self, rt: &Runtime, row: &tokio_postgres::Row) -> Result<Value, Value> {
+    /// The value of `row`, or what the impls of the program are still
+    /// to give for it ([`Row::Partial`]), or the `PostgresError` of a
+    /// cell that has none (a NULL for a field that is no `Option`, a
+    /// `NaN` for a `Float`). A cell after one that waits for an impl
+    /// and that has no value is that row's error, once the impls before
+    /// it have given theirs.
+    pub(super) fn row(&self, rt: &Runtime, row: &tokio_postgres::Row) -> Result<Row, Value> {
         let raw = |column: usize| match row.try_get::<_, Raw>(column) {
             Ok(Raw(raw)) => Ok(raw),
             Err(e) => Err(super::other_error(format!("postgres: {e}"))),
         };
+        let written = |id| self.impls.decoded(id);
         match &self.kind {
             PlanKind::Record { ty, fields } => {
                 let mut values = Vec::with_capacity(fields.len());
-                for (field, c) in fields {
-                    let value = cell(rt, c, &c.col, field, raw(c.column)?)
-                        .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
-                    values.push(value);
+                let mut cells = Vec::new();
+                // The row so far, with the error of the cell at hand.
+                let failed = |values, cells: Vec<Deferred>, error| match cells.is_empty() {
+                    true => Err(error),
+                    false => Ok(Row::Partial(Partial::Record {
+                        ty: ty.clone(),
+                        values,
+                        cells,
+                        error: Some(error),
+                    })),
+                };
+                for (at, (field, c)) in fields.iter().enumerate() {
+                    let raw = match raw(c.column) {
+                        Ok(raw) => raw,
+                        Err(error) => return failed(values, cells, error),
+                    };
+                    let r = Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
+                    let value = cell(&r, c, &c.col, field, raw);
+                    let holes = r.into_holes();
+                    if !holes.is_empty() {
+                        cells.push(Deferred {
+                            at,
+                            field: field.clone(),
+                            column: c.clone(),
+                            raw: raw.unwrap_or_default().to_vec(),
+                            holes,
+                        });
+                    }
+                    match value {
+                        Ok(value) => values.push(value),
+                        Err(m) => {
+                            let error = type_mismatch(&c.name, &m.expected, &m.actual);
+                            return failed(values, cells, error);
+                        }
+                    }
                 }
-                Ok(Value::record(ty.clone(), values))
+                Ok(match cells.is_empty() {
+                    true => Row::Done(Value::record(ty.clone(), values)),
+                    false => Row::Partial(Partial::Record {
+                        ty: ty.clone(),
+                        values,
+                        cells,
+                        error: None,
+                    }),
+                })
             }
-            PlanKind::Value { columns } => {
+            PlanKind::Value { columns, decoded } => {
+                let r = &Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
                 let mut entries = Vec::with_capacity(columns.len());
                 for c in columns {
-                    let value = cell(rt, c, &c.col, &FieldType::JsonValue, raw(c.column)?)
+                    let value = cell(r, c, &c.col, &FieldType::JsonValue, raw(c.column)?)
                         .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
                     entries.push((Value::String(c.name.as_str().into()), value));
                 }
-                Ok(Value::variant(bv::JSON_OBJECT, vec![Value::map(entries)]))
+                let json = Value::variant(bv::JSON_OBJECT, vec![Value::map(entries)]);
+                Ok(match decoded {
+                    Some(slot) => Row::Partial(Partial::Decoded { slot: *slot, json }),
+                    None => Row::Done(json),
+                })
+            }
+        }
+    }
+
+    /// The rows `rows` of a result, each decoded as [`Plan::row`] says:
+    /// their values; or, if a row waits for impls of the program, the
+    /// rows for the task to finish ([`Filling`]), with the error of a
+    /// later row that has no value, if one has none; or the error of the
+    /// first row that has no value, if none before it waits.
+    pub(super) fn rows<'r>(
+        &self,
+        rt: &Runtime,
+        rows: impl IntoIterator<Item = &'r tokio_postgres::Row>,
+    ) -> Result<Rows, Value> {
+        let mut decoded = Vec::new();
+        let mut waits = false;
+        for row in rows {
+            match self.row(rt, row) {
+                Ok(row) => {
+                    waits |= matches!(row, Row::Partial(_));
+                    decoded.push(row);
+                }
+                Err(error) if waits => return Ok(Rows::ToFill(decoded, Some(error))),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(match waits {
+            true => Rows::ToFill(decoded, None),
+            false => Rows::Done(
+                decoded
+                    .into_iter()
+                    .map(|row| match row {
+                        Row::Done(value) => value,
+                        Row::Partial(_) => Value::Unit,
+                    })
+                    .collect(),
+            ),
+        })
+    }
+
+    /// The table of the program's globals the plan decodes by.
+    pub(super) fn impls(&self) -> &Arc<Globals> {
+        &self.impls
+    }
+}
+
+// ── Rows that wait for impls of the program ─────────────────────────
+
+/// Whether a row of `row` may hold a part of a type with a written
+/// `json.Decode` impl (in the table `impls`): a row type with one, or a
+/// record type a field of which names one, at any depth.
+pub(super) fn reaches_impl(rt: &Runtime, impls: &Globals, row: &RowType) -> bool {
+    let mut named = match row {
+        RowType::Decoded(_) => return true,
+        RowType::Value => return false,
+        RowType::Record(ty) => vec![ty.id],
+    };
+    let mut seen = Vec::new();
+    while let Some(id) = named.pop() {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        if impls.decoded(id).is_some() {
+            return true;
+        }
+        let Some(info) = rt.type_info(id) else {
+            continue;
+        };
+        match &info.shape {
+            Shape::Record(fields) => fields.iter().for_each(|(_, f)| f.records(&mut named)),
+            Shape::Enum(variants) => (variants.iter())
+                .flat_map(|v| v.fields.iter())
+                .for_each(|f| f.records(&mut named)),
+            Shape::Opaque => {}
+        }
+    }
+    false
+}
+
+/// A row as a thread of the I/O pool decodes it.
+pub(super) enum Row {
+    /// Its value.
+    Done(Value),
+    /// What the impls of the program are still to give for it.
+    Partial(Partial),
+}
+
+/// The rows of a result as a thread of the I/O pool decodes them.
+pub(super) enum Rows {
+    /// Their values.
+    Done(Vec<Value>),
+    /// Rows some of which wait for impls of the program, and the error
+    /// of the row after them that has no value, if one has none.
+    ToFill(Vec<Row>, Option<Value>),
+}
+
+/// A row that waits for the `json.Decode` impls of the program.
+pub(super) enum Partial {
+    /// A record of the plan's type: its fields so far (a stand-in for
+    /// a field of a cell that waits), each cell whose document holds
+    /// parts an impl decodes, and the error of the cell after them that
+    /// has no value, if one has none.
+    Record {
+        ty: Arc<TypeInfo>,
+        values: Vec<Value>,
+        cells: Vec<Deferred>,
+        error: Option<Value>,
+    },
+    /// A row of a type with a written impl: the `json.Object` of its
+    /// columns, which the `decode` in the global slot makes the row.
+    Decoded { slot: u16, json: Value },
+}
+
+/// A cell of a `json` or `jsonb` column (or an array of them) whose
+/// document holds parts that impls of the program decode.
+pub(super) struct Deferred {
+    /// The field it fills, by its place in the record.
+    at: usize,
+    field: FieldType,
+    column: ColumnPlan,
+    /// The cell as the server sent it (never NULL: a NULL is no
+    /// document).
+    raw: Vec<u8>,
+    /// The parts, in the order the decoder came to them.
+    holes: Vec<Hole>,
+}
+
+impl Partial {
+    /// The calls of written `decode`s the row waits for, in order: the
+    /// slot of each, and the `json.Value` it is given.
+    fn calls(&self) -> Vec<(u16, Value)> {
+        match self {
+            Partial::Record { cells, .. } => (cells.iter())
+                .flat_map(|cell| cell.holes.iter())
+                .map(|hole| (hole.slot, hole.json.clone()))
+                .collect(),
+            Partial::Decoded { slot, json } => vec![(*slot, json.clone())],
+        }
+    }
+
+    /// The row, now that the impls have given `given` (`Ok` of a value,
+    /// or `Err` of the `JsonError` an impl returned, which is the last
+    /// one: no impl after it is called), or the row's error: an impl's
+    /// error in a cell is the column's type mismatch, worded as the
+    /// decoder's own errors in a document are; a row type's impl's is
+    /// an `Other` of its message.
+    fn finish(
+        self,
+        rt: &Runtime,
+        impls: &Globals,
+        given: Vec<Result<Value, Value>>,
+    ) -> Result<Value, Value> {
+        let (ty, mut values, cells, error) = match self {
+            Partial::Decoded { .. } => {
+                return match given.into_iter().next() {
+                    Some(Ok(value)) => Ok(value),
+                    Some(Err(error)) => Err(super::other_error(json::message(&error))),
+                    None => Err(super::other_error(
+                        "postgres: internal error: a row's decode gave nothing",
+                    )),
+                };
+            }
+            Partial::Record {
+                ty,
+                values,
+                cells,
+                error,
+            } => (ty, values, cells, error),
+        };
+        let written = |id| impls.decoded(id);
+        let mut given = given.into_iter();
+        for cell in cells {
+            let parts: Vec<_> = given.by_ref().take(cell.holes.len()).collect();
+            let r = Reader::with_impls(rt, &written, Holes::Supply(parts.into_iter()));
+            let c = &cell.column;
+            let value = self::cell(&r, c, &c.col, &cell.field, Some(&cell.raw))
+                .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
+            if let Some(place) = values.get_mut(cell.at) {
+                *place = value;
+            } else {
+                values.push(value);
+            }
+        }
+        match error {
+            Some(error) => Err(error),
+            None => Ok(Value::record(ty, values)),
+        }
+    }
+}
+
+/// Rows that wait for the impls of the program, finished in the task
+/// that asked for them: it calls each impl ([`Fill::Call`]) and hands
+/// [`Filling::next`] what it returned, until the rows are done.
+pub(super) struct Filling {
+    rt: Arc<Runtime>,
+    impls: Arc<Globals>,
+    rows: std::vec::IntoIter<Row>,
+    done: Vec<Value>,
+    /// The error of the row after them that has no value, if one has
+    /// none.
+    error: Option<Value>,
+    /// The row at hand, the calls it waits for, and what they gave.
+    at_hand: Option<(Partial, Vec<(u16, Value)>, Vec<Result<Value, Value>>)>,
+}
+
+/// What the task does next for rows that wait for impls.
+pub(super) enum Fill {
+    /// Call the `decode` in the global slot with the `json.Value`, and
+    /// hand what it returns to [`Filling::next`].
+    Call(u16, Value),
+    /// The rows, or the error of the first that has none.
+    Done(Result<Vec<Value>, Value>),
+}
+
+impl Filling {
+    pub(super) fn new(
+        rt: Arc<Runtime>,
+        impls: Arc<Globals>,
+        rows: Vec<Row>,
+        error: Option<Value>,
+    ) -> Filling {
+        Filling {
+            rt,
+            impls,
+            rows: rows.into_iter(),
+            done: Vec::new(),
+            error,
+            at_hand: None,
+        }
+    }
+
+    /// What comes next, `given` what the last call returned (`Ok` of
+    /// the value, or `Err` of the `JsonError` it returned).
+    pub(super) fn next(&mut self, given: Option<Result<Value, Value>>) -> Fill {
+        if let (Some(given), Some((_, _, gave))) = (given, &mut self.at_hand) {
+            gave.push(given);
+        }
+        loop {
+            if let Some((partial, calls, gave)) = self.at_hand.take() {
+                let failed = matches!(gave.last(), Some(Err(_)));
+                if let (false, Some((slot, json))) = (failed, calls.get(gave.len())) {
+                    let call = Fill::Call(*slot, json.clone());
+                    self.at_hand = Some((partial, calls, gave));
+                    return call;
+                }
+                match partial.finish(&self.rt, &self.impls, gave) {
+                    Ok(value) => self.done.push(value),
+                    Err(error) => return Fill::Done(Err(error)),
+                }
+            }
+            match self.rows.next() {
+                Some(Row::Done(value)) => self.done.push(value),
+                Some(Row::Partial(partial)) => {
+                    let calls = partial.calls();
+                    self.at_hand = Some((partial, calls, Vec::new()));
+                }
+                None => {
+                    return Fill::Done(match self.error.take() {
+                        Some(error) => Err(error),
+                        None => Ok(std::mem::take(&mut self.done)),
+                    });
+                }
             }
         }
     }
@@ -573,7 +932,7 @@ impl<'a> FromSql<'a> for Raw<'a> {
 /// is, which holds `col` (the column's own, or its elements'). The plan
 /// has checked that `col` fills `field`.
 fn cell(
-    rt: &Runtime,
+    rt: &Reader,
     c: &ColumnPlan,
     col: &Col,
     field: &FieldType,
@@ -1055,7 +1414,7 @@ mod tests {
     #[test]
     fn a_range_too_long_to_write_out_is_no_parameter() {
         let range = Value::List(crate::value::List::ints(1, 10_000_001).expect("a range"));
-        let refused = param("postgres.query", &range, &Unsendable::default()).unwrap_err();
+        let refused = written(&range).unwrap_err();
         assert_eq!(
             refused.message,
             "range 1..10000001 has 10000001 elements; materializing more than 10000000 is not allowed"
@@ -1113,9 +1472,16 @@ mod tests {
         }
     }
 
+    /// The parameter `value`, written as `postgres.query` writes it.
+    fn written(value: &Value) -> Result<TextParam, VmError> {
+        let caller = "postgres.query";
+        let value = data::data(caller, data::Format::Postgres, value)?;
+        param(caller, value, &Unsendable::default())
+    }
+
     /// The text of the parameter `value`, or the message of its refusal.
     fn sent(value: &Value) -> Result<String, String> {
-        match param("postgres.query", value, &Unsendable::default()) {
+        match written(value) {
             Ok(TextParam::Text(text)) => Ok(text),
             Ok(other) => panic!("{other:?}"),
             Err(e) => Err(e.message),

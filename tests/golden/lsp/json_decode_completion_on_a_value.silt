@@ -1,0 +1,15 @@
+-- cmd: lsp
+-- lsp: completion 13:14
+-- `decode` takes no value of the type: completion after a dot on a value
+-- does not offer it, also where json is imported (`display` it does).
+import json
+
+type Money {
+  cents: Int,
+}
+
+fn main() {
+  let m = Money { cents: 5 }
+  println(m.d)
+  println(json.stringify(m))
+}

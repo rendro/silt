@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A type that lacks `json.Decode` is refused at the call that gives it,
+-- with the text of the decoder: the decoder the need comes from, and in a
+-- note the function the call calls, whether it writes the bound (`load`,
+-- also through `outer`, both checked after `main` uses them) or has it
+-- inferred (`load_inferred`). A function that only declares the bound
+-- names itself (`declared_only`).
+import json
+import set
+
+type Holder { s: Set(Int) }
+
+fn main() {
+  let _ = json.parse("\{}", Holder)
+  let _ = load("\{}", Holder)
+  let _ = outer("\{}", Holder)
+  let _ = load_inferred("\{}", Holder)
+  let _ = declared_only(Holder)
+}
+
+fn outer(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  load(text, a)
+}
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn load_inferred(text, t) {
+  json.parse_map(text, t)
+}
+
+fn declared_only(type a) -> Int where a: json.Decode {
+  1
+}

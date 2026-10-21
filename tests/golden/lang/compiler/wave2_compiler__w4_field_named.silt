@@ -8,7 +8,7 @@ import toml
 type Inner { tags: List(Set(Int)) }
 type Outer { name: String, inner: Inner }
 
-fn from_json(text: String, type a) -> Result(a, json.JsonError) {
+fn from_json(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
   json.parse(text, a)
 }
 

@@ -177,9 +177,10 @@ impl Vm {
         }
     }
 
-    /// A record or variant has no written `Display` impl in this VM's
-    /// table: the table that may have one, if there is one. That is
-    /// the program's newest, with what the REPL entry being run adds
+    /// A record or variant has no written impl (of `Display`, of
+    /// `json.Encode`) in this VM's table: the table that may have one,
+    /// if there is one and `any` says it has an impl of the trait. That
+    /// is the program's newest, with what the REPL entry being run adds
     /// (see [`Vm::look_again`]): a later entry may have written the
     /// impl, for the VM of a task of an earlier one.
     ///
@@ -187,10 +188,10 @@ impl Vm {
     /// all of it in their table (`table` is `entry`, one table), and
     /// nothing newer ever comes. So does the VM that runs a session's
     /// entry. Only the VM of a session's task goes on from here.
-    fn wider_table(&mut self) -> Option<Arc<Globals>> {
+    pub(super) fn wider_table(&mut self, any: fn(&Globals) -> bool) -> Option<Arc<Globals>> {
         match Arc::ptr_eq(&self.view.table, &self.view.entry) {
             true => None,
-            false => self.entry_table_shown(),
+            false => self.entry_table(any),
         }
     }
 
@@ -198,9 +199,9 @@ impl Vm {
     /// program in its table.
     #[cold]
     #[inline(never)]
-    fn entry_table_shown(&mut self) -> Option<Arc<Globals>> {
+    fn entry_table(&mut self, any: fn(&Globals) -> bool) -> Option<Arc<Globals>> {
         self.look_again();
-        (self.view.entry.any_shown()).then(|| self.view.entry.clone())
+        any(&self.view.entry).then(|| self.view.entry.clone())
     }
 
     /// Show `value` and go on with `then`, which gets its text: at once
@@ -226,7 +227,9 @@ impl Vm {
                     | Value::Map(_)
                     | Value::Set(_)
             );
-            wider = holds_parts.then(|| self.wider_table()).flatten();
+            wider = holds_parts
+                .then(|| self.wider_table(Globals::any_shown))
+                .flatten();
             if wider.is_none() {
                 let text = self.display_value(value);
                 return then(self, text);
@@ -238,7 +241,7 @@ impl Vm {
         let (mut text, mut parts, unwritten) = self.parts_shown(table, value)?;
         if unwritten
             && wider.is_none()
-            && let Some(table) = self.wider_table()
+            && let Some(table) = self.wider_table(Globals::any_shown)
         {
             (text, parts, _) = self.parts_shown(&table, value)?;
             wider = Some(table);

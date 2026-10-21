@@ -6,7 +6,7 @@ import json
 type Todo { id: Int, title: String }
 
 trait Decodable {
-    fn decode(self, type a) -> Result(a, json.JsonError)
+    fn decode(self, type a) -> Result(a, json.JsonError) where a: json.Decode
 }
 
 trait Decodable for String {

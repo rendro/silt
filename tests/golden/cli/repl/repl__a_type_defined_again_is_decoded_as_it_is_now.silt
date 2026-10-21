@@ -1,5 +1,5 @@
 -- cmd: repl
--- stdin: import json\nfn load(text: String, type a) -> Result(a, json.JsonError) { json.parse(text, a) }\ntype R { b: Bytes }\nload("\{}", R)\ntype R { n: Int }\nload("\{\"n\": 1}", R)\ntype R { b: Bytes }\nload("\{}", R)\n:quit\n
+-- stdin: import json\nfn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode { json.parse(text, a) }\ntype R { b: Bytes }\nload("\{}", R)\ntype R { n: Int }\nload("\{\"n\": 1}", R)\ntype R { b: Bytes }\nload("\{}", R)\n:quit\n
 -- A type defined again in a later entry is a new one, checked as it is
 -- now: a call that gives a function the one with a field no decoder
 -- exists for is refused, the one that has none is decoded.

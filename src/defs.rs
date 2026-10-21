@@ -196,13 +196,38 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
     })
 }
 
-/// The builtin traits, in the order of their ids: the `k`th is
+/// The traits of the prelude: the first of [`builtin_traits`].
+pub const PRELUDE_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash", "Number"];
+
+/// Every builtin trait, with the builtin module that declares it
+/// (`None` for the prelude), in the order of their ids: the `k`th is
 /// `TraitId(DefId(builtin_types().len() + k))`. The builtin definitions
-/// enter them right after the builtin types.
-pub const BUILTIN_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash", "Number"];
+/// enter them right after the builtin types. The prelude's come first,
+/// then those the builtin registry declares for a module
+/// (`json.Encode`).
+pub fn builtin_traits() -> &'static [(&'static str, Option<&'static str>)] {
+    static TRAITS: OnceLock<Vec<(&'static str, Option<&'static str>)>> = OnceLock::new();
+    TRAITS.get_or_init(|| {
+        let registry = crate::builtins::registry::registry();
+        let prelude = PRELUDE_TRAITS.iter().map(|name| (*name, None));
+        let modules = registry
+            .modules
+            .iter()
+            .flat_map(|module| (module.trait_names.iter()).map(|name| (*name, Some(module.name))));
+        prelude.chain(modules).collect()
+    })
+}
+
+/// The builtin trait of the id `id`, with the builtin module that
+/// declares it; `None` for the id of any other definition.
+pub fn builtin_trait_of_id(id: DefId) -> Option<(&'static str, Option<&'static str>)> {
+    let k = (id.0 as usize).checked_sub(builtin_types().len())?;
+    builtin_traits().get(k).copied()
+}
 
 /// The builtin trait whose method `method` is (`display` of Display,
-/// `message` of Error); `None` for any other name.
+/// `message` of Error, `encode` of json.Encode); `None` for any other
+/// name.
 pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
     let name = match method {
         "display" => "Display",
@@ -210,6 +235,8 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
         "equal" => "Equal",
         "hash" => "Hash",
         "message" => "Error",
+        "encode" => "Encode",
+        "decode" => "Decode",
         _ => return None,
     };
     builtin_trait_id(name)
@@ -218,9 +245,9 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
 /// The id of the builtin trait `name`; `None` when no builtin trait has
 /// that name.
 pub fn builtin_trait_id(name: &str) -> Option<TraitId> {
-    BUILTIN_TRAITS
+    builtin_traits()
         .iter()
-        .position(|t| *t == name)
+        .position(|(t, _)| *t == name)
         .map(|k| TraitId(DefId((builtin_types().len() + k) as u32)))
 }
 

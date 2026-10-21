@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Fn' does not implement trait 'json.Encode'
+-- stderr-contains: --> the_bound_is_inferred_through_functions.silt:24:15
+-- stderr-contains: type 'Set' does not implement trait 'json.Encode'
+-- stderr-contains: --> the_bound_is_inferred_through_functions.silt:26:17
+-- stderr-not-contains: :23:
+-- A function without annotations that hands its argument to
+-- `json.stringify`, directly, through another function or from a
+-- closure, needs `json.Encode` of it: the call that gives it a function
+-- or a set is refused, where it is made.
+import json
+
+fn send(x) {
+  json.stringify(x)
+}
+
+fn via(x) {
+  send(x)
+}
+
+fn main() {
+  println(via([1, 2]))
+  println(via({ x -> x }))
+  let later = { x -> json.pretty([x]) }
+  println(later(#[1]))
+}

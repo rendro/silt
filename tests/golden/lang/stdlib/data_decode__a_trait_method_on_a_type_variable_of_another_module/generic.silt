@@ -1,6 +1,6 @@
 import json
 import source.{ Loader }
 
-pub fn fetch(l: l, type b) -> Result(b, json.JsonError) where l: Loader {
+pub fn fetch(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
   l.load_again(b)
 }

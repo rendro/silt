@@ -47,11 +47,12 @@ use chrono::{NaiveDate, NaiveTime};
 use super::registry::decoding::Family;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::VmError;
+use crate::vm::{Step, Vm, VmError};
 
 use super::data::{self, Data, Format};
 use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, shown};
 use super::typed::{Type, builtins};
+use crate::typeinfo::FieldType;
 
 // ── TomlError helpers ────────────────────────────────────────────────
 //
@@ -155,6 +156,7 @@ impl serde::Serialize for Toml<'_> {
             Data::Null | Data::Unit | Data::Bytes(_) => {
                 Err(S::Error::custom("TOML has no form for the value"))
             }
+            Data::Hole(_) => Err(S::Error::custom(data::UNFILLED)),
         }
     }
 }
@@ -225,7 +227,7 @@ fn top_level(caller: &str, data: Data) -> Result<Data, VmError> {
             Ok(_) => "datetime",
             Err(_) => "string",
         },
-        Data::Null | Data::Unit | Data::Bytes(_) | Data::Json(_) => "null",
+        Data::Null | Data::Unit | Data::Bytes(_) | Data::Json(_) | Data::Hole(_) => "null",
     };
     Err(VmError::new(format!(
         "{caller}: top-level value must be a table/record, got {kind}"
@@ -250,7 +252,34 @@ const RULES: Rules = Rules {
         bv::TOML_MISSING_FIELD,
         bv::TOML_OTHER,
     ],
+    from_impl,
 };
+
+/// The `TomlError` of the `JsonError` `error` that a written
+/// `json.Decode` impl gave for a part `at` a path: the variant of the
+/// same name, the path added as json's decoder adds it
+/// ([`decode::at_part`]). A `Syntax`, whose offset is in the impl's
+/// JSON text and not in the TOML document, is an `Other` of json's
+/// message of it ("json syntax error at byte 3: ...").
+fn from_impl(error: &Value, at: &str) -> Value {
+    let error = decode::at_part(error, at);
+    let Value::Variant(json) = &error else {
+        return error;
+    };
+    let fields = json.fields().to_vec();
+    let tag = match () {
+        _ if json.is(bv::JSON_TYPE_MISMATCH) => bv::TOML_TYPE_MISMATCH,
+        _ if json.is(bv::JSON_MISSING_FIELD) => bv::TOML_MISSING_FIELD,
+        _ if json.is(bv::JSON_OTHER) => bv::TOML_OTHER,
+        _ if json.is(bv::JSON_SYNTAX) => {
+            let message =
+                super::json::error_text(json.name(), &fields).unwrap_or_else(|| error.to_string());
+            return Value::variant(bv::TOML_OTHER, vec![Value::String(message.into())]);
+        }
+        _ => return error,
+    };
+    Value::variant(tag, fields)
+}
 
 impl Document for ::toml::Value {
     type Table = ::toml::Table;
@@ -297,9 +326,21 @@ static PARSE_MAP: Decoder = Decoder::new("toml.parse_map");
 
 /// `value` as TOML text, for `toml.<name>`, `pretty` or not:
 /// `Ok(text)`, or the `TomlError` of a value that TOML has no form for.
-fn written(name: &str, value: &Value, pretty: bool) -> Value {
+/// (A part of a type with a written `json.Encode` impl is written as
+/// the `json.Value` the impl gives, which is the program's code: a
+/// step.)
+fn written(vm: &mut Vm, name: &str, value: &Value, pretty: bool) -> Result<Step, VmError> {
     let caller = format!("toml.{name}");
-    let data = match data::data(&caller, Format::Toml, value).and_then(|d| top_level(&caller, d)) {
+    vm.encode(&caller.clone(), Format::Toml, value, move |_, data| {
+        Ok(Step::Done(text(&caller, data, pretty)))
+    })
+}
+
+/// The TOML text `caller` writes of `data`, `pretty` or not:
+/// `Ok(text)`, or the `TomlError` of a value that TOML has no form for
+/// (the error the writer gave in place of the data, if it gave one).
+fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Value {
+    let data = match data.and_then(|d| top_level(caller, d)) {
         Ok(data) => data,
         Err(e) => return toml_unknown_err(e.message),
     };
@@ -313,71 +354,89 @@ fn written(name: &str, value: &Value, pretty: bool) -> Value {
     }
 }
 
+/// The TOML document `s`, or the result of a text that is none.
+fn document(s: &str) -> Result<::toml::Value, Value> {
+    ::toml::from_str::<::toml::Value>(s).map_err(|e| toml_de_result_err(&e))
+}
+
+/// A document read as one value.
+fn one(
+    r: &decode::Reader,
+    doc: &::toml::Value,
+    expected: &FieldType,
+) -> Result<Value, decode::Error> {
+    decode::value(r, doc, expected, &At::Top)
+}
+
+/// A document read as the list under its one key (which `parse_list`
+/// has checked it has), each element `<key>[i]`.
+fn list_under_its_key(
+    r: &decode::Reader,
+    doc: &::toml::Value,
+    element: &FieldType,
+) -> Result<Value, decode::Error> {
+    let only = doc.as_table().and_then(|table| table.iter().next());
+    let Some((key, only)) = only else {
+        return Err(decode::Error::mismatch("table", doc.kind(), &At::Top));
+    };
+    decode::list(r, element, only, &At::Top.key(key))
+}
+
+/// A document read as a map of values.
+fn map_of(
+    r: &decode::Reader,
+    doc: &::toml::Value,
+    element: &FieldType,
+) -> Result<Value, decode::Error> {
+    decode::map(r, element, doc, &At::Top)
+}
+
+// (A part of a type with a written `json.Decode` impl is decoded by the
+// impl, which is the program's code: the decoders are steps.)
 builtins! {
-    fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target(&PARSE, ty)?;
-        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
-            return Ok(refused);
-        }
-        Ok(match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => decode::result(&RULES, decode::document(&vm.runtime, &target, &tv)),
-            Err(e) => toml_de_result_err(&e),
+    fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
+        let expected = decode::target(&PARSE, ty)?.element();
+        vm.decode_document(PARSE.name, expected, one, || document(s))
+    }
+
+    fn parse_list(vm, s: &str, ty: Type) -> Result<Step, VmError> {
+        let element = decode::target(&PARSE_LIST, ty)?.element();
+        let shown = shown(&vm.runtime, &element);
+        vm.decode_document(PARSE_LIST.name, element, list_under_its_key, || {
+            let tv = document(s)?;
+            // TOML's top level is always a table: the list is the array
+            // under its one key (`[[points]]` for records, `xs = [1, 2]`).
+            let ::toml::Value::Table(table) = &tv else {
+                let error = decode::Error::mismatch("table", tv.kind(), &At::Top);
+                return Err(decode::result(&RULES, Err(error)));
+            };
+            if table.len() != 1 {
+                return Err(toml_unknown_err(format!(
+                    "toml.parse_list({shown}): expected a document with exactly one top-level key, an array, found {} keys",
+                    table.len()
+                )));
+            }
+            Ok(tv)
         })
     }
 
-    fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target(&PARSE_LIST, ty)?;
-        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
-            return Ok(refused);
-        }
-        let element = target.element();
-        let tv = match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => tv,
-            Err(e) => return Ok(toml_de_result_err(&e)),
-        };
-        // TOML's top level is always a table: the list is the array
-        // under its one key (`[[points]]` for records, `xs = [1, 2]`).
-        let ::toml::Value::Table(table) = &tv else {
-            let error = decode::Error::mismatch("table", tv.kind(), &At::Top);
-            return Ok(decode::result(&RULES, Err(error)));
-        };
-        let mut entries = table.iter();
-        let (Some((key, only)), None) = (entries.next(), entries.next()) else {
-            return Ok(toml_unknown_err(format!(
-                "toml.parse_list({}): expected a document with exactly one top-level key, an array, found {} keys",
-                shown(&vm.runtime, &element),
-                table.len()
-            )));
-        };
-        let at = At::Top.key(key);
-        Ok(decode::result(&RULES, decode::list(&vm.runtime, &element, only, &at)))
+    fn parse_map(vm, s: &str, ty: Type) -> Result<Step, VmError> {
+        let element = decode::target(&PARSE_MAP, ty)?.element();
+        vm.decode_document(PARSE_MAP.name, element, map_of, || document(s))
     }
 
-    fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
-        let target = decode::target(&PARSE_MAP, ty)?;
-        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
-            return Ok(refused);
-        }
-        let element = target.element();
-        Ok(match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => decode::result(&RULES, decode::map(&vm.runtime, &element, &tv, &At::Top)),
-            Err(e) => toml_de_result_err(&e),
-        })
+    fn stringify(vm, value: &Value) -> Result<Step, VmError> {
+        written(vm, "stringify", value, false)
     }
 
-    fn stringify(value: &Value) -> Value {
-        written("stringify", value, false)
-    }
-
-    fn pretty(value: &Value) -> Value {
-        written("pretty", value, true)
+    fn pretty(vm, value: &Value) -> Result<Step, VmError> {
+        written(vm, "pretty", value, true)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typeinfo::FieldType;
 
     /// A field whose type holds `Bytes` has no decoder, whatever the
     /// document holds there, an empty array too, or nothing.
@@ -391,10 +450,19 @@ mod tests {
             let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
             // As toml.parse decodes it: the type is refused before the
             // document is read.
-            let target = decode::Target::Record(&ty, &fields);
-            let decoded = decode::refused(&vm.runtime, &RULES, &target).unwrap_or_else(|| {
-                decode::result(&RULES, decode::document(&vm.runtime, &target, &doc))
-            });
+            let target = decode::Target::Record(&ty);
+            let decoded = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target)
+                .unwrap_or_else(|| {
+                    decode::result(
+                        &RULES,
+                        decode::value(
+                            &decode::Reader::new(&vm.runtime),
+                            &doc,
+                            &target.element(),
+                            &At::Top,
+                        ),
+                    )
+                });
             assert_eq!(
                 decoded.to_string(),
                 "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",
@@ -424,9 +492,12 @@ mod tests {
                             _ => Value::list(vec![inner]),
                         })
                 };
-                let text = written("stringify", &nested(MAX_ENCODE_DEPTH), false);
-                let pretty = written("pretty", &nested(MAX_ENCODE_DEPTH), true);
-                let refused = written("pretty", &nested(MAX_ENCODE_DEPTH + 1), true);
+                let written = |caller: &str, value: &Value, pretty| {
+                    text(caller, data::data(caller, Format::Toml, value), pretty)
+                };
+                let text = written("toml.stringify", &nested(MAX_ENCODE_DEPTH), false);
+                let pretty = written("toml.pretty", &nested(MAX_ENCODE_DEPTH), true);
+                let refused = written("toml.pretty", &nested(MAX_ENCODE_DEPTH + 1), true);
                 (
                     [text, pretty].map(|v| v.to_string().len()),
                     format!("{refused:?}"),

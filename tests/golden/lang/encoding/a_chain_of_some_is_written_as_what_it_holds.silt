@@ -9,7 +9,7 @@
 import json
 import toml
 
-fn written(x: a, n: Int) -> String {
+fn written(x: a, n: Int) -> String where a: json.Encode {
   match n <= 0 {
     true -> {
       let table = match toml.stringify(#{"k": x}) {
