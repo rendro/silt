@@ -2367,10 +2367,11 @@ impl TypeChecker {
         let on = format!("type '{}'", self.show_type(&Type::Generic(ty, vec![])));
         self.ambiguous_method(method, &on, &traits, span);
         // Called through the type (`T.decode(v)`), there is no receiver
-        // to annotate: a function bounded by the trait says which.
+        // to annotate: a function bounded by the trait says which (a
+        // program's trait where one is among them, `Pretty` over `Display`).
         if on_type {
             let named = (traits.iter())
-                .find(|t| !matches!(crate::defs::builtin_trait_of_id(t.id.0), Some((_, Some(_)))))
+                .find(|t| crate::defs::builtin_trait_of_id(t.id.0).is_none())
                 .or(traits.first())
                 .map(|t| self.show_trait(*t))
                 .unwrap_or_default();
