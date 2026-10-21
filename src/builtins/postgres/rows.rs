@@ -138,10 +138,11 @@ pub(super) fn params(
 /// The parameter `value`. `None` is NULL and `Some(x)` is `x`; a date,
 /// a time and a datetime are written as silt shows them (a datetime
 /// with the offset `+00`, a year before 1 as a year BC), `Bytes` as
-/// `bytea`'s hex text; a list is an array or JSON (see [`TextParam`]),
-/// and every other value that is no scalar (a record, a map, a tuple, a
-/// variant, a `json.Value`) is written as `json.stringify` writes it. A
-/// value JSON has no form for is the error `json.stringify` gives.
+/// `bytea`'s hex text; a variant without fields is its name, as a
+/// string is; a list is an array or JSON (see [`TextParam`]), and every
+/// other value that is no scalar (a record, a map, a tuple, a variant
+/// with fields, a `json.Value`) is written as `json.stringify` writes
+/// it. A value JSON has no form for is the error `json.stringify` gives.
 fn param(caller: &str, value: &Value, unsendable: &Unsendable) -> Result<TextParam, VmError> {
     let value = data::data(caller, data::Format::Postgres, value)?;
     Ok(match value {

@@ -1,0 +1,20 @@
+"Active"
+{"name":"build","status":"Active","history":["Active",{"fields":[2],"variant":"Paused"},{"fields":["x","Active"],"variant":"Moved"}]}
+{"a":"Active"}
+["Active",{"fields":[1],"variant":"Paused"}]
+"Active"
+{"fields":["Wednesday"],"variant":"Ok"}
+[
+  "Active",
+  {
+    "fields": [
+      "y",
+      "Active"
+    ],
+    "variant": "Moved"
+  }
+]
+name = "build"
+status = "Active"
+history = ["Active", { fields = [2], variant = "Paused" }, { fields = ["x", "Active"], variant = "Moved" }]
+Err(toml.stringify: top-level value must be a table/record, got string)

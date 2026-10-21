@@ -1,8 +1,10 @@
 -- A record nested in a row's field is filled from a json document by
 -- json's rules, which decode an enum (postgres has no decoder for an
--- enum field of the row itself).
+-- enum field of the row itself): a variant without fields is the string
+-- of its name, one with fields the object json.stringify writes. As a
+-- parameter a variant is written as json.stringify writes it: the name
+-- alone is a text, the object JSON text.
 import env
-import list
 import postgres
 
 type Status {
@@ -14,6 +16,8 @@ type Inner { state: Status }
 
 type Wrapped { inner: Inner }
 
+type Text { s: String }
+
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
     Some(url) -> url
@@ -21,13 +25,9 @@ fn url() -> String {
   }
 }
 
-fn rows(db: postgres.PgPool, sql: String, type a) -> Result(List(a), postgres.PostgresError) {
-  postgres.query(db, sql, (), a)
-}
-
-fn show(r: Result(List(a), postgres.PostgresError)) {
+fn show(r: Result(List(a), postgres.PostgresError)) where a: Display {
   match r {
-    Ok(rows) -> println("{list.length(rows)} rows")
+    Ok(rows) -> println(rows)
     Err(e) -> println(e.message())
   }
 }
@@ -35,7 +35,12 @@ fn show(r: Result(List(a), postgres.PostgresError)) {
 fn main() {
   match postgres.connect(url()) {
     Ok(db) -> {
-      show(rows(db, """SELECT '{"state": {"variant": "Active"}}'::jsonb AS inner""", Wrapped))
+      show(postgres.query(db, """SELECT '{"state": "Active"}'::jsonb AS inner""", (), Wrapped))
+      show(postgres.query(db, """SELECT '{"state": {"fields": [2], "variant": "Paused"}}'::jsonb AS inner""", (), Wrapped))
+      show(postgres.query(db, """SELECT '{"state": {"variant": "Active"}}'::jsonb AS inner""", (), Wrapped))
+      show(postgres.query(db, "SELECT $1::text AS s", (Active,), Text))
+      show(postgres.query(db, "SELECT $1::text AS s", (Paused(3),), Text))
+      show(postgres.query(db, "SELECT json_build_object('state', $1::jsonb) AS inner", (Paused(4),), Wrapped))
       postgres.close(db)
     }
     Err(e) -> println("connect: {e.message()}")

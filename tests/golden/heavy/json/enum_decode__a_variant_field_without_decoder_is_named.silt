@@ -9,5 +9,5 @@ type Bad {
 }
 
 fn main() {
-  println(json.parse("""{"variant": "Fine"}""", Bad))
+  println(json.parse("\"Fine\"", Bad))
 }

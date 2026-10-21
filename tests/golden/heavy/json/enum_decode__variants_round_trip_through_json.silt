@@ -1,6 +1,7 @@
 -- An enum the program declares (without type parameters) is decoded from
--- the object json.stringify writes of a variant: {"variant":"Name"} for
--- one without fields, {"fields":[...],"variant":"Name"} for one with them.
+-- what json.stringify writes of a variant: the string "Name" for one
+-- without fields, the object {"fields":[...],"variant":"Name"} for one
+-- with them.
 -- Each field is decoded as the variant declares it: a record, a list, an
 -- option, another enum, the enum itself. It is decoded at the top, in a
 -- record field, in a List, an Option and a Map, by json.parse,
@@ -72,6 +73,7 @@ fn main() {
   }
   println(round_trip(json.stringify(Moved("t", Some(7))), Status))
   println(round_trip(text, Job) == Ok(job))
-  -- A variant without fields may say so with an empty list.
-  println(json.parse("""{"variant": "Active", "fields": []}""", Status))
+  -- A variant without fields inside the fields of another is its name.
+  println(json.stringify(shape))
+  println(json.parse("""{"fields": ["Active", ["Active"]], "variant": "Tagged"}""", Shape))
 }

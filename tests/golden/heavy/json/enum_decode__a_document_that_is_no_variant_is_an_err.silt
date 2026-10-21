@@ -2,9 +2,11 @@
 -- a name the enum has no variant of and the wrong number of fields are
 -- Other and name the enum and the variant; a field of the wrong type is
 -- the TypeMismatch a record field gets; an object without "variant" is
--- MissingField("variant"); a value that is no object (a bare variant
--- name too) is TypeMismatch with the enum's name. In a record field and
--- in a list the Err is the same.
+-- MissingField("variant"). A variant without fields is only its name:
+-- an object that names one is TypeMismatch("String", "object"), and the
+-- name of a variant with fields alone has 0 fields. A value that is no
+-- string and no object is TypeMismatch("String or object", ...). In a
+-- record field and in a list the Err is the same, with the path.
 import json
 
 type Status {
@@ -15,23 +17,36 @@ type Status {
 type Job { status: Status }
 
 fn main() {
+  println(json.parse("\"Gone\"", Status))
+  println(json.parse("\"active\"", Status))
+  println(json.parse("\"Paused\"", Status))
+  println(json.parse("""{"variant": "Active"}""", Status))
+  println(json.parse("""{"variant": "Active", "fields": []}""", Status))
   println(json.parse("""{"variant": "Gone"}""", Status))
   println(json.parse("""{"variant": "Paused"}""", Status))
   println(json.parse("""{"variant": "Paused", "fields": [1, 2]}""", Status))
-  println(json.parse("""{"variant": "Active", "fields": [1]}""", Status))
   println(json.parse("""{"variant": "Paused", "fields": ["x"]}""", Status))
   println(json.parse("""{"fields": [1]}""", Status))
   println(json.parse("""{"variant": 1}""", Status))
   println(json.parse("""{"variant": "Paused", "fields": 1}""", Status))
-  println(json.parse("\"Active\"", Status))
+  println(json.parse("1", Status))
+  println(json.parse("[\"Active\"]", Status))
+  println(json.parse("null", Status))
+  println(json.parse("""{"status": "Gone"}""", Job))
+  println(json.parse("""{"status": {"variant": "Active"}}""", Job))
   println(json.parse("""{"status": {"variant": "Gone"}}""", Job))
-  println(json.parse_list("""[{"variant": "Active"}, {"variant": "Paused", "fields": [1.5]}]""", Status))
-  println(json.parse_list("""{"variant": "Active"}""", Status))
-  match json.parse("""{"variant": "Gone"}""", Status) {
+  println(json.parse_list("""["Active", "Paused"]""", Status))
+  println(json.parse_list("""["Active", {"variant": "Paused", "fields": [1.5]}]""", Status))
+  println(json.parse_list("\"Active\"", Status))
+  match json.parse("\"Gone\"", Status) {
     Err(json.Other(why)) -> println("Other: {why}")
     other -> println("unexpected: {other}")
   }
-  match json.parse("""{"variant": "Paused", "fields": ["x"]}""", Status) {
+  match json.parse("""{"variant": "Active"}""", Status) {
+    Err(json.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected}, {actual}")
+    other -> println("unexpected: {other}")
+  }
+  match json.parse("true", Status) {
     Err(json.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected}, {actual}")
     other -> println("unexpected: {other}")
   }

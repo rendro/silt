@@ -44,9 +44,9 @@ fn show(r: Result(a, e)) where e: Error {
 }
 
 fn main() {
-  show(from_json("""{"name": "x", "blob": {"variant": "Empty"}}""", File))
+  show(from_json("""{"name": "x", "blob": "Empty"}""", File))
   show(from_json("""{"name": "x"}""", File))
   show(list_of("[]", Blob))
-  show(list_of("""[{"variant": "Empty"}]""", Blob))
+  show(list_of("""["Empty"]""", Blob))
   show(from_toml("", Config))
 }

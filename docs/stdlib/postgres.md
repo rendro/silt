@@ -84,7 +84,8 @@ value:
 | `Bytes` | `bytea`'s hex text, `\x00ff` |
 | `Date`, `Time`, `DateTime` | silt's text of it: `2026-10-13`, `01:02:03`; a `DateTime` in UTC, `2026-10-13T01:02:03+00`; a year before 1 as a year BC, `0044-03-15 BC` |
 | a `List` | an array (`{"1","2"}`) where the statement's parameter is an array (`id = ANY($1)`), and JSON anywhere else |
-| a record, a `Map`, a tuple, a variant, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
+| a variant without fields | its name, as a `String` is sent (so `Active` goes into a `text` column, or a postgres enum with the label `Active`) |
+| a record, a `Map`, a tuple, a variant with fields, a `json.Value` | JSON, as `json.stringify` writes it (`json.Null` is the JSON `null`, not SQL `NULL`) |
 
 A `DateTime` read from a `timestamptz` (in UTC, see the table of
 [Rows](#rows)) and sent back is the same instant whatever the session's

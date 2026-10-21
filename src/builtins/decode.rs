@@ -425,6 +425,9 @@ pub(crate) struct Rules {
     pub(crate) caller: &'static str,
     /// What a record and a map expect, the kind of a table.
     pub(crate) table: &'static str,
+    /// What an enum expects: the string of a variant's name, or the
+    /// table of a variant with fields.
+    pub(crate) variant: &'static str,
     /// What a `Date`, a `Time` and a `DateTime` expect.
     pub(crate) dates: [&'static str; 3],
     /// How a number that is no `Int` is told from one.
@@ -833,19 +836,41 @@ pub(crate) fn value<D: Document>(
 }
 
 /// The variant of the enum type `ty` that `doc`, which is `at` a path,
-/// is: an object as `json.stringify` writes a variant,
-/// `{"variant":"Name"}` for one without fields and
-/// `{"fields":[...],"variant":"Name"}` for one with them (`"fields"` may
-/// be absent or `[]` for one without), each field decoded as the variant
-/// declares it. Other keys are ignored.
+/// is, as `json.stringify` writes a variant: the string of its name
+/// (`"Active"`) for one without fields, and the object
+/// `{"fields":[...],"variant":"Name"}` for one with them, each field
+/// decoded as the variant declares it (other keys of the object are
+/// ignored).
 pub(crate) fn variant<D: Document>(
     rt: &Runtime,
     ty: &Arc<TypeInfo>,
     doc: &D,
     at: &At,
 ) -> Result<Value, Error> {
-    let Node::Table(table) = doc.node() else {
-        return Err(Error::mismatch(D::RULES.table, doc.kind(), at));
+    let count = |n: usize| match n {
+        1 => "1 field".to_string(),
+        n => format!("{n} fields"),
+    };
+    let declared = |tag: &Tag| &ty.variants()[tag.ordinal() as usize].fields;
+    let no_variant = |name: &str, at: &At| {
+        Error::other(format_args!("`{}` has no variant `{name}`", ty.name), at)
+    };
+    let table = match doc.node() {
+        Node::String(name) => {
+            let tag = Tag::named(ty, name).ok_or_else(|| no_variant(name, at))?;
+            let fields = declared(&tag);
+            if !fields.is_empty() {
+                let message = format_args!(
+                    "variant `{name}` of `{}` has {}, got 0",
+                    ty.name,
+                    count(fields.len())
+                );
+                return Err(Error::other(message, at));
+            }
+            return Ok(Value::variant(tag, Vec::new()));
+        }
+        Node::Table(table) => table,
+        _ => return Err(Error::mismatch(D::RULES.variant, doc.kind(), at)),
     };
     let at_name = at.key("variant");
     let name = match D::get(table, "variant").map(|name| (name, name.node())) {
@@ -853,22 +878,19 @@ pub(crate) fn variant<D: Document>(
         Some((name, _)) => return Err(Error::mismatch("String", name.kind(), &at_name)),
         None => return Err(Error::MissingField(at_name.to_string())),
     };
-    let Some(tag) = Tag::named(ty, name) else {
-        let message = format_args!("`{}` has no variant `{name}`", ty.name);
-        return Err(Error::other(message, &at_name));
-    };
+    let tag = Tag::named(ty, name).ok_or_else(|| no_variant(name, &at_name))?;
+    let declared = declared(&tag);
+    // (A variant without fields is its name, never an object.)
+    if declared.is_empty() {
+        return Err(Error::mismatch("String", doc.kind(), at));
+    }
     let at_fields = at.key("fields");
     let items = match D::get(table, "fields").map(|items| (items, items.node())) {
         Some((_, Node::Array(items))) => items,
         Some((items, _)) => return Err(Error::mismatch("array", items.kind(), &at_fields)),
         None => &[],
     };
-    let declared = &ty.variants()[tag.ordinal() as usize].fields;
     if items.len() != declared.len() {
-        let count = |n: usize| match n {
-            1 => "1 field".to_string(),
-            n => format!("{n} fields"),
-        };
         let message = format_args!(
             "variant `{name}` of `{}` has {}, got {}",
             ty.name,

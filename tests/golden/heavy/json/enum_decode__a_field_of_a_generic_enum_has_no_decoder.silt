@@ -11,5 +11,5 @@ type Box(a) {
 type Holder { b: Box(Int) }
 
 fn main() {
-  println(json.parse("""{"b": {"variant": "Empty"}}""", Holder))
+  println(json.parse("""{"b": "Empty"}""", Holder))
 }

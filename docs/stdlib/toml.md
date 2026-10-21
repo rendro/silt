@@ -286,7 +286,7 @@ follows:
 | `Some(x)` | `x`, as `x` is written |
 | `None` in an array (a list, a tuple, the fields of a variant) | nothing: `Err(Other("toml.stringify: TOML has no null: a None in an array"))` |
 | a `json.Value` | the TOML value it holds: `json.Int(1)` as `1`, `json.Array` as an array, `json.Object` as a table (its keys sorted); `json.Null` as `None` is |
-| any other variant (of `Result` too) | a table with the keys `variant` (its name) and `fields` (an array, only when it has fields) |
+| any other variant (of `Result` too) | a table with the keys `fields` (an array) and `variant` (its name); a variant without fields is the string of its name |
 | `Date`, `Time`, `DateTime` | TOML's own literals: `2026-10-19`, `12:30:00` (with a fractional second only when the value has one: `12:30:00.25`) and `2026-10-19T12:30:00` |
 | `Duration`, `Instant` | as the records they are: a table with `ns` or `epoch_ns` |
 | `()` | nothing: `Err(Other("toml.stringify: TOML cannot represent Unit"))` |

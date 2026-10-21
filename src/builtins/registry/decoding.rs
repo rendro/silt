@@ -114,7 +114,7 @@ impl Family {
     }
 
     /// Whether the family decodes a non-generic enum type of the
-    /// program, from the object `json.stringify` writes of a variant: as
+    /// program, from what `json.stringify` writes of a variant: as
     /// the type argument, as an element and as a field, at any depth.
     pub fn decodes_enums(self) -> bool {
         self == Family::Json
@@ -450,7 +450,7 @@ mod tests {
         for field in ["Set(Int)", "Map(Int, Int)", "Gen(Int)", "GE(Int)"] {
             fields.push(("Int", field.to_string(), None));
         }
-        let a = r#"{"variant": "A"}"#;
+        let a = r#""A""#;
         for (field, present) in [
             ("E", a.to_string()),
             ("Option(E)", a.to_string()),

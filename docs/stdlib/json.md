@@ -107,19 +107,20 @@ enum, an empty list or map too).
 ## Enums
 
 An enum type the program declares, without type parameters, is decoded from
-the object `json.stringify` writes of a variant, so a variant written with
+what `json.stringify` writes of a variant, so a variant written with
 `json.stringify` reads back as the same variant:
 
 | Variant | JSON |
 |---------|------|
-| without fields, `Active` | `{"variant":"Active"}` |
+| without fields, `Active` | `"Active"` |
 | with fields, `Moved("x", Some(2))` | `{"fields":["x",2],"variant":"Moved"}` |
 
-`"variant"` names the variant; `"fields"` lists its fields in the order the
-variant declares them, each decoded as a record field of its type is (a
-record, a list, an option, another enum). A variant without fields may also
-be written with `"fields": []`; other keys of the object are ignored. Only
-this object is read: a bare string such as `"Active"` is no variant.
+A variant without fields is the string of its name, wherever it is (in a
+record, a list, a map, the fields of another variant). Of a variant with
+fields, `"variant"` names the variant and `"fields"` lists its fields in the
+order the variant declares them, each decoded as a record field of its type is
+(a record, a list, an option, another enum); other keys of the object are
+ignored.
 
 An enum type may be decoded at the top (`json.parse(text, Status)`), as the
 elements of `json.parse_list` and the values of `json.parse_map`, and as the
@@ -129,10 +130,13 @@ the error of a record does (here of an enum at the top):
 
 | Document | Error |
 |----------|-------|
-| no object (a string, a number) | `TypeMismatch("object", "string")` |
-| no `"variant"` key | `MissingField("variant")` |
+| a string the enum has no variant of | ``Other("`Status` has no variant `Gone`")`` |
+| the name of a variant with fields | ``Other("variant `Paused` of `Status` has 1 field, got 0")`` |
+| no string and no object (a number, an array) | `TypeMismatch("String or object", "number")` |
+| an object that names a variant without fields | `TypeMismatch("String", "object")` |
+| an object without a `"variant"` key | `MissingField("variant")` |
 | a `"variant"` that is no string | `TypeMismatch("String", "number at variant")` |
-| a name the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant")`` |
+| a `"variant"` the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant")`` |
 | `"fields"` that is no array | `TypeMismatch("array", "number at fields")` |
 | the wrong number of fields | ``Other("variant `Paused` of `Status` has 1 field, got 2 at fields")`` |
 | a field of the wrong type | the error of a value of that type, such as `TypeMismatch("Int", "string at fields[0]")` |
@@ -155,8 +159,9 @@ fn main() {
   let text = json.stringify(job)
   println(text) -- {"name":"build","status":{"fields":[3],"variant":"Paused"}}
   println(json.parse(text, Job)) -- Ok(Job {name: build, status: Paused(3)})
-  println(json.parse("""{"variant": "Gone"}""", Status))
-  -- Err(`Status` has no variant `Gone` at variant)
+  println(json.stringify([Active, Paused(1)])) -- ["Active",{"fields":[1],"variant":"Paused"}]
+  println(json.parse("""{"name": "x", "status": "Gone"}""", Job))
+  -- Err(`Status` has no variant `Gone` at status)
 }
 ```
 
@@ -438,7 +443,7 @@ written as follows:
 | a record | an object of its fields, in the order the type declares them: `{"name":"Ada","age":36}` |
 | `Some(x)` | `x`, as `x` is written |
 | `None`, `()` | `null` |
-| any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is `{"variant":"Name"}` |
+| any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is the string `"Name"` |
 | `json.Value` | the JSON it holds: `json.Int(1)` is `1`, `json.Null` is `null` |
 | `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250000000"`) and `"2026-10-19T12:30:00"` |
 | `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |

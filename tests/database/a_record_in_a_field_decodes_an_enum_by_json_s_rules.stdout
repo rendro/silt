@@ -1,1 +1,6 @@
-1 rows
+[Wrapped {inner: Inner {state: Active}}]
+[Wrapped {inner: Inner {state: Paused(2)}}]
+postgres type mismatch on column `inner`: expected Inner, got jsonb: json type mismatch: expected String, got object at state
+[Text {s: Active}]
+[Text {s: {"fields":[3],"variant":"Paused"}}]
+[Wrapped {inner: Inner {state: Paused(4)}}]
