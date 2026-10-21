@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `Holder.decode` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+-- `T.decode` of a type that lacks `json.Decode` is refused as a decoder
+-- refuses it, naming the call: no decoder is asked for it.
+import json
+import set
+
+type Holder { s: Set(Int) }
+
+fn main() {
+  println(Holder.decode(json.Null))
+}

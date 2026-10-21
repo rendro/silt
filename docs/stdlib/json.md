@@ -425,6 +425,12 @@ fn main() {
 }
 ```
 
+`T.decode(value)` decodes a `json.Value` into `T`: by its impl where one is
+written, else as `json.decode(value, T)` does. For a `type a` with the
+bound, `a.decode(value)`. It takes no value of the type: `x.decode(..)` on
+a value is no call of it.
+
+
 ## `json.decode`
 
 ```

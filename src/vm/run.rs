@@ -1617,6 +1617,26 @@ impl Vm {
                 }
             }
         }
+        // `decode` of a type with no written `json.Decode` impl
+        // (`T.decode(v)`, `a.decode(v)` for a `type a`): the json
+        // decoder's, with the type the descriptor names.
+        if descriptor_receiver
+            && argc == 2
+            && self.view.entry.trait_at(trait_index) == crate::defs::builtin_trait_id("Decode")
+            && self.view.entry.method_name(method) == Some("decode")
+        {
+            let value = self.stack[receiver_slot + 1].clone();
+            let ty = self.stack[receiver_slot].clone();
+            self.stack.truncate(receiver_slot);
+            let Some(ty) = <crate::builtins::typed::Type as crate::builtins::typed::Arg>::take(&ty)
+            else {
+                return Err(VmError::type_confusion(
+                    "decode of a value that names no type",
+                ));
+            };
+            let step = crate::builtins::json::decode_value(self, &value, ty)?;
+            return self.enter_step(step);
+        }
         // No impl has the method for the receiver's type: what the
         // call does then goes by the method's name. Called through a
         // type (`a.display(x)` for a `type a`, `t.compare(x, y)` for a
