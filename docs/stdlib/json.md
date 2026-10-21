@@ -383,8 +383,10 @@ stays structural (`null` is `None`). The `Err` it returns is the decoder's
 error, with the path of its part appended as to the decoder's own errors:
 `Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
 posts[1].tags")`, a `MissingField("name")` there is
-`MissingField("posts[1].tags.name")`. The first error in the document
-counts, the impl's or the decoder's.
+`MissingField("posts[1].tags.name")`; an error that has a path already (one
+the impl got from `json.decode` of a part of its value) has the two
+joined, `at posts[1].tags.k`. The first error in the document counts, the
+impl's or the decoder's.
 
 ```silt
 import json
