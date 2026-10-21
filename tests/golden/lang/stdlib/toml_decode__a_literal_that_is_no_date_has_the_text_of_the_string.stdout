@@ -1,0 +1,7 @@
+Err(invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid characters at d)
+Err(invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid characters at d)
+Err(invalid date '1979-05-27T07:32:00' (expected YYYY-MM-DD): trailing input at d)
+Err(invalid time '1979-05-27' (expected HH:MM:SS): input contains invalid characters at t)
+Err(invalid time '1979-05-27' (expected HH:MM:SS): input contains invalid characters at t)
+Err(invalid datetime '07:32:00' at at)
+Err(invalid datetime '07:32:00' at at)

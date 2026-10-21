@@ -150,13 +150,18 @@ impl TypeChecker {
                 return None;
             }
             let enum_type = self.tables.is_enum(head);
+            // (A row is decoded into a record of its columns, or by the
+            // type's own impl, which the program may write for its enum.)
             if enum_type && !family.decodes_enums() {
                 return refusal(
                     Code::Undecodable,
                     format!(
                         "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
                     ),
-                    record_help,
+                    &format!(
+                        "declare a record type, or write a `json.Decode` impl for `{}`",
+                        self.written_type(head)
+                    ),
                 );
             }
             if self.tables.is_generic(head) {

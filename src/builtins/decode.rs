@@ -958,14 +958,14 @@ pub(crate) fn value<D: Document>(
         FieldType::JsonValue => Err(Error::Unsupported("json.Value".into())),
         FieldType::Bytes => Err(Error::Unsupported("Bytes".into())),
         // A date and a time are a string of their text, or a literal of
-        // the format.
+        // the format; a text that is none has the one message either way.
         FieldType::Date => match node {
             Node::String(s) => parse_date(s)
                 .map(make_date)
                 .map_err(|e| Error::other(invalid_date_message(s, e), at)),
             Node::Datetime(s) => parse_date(&s)
                 .map(make_date)
-                .map_err(|e| Error::other(format_args!("invalid date '{s}': {e}"), at)),
+                .map_err(|e| Error::other(invalid_date_message(&s, e), at)),
             _ => Err(mismatch("time.Date")),
         },
         FieldType::Time => match node {
@@ -974,7 +974,7 @@ pub(crate) fn value<D: Document>(
                 .map_err(|e| Error::other(invalid_time_message(s, &e), at)),
             Node::Datetime(s) => parse_time(&s)
                 .map(make_time)
-                .map_err(|e| Error::other(format_args!("invalid time '{s}': {e}"), at)),
+                .map_err(|e| Error::other(invalid_time_message(&s, &e), at)),
             _ => Err(mismatch("time.Time")),
         },
         FieldType::DateTime => {

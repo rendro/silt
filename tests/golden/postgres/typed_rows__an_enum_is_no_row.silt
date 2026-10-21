@@ -2,9 +2,10 @@
 -- requires-feature: postgres
 -- exit: 1
 -- stderr-contains: `postgres.stream` cannot decode `Mood`: it is an enum type, and enums have no decoder
--- stderr-contains: help: declare a record type with a field for each column
--- Every type a row is not decoded into has the one help: an enum, as a
--- primitive type or a generic record does.
+-- stderr-contains: help: declare a record type, or write a `json.Decode` impl for `Mood`
+-- An enum type is no row: a row is decoded into a record of its
+-- columns, or by a `json.Decode` impl the program writes for its type,
+-- which the help names.
 import postgres
 
 type Mood { Sad, Happy }

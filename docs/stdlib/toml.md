@@ -207,10 +207,11 @@ that `json.parse` accepts for each of those field types:
 
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an `Other`
-that names the text, from a string
-`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`
-and from a literal
-`invalid time '23:59:60': a leap second (second 60) is not read`.
+that names the text, from a string and from a literal alike:
+`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
+A date or a time that is none has one message whether it is written in
+quotes or as a literal: `d = 07:32:00` for a `Date` field `d` is
+`invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid characters at d`.
 
 ```silt
 import toml
