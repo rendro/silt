@@ -436,12 +436,15 @@ impl TypeChecker {
             // Nothing decides the subject and no definition is general
             // in it. For a trait every type implements by its structure
             // it does not matter which type it is: it is `()`
-            // (`println([])`, `json.stringify(Ok(1))`). (Not for
-            // `json.Decode`, which `()` has not: a decoder builds a
-            // value of the type, so the type matters.)
+            // (`println([])`, `json.stringify(Ok(1))`). A type nothing
+            // decides is no type a decoder is given (`let _ =
+            // json.parse`): `json.Decode` of it asks nothing.
+            if tr.is_builtin("Decode") {
+                continue;
+            }
             if STRUCTURAL_METHODS
                 .iter()
-                .any(|(name, _)| tr.is_builtin(name) && *name != "Decode")
+                .any(|(name, _)| tr.is_builtin(name))
             {
                 let _ = self.unify_types(subject, &Type::Unit);
                 continue;
