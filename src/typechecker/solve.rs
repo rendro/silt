@@ -1356,7 +1356,6 @@ impl TypeChecker {
         traits: &[TraitKey],
         span: Span,
     ) {
-        self.ambiguous_method(method, on, traits, span);
         let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
         let above = |t: TraitKey| self.supertraits_of(t);
         // The bounds no other one has as a supertrait: what the `where`
@@ -1377,11 +1376,46 @@ impl TypeChecker {
                 .collect(),
             _ => giving,
         };
+        let shown_args = |this: &Self, args: &[Type]| -> Vec<String> {
+            (args.iter())
+                .map(|a| this.show_type(&this.apply(&substitute_vars(a, &this.rigid_of))))
+                .collect()
+        };
+        // Two bounds of one trait at different arguments
+        // (`where a: Conv(Int), a: Conv(String)`): the bounds give the
+        // method, by their arguments.
+        let mut of_one_trait = traits.to_vec();
+        super::inference::distinct(&mut of_one_trait);
+        match of_one_trait.len() < traits.len() {
+            true => {
+                let mut given: Vec<String> = (in_scope.iter())
+                    .filter(|(t, _)| traits.contains(t))
+                    .map(|(t, args)| match shown_args(self, args) {
+                        args if args.is_empty() => self.show_trait(*t),
+                        args => format!("{}({})", self.show_trait(*t), args.join(", ")),
+                    })
+                    .collect();
+                given.sort();
+                given.dedup();
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousMethod,
+                        span,
+                        format!(
+                            "ambiguous method '{method}' on {on}: provided by bounds {}",
+                            given.join(", ")
+                        ),
+                    )
+                    .with_help(
+                        "say which is meant: annotate the receiver's type, or bound it with a `where` clause",
+                    ),
+                );
+            }
+            false => self.ambiguous_method(method, on, traits, span),
+        }
         let mut bounds: Vec<String> = (named.into_iter())
             .map(|(t, args)| {
-                let args: Vec<String> = (args.iter())
-                    .map(|a| self.show_type(&self.apply(&substitute_vars(a, &self.rigid_of))))
-                    .collect();
+                let args = shown_args(self, args);
                 match args.is_empty() {
                     true => format!("`{}`", self.written_trait(*t)),
                     false => format!("`{}({})`", self.written_trait(*t), args.join(", ")),

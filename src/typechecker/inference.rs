@@ -194,8 +194,10 @@ impl TypeChecker {
     /// and `v: Sub(Int)` with `trait Sub(a): Super(a)` says
     /// `v: Super(Int)`.
     pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
+        // (Two bounds of one trait at different arguments are two
+        // bounds: `where a: Conv(Int), a: Conv(String)`.)
         let in_scope = self.bounds.entry(var).or_default();
-        if in_scope.iter().any(|(t, _)| *t == trait_name) {
+        if in_scope.iter().any(|(t, a)| *t == trait_name && *a == args) {
             return;
         }
         in_scope.push((trait_name, args.clone()));
@@ -341,8 +343,9 @@ impl TypeChecker {
 
     /// Report that the declaration being checked does not declare
     /// `r: trait_name(args)`, which the use `origin` in it needs, unless
-    /// it does. The bound it declares for the trait is the only one `r`
-    /// has, so its arguments are the ones needed.
+    /// it does. Where it declares one bound for the trait, its arguments
+    /// are the ones needed; of several (`a: Conv(Int), a: Conv(String)`)
+    /// the one at the arguments needed, if one is.
     pub(super) fn require_declared_bound(
         &mut self,
         r: RigidId,
@@ -353,12 +356,37 @@ impl TypeChecker {
         if self.unknown_bounds.contains(&r.var) {
             return;
         }
-        let declared = self
-            .bounds
-            .get(&r.var)
-            .and_then(|bounds| bounds.iter().find(|(t, _)| *t == trait_name))
-            .map(|(_, declared)| declared.clone());
-        if let Some(declared) = declared {
+        let of_trait: Vec<Vec<Type>> = (self.bounds.get(&r.var).into_iter().flatten())
+            .filter(|(t, _)| *t == trait_name)
+            .map(|(_, declared)| declared.clone())
+            .collect();
+        if of_trait.len() > 1 {
+            let at = |declared: &Vec<Type>| {
+                (declared
+                    .iter()
+                    .map(|t| self.apply(&substitute_vars(t, &self.rigid_of))))
+                .collect::<Vec<Type>>()
+            };
+            let needed: Vec<Type> = args.iter().map(|t| self.apply(t)).collect();
+            if args.is_empty() || of_trait.iter().any(|declared| at(declared) == needed) {
+                return;
+            }
+            let declared: Vec<String> = (of_trait.iter())
+                .map(|declared| format!("'{}'", self.show_bound(trait_name, &at(declared))))
+                .collect();
+            self.error(
+                Code::MissingConstraint,
+                format!(
+                    "type variable `{}` is declared to implement {}, not '{}'",
+                    r.name,
+                    declared.join(" and "),
+                    self.show_bound(trait_name, args)
+                ),
+                origin.span,
+            );
+            return;
+        }
+        if let Some(declared) = of_trait.into_iter().next() {
             if args.is_empty() || declared.len() != args.len() {
                 return;
             }
@@ -603,11 +631,12 @@ impl TypeChecker {
         if self.unknown_bounds.contains(&r.var) {
             return None;
         }
-        let bounds: Vec<TraitKey> = self
+        let mut bounds: Vec<TraitKey> = self
             .bounds
             .get(&r.var)
             .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
             .unwrap_or_default();
+        distinct(&mut bounds);
         if bounds.is_empty() {
             self.errors.push(
                 Diagnostic::error(
@@ -787,7 +816,7 @@ impl TypeChecker {
                 // The methods of the variable's bounds. The `where`
                 // clause promises an impl at every call; the call finds
                 // it at run time by the type the descriptor carries.
-                let Some(trait_names) = self
+                let Some(mut trait_names) = self
                     .bounds
                     .get(&r.var)
                     .map(|bounds| bounds.iter().map(|(t, _)| *t).collect::<Vec<TraitKey>>())
@@ -803,6 +832,7 @@ impl TypeChecker {
                     );
                     return None;
                 };
+                distinct(&mut trait_names);
                 let matches = self.bound_methods(*r, field);
                 if matches.is_empty() {
                     let traits_str = trait_names
@@ -4059,4 +4089,17 @@ pub(super) fn type_of_var(ty: &Type) -> Option<Type> {
         Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(type_of_var),
         _ => None,
     }
+}
+
+/// `traits` with each trait once, in the order of their first places
+/// (two bounds of one trait at different arguments name it twice).
+pub(super) fn distinct(traits: &mut Vec<TraitKey>) {
+    let mut seen: Vec<TraitKey> = Vec::new();
+    traits.retain(|t| {
+        let first = !seen.contains(t);
+        if first {
+            seen.push(*t);
+        }
+        first
+    });
 }

@@ -1,0 +1,26 @@
+error[type]: ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+ --> two_bounds_of_one_trait__a_method_both_give_is_ambiguous.silt:18:3
+    |
+ 18 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+  = help: the bounds `Conv(Int)` and `Conv(String)` both give `show`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'conv' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+ --> two_bounds_of_one_trait__a_method_both_give_is_ambiguous.silt:22:3
+    |
+ 22 |   x.conv()
+    |   ^^^^^^ ambiguous method 'conv' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+  = help: the bounds `Conv(Int)` and `Conv(String)` both give `conv`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'make' on `type a`: provided by bounds Make(Int), Make(String)
+ --> two_bounds_of_one_trait__a_method_both_give_is_ambiguous.silt:26:3
+    |
+ 26 |   a.make()
+    |   ^^^^^^ ambiguous method 'make' on `type a`: provided by bounds Make(Int), Make(String)
+  = help: the bounds `Make(Int)` and `Make(String)` both give `make`: call it from a function bounded by only one of them
+
+error[type]: type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', not 'Conv(Bool)'
+ --> two_bounds_of_one_trait__a_method_both_give_is_ambiguous.silt:42:9
+    |
+ 42 |   other(x)
+    |         ^ type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', not 'Conv(Bool)'

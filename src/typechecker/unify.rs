@@ -330,7 +330,7 @@ impl TypeChecker {
         if let Some(bounds) = self.bounds.get(&r2.var).cloned() {
             let merged = self.bounds.entry(r1.var).or_default();
             for bound in bounds {
-                if !merged.iter().any(|(t, _)| *t == bound.0) {
+                if !merged.contains(&bound) {
                     merged.push(bound);
                 }
             }
