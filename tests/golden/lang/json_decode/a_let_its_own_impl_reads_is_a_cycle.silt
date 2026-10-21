@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the top-level `let` 'p' needs its own value to be initialised: p -> T.decode -> p
+-- A `let` whose value is decoded by an impl that reads the `let`.
+import json
+
+type T { n: Int }
+
+trait json.Decode for T {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match p {
+      Ok(t) -> Ok(t)
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+let p = json.parse("1", T)
+
+fn main() {
+  println(p)
+}

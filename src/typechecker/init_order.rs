@@ -65,7 +65,11 @@
 //!    of an argument (`json.stringify`), `toml.stringify`, `toml.pretty`
 //!    and the parameters of a postgres statement (whose signatures ask
 //!    nothing of them, but which write them with the same writer), and
-//!    `.encode()` on a type with no impl of its own.
+//!    `.encode()` on a type with no impl of its own. Decoding a document
+//!    into a type is the same with the module's `json.Decode` impls of
+//!    the type and of the types of its fields: a builtin whose signature
+//!    asks `json.Decode` of its type argument (`json.parse`), and
+//!    `T.decode(v)` on a type with no impl of its own.
 //!
 //!    A function with type variables of its own (`fn label(x: a) ->
 //!    String where a: Display`) shows values whose types have them.
@@ -459,11 +463,15 @@ impl TypeChecker {
         let own_trait = |tr: TraitId| self.own_traits.values().any(|own| own.id == tr);
         let display = TraitKey::builtin("Display");
         let encode = TraitKey::builtin("Encode");
-        // The method of each trait whose written impls showing or
-        // writing a value calls, at any depth.
-        let method_of = |tr: TraitKey| match tr == encode {
-            true => intern("encode"),
-            false => intern("display"),
+        let decode = TraitKey::builtin("Decode");
+        // The method of each trait whose written impls showing, writing
+        // or decoding a value calls, at any depth.
+        let method_of = |tr: TraitKey| {
+            intern(match tr {
+                _ if tr == encode => "encode",
+                _ if tr == decode => "decode",
+                _ => "display",
+            })
         };
         let mut named: HashMap<(usize, usize), Symbol> = HashMap::new();
         let mut edges: Vec<Vec<usize>> = Vec::with_capacity(nodes.len());
@@ -623,15 +631,17 @@ impl TypeChecker {
                     // default, and, for a trait of another module or a
                     // builtin one, impls and defaults outside it.
                     // (`display` of such a receiver shows it, `encode`
-                    // writes it.)
+                    // writes it, `decode` of a type decodes into it.)
                     Some(Selection::Dynamic { tr })
-                        if [display, encode]
+                        if [display, encode, decode]
                             .iter()
                             .any(|t| t.id == *tr && *method == method_of(*t))
                             && recv.ty.is_some() =>
                     {
-                        if let Some(ty) = &recv.ty {
-                            let tr = if *tr == encode.id { encode } else { display };
+                        if let Some(ty) = &recv.ty
+                            && let Some(tr) =
+                                [display, encode, decode].into_iter().find(|t| t.id == *tr)
+                        {
                             show(tr, ty);
                         }
                     }
@@ -644,15 +654,15 @@ impl TypeChecker {
                         }
                     }
                     // The VM's own method of a builtin trait: `display`
-                    // shows the receiver, `encode` writes it; the others
-                    // call no code a program writes.
+                    // shows the receiver, `encode` writes it, `decode` of
+                    // a type decodes into it; the others call no code a
+                    // program writes.
                     Some(Selection::Native { tr }) => {
-                        if let Some(ty) = &recv.ty {
-                            if *tr == display.id {
-                                show(display, ty);
-                            } else if *tr == encode.id {
-                                show(encode, ty);
-                            }
+                        if let Some(ty) = &recv.ty
+                            && let Some(tr) =
+                                [display, encode, decode].into_iter().find(|t| t.id == *tr)
+                        {
+                            show(tr, ty);
                         }
                     }
                     Some(Selection::Field | Selection::FieldCall) => {}
