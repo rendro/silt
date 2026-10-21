@@ -1339,7 +1339,10 @@ impl TypeChecker {
     /// type `a` of a `type a` parameter), whose type is the annotation
     /// variable `r`, is a method of each of `traits`, which bound it:
     /// being bounded already, the call says which it means by being in a
-    /// function bounded by only one of them.
+    /// function bounded by only one of them. The help names the bounds
+    /// that give the method as the program wrote them: a bound whose
+    /// supertrait gives it (`where a: S` with `trait S: Ar`), not the
+    /// supertrait, unless one bound gives it all.
     pub(super) fn ambiguous_bound_method(
         &mut self,
         method: Symbol,
@@ -1349,22 +1352,45 @@ impl TypeChecker {
         span: Span,
     ) {
         self.ambiguous_method(method, on, traits, span);
-        let mut bounds: Vec<String> = (self.bounds.get(&r.var).cloned().unwrap_or_default())
-            .into_iter()
-            .filter(|(t, _)| traits.contains(t))
+        let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
+        let above = |t: TraitKey| self.supertraits_of(t);
+        // The bounds no other one has as a supertrait: what the `where`
+        // clause says, the supertraits aside.
+        let said: Vec<&(TraitKey, Vec<Type>)> = (in_scope.iter())
+            .filter(|(t, _)| {
+                !in_scope
+                    .iter()
+                    .any(|(o, _)| o != t && above(*o).contains(t))
+            })
+            .collect();
+        let giving: Vec<&(TraitKey, Vec<Type>)> = (said.iter().copied())
+            .filter(|(t, _)| traits.iter().any(|g| g == t || above(*t).contains(g)))
+            .collect();
+        let named: Vec<&(TraitKey, Vec<Type>)> = match giving.len() {
+            0 | 1 => (in_scope.iter())
+                .filter(|(t, _)| traits.contains(t))
+                .collect(),
+            _ => giving,
+        };
+        let mut bounds: Vec<String> = (named.into_iter())
             .map(|(t, args)| {
-                let args: Vec<Type> = (args.iter())
-                    .map(|a| substitute_vars(a, &self.rigid_of))
+                let args: Vec<String> = (args.iter())
+                    .map(|a| self.show_type(&self.apply(&substitute_vars(a, &self.rigid_of))))
                     .collect();
-                format!("`{}`", self.show_bound(t, &args))
+                match args.is_empty() {
+                    true => format!("`{}`", self.written_trait(*t)),
+                    false => format!("`{}({})`", self.written_trait(*t), args.join(", ")),
+                }
             })
             .collect();
         bounds.sort();
         bounds.dedup();
         let (all, both) = match bounds.split_last() {
             Some((last, [one])) => (format!("{one} and {last}"), "both"),
-            Some((last, rest)) => (format!("{} and {last}", rest.join(", ")), "all"),
-            None => return,
+            Some((last, rest)) if !rest.is_empty() => {
+                (format!("{} and {last}", rest.join(", ")), "all")
+            }
+            _ => return,
         };
         if let Some(last) = self.errors.last_mut() {
             last.help = vec![format!(
@@ -1372,6 +1398,21 @@ impl TypeChecker {
                  only one of them"
             )];
         }
+    }
+
+    /// The supertraits of the trait `t`, theirs too.
+    fn supertraits_of(&self, t: TraitKey) -> Vec<TraitKey> {
+        let mut found: Vec<TraitKey> = Vec::new();
+        let mut next = vec![t];
+        while let Some(t) = next.pop() {
+            for s in (self.tables.traits.get(&t)).map_or(&[][..], |info| &info.supertraits) {
+                if !found.contains(s) {
+                    found.push(*s);
+                    next.push(*s);
+                }
+            }
+        }
+        found
     }
 
     /// The bound `tr(args)` as a message shows it: `Greet`, `Conv(Int)`.

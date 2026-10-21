@@ -92,6 +92,22 @@ impl TypeChecker {
         self.show_trait_in_module(t)
     }
 
+    /// The name of the trait `t` as the module being checked writes it:
+    /// with its module where another module declares it (`m.Show`,
+    /// `json.Encode`), a prelude trait by its name (`Display`); in a
+    /// REPL cell the traits of the earlier cells are in scope by name.
+    pub(super) fn written_trait(&self, t: TraitKey) -> String {
+        if let Some((name, None)) = crate::defs::builtin_trait_of_id(t.id.0) {
+            return name.to_string();
+        }
+        let qualified = self.show_trait_in_module(t);
+        // (An earlier cell's "module" has no name a program writes.)
+        match self.is_cell && qualified.starts_with('<') {
+            true => t.name.to_string(),
+            false => qualified,
+        }
+    }
+
     /// The trait with the module that declares it, where that is not
     /// the module being checked: `a.Show`, `prelude.Display`.
     pub(super) fn show_trait_in_module(&self, t: TraitKey) -> String {
