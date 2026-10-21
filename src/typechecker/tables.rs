@@ -540,6 +540,14 @@ impl Tables {
                 continue;
             }
             let method = intern(method);
+            // (`decode` is called on the type.)
+            if self
+                .traits
+                .get(&tr)
+                .is_some_and(|info| !info.receivers.contains(&method))
+            {
+                continue;
+            }
             methods.extend(
                 self.trait_impl_set
                     .iter()

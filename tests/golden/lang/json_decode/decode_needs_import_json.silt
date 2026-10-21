@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'P' has no method 'decode'
+-- Without `import json` no type has the method `decode` of json.Decode.
+type P { x: Int }
+
+fn main() {
+  println(P.decode(1))
+}
