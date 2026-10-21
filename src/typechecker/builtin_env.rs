@@ -111,11 +111,11 @@ fn module_of(qualified: &str) -> &str {
 // ── What the builtin scope is made of ───────────────────────────────
 
 /// What a use of `qualified`, a type of a builtin module that is no
-/// value (`time.DateTime`), as a value is told: the types of a module are
-/// no values but `json.Value`, and a decoder decodes such a type, where
+/// value (`time.DateTime`), as a value is told: only `json.Value` of a
+/// module's types is a value, and a decoder decodes such a type, where
 /// it decodes it at all, as the type of a record's field.
 pub(crate) fn module_type_is_no_value_help(qualified: &str) -> String {
-    let no_value = "the types of a module are no values but `json.Value`";
+    let no_value = "only `json.Value` of a module's types can be given as a value";
     let decoded = crate::builtins::registry::decoding::Leaf::ALL
         .iter()
         .any(|leaf| leaf.name() == qualified);
