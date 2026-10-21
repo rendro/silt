@@ -964,7 +964,7 @@ impl Conn {
         let (server, pending) = (self.server.clone(), self.pending.clone());
         let scheduler = vm.scheduler().clone();
         let op = vm
-            .start_io(not_served, move || {
+            .start_io(not_served, move |_| {
                 let mut before_body = |waits: bool| {
                     let _ = announced.complete((), scheduler.wake());
                     // The interim response is written like everything
@@ -1026,7 +1026,7 @@ impl Conn {
         }
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
         let op = vm
-            .start_io(not_served, move || {
+            .start_io(not_served, move |_| {
                 Value::Bool(stream.write_all(&bytes[written..]).is_ok())
             })
             .stop_with(move || stopped.shut_down());
@@ -1055,7 +1055,7 @@ impl Conn {
     fn drain(&mut self, vm: &mut Vm) -> Step {
         let (stream, stopped) = (self.stream.clone(), self.stream.clone());
         let op = vm
-            .start_io(not_served, move || {
+            .start_io(not_served, move |_| {
                 stream.end_writes();
                 let mut dropped = [0u8; 8 * 1024];
                 while matches!(stream.read(&mut dropped), Ok(n) if n > 0) {}

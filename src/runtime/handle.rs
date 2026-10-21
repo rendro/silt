@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use crate::runtime::sync::{Cell, Completion, Wake};
 use crate::value::Value;
-use crate::vm::VmError;
+use crate::vm::{VmError, Wanted};
 
 /// A combined Read + Write trait object used as the inner stream type for
 /// `TcpStreamHandle`. Plain TCP impls it directly; the rustls wrappers in
@@ -77,44 +77,13 @@ pub struct TcpListenerHandle {
 /// What an accept on a listener came to.
 pub enum Accepted {
     Conn(std::net::TcpStream),
-    /// The accept was given up ([`TcpListenerHandle::stop`] with its
-    /// flag): nobody waits for it.
+    /// The accept was given up: nobody wants its connection
+    /// ([`Wanted::gone`]).
     GivenUp,
     /// An `http.serve` has the listener to itself: no other accept
     /// takes a connection from it, also not one that was waiting when
     /// the server started.
     Served,
-}
-
-/// What gives an accept up: its own flag, which
-/// [`TcpListenerHandle::stop`] sets when nobody waits for the accept
-/// any more, and the flags of the task that started it, which are set
-/// when the task is cancelled or its time is over. Such a task takes
-/// nothing new (`Vm::takes_nothing_new`), and that holds from the
-/// moment its flag is set, not from the moment it waits: a client
-/// that connects after the cancel of a task that has started an
-/// accept but not yet waited for it is the next accept's.
-#[derive(Clone, Default)]
-pub struct GiveUp {
-    own: Arc<AtomicBool>,
-    task: Vec<Arc<AtomicBool>>,
-}
-
-impl GiveUp {
-    /// For an accept of the task whose flags are `task`.
-    pub fn of_task(task: impl IntoIterator<Item = Arc<AtomicBool>>) -> GiveUp {
-        GiveUp {
-            own: Arc::default(),
-            task: task.into_iter().collect(),
-        }
-    }
-
-    /// Whether the accept is given up.
-    pub fn is_set(&self) -> bool {
-        std::iter::once(&self.own)
-            .chain(&self.task)
-            .any(|flag| flag.load(AtomicOrdering::SeqCst))
-    }
 }
 
 /// The mark of an `http.serve` on its listener.
@@ -128,8 +97,8 @@ struct Served {
 
 #[derive(Default)]
 struct Accepting {
-    /// The stop flag of the accept that is in the OS call.
-    current: Option<Arc<AtomicBool>>,
+    /// The accept that is in the OS call.
+    current: Option<Current>,
     /// The addresses that the connections made to wake an accept come
     /// from: such a connection is not a client's.
     wakes: Vec<std::net::SocketAddr>,
@@ -196,10 +165,12 @@ impl TcpListenerHandle {
         // the system's call is woken as one that is given up is, and
         // those that wait their turn look again. Each ends with
         // [`Accepted::Served`].
-        let current = self.accepting.lock().current.clone();
-        if let Some(current) = current {
-            self.stop_flag(&current);
+        let mut accepting = self.accepting.lock();
+        if let Some(current) = &accepting.current {
+            current.stopped.store(true, AtomicOrdering::SeqCst);
+            self.wake_the_call(&mut accepting);
         }
+        drop(accepting);
         self.turn.notify_all();
         Some(token)
     }
@@ -212,10 +183,11 @@ impl TcpListenerHandle {
         }
     }
 
-    /// The next connection, for the accept that `give_up` gives up.
-    /// A client's connection is never lost to an accept that was
-    /// given up, or that a server has taken the listener from: it is
-    /// kept for the next one.
+    /// The next connection, for the accept whose waiter is `wanted`. A
+    /// client's connection is never lost to an accept that was given
+    /// up, or that a server has taken the listener from: it is kept for
+    /// the next one. The accept claims the connection it returns
+    /// ([`Wanted::claim`]): one that it cannot claim is kept.
     ///
     /// `server` says that the accept is the one of the `http.serve`
     /// that has the listener. Such an accept also takes the
@@ -225,26 +197,35 @@ impl TcpListenerHandle {
     /// one go, not one for each time its task comes round. Any other
     /// accept ends with [`Accepted::Served`] while a server has the
     /// listener.
-    pub fn accept(&self, give_up: &GiveUp, server: bool) -> std::io::Result<Accepted> {
+    pub fn accept(&self, wanted: &Wanted, server: bool) -> std::io::Result<Accepted> {
         let foreign = |listener: &Self| !server && listener.is_served();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let given_up = || stopped.load(AtomicOrdering::SeqCst) || wanted.gone();
         {
             let mut accepting = self.accepting.lock();
             loop {
                 if foreign(self) {
                     return Ok(Accepted::Served);
                 }
-                if give_up.is_set() {
+                if given_up() {
                     return Ok(Accepted::GivenUp);
                 }
                 if let Some(stream) = accepting.kept.pop_front() {
-                    return Ok(Accepted::Conn(stream));
+                    if wanted.claim() {
+                        return Ok(Accepted::Conn(stream));
+                    }
+                    accepting.kept.push_front(stream);
+                    return Ok(Accepted::GivenUp);
                 }
                 if accepting.current.is_none() {
                     break;
                 }
                 self.turn.wait(&mut accepting);
             }
-            accepting.current = Some(give_up.own.clone());
+            accepting.current = Some(Current {
+                op: wanted.id(),
+                stopped: stopped.clone(),
+            });
         }
         let result = loop {
             match self.listener.accept() {
@@ -254,7 +235,7 @@ impl TcpListenerHandle {
                     let mut accepting = self.accepting.lock();
                     let wake = accepting.wakes.iter().position(|addr| *addr == peer);
                     let Some(wake) = wake else {
-                        if give_up.is_set() || foreign(self) {
+                        if given_up() || foreign(self) || !wanted.claim() {
                             // A client's, and this accept is not to
                             // have it: it is the next accept's.
                             accepting.kept.push_back(stream);
@@ -263,11 +244,15 @@ impl TcpListenerHandle {
                         break Ok(Some(stream));
                     };
                     accepting.wakes.swap_remove(wake);
-                    if give_up.is_set() {
+                    if given_up() {
                         break Ok(None);
                     }
                     if let Some(kept) = accepting.kept.pop_front() {
-                        break Ok(Some(kept));
+                        if wanted.claim() {
+                            break Ok(Some(kept));
+                        }
+                        accepting.kept.push_front(kept);
+                        break Ok(None);
                     }
                     // Meant for an accept that had its connection
                     // already: this one goes on.
@@ -363,43 +348,37 @@ impl TcpListenerHandle {
         // looks at what is kept before it calls the OS again.
         let mut accepting = self.accepting.lock();
         if accepting.current.is_some() {
-            let woken = self.wake_addr().and_then(|addr| {
-                let conn = std::net::TcpStream::connect_timeout(&addr, WAKE_CONNECT_LIMIT)?;
-                conn.local_addr()
-            });
-            if let Ok(from) = woken {
-                accepting.wakes.push(from);
-            }
+            self.wake_the_call(&mut accepting);
         }
     }
 
-    /// Give up the accept that was called with `give_up`: it returns
-    /// `None`, at once if it waits its turn, and as soon as the
-    /// connection made here reaches it if it is in the OS call.
+    /// Wake the accept whose waiter `wanted` has gone
+    /// ([`Wanted::gone`]): it returns [`Accepted::GivenUp`], at once if
+    /// it waits its turn, and as soon as the connection made here
+    /// reaches it if it is in the OS call.
     ///
     /// That connection goes to the listener's own port on the loopback
     /// address. If it cannot be made (the listener's backlog is full,
     /// a packet filter forbids loopback traffic to the port, the
     /// process has no descriptor left), the accept stays in the OS
     /// call until a client connects: its thread lingers.
-    pub fn stop(&self, give_up: &GiveUp) {
-        self.stop_flag(&give_up.own);
-    }
-
-    /// [`TcpListenerHandle::stop`] of the accept whose own flag is
-    /// `stopped`.
-    fn stop_flag(&self, stopped: &Arc<AtomicBool>) {
-        stopped.store(true, AtomicOrdering::SeqCst);
+    pub fn stop(&self, wanted: &Wanted) {
         let mut accepting = self.accepting.lock();
         let in_the_call = accepting
             .current
             .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, stopped));
+            .is_some_and(|current| current.op == wanted.id());
         if !in_the_call {
             drop(accepting);
             self.turn.notify_all();
             return;
         }
+        self.wake_the_call(&mut accepting);
+    }
+
+    /// Wake the accept that is in the OS call, by a connection that it
+    /// knows by its address and drops.
+    fn wake_the_call(&self, accepting: &mut Accepting) {
         let woken = self.wake_addr().and_then(|addr| {
             let conn = std::net::TcpStream::connect_timeout(&addr, WAKE_CONNECT_LIMIT)?;
             conn.local_addr()
@@ -420,6 +399,15 @@ impl TcpListenerHandle {
         }
         Ok(addr)
     }
+}
+
+/// The accept that is in the system's call.
+struct Current {
+    /// Its operation ([`Wanted::id`]).
+    op: usize,
+    /// Set when a server takes the listener from it
+    /// ([`TcpListenerHandle::serve`]).
+    stopped: Arc<AtomicBool>,
 }
 
 /// How long the connection that wakes an accept may take to be made.
@@ -1285,7 +1273,7 @@ mod tests {
         let clients: Vec<TcpStream> = (0..40)
             .map(|_| TcpStream::connect(addr).expect("connect"))
             .collect();
-        let flag = GiveUp::default();
+        let flag = Wanted::of_test(Vec::new());
         let first = listener.accept(&flag, false).expect("accept");
         assert!(matches!(first, Accepted::Conn(_)));
         assert!(listener.take_kept().is_none());
@@ -1562,7 +1550,7 @@ mod tests {
             .map(|_| {
                 let listener = listener.clone();
                 std::thread::spawn(move || {
-                    let flag = GiveUp::default();
+                    let flag = Wanted::of_test(Vec::new());
                     listener.accept(&flag, false).expect("accept")
                 })
             })
@@ -1578,7 +1566,7 @@ mod tests {
         // The next client is the server's, and no connection that woke
         // an accept is taken for one.
         let mut client = TcpStream::connect(addr).expect("connect");
-        let flag = GiveUp::default();
+        let flag = Wanted::of_test(Vec::new());
         let Accepted::Conn(mut conn) = listener.accept(&flag, true).expect("accept") else {
             panic!("the server's accept got no connection");
         };
@@ -1607,7 +1595,7 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         let listener = Arc::new(TcpListenerHandle::new(0, listener));
         let cancelled = Arc::new(AtomicBool::new(false));
-        let give_up = GiveUp::of_task([cancelled.clone()]);
+        let give_up = Wanted::of_test(vec![cancelled.clone()]);
         let accept = {
             let (listener, give_up) = (listener.clone(), give_up.clone());
             std::thread::spawn(move || listener.accept(&give_up, false).expect("accept"))

@@ -284,7 +284,7 @@ impl Native for Pipe {
                     return Ok(vm.call(callee, args));
                 }
                 Next::Io(operation, stop) => {
-                    let mut op = vm.start_io(io_failure, operation);
+                    let mut op = vm.start_io(io_failure, move |_| operation());
                     if let Some(stop) = stop {
                         self.stop = Some(stop.clone());
                         op = op.stop_with(move || stop());

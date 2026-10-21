@@ -46,7 +46,7 @@ use crate::scheduler::IO_TIMEOUT;
 use crate::scheduler::Scheduler;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
-use crate::vm::{IoOp, Native, Runtime, Step, Vm, VmError};
+use crate::vm::{IoOp, Native, Runtime, Step, Vm, VmError, Wanted};
 
 mod rows;
 
@@ -491,72 +491,6 @@ impl Drop for TxGuard<'_> {
     }
 }
 
-/// What a statement of a transaction and the task that waits for it
-/// know of each other: whether the statement has taken the connection,
-/// or the task stopped waiting before it did. A statement that never
-/// had the connection is not cancelled in the server and does not abort
-/// the transaction: it gives up.
-#[derive(Clone, Default)]
-struct Claim(Arc<std::sync::atomic::AtomicU8>);
-
-impl Claim {
-    const WAITING: u8 = 0;
-    const TOOK: u8 = 1;
-    const GAVE_UP: u8 = 2;
-
-    /// The statement takes the connection: `false` if its task has
-    /// stopped waiting for it.
-    fn take(&self) -> bool {
-        use std::sync::atomic::Ordering::SeqCst;
-        match self
-            .0
-            .compare_exchange(Self::WAITING, Self::TOOK, SeqCst, SeqCst)
-        {
-            Ok(_) => true,
-            Err(now) => now == Self::TOOK,
-        }
-    }
-
-    /// The task stops waiting: `true` if the statement had not taken
-    /// the connection, and will not.
-    fn give_up(&self) -> bool {
-        use std::sync::atomic::Ordering::SeqCst;
-        self.0
-            .compare_exchange(Self::WAITING, Self::GAVE_UP, SeqCst, SeqCst)
-            .is_ok()
-    }
-
-    fn gave_up(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::SeqCst) == Self::GAVE_UP
-    }
-
-    /// Run `f`, the work of a statement on the I/O pool, with this
-    /// claim as the one `tx_conn` takes the connection for.
-    fn during(self, f: impl FnOnce() -> Value) -> Value {
-        /// The claim goes when `f` ends, also by a panic.
-        struct Clear;
-        impl Drop for Clear {
-            fn drop(&mut self) {
-                CLAIM.with(|claim| claim.borrow_mut().take());
-            }
-        }
-        CLAIM.with(|claim| *claim.borrow_mut() = Some(self));
-        let _clear = Clear;
-        f()
-    }
-
-    /// The claim of the statement this thread runs, if it runs one.
-    fn current() -> Option<Claim> {
-        CLAIM.with(|claim| claim.borrow().clone())
-    }
-}
-
-thread_local! {
-    /// The claim of the statement of a transaction that this thread of
-    /// the I/O pool runs (`Claim::during`).
-    static CLAIM: std::cell::RefCell<Option<Claim>> = const { std::cell::RefCell::new(None) };
-}
-
 /// What `postgres.query` and the other statements of a transaction are
 /// while its stream holds the connection and waits for room in its
 /// channel.
@@ -638,19 +572,21 @@ fn tx_ended() -> Value {
 /// stream: it waits while another one holds it. The `PostgresError` of
 /// one whose transaction has ended or is aborted, and of one that comes
 /// while a stream of the transaction holds the connection and waits for
-/// room in its channel (`STREAM_STILL_OPEN`). A statement whose task
-/// stopped waiting for it before it got the connection gives up (with
-/// a value nobody reads).
-fn tx_conn(cell: &TxCell) -> Result<TxGuard<'_>, Value> {
-    let claim = Claim::current();
+/// room in its channel (`STREAM_STILL_OPEN`). A statement (whose waiter
+/// is `wanted`; a stream has none) that is not wanted any more before
+/// it gets the connection gives up (with a value nobody reads): it
+/// claims the connection when it gets it ([`Wanted::claim`]), and a
+/// statement that never had it is not cancelled in the server and does
+/// not abort the transaction.
+fn tx_conn<'a>(cell: &'a TxCell, wanted: Option<&Wanted>) -> Result<TxGuard<'a>, Value> {
     let gave_up = || other_error("postgres: the statement's task stopped waiting for it");
     let mut holder = cell.holder();
     loop {
-        if claim.as_ref().is_some_and(Claim::gave_up) {
+        if wanted.is_some_and(Wanted::gone) {
             return Err(gave_up());
         }
         if !holder.held {
-            if claim.as_ref().is_some_and(|claim| !claim.take()) {
+            if wanted.is_some_and(|wanted| !wanted.claim()) {
                 return Err(gave_up());
             }
             holder.held = true;
@@ -1800,13 +1736,17 @@ fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
 /// transaction's. A transaction's `Mutex<TxConn>` is held while `f`
 /// runs, never across a VM yield. The value is `Ok` of `f`'s, or `Err`
 /// of the `PostgresError`.
-fn with_conn(target: ExecutorRef, f: impl FnOnce(&Conn) -> Result<Value, Value>) -> Value {
+fn with_conn(
+    target: ExecutorRef,
+    wanted: &Wanted,
+    f: impl FnOnce(&Conn) -> Result<Value, Value>,
+) -> Value {
     let done = match target {
         ExecutorRef::Pool(pool) => match PinnedConn::take(&pool) {
             Ok(conn) => f(&conn),
             Err(e) => Err(pool_error_value(&e)),
         },
-        ExecutorRef::Tx(cell) => match tx_conn(&cell) {
+        ExecutorRef::Tx(cell) => match tx_conn(&cell, Some(wanted)) {
             Ok(conn) => f(conn.conn()),
             Err(e) => Err(e),
         },
@@ -1835,11 +1775,11 @@ fn do_query(
     target: ExecutorRef,
     sql: String,
     params: Vec<TextParam>,
-    row: RowType,
-    rt: Arc<Runtime>,
+    (row, rt): (RowType, Arc<Runtime>),
+    wanted: &Wanted,
 ) -> Value {
     let bind = binding(&params);
-    with_conn(target, |conn| {
+    with_conn(target, wanted, |conn| {
         let (statement, plan) = prepare(conn, &rt, &sql, &row)?;
         let rows = conn.wait(conn.client().query(&statement, &bind));
         let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
@@ -1849,9 +1789,9 @@ fn do_query(
 }
 
 /// Run a statement and give the number of rows it affected.
-fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>) -> Value {
+fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>, wanted: &Wanted) -> Value {
     let bind = binding(&params);
-    with_conn(target, |conn| {
+    with_conn(target, wanted, |conn| {
         match conn.wait(conn.client().execute(sql.as_str(), &bind)) {
             Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
             Err(e) => Err(pg_error_to_variant(&e)),
@@ -1989,7 +1929,7 @@ fn do_stream_worker(
                 let _ = send_or_stop(wrapped);
             }
         },
-        ExecutorRef::Tx(cell) => match tx_conn(&cell) {
+        ExecutorRef::Tx(cell) => match tx_conn(&cell, None) {
             Ok(conn) => {
                 let _ = pump(conn.conn(), &sql, &bind);
             }
@@ -2021,16 +1961,18 @@ fn do_cursor_open(
     params: Vec<TextParam>,
     batch_size: u64,
     (row, rt): (RowType, Arc<Runtime>),
+    wanted: &Wanted,
 ) -> Value {
     let bind = binding(&params);
-    let planned = tx_conn(&cell).and_then(|conn| prepare(conn.conn(), &rt, &sql, &row));
+    let planned =
+        tx_conn(&cell, Some(wanted)).and_then(|conn| prepare(conn.conn(), &rt, &sql, &row));
     let plan = match planned {
         Ok((_, plan)) => Arc::new(plan),
         Err(e) => return err(e),
     };
     let (cursor_id, name) = register_cursor(tx_id, batch_size, plan);
     let declare_sql = format!("DECLARE {name} CURSOR FOR {sql}");
-    let declared = tx_conn(&cell).map(|conn| {
+    let declared = tx_conn(&cell, Some(wanted)).map(|conn| {
         let conn = conn.conn();
         conn.wait(conn.client().execute(declare_sql.as_str(), &bind))
     });
@@ -2051,7 +1993,7 @@ fn do_cursor_open(
 }
 
 /// Fetch the next batch from an open cursor. Empty list = exhausted.
-fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>) -> Value {
+fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>, wanted: &Wanted) -> Value {
     let entry = match lookup_cursor(cursor_id) {
         Some(e) => e,
         None if cursor_tx_ended(cursor_id) => return err(tx_ended()),
@@ -2081,7 +2023,7 @@ fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>) -> Value {
         }
     };
     let fetch_sql = format!("FETCH FORWARD {} FROM {}", entry.batch_size, entry.name);
-    let conn = match tx_conn(&cell) {
+    let conn = match tx_conn(&cell, Some(wanted)) {
         Ok(conn) => conn,
         Err(e) => return err(e),
     };
@@ -2116,7 +2058,7 @@ fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>) -> Value {
 
 /// Explicitly close a cursor. Runs `CLOSE <name>` if the tx is still
 /// alive; otherwise no-ops (the tx end implicitly closed it).
-fn do_cursor_close(cursor_id: u64) -> Value {
+fn do_cursor_close(cursor_id: u64, wanted: &Wanted) -> Value {
     let entry = match remove_cursor(cursor_id) {
         Some(e) => e,
         None => {
@@ -2132,7 +2074,7 @@ fn do_cursor_close(cursor_id: u64) -> Value {
         }
     };
     let close_sql = format!("CLOSE {}", entry.name);
-    let Ok(conn) = tx_conn(&cell) else {
+    let Ok(conn) = tx_conn(&cell, Some(wanted)) else {
         // The transaction has ended, and the cursor with it.
         return ok(Value::Unit);
     };
@@ -2272,7 +2214,11 @@ fn do_listen_worker(
 /// Blocking worker for `notify`. Uses `SELECT pg_notify($1, $2)` so the
 /// channel name and payload are both bind parameters — no escaping
 /// needed and dynamic channel names are supported.
-fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Value {
+fn do_notify(
+    target: ExecutorRef,
+    (channel_name, payload): (String, String),
+    wanted: &Wanted,
+) -> Value {
     let sql = "SELECT pg_notify($1, $2)";
     let params: [&(dyn ToSql + Sync); 2] = [&channel_name, &payload];
     match target {
@@ -2287,7 +2233,7 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
             }
         }
         ExecutorRef::Tx(cell) => {
-            let conn = match tx_conn(&cell) {
+            let conn = match tx_conn(&cell, Some(wanted)) {
                 Ok(conn) => conn,
                 Err(e) => return err(e),
             };
@@ -2417,7 +2363,9 @@ builtins! {
         let sql = sql.to_string();
         let tx = TxHandle::take(conn).and_then(tx_of);
         let rt = vm.runtime.clone();
-        Ok(statement(vm, tx, unsendable, move || do_query(target, sql, params, row, rt)))
+        Ok(statement(vm, tx, unsendable, move |wanted| {
+            do_query(target, sql, params, (row, rt), wanted)
+        }))
     }
 
     fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Started {
@@ -2428,7 +2376,7 @@ builtins! {
         let target = resolve_executor(conn)?;
         let sql = sql.to_string();
         let tx = TxHandle::take(conn).and_then(tx_of);
-        Ok(statement(vm, tx, unsendable, move || do_execute(target, sql, params)))
+        Ok(statement(vm, tx, unsendable, move |wanted| do_execute(target, sql, params, wanted)))
     }
 
     // `postgres.transact(pool, callback)` — pins a single pooled
@@ -2463,7 +2411,7 @@ builtins! {
         let pool = pool.open()?;
         let runtime = vm.runtime.clone();
         let op = vm
-            .start_io(pg_timeout_err, move || begin_tx(&pool))
+            .start_io(pg_timeout_err, move |_| begin_tx(&pool))
             // The task went before it had its transaction: nobody ends
             // it but this.
             .unheard_with(move |began| {
@@ -2523,7 +2471,7 @@ builtins! {
         let scheduler = vm.scheduler().clone();
         let starting = scheduler.external();
         let decode = (row, vm.runtime.clone());
-        let op = vm.start_io(pg_timeout_err, move || {
+        let op = vm.start_io(pg_timeout_err, move |_| {
             let _running = scheduler.enter();
             drop(starting);
             let params = (params, unsendable);
@@ -2547,20 +2495,20 @@ builtins! {
         };
         let sql = sql.to_string();
         let decode = (row, vm.runtime.clone());
-        Ok(statement(vm, tx_of(tx), unsendable, move || {
-            do_cursor_open(tx.0, cell, sql, params, batch_size, decode)
+        Ok(statement(vm, tx_of(tx), unsendable, move |wanted| {
+            do_cursor_open(tx.0, cell, sql, params, batch_size, decode, wanted)
         }))
     }
 
     fn cursor_next(vm, cursor: CursorHandle) -> Result<Step, VmError> {
         let tx = lookup_cursor(cursor.0).and_then(|entry| tx_of(TxHandle(entry.tx_id)));
         let rt = vm.runtime.clone();
-        statement(vm, tx, None, move || do_cursor_next(cursor.0, rt))
+        statement(vm, tx, None, move |wanted| do_cursor_next(cursor.0, rt, wanted))
     }
 
     fn cursor_close(vm, cursor: CursorHandle) -> Result<Step, VmError> {
         let tx = lookup_cursor(cursor.0).and_then(|entry| tx_of(TxHandle(entry.tx_id)));
-        statement(vm, tx, None, move || do_cursor_close(cursor.0))
+        statement(vm, tx, None, move |wanted| do_cursor_close(cursor.0, wanted))
     }
 
     fn close(pool: PoolHandle) {
@@ -2621,7 +2569,7 @@ builtins! {
             let worker_ch = worker_channel.clone();
             let scheduler = runtime.scheduler.clone();
             let serving = scheduler.external();
-            let op = runtime.io_pool.submit(pg_timeout_err, move || {
+            let op = runtime.io_pool.submit(pg_timeout_err, Vec::new(), move |_| {
                 do_listen_worker(conn, channel_name, told, worker_ch, scheduler);
                 drop(serving);
                 Value::Unit
@@ -2643,7 +2591,7 @@ builtins! {
         }
         let (channel, payload) = (channel.to_string(), payload.to_string());
         let tx = TxHandle::take(conn).and_then(tx_of);
-        Ok(statement(vm, tx, None, move || do_notify(target, channel, payload)))
+        Ok(statement(vm, tx, None, move |wanted| do_notify(target, (channel, payload), wanted)))
     }
 }
 
@@ -2682,33 +2630,29 @@ fn statement(
     vm: &mut Vm,
     tx: Option<StatementTx>,
     unsendable: Option<Unsendable>,
-    f: impl FnOnce() -> Value + Send + 'static,
+    f: impl FnOnce(&Wanted) -> Value + Send + 'static,
 ) -> Result<Step, VmError> {
-    let claim = Claim::default();
-    let op = match &tx {
-        None => vm.start_io(pg_timeout_err, f),
-        Some(_) => {
-            let claim = claim.clone();
-            vm.start_io(pg_timeout_err, move || claim.during(f))
-        }
-    };
+    let op = vm.start_io(pg_timeout_err, f);
     let op = match tx {
         None => op,
         Some(StatementTx { canceller, cell }) => {
             let runtime = vm.runtime.clone();
+            let wanted = op.wanted();
             // Called where the waiter goes, which must not wait.
             op.stop_with(move || {
                 // One that never had the connection gives up there.
-                if claim.give_up() {
+                if !wanted.claimed() {
                     let _holder = cell.holder();
                     cell.changed.notify_all();
                     return;
                 }
                 canceller.mark();
-                let request = runtime.io_pool.submit(pg_timeout_err, move || {
-                    canceller.cancel();
-                    Value::Unit
-                });
+                let request = runtime
+                    .io_pool
+                    .submit(pg_timeout_err, Vec::new(), move |_| {
+                        canceller.cancel();
+                        Value::Unit
+                    });
                 request.detach();
             })
         }
@@ -2797,7 +2741,7 @@ impl Native for Transact {
                 let op = vm
                     .runtime
                     .io_pool
-                    .submit(pg_timeout_err, move || end_tx(entry, input));
+                    .submit(pg_timeout_err, Vec::new(), move |_| end_tx(entry, input));
                 // Not ended at `SILT_IO_TIMEOUT`: an `Err` must never
                 // stand for a transaction that was committed. (A
                 // deadline or a cancel does end it; the task then
@@ -2862,10 +2806,12 @@ fn abandon_tx(runtime: &crate::vm::Runtime, tx_id: u64) {
     let Some(entry) = take_tx(tx_id, runtime.scheduler.wake()) else {
         return;
     };
-    let op = runtime.io_pool.submit(pg_timeout_err, move || {
-        roll_back_abandoned(entry);
-        Value::Unit
-    });
+    let op = runtime
+        .io_pool
+        .submit(pg_timeout_err, Vec::new(), move |_| {
+            roll_back_abandoned(entry);
+            Value::Unit
+        });
     op.detach();
 }
 

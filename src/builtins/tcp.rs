@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use super::common::{READ_AT_ONCE, ok};
 use super::typed::{self, Bytes, builtins};
-use crate::runtime::handle::{Accepted, GiveUp, TcpListenerHandle, TcpStreamHandle};
+use crate::runtime::handle::{Accepted, TcpListenerHandle, TcpStreamHandle};
 use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
@@ -205,7 +205,7 @@ mod tls {
                 }
             }
         };
-        let op = vm.start_io(tcp_timeout_err, move || {
+        let op = vm.start_io(tcp_timeout_err, move |_| {
             let wrapped = config().and_then(|config| {
                 let conn = ServerConnection::new(Arc::new(config))
                     .map_err(|e| format!("server connection setup: {e}"))?;
@@ -409,17 +409,6 @@ fn err_closed() -> Value {
     Value::variant(bv::ERR, vec![Value::variant(bv::TCP_CLOSED, vec![])])
 }
 
-/// What gives an accept of the task of `vm` on `listener` up, and
-/// what does when nobody waits for the accept any more.
-fn accept_stop(
-    vm: &Vm,
-    listener: &Arc<TcpListenerHandle>,
-) -> (GiveUp, impl FnOnce() + Send + 'static) {
-    let give_up = GiveUp::of_task(vm.nothing_new_flags());
-    let (listener, mine) = (listener.clone(), give_up.clone());
-    (give_up, move || listener.stop(&mine))
-}
-
 /// What an accept on a listener that an `http.serve` has to itself
 /// says.
 const SERVED: &str = "the listener is served by http.serve";
@@ -444,10 +433,9 @@ pub(crate) fn accept_op(
     server: bool,
 ) -> crate::vm::IoOp {
     let next_id = vm.next_tcp_id();
-    let (give_up, stop) = accept_stop(vm, listener);
     let (accepting, listener) = (listener.clone(), listener.clone());
-    vm.start_io(tcp_timeout_err, move || {
-        match accepting.accept(&give_up, server) {
+    let op = vm.start_io(tcp_timeout_err, move |wanted| {
+        match accepting.accept(wanted, server) {
             Ok(Accepted::Conn(stream)) => Value::variant(
                 bv::OK,
                 vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
@@ -460,8 +448,14 @@ pub(crate) fn accept_op(
             Ok(Accepted::Served) => err(SERVED),
             Err(e) => tcp_io_err(Doing::Using, &e),
         }
+    });
+    let (stopping, wanted) = (listener.clone(), op.wanted());
+    // An accept that has claimed its connection is on its way back.
+    op.stop_with(move || {
+        if !wanted.claimed() {
+            stopping.stop(&wanted)
+        }
     })
-    .stop_with(stop)
     // A connection that came just as the task stopped waiting (it
     // was cancelled, its deadline passed) reached no task: only
     // the operation's value holds it. It is a client's, and goes
@@ -508,7 +502,9 @@ fn on_connection(
     if stream.is_closed() {
         return Ok(Step::Done(err_closed()));
     }
-    let op = vm.start_io(tcp_timeout_err, op).stop_unless_taken(unheard);
+    let op = vm
+        .start_io(tcp_timeout_err, move |_| op())
+        .stop_unless_taken(unheard);
     vm.io_wait("tcp", tcp_timeout_err, op)
 }
 
