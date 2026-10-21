@@ -5,13 +5,16 @@
 -- an impl at row 600 after the 599 rows before it, and then the end;
 -- the decoder's own error at row 600 the same; an impl that fails at
 -- row 600 ends the stream after the 599 rows before it; a stream closed
--- after 300 rows stops, and the pool's next statement runs; and a
--- stream in a transaction.
+-- after 300 rows stops, and the pool's next statement runs; a stream
+-- in a transaction; and an impl that waits (it sleeps, and joins a task
+-- it spawns) finishes its rows all the same.
 import channel
 import env
 import json
 import postgres
 import string
+import task
+import time
 
 type Code { digits: String }
 
@@ -29,6 +32,23 @@ trait json.Decode for Code {
 }
 
 type R { n: Int, code: Option(Code) }
+
+type Slow { n: Int }
+
+trait json.Decode for Slow {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> {
+        time.sleep(time.ms(1))
+        let t = task.spawn { -> n * 2 }
+        Ok(Slow { n: task.join(t) })
+      }
+      _ -> Err(json.Other("no number here"))
+    }
+  }
+}
+
+type S { slow: Slow }
 
 fn url() -> String {
   match env.get("SILT_TEST_POSTGRES_URL") {
@@ -118,6 +138,23 @@ fn main() {
         Ok(())
       }
       println("  {done}")
+      println("an impl that waits:")
+      match postgres.stream(db, "SELECT to_jsonb(g) AS slow FROM generate_series(1, 300) g", (), S) {
+        Ok(rows) -> {
+          let (n, sum) = loop n = 0, sum = 0 {
+            match channel.receive(rows) {
+              Some(Ok(row)) -> loop(n + 1, sum + row.slow.n)
+              Some(Err(e)) -> {
+                println(e.message())
+                (n, sum)
+              }
+              None -> (n, sum)
+            }
+          }
+          println("  {n} rows, their sum {sum}")
+        }
+        Err(e) -> println(e.message())
+      }
       postgres.close(db)
     }
     Err(e) -> println(e.message())

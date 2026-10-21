@@ -696,6 +696,20 @@ impl Scheduler {
         self.inner.current_owner()
     }
 
+    /// Run `run` on the calling thread as code of a task of `owner`:
+    /// what it spawns counts with that owner's tasks.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn as_owner<R>(&self, owner: u64, run: impl FnOnce() -> R) -> R {
+        struct Restore(Option<u64>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = RUNNING_TASK_OWNER.try_with(|owner| owner.set(self.0));
+            }
+        }
+        let _restore = Restore(RUNNING_TASK_OWNER.with(|now| now.replace(Some(owner))));
+        run()
+    }
+
     /// See [`External`]. It counts for the owner of the code that asks.
     pub(crate) fn external(&self) -> External {
         let group = self.inner.group(self.inner.current_owner());

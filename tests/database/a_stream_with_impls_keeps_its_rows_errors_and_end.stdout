@@ -14,3 +14,5 @@ closed after 300 rows:
 in a transaction:
   2000 rows in order, then (end)
   Ok(())
+an impl that waits:
+  300 rows, their sum 90300

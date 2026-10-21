@@ -680,6 +680,20 @@ impl Vm {
         self.finish_run(run, floor, stack_floor)
     }
 
+    /// Run the builtin's frame `native` to its end here, on the calling
+    /// thread, as [`Vm::show_text`] runs `Display` impls: the thread
+    /// counts as a task of the scheduler while it does, and waits where
+    /// the code waits. Its value, or the error of the run (the frames it
+    /// leaves are dropped).
+    #[cfg(feature = "postgres")]
+    pub(crate) fn run_here(&mut self, native: Box<dyn Native>) -> Result<Value, VmError> {
+        let floor = self.frames.len();
+        let stack_floor = self.stack.len();
+        self.push_native_frame(native);
+        let run = self.run_thread(floor, |vm| vm.run_frames(floor, vm.own_slice()));
+        self.finish_run(run, floor, stack_floor)
+    }
+
     /// Make this VM the one of a task that calls `closure` with no
     /// arguments: the scheduler runs it slice by slice
     /// ([`Vm::execute_slice`]).
