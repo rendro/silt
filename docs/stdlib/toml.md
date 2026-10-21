@@ -124,7 +124,9 @@ has (a `Set`). An `Option` around it stays structural (a key left out is
 variant, with the path of its part appended as to the decoder's own
 errors: `Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
 posts[1].tags")`, `MissingField("name")` there is
-`MissingField("posts[1].tags.name")`. A `Syntax` error (an impl that
+`MissingField("posts[1].tags.name")`; a message is the impl's text with
+the path appended as it is (`TypeMismatch("Int", "string at k at
+posts[1].tags")` for one the impl got from `json.decode`). A `Syntax` error (an impl that
 parses a JSON text of its own) is an `Other` of json's message of it,
 `Other("json syntax error at byte 3: ... at posts[1].tags")`, since its
 offset is in that text and not in the TOML document. The first error the
