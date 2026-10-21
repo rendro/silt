@@ -1327,7 +1327,7 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
         return tx.open().map(ExecutorRef::Tx);
     }
     Err(other_error(format!(
-        "postgres requires PgPool or PgTx, got {}",
+        "postgres requires a postgres.PgPool or a postgres.PgTx, got {}",
         match conn {
             Value::Variant(variant) => variant.name(),
             other => other.kind(),
@@ -2588,9 +2588,9 @@ fn mend(expected: &str, actual: &str) -> Mend {
                     | "String"
                     | "Bool"
                     | "Bytes"
-                    | "Date"
-                    | "Time"
-                    | "DateTime"
+                    | "time.Date"
+                    | "time.Time"
+                    | "time.DateTime"
                     | "json.Value"
             ),
         }
@@ -3196,7 +3196,7 @@ mod tests {
             "MyType",
             "24:00:00",
         ] {
-            for expected in ["Int", "List(List(Int))", "Date", "Bytes", "json.Value"] {
+            for expected in ["Int", "List(List(Int))", "time.Date", "Bytes", "json.Value"] {
                 assert_eq!(mend(expected, actual), Mend::Cast, "{expected} {actual}");
             }
             assert_eq!(mend("Meta", actual), Mend::Json, "{actual}");
@@ -3204,7 +3204,7 @@ mod tests {
             assert_eq!(mend("(Int, String)", actual), Mend::Json, "{actual}");
             assert_eq!(mend("List(Meta)", actual), Mend::JsonArray, "{actual}");
             assert_eq!(mend("List(Option(Int))", actual), Mend::Cast, "{actual}");
-            assert_eq!(mend("List(List(Option(Date)))", actual), Mend::Cast);
+            assert_eq!(mend("List(List(Option(time.Date)))", actual), Mend::Cast);
             assert_eq!(mend("List(Option(Meta))", actual), Mend::JsonArray);
             assert_eq!(
                 mend("List(List(Meta))", actual),

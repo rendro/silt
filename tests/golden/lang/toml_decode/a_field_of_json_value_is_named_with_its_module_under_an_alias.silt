@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A decoder's refusal names the field's type as the program writes a
+-- type of the json module, with the module's own name, whatever name
+-- the module is imported under: `json.Value`, never `Value` or `j.Value`.
+import json as j
+import toml as t
+
+type Q { q: j.Value }
+type P { p: Option(List(j.Value)) }
+
+fn d() {
+  let _ = t.parse_map("", Q)
+}
+
+fn e() {
+  let _ = t.parse("", P)
+}
+
+fn main() {}

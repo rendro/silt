@@ -4,7 +4,7 @@
 -- implemented for Int: a call on an Int here sees both traits and is
 -- ambiguous (prelude traits are always seen); a call through a `where`
 -- bound names its trait and is not.
--- stderr-contains: error[type]: ambiguous method 'display' on type 'Int': provided by traits Describe, prelude.Display
+-- stderr-contains: error[type]: ambiguous method 'display' on type 'Int': provided by traits Describe, Display
 -- stderr-contains: --> user_trait_method_named_like_builtin_call.silt:16:11
 trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }

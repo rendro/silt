@@ -9,6 +9,7 @@ error[type]: 'time.Date' is not a value
     |
  16 |   let _ = json.parse("1", time.Date)
     |                           ^^^^^^^^^ 'time.Date' is not a value
+  = help: only `json.Value` of a module's types can be given as a value; a decoder decodes a `time.Date` as the type of a record's field: `type R { at: time.Date }`
 
 error[type]: undefined variable 'Option'
  --> a_type_argument_error_is_the_only_error.silt:17:27
@@ -27,4 +28,4 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
     |
  21 |   println(g("\{}", k.t))
     |                    ^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

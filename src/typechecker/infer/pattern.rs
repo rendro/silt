@@ -254,7 +254,7 @@ impl TypeChecker {
             PatternKind::Constructor { name, .. } => match self.pattern_constructor_enum(part) {
                 Some((enum_ref, info)) => format!(
                     "constructor '{}' is only one of {} variants of enum '{}'",
-                    name,
+                    self.written_variant(enum_ref, *name),
                     info.variants.len(),
                     self.show_type(&Type::Generic(enum_ref, Vec::new()))
                 ),
@@ -298,7 +298,7 @@ impl TypeChecker {
     fn refutable_type_reason(&self, ty: &Type) -> String {
         format!(
             "the pattern does not match every value of type '{}'",
-            self.apply(ty)
+            self.show_type(&self.apply(ty))
         )
     }
 
@@ -970,7 +970,7 @@ impl TypeChecker {
                 Code::ArityMismatch,
                 format!(
                     "constructor '{}' expects {} {}, but pattern has {}",
-                    name,
+                    self.written_variant(enum_ref, name),
                     expected,
                     plural(expected, "field", "fields"),
                     args.len()

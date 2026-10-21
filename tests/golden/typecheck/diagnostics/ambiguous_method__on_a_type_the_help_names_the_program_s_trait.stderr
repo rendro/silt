@@ -1,13 +1,13 @@
-error[type]: ambiguous method 'display' on type 'T': provided by traits Pretty, prelude.Display
+error[type]: ambiguous method 'display' on type 'T': provided by traits Display, Pretty
  --> ambiguous_method__on_a_type_the_help_names_the_program_s_trait.silt:21:11
     |
  21 |   println(T.display(T { n: 1 }))
-    |           ^^^^^^^^^ ambiguous method 'display' on type 'T': provided by traits Pretty, prelude.Display
+    |           ^^^^^^^^^ ambiguous method 'display' on type 'T': provided by traits Display, Pretty
   = help: say which is meant: call it through a function bounded by the trait you mean, `where a: Pretty`
 
-error[type]: ambiguous method 'display' on type 'Int': provided by traits Pretty, prelude.Display
+error[type]: ambiguous method 'display' on type 'Int': provided by traits Display, Pretty
  --> ambiguous_method__on_a_type_the_help_names_the_program_s_trait.silt:22:11
     |
  22 |   println(Int.display(5))
-    |           ^^^^^^^^^^^ ambiguous method 'display' on type 'Int': provided by traits Pretty, prelude.Display
+    |           ^^^^^^^^^^^ ambiguous method 'display' on type 'Int': provided by traits Display, Pretty
   = help: say which is meant: call it through a function bounded by the trait you mean, `where a: Pretty`

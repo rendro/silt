@@ -53,9 +53,14 @@ impl TypeChecker {
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
                 if !self.head_has_trait(*supertrait, *type_name) {
+                    let (ty, tr, sup) = (
+                        self.show_type(&Type::Generic(*type_name, Vec::new())),
+                        self.show_trait(*trait_name),
+                        self.show_trait(*supertrait),
+                    );
                     self.error(Code::MissingTraitImpl,
                         format!(
-                            "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
+                            "type '{ty}' implements '{tr}' but does not implement supertrait '{sup}'"
                         ),
                         diag_span,
                     );
@@ -97,22 +102,18 @@ impl TypeChecker {
                 if !pos_ok {
                     let fmt_args = |args: &[Type]| -> String {
                         args.iter()
-                            .map(|t| format!("{t}"))
+                            .map(|t| self.show_type(&self.apply(t)))
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
+                    let (tr, sup) = (self.show_trait(*trait_name), self.show_trait(*supertrait));
+                    let ty = self.show_type(&Type::Generic(*type_name, Vec::new()));
                     self.error(Code::InvalidTraitImpl,
                         format!(
-                            "impl {}({}) for {} requires impl {}({}) for {}, but found impl {}({}) for {}",
-                            resolve(trait_name.name),
+                            "impl {tr}({}) for {ty} requires impl {sup}({}) for {ty}, but found impl {sup}({}) for {ty}",
                             fmt_args(&enclosing_args),
-                            type_name,
-                            resolve(supertrait.name),
                             fmt_args(&expected_super_args),
-                            type_name,
-                            resolve(supertrait.name),
                             fmt_args(&actual_super_args),
-                            type_name,
                         ),
                         diag_span,
                     );
@@ -136,7 +137,9 @@ impl TypeChecker {
                         Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
-                            trait_name, type_name, method_name
+                            self.show_trait(*trait_name),
+                            self.show_type(&Type::Generic(*type_name, Vec::new())),
+                            method_name
                         ),
                         diag_span,
                     );
@@ -693,7 +696,7 @@ impl TypeChecker {
                     .map_or_else(|| "?".to_string(), |name| resolve(*name))
             })
         };
-        let (tr, ty) = (self.show_trait(tr), resolve(ti.target_type));
+        let (tr, ty) = (self.show_trait(tr), self.impl_target_name(ti, target_type));
         let place = match (named(of_trait), named(of_type)) {
             (Some(t), Some(y)) if t == y => {
                 format!("it may be written in module '{t}', which declares both")
@@ -722,12 +725,25 @@ impl TypeChecker {
         false
     }
 
-    /// The trait the impl `ti` implements, as messages name it: as
-    /// written, but a trait of a builtin module with its module
-    /// (`json.Encode`, whatever the impl wrote).
+    /// The trait the impl `ti` implements, as messages name it: as a
+    /// program writes it, a trait of another module with its module
+    /// (`json.Encode`, `traits.Area`, whatever the impl wrote).
     fn impl_trait_name(&self, ti: &TraitImpl) -> String {
         self.impl_trait(ti)
-            .map_or_else(|| resolve(ti.trait_name), |tr| tr.to_string())
+            .map_or_else(|| resolve(ti.trait_name), |tr| self.show_trait(tr))
+    }
+
+    /// The target of the impl `ti`, for the type `target_type`, as
+    /// messages name it: as the impl writes it (an alias of the type
+    /// keeps its name), a type of another module with its module
+    /// (`time.Date`, `shapes.Square`).
+    fn impl_target_name(&self, ti: &TraitImpl, target_type: TypeRef) -> String {
+        match self.other_module(target_type) {
+            Some(module) if ti.target_type == target_type.name => {
+                format!("{module}.{}", ti.target_type)
+            }
+            _ => ti.target_type.to_string(),
+        }
     }
 
     /// Whether the impl `ti`, for the type `target_type`, is written
@@ -819,7 +835,7 @@ impl TypeChecker {
                     format!(
                         "duplicate implementation of trait '{}' for type '{}'",
                         self.impl_trait_name(ti),
-                        ti.target_type
+                        self.impl_target_name(ti, target_type)
                     ),
                     ti.span,
                 );
@@ -1230,7 +1246,7 @@ impl TypeChecker {
                         expected,
                         inference::plural(expected, "type argument", "type arguments"),
                         ti.trait_args.len(),
-                        resolve(ti.target_type),
+                        self.impl_target_name(ti, target_type),
                     ),
                     ti.span,
                 );
@@ -1304,7 +1320,7 @@ impl TypeChecker {
                         "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
                         resolve(binding.name),
                         self.impl_trait_name(ti),
-                        resolve(ti.target_type),
+                        self.impl_target_name(ti, target_type),
                     ),
                     binding.span,
                 );
@@ -1381,7 +1397,7 @@ impl TypeChecker {
                     format!(
                         "impl of '{}' for '{}' is missing required associated type '{}'",
                         self.impl_trait_name(ti),
-                        resolve(ti.target_type),
+                        self.impl_target_name(ti, target_type),
                         resolve(assoc.name),
                     ),
                     ti.span,
@@ -1631,14 +1647,7 @@ impl TypeChecker {
                     written
                 }
                 Some(expected) => {
-                    // (The method of a builtin module's trait is written
-                    // with the module's types: a message names them so,
-                    // `json.Value`.)
-                    let of_module = crate::defs::builtin_trait_of_id(trait_key.id.0)
-                        .is_some_and(|(_, module)| module.is_some());
-                    self.qualify_module_types = of_module;
                     let unified = self.unify_types(&written, expected);
-                    self.qualify_module_types = false;
                     match unified {
                         Ok(()) => expected.clone(),
                         Err(mismatch) => {
@@ -1744,7 +1753,7 @@ impl TypeChecker {
                                              `{}: {}`, which the trait does not declare for it",
                                             method.name,
                                             self.impl_trait_name(ti),
-                                            ti.target_type,
+                                            self.impl_target_name(ti, target_type),
                                             type_param,
                                             self.show_bound(*trait_name, &resolved_bound_args)
                                         ),
@@ -1752,7 +1761,7 @@ impl TypeChecker {
                                     .with_help(format!(
                                         "a call through the trait would not owe it: declare the \
                                          bound on the method in trait '{}', or on the impl's header",
-                                        ti.trait_name
+                                        self.impl_trait_name(ti)
                                     )),
                                 );
                             }
@@ -1910,9 +1919,11 @@ impl TypeChecker {
             record.field_spans.get(at).copied()
         };
         // The impl as it is written (its target may be an alias of the
-        // record), the record by its name.
-        let (tr, of) = (self.impl_trait_name(ti), ti.target_type);
+        // record; a type of another module with its module), the record
+        // by its name.
+        let tr = self.impl_trait_name(ti);
         let ty = self.show_type(&Type::Generic(target_type, vec![]));
+        let of = self.impl_target_name(ti, target_type);
         let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
         let mut written: Vec<Symbol> = Vec::new();
         for method in &ti.methods {

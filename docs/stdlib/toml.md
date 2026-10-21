@@ -65,7 +65,7 @@ The fields of a record type, and of each variant of an enum type (and of every
 record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
-- `Date`, `Time`, `DateTime`
+- `time.Date`, `time.Time`, `time.DateTime`
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - non-generic record types
@@ -82,7 +82,9 @@ field is `Err(TypeMismatch("Int", "float at x"))`, because TOML says
 which kind a number is. In the same way a datetime literal (`1990-01-01`,
 `07:32:00`) goes into a `Date`, `Time` or `DateTime` field only: for a
 `String` field `s` it is `Err(TypeMismatch("String", "datetime at s"))`, and the
-text in quotes (`"1990-01-01"`) is a string.
+text in quotes (`"1990-01-01"`) is a string. A value that is neither a
+datetime literal nor a string, for a `Date` field `d`, is
+`Err(TypeMismatch("time.Date", "integer at d"))` (`time.Time`, `time.DateTime` likewise).
 
 The type a decoder is given is checked where it is known, as for
 `json.parse`: written at the call (`toml.parse(text, Config)`), held in a

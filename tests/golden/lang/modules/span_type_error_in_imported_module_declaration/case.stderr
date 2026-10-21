@@ -1,5 +1,5 @@
-error[type]: type 'Cat' does not implement trait 'a.Speak'
+error[type]: type 'b.Cat' does not implement trait 'a.Speak'
  --> main.silt:9:18
    |
  9 |   println(a.talk(c))
-   |                  ^ type 'Cat' does not implement trait 'a.Speak'
+   |                  ^ type 'b.Cat' does not implement trait 'a.Speak'

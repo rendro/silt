@@ -5,11 +5,11 @@ error[type]: ambiguous method 'show' on a value of type `a`: provided by traits 
     |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by traits Br, shapes.Ar
   = help: the bounds `Br` and `shapes.Ar` both give `show`: call it from a function bounded by only one of them
 
-error[type]: ambiguous method 'display' on a value of type `a`: provided by traits Shows, prelude.Display
+error[type]: ambiguous method 'display' on a value of type `a`: provided by traits Display, Shows
  --> main.silt:36:3
     |
  36 |   x.display()
-    |   ^^^^^^^^^ ambiguous method 'display' on a value of type `a`: provided by traits Shows, prelude.Display
+    |   ^^^^^^^^^ ambiguous method 'display' on a value of type `a`: provided by traits Display, Shows
   = help: the bounds `Display` and `Shows` both give `display`: call it from a function bounded by only one of them
 
 error[type]: ambiguous method 'show' on a value of type `a`: provided by traits Ar, Br

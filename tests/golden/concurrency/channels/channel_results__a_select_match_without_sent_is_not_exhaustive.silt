@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: missing variant Sent
+-- stderr-contains: non-exhaustive match: missing variant channel.Sent
 -- stderr-not-contains: Empty
 -- A select match is told of the variants `channel.select` can give and
 -- of no other.

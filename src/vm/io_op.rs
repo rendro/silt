@@ -856,6 +856,15 @@ impl IoOp {
         Some(value)
     }
 
+    /// Whether the operation is over: its value is there and its
+    /// thread is done with it, so a waiter that goes now sees the value
+    /// (`Leave::Returns`'s `give_back` runs in its `Drop`). The value
+    /// alone (`cell`) comes a moment before that.
+    #[cfg(test)]
+    pub(crate) fn finished(&self) -> bool {
+        *self.state.phase.lock() == Phase::Finished
+    }
+
     /// Nobody waits for the operation, and it counts as pending no
     /// longer; its thread stays the pool's, and it is not one of those
     /// that cannot be interrupted ([`IO_POOL_UNHEARD_MAX`]): work that

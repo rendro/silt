@@ -133,7 +133,12 @@ impl TypeChecker {
             true => ROW_TYPE_HELP,
             false => decodable_types_help.as_str(),
         };
-        let type_name = resolve(written.unwrap_or(head.name));
+        // (A type of another module with its module, `time.Date`; an
+        // alias by its name.)
+        let type_name = match written {
+            Some(alias) => resolve(alias),
+            None => self.show_type(&Type::Generic(head, Vec::new())),
+        };
         let refusal = |code, message: String, help: &str| {
             Some(Diagnostic::error(code, span, message).with_help(help))
         };
@@ -162,17 +167,18 @@ impl TypeChecker {
                     // the decoders read the fields as the type declares
                     // them.
                     Some(_) => format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: it names `{ty}`, \
+                        "`{builtin_name}` cannot decode `{type_name}`: it names `{}`, \
                          an instance of the generic {kind} type `{}`, and a decoder reads \
                          the fields of a {kind} type without parameters",
-                        head.name
+                        self.show_type(ty),
+                        self.show_type(&Type::Generic(head, Vec::new()))
                     ),
                     // An instance that no alias names.
                     None if free_vars_in(ty).is_empty() => format!(
-                        "`{builtin_name}` cannot decode `{ty}`: it is an instance of the \
-                         generic {kind} type `{}`, and a decoder reads the fields of a \
+                        "`{builtin_name}` cannot decode `{}`: it is an instance of the \
+                         generic {kind} type `{type_name}`, and a decoder reads the fields of a \
                          {kind} type without parameters",
-                        head.name
+                        self.show_type(ty)
                     ),
                     None => format!(
                         "`{builtin_name}` cannot decode `{type_name}`: it is a generic {kind} \
@@ -292,7 +298,10 @@ impl TypeChecker {
                 Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
                     let enum_type = (nested.iter().map(|id| type_ref(*id)))
                         .find(|t| self.tables.is_enum(*t) && !self.has_decode_impl(*t))?;
-                    (!family.decodes_enums()).then(|| resolve(enum_type.name))
+                    (!family.decodes_enums()).then(|| match self.other_module(enum_type) {
+                        Some(module) => format!("{module}.{}", enum_type.name),
+                        None => resolve(enum_type.name),
+                    })
                 }),
             };
             if let Some(part) = lacking {
@@ -300,7 +309,7 @@ impl TypeChecker {
                     record: resolve(record.name),
                     field: resolve(field),
                     in_variant,
-                    field_type: shown(&ty),
+                    field_type: self.show_type(&ty),
                     part,
                     nested: false,
                 });
@@ -336,7 +345,9 @@ fn connection_refusal(builtin_name: &str, ty: &Type, span: Span) -> Option<Diagn
         _ => Some(Diagnostic::error(
             Code::TypeMismatch,
             span,
-            format!("the connection of `{builtin_name}` must be a PgPool or a PgTx"),
+            format!(
+                "the connection of `{builtin_name}` must be a postgres.PgPool or a postgres.PgTx"
+            ),
         )),
     }
 }

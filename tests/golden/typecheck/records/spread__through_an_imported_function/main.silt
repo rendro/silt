@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: cannot spread a `Person` through 'shapes.ext': convert it where its type is known, `{...p}`
--- stderr-contains: error[type]: cannot spread a `Person` through 'shapes.tag'
--- stderr-contains: error[type]: cannot spread a `Person` through 'shapes.wrap'
+-- stderr-contains: error[type]: cannot spread a `shapes.Person` through 'shapes.ext': convert it where its type is known, `{...p}`
+-- stderr-contains: error[type]: cannot spread a `shapes.Person` through 'shapes.tag'
+-- stderr-contains: error[type]: cannot spread a `shapes.Person` through 'shapes.wrap'
 -- stderr-contains: 18:22
 -- stderr-contains: 19:22
 -- stderr-contains: 20:23

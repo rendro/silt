@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: non-exhaustive match: missing variant Empty
+-- stderr-contains: non-exhaustive match: missing variant channel.Empty
 -- stderr-not-contains: Sent
 -- `channel.try_receive` and `channel.receive_timeout` give
 -- `ChannelResult(a)`: `Message(value)`, `Empty` or `Closed`, and nothing

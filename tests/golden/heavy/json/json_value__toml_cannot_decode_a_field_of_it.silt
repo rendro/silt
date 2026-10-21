@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: `toml.parse` cannot decode `Config`: field `extra` has type `Option(List(Value))`, and `json.Value` has no decoder
+-- stderr-contains: `toml.parse` cannot decode `Config`: field `extra` has type `Option(List(json.Value))`, and `json.Value` has no decoder
 -- stderr-not-contains: json.Value, List(T)
 import json
 import toml

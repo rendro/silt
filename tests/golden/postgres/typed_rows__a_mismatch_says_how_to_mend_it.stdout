@@ -1,6 +1,6 @@
 postgres type mismatch on column `id`: expected Int, got float8; cast it in SQL, for example id::text
 postgres type mismatch on column `ids`: expected List(Int), got text[]; cast it in SQL, for example ids::text
-postgres type mismatch on column `days`: expected List(Option(Date)), got text[]; cast it in SQL, for example days::text
+postgres type mismatch on column `days`: expected List(Option(time.Date)), got text[]; cast it in SQL, for example days::text
 postgres type mismatch on column `r`: expected json.Value, got interval; cast it in SQL, for example r::text
 postgres type mismatch on column `meta`: expected Meta, got text; a field of type `Meta` is filled only from a json or jsonb column
 postgres type mismatch on column `tags`: expected Map(String, Int), got text; a field of type `Map(String, Int)` is filled only from a json or jsonb column

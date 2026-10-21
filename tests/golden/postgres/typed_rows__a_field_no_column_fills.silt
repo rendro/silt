@@ -2,7 +2,7 @@
 -- requires-feature: postgres
 -- exit: 1
 -- stderr-contains: `postgres.cursor` cannot decode `Tagged`: field `tags` has type `Set(String)`, which has no decoder
--- stderr-contains: Bool, Bytes, Date, Time, DateTime, json.Value
+-- stderr-contains: Bool, Bytes, time.Date, time.Time, time.DateTime, json.Value
 -- stderr-not-contains: Bytes only as a field
 -- A field of a type that no column fills is an error where the type is
 -- given to the decoder, as it is for `json.parse`; the help lists the

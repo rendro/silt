@@ -19,20 +19,44 @@ impl TypeChecker {
         self.show_types(&[ty], true).pop().unwrap_or_default()
     }
 
-    /// The types of one message (see `show_apart`, `show_type`): a named
-    /// type that another type of the message has the name of, or, with
-    /// `session`, another type the session knows, is written with its
-    /// module; a module's own type keeps its bare name unless the other
-    /// is its own too.
+    /// The types of one message (see `show_apart`, `show_type`): a type
+    /// of another module is written as a program writes it, with its
+    /// module (`json.Value`, `time.Date`, `shapes.Shape`); a prelude
+    /// type and the module's own keep their bare names, unless another
+    /// type of the message, or with `session` another type the session
+    /// knows, has the name (`prelude.Option`, `a.Pt` and `b.Pt`).
     fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
         Type::show_all(types, |r, clash| {
-            let of_module = self.qualify_module_types
-                && crate::defs::builtin_types()
-                    .get(r.id.0.0 as usize)
-                    .is_some_and(|(_, module)| module.is_some());
-            (clash || of_module || (session && self.type_name_clashes(r)))
+            (clash || (session && self.type_name_clashes(r)) || self.other_module(r).is_some())
                 .then(|| self.qualified_type(r))
         })
+    }
+
+    /// The module of `r` if it is another module than the one being
+    /// checked, as a program names it: a builtin module (`json`,
+    /// `time`) or a module of the program's. `None` for a prelude type,
+    /// for one of the module's own, and in a REPL cell for one of an
+    /// earlier cell, which the cell writes by its name.
+    pub(super) fn other_module(&self, r: TypeRef) -> Option<Symbol> {
+        match crate::defs::builtin_types().get(r.id.0.0 as usize) {
+            Some((_, module)) => module.map(intern),
+            None => self
+                .def(r.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module).copied())
+                .filter(|module| !resolve(*module).starts_with('<')),
+        }
+    }
+
+    /// The variant `name` of the enum `enum_ty` as a program writes it:
+    /// with its module where the enum is another module's (`json.Bool`,
+    /// `shapes.Circle`), bare otherwise (`Some`, a variant of the
+    /// module's own).
+    pub(super) fn written_variant(&self, enum_ty: TypeRef, name: Symbol) -> String {
+        match self.other_module(enum_ty) {
+            Some(module) => format!("{module}.{name}"),
+            None => name.to_string(),
+        }
     }
 
     /// Whether another type the session knows has the name of `r`.
@@ -73,23 +97,29 @@ impl TypeChecker {
         }
     }
 
-    /// The name of the trait `t` in a message: written with its module
-    /// when another trait the session knows has its name (`a.Show`),
-    /// and always when a builtin module declares it (`json.Encode`): a
-    /// program names it so.
+    /// The name of the trait `t` in a message, as a program writes it:
+    /// a trait of another module with its module (`json.Encode`,
+    /// `a.Show`); a prelude trait and the module's own bare (`Display`),
+    /// unless another trait the session knows has its name
+    /// (`prelude.Display` beside a program's `Display`).
     pub(super) fn show_trait(&self, t: TraitKey) -> String {
-        if let Some((name, Some(module))) = crate::defs::builtin_trait_of_id(t.id.0) {
-            return format!("{module}.{name}");
-        }
+        let of_another_module = match crate::defs::builtin_trait_of_id(t.id.0) {
+            Some((_, module)) => module.is_some(),
+            None => self
+                .def(t.id.0)
+                .filter(|def| def.module != self.module)
+                .and_then(|def| self.tables.module_names.get(&def.module))
+                .is_some_and(|module| !resolve(*module).starts_with('<')),
+        };
         let clashes = self
             .tables
             .traits
             .keys()
             .any(|o| o.name == t.name && o.id != t.id);
-        if !clashes {
-            return t.name.to_string();
+        match of_another_module || clashes {
+            true => self.show_trait_in_module(t),
+            false => t.name.to_string(),
         }
-        self.show_trait_in_module(t)
     }
 
     /// The name of the trait `t` as the module being checked writes it:

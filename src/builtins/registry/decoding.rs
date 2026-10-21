@@ -64,9 +64,9 @@ impl Leaf {
             Leaf::String => "String",
             Leaf::Bool => "Bool",
             Leaf::Bytes => "Bytes",
-            Leaf::Date => "Date",
-            Leaf::Time => "Time",
-            Leaf::DateTime => "DateTime",
+            Leaf::Date => "time.Date",
+            Leaf::Time => "time.Time",
+            Leaf::DateTime => "time.DateTime",
             Leaf::JsonValue => "json.Value",
         }
     }
@@ -284,16 +284,6 @@ mod tests {
         }
     }
 
-    /// The leaves as a program writes them.
-    fn written(leaf: Leaf) -> &'static str {
-        match leaf {
-            Leaf::Date => "time.Date",
-            Leaf::Time => "time.Time",
-            Leaf::DateTime => "time.DateTime",
-            other => other.name(),
-        }
-    }
-
     /// What a program imports: `postgres` where it is built.
     const IMPORTS: &str = match cfg!(feature = "postgres") {
         true => "import json\nimport postgres\nimport time\nimport toml\n",
@@ -438,7 +428,7 @@ mod tests {
         let mut fields: Vec<(&str, String, Option<String>)> = Vec::new();
         let raw = r#"{"variant": "Raw", "fields": [0]}"#;
         for leaf in Leaf::ALL {
-            let l = written(leaf);
+            let l = leaf.name();
             for field in [
                 l.to_string(),
                 format!("List({l})"),
@@ -583,7 +573,7 @@ mod tests {
                     Ok(_) => {
                         // Every leaf of an accepted field is one the help names.
                         for leaf in Leaf::ALL {
-                            let l = written(leaf);
+                            let l = leaf.name();
                             let holds_inner =
                                 ["Inner", "EB", "RE"].iter().any(|t| field.contains(t));
                             if field.contains(l) || (holds_inner && l == *inner) {

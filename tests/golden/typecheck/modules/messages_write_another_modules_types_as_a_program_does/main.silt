@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A message writes a type or a variant of another module as a program
+-- writes it, with its module: `json.Value`, `json.Bool`, `time.Date`,
+-- `shapes.Circle`. A prelude type (`Int`, `Option`) and the module's
+-- own (`Mine`) keep their bare names.
+import json
+import shapes
+import time
+
+type Mine { Null, Other }
+
+fn kind(v: json.Value) -> String {
+  match v {
+    json.Null -> "null"
+    json.Int(n) -> "int {n}"
+  }
+}
+
+fn size(s: shapes.Shape) -> Int {
+  match s {
+    shapes.Dot -> 0
+  }
+}
+
+fn main() {
+  let v = json.Null
+  match v {
+    Null -> println("null?")
+    _ -> println("other")
+  }
+  let d: Int = time.today()
+  let o: Option(Mine) = Some(1)
+  println(kind(json.Null))
+  println(size(shapes.Dot))
+}

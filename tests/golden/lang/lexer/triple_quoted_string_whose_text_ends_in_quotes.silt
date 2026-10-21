@@ -1,0 +1,18 @@
+-- A run of three or more quotes ends a triple-quoted string: its last
+-- three close it, the ones before are text.
+import io
+import string
+
+fn main() {
+  let one = """v = "s""""
+  println(one)
+  println(io.inspect("""a"""""))
+  println(string.length(""""""""))
+  let block = """
+    say "hi"
+    """
+  println(block)
+  let ends = """
+    a "quote""""
+  println(ends)
+}

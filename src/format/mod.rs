@@ -145,41 +145,65 @@ fn on_own_stack(
 ) -> Result<String, Diagnostic> {
     use std::sync::mpsc;
 
-    type Job = Box<dyn FnOnce() + Send>;
+    type Formatted = std::thread::Result<Result<String, Diagnostic>>;
+    type Job = Box<dyn FnOnce() -> Formatted + Send>;
 
     /// The thread that formats for the thread that owns this. Starting
     /// one costs several times what formatting a file does, so it is
     /// kept; it ends when its owner does.
-    struct Worker(mpsc::Sender<Job>);
+    ///
+    /// It answers a job only when everything of the job is freed, on
+    /// channels that live as long as it: once its owner has the answer,
+    /// the thread allocates and frees nothing more. (An owner that ends
+    /// the process then does not kill it in the middle of a free: on
+    /// Windows the exit kills the other threads first and then runs the
+    /// allocator's clean-up, which a lock held by a killed thread would
+    /// hold up for ever.)
+    struct Worker {
+        jobs: mpsc::Sender<Job>,
+        answers: mpsc::Receiver<Formatted>,
+    }
 
     thread_local! {
         static WORKER: Worker = {
             let (jobs, queue) = mpsc::channel::<Job>();
+            let (answer, answers) = mpsc::sync_channel::<Formatted>(1);
             std::thread::Builder::new()
                 .name("silt-format".into())
                 .stack_size(STACK)
                 .spawn(move || {
                     for job in queue {
-                        job();
+                        let formatted = job();
+                        if answer.send(formatted).is_err() {
+                            return;
+                        }
                     }
                 })
                 .expect("spawning the formatter's thread");
-            Worker(jobs)
+            Worker { jobs, answers }
         };
     }
 
     // The tree and its symbols stay on that thread (the interner is per
     // thread, and each run starts with an empty one); text and
     // diagnostics, which hold no symbol, come back.
-    let (reply, result) = mpsc::sync_channel(1);
     let source = source.to_string();
     let job: Job = Box::new(move || {
         crate::intern::reset();
         let run = std::panic::AssertUnwindSafe(|| format_here(file, &source, tamper));
-        let _ = reply.send(std::panic::catch_unwind(run));
+        std::panic::catch_unwind(run)
     });
-    WORKER.with(|worker| worker.0.send(job).expect("the formatter's thread is gone"));
-    match result.recv().expect("the formatter's thread is gone") {
+    let formatted = WORKER.with(|worker| {
+        worker
+            .jobs
+            .send(job)
+            .expect("the formatter's thread is gone");
+        worker
+            .answers
+            .recv()
+            .expect("the formatter's thread is gone")
+    });
+    match formatted {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }

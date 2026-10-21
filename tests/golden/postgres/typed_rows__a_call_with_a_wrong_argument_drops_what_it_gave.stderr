@@ -1,6 +1,6 @@
-error[type]: type mismatch: expected Channel(Result(_, PostgresError)), got Result(Channel(Result(Row, PostgresError)), PostgresError)
+error[type]: type mismatch: expected Channel(Result(_, postgres.PostgresError)), got Result(Channel(Result(Row, postgres.PostgresError)), postgres.PostgresError)
  --> typed_rows__a_call_with_a_wrong_argument_drops_what_it_gave.silt:17:9
     |
  17 |   first(postgres.stream(db, "SELECT 1 AS n", (), Row))
-    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Channel(Result(_, PostgresError)), got Result(Channel(Result(Row, PostgresError)), PostgresError)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Channel(Result(_, postgres.PostgresError)), got Result(Channel(Result(Row, postgres.PostgresError)), postgres.PostgresError)
   = help: to chain through a `Result`, use `?` to propagate the error, or `|> result.flat_map { x -> ... }` to continue the pipeline on the Ok value

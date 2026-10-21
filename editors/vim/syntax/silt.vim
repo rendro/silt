@@ -61,8 +61,9 @@ syntax match siltStringEscape '\\[nrt0\\"{}]' contained
 syntax match siltStringEscape '\\u{\x\{1,6}}' contained
 syntax region siltStringInterp start='{' end='}' contained contains=TOP
 
-" Triple-quoted raw strings (no escapes, no interpolation)
-syntax region siltRawString start='"""' end='"""'
+" Triple-quoted raw strings (no escapes, no interpolation). A run of
+" quotes ends one with its last three: the ones before are text.
+syntax region siltRawString start='"""' end='"""\("\)\@!'
 
 " ── Numbers ─────────────────────────────────────────────────────────
 " Mirrors src/lexer.rs number scanning (scan_number / scan_hex_int /

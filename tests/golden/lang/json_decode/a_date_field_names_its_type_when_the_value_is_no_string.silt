@@ -1,0 +1,17 @@
+-- A Date, Time or DateTime field given a value of another kind is a
+-- TypeMismatch that names the field's type, as an Int or a String field
+-- does: json and toml say the same.
+import json
+import time
+import toml
+
+type D { d: time.Date, t: time.Time, dt: time.DateTime }
+
+fn main() {
+  println(json.parse("""{"d": 1, "t": "10:00", "dt": "2020-01-01T00:00"}""", D))
+  println(json.parse("""{"d": "2020-01-01", "t": 1, "dt": "2020-01-01T00:00"}""", D))
+  println(json.parse("""{"d": "2020-01-01", "t": "10:00", "dt": true}""", D))
+  println(toml.parse("d = 1\nt = 10:00:00\ndt = 2020-01-01T00:00:00", D))
+  println(toml.parse("d = 2020-01-01\nt = 1\ndt = 2020-01-01T00:00:00", D))
+  println(toml.parse("d = 2020-01-01\nt = 10:00:00\ndt = true", D))
+}

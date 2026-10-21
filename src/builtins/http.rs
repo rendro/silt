@@ -1659,11 +1659,14 @@ mod serve_tests {
         let token = listener
             .serve(Some(flag.clone()))
             .expect("nobody serves it");
-        // The server's accept is given a client's connection.
+        // The server's accept is given a client's connection, and is
+        // over. (Its value comes before its thread is done with it: a
+        // cancel in between leaves the connection to that thread, which
+        // gives it to the listener a moment later.)
         let op = super::super::tcp::accept_op(&mut vm, &listener, true);
         let _client = std::net::TcpStream::connect(addr).expect("a connection");
         let limit = Instant::now() + Duration::from_secs(10);
-        while op.cell.get().is_none() {
+        while !op.finished() {
             assert!(Instant::now() < limit, "the accept did not return");
             std::thread::sleep(Duration::from_millis(1));
         }

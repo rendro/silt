@@ -4,7 +4,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: operator '+' requires Int or Float, got 'Result(Int, IntError)'
+-- stderr-contains: operator '+' requires Int or Float, got 'Result(Int, int.IntError)'
 import int
 
 fn f() -> Result(Int, int.IntError) {

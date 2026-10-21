@@ -1,0 +1,6 @@
+Err(json type mismatch: expected time.Date, got number at d)
+Err(json type mismatch: expected time.Time, got number at t)
+Err(json type mismatch: expected time.DateTime, got boolean at dt)
+Err(toml type mismatch: expected time.Date, got integer at d)
+Err(toml type mismatch: expected time.Time, got integer at t)
+Err(toml type mismatch: expected time.DateTime, got boolean at dt)

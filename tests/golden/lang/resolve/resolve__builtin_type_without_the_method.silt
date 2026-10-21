@@ -4,7 +4,7 @@
 -- stderr-contains: error[type]: type 'Option' has no method 'compare'
 -- stderr-contains: error[type]: type 'Result' has no method 'compare'
 -- stderr-contains: error[type]: type 'Map(_, _)' has no method 'compare'
--- stderr-contains: error[type]: type 'Weekday' has no method 'nope'
+-- stderr-contains: error[type]: type 'time.Weekday' has no method 'nope'
 -- stderr-not-contains: undefined variable
 -- A builtin type reached through its name that lacks the method is told
 -- so, whichever builtin type it is.

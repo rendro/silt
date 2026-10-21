@@ -110,6 +110,42 @@ fn module_of(qualified: &str) -> &str {
 
 // ── What the builtin scope is made of ───────────────────────────────
 
+/// What a use of `qualified`, a type of a builtin module that is no
+/// value (`time.DateTime`), as a value is told: only `json.Value` of a
+/// module's types is a value, and a decoder decodes such a type, where
+/// it decodes it at all, as the type of a record's field.
+pub(crate) fn module_type_is_no_value_help(qualified: &str) -> String {
+    let no_value = "only `json.Value` of a module's types can be given as a value";
+    let decoded = crate::builtins::registry::decoding::Leaf::ALL
+        .iter()
+        .any(|leaf| leaf.name() == qualified);
+    match decoded {
+        true => format!(
+            "{no_value}; a decoder decodes a `{qualified}` as the type of a record's field: \
+             `type R {{ at: {qualified} }}`"
+        ),
+        false => no_value.to_string(),
+    }
+}
+
+/// The same, for the bare `name` of `qualified` used as a value (not
+/// imported, or imported by its name: `import time.{ DateTime }`).
+pub(crate) fn bare_module_type_is_no_value_help(name: &str, qualified: &str) -> String {
+    format!(
+        "`{name}` is the type `{qualified}`, and {}",
+        module_type_is_no_value_help(qualified)
+    )
+}
+
+/// Whether `module.name` is a type of a builtin module that is no value
+/// (every one of them but `json.Value`).
+pub(crate) fn is_module_type_no_value(module: &str, name: &str) -> bool {
+    (module, name) != ("json", "Value")
+        && crate::defs::builtin_types()
+            .iter()
+            .any(|(n, m)| *n == name && *m == Some(module))
+}
+
 /// Bind the types that are values: the descriptors of the primitive and
 /// container types, and of `json.Value`.
 fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {

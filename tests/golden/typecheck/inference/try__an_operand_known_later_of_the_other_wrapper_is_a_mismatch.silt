@@ -1,0 +1,21 @@
+-- exit: 1
+-- `?` on an operand whose type is known only later: an Option in a
+-- function that returns a Result is the mismatch the operand known at
+-- once gives, not "can only be used inside a function that returns
+-- Result or Option".
+fn f(h) -> Result(Int, Bool) {
+  let z = h()?
+  let _ = h() == Some(1)
+  Ok(z)
+}
+
+fn g(h) -> Option(Int) {
+  let z = h()?
+  let _ = h() == Ok(1)
+  Some(z)
+}
+
+fn main() {
+  println(f({ -> Some(1) }))
+  println(g({ -> Ok(1) }))
+}

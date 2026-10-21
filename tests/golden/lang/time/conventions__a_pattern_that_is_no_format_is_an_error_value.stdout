@@ -2,9 +2,9 @@ Ok(2024-12-25 18:05)
 Ok(25/12/2024)
 Wednesday, December 25
 Err(time format error: invalid format specifier in '%Q')
-Err(time format error: a specifier of a time zone in '%z' is not valid for a DateTime: a DateTime has no time zone)
+Err(time format error: a specifier of a time zone in '%z' is not valid for a time.DateTime: a time.DateTime has no time zone)
 Err(time format error: invalid format specifier in '%Q')
-Err(time format error: a specifier of a time of day in '%H' is not valid for a Date)
+Err(time format error: a specifier of a time of day in '%H' is not valid for a time.Date)
 InvalidFormat: invalid format specifier in '100%'
 parse_date: InvalidFormat
 parse: InvalidFormat

@@ -1,0 +1,5 @@
+error[type]: refutable pattern in `let`: constructor 'shapes.Circle' is only one of 2 variants of enum 'shapes.Shape'; use a `match` or `when let ... else` instead
+ --> main.silt:6:26
+   |
+ 6 |   let shapes.Circle(r) = shapes.Circle(1.0)
+   |                          ^^^^^^^^^^^^^^^^^^ refutable pattern in `let`: constructor 'shapes.Circle' is only one of 2 variants of enum 'shapes.Shape'; use a `match` or `when let ... else` instead

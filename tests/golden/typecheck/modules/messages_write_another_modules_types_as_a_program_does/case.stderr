@@ -1,0 +1,29 @@
+error[type]: non-exhaustive match: missing variants json.Bool, json.Float, json.String, json.Array, json.Object
+ --> main.silt:14:9
+    |
+ 14 |   match v {
+    |         ^ non-exhaustive match: missing variants json.Bool, json.Float, json.String, json.Array, json.Object
+
+error[type]: non-exhaustive match: missing variants shapes.Circle, shapes.Square
+ --> main.silt:21:9
+    |
+ 21 |   match s {
+    |         ^ non-exhaustive match: missing variants shapes.Circle, shapes.Square
+
+error[type]: type mismatch: expected Mine, got json.Value
+ --> main.silt:28:9
+    |
+ 28 |   match v {
+    |         ^ type mismatch: expected Mine, got json.Value
+
+error[type]: type mismatch: expected Int, got time.Date
+ --> main.silt:32:16
+    |
+ 32 |   let d: Int = time.today()
+    |                ^^^^^^^^^^^^ type mismatch: expected Int, got time.Date
+
+error[type]: type mismatch: expected Mine, got Int
+ --> main.silt:33:25
+    |
+ 33 |   let o: Option(Mine) = Some(1)
+    |                         ^^^^^^^ type mismatch: expected Mine, got Int

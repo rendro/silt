@@ -79,7 +79,7 @@ fn main() {
         .error_message
         .expect("expected a Display error, got clean exit");
     assert!(
-        err.contains("does not implement trait 'Display'") && err.contains("'TcpListener'"),
+        err.contains("does not implement trait 'Display'") && err.contains("'tcp.TcpListener'"),
         "expected a Display error naming TcpListener, got: {err}"
     );
 }

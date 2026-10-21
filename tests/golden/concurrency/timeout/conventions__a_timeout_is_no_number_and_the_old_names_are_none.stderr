@@ -17,8 +17,8 @@ error[type]: module 'channel' has no member 'ChannelTimeout'
  12 |   let e: channel.ChannelError = channel.ChannelTimeout
     |                                 ^^^^^^^^^^^^^^^^^^^^^^ module 'channel' has no member 'ChannelTimeout'
 
-error[type]: type mismatch: expected Duration, got Int
+error[type]: type mismatch: expected time.Duration, got Int
  --> conventions__a_timeout_is_no_number_and_the_old_names_are_none.silt:9:27
    |
  9 |   let _ = channel.timeout(50)
-   |                           ^^ type mismatch: expected Duration, got Int
+   |                           ^^ type mismatch: expected time.Duration, got Int

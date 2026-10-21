@@ -4,7 +4,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`
  22 |   let _ = load("\{}", Blob)
     |                       ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
   = note: `load` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `json.Value`, a type of the json decoders
  --> data_decode__a_wrapper_passes_its_type_to_the_decoder.silt:24:26

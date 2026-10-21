@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- An impl's and a pattern's messages write a type, a trait and a
+-- variant of another module as a program writes them (`json.Value`,
+-- `json.Encode`, `json.Int`), and a type imported by its name that is
+-- no value says so.
+import json
+import json.{ Encode }
+import time.{ DateTime }
+
+trait Tr { fn f(self) -> Int }
+trait Tr for json.Value { fn f2(self) -> Int { 2 } }
+trait Conv(a) { fn conv(self) -> a }
+trait Conv for json.Value { fn conv(self) -> Int { 1 } }
+type P { x: Int }
+trait Encode for P { fn nope(self) -> json.Value { json.Null } }
+
+fn main() {
+  let v = json.Int(1)
+  let json.Int(x) = v
+  let y = match v {
+    json.Int(a, b) -> 1
+    _ -> 2
+  }
+  let _ = json.parse("1", DateTime)
+  println("{x}{y}")
+}

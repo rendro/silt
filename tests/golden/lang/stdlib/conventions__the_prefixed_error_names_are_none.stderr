@@ -29,8 +29,8 @@ error[type]: module 'int' has no member 'ParseEmpty'
  15 |   let d: int.ParseError = int.ParseEmpty
     |                           ^^^^^^^^^^^^^^ module 'int' has no member 'ParseEmpty'
 
-error[type]: type mismatch: expected FloatError, got IntError
+error[type]: type mismatch: expected float.FloatError, got int.IntError
  --> conventions__the_prefixed_error_names_are_none.silt:16:29
     |
  16 |   let e: float.FloatError = int.Empty
-    |                             ^^^^^^^^^ type mismatch: expected FloatError, got IntError
+    |                             ^^^^^^^^^ type mismatch: expected float.FloatError, got int.IntError
