@@ -281,6 +281,11 @@ impl TypeChecker {
             false => self.tables.decoded_record_fields(record),
         };
         for (field, ty) in fields {
+            // A type that is unknown where the field writes it is that
+            // error alone.
+            if ty.holds_error() {
+                continue;
+            }
             let mut nested = Vec::new();
             let lacking = match self.tables.decoded_field_type(&ty, &mut nested) {
                 Err(part) => Some(part),

@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- A field whose type names an unknown type is that one error, where the
+-- type is written: a decoder given the record (or a record it is
+-- nested in) does not report the field again as one with no decoder.
+-- A field of a known type with no decoder still is.
+import json
+import toml
+
+type Event { at: List(Option(Date)) }
+
+type Outer { inner: Event, n: Int }
+
+type Mixed { at: Date, tags: Set(String) }
+
+fn main() {
+  println(json.parse("\{}", Event))
+  println(toml.parse("", Event))
+  println(json.parse("\{}", Outer))
+  println(json.parse("\{}", Mixed))
+}
