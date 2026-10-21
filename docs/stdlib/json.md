@@ -369,6 +369,62 @@ refuses it, with the function that passes it on in a note:
   = note: `load` passes it to `json.parse`
 ```
 
+Write `trait json.Decode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `json.Encode` impl is written; an impl
+for a builtin type is an error, a builtin type keeps its own form, and an
+impl for a generic type is refused: a decoder builds a value of one type).
+Its `decode` gives the value of `T` that a `json.Value` is, wherever a
+value of the type is in the document: at the top, as an element of
+`json.parse_list`, as a value of `json.parse_map`, in a record's or a
+variant's field, in a list or a map in one. The fields of `T` are then not
+looked into, so `T` may hold a type no decoder has. An `Option` around it
+stays structural (`null` is `None`). The `Err` it returns is the decoder's
+error, with the path of its part appended as to the decoder's own errors:
+`Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
+posts[1].tags")`, a `MissingField("name")` there is
+`MissingField("posts[1].tags.name")`. The first error in the document
+counts, the impl's or the decoder's.
+
+```silt
+import json
+import list
+import set
+
+type Tags {
+  names: Set(String),
+}
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { names: set.from_list([text]) })
+      json.Array(items) -> {
+        let names = list.filter_map(items) { item ->
+          match item {
+            json.String(name) -> Some(name)
+            _ -> None
+          }
+        }
+        Ok(Tags { names: set.from_list(names) })
+      }
+      _ -> Err(json.Other("tags are a string or a list of strings"))
+    }
+  }
+}
+
+type Post {
+  title: String,
+  tags: Tags,
+}
+
+fn main() {
+  println(json.parse("""{"title": "a", "tags": "x"}""", Post))
+  -- Ok(Post {title: a, tags: Tags {names: #[x]}})
+  println(json.parse("""{"title": "a", "tags": 3}""", Post))
+  -- Err(tags are a string or a list of strings at tags)
+}
+```
+
 ## `json.decode`
 
 ```

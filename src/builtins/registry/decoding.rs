@@ -470,7 +470,7 @@ mod tests {
             // (A VM of its own: each program numbers its types from the
             // same id, and a runtime decides a type's decoder once.)
             let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
-            let rt = &vm.runtime;
+            let rt = &decode::Reader::new(&vm.runtime);
             // The types as the run time has them: through a `type a`
             // that reaches no decoder, which the checker asks nothing of.
             let generic = program(

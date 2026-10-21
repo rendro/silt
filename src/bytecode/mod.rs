@@ -125,6 +125,9 @@ pub struct Globals {
     /// The slot of `encode` of each type a program wrote a
     /// `json.Encode` impl for: what writing a value of the type calls.
     encoded: Written,
+    /// The slot of `decode` of each type a program wrote a
+    /// `json.Decode` impl for: what decoding a value of the type calls.
+    decoded: Written,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
     traits: Rows<(TraitId, String)>,
@@ -139,8 +142,8 @@ impl Globals {
     /// (the names of methods, the traits): code of the entry may still
     /// be about, a closure it sent to a task. Its definitions are taken
     /// back: which slot a definition, an impl's method, a trait's
-    /// default method and a type's `display` and `encode` has is as in
-    /// `before`. So what the entry had defined (its own impls, a module
+    /// default method and a type's `display`, `encode` and `decode` has is as
+    /// in `before`. So what the entry had defined (its own impls, a module
     /// it imported) gets slots of its own when it is defined again, and
     /// no slot is ever set twice.
     pub fn without_definitions_since(&self, before: &Globals) -> Globals {
@@ -155,6 +158,7 @@ impl Globals {
             defaults: before.defaults.clone(),
             shown: before.shown.clone(),
             encoded: before.encoded.clone(),
+            decoded: before.decoded.clone(),
         }
     }
 
@@ -245,6 +249,16 @@ impl Globals {
     /// Whether the program wrote a `json.Encode` impl for any type.
     pub fn any_encoded(&self) -> bool {
         self.encoded.any()
+    }
+
+    /// The slot of the `decode` a program wrote for the type `ty`.
+    pub fn decoded(&self, ty: TypeId) -> Option<u16> {
+        self.decoded.get(ty)
+    }
+
+    /// Whether the program wrote a `json.Decode` impl for any type.
+    pub fn any_decoded(&self) -> bool {
+        self.decoded.any()
     }
 
     /// The name of the trait a `CallMethod` operand names.
@@ -355,13 +369,16 @@ impl Globals {
         if method == "encode" && crate::defs::builtin_trait_id("Encode") == Some(t) {
             self.encoded.insert(ty, slot);
         }
+        if method == "decode" && crate::defs::builtin_trait_id("Decode") == Some(t) {
+            self.decoded.insert(ty, slot);
+        }
         Some(slot)
     }
 }
 
 /// The slot of the method a program wrote for each type, of a trait
-/// whose method a value is written with at any depth (`display`,
-/// `encode`).
+/// whose method a value is written or read with at any depth
+/// (`display`, `encode`, `decode`).
 #[derive(Debug, Clone, Default)]
 struct Written {
     slots: Layers<TypeId, u16>,

@@ -330,7 +330,9 @@ impl Col {
             (Col::Void, _) => false,
             // A json document fills a field of every type json's decoders
             // decode, in the record types the field names too.
-            (Col::Json | Col::Jsonb, _) => decode::decodes(rt, Family::Json, field),
+            (Col::Json | Col::Jsonb, _) => {
+                decode::decodes(&decode::Reader::new(rt), Family::Json, field)
+            }
             (Col::Bool, F::Bool)
             | (Col::Int2 | Col::Int4 | Col::Int8, F::Int)
             | (Col::Float4 | Col::Float8 | Col::Numeric, F::Float)
@@ -477,7 +479,9 @@ impl Plan {
                 // any column is matched. (The checker refuses such a
                 // type wherever a program gives one: the decoders'
                 // guard.)
-                if let Some(message) = decode::record_refusal(rt, Family::Postgres, ty) {
+                if let Some(message) =
+                    decode::record_refusal(&decode::Reader::new(rt), Family::Postgres, ty)
+                {
                     return Err(super::other_error(message));
                 }
                 let mut fields = Vec::with_capacity(declared.len());

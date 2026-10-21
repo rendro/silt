@@ -255,6 +255,20 @@ fn a_task_writes_a_value_with_the_json_encode_impl_of_a_later_entry() {
     );
 }
 
+/// A `json.Decode` impl of a later entry decodes its type wherever it is
+/// in the document, as a `json.Encode` impl writes it: here as the
+/// element of a list.
+#[test]
+fn a_task_decodes_a_document_with_the_json_decode_impl_of_a_later_entry() {
+    assert_tasks_see(
+        "import json\nfn ld(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode { json.parse_list(text, a) }",
+        "type Q { q: Int }\n\
+         trait json.Decode for Q { fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Q { q: 9 }) } }",
+        "ld(\"[1]\", Q)",
+        "Ok([Q {q: 9}])",
+    );
+}
+
 /// A trait of a later entry, its method called on a value whose type
 /// the call does not know. It was `the call of a method names a method
 /// the program does not have`.

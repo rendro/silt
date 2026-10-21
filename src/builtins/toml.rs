@@ -317,18 +317,18 @@ fn written(name: &str, value: &Value, pretty: bool) -> Value {
 builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Value, VmError> {
         let target = decode::target(&PARSE, ty)?;
-        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+        if let Some(refused) = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target) {
             return Ok(refused);
         }
         Ok(match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => decode::result(&RULES, decode::document(&vm.runtime, &target, &tv)),
+            Ok(tv) => decode::result(&RULES, decode::document(&decode::Reader::new(&vm.runtime), &target, &tv)),
             Err(e) => toml_de_result_err(&e),
         })
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Value, VmError> {
         let target = decode::target(&PARSE_LIST, ty)?;
-        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+        if let Some(refused) = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target) {
             return Ok(refused);
         }
         let element = target.element();
@@ -351,17 +351,17 @@ builtins! {
             )));
         };
         let at = At::Top.key(key);
-        Ok(decode::result(&RULES, decode::list(&vm.runtime, &element, only, &at)))
+        Ok(decode::result(&RULES, decode::list(&decode::Reader::new(&vm.runtime), &element, only, &at)))
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Value, VmError> {
         let target = decode::target(&PARSE_MAP, ty)?;
-        if let Some(refused) = decode::refused(&vm.runtime, &RULES, &target) {
+        if let Some(refused) = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target) {
             return Ok(refused);
         }
         let element = target.element();
         Ok(match ::toml::from_str::<::toml::Value>(s) {
-            Ok(tv) => decode::result(&RULES, decode::map(&vm.runtime, &element, &tv, &At::Top)),
+            Ok(tv) => decode::result(&RULES, decode::map(&decode::Reader::new(&vm.runtime), &element, &tv, &At::Top)),
             Err(e) => toml_de_result_err(&e),
         })
     }
@@ -393,9 +393,13 @@ mod tests {
             // As toml.parse decodes it: the type is refused before the
             // document is read.
             let target = decode::Target::Record(&ty, &fields);
-            let decoded = decode::refused(&vm.runtime, &RULES, &target).unwrap_or_else(|| {
-                decode::result(&RULES, decode::document(&vm.runtime, &target, &doc))
-            });
+            let decoded = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target)
+                .unwrap_or_else(|| {
+                    decode::result(
+                        &RULES,
+                        decode::document(&decode::Reader::new(&vm.runtime), &target, &doc),
+                    )
+                });
             assert_eq!(
                 decoded.to_string(),
                 "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",
