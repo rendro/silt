@@ -2573,9 +2573,13 @@ fn mend(expected: &str, actual: &str) -> Mend {
     if actual == "NULL" || matches!(head.trim_end_matches("[]"), "json" | "jsonb") {
         return Mend::None;
     }
-    // (The type as `decode::shown` writes it.)
+    // (The type as `decode::shown` writes it. An array's element may be
+    // NULL: `List(Option(Int))`.)
     fn from_a_column(ty: &str) -> bool {
-        match ty.strip_prefix("List(").and_then(|t| t.strip_suffix(')')) {
+        fn inner<'t>(ty: &'t str, head: &str) -> Option<&'t str> {
+            ty.strip_prefix(head)?.strip_suffix(')')
+        }
+        match inner(ty, "List(").map(|t| inner(t, "Option(").unwrap_or(t)) {
             Some(element) => from_a_column(element),
             None => matches!(
                 ty,
@@ -3199,6 +3203,9 @@ mod tests {
             assert_eq!(mend("Map(String, Int)", actual), Mend::Json, "{actual}");
             assert_eq!(mend("(Int, String)", actual), Mend::Json, "{actual}");
             assert_eq!(mend("List(Meta)", actual), Mend::JsonArray, "{actual}");
+            assert_eq!(mend("List(Option(Int))", actual), Mend::Cast, "{actual}");
+            assert_eq!(mend("List(List(Option(Date)))", actual), Mend::Cast);
+            assert_eq!(mend("List(Option(Meta))", actual), Mend::JsonArray);
             assert_eq!(
                 mend("List(List(Meta))", actual),
                 Mend::JsonArray,

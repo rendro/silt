@@ -11,11 +11,13 @@ fn main() {
   let mismatches = [
     postgres.TypeMismatch("id", "Int", "float8"),
     postgres.TypeMismatch("ids", "List(Int)", "text[]"),
+    postgres.TypeMismatch("days", "List(Option(Date))", "text[]"),
     postgres.TypeMismatch("r", "json.Value", "interval"),
     postgres.TypeMismatch("meta", "Meta", "text"),
     postgres.TypeMismatch("tags", "Map(String, Int)", "text"),
     postgres.TypeMismatch("pair", "(Int, String)", "int4"),
     postgres.TypeMismatch("metas", "List(Meta)", "text[]"),
+    postgres.TypeMismatch("metas", "List(Option(Meta))", "int4[]"),
     postgres.TypeMismatch("grid", "List(List(Meta))", "int4[]"),
     postgres.TypeMismatch("meta", "Meta", "NULL"),
     postgres.TypeMismatch("meta", "Meta", "jsonb: expected a record at n"),

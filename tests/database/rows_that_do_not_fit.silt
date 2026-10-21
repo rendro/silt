@@ -40,6 +40,8 @@ type Pair { pair: (Int, String) }
 
 type Docs { docs: List(Meta) }
 
+type Ns { ns: List(Option(Int)) }
+
 type Grid { g: List(List(Int)) }
 
 type Day { d: time.Date }
@@ -94,6 +96,7 @@ fn main() {
       show("text for a map", postgres.query(db, "SELECT 'a'::text AS tags", (), Tags))
       show("an int4 for a tuple", postgres.query(db, "SELECT 1 AS pair", (), Pair))
       show("a text[] for a list of records", postgres.query(db, "SELECT ARRAY['a'] AS docs", (), Docs))
+      show("a text[] for a list of Options", postgres.query(db, "SELECT ARRAY['a'] AS ns", (), Ns))
       show("an array of 1 dimension for a list of lists", postgres.query(db, "SELECT ARRAY[1, 2] AS g", (), Grid))
       show("an array of 2 dimensions for a list", postgres.query(db, "SELECT ARRAY[[1], [2]] AS x", (), Xs))
       show("a date that is infinity", postgres.query(db, "SELECT 'infinity'::date AS d", (), Day))
