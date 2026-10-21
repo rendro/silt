@@ -8,7 +8,6 @@ import toml
 
 type Blob { data: Set(Int) }
 type Fine { n: Int }
-type Mood { Happy, Sad }
 
 fn load(text, t) {
   json.parse(text, t)
@@ -22,5 +21,5 @@ fn main() {
   let _ = load("\{\"n\": 1}", Fine)
   let _ = load("\{}", Blob)
   let _ = load_twice("n = 1", Fine)
-  let _ = load_twice("", Mood)
+  let _ = load_twice("", json.Value)
 }

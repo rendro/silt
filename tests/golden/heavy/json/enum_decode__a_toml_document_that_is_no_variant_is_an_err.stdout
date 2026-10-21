@@ -1,0 +1,12 @@
+Err(`Status` has no variant `Gone` at status)
+Err(variant `Paused` of `Status` has 1 field, got 0 at status)
+Err(toml type mismatch: expected String, got table at status)
+Err(toml type mismatch: expected String or table, got integer at status)
+Err(toml type mismatch: expected String or table, got datetime at status)
+Err(variant `Paused` of `Status` has 1 field, got 2 at status.fields)
+Err(toml type mismatch: expected Int, got float at status.fields[0])
+Err(toml missing field: status.variant)
+Err(`Status` has no variant `Gone` at xs[1])
+Err(toml type mismatch: expected String, got table)
+Other: `Status` has no variant `Gone` at status
+TypeMismatch: String or table, boolean at status

@@ -6,7 +6,7 @@
 //! `module.rs::builtin_error_enum_variants_with_arity` for Phase 0
 //! background:
 //! - `toml.parse(T: Type, s: String) -> Result(T, TomlError)` — parse a top-
-//!   level TOML table into a record of type `T`.
+//!   level TOML table into a record, or a variant with fields, of type `T`.
 //! - `toml.parse_list(T: Type, s: String) -> Result(List(T), TomlError)` —
 //!   parse a document whose top-level table has one key, an array: a
 //!   `[[items]]` array of tables for a record type, `xs = [1, 2]` for `Int`.

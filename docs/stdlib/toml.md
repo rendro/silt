@@ -12,7 +12,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record |
+| `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record or a variant with fields |
 | `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse the one array of a document (such as a `[[items]]` section) into a list |
 | `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError)` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, TomlError)` | Pretty-print a value as TOML |
@@ -55,25 +55,26 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `toml.parse` | a record type |
-| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, or a record type |
-| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, or a record type |
+| `toml.parse` | a record type or an enum type |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |
+| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, or an enum type |
 
 An alias of one of these is the type it names.
 
-The fields of a record type (and of every record type nested in it) may have
-these types:
+The fields of a record type, and of each variant of an enum type (and of every
+record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `Date`, `Time`, `DateTime`
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - non-generic record types
+- non-generic enum types (see [Enums](#enums))
 - type aliases of any of these
 
-where `T` is again one of these types. Anything else (a `Set`, an enum, a
-generic record, a function, a `Map` whose key is not `String`, a type
-parameter) has no decoder.
+where `T` is again one of these types. Anything else (a `Set`, a generic
+record or enum, a builtin enum such as `time.Weekday`, a function, a `Map`
+whose key is not `String`, a type parameter) has no decoder.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
@@ -90,11 +91,40 @@ method that passes it on to the decoder (each call of it is checked, a
 trait method's on a value whose type is a type variable too). A
 record with a field no decoder exists for is a compile error that names the
 field and its type (or the field of a record type it names that has none);
-so is an enum, which toml has no decoder for, or a type the function does
-not take (such as `toml.parse(text, Int)`). The check applies equally to a
+so is an enum with a variant whose field has none (the error names the
+variant), or a type the function does not take (such as
+`toml.parse(text, Int)`). The check applies equally to a
 decoder imported by name (`import toml.{ parse }`) and to one called through
 a module alias, and a type is refused whatever a document would hold (an
 `Option` field whose key is left out, an empty list or map too).
+
+
+## Enums
+
+An enum type the program declares, without type parameters, is decoded from
+what `toml.stringify` writes of a variant, as `json.parse` decodes one (see
+[json](json.md#enums)): a variant without fields is the string of its name,
+and a variant with fields is a table whose `variant` names it and whose
+`fields` array lists its fields.
+
+```toml
+status = "Active"
+history = ["Active", { fields = [2], variant = "Paused" }]
+
+[next]
+fields = [1]
+variant = "Paused"
+```
+
+An enum type may be the type argument (at the top of `toml.parse` only a
+variant with fields is a table), the elements of `toml.parse_list`, the
+values of `toml.parse_map`, and the type of a field anywhere in a record or
+in another enum's variant. A document that is no variant of the enum is an
+`Err` with the texts of `json.parse`, toml's names of the kinds of values and
+the path: `status = "Gone"` is ``Other("`Status` has no variant `Gone` at
+status")``, `status = 1` is `TypeMismatch("String or table", "integer at
+status")`, and `status = { variant = "Active" }` is `TypeMismatch("String",
+"table at status")`.
 
 
 ## Nesting limits
@@ -297,8 +327,9 @@ before its sub-tables (`[name]`, `[[name]]`), as TOML requires. `toml.parse`
 reads a `Date`, a `Time` and a `DateTime` back into a field of the same type.
 A date whose year has no literal (one before the year 0 or past 9999) is
 written as a string of the text silt shows of it, which `toml.parse` reads
-back as well. A variant is written but not read back (an enum has no
-decoder).
+back as well. A variant is read back into its enum type when the program
+declares it (see [Enums](#enums)); a variant of a builtin enum is written but
+not read back.
 
 ```silt
 import toml

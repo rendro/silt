@@ -12,7 +12,7 @@ error[type]: `toml.parse` cannot decode `B`: field `b` has type `Option(List(Byt
  31 |   show(from_toml("n = 1", B))
     |                           ^ `toml.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
 
 error[type]: `json.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
  --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:32:43
@@ -28,7 +28,7 @@ error[type]: `toml.parse` cannot decode `B`: field `b` has type `Option(List(Byt
  33 |   show(from_toml("n = 1\nb = []", B))
     |                                   ^ `toml.parse` cannot decode `B`: field `b` has type `Option(List(Bytes))`, and `Bytes` has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
 
 error[type]: `json.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
  --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:34:34
@@ -44,7 +44,7 @@ error[type]: `toml.parse` cannot decode `S`: field `s` has type `Option(Set(Int)
  35 |   show(from_toml("n = 1", S))
     |                           ^ `toml.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record types, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, and aliases of these
 
 error[type]: `json.parse` cannot decode `S`: field `s` has type `Option(Set(Int))`, and `Set(Int)` has no decoder
  --> data_decode__a_field_with_no_decoder_is_refused_when_its_key_is_absent.silt:36:45

@@ -114,10 +114,12 @@ impl Family {
     }
 
     /// Whether the family decodes a non-generic enum type of the
-    /// program, from what `json.stringify` writes of a variant: as
-    /// the type argument, as an element and as a field, at any depth.
+    /// program, from what `json.stringify` writes of a variant (the
+    /// string of the name of a variant without fields, the table of one
+    /// with fields): as the type argument, as an element and as a field,
+    /// at any depth. A row has no form for one.
     pub fn decodes_enums(self) -> bool {
-        self == Family::Json
+        self != Family::Postgres
     }
 
     /// The family of what a map, a tuple or a nested record of a field
@@ -215,7 +217,8 @@ impl Decoding {
         family: Family::Json,
         primitives: true,
     };
-    /// `toml.parse`: a document is a table, a record.
+    /// `toml.parse`: a document is a table, a record or a variant with
+    /// fields.
     pub const TOML_RECORD: Decoding = Decoding {
         family: Family::Toml,
         primitives: false,
@@ -239,27 +242,33 @@ impl Decoding {
 
     /// What the type argument may be, each type as `name` writes it:
     /// `Int, Float, String, Bool, json.Value, a record type, or an enum
-    /// type`, `a record type or json.Value`.
+    /// type`, `a record type or json.Value`, `a record type or an enum
+    /// type`.
     pub fn type_arguments(self, name: impl Fn(&str) -> String) -> String {
         let json_value = self.json_value().then(|| name(Leaf::JsonValue.name()));
+        let enums = self
+            .family
+            .decodes_enums()
+            .then(|| "an enum type".to_string());
         match self.primitives {
             true => {
                 let mut types: Vec<String> =
                     BUILTIN_PRIMITIVE_NAMES.iter().map(|t| name(t)).collect();
                 types.extend(json_value);
                 types.push("a record type".to_string());
-                if self.family.decodes_enums() {
-                    types.push("an enum type".to_string());
-                }
+                types.extend(enums);
                 if let Some(last) = types.last_mut() {
                     *last = format!("or {last}");
                 }
                 types.join(", ")
             }
-            false => match json_value {
-                Some(json_value) => format!("a record type or {json_value}"),
-                None => "a record type".to_string(),
-            },
+            false => {
+                let others: Vec<String> = json_value.into_iter().chain(enums).collect();
+                match others.is_empty() {
+                    true => "a record type".to_string(),
+                    false => format!("a record type or {}", others.join(" or ")),
+                }
+            }
         }
     }
 }

@@ -3,8 +3,8 @@
 -- An enum whose variant has a field no decoder exists for (here Bytes)
 -- has no json decoder, so a record with a field of it, or the enum
 -- itself, is refused whatever the document would hold: another
--- variant, the key left out, an empty list. And toml has no decoder for
--- an enum, so a record with an enum field is refused too.
+-- variant, the key left out, an empty list. toml refuses it as well,
+-- in an Option field of a record whose key is left out too.
 -- (Through a `type a` parameter: the checker asks of each type a call
 -- gives it what the decoder the function gives it to asks.)
 import json
@@ -17,12 +17,7 @@ type Blob {
 
 type File { name: String, blob: Blob }
 
-type Status {
-  Active,
-  Paused(Int),
-}
-
-type Config { status: Option(Status) }
+type Config { blob: Option(Blob) }
 
 fn from_json(text: String, type a) -> Result(a, json.JsonError) {
   json.parse(text, a)

@@ -1,0 +1,25 @@
+name = "build"
+history = ["Active", { fields = [2], variant = "Paused" }]
+
+[status]
+fields = ["a", "Active"]
+variant = "Moved"
+
+[next]
+fields = [1]
+variant = "Paused"
+
+[by_host]
+h = "Active"
+true
+true
+true
+name = "idle"
+status = "Active"
+history = []
+
+[by_host]
+true
+Ok([Active, Paused(1)])
+Ok(#{"a": Active, "b": Moved(x, Active)})
+Ok(Paused(3))
