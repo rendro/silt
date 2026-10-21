@@ -1,31 +1,31 @@
-error[type]: `toml.parse` cannot decode `Doc`: field `j` has type `Value`, and `json.Value` has no decoder
+error[type]: `toml.parse` cannot decode `Doc`: field `j` has type `json.Value`, which has no decoder
  --> data_decode__a_json_value_field_has_no_toml_decoder_whatever_the_document_holds.silt:34:27
     |
  34 |   show(from_toml("n = 1", Doc))
-    |                           ^^^ `toml.parse` cannot decode `Doc`: field `j` has type `Value`, and `json.Value` has no decoder
+    |                           ^^^ `toml.parse` cannot decode `Doc`: field `j` has type `json.Value`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
   = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
-error[type]: `toml.parse` cannot decode `Maybe`: field `j` has type `Option(Value)`, and `json.Value` has no decoder
+error[type]: `toml.parse` cannot decode `Maybe`: field `j` has type `Option(json.Value)`, and `json.Value` has no decoder
  --> data_decode__a_json_value_field_has_no_toml_decoder_whatever_the_document_holds.silt:35:27
     |
  35 |   show(from_toml("n = 1", Maybe))
-    |                           ^^^^^ `toml.parse` cannot decode `Maybe`: field `j` has type `Option(Value)`, and `json.Value` has no decoder
+    |                           ^^^^^ `toml.parse` cannot decode `Maybe`: field `j` has type `Option(json.Value)`, and `json.Value` has no decoder
   = note: `from_toml` passes it to `toml.parse`
   = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
-error[type]: `toml.parse` cannot decode `Many`: field `js` has type `List(Value)`, and `json.Value` has no decoder
+error[type]: `toml.parse` cannot decode `Many`: field `js` has type `List(json.Value)`, and `json.Value` has no decoder
  --> data_decode__a_json_value_field_has_no_toml_decoder_whatever_the_document_holds.silt:36:36
     |
  36 |   show(from_toml("n = 1\njs = []", Many))
-    |                                    ^^^^ `toml.parse` cannot decode `Many`: field `js` has type `List(Value)`, and `json.Value` has no decoder
+    |                                    ^^^^ `toml.parse` cannot decode `Many`: field `js` has type `List(json.Value)`, and `json.Value` has no decoder
   = note: `from_toml` passes it to `toml.parse`
   = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
-error[type]: `toml.parse` cannot decode `Outer`: field `j` of `Inner`, a record type nested in it, has type `Value`, and `json.Value` has no decoder
+error[type]: `toml.parse` cannot decode `Outer`: field `j` of `Inner`, a record type nested in it, has type `json.Value`, which has no decoder
  --> data_decode__a_json_value_field_has_no_toml_decoder_whatever_the_document_holds.silt:37:27
     |
  37 |   show(from_toml("n = 1", Outer))
-    |                           ^^^^^ `toml.parse` cannot decode `Outer`: field `j` of `Inner`, a record type nested in it, has type `Value`, and `json.Value` has no decoder
+    |                           ^^^^^ `toml.parse` cannot decode `Outer`: field `j` of `Inner`, a record type nested in it, has type `json.Value`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
   = help: decodable field types are Int, Float, String, Bool, Date, Time, DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

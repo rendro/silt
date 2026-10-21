@@ -26,13 +26,18 @@ impl TypeChecker {
     /// is its own too.
     fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
         Type::show_all(types, |r, clash| {
-            let of_module = self.qualify_module_types
-                && crate::defs::builtin_types()
-                    .get(r.id.0.0 as usize)
-                    .is_some_and(|(_, module)| module.is_some());
+            let of_module = self.qualify_module_types && of_builtin_module(r);
             (clash || of_module || (session && self.type_name_clashes(r)))
                 .then(|| self.qualified_type(r))
         })
+    }
+
+    /// `ty` with each type of a builtin module written with its module
+    /// (`Option(json.Value)`): the field type a decoder's refusal names,
+    /// beside the part of it that has no decoder, which the registry
+    /// writes so.
+    pub(super) fn show_with_builtin_modules(&self, ty: &Type) -> String {
+        Type::show_all(&[ty], |r, _| of_builtin_module(r).then(|| self.qualified_type(r))).remove(0)
     }
 
     /// Whether another type the session knows has the name of `r`.
@@ -234,4 +239,12 @@ impl TypeChecker {
             None => format!("unknown type '{name}'"),
         }
     }
+}
+
+/// Whether `r` is a type of a builtin module (`json.Value`,
+/// `time.Date`), not of the prelude or of a program's module.
+fn of_builtin_module(r: TypeRef) -> bool {
+    crate::defs::builtin_types()
+        .get(r.id.0.0 as usize)
+        .is_some_and(|(_, module)| module.is_some())
 }

@@ -300,7 +300,7 @@ impl TypeChecker {
                     record: resolve(record.name),
                     field: resolve(field),
                     in_variant,
-                    field_type: shown(&ty),
+                    field_type: self.show_with_builtin_modules(&ty),
                     part,
                     nested: false,
                 });
