@@ -1,0 +1,75 @@
+-- A stream whose rows hold parts of a type with a written `json.Decode`
+-- impl gives the rows the impls finish, in order. The `Err` an impl
+-- returns is that row's `Err`, and the stream ends there, as at a row
+-- the decoder refuses. An impl that fails ends the stream with its
+-- failure, as a failing stream stage does: a plain `channel.receive`
+-- sees `None` (`channel.each` raises it: the next case). A stream that
+-- is closed while it is read stops.
+import channel
+import env
+import json
+import postgres
+import string
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Code { digits: text })
+      json.Int(n) -> match n {
+        0 -> Ok(Code { digits: "{100 / n}" })
+        _ -> Err(json.Other("no code: {n}"))
+      }
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { n: Int, code: Code }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn drain(rows: Channel(Result(R, postgres.PostgresError))) {
+  match channel.receive(rows) {
+    Some(row) -> {
+      println("  {row}")
+      drain(rows)
+    }
+    None -> println("  (end)")
+  }
+}
+
+fn main() {
+  let sql = "SELECT g AS n, CASE WHEN g = 3 THEN to_jsonb(:k) ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 5) g"
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println("an Err:")
+      match postgres.stream(db, string.replace(sql, ":k", "7"), (), R) {
+        Ok(rows) -> drain(rows)
+        Err(e) -> println(e.message())
+      }
+      println("a failure:")
+      match postgres.stream(db, string.replace(sql, ":k", "0"), (), R) {
+        Ok(rows) -> drain(rows)
+        Err(e) -> println(e.message())
+      }
+      println("closed:")
+      match postgres.stream(db, "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 100000) g", (), R) {
+        Ok(rows) -> {
+          println("  {channel.receive(rows)}")
+          channel.close(rows)
+          println("  closed")
+        }
+        Err(e) -> println(e.message())
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println(e.message())
+  }
+}

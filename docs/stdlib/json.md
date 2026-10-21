@@ -384,8 +384,9 @@ error, with the path of its part appended as to the decoder's own errors:
 `Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
 posts[1].tags")`, a `MissingField("name")` there is
 `MissingField("posts[1].tags.name")`. The first error in the document
-counts, the impl's or the decoder's. The toml decoders honour the impl
-too (see [toml](toml.md#types-with-a-jsondecode-impl)).
+counts, the impl's or the decoder's. The toml decoders and a postgres
+row honour the impl too (see [toml](toml.md#types-with-a-jsondecode-impl)
+and [postgres](postgres.md#types-with-a-jsondecode-impl)).
 
 ```silt
 import json

@@ -229,8 +229,10 @@ struct Impls<'a> {
 pub(crate) enum Holes {
     /// Keep the part, in the order the decoder comes to it.
     Collect(Vec<Hole>),
-    /// Put there the next of what the impls gave.
-    Supply(std::vec::IntoIter<Value>),
+    /// Put there the next of what the impls gave: the value, or the
+    /// `JsonError` an impl returned, which is the decoder's error there
+    /// (the format's, with the part's path: `Rules::from_impl`).
+    Supply(std::vec::IntoIter<Result<Value, Value>>),
 }
 
 /// A part of a document of a type with a written `decode`.
@@ -253,7 +255,7 @@ impl std::ops::Deref for Reader<'_> {
 
 impl<'a> Reader<'a> {
     /// A reader that decodes every type by its structure.
-    #[cfg(any(test, feature = "postgres"))]
+    #[cfg(test)]
     pub(crate) fn new(rt: &'a Runtime) -> Reader<'a> {
         Reader { rt, impls: None }
     }
@@ -297,7 +299,13 @@ impl<'a> Reader<'a> {
                 });
                 Value::Unit
             }),
-            Holes::Supply(values) => Ok(values.next().unwrap_or(Value::Unit)),
+            Holes::Supply(values) => match values.next() {
+                Some(Ok(value)) => Ok(value),
+                Some(Err(error)) => {
+                    Err(Error::Given((D::RULES.from_impl)(&error, &at.to_string())))
+                }
+                None => Ok(Value::Unit),
+            },
         })
     }
 
@@ -392,13 +400,13 @@ fn variant_field_message(ty: &str, variant: &str, declared: &str) -> std::string
     )
 }
 
-/// Whether `field_type` names an enum type (not counting the fields of
-/// the record types it names).
-fn names_enum(field_type: &FieldType) -> bool {
+/// Whether `field_type` names an enum type that no written impl decodes
+/// (not counting the fields of the record types it names).
+fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
     match field_type {
-        FieldType::Enum(_) => true,
-        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(t),
-        FieldType::Tuple(ts) => ts.iter().any(names_enum),
+        FieldType::Enum(id) => !rt.written(*id),
+        FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(rt, t),
+        FieldType::Tuple(ts) => ts.iter().any(|t| names_enum(rt, t)),
         _ => false,
     }
 }
@@ -406,11 +414,12 @@ fn names_enum(field_type: &FieldType) -> bool {
 /// Whether `field_type`, not counting the fields of the record and enum
 /// types it names, holds a part that `family` has no decoder for: it is
 /// a type no decoder has, or it holds a leaf the family does not decode,
-/// or an enum type where the family decodes none.
-fn lacks_here(family: Family, field_type: &FieldType) -> bool {
+/// or an enum type where the family decodes none (one with a written
+/// impl is the impl's).
+fn lacks_here(rt: &Reader, family: Family, field_type: &FieldType) -> bool {
     matches!(field_type, FieldType::Unsupported(_))
         || family.lacks(field_type).is_some()
-        || (!family.decodes_enums() && names_enum(field_type))
+        || (!family.decodes_enums() && names_enum(rt, field_type))
 }
 
 /// The first field of a field of type `field_type` that `family` has no
@@ -423,7 +432,7 @@ fn lacking(
     field_type: &FieldType,
     seen: &mut Vec<(TypeId, Family)>,
 ) -> Option<(Option<Place>, std::string::String)> {
-    if lacks_here(family, field_type) {
+    if lacks_here(rt, family, field_type) {
         return Some((None, shown(rt, field_type)));
     }
     let mut named = Vec::new();
@@ -630,6 +639,9 @@ pub(crate) enum Error {
     /// written): [`record`] turns it into an `Other` that names the field
     /// whose type it is.
     Unsupported(std::string::String),
+    /// The error a written `json.Decode` impl gave for a part, as the
+    /// format's error variant.
+    Given(Value),
 }
 
 impl From<VmError> for Error {
@@ -660,6 +672,7 @@ impl Error {
             ),
             Error::MissingField(path) => Value::variant(missing, vec![string(path)]),
             Error::Other(message) => Value::variant(other, vec![string(message)]),
+            Error::Given(error) => error,
             // (Only a record's field holds such a type, and `record`
             // names it: this is the fallback.)
             Error::Unsupported(declared) => Value::variant(
@@ -1222,6 +1235,7 @@ mod tests {
             Err(Error::MissingField(at)) => format!("MissingField {at}"),
             Err(Error::Other(message)) => format!("Other {message}"),
             Err(Error::Unsupported(declared)) => format!("Unsupported {declared}"),
+            Err(Error::Given(error)) => format!("Given {error}"),
         }
     }
 

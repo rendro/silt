@@ -112,7 +112,9 @@ type, or a record with a field of a type no column can fill (`Bytes` in a
 `Map`, a tuple or a nested record, which only a json document could fill;
 an enum, which postgres has no decoder for), is a compile error that names
 the field and its record. A record nested in a field is filled from a json
-document by `json.parse`'s rules, an enum in it too.
+document by `json.parse`'s rules, an enum in it too. A record or enum type
+with a written [`json.Decode`](json.md#jsondecode) impl is decoded by the
+impl (see [Types with a `json.Decode` impl](#types-with-a-jsondecode-impl)).
 
 | Function | Type argument |
 |----------|---------------|
@@ -131,10 +133,12 @@ type may have these types:
 - tuples, such as `(Int, String)`
 - non-generic record types, from a `json` or `jsonb` column by `json.parse`'s
   rules (an enum in them too)
+- a record or enum type with a written `json.Decode` impl, from a `json` or
+  `jsonb` column by the impl
 - type aliases of any of these
 
-where `T` is again one of these types. An enum, a `Set`, a generic record, a
-function or a type parameter has no decoder.
+where `T` is again one of these types. An enum without such an impl, a
+`Set`, a generic record, a function or a type parameter has no decoder.
 
 Each field of the record is read from the column of its exact name;
 Postgres folds a name it is not given in quotes to lower case, so a
@@ -201,6 +205,39 @@ in SQL, `col::text`.
 
 In a `json.Value` row each row is a `json.Object` of all its columns,
 `json.Null` for a `NULL`; two columns of one name are the error above.
+
+### Types with a `json.Decode` impl
+
+One data layer, one override: a record or enum type with a written
+`trait json.Decode for T` impl is decoded by its `decode` in a row as in
+`json.parse`, and its fields are not looked into (it may hold a `Set`):
+
+- A field whose type is, or holds, such a type is filled from a `json` or
+  `jsonb` column (or an array of them), as a record's field is: the impl
+  gets its part of the cell's document as a `json.Value`, wherever it is
+  (the field itself, an element of a list, a field of a record in the
+  document). An `Option` around it stays structural (`NULL` and `null`
+  are `None`). Any other column is the plan's `TypeMismatch(column,
+  "T", "text")` before the statement runs. The `Err` the impl returns
+  is the column's mismatch, worded as the decoder's own errors in a
+  document: `TypeMismatch("code", "Code", "jsonb: no code here")`, with
+  the path of the part in the document where it is no whole cell
+  (`at [0]`). The first error in the row, in the order of the type's
+  fields, counts, the impl's or a later cell's.
+- A row type with such an impl is decoded by the impl from the
+  `json.Object` of the row's columns, as a `json.Value` row is (every
+  column, by its name): an enum type is a row type so. The `Err` the impl
+  returns is the row's `Err(Other(message))`, the `JsonError`'s message:
+  `Other("json missing field: n")`.
+
+The impls are the program's code, which the task that called
+`postgres.query` or `postgres.cursor_next` runs, after the rows are read
+(a failure of an impl is that task's). In a stream, a task of its own
+finishes each such row before the worker sends it: an impl's `Err` is
+that row's `Err`, and the stream ends there, as at a row the decoder
+refuses; an impl that fails ends the stream with its failure, as a
+failing stream stage does: `channel.each` raises it, a plain
+`channel.receive` sees `None`.
 
 `postgres.execute` gives the number of rows the statement affected (for
 a statement that affects no rows, such as `CREATE TABLE`, `0`). A

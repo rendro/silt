@@ -41,8 +41,6 @@ struct Decoding<D: Document> {
     expected: FieldType,
     read: Read<D>,
     holes: Vec<Hole>,
-    /// The `decode` of each part's type.
-    impls: Vec<Value>,
     /// What the impls gave for the parts so far.
     decoded: Vec<Value>,
     /// The error the decoder met after the parts, if it met one.
@@ -59,29 +57,18 @@ impl<D: Document + Send> Native for Decoding<D> {
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.calling {
             let at = &self.holes[self.decoded.len()].at;
-            match &input {
-                Value::Variant(result) if result.is(bv::OK) => {
-                    self.decoded.push(result.fields()[0].clone());
-                }
-                Value::Variant(result) if result.is(bv::ERR) => {
-                    let error = (D::RULES.from_impl)(&result.fields()[0], at);
+            match vm.decode_returned(&input)? {
+                Ok(value) => self.decoded.push(value),
+                Err(error) => {
+                    let error = (D::RULES.from_impl)(&error, at);
                     return Ok(Step::Done(Value::variant(bv::ERR, vec![error])));
-                }
-                other => {
-                    return Err(VmError::type_confusion(format!(
-                        "decode returned {}, not a Result",
-                        vm.user_facing_type_name(other)
-                    )));
                 }
             }
         }
         let next = self.decoded.len();
-        if let (Some(hole), Some(impl_)) = (self.holes.get(next), self.impls.get(next)) {
+        if let Some(hole) = self.holes.get(next) {
             self.calling = true;
-            // (The VM's own copy of the impl's closure, as a call of
-            // the impl's method would take.)
-            let impl_ = vm.own.value(hole.slot, impl_.clone());
-            return Ok(vm.call(impl_, [hole.json.clone()]));
+            return vm.call_written_decode(hole.slot, hole.json.clone());
         }
         // Every part decoded: the decoder's own error after them, or
         // the value with them.
@@ -90,8 +77,11 @@ impl<D: Document + Send> Native for Decoding<D> {
         }
         let table = self.table.clone();
         let written = move |id| table.decoded(id);
-        let values = std::mem::take(&mut self.decoded).into_iter();
-        let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(values));
+        let values: Vec<_> = std::mem::take(&mut self.decoded)
+            .into_iter()
+            .map(Ok)
+            .collect();
+        let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(values.into_iter()));
         let decoded = (self.read)(&reader, &self.doc, &self.expected);
         Ok(Step::Done(decode::result(D::RULES, decoded)))
     }
@@ -127,10 +117,6 @@ impl Vm {
         if holes.is_empty() {
             return Ok(Step::Done(decode::result(D::RULES, decoded)));
         }
-        let impls = holes
-            .iter()
-            .map(|hole| self.written_decode(hole))
-            .collect::<Result<Vec<Value>, VmError>>()?;
         Ok(Step::Run(Box::new(Decoding {
             name,
             table,
@@ -138,7 +124,6 @@ impl Vm {
             expected,
             read,
             holes,
-            impls,
             decoded: Vec::new(),
             error: decoded.err(),
             calling: false,
@@ -155,14 +140,34 @@ impl Vm {
         }
     }
 
-    /// The `decode` the program wrote for the type of the part `hole`.
-    ///
-    /// An impl of `json.Decode` is written in the module that declares
-    /// its type, and a module's functions are set before any of its code
-    /// runs: an impl that is not set yet is a bug of silt, and said so.
-    fn written_decode(&self, hole: &Hole) -> Result<Value, VmError> {
-        self.global(hole.slot).cloned().ok_or_else(|| {
-            VmError::type_confusion("a `decode` written for a type is called before it is set")
-        })
+    /// The call of the `decode` the program wrote in the global slot
+    /// `slot` with `json`: the VM's own copy of the impl's closure, as
+    /// a call of the impl's method would take.
+    pub(crate) fn call_written_decode(&mut self, slot: u16, json: Value) -> Result<Step, VmError> {
+        let impl_ = self.global(slot).cloned().ok_or_else(unset_decode)?;
+        let impl_ = self.own.value(slot, impl_);
+        Ok(self.call(impl_, [json]))
+    }
+}
+
+/// An impl of `json.Decode` is written in the module that declares its
+/// type, and a module's functions are set before any of its code runs:
+/// an impl that is not set yet is a bug of silt, and said so.
+fn unset_decode() -> VmError {
+    VmError::type_confusion("a `decode` written for a type is called before it is set")
+}
+
+impl Vm {
+    /// What a call of a written `decode` returned, `given`: `Ok` of the
+    /// value, or `Err` of the `JsonError` it returned.
+    pub(crate) fn decode_returned(&self, given: &Value) -> Result<Result<Value, Value>, VmError> {
+        match given {
+            Value::Variant(result) if result.is(bv::OK) => Ok(Ok(result.fields()[0].clone())),
+            Value::Variant(result) if result.is(bv::ERR) => Ok(Err(result.fields()[0].clone())),
+            other => Err(VmError::type_confusion(format!(
+                "decode returned {}, not a Result",
+                self.user_facing_type_name(other)
+            ))),
+        }
     }
 }

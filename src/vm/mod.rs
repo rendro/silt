@@ -268,13 +268,28 @@ impl Vm {
         op: IoOp,
         then: impl FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
+        self.io_wait_step(name, timeout_err, op, move |_, value| {
+            then(value).map(Step::Done)
+        })
+    }
+
+    /// [`Vm::io_wait`] that goes on as `then` says with the operation's
+    /// value: the builtin's value, or a frame that computes it (one
+    /// that calls the program's code).
+    pub(crate) fn io_wait_step(
+        &mut self,
+        name: &'static str,
+        timeout_err: ErrFactory,
+        op: IoOp,
+        then: impl FnOnce(&mut Vm, Value) -> Result<Step, VmError> + Send + 'static,
+    ) -> Result<Step, VmError> {
         let mut then = Some(then);
         let deadline = self.runtime.scheduler.io_deadline();
         let wait = Wait::new(vec![Arm::Cell(op.cell.clone())]).deadline(deadline);
         // The frame owns the operation: when the wait is over, however
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
-        Ok(self.park(name, wait, move |_, fired| {
+        Ok(self.park(name, wait, move |vm, fired| {
             // The value is taken only by a wait that it ended: one
             // that came as the deadline passed stays unheard.
             let value = match fired {
@@ -282,7 +297,7 @@ impl Vm {
                 _ => None,
             };
             match (value, then.take()) {
-                (Some(value), Some(then)) => Ok(Step::Done(then(value)?)),
+                (Some(value), Some(then)) => then(vm, value),
                 (Some(value), None) => Ok(Step::Done(value)),
                 (None, _) => Ok(Step::Done(timeout_err(IoFailure::Timeout(
                     crate::scheduler::IO_TIMEOUT,

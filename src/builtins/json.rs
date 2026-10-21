@@ -9,8 +9,6 @@ use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
 use crate::typeinfo::bv;
 use crate::value::Value;
-#[cfg(feature = "postgres")]
-use crate::vm::Runtime;
 use crate::vm::{Step, Vm, VmError};
 
 // ── JsonError helpers ────────────────────────────────────────────────
@@ -406,22 +404,26 @@ impl Document for serde_json::Value {
 
 /// The value of the field type `expected` that the document `json` is,
 /// for a decoder of a format that holds JSON documents (postgres's
-/// `json` and `jsonb` columns): `Err` of what `JsonError`'s `message`
-/// says of why there is none.
+/// `json` and `jsonb` columns), read by `r` (a part of a type with a
+/// written `json.Decode` impl is its hole): `Err` of what `JsonError`'s
+/// `message` says of why there is none.
 #[cfg(feature = "postgres")]
 pub(crate) fn decode_field(
-    rt: &Runtime,
+    r: &decode::Reader,
     json: &serde_json::Value,
     expected: &FieldType,
 ) -> Result<Value, std::string::String> {
-    decode::value(&decode::Reader::new(rt), json, expected, &At::Top).map_err(|e| {
-        let why = e.variant(&RULES);
-        let text = match &why {
-            Value::Variant(why) => error_text(why.name(), why.fields()),
-            _ => None,
-        };
-        text.unwrap_or_else(|| why.to_string())
-    })
+    decode::value(r, json, expected, &At::Top).map_err(|e| message(&e.variant(&RULES)))
+}
+
+/// What `JsonError`'s `message` says of `error`.
+#[cfg(feature = "postgres")]
+pub(crate) fn message(error: &Value) -> std::string::String {
+    let text = match error {
+        Value::Variant(why) => error_text(why.name(), why.fields()),
+        _ => None,
+    };
+    text.unwrap_or_else(|| error.to_string())
 }
 
 /// What `caller`, a json decoder, gives for its type argument `ty`:
