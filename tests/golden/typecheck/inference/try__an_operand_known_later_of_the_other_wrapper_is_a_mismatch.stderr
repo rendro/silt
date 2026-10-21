@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected Option(_), got Result(Int, Bool)
+ --> try__an_operand_known_later_of_the_other_wrapper_is_a_mismatch.silt:7:11
+   |
+ 7 |   let z = h()?
+   |           ^^^^ type mismatch: expected Option(_), got Result(Int, Bool)
+
+error[type]: type mismatch: expected Result(_, _), got Option(Int)
+ --> try__an_operand_known_later_of_the_other_wrapper_is_a_mismatch.silt:13:11
+    |
+ 13 |   let z = h()?
+    |           ^^^^ type mismatch: expected Result(_, _), got Option(Int)

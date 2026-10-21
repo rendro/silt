@@ -607,7 +607,9 @@ impl TypeChecker {
             Type::Var(_) => {
                 self.unify(&ret_resolved, &expected_wrapper, span);
             }
-            Type::Generic(n, _) if n.is_builtin(head) => {
+            // A Result or an Option, of either wrapper: a `?` of the
+            // other one is the mismatch the inline path reports.
+            Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option") => {
                 self.unify(&ret_resolved, &expected_wrapper, span);
             }
             // Concrete non-matching return type: this is the unsound
