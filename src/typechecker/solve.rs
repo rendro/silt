@@ -2194,7 +2194,7 @@ impl TypeChecker {
     /// method of the trait is not called here. (Its impls may or may not
     /// be known to the session by now; what a module means does not
     /// depend on that.)
-    fn unreached(&self, t: TraitKey) -> Option<Symbol> {
+    pub(super) fn unreached(&self, t: TraitKey) -> Option<Symbol> {
         let module = self.defs.as_ref()?.get(t.id.0).module;
         if let Some(name) = module.builtin_name() {
             return (!self.imports_builtin_trait(t, module)).then(|| intern(name));
@@ -2249,7 +2249,10 @@ impl TypeChecker {
         if !on_type && !takes_self {
             return None;
         }
-        (self.tables.has_structural_name(tr, ty) && self.by_structure(tr, ty)).then_some(tr)
+        (self.tables.has_structural_name(tr, ty)
+            && self.by_structure(tr, ty)
+            && self.unreached(tr).is_none())
+        .then_some(tr)
     }
 
     /// Of the traits that give a type a method (`method_providers`), the

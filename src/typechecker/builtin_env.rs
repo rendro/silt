@@ -403,7 +403,7 @@ pub fn __trait_init_fingerprint_check_program() -> (
         .collect();
     let method_keys: BTreeSet<String> = checker
         .tables
-        .methods()
+        .methods(&|_| true)
         .iter()
         .map(|(ty, m)| format!("{}.{}", resolve(ty.name), resolve(*m)))
         .collect();

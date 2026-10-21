@@ -153,8 +153,13 @@ impl std::hash::Hash for TraitKey {
     }
 }
 
+/// A trait is written by its name; a trait of a builtin module with the
+/// module (`json.Encode`), as a program names it.
 impl std::fmt::Display for TraitKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some((name, Some(module))) = crate::defs::builtin_trait_of_id(self.id.0) {
+            return write!(f, "{module}.{name}");
+        }
         write!(f, "{}", self.name)
     }
 }
