@@ -89,20 +89,13 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
             }
         }
         // A variant without a section of its own shows what documents
-        // its enum, under a line that says whose it is: the enum's
-        // section of the errors page for a variant of the module's
-        // error enum, the enum's own section, or else the module's page.
-        let error_sections = iter_sections(ERRORS_PAGE);
+        // its enum (`type_docs`), under a line that says whose it is,
+        // or else the module's page.
         for module in registry.enabled_modules() {
             for ty in &module.type_decls {
-                let section = error_sections
-                    .iter()
-                    .find(|(keys, _)| {
-                        module.error == Some(ty.name) && keys.iter().any(|k| k == ty.name)
-                    })
-                    .map(|(_, body)| body.clone());
-                let below = section
-                    .or_else(|| docs.get(&format!("{}.{}", module.name, ty.name)).cloned())
+                let below = type_docs()
+                    .get(&format!("{}.{}", module.name, ty.name))
+                    .cloned()
                     .unwrap_or_else(|| strip_frontmatter(module.page).to_string());
                 for (variant, _) in ty.variants() {
                     let name = format!("{}.{variant}", module.name);
@@ -141,6 +134,73 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                 );
                 docs.insert(name, text);
             }
+        }
+        docs
+    })
+}
+
+/// The docs of each type that a built module declares, by its name as
+/// it is reached (`json.Value`, `io.IoError`), where it has any: the
+/// errors page's section on the module's error enum, else the type's
+/// own section of a page.
+pub fn type_docs() -> &'static HashMap<String, String> {
+    static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    DOCS.get_or_init(|| {
+        let modules: Vec<&Module> = registry().enabled_modules().collect();
+        let names: HashSet<String> = modules
+            .iter()
+            .flat_map(|m| {
+                m.type_decls
+                    .iter()
+                    .map(|ty| format!("{}.{}", m.name, ty.name))
+            })
+            .collect();
+        let mut docs = HashMap::new();
+        for (_, page) in pages() {
+            for (keys, body) in iter_sections(page) {
+                for key in keys.into_iter().filter(|key| names.contains(key)) {
+                    docs.insert(key, body.clone());
+                }
+            }
+        }
+        let error_sections = iter_sections(ERRORS_PAGE);
+        for module in modules {
+            let Some(error) = module.error else { continue };
+            if let Some((_, body)) = error_sections
+                .iter()
+                .find(|(keys, _)| keys.iter().any(|k| k == error))
+            {
+                docs.insert(format!("{}.{error}", module.name), body.clone());
+            }
+        }
+        docs
+    })
+}
+
+/// What an editor says of each builtin module whose feature is built
+/// (`json` in `import json`, in `json.parse`, in `json.Encode`): the
+/// first sentence of the first paragraph of the module's part of its
+/// page (under its `# json` heading), on one line.
+pub fn module_docs() -> &'static HashMap<&'static str, String> {
+    static DOCS: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
+    DOCS.get_or_init(|| {
+        let mut docs = HashMap::new();
+        for module in registry().enabled_modules() {
+            let paragraph: Vec<&str> = strip_frontmatter(module.page)
+                .lines()
+                .skip_while(|line| heading_module(line).is_none_or(|m| m.name != module.name))
+                .skip(1)
+                .take_while(|line| !line.starts_with("# "))
+                .skip_while(|line| line.trim().is_empty() || line.starts_with('#'))
+                .take_while(|line| !line.trim().is_empty())
+                .flat_map(|line| line.split_whitespace())
+                .collect();
+            let paragraph = paragraph.join(" ");
+            let sentence = match paragraph.find(". ") {
+                Some(end) => &paragraph[..=end],
+                None => &paragraph,
+            };
+            docs.insert(module.name, sentence.to_string());
         }
         docs
     })
@@ -601,6 +661,31 @@ mod tests {
             problems
                 .contains(&"no table of type arguments of the page lists `toml.parse`".to_string()),
             "{problems:?}"
+        );
+    }
+
+    /// Every built module has a sentence of its own: the one that opens
+    /// its part of the page, also where the page is shared (`env` and
+    /// `fs` are on `io`'s page, below `io`'s part).
+    #[test]
+    fn every_builtin_module_has_the_first_sentence_of_its_own_part() {
+        let docs = module_docs();
+        for module in registry().enabled_modules() {
+            let text = &docs[module.name];
+            assert!(
+                text.ends_with('.') && !text.contains('\n') && text.len() > 10,
+                "`{}`: {text:?}",
+                module.name
+            );
+        }
+        assert_eq!(
+            docs["json"],
+            "Parse JSON strings into typed silt values and serialize values to JSON."
+        );
+        assert_eq!(docs["env"], "Environment variable access.");
+        assert_eq!(
+            docs["option"],
+            "Functions for transforming and querying `Option(a)` values without pattern matching."
         );
     }
 

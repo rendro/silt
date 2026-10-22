@@ -1,0 +1,15 @@
+-- cmd: lsp
+-- requires-feature: tcp
+-- lsp: hover 10:14
+-- lsp: hover 11:14
+-- Hover on a type of the `tcp` module, which is built with the cargo
+-- feature `tcp`, as on another builtin module's type (see
+-- `hover_on_a_builtin_module_type`).
+import tcp
+
+fn f0(x: tcp.TcpError) -> Int { 0 }
+fn f1(x: tcp.TcpStream) -> Int { 0 }
+
+fn main() {
+  println(1)
+}

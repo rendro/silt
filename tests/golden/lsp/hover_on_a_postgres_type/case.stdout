@@ -1,0 +1,42 @@
+> hover 11:19
+```silt
+type postgres.PostgresError {
+  Connect(String),
+  Tls(String),
+  AuthFailed(String),
+  Query(String, String),
+  TypeMismatch(String, String, String),
+  NoSuchColumn(String),
+  Closed,
+  Timeout,
+  TxnAborted,
+  Other(String),
+}
+```
+
+---
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Connect(String)` | message | a connect that failed (refused port, unknown or unreachable host, missing database), URL parse, connect options, SQLSTATE class 08 |
+| `Tls(String)` | message | TLS handshake / a server without TLS when `sslmode` requires TLS / cert read / connector build |
+| `AuthFailed(String)` | message | SQLSTATE class 28: a role or password the server refuses |
+| `Query(String, String)` | message, SQLSTATE | server-reported error |
+| `TypeMismatch(String, String, String)` | column, expected, actual | a column whose type, or a cell whose value, does not fit the field it is decoded into |
+| `NoSuchColumn(String)` | column | a field with no column in the result; SQLSTATE 42703 |
+| `Closed` | — | connection dropped, or a transaction used after it ended |
+| `Timeout` | — | SQLSTATE 57014, a server that does not answer a connect, no free connection in the pool's 30 s |
+| `TxnAborted` | — | SQLSTATE 25P02 — rollback required |
+| `Other(String)` | message | unclassified pg error |
+> hover 12:19
+```silt
+type postgres.Notification {
+  channel: String,
+  payload: String,
+  pid: Int,
+}
+```
+> hover 13:19
+```silt
+type postgres.PgPool
+```

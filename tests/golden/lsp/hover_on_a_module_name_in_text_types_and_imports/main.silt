@@ -1,0 +1,50 @@
+-- cmd: lsp
+-- lsp: hover 35:12
+-- lsp: hover 35:27
+-- lsp: hover 36:16
+-- lsp: hover 36:27
+-- lsp: hover 40:12
+-- lsp: hover 40:10
+-- lsp: hover 38:10
+-- lsp: hover 38:14
+-- lsp: hover 39:26
+-- lsp: hover 41:13
+-- lsp: hover 28:16
+-- lsp: hover 29:18
+-- lsp: hover 29:8
+-- lsp: hover 40:22
+-- lsp: hover 30:15
+-- lsp: hover 30:22
+-- A module's name in a string or a comment is text, and the dot is no
+-- name: neither shows the module.
+-- In a type the name before the dot is a module whatever local is
+-- spelled like it (`json` of `let json`); in an expression it is the
+-- local (`list.w`, `f(json)`).
+-- On an import line the alias shows its module, as a use of it does
+-- (`module shapes` for `sh`), and an item what it shows where it is
+-- used.
+import json
+import list
+import time as t
+import shapes as sh
+import json.{ Value, stringify }
+
+type Box { w: Int }
+
+fn main() {
+  let a = "json.Value and sh.Square"
+  let b = 1 -- json.Value sh.Square
+  let json = Box { w: 1 }
+  let v: json.Value = stringify(1) |> to_value
+  let f = { list: Box -> list.w }
+  let s: sh.Square = sh.unit()
+  println(f(json))
+  println(t.hours(s.side))
+  println(a)
+  println(b)
+  println(v)
+}
+
+fn to_value(text: String) -> Value {
+  json.String(text)
+}

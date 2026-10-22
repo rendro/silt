@@ -1,0 +1,32 @@
+-- cmd: lsp
+-- lsp: hover 19:36
+-- lsp: hover 19:41
+-- lsp: hover 21:19
+-- lsp: hover 21:24
+-- lsp: hover 21:42
+-- lsp: hover 21:47
+-- lsp: hover 27:19
+-- lsp: hover 27:24
+-- lsp: hover 28:13
+-- A builtin module's type shows its declaration and docs, and its module
+-- the module, wherever the type is written: inside `Map(String, List(..))`
+-- in a record field, inside `List(..)` and `Option(..)` in a signature, on
+-- a closure's parameter, and bare after `import json.{ Value }`.
+import json
+import json.{ Value }
+import list
+
+type Doc { parts: Map(String, List(json.Value)) }
+
+fn first(xs: List(json.Value)) -> Option(json.Value) {
+  list.head(xs)
+}
+
+fn main() {
+  let d = Doc { parts: #{ "a": [json.Null] } }
+  let show = { v: json.Value -> json.stringify(v) }
+  let bare: Value = json.Int(1)
+  println(first([bare]))
+  println(show(bare))
+  println(d.parts)
+}

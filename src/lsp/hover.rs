@@ -9,8 +9,7 @@ use super::ast_walk::{find_ident_at_offset, find_type_at_offset, has_unresolved_
 use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
-use super::local_bindings::nearest_local_binding_for;
-use super::modules::{qualified_access_at, qualifier_at, type_qualifier_at};
+use super::modules::{module_qualifier_at, qualified_access_at};
 use super::workspace::Named;
 
 impl Server {
@@ -60,13 +59,15 @@ impl Server {
         }
 
         // The name of an imported module before a dot (`geo` in
-        // `geo.mk`): the module, not the member's type.
-        if let Some(module) =
-            qualifier_at(program, cursor).or_else(|| type_qualifier_at(&doc.source.text, cursor))
-            && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
-            && let Some(view) = self.imported_module(doc, module)
-        {
-            return Some(markdown(Self::module_hover(&view, module)));
+        // `geo.mk`, `json` in `json.Encode`): the module, not the
+        // member's type.
+        if let Some(module) = module_qualifier_at(doc, cursor) {
+            if let Some(view) = self.imported_module(doc, module) {
+                return Some(markdown(Self::module_hover(&view)));
+            }
+            if let Some(value) = self.imported_builtin_module_hover(doc, module) {
+                return Some(markdown(value));
+            }
         }
 
         // The module an import names (`list` in `import list`).
@@ -90,10 +91,8 @@ impl Server {
             }
             return Some(markdown(value));
         }
-        if named_type.is_some() {
-            return find_ident_at_offset(program, cursor)
-                .and_then(|name| self.builtin_docs.get(&resolve(name)))
-                .map(|docs| markdown(docs.clone()));
+        if let Some(ty) = named_type {
+            return self.builtin_type_hover_text(doc, ty).map(markdown);
         }
 
         // A trait named (`Display` in `where a: Display`, in an impl's

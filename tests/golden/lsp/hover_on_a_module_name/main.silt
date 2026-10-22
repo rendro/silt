@@ -1,0 +1,67 @@
+-- cmd: lsp
+-- lsp: hover 43:7
+-- lsp: hover 43:12
+-- lsp: hover 44:22
+-- lsp: hover 44:27
+-- lsp: hover 44:35
+-- lsp: hover 47:34
+-- lsp: hover 47:48
+-- lsp: hover 48:3
+-- lsp: hover 48:8
+-- lsp: hover 52:9
+-- lsp: hover 54:9
+-- lsp: hover 54:14
+-- lsp: hover 60:10
+-- lsp: hover 60:15
+-- lsp: hover 61:10
+-- lsp: hover 61:26
+-- lsp: hover 62:11
+-- lsp: hover 62:16
+-- lsp: hover 63:11
+-- lsp: hover 64:11
+-- lsp: hover 35:8
+-- lsp: hover 36:8
+-- lsp: hover 37:8
+-- lsp: hover 38:8
+-- lsp: hover 39:8
+-- Hover on a builtin module's name before a dot shows the module and
+-- the first sentence of its reference page, wherever the qualified
+-- name stands: in an impl's header, a type, an expression, a `where`
+-- clause, a pattern, through an alias, and in the `import` line; a
+-- module of a shared page (`env`, on `io`'s) its own part's sentence.
+-- The name after the dot keeps its own hover; a builtin module's type
+-- shows its docs in a return type and a `let` annotation too. A module
+-- of the program shows its name and file.
+import json
+import list
+import time as t
+import env
+import shapes
+
+type Box { w: Int }
+
+trait json.Encode for Box {
+  fn encode(self) -> json.Value { json.Int(self.w) }
+}
+
+fn send(x: a) -> String where a: json.Encode + shapes.Area {
+  json.stringify(x)
+}
+
+fn read(text: String) -> Int {
+  match json.parse(text, Box) {
+    Ok(b) -> b.w
+    Err(json.Syntax(_, at)) -> at
+    Err(_) -> 0
+  }
+}
+
+fn main() {
+  let v: json.Value = json.Int(1)
+  let s: shapes.Square = shapes.unit()
+  println(list.map([1]) { x -> x + s.side })
+  println(t.hours(1))
+  println(env.get("HOME"))
+  println(read("1"))
+  println(v)
+}

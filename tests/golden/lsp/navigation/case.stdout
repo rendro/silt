@@ -12,8 +12,7 @@ type P { name: String, age: Int }
 module list
 ```
 
-Functions for working with ordered, immutable lists (`List(a)`). Lists use
-`[...]` literal syntax and support the range operator `1..5`.
+Functions for working with ordered, immutable lists (`List(a)`).
 > type-definition 21:10
 main.silt:19:6-19:7
 > type-definition 26:7
