@@ -149,9 +149,10 @@ jobs:
 
   test-default-features:
     # Everything else runs with --all-features. This job runs the unit
-    # tests and the golden corpus against the default build; golden cases
-    # that need an optional feature declare `-- requires-feature:` and
-    # are skipped here.
+    # tests and the golden corpus against the default build, then
+    # against a build with no features at all; golden cases that need an
+    # optional feature declare `-- requires-feature:` and are skipped
+    # there. Last, every test target must still build without features.
     name: Test default features
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -169,6 +170,12 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --no-fail-fast --lib --bin silt --test golden
+      - name: cargo nextest (no default features)
+        run: |
+          CI=1 perl -e 'alarm 900; exec @ARGV or die "exec: $!"' \
+            cargo nextest run --no-default-features --no-fail-fast --lib --bin silt --test golden
+      - name: cargo build --tests (no default features)
+        run: cargo build --no-default-features --tests
 
   test-release-deep-values:
     # The tests whose limits depend on native stack frames in a release
