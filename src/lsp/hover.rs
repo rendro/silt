@@ -103,7 +103,10 @@ impl Server {
             return Some(markdown(value));
         }
 
-        let ty = find_type_at_offset(program, cursor);
+        // An item of an import (`map` in `import list.{ map }`) is in no
+        // expression: it has its definition's type, general.
+        let ty =
+            find_type_at_offset(program, cursor).or_else(|| self.import_item_type_at(uri, cursor));
 
         // If the cursor is on a binding-site (e.g. `fn foo` declaration name)
         // and we have a definition for that symbol, prefer the definition's

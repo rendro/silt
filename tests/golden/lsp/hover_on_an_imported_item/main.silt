@@ -1,0 +1,26 @@
+-- cmd: lsp
+-- lsp: hover 13:15
+-- lsp: hover 13:20
+-- lsp: hover 14:15
+-- lsp: hover 15:14
+-- lsp: hover 15:21
+-- lsp: hover 15:27
+-- lsp: hover 16:13
+-- lsp: hover 19:20
+-- Hover on an item of `import m.{ item }` shows what a use shows: the
+-- type, general (its type variables written as letters), and the docs.
+-- (The last request is a use, for comparison.)
+import list.{ map, fold }
+import json.{ parse }
+import geo.{ twice, size, Circle }
+import io.{ NotFound }
+
+fn main() {
+  println([1] |> map { x -> x + 1 })
+  println([1] |> fold(0) { a, x -> a + x })
+  println(parse("1", Int))
+  println(twice(1) { x -> x + 1 })
+  println(size(2))
+  println(Circle(1.0))
+  println(NotFound("p"))
+}

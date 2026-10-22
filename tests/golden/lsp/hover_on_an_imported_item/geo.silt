@@ -1,0 +1,7 @@
+-- Applies `f` twice.
+pub fn twice(x: a, f: Fn(a) -> a) -> a { f(f(x)) }
+
+-- The size.
+pub fn size(n: Int) -> Int { n }
+
+pub type Shape { Circle(Float), Dot }

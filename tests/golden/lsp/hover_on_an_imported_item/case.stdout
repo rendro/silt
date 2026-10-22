@@ -1,0 +1,172 @@
+> hover 13:15
+```silt
+Fn(List(a), Fn(a) -> b) -> List(b)
+```
+
+---
+
+```
+list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
+```
+
+Returns a new list with `f` applied to each element.
+
+```silt
+import list
+
+fn main() {
+  let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+  println(doubled) -- [2, 4, 6]
+}
+```
+> hover 13:20
+```silt
+Fn(List(a), b, Fn(b, a) -> b) -> b
+```
+
+---
+
+```
+list.fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
+```
+
+Reduces a list to a single value. Starts with `init`, then calls `f(acc, elem)`
+for each element.
+
+```silt
+import list
+
+fn main() {
+  let sum = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
+  println(sum) -- 6
+}
+```
+> hover 14:15
+```silt
+Fn(String, type a) -> Result(a, JsonError)
+```
+
+---
+
+```
+json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
+```
+
+Parses a JSON string into a record of type `a`. The type is passed as a `type`
+parameter (see [Generics](../language/generics.md) — not a string). Fields are
+matched by name; `Option` fields default to `None` if missing from the JSON.
+
+Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) are
+automatically parsed from ISO 8601 strings. `DateTime` fields also accept
+timezone-aware formats (RFC 3339) — the offset is applied and the value is
+stored as UTC:
+
+| Field type | Accepted formats | Example |
+|------------|-----------------|---------|
+| `Date` | `YYYY-MM-DD`, a year of more digits or with a sign as silt shows it (`12026-01-01`, `-001-01-01`) | `"2024-03-15"` |
+| `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `"14:30:00"`, `"14:30:00.25"` |
+| `DateTime` | `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second, with optional `Z` or `±HH:MM` offset; the year as for `Date` | `"2024-03-15T09:00:00+09:00"` |
+
+A value that is no string is a `TypeMismatch` that names the field's type,
+as for an `Int` field: `{"d": 1}` for a `Date` field `d` is
+`Err(TypeMismatch("time.Date", "number at d"))`.
+
+A fractional second is read to the nanosecond; further digits are cut. A
+second 60, a leap second, is no time silt holds: it is refused with an
+`Other` that names the text, such as
+`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
+
+```silt
+import json
+
+type User {
+  name: String,
+  age: Int,
+}
+
+fn main() {
+  let input = """{"name": "Alice", "age": 30}"""
+  match json.parse(input, User) {
+    Ok(user) -> println(user.name)
+    Err(e) -> println("Error: {e.message()}")
+  }
+}
+```
+
+Date/Time example:
+
+```silt
+import json
+import time
+
+type Event {
+  name: String,
+  date: time.Date,
+}
+
+fn main() -> Result(Unit, json.JsonError) {
+  let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
+  println(e.date |> time.weekday) -- Friday
+  Ok(())
+}
+```
+> hover 15:14
+```silt
+Fn(a, Fn(a) -> a) -> a
+```
+
+---
+
+Applies `f` twice.
+> hover 15:21
+```silt
+Fn(Int) -> Int
+```
+
+---
+
+The size.
+> hover 15:27
+```silt
+Fn(Float) -> Shape
+```
+> hover 16:13
+```silt
+Fn(String) -> IoError
+```
+
+---
+
+A variant of `io.IoError`, reached as `io.NotFound`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `NotFound(String)` | path | file or directory missing |
+| `PermissionDenied(String)` | path | permissions check failed |
+| `AlreadyExists(String)` | path | target already exists |
+| `InvalidInput(String)` | description | malformed argument |
+| `Interrupted` | — | syscall interrupted |
+| `UnexpectedEof` | — | reader hit EOF mid-record |
+| `WriteZero` | — | writer returned zero bytes |
+| `Other(String)` | platform message | unclassified platform error |
+> hover 19:20
+```silt
+Fn(List(Int), Fn(Int) -> Int) -> List(Int)
+```
+
+---
+
+```
+list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
+```
+
+Returns a new list with `f` applied to each element.
+
+```silt
+import list
+
+fn main() {
+  let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+  println(doubled) -- [2, 4, 6]
+}
+```

@@ -511,6 +511,15 @@ impl Tables {
         })
     }
 
+    /// The scheme of the definition `id`: a builtin's as the builtin
+    /// scope binds it, a module's as its check left it.
+    pub fn scheme_of(&self, id: crate::defs::DefId) -> Option<Scheme> {
+        match names::builtin_def(id) {
+            Some(def) => builtin_scheme(&def),
+            None => self.schemes.get(&id).cloned(),
+        }
+    }
+
     /// Every method a value has, as (the type impls key the value's type
     /// by, the method's name): those of the impls that take `self`, and those of the
     /// structural traits (of a builtin type, the traits it is stamped
