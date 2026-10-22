@@ -66,6 +66,8 @@ pub(crate) struct ViaUse {
     pub(super) need: ViaNeed,
     pub(super) passer: Option<Symbol>,
     pub(super) origin: Origin,
+    /// The types the call gives the method, each at its argument.
+    pub(super) places: Places,
     pub(super) in_body: Option<Symbol>,
 }
 
@@ -154,12 +156,14 @@ impl TypeChecker {
     /// A call of a trait method owed (`Pred::Via`), its receiver known
     /// now: on an annotation variable, a need of the body the call is in
     /// (`in_body`); on a type, decided with the module's bodies
-    /// (`via_waiting`), at `origin`, naming `passer`. Whether a need grew.
+    /// (`via_waiting`), at `origin` (each type the call gives at its
+    /// place in `places`), naming `passer`. Whether a need grew.
     pub(super) fn via_owed(
         &mut self,
         need: ViaNeed,
         passer: Option<Symbol>,
         origin: Origin,
+        places: Places,
         in_body: Option<Symbol>,
     ) -> bool {
         match self.apply(&need.receiver) {
@@ -170,6 +174,7 @@ impl TypeChecker {
                     need,
                     passer,
                     origin,
+                    places,
                     in_body,
                 });
                 false
@@ -650,11 +655,7 @@ impl TypeChecker {
                 _ => false,
             });
             if let Some((span, ..)) = place {
-                // (The types the call gives the method go with it.)
-                let at = std::mem::replace(&mut self.wanted[k].origin.span, *span);
-                if let Some(places) = self.via_places.remove(&at) {
-                    (self.via_places.entry(*span).or_default()).extend(places);
-                }
+                self.wanted[k].origin.span = *span;
             }
         }
     }
@@ -744,12 +745,10 @@ impl TypeChecker {
             }
         }
         for use_ in std::mem::take(&mut self.via_waiting) {
-            // The types the call gives the method, each at its argument.
-            let places = (self.via_places.get(&use_.origin.span).cloned()).unwrap_or_default();
             let placing = Placing {
                 passer: use_.passer,
                 origin: use_.origin,
-                places,
+                places: use_.places,
             };
             self.apply_via(&use_.need, use_.in_body, Some(&placing));
         }

@@ -1,71 +1,151 @@
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:25:32
+ --> main.silt:32:32
     |
- 25 |   lib.via(lib.T { n: 1 }, Rec, L)
+ 32 |   lib.via(lib.T { n: 1 }, Rec, L)
     |                                ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.via` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:26:19
+ --> main.silt:33:19
     |
- 26 |   lib.direct(Rec, L)
+ 33 |   lib.direct(Rec, L)
     |                   ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.direct` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:27:27
+ --> main.silt:34:27
     |
- 27 |   lib.via(lib.T { n: 1 }, L, Rec)
+ 34 |   lib.via(lib.T { n: 1 }, L, Rec)
     |                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.via` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:28:14
+ --> main.silt:35:14
     |
- 28 |   lib.direct(L, Rec)
+ 35 |   lib.direct(L, Rec)
     |              ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.direct` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
 error[type]: `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
- --> main.silt:29:32
+ --> main.silt:36:32
     |
- 29 |   lib.via(lib.T { n: 1 }, Rec, RA)
+ 36 |   lib.via(lib.T { n: 1 }, Rec, RA)
     |                                ^^ `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.via` passes it to `toml.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Int`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:30:29
+ --> main.silt:37:29
     |
- 30 |   lib.fixed(lib.T { n: 1 }, L)
+ 37 |   lib.fixed(lib.T { n: 1 }, L)
     |                             ^ `toml.parse` cannot decode `Int`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.fixed` passes it to `toml.parse`
   = help: declare a record type with a field of the type you want, and decode into the record
 
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:30:29
+ --> main.silt:37:29
     |
- 30 |   lib.fixed(lib.T { n: 1 }, L)
+ 37 |   lib.fixed(lib.T { n: 1 }, L)
     |                             ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.fixed` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
 error[type]: `toml.parse` cannot decode `Int`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> main.silt:31:29
+ --> main.silt:38:29
     |
- 31 |   lib.fixed(lib.T { n: 1 }, RA)
+ 38 |   lib.fixed(lib.T { n: 1 }, RA)
     |                             ^^ `toml.parse` cannot decode `Int`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `lib.fixed` passes it to `toml.parse`
   = help: declare a record type with a field of the type you want, and decode into the record
 
 error[type]: `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
- --> main.silt:31:29
+ --> main.silt:38:29
     |
- 31 |   lib.fixed(lib.T { n: 1 }, RA)
+ 38 |   lib.fixed(lib.T { n: 1 }, RA)
     |                             ^^ `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.fixed` passes it to `toml.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:39:42
+    |
+ 39 |   lib.pair(lib.T { n: 1 }, ([1], ["x"]), L, L2)
+    |                                          ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.pair` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:39:45
+    |
+ 39 |   lib.pair(lib.T { n: 1 }, ([1], ["x"]), L, L2)
+    |                                             ^^ `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.pair` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:40:27
+    |
+ 40 |   lib.dpair(([1], ["x"]), L, L2)
+    |                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.dpair` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:40:30
+    |
+ 40 |   lib.dpair(([1], ["x"]), L, L2)
+    |                              ^^ `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.dpair` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:41:43
+    |
+ 41 |   lib.first((["x"], [1]), lib.T { n: 1 }, L, L2)
+    |                                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.first` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:41:46
+    |
+ 41 |   lib.first((["x"], [1]), lib.T { n: 1 }, L, L2)
+    |                                              ^^ `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.first` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:42:28
+    |
+ 42 |   lib.dfirst((["x"], [1]), L, L2)
+    |                            ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.dfirst` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:42:31
+    |
+ 42 |   lib.dfirst((["x"], [1]), L, L2)
+    |                               ^^ `toml.parse` cannot decode `L2`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.dfirst` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:43:29
+    |
+ 43 |   lib.twice(lib.T { n: 1 }, L, L3)
+    |                             ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.twice` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:44:14
+    |
+ 44 |   lib.dtwice(L, L3)
+    |              ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.dtwice` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list

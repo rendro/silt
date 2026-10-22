@@ -1690,29 +1690,30 @@ impl TypeChecker {
                         }
                         // A trait method's call: what the method of the
                         // receiver's impl gives a decoder is decided with
-                        // the module's bodies, each type at the argument
-                        // that gives it, by the alias that names it (in
-                        // the order of the arguments: of two that give
-                        // one type, the first names it, as through a
-                        // function).
-                        if let Goal::Pred(Pred::Via { method_ty, .. }) = &self.wanted[k].goal {
+                        // the module's bodies, each type at the type
+                        // argument of the call that gives it, by the alias
+                        // that names it (as through a function: of two
+                        // that give one type, the first).
+                        if let Goal::Pred(Pred::Via { .. }) = &self.wanted[k].goal {
                             let origin = self.wanted[k].origin;
-                            let mut places: Vec<_> = (type_of_vars(&self.apply(method_ty)))
-                                .into_iter()
-                                .filter_map(|v| {
-                                    let i = (params.iter().skip(implicit_self))
-                                        .position(|param| free_vars_in(param).contains(&v))?;
-                                    let arg = args.get(i)?;
+                            self.wanted[k].places = (params.iter().skip(implicit_self))
+                                .zip(args.iter())
+                                .filter_map(|(param, arg)| {
+                                    let given = match self.apply(param) {
+                                        Type::Generic(name, given)
+                                            if name.is_builtin(crate::defs::TYPE_OF) =>
+                                        {
+                                            given.first().cloned()?
+                                        }
+                                        _ => return None,
+                                    };
                                     let origin = Origin {
                                         span: arg.span,
                                         ..origin
                                     };
-                                    Some((i, (Type::Var(v), origin, self.alias_named(arg))))
+                                    Some((given, origin, self.alias_named(arg)))
                                 })
                                 .collect();
-                            places.sort_by_key(|(i, _)| *i);
-                            let places = places.into_iter().map(|(_, place)| place);
-                            (self.via_places.entry(arg.span).or_default()).extend(places);
                         }
                     }
                 }
@@ -4188,23 +4189,6 @@ pub(super) fn type_of_var(ty: &Type) -> Option<Type> {
             .cloned(),
         Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(type_of_var),
         _ => None,
-    }
-}
-
-/// Each type variable `ty` gives as a type argument (`TypeOf(a)`), in
-/// order.
-fn type_of_vars(ty: &Type) -> Vec<TyVar> {
-    match ty {
-        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => match args.first() {
-            Some(Type::Var(v)) => vec![*v],
-            _ => Vec::new(),
-        },
-        Type::Fun(params, ret) => params
-            .iter()
-            .chain([&**ret])
-            .flat_map(type_of_vars)
-            .collect(),
-        _ => Vec::new(),
     }
 }
 

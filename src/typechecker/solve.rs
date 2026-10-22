@@ -14,6 +14,9 @@ pub(crate) struct Wanted {
     /// Whether a scheme has it: its subject is a variable a definition
     /// is general in (`generalize`), so each use of that owes it.
     pub(super) in_scheme: bool,
+    /// For a call of a trait method (`Pred::Via`): the types the call
+    /// gives the method, each at the argument that gives it.
+    pub(super) places: super::builtin_needs::Places,
 }
 
 /// What waits for a type to be known.
@@ -223,6 +226,7 @@ impl TypeChecker {
             origin,
             solved: false,
             in_scheme: false,
+            places: Vec::new(),
         });
         self.solve_wanted(self.wanted.len() - 1);
     }
