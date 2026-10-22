@@ -664,29 +664,28 @@ impl Plan {
         rt: &Runtime,
         rows: impl IntoIterator<Item = &'r tokio_postgres::Row>,
     ) -> Result<Rows, Value> {
-        let mut decoded = Vec::new();
-        let mut waits = false;
+        // The values of the rows until one waits, and from that row on
+        // the rows: a `Row` is several times the size of a `Value`, and
+        // most results have no row that waits.
+        let mut values = Vec::new();
+        let mut decoded: Option<Vec<Row>> = None;
         for row in rows {
-            match self.row(rt, row) {
-                Ok(row) => {
-                    waits |= matches!(row, Row::Partial(_));
-                    decoded.push(row);
+            match (self.row(rt, row), &mut decoded) {
+                (Ok(Row::Done(value)), None) => values.push(value),
+                (Ok(row), Some(decoded)) => decoded.push(row),
+                (Ok(row), None) => {
+                    let done = std::mem::take(&mut values).into_iter().map(Row::Done);
+                    decoded = Some(done.chain([row]).collect());
                 }
-                Err(error) if waits => return Ok(Rows::ToFill(decoded, Some(error))),
-                Err(error) => return Err(error),
+                (Err(error), Some(decoded)) => {
+                    return Ok(Rows::ToFill(std::mem::take(decoded), Some(error)));
+                }
+                (Err(error), None) => return Err(error),
             }
         }
-        Ok(match waits {
-            true => Rows::ToFill(decoded, None),
-            false => Rows::Done(
-                decoded
-                    .into_iter()
-                    .map(|row| match row {
-                        Row::Done(value) => value,
-                        Row::Partial(_) => Value::Unit,
-                    })
-                    .collect(),
-            ),
+        Ok(match decoded {
+            Some(decoded) => Rows::ToFill(decoded, None),
+            None => Rows::Done(values),
         })
     }
 
