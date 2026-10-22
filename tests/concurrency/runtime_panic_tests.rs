@@ -194,6 +194,33 @@ fn main() {
     assert_eq!(out.contents(), "main sleeps\n");
 }
 
+/// The same when the task's sleep is over before its wait begins: the
+/// deadline still goes through the timer, which panics.
+#[test]
+fn a_panic_of_the_timer_thread_comes_for_a_sleep_over_at_once() {
+    let program = compiled(
+        r#"
+import task
+import time
+
+fn main() {
+  let sleeper = task.spawn { -> time.sleep(time.nanos(1)) }
+  println("main waits")
+  task.join(sleeper)
+  println("main went on")
+}
+"#,
+    );
+    let out = Buffer::new();
+    let mut vm = Vm::new(HostIo::buffer(&out));
+    panic_for_test(&vm, PanicAt::Timer);
+    let panic = panic_of(|| {
+        let _ = vm.run_program(&program);
+    });
+    assert_eq!(panic, "a panic made for a test: Timer");
+    assert_eq!(out.contents(), "main waits\n");
+}
+
 /// A thread of the I/O pool panics when its operation has returned,
 /// before it hands the value over: the task that waits for the value
 /// would wait for ever, and the program would count as having I/O in

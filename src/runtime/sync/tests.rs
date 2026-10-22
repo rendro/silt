@@ -639,6 +639,32 @@ fn a_deadline_that_has_passed_ends_the_wait_unless_an_arm_is_ready() {
     );
 }
 
+/// Test-only: a timer told to fire every deadline gets the one that had
+/// passed when its wait began too, and fires it at its next look.
+#[test]
+fn a_timer_that_fires_every_deadline_gets_one_that_has_passed() {
+    let d = Double::new();
+    d.timer.fire_every_deadline();
+    let ch = Channel::new(0, 1);
+    d.clock.advance(5 * MS);
+    let now = Some(d.timer.now());
+    assert!(d.block(1, recv(&ch).deadline(now)).is_none());
+    assert!(d.block(2, Wait::new(Vec::new()).deadline(now)).is_none());
+    assert_eq!(d.timer.real_wait(), Some(Duration::ZERO));
+    assert_eq!(d.timer.fire_due(&d), 2);
+    assert_eq!(d.woken(), [1, 2]);
+    assert!(matches!(resumed(&d, 1), Fired::Deadline));
+    assert!(matches!(resumed(&d, 2), Fired::Deadline));
+    assert_eq!((ch.queued(), d.timer.pending()), ((0, 0), 0));
+
+    // An arm that is ready still ends the wait at once.
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert_eq!(
+        received(d.block(1, recv(&ch).deadline(now)).unwrap()),
+        (0, 1)
+    );
+}
+
 // ── The deadline of the task ────────────────────────────────────────
 
 /// A wait of a task whose time is over at `ms` from now.

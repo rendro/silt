@@ -227,6 +227,28 @@ fn main() {
     assert_internal_error(ended, "silt-timer", "Timer");
 }
 
+/// The same with a sleep that is over before its wait begins: its
+/// deadline goes through the timer all the same. (A worker held up for
+/// longer than the sleep between the call and the wait did the same to
+/// a sleep of 5 ms: the wait ended at once, the timer never ran, and
+/// the program went on.)
+#[test]
+#[cfg(feature = "test-hooks")]
+fn a_panic_of_the_timer_thread_ends_the_program_after_a_sleep_over_at_once() {
+    let source = r#"import task
+import time
+
+fn main() {
+  let sleeper = task.spawn { -> time.sleep(time.nanos(1)) }
+  println("main waits")
+  task.join(sleeper)
+  println("main went on")
+}
+"#;
+    let ended = run("timer_at_once", source, Some("timer"));
+    assert_internal_error(ended, "silt-timer", "Timer");
+}
+
 /// A thread of the I/O pool panics when its operation has returned,
 /// before it hands the value to the task that waits for it, which
 /// `main` joins.

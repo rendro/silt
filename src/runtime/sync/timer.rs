@@ -8,6 +8,8 @@
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+#[cfg(any(test, feature = "test-hooks"))]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -47,6 +49,11 @@ pub struct Timer {
     entries: Mutex<Entries>,
     /// The entries that are armed or that `fire_due` is carrying out.
     pending: AtomicUsize,
+    /// Test-only: whether every deadline of a wait goes through the
+    /// timer, the one that had passed when the wait began too
+    /// ([`Timer::fire_every_deadline`]).
+    #[cfg(any(test, feature = "test-hooks"))]
+    fires_every_deadline: AtomicBool,
 }
 
 impl Timer {
@@ -56,7 +63,30 @@ impl Timer {
             io,
             entries: Mutex::default(),
             pending: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "test-hooks"))]
+            fires_every_deadline: AtomicBool::new(false),
         })
+    }
+
+    /// Test-only: from now on no wait ends at once because its deadline
+    /// had passed when it began; it is armed like any other, and the
+    /// timer fires it at its next look. A test that makes the thread
+    /// that fires the timer panic (`PanicAt::Timer`) asks for this: a
+    /// short wait whose thread was held up before it began would
+    /// otherwise never reach the timer.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fire_every_deadline(&self) {
+        self.fires_every_deadline.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether a wait whose deadline had passed when it began ends at
+    /// once (`Timer::fire_every_deadline`, test-only).
+    pub(super) fn ends_passed_deadlines_at_once(&self) -> bool {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if self.fires_every_deadline.load(Ordering::SeqCst) {
+            return false;
+        }
+        true
     }
 
     /// The clock's monotonic reading.

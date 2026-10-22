@@ -322,7 +322,9 @@ pub enum PanicAt {
     Task(usize),
     /// On the program's own thread, when a wait of its code has ended.
     Program,
-    /// On the timer's thread, when a deadline is due.
+    /// On the timer's thread, when a deadline is due. Every deadline
+    /// of a wait goes through the timer then, one that had passed
+    /// when its wait began too (`Timer::fire_every_deadline`).
     Timer,
     /// On a thread of the I/O pool, when its operation has returned
     /// and before the value is handed to the waiter.
@@ -897,7 +899,15 @@ impl Scheduler {
             PanicAt::BuiltinOfATask => {
                 (self.inner.panic_in_a_builtin_of_a_task).store(true, Ordering::SeqCst)
             }
-            at => self.inner.panic_at.lock().push(at),
+            at => {
+                // A deadline that has passed when its wait begins is
+                // fired by the timer too: the panic does not depend on
+                // how quickly a short wait began.
+                if at == PanicAt::Timer {
+                    self.inner.parking.timer().fire_every_deadline();
+                }
+                self.inner.panic_at.lock().push(at)
+            }
         }
     }
 
