@@ -253,15 +253,19 @@ impl Server {
     /// `trait json.Encode for P`), if it names one: one of silt's own
     /// too, which has no declaration in a file.
     pub(super) fn trait_named_at(&self, uri: &Uri, cursor: usize) -> Option<crate::defs::TraitId> {
-        let (_, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
+        let (span, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
             return None;
         };
-        let module = self.documents.get(uri)?.module.as_ref()?;
+        let doc = self.documents.get(uri)?;
+        let module = doc.module.as_ref()?;
         let session = &self.projects.get(&module.project)?.session;
+        // (The name written there is the trait's own: a method's name at
+        // a call is the method, whatever it resolves through.)
+        let written = doc.source.text.get(span.start as usize..span.end as usize);
         keys.iter().find_map(|key| {
-            let id = def_of_key(session, key)?;
-            match session.defs().get(id).kind {
-                DefKind::Trait(tr) => Some(tr),
+            let def = session.defs().get(def_of_key(session, key)?);
+            match def.kind {
+                DefKind::Trait(tr) if written == Some(resolve_sym(def.name).as_str()) => Some(tr),
                 _ => None,
             }
         })

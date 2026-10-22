@@ -31,20 +31,20 @@ impl Server {
                 }
                 // A builtin module's (`json.Encode`): the declaration of
                 // the registry, and its section of the module's page.
+                // It is written as a program names it: the trait and the
+                // module's types with the module (`json.Value`).
                 Some(module) => {
-                    let text = crate::builtins::registry::registry()
-                        .modules
-                        .iter()
-                        .find(|m| m.name == module)?
-                        .traits;
-                    let program = crate::builtins::registry::parse(text);
+                    let registry = crate::builtins::registry::registry();
+                    let of = registry.modules.iter().find(|m| m.name == module)?;
+                    let program = crate::builtins::registry::parse(of.traits);
                     let decl = declared(&program.decls, |t| resolve(t.name) == name)?;
                     let section = self.builtin_docs.get(&format!("{module}.{name}"));
-                    // (Shown as the page writes it, without the `pub` of
-                    // the registry's text.)
-                    let signature = signature(decl, Some(text));
-                    let signature = signature.strip_prefix("pub ").unwrap_or(&signature);
-                    (signature.to_string(), section.map(|s| below_signature(s)))
+                    let names = (of.type_decls.iter().map(|t| t.name))
+                        .chain(of.opaque.iter().map(|(name, _)| *name))
+                        .chain(of.trait_names.iter().copied())
+                        .collect();
+                    let q = Qualify { module, names };
+                    (written(decl, Some(&q)), section.map(|s| below_signature(s)))
                 }
             }
         } else {
@@ -90,7 +90,7 @@ fn below_signature(section: &str) -> String {
 /// file declares, is written from its declaration.
 fn signature(t: &TraitDecl, source: Option<&str>) -> String {
     let Some(text) = source else {
-        return written(t);
+        return written(t, None);
     };
     let slice = |start: u32, end: u32| text.get(start as usize..end as usize).unwrap_or_default();
     // The header runs to the brace that opens the body: the first one
@@ -163,35 +163,54 @@ fn indented(text: &str, start: u32, part: &str) -> String {
     out
 }
 
-/// The signature of the trait `t` from its declaration alone.
-fn written(t: &TraitDecl) -> String {
-    let mut header = format!("trait {}", t.name);
+/// The names of a builtin module that a program writes with the module
+/// (`json.Value`), and the module.
+struct Qualify {
+    module: &'static str,
+    names: Vec<&'static str>,
+}
+
+/// The name `name`, after the qualifier `module`, as a program writes
+/// it: with the module of `q` if it is one of its names.
+fn named(q: Option<&Qualify>, module: Option<Qualifier>, name: crate::intern::Symbol) -> String {
+    match q {
+        Some(q) if module.is_none() && q.names.contains(&resolve(name).as_str()) => {
+            format!("{}.{name}", q.module)
+        }
+        _ => Qualifier::written(module, name),
+    }
+}
+
+/// The signature of the trait `t` from its declaration alone, its names
+/// qualified as `q` says.
+fn written(t: &TraitDecl, q: Option<&Qualify>) -> String {
+    let mut header = format!("trait {}", named(q, None, t.name));
     if !t.params.is_empty() {
         let params: Vec<String> = t.params.iter().map(|p| resolve(*p)).collect();
         header.push_str(&format!("({})", params.join(", ")));
     }
     if !t.supertraits.is_empty() {
-        let supers: Vec<String> = t.supertraits.iter().map(trait_ref).collect();
+        let supers: Vec<String> = t.supertraits.iter().map(|r| trait_ref(q, r)).collect();
         header.push_str(&format!(": {}", supers.join(" + ")));
     }
-    header.push_str(&where_clauses(&t.param_where_clauses));
+    header.push_str(&where_clauses(q, &t.param_where_clauses));
     let mut members: Vec<String> = t
         .assoc_types
         .iter()
         .map(|assoc| {
-            let bounds: Vec<String> = assoc.bounds.iter().map(trait_ref).collect();
+            let bounds: Vec<String> = assoc.bounds.iter().map(|r| trait_ref(q, r)).collect();
             match bounds.is_empty() {
                 true => format!("  type {}", assoc.name),
                 false => format!("  type {}: {}", assoc.name, bounds.join(" + ")),
             }
         })
         .collect();
-    members.extend(t.methods.iter().map(|f| format!("  {}", method(f))));
+    members.extend(t.methods.iter().map(|f| format!("  {}", method(q, f))));
     assemble(&header, members.into_iter())
 }
 
 /// `fn name(params) -> ret where ...` of the method `f`.
-fn method(f: &FnDecl) -> String {
+fn method(q: Option<&Qualify>, f: &FnDecl) -> String {
     let params: Vec<String> = f
         .params
         .iter()
@@ -201,64 +220,61 @@ fn method(f: &FnDecl) -> String {
                 _ => "_".to_string(),
             };
             match &p.ty {
-                Some(ty) => format!("{name}: {}", type_expr(ty)),
+                Some(ty) => format!("{name}: {}", type_expr(q, ty)),
                 None => name,
             }
         })
         .collect();
     let mut out = format!("fn {}({})", f.name, params.join(", "));
     if let Some(ret) = &f.return_type {
-        out.push_str(&format!(" -> {}", type_expr(ret)));
+        out.push_str(&format!(" -> {}", type_expr(q, ret)));
     }
-    out.push_str(&where_clauses(&f.where_clauses));
+    out.push_str(&where_clauses(q, &f.where_clauses));
     out
 }
 
-fn where_clauses(clauses: &[WhereClause]) -> String {
+fn where_clauses(q: Option<&Qualify>, clauses: &[WhereClause]) -> String {
     if clauses.is_empty() {
         return String::new();
     }
     let clauses: Vec<String> = clauses
         .iter()
         .map(|c| {
-            let name = Qualifier::written(c.trait_module, c.trait_name);
-            format!("{}: {name}{}", c.type_param, args(&c.trait_args))
+            let name = named(q, c.trait_module, c.trait_name);
+            format!("{}: {name}{}", c.type_param, args(q, &c.trait_args))
         })
         .collect();
     format!(" where {}", clauses.join(", "))
 }
 
-fn trait_ref(r: &TraitRef) -> String {
-    format!("{}{}", Qualifier::written(r.module, r.name), args(&r.args))
+fn trait_ref(q: Option<&Qualify>, r: &TraitRef) -> String {
+    format!("{}{}", named(q, r.module, r.name), args(q, &r.args))
 }
 
 /// `(a, b)` of the type arguments `args`; nothing for none.
-fn args(args: &[TypeExpr]) -> String {
+fn args(q: Option<&Qualify>, args: &[TypeExpr]) -> String {
     match args.is_empty() {
         true => String::new(),
         false => {
-            let args: Vec<String> = args.iter().map(type_expr).collect();
+            let args: Vec<String> = args.iter().map(|a| type_expr(q, a)).collect();
             format!("({})", args.join(", "))
         }
     }
 }
 
-fn type_expr(te: &TypeExpr) -> String {
+fn type_expr(q: Option<&Qualify>, te: &TypeExpr) -> String {
+    let all = |types: &[TypeExpr]| types.iter().map(|t| type_expr(q, t)).collect::<Vec<_>>();
     match &te.kind {
-        TypeExprKind::Named { module, name, .. } => Qualifier::written(*module, *name),
+        TypeExprKind::Named { module, name, .. } => named(q, *module, *name),
         TypeExprKind::Generic {
             module,
             name,
             args: a,
             ..
-        } => format!("{}{}", Qualifier::written(*module, *name), args(a)),
-        TypeExprKind::Tuple(elems) => {
-            let elems: Vec<String> = elems.iter().map(type_expr).collect();
-            format!("({})", elems.join(", "))
-        }
+        } => format!("{}{}", named(q, *module, *name), args(q, a)),
+        TypeExprKind::Tuple(elems) => format!("({})", all(elems).join(", ")),
         TypeExprKind::Function(params, ret) => {
-            let params: Vec<String> = params.iter().map(type_expr).collect();
-            format!("Fn({}) -> {}", params.join(", "), type_expr(ret))
+            format!("Fn({}) -> {}", all(params).join(", "), type_expr(q, ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
         TypeExprKind::AssocProj {
@@ -271,14 +287,14 @@ fn type_expr(te: &TypeExpr) -> String {
             (TypeExprKind::SelfType, None) => format!("Self::{assoc_name}"),
             _ => format!(
                 "<{} as {}>::{assoc_name}",
-                type_expr(receiver),
-                Qualifier::written(*trait_module, *trait_name)
+                type_expr(q, receiver),
+                named(q, *trait_module, *trait_name)
             ),
         },
         TypeExprKind::AnonRecord { fields, tail } => {
             let mut parts: Vec<String> = fields
                 .iter()
-                .map(|(name, ty)| format!("{name}: {}", type_expr(ty)))
+                .map(|(name, ty)| format!("{name}: {}", type_expr(q, ty)))
                 .collect();
             if let Some((rest, _)) = tail {
                 parts.push(format!("...{rest}"));

@@ -1,7 +1,7 @@
-> hover 30:48
+> hover 41:48
 ```silt
-trait Encode {
-  fn encode(self) -> Value
+trait json.Encode {
+  fn encode(self) -> json.Value
 }
 ```
 
@@ -70,7 +70,7 @@ fn main() {
   -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
 }
 ```
-> hover 30:57
+> hover 41:57
 ```silt
 trait Display {
   fn display(self) -> String
@@ -82,7 +82,7 @@ trait Display {
 How a value is shown: `println`, `print`, interpolation, `.display()`
 and `string.from` show it so. A type has it by its structure, or by an
 impl written in the module that declares the type.
-> hover 30:76
+> hover 41:76
 ```silt
 pub trait Area {
   fn area(self) -> Float
@@ -92,7 +92,7 @@ pub trait Area {
 ---
 
 A shape's area.
-> hover 30:85
+> hover 41:85
 ```silt
 trait Sized {
   fn size(self) -> Int
@@ -103,7 +103,7 @@ trait Sized {
 ---
 
 Says how big.
-> hover 30:95
+> hover 41:95
 ```silt
 trait Compare: Equal {
   fn compare(self, other: Self) -> Int
@@ -114,7 +114,7 @@ trait Compare: Equal {
 
 The order of values: `<`, `>`, `<=` and `>=` need it. A type made of
 types that have it has it by its structure; an impl is an error.
-> hover 57:8
+> hover 68:8
 ```silt
 trait Sized {
   fn size(self) -> Int
@@ -125,7 +125,7 @@ trait Sized {
 ---
 
 Says how big.
-> hover 61:8
+> hover 72:8
 ```silt
 trait Display {
   fn display(self) -> String
@@ -137,10 +137,10 @@ trait Display {
 How a value is shown: `println`, `print`, interpolation, `.display()`
 and `string.from` show it so. A type has it by its structure, or by an
 impl written in the module that declares the type.
-> hover 65:13
+> hover 76:13
 ```silt
-trait Encode {
-  fn encode(self) -> Value
+trait json.Encode {
+  fn encode(self) -> json.Value
 }
 ```
 
@@ -209,7 +209,7 @@ fn main() {
   -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
 }
 ```
-> hover 40:13
+> hover 51:13
 ```silt
 trait Sized {
   fn size(self) -> Int
@@ -220,13 +220,13 @@ trait Sized {
 ---
 
 Says how big.
-> hover 40:8
+> hover 51:8
 ```silt
 trait Big: Sized {
   fn big(self) -> Bool
 }
 ```
-> hover 47:8
+> hover 58:8
 ```silt
 trait Pairs(b) {
   type Item
@@ -242,11 +242,146 @@ trait Pairs(b) {
 Pairs of things.
 
 Two of them.
-> definition 30:76
+> hover 35:35
+```silt
+trait json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError)
+}
+```
+
+---
+
+What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
+need of the type they decode into. A type has it by its structure: the
+types of [Decodable types](#decodable-types) have it, a record or enum
+type of the program when the types of its fields do. A container, a date
+and a time are decoded as the type of a field, not as the type a decoder
+is given (a type written as a value names no list's element type). A
+function with a `type a` parameter (any annotation names the variable)
+that hands it to a decoder writes `where a: json.Decode`; only a function
+with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is
+inferred to need it:
+
+```silt
+import json
+
+type Config {
+  port: Int,
+}
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  println(load("""{"port": 80}""", Config)) -- Ok(Config {port: 80})
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Decode', which 'json.parse' needs
+```
+
+A type that lacks it is refused at the call that gives it, as a decoder
+refuses it, with the function that passes it on in a note:
+
+```text
+`json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `load` passes it to `json.parse`
+```
+
+Write `trait json.Decode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `json.Encode` impl is written; an impl
+for a builtin type is an error, a builtin type keeps its own form, and an
+impl for a generic type is refused: a decoder builds a value of one type).
+Its `decode` gives the value of `T` that a `json.Value` is, wherever a
+value of the type is in the document: at the top, as an element of
+`json.parse_list`, as a value of `json.parse_map`, in a record's or a
+variant's field, in a list or a map in one. The fields of `T` are then not
+looked into, so `T` may hold a type no decoder has. An `Option` around it
+stays structural (`null` is `None`). The `Err` it returns is the decoder's
+error, with the path of its part appended as to the decoder's own errors:
+`Other("bad tags")` at `posts[1].tags` is `Other("bad tags at
+posts[1].tags")`, a `MissingField("name")` there is
+`MissingField("posts[1].tags.name")`. A message is the impl's text, and the
+path is appended to it as it is: an error the impl got from `json.decode` of
+a part of its value, `TypeMismatch("Int", "string at k")`, ends with `at k at
+posts[1].tags`. The first error in the document counts, the impl's or the
+decoder's. The toml decoders and a postgres row honour the impl too (see
+[toml](toml.md#types-with-a-jsondecode-impl) and
+[postgres](postgres.md#types-with-a-jsondecode-impl)).
+
+```silt
+import json
+import list
+import set
+
+type Tags {
+  names: Set(String),
+}
+
+trait json.Decode for Tags {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Tags { names: set.from_list([text]) })
+      json.Array(items) -> {
+        let names = list.filter_map(items) { item ->
+          match item {
+            json.String(name) -> Some(name)
+            _ -> None
+          }
+        }
+        Ok(Tags { names: set.from_list(names) })
+      }
+      _ -> Err(json.Other("tags are a string or a list of strings"))
+    }
+  }
+}
+
+type Post {
+  title: String,
+  tags: Tags,
+}
+
+fn main() {
+  println(json.parse("""{"title": "a", "tags": "x"}""", Post))
+  -- Ok(Post {title: a, tags: Tags {names: #[x]}})
+  println(json.parse("""{"title": "a", "tags": 3}""", Post))
+  -- Err(tags are a string or a list of strings at tags)
+}
+```
+
+`T.decode(value)` decodes a `json.Value` into `T`: by its impl where one is
+written, else as `json.decode(value, T)` does. For a `type a` with the
+bound, `a.decode(value)`. It takes no value of the type: `x.decode(..)` on
+a value is no call of it.
+> hover 86:25
+```silt
+Fn(Box) -> Int
+```
+
+---
+
+Says how big.
+> hover 87:14
+```silt
+Fn(Box) -> Int
+```
+> hover 88:17
+```silt
+Fn(Box) -> Int
+```
+> hover 89:25
+```silt
+Fn(Box) -> String
+```
+> definition 41:76
 shapes.silt:2:11-2:15
-> definition 30:85
-main.silt:35:7-35:12
-> definition 57:8
-main.silt:35:7-35:12
-> definition 61:8
+> definition 41:85
+main.silt:46:7-46:12
+> definition 68:8
+main.silt:46:7-46:12
+> definition 72:8
 (nothing)
