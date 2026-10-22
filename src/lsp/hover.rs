@@ -95,10 +95,8 @@ impl Server {
             }
             return Some(markdown(value));
         }
-        if named_type.is_some() {
-            return find_ident_at_offset(program, cursor)
-                .and_then(|name| self.builtin_docs.get(&resolve(name)))
-                .map(|docs| markdown(docs.clone()));
+        if let Some(ty) = named_type {
+            return self.builtin_type_docs(doc, ty).map(markdown);
         }
 
         // A trait named (`Display` in `where a: Display`, in an impl's

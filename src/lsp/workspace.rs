@@ -540,6 +540,24 @@ impl Server {
             .map(str::to_string)
     }
 
+    /// The docs of silt's own type `id`, as it is reached: a builtin
+    /// module's under its qualified name (`json.Value`), else under its
+    /// bare one.
+    pub(super) fn builtin_type_docs(
+        &self,
+        doc: &Document,
+        id: crate::defs::TypeId,
+    ) -> Option<String> {
+        let module = doc.module.as_ref()?;
+        let def = self.projects.get(&module.project)?.session.defs().get(id.0);
+        let name = resolve_sym(def.name);
+        def.module
+            .builtin_name()
+            .and_then(|module| self.builtin_docs.get(&format!("{module}.{name}")))
+            .or_else(|| self.builtin_docs.get(&name))
+            .cloned()
+    }
+
     /// The definition of the type `id` of the session of the open
     /// document `doc`, as a target.
     pub(super) fn type_target(&self, doc: &Document, id: crate::defs::TypeId) -> Option<Target> {

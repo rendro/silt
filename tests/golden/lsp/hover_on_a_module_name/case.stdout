@@ -1,10 +1,10 @@
-> hover 41:7
+> hover 43:7
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 41:12
+> hover 43:12
 ```silt
 trait json.Encode {
   fn encode(self) -> json.Value
@@ -76,37 +76,90 @@ fn main() {
   -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
 }
 ```
-> hover 42:22
+> hover 44:22
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 42:35
+> hover 44:27
+```
+type Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(Value)),
+  Object(Map(String, Value)),
+}
+```
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+> hover 44:35
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 45:34
+> hover 47:34
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 45:48
+> hover 47:48
 ```silt
 module shapes
 ```
 
 shapes.silt
-> hover 46:3
+> hover 48:3
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 46:8
+> hover 48:8
 ```silt
 Fn(a) -> String
 ```
@@ -166,19 +219,19 @@ fn main() {
   -- "2026-10-19"
 }
 ```
-> hover 50:9
-```silt
-module json
-```
-
-Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 52:9
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 52:14
+> hover 54:9
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 54:14
 ```silt
 Int
 ```
@@ -193,33 +246,84 @@ A variant of `json.JsonError`, reached as `json.Syntax`.
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 58:10
+> hover 60:10
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 58:15
-(nothing)
-> hover 59:10
+> hover 60:15
+```
+type Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(Value)),
+  Object(Map(String, Value)),
+}
+```
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+> hover 61:10
 ```silt
 module shapes
 ```
 
 shapes.silt
-> hover 59:26
+> hover 61:26
 ```silt
 module shapes
 ```
 
 shapes.silt
-> hover 60:11
+> hover 62:11
 ```silt
 module list
 ```
 
 Functions for working with ordered, immutable lists (`List(a)`).
-> hover 60:16
+> hover 62:16
 ```silt
 Fn(List(Int), Fn(Int) -> Int) -> List(Int)
 ```
@@ -240,43 +344,43 @@ fn main() {
   println(doubled) -- [2, 4, 6]
 }
 ```
-> hover 61:11
+> hover 63:11
 ```silt
 module time
 ```
 
 Dates, times, instants, durations, formatting, parsing, and arithmetic.
-> hover 62:11
+> hover 64:11
 ```silt
 module env
 ```
 
 Environment variable access.
-> hover 33:8
+> hover 35:8
 ```silt
 module json
 ```
 
 Parse JSON strings into typed silt values and serialize values to JSON.
-> hover 34:8
+> hover 36:8
 ```silt
 module list
 ```
 
 Functions for working with ordered, immutable lists (`List(a)`).
-> hover 35:8
+> hover 37:8
 ```silt
 module time
 ```
 
 Dates, times, instants, durations, formatting, parsing, and arithmetic.
-> hover 36:8
+> hover 38:8
 ```silt
 module env
 ```
 
 Environment variable access.
-> hover 37:8
+> hover 39:8
 ```silt
 module shapes
 ```
