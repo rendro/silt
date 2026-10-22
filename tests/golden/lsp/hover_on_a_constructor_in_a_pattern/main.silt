@@ -1,36 +1,41 @@
 -- cmd: lsp
--- lsp: hover 48:14
--- lsp: hover 48:21
--- lsp: hover 48:26
--- lsp: hover 49:14
--- lsp: hover 49:27
--- lsp: hover 57:19
--- lsp: type-definition 57:19
--- lsp: hover 57:26
--- lsp: hover 58:12
--- lsp: hover 58:19
--- lsp: hover 58:46
--- lsp: hover 58:53
--- lsp: hover 59:19
--- lsp: hover 66:10
--- lsp: type-definition 66:10
--- lsp: hover 66:12
--- lsp: hover 67:10
--- lsp: hover 67:14
--- lsp: hover 73:8
+-- lsp: hover 55:14
+-- lsp: hover 55:21
+-- lsp: hover 55:26
+-- lsp: hover 56:14
+-- lsp: hover 56:27
+-- lsp: hover 64:19
+-- lsp: type-definition 64:19
+-- lsp: hover 64:26
+-- lsp: hover 65:12
+-- lsp: hover 65:19
+-- lsp: hover 65:46
+-- lsp: hover 65:53
+-- lsp: hover 66:19
 -- lsp: hover 73:10
--- lsp: hover 73:13
--- lsp: hover 78:17
--- lsp: hover 78:21
--- lsp: hover 82:10
--- lsp: hover 82:12
+-- lsp: type-definition 73:10
+-- lsp: hover 73:12
+-- lsp: hover 74:10
+-- lsp: hover 74:14
+-- lsp: hover 80:8
+-- lsp: hover 80:10
+-- lsp: hover 80:13
+-- lsp: hover 85:17
+-- lsp: hover 85:21
+-- lsp: hover 89:10
+-- lsp: hover 89:12
+-- lsp: hover 98:5
+-- lsp: hover 100:13
+-- lsp: hover 100:21
+-- lsp: hover 102:10
 -- A constructor in a pattern shows what an expression that names it
 -- shows: a variant with fields a function to the type of the value it
 -- matches, one without that type, and the variant's docs; not the type
 -- of the expression around the pattern. Its type definition is its
 -- enum. A name the pattern binds inside it has the type of its field.
 -- Builtin and program enums, qualified and bare, nested, generic, in a
--- `match`, a `let`, a `when let`, a parameter.
+-- `match`, a `let`, a `when let`, a parameter, a closure's parameter.
+-- A record's name in a pattern shows its declaration.
 -- (The head of an arm's pattern keeps the scrutinee's type.)
 import json
 import shapes
@@ -40,6 +45,8 @@ import string
 type Pair(a) { P(a, a), One(a) }
 
 type Two(a) { T(a, a) }
+
+type Pt { a: Int, b: Int }
 
 type Box { B(Option(shapes.Shape)) }
 
@@ -86,6 +93,17 @@ fn param(B(inner): Box) -> Int {
   }
 }
 
+fn record(p: Pt, o: Option(Pt)) -> Int {
+  let n = match p {
+    Pt { a, b } -> a + b
+  }
+  let f = { Pt { a: k, b } -> k + b }
+  match o {
+    Some(Pt { a: x, b }) -> x + b + f(p) + n
+    None -> n
+  }
+}
+
 fn main() {
   println(decode(Ok(json.Null)))
   println(nested(B(None)))
@@ -93,4 +111,5 @@ fn main() {
   println(bound((T(1, 3), 2)))
   println(when_let(None))
   println(param(B(None)))
+  println(record(Pt { a: 1, b: 2 }, None))
 }

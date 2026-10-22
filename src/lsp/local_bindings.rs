@@ -102,19 +102,22 @@ pub(super) fn collect_local_bindings(
 /// binds.
 fn collect_method_bindings(method: &FnDecl, out: &mut Collect) {
     let body_end = method.body.span.end as usize;
-    param_bindings(&method.params, &method.body, out);
+    param_bindings(&method.params, None, &method.body, out);
     collect_local_bindings_in_expr(&method.body, body_end, out);
 }
 
 /// The names the parameters `params` of a function or closure with the
-/// body `body` bind, visible in the body. A parameter that is one name
-/// has the type the body uses it at.
-fn param_bindings(params: &[Param], body: &Expr, out: &mut Collect) {
+/// body `body` bind, visible in the body. A parameter has its type of
+/// `types` (a closure's, from the checker's type of it), else, if it is
+/// one name, the type the body uses it at.
+fn param_bindings(params: &[Param], types: Option<&[Type]>, body: &Expr, out: &mut Collect) {
     let body_start = body.span.start as usize;
     let body_end = body.span.end as usize;
-    for param in params {
-        let ty = match &param.pattern.kind {
-            PatternKind::Ident(name) => find_param_type(body, *name),
+    let types = types.filter(|types| types.len() == params.len());
+    for (i, param) in params.iter().enumerate() {
+        let ty = match (&param.pattern.kind, types) {
+            (_, Some(types)) => Some(types[i].clone()),
+            (PatternKind::Ident(name), None) => find_param_type(body, *name),
             _ => None,
         };
         collect_pattern_bindings(&param.pattern, body_start, ty.as_ref(), body_end, out);
@@ -181,7 +184,11 @@ fn collect_local_bindings_in_expr(expr: &Expr, scope_end: usize, out: &mut Colle
         }
         ExprKind::Lambda { params, body, .. } => {
             let body_end = body.span.end as usize;
-            param_bindings(params, body, out);
+            let types = match &expr.ty {
+                Some(Type::Fun(types, _)) => Some(types.as_slice()),
+                _ => None,
+            };
+            param_bindings(params, types, body, out);
             collect_local_bindings_in_expr(body, body_end, out);
         }
         ExprKind::Match { expr, arms } => {
