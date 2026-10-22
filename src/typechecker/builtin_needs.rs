@@ -1027,8 +1027,6 @@ fn match_type(pattern: &Type, ty: &Type, vars: &[TyVar], mapping: &mut HashMap<T
     }
 }
 
-/// The type the first type argument (`TypeOf(t)`) of the function type
-/// `ty` gives: `t`.
 /// The type arguments (`TypeOf(t)`) of `ty`, a method's type at a call,
 /// that name no type variable: the types the calling function writes,
 /// gathered into `out`.
@@ -1050,6 +1048,8 @@ fn written_type_arguments(ty: &Type, out: &mut Vec<Type>) {
     }
 }
 
+/// The type the first type argument (`TypeOf(t)`) of the function type
+/// `ty` gives: `t`.
 fn type_of_first(ty: &Type) -> Option<Type> {
     match ty {
         Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args.first().cloned(),
