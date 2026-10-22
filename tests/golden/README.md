@@ -32,7 +32,7 @@ byte-order mark and before any code, each `-- key: value`:
 
 | Directive | Meaning | Default |
 |---|---|---|
-| `-- cmd: run` / `check` / `test` / `fmt` / `fmt --check` / `disasm` / `repl` / `lsp` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:`; for `fmt` see "Format cases" below; for `lsp` see "LSP cases" below | `run` |
+| `-- cmd: run` / `check` / `test` / `fmt` / `fmt --check` / `disasm` / `repl` / `lsp` | the subcommand; for `repl` the file is not passed, and the session comes from `-- stdin:`, and the case needs the cargo feature `repl` (`-- cmd: repl` implies `-- requires-feature: repl`); for `fmt` see "Format cases" below; for `lsp` see "LSP cases" below | `run` |
 | `-- exit: N` | expected exit status | `0` |
 | `-- stdout-contains: TEXT` | stdout must contain TEXT (repeatable) | — |
 | `-- stderr-contains: TEXT` | stderr must contain TEXT (repeatable) | — |
