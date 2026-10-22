@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A use that needs one of two bounds of one trait at an argument the
+-- function decides only later (`ys`, fixed by the line after the call)
+-- is given the bound at that argument once it is known; one whose
+-- argument nothing decides does not say which bound it needs (with one
+-- bound, the bound decides it).
+trait Conv(b) {
+  fn show(self) -> String
+}
+type T { n: Int }
+trait Conv(b) for T {
+  fn show(self) -> String { "T {self.n}" }
+}
+fn gen2(x: a, y: List(c)) -> String where a: Conv(c) { x.show() }
+fn both(x: a, ys) -> String where a: Conv(Int), a: Conv(String) {
+  let r = gen2(x, ys)
+  let _ = [1] == ys
+  r
+}
+fn open(x: a) -> String where a: Conv(Int), a: Conv(String) {
+  let ys = []
+  gen2(x, ys)
+}
+fn one(x: a) -> String where a: Conv(Int) {
+  let ys = []
+  gen2(x, ys)
+}
+fn main() {
+  println(both(T { n: 7 }, [1]))
+  println(open(T { n: 7 }))
+  println(one(T { n: 7 }))
+}

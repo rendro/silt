@@ -361,29 +361,7 @@ impl TypeChecker {
             .map(|(_, declared)| declared.clone())
             .collect();
         if of_trait.len() > 1 {
-            let at = |declared: &Vec<Type>| {
-                (declared
-                    .iter()
-                    .map(|t| self.apply(&substitute_vars(t, &self.rigid_of))))
-                .collect::<Vec<Type>>()
-            };
-            let needed: Vec<Type> = args.iter().map(|t| self.apply(t)).collect();
-            if args.is_empty() || of_trait.iter().any(|declared| at(declared) == needed) {
-                return;
-            }
-            let declared: Vec<String> = (of_trait.iter())
-                .map(|declared| format!("'{}'", self.show_bound(trait_name, &at(declared))))
-                .collect();
-            self.error(
-                Code::MissingConstraint,
-                format!(
-                    "type variable `{}` is declared to implement {}, not '{}'",
-                    r.name,
-                    declared.join(" and "),
-                    self.show_bound(trait_name, args)
-                ),
-                origin.span,
-            );
+            self.several_bounds(r, trait_name, args, origin, false);
             return;
         }
         if let Some(declared) = of_trait.into_iter().next() {
@@ -463,6 +441,69 @@ impl TypeChecker {
         )
         .with_help(format!("add `where {}: {bound}`", r.name));
         self.errors.push(diagnostic);
+    }
+
+    /// `require_declared_bound` where `r` has several bounds of
+    /// `trait_name` (`a: Conv(Int), a: Conv(String)`): the use needs the
+    /// one at its arguments. Arguments still unknown wait for the end of
+    /// the function's body (`settle`: `settle_open_bound_uses`), which
+    /// may decide them; unknown then, the use does not say which bound.
+    fn several_bounds(
+        &mut self,
+        r: RigidId,
+        trait_name: TraitKey,
+        args: &[Type],
+        origin: Origin,
+        settle: bool,
+    ) {
+        if args.is_empty() {
+            return;
+        }
+        let of_trait: Vec<Vec<Type>> = (self.bounds.get(&r.var).into_iter().flatten())
+            .filter(|(t, _)| *t == trait_name)
+            .map(|(_, declared)| {
+                (declared
+                    .iter()
+                    .map(|t| self.apply(&substitute_vars(t, &self.rigid_of))))
+                .collect()
+            })
+            .collect();
+        let needed: Vec<Type> = args.iter().map(|t| self.apply(t)).collect();
+        if of_trait.contains(&needed) {
+            return;
+        }
+        let open = needed.iter().any(|t| !free_vars_in(t).is_empty());
+        if open && !settle {
+            self.open_bound_uses.push((r, trait_name, needed, origin));
+            return;
+        }
+        let declared: Vec<String> = (of_trait.iter())
+            .map(|declared| format!("'{}'", self.show_bound(trait_name, declared)))
+            .collect();
+        let message = match open {
+            true => format!(
+                "type variable `{}` is declared to implement {}, and which of them this use \
+                 needs is not known",
+                r.name,
+                declared.join(" and ")
+            ),
+            false => format!(
+                "type variable `{}` is declared to implement {}, not '{}'",
+                r.name,
+                declared.join(" and "),
+                self.show_bound(trait_name, &needed)
+            ),
+        };
+        self.error(Code::MissingConstraint, message, origin.span);
+    }
+
+    /// Check the uses that wait for their arguments to choose among
+    /// several bounds of one trait (`several_bounds`): at the end of a
+    /// function's body, which decides what it can.
+    pub(super) fn settle_open_bound_uses(&mut self) {
+        for (r, trait_name, args, origin) in std::mem::take(&mut self.open_bound_uses) {
+            self.several_bounds(r, trait_name, &args, origin, true);
+        }
     }
 
     /// The methods named `field` that the bounds in scope give the
@@ -1114,6 +1155,7 @@ impl TypeChecker {
         self.fn_frames.pop();
         env.pop();
         self.unify_body_result(&f.body, &body_type, &ret_type);
+        self.settle_open_bound_uses();
 
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
@@ -1141,7 +1183,7 @@ impl TypeChecker {
                 }
             }
         }
-        self.note_qmark_requirement_on_ret_mismatch(from, ret);
+        self.note_qmark_requirement_on_ret_mismatch(from, body_type, ret);
     }
 
     /// GAP (round 93): when the body/return-type unify fails AND the
@@ -1154,13 +1196,45 @@ impl TypeChecker {
     /// the inverse direction (got Result/Option, expected plain): both
     /// append a continuation line to the raw unify mismatch rather
     /// than emitting a separate diagnostic.
-    fn note_qmark_requirement_on_ret_mismatch(&mut self, err_count_before: usize, ret_ty: &Type) {
+    ///
+    /// Where the `?` itself decided the return type (an unannotated
+    /// function, a closure) and the body gives no Result or Option, the
+    /// function returns neither: that is the `?`'s error, the one text
+    /// of a `?` in such a function (`try_operand`).
+    fn note_qmark_requirement_on_ret_mismatch(
+        &mut self,
+        err_count_before: usize,
+        body_ty: &Type,
+        ret_ty: &Type,
+    ) {
         if self.errors.len() == err_count_before {
             return;
         }
         let Some(qspan) = self.current_qmark_spans.first().copied() else {
             return;
         };
+        let body_resolved = self.apply(body_ty);
+        let wrapper = |t: &Type| matches!(t, Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option"));
+        if let Some(operand) = self.qmark_decided.get(&qspan).cloned()
+            && !wrapper(&body_resolved)
+            && !matches!(body_resolved, Type::Var(_) | Type::Error | Type::Never)
+        {
+            let note = format!(
+                "the ?-ed expression is {}, but the enclosing function returns {}",
+                self.show_type(&self.apply(&operand)),
+                self.show_type(&body_resolved)
+            );
+            self.errors.truncate(err_count_before);
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidQuestion,
+                    qspan,
+                    "? operator can only be used inside a function that returns Result or Option",
+                )
+                .with_note(note),
+            );
+            return;
+        }
         // Only when the return type is actually Result/Option-shaped —
         // i.e. the shape `?` itself unifies into the return type. If the
         // user annotated something else, the `?` site already got its own

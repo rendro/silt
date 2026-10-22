@@ -1,0 +1,36 @@
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:11:3
+    |
+ 11 |   Some(1)?
+    |   ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Option(Int), but the enclosing function returns Int
+
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:15:16
+    |
+ 15 |   let f = { -> Some(1)? }
+    |                ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Option(Int), but the enclosing function returns Int
+
+error[type]: type mismatch: expected Result(Int, String), got Int
+ --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:21:3
+    |
+ 21 |   r?
+    |   ^^ type mismatch: expected Result(Int, String), got Int
+ ::: try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:21:3
+    |
+ 21 |   r?
+    |   -- this `?` requires this function to return Result(Int, String)
+
+error[type]: type mismatch: expected Result(_, _), got Option(Int)
+ --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:25:11
+    |
+ 25 |   let x = Ok(1)?
+    |           ^^^^^^ type mismatch: expected Result(_, _), got Option(Int)
+
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:30:11
+    |
+ 30 |   let _ = Some(1)?
+    |           ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Option(Int), but the enclosing function returns ()

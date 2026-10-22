@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- The help of a method two bounds give names the bounds as the `where`
+-- clause writes them: `Sub(Int)`, whose supertrait `Conv(Int)` gives the
+-- method, and `Conv(String)`; two bounds of a subtrait are named so too.
+trait Conv(b) {
+  fn show(self) -> String
+}
+
+trait Sub(b): Conv(b) {
+  fn sub(self) -> String
+}
+
+fn mixed(x: a) -> String where a: Sub(Int), a: Conv(String) {
+  x.show()
+}
+
+fn subs(x: a) -> String where a: Sub(Int), a: Sub(String) {
+  x.show()
+}
+
+fn same(x: a) -> String where a: Sub(Int), a: Conv(Int) {
+  x.show()
+}
+
+fn main() {
+  println(1)
+}

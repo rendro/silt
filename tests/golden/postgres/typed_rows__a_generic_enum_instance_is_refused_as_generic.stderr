@@ -1,0 +1,13 @@
+error[type]: `postgres.query` cannot decode `Gen(Int)`: it is an instance of the generic enum type `Gen`, and a decoder reads the fields of an enum type without parameters
+ --> typed_rows__a_generic_enum_instance_is_refused_as_generic.silt:14:46
+    |
+ 14 |   let _ = postgres.query(db, "SELECT 1", (), Gen(Int))
+    |                                              ^^^^^^^^ `postgres.query` cannot decode `Gen(Int)`: it is an instance of the generic enum type `Gen`, and a decoder reads the fields of an enum type without parameters
+  = help: declare a record type with a field for each column
+
+error[type]: `toml.parse` cannot decode `Gen(Int)`: it is an instance of the generic enum type `Gen`, and a decoder reads the fields of an enum type without parameters
+ --> typed_rows__a_generic_enum_instance_is_refused_as_generic.silt:15:31
+    |
+ 15 |   let _ = toml.parse("a = 1", Gen(Int))
+    |                               ^^^^^^^^ `toml.parse` cannot decode `Gen(Int)`: it is an instance of the generic enum type `Gen`, and a decoder reads the fields of an enum type without parameters
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

@@ -1,8 +1,9 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: this `?` requires this function to return Result(_, String)
--- stderr-contains: expected Result(_, String), got ()
--- `?` in an unannotated fn: the mismatch carries a note naming the `?` line.
+-- stderr-contains: ? operator can only be used inside a function that returns Result or Option
+-- stderr-contains: note: the ?-ed expression is Result(Int, String), but the enclosing function returns ()
+-- `?` in an unannotated fn whose body gives `()`: the function returns
+-- neither a Result nor an Option, which is the `?`'s error, at the `?`.
 fn parse() -> Result(Int, String) {
   Ok(1)
 }

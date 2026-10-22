@@ -198,6 +198,14 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
+    /// The `?` uses that decided an open return type (an unannotated
+    /// function's or a closure's), with the operand's type: a body that
+    /// gives no Result or Option is then the `?`'s error.
+    pub(super) qmark_decided: HashMap<Span, Type>,
+    /// The uses that need one of several bounds of one trait of an
+    /// annotation variable at arguments not known yet, checked at the
+    /// end of the function's body (`settle_open_bound_uses`).
+    pub(super) open_bound_uses: Vec<(RigidId, TraitKey, Vec<Type>, Origin)>,
     /// Names of function declarations that were synthesized by parser
     /// error recovery (Option B). Populated in register_fn_decl when the
     /// FnDecl has `is_recovery_stub == true`. Used by the `ExprKind::Call`
@@ -405,6 +413,8 @@ impl TypeChecker {
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
+            qmark_decided: HashMap::new(),
+            open_bound_uses: Vec::new(),
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
             wanted: Vec::new(),

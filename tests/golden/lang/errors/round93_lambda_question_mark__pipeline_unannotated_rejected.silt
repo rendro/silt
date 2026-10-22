@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: this `?` requires this function to return Result(_, String)
+-- stderr-contains: note: the ?-ed expression is Result(Int, String), but the enclosing function returns Int
 import list
 fn main() {
   let xs = [Ok(1), Err("bad"), Ok(3)]

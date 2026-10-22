@@ -609,6 +609,7 @@ impl TypeChecker {
             // constrain it, exactly like the inline concrete path.
             Type::Var(_) => {
                 self.unify(&ret_resolved, &expected_wrapper, span);
+                self.qmark_decided.insert(span, resolved.clone());
             }
             // A Result or an Option, of either wrapper: a `?` of the
             // other one is the mismatch the inline path reports.
@@ -1358,13 +1359,14 @@ impl TypeChecker {
     ) {
         let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
         let above = |t: TraitKey| self.supertraits_of(t);
-        // The bounds no other one has as a supertrait: what the `where`
-        // clause says, the supertraits aside.
+        // The bounds no other one has as a supertrait at its arguments:
+        // what the `where` clause says, the supertraits aside
+        // (`where a: Sub(Int), a: Conv(String)` with `trait Sub(b):
+        // Conv(b)` says `Conv(String)`, and `Conv(Int)` comes of `Sub`).
         let said: Vec<&(TraitKey, Vec<Type>)> = (in_scope.iter())
-            .filter(|(t, _)| {
-                !in_scope
-                    .iter()
-                    .any(|(o, _)| o != t && above(*o).contains(t))
+            .filter(|bound| {
+                !(in_scope.iter())
+                    .any(|other| other != *bound && self.supers_at(other).contains(bound))
             })
             .collect();
         let giving: Vec<&(TraitKey, Vec<Type>)> = (said.iter().copied())
@@ -1437,6 +1439,33 @@ impl TypeChecker {
                  only one of them"
             )];
         }
+    }
+
+    /// The supertraits the bound `bound` brings into scope, at the
+    /// arguments it gives them, theirs too: what `declare_bound` adds
+    /// with it.
+    fn supers_at(&self, bound: &(TraitKey, Vec<Type>)) -> Vec<(TraitKey, Vec<Type>)> {
+        let mut found: Vec<(TraitKey, Vec<Type>)> = Vec::new();
+        let mut next = vec![bound.clone()];
+        while let Some((t, args)) = next.pop() {
+            let Some(info) = self.tables.traits.get(&t) else {
+                continue;
+            };
+            for (i, super_name) in info.supertraits.iter().enumerate() {
+                let super_args: Vec<Type> = match info.supertrait_args.get(i) {
+                    Some(exprs) if !exprs.is_empty() => (exprs.iter())
+                        .map(|te| super::inference::resolve_supertrait_arg(te, info, &args))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let reached = (*super_name, super_args);
+                if !found.contains(&reached) {
+                    found.push(reached.clone());
+                    next.push(reached);
+                }
+            }
+        }
+        found
     }
 
     /// The supertraits of the trait `t`, theirs too.

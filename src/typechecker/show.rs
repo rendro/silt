@@ -24,12 +24,27 @@ impl TypeChecker {
     /// module (`json.Value`, `time.Date`, `shapes.Shape`); a prelude
     /// type and the module's own keep their bare names, unless another
     /// type of the message, or with `session` another type the session
-    /// knows, has the name (`prelude.Option`, `a.Pt` and `b.Pt`).
+    /// knows, has the name (`prelude.Option`, `a.Pt` and `b.Pt`). In a
+    /// REPL cell a type of an earlier cell declared again since, which
+    /// the cell cannot name, is written with its cell (`<repl:1>.H`).
     fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
         Type::show_all(types, |r, clash| {
-            (clash || (session && self.type_name_clashes(r)) || self.other_module(r).is_some())
-                .then(|| self.qualified_type(r))
+            (clash
+                || (session && self.type_name_clashes(r))
+                || self.other_module(r).is_some()
+                || self.shadowed_cell_type(r))
+            .then(|| self.qualified_type(r))
         })
+    }
+
+    /// Whether `r` is, in a REPL cell, a type of an earlier cell that the
+    /// cell does not name by its name: a later cell declared it again.
+    fn shadowed_cell_type(&self, r: TypeRef) -> bool {
+        self.is_cell
+            && !self.named_types.contains(&r.id.0)
+            && self
+                .def(r.id.0)
+                .is_some_and(|def| self.cells.contains(&def.module))
     }
 
     /// The module of `r` if it is another module than the one being

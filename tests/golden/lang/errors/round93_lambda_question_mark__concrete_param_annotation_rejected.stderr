@@ -1,9 +1,6 @@
-error[type]: type mismatch: expected Result(_, String), got Int
- --> round93_lambda_question_mark__concrete_param_annotation_rejected.silt:8:39
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> round93_lambda_question_mark__concrete_param_annotation_rejected.silt:9:39
    |
- 8 |   let f = { x: Result(Int, String) -> x? + 1 }
-   |                                       ^^^^^^ type mismatch: expected Result(_, String), got Int
- ::: round93_lambda_question_mark__concrete_param_annotation_rejected.silt:8:39
-   |
- 8 |   let f = { x: Result(Int, String) -> x? + 1 }
-   |                                       -- this `?` requires this function to return Result(_, String)
+ 9 |   let f = { x: Result(Int, String) -> x? + 1 }
+   |                                       ^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Result(Int, String), but the enclosing function returns Int

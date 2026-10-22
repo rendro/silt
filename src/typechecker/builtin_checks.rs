@@ -165,6 +165,39 @@ impl TypeChecker {
                 return None;
             }
             let enum_type = self.tables.is_enum(head);
+            // (A generic type first: no impl can be written for one, so
+            // the enum's help below could not be followed.)
+            if self.tables.is_generic(head) {
+                let (kind, a_kind) = match enum_type {
+                    true => ("enum", "an enum"),
+                    false => ("record", "a record"),
+                };
+                let message = match written {
+                    // Through an alias that gives the type its arguments
+                    // (`type BI = Box(Int)`) the type is one instance;
+                    // the decoders read the fields as the type declares
+                    // them.
+                    Some(_) => format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it names `{}`, \
+                         an instance of the generic {kind} type `{}`, and a decoder reads \
+                         the fields of {a_kind} type without parameters",
+                        self.show_type(ty),
+                        self.show_type(&Type::Generic(head, Vec::new()))
+                    ),
+                    // An instance that no alias names.
+                    None if free_vars_in(ty).is_empty() => format!(
+                        "`{builtin_name}` cannot decode `{}`: it is an instance of the \
+                         generic {kind} type `{type_name}`, and a decoder reads the fields of \
+                         {a_kind} type without parameters",
+                        self.show_type(ty)
+                    ),
+                    None => format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it is a generic {kind} \
+                         type, and a decoder builds a value of one type"
+                    ),
+                };
+                return refusal(Code::Undecodable, message, generic_help);
+            }
             // (A row is decoded into a record of its columns, or by the
             // type's own impl, which the program may write for its enum.)
             if enum_type && !family.decodes_enums() {
@@ -178,34 +211,6 @@ impl TypeChecker {
                         self.written_type(head)
                     ),
                 );
-            }
-            if self.tables.is_generic(head) {
-                let kind = if enum_type { "enum" } else { "record" };
-                let message = match written {
-                    // Through an alias that gives the type its arguments
-                    // (`type BI = Box(Int)`) the type is one instance;
-                    // the decoders read the fields as the type declares
-                    // them.
-                    Some(_) => format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: it names `{}`, \
-                         an instance of the generic {kind} type `{}`, and a decoder reads \
-                         the fields of a {kind} type without parameters",
-                        self.show_type(ty),
-                        self.show_type(&Type::Generic(head, Vec::new()))
-                    ),
-                    // An instance that no alias names.
-                    None if free_vars_in(ty).is_empty() => format!(
-                        "`{builtin_name}` cannot decode `{}`: it is an instance of the \
-                         generic {kind} type `{type_name}`, and a decoder reads the fields of a \
-                         {kind} type without parameters",
-                        self.show_type(ty)
-                    ),
-                    None => format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: it is a generic {kind} \
-                         type, and a decoder builds a value of one type"
-                    ),
-                };
-                return refusal(Code::Undecodable, message, generic_help);
             }
             // A toml document is a table: of an enum, only a variant
             // with fields is one.

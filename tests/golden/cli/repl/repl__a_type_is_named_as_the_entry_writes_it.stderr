@@ -13,8 +13,13 @@ error[type]: type mismatch: expected H, got <repl:6>.H
    |
  1 | let a: H = old
    | ^^^^^^^^^^^^^^ type mismatch: expected H, got <repl:6>.H
-error[type]: type mismatch: expected Value, got H
+error[type]: type mismatch: expected Int, got <repl:6>.H
  --> <repl:10>:1:1
+   |
+ 1 | let n: Int = old
+   | ^^^^^^^^^^^^^^^^ type mismatch: expected Int, got <repl:6>.H
+error[type]: type mismatch: expected Value, got H
+ --> <repl:11>:1:1
    |
  1 | let b: Value = H { m: 1 }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Value, got H
