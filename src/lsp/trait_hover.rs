@@ -63,16 +63,16 @@ impl Server {
 }
 
 impl Server {
-    /// What hover shows for silt's own type `id`: a builtin module's
-    /// (`json.Value`) its declaration as the registry has it, written as
-    /// a program names it, and below it its documentation, if it has
-    /// any; a type of the prelude its documentation alone.
+    /// What hover shows for silt's own type `id`: its declaration as the
+    /// registry has it (a builtin module's written as a program names
+    /// it: `json.Value`), and below it its documentation, if it has any
+    /// (no type of the prelude has).
     pub(super) fn builtin_type_hover_text(&self, doc: &Document, id: TypeId) -> Option<String> {
         let module = doc.module.as_ref()?;
         let def = self.projects.get(&module.project)?.session.defs().get(id.0);
         let name = resolve(def.name);
         let Some(module) = def.module.builtin_name() else {
-            return self.builtin_docs.get(&name).cloned();
+            return prelude_type_declaration(&name).map(|text| format!("```silt\n{text}\n```"));
         };
         let registry = crate::builtins::registry::registry();
         let of = registry.modules.iter().find(|m| m.name == module)?;
@@ -82,7 +82,7 @@ impl Server {
             Decl::Type(td) if resolve(td.name) == name => Some(td),
             _ => None,
         }) {
-            Some(td) => type_declaration(td, &q),
+            Some(td) => type_declaration(td, Some(&q)),
             // An opaque handle: its name and its type arguments.
             None => {
                 let (_, arity) = of.opaque.iter().find(|(opaque, _)| *opaque == name)?;
@@ -107,10 +107,32 @@ impl Server {
     }
 }
 
-/// The declaration of a builtin module's type `td`, one variant or
-/// field a line, its names written as `q` qualifies them.
-fn type_declaration(td: &TypeDecl, q: &Qualify) -> String {
-    let mut header = format!("type {}", named(Some(q), None, td.name));
+/// The declaration of the prelude's type `name`: an enum's
+/// (`Option(a)`), one variant a line; another's its name and its type
+/// parameters (`type Int`, `type Map(k, v)`). `None` for a name no
+/// program writes (`TypeOf`).
+fn prelude_type_declaration(name: &str) -> Option<String> {
+    let program = crate::builtins::registry::parse(crate::builtins::registry::PRELUDE_TYPES);
+    if let Some(td) = program.decls.iter().find_map(|decl| match decl {
+        Decl::Type(td) if resolve(td.name) == name => Some(td),
+        _ => None,
+    }) {
+        return Some(type_declaration(td, None));
+    }
+    let params = match crate::types::builtins::lookup(name)?.arity? {
+        0 => "",
+        1 => "(a)",
+        2 => "(k, v)",
+        _ => return None,
+    };
+    Some(format!("type {name}{params}"))
+}
+
+/// The declaration of a builtin type `td`, one variant or field a line,
+/// its names written as `q` qualifies them (a builtin module's), or as
+/// they are (the prelude's).
+fn type_declaration(td: &TypeDecl, q: Option<&Qualify>) -> String {
+    let mut header = format!("type {}", named(q, None, td.name));
     if !td.params.is_empty() {
         let params: Vec<String> = td.params.iter().map(|p| resolve(*p)).collect();
         header.push_str(&format!("({})", params.join(", ")));
@@ -118,13 +140,13 @@ fn type_declaration(td: &TypeDecl, q: &Qualify) -> String {
     let members: Vec<String> = match &td.body {
         TypeBody::Enum(variants) => variants
             .iter()
-            .map(|v| format!("  {}{},", v.name, args(Some(q), &v.fields)))
+            .map(|v| format!("  {}{},", v.name, args(q, &v.fields)))
             .collect(),
         TypeBody::Record(fields) => fields
             .iter()
-            .map(|f| format!("  {}: {},", f.name, type_expr(Some(q), &f.ty)))
+            .map(|f| format!("  {}: {},", f.name, type_expr(q, &f.ty)))
             .collect(),
-        TypeBody::Alias(target) => return format!("{header} = {}", type_expr(Some(q), target)),
+        TypeBody::Alias(target) => return format!("{header} = {}", type_expr(q, target)),
     };
     assemble(&header, members.into_iter())
 }

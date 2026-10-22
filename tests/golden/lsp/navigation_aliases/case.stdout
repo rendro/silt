@@ -17,7 +17,9 @@ module helpers
 
 helpers.silt
 > hover 21:14
-(nothing)
+```silt
+type Int
+```
 > definition 23:10
 helpers.silt:1:1-1:1
 > definition 25:10
