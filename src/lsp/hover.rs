@@ -103,13 +103,14 @@ impl Server {
             return Some(markdown(value));
         }
 
-        // A constructor in a pattern (`Syntax` in `Err(json.Syntax(m, at))
-        // ->`) is no expression: it has the type an expression that names
-        // it has, not the one of the expression around the pattern. Nor
-        // is an item of an import (`map` in `import list.{ map }`): it
-        // has its definition's type, general.
-        let ty = match doc.pattern_constructor_at(cursor) {
-            Some(constructor) => constructor.ty.clone(),
+        // A name in a pattern is no expression: a constructor (`Syntax` in
+        // `Err(json.Syntax(m, at)) ->`) has the type an expression that
+        // names it has, a field's name its field's type, `_` the type of
+        // what it matches; not the one of the expression around the
+        // pattern. Nor is an item of an import (`map` in `import list.{
+        // map }`): it has its definition's type, general.
+        let ty = match doc.pattern_name_at(cursor) {
+            Some(name) => name.ty.clone(),
             None => find_type_at_offset(program, cursor)
                 .or_else(|| self.import_item_type_at(uri, cursor)),
         };

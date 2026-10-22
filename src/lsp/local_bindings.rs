@@ -17,7 +17,7 @@ use crate::typechecker::Tables;
 use super::ast_walk::{visit_expr_children, written_general};
 use super::definitions::find_param_type;
 use super::fields::{RecordFields, record_field_types};
-use super::state::{LocalBinding, PatternConstructor};
+use super::state::{LocalBinding, PatternName};
 
 // ── Local binding collection (for hover/goto on locals) ──────────────
 
@@ -28,7 +28,7 @@ struct Collect<'a> {
     /// of each enum.
     tables: Option<&'a Tables>,
     bindings: Vec<LocalBinding>,
-    constructors: Vec<PatternConstructor>,
+    names: Vec<PatternName>,
 }
 
 /// Every local binding of `program`, and every constructor its patterns
@@ -42,12 +42,12 @@ pub(super) fn collect_local_bindings(
     top_level: Option<&HashMap<Symbol, Type>>,
     records: &RecordFields,
     tables: Option<&Tables>,
-) -> (Vec<LocalBinding>, Vec<PatternConstructor>) {
+) -> (Vec<LocalBinding>, Vec<PatternName>) {
     let mut out = Collect {
         records,
         tables,
         bindings: Vec::new(),
-        constructors: Vec::new(),
+        names: Vec::new(),
     };
     for decl in &program.decls {
         match decl {
@@ -95,7 +95,7 @@ pub(super) fn collect_local_bindings(
             _ => {}
         }
     }
-    (out.bindings, out.constructors)
+    (out.bindings, out.names)
 }
 
 /// The parameters of a trait's or an impl's method, and what its body
@@ -212,7 +212,7 @@ fn collect_local_bindings_in_expr(expr: &Expr, scope_end: usize, out: &mut Colle
                 // (The head of an arm's pattern has the scrutinee's
                 // type: see `find_type_at_offset`.)
                 if let PatternKind::Constructor { name_span, .. } = &arm.pattern.kind {
-                    out.constructors.retain(|c| c.span != *name_span);
+                    out.names.retain(|c| c.span != *name_span);
                 }
                 if let Some(ref g) = arm.guard {
                     collect_local_bindings_in_expr(g, arm_end, out);
@@ -261,6 +261,12 @@ fn collect_pattern_bindings(
     out: &mut Collect,
 ) {
     match &pattern.kind {
+        // `_` has the type of what it matches.
+        PatternKind::Wildcard => out.names.push(PatternName {
+            span: pattern.span,
+            ty: expr_ty.cloned(),
+            matched: expr_ty.cloned(),
+        }),
         PatternKind::Ident(name) if resolve(*name) != "_" => {
             out.bindings.push(LocalBinding {
                 name: *name,
@@ -331,8 +337,13 @@ fn collect_pattern_bindings(
                     _ => None,
                 },
             };
-            out.constructors.push(PatternConstructor {
+            out.names.push(PatternName {
                 span: *name_span,
+                matched: match (expr_ty, &ty) {
+                    (Some(matched), _) => Some(matched.clone()),
+                    (None, Some(Type::Fun(_, matched))) => Some((**matched).clone()),
+                    (None, general) => general.clone(),
+                },
                 ty,
             });
             for (i, p) in args.iter().enumerate() {
@@ -352,7 +363,13 @@ fn collect_pattern_bindings(
             };
             for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
+                    // The field's name (`x` in `P { x: a }`) has its type.
                     let ty = lookup_field_ty(*name);
+                    out.names.push(PatternName {
+                        span: *name_span,
+                        ty: ty.clone(),
+                        matched: ty.clone(),
+                    });
                     collect_pattern_bindings(p, visible_from, ty.as_ref(), scope_end, out);
                 } else {
                     out.bindings.push(LocalBinding {
@@ -382,7 +399,13 @@ fn collect_pattern_bindings(
             };
             for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
+                    // The field's name (`x` in `P { x: a }`) has its type.
                     let ty = lookup_field_ty(*name);
+                    out.names.push(PatternName {
+                        span: *name_span,
+                        ty: ty.clone(),
+                        matched: ty.clone(),
+                    });
                     collect_pattern_bindings(p, visible_from, ty.as_ref(), scope_end, out);
                 } else {
                     out.bindings.push(LocalBinding {
