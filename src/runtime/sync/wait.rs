@@ -177,7 +177,9 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     // The clock is an embedder's code: it is not called under a lock.
     let now = (deadline.is_some() || task_deadline.is_some()).then(|| timer.now());
     let over = |at: Option<Duration>| at.is_some_and(|at| now.is_some_and(|now| now >= at));
-    let (expired, task_expired) = (over(deadline), over(task_deadline));
+    // (A test may have every deadline go through the timer.)
+    let expired = over(deadline) && timer.ends_passed_deadlines_at_once();
+    let task_expired = over(task_deadline);
     let times = Times {
         deadline,
         expired,
