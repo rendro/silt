@@ -1,0 +1,299 @@
+> hover 19:36
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 19:41
+```silt
+type json.Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
+}
+```
+
+---
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+> hover 21:19
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 21:24
+```silt
+type json.Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
+}
+```
+
+---
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+> hover 21:42
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 21:47
+```silt
+type json.Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
+}
+```
+
+---
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+> hover 27:19
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 27:24
+```silt
+type json.Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
+}
+```
+
+---
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
+> hover 28:13
+```silt
+type json.Value {
+  Null,
+  Bool(Bool),
+  Int(Int),
+  Float(Float),
+  String(String),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
+}
+```
+
+---
+
+A JSON document as it is, for input whose shape is not known in advance:
+any document reads into it. Its variants are written through the module,
+`json.Null`, `json.Int(n)`, `json.Object(fields)`. When the shape is known,
+decode into a record type instead: a mistake in the document is then an
+error where it is read.
+
+- A number is an `Int` when it is a whole number in `Int`'s range (`1`,
+  `1.0`, `1e3`), as for an `Int` field, and a `Float` otherwise (`1.5`,
+  a number out of that range).
+- An object is a `Map(String, Value)`. Its keys come out sorted, not in
+  the document's order, and of a key written twice the last value counts.
+
+`json.stringify` and `json.pretty` write a `json.Value` as the JSON it
+holds: `json.Int(1)` as `1`, `json.Object` as an object.
+
+```silt
+import json
+import map
+
+fn name_of(body: String) -> Option(String) {
+  match json.parse(body, json.Value) {
+    Ok(json.Object(fields)) -> match map.get(fields, "name") {
+      Some(json.String(name)) -> Some(name)
+      _ -> None
+    }
+    _ -> None
+  }
+}
+
+fn main() {
+  println(name_of("""{"name": "Ada", "age": 36, "tags": ["x"]}""")) -- Some(Ada)
+  let reply = json.Object(#{ "name": json.String("Ada"), "age": json.Int(36) })
+  println(json.stringify(reply)) -- {"age":36,"name":"Ada"}
+}
+```
+
+A record field of type `json.Value` keeps that part of the document as it
+is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
+any field that is no `Option`, it must be in the document (a JSON `null`
+is `json.Null`); a field of type `Option(json.Value)` may be left out.
