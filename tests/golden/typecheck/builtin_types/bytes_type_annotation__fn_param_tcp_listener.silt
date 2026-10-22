@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 0
+-- requires-feature: tcp
 -- `tcp.TcpListener` is a valid parameter annotation.
 import tcp
 fn handle(l: tcp.TcpListener) -> Int { 1 }

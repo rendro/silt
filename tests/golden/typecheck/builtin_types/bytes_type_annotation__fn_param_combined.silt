@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 0
+-- requires-feature: tcp
 -- tcp.TcpListener, tcp.TcpStream and Bytes together in one signature.
 import tcp
 import bytes

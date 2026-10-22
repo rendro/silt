@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 1
+-- requires-feature: http
 -- stderr-contains: error[type]
 -- stderr-contains: type mismatch
 import http
