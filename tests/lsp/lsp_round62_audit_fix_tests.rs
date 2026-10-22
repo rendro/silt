@@ -247,6 +247,7 @@ fn completion_offers_primitive_types_in_type_annotation_position() {
     client.shutdown();
 }
 
+#[cfg(feature = "repl")]
 #[test]
 fn repl_builtin_names_includes_primitive_types() {
     // `repl::builtin_names` must surface every prelude type of

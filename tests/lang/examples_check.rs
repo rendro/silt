@@ -125,6 +125,9 @@ fn every_example_type_checks_and_has_no_warnings() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
 
+        if !output.status.success() && needs_a_feature_not_built(&output.stderr) {
+            return;
+        }
         if !output.status.success() {
             failures.lock().unwrap().push(format!(
                 "{}: exit={:?}\nstdout:\n{}\nstderr:\n{}",
@@ -200,11 +203,12 @@ fn extract_silt_blocks(body: &str) -> Vec<(usize, String)> {
     blocks
 }
 
-/// Whether a `silt check` found a use of a function whose cargo
-/// feature this build lacks (the TLS functions of `tcp` without
-/// `tcp-tls`): the block is checked by a build that has the feature.
-/// (The other errors of such a check can follow from that one: a value
-/// of the missing function has no type.)
+/// Whether a `silt check` or `silt run` found a use of a module or a
+/// function whose cargo feature this build lacks (the TLS functions of
+/// `tcp` without `tcp-tls`, `http` without default features): the
+/// example or block is checked by a build that has the feature. (The
+/// other errors of such a check can follow from that one: a value of
+/// the missing function has no type.)
 fn needs_a_feature_not_built(stderr: &[u8]) -> bool {
     String::from_utf8_lossy(stderr)
         .lines()
@@ -1105,6 +1109,9 @@ fn all_doc_fn_main_blocks_run_if_safe() {
                 stderr,
                 stdout
             ));
+            return;
+        }
+        if !output.status.success() && needs_a_feature_not_built(&output.stderr) {
             return;
         }
 

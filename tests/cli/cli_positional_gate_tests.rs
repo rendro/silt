@@ -97,6 +97,7 @@ fn silt_init_with_no_args_still_works() {
 
 // ── F14: silt repl <pos> / silt lsp <pos> ─────────────────────────────
 
+#[cfg(feature = "repl")]
 #[test]
 fn silt_repl_rejects_positional_argument() {
     let out = silt_cmd()
@@ -117,6 +118,7 @@ fn silt_repl_rejects_positional_argument() {
     );
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn silt_lsp_rejects_positional_argument() {
     let out = silt_cmd()
@@ -137,6 +139,7 @@ fn silt_lsp_rejects_positional_argument() {
     );
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn silt_lsp_rejects_multiple_positionals() {
     let out = silt_cmd()

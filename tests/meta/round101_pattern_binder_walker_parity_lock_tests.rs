@@ -4,6 +4,8 @@
 //! (`repl::scope_completion_names`), which the resolver builds from the
 //! patterns' binders; these tests read it for a program of one `let`.
 
+#![cfg(feature = "repl")]
+
 use silt::session::testing::session_with;
 
 fn completion_names(src: &str) -> Vec<String> {

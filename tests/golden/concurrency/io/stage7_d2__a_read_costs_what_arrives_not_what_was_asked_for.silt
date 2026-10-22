@@ -1,3 +1,4 @@
+-- requires-feature: tcp
 -- A read that asks for more bytes than any machine holds gets what the
 -- peer sent: the buffer of a read is for the bytes that arrive, not for
 -- the number asked for (it was allocated whole, and the process ended

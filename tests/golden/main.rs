@@ -170,11 +170,12 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
             _ => {}
         }
     }
-    // The LSP is a cargo feature; a case that talks to it needs it.
-    if d.cmd.first().map(String::as_str) == Some("lsp")
-        && !d.requires_features.iter().any(|f| f == "lsp")
+    // The LSP and the REPL are cargo features; a case that talks to
+    // one needs it.
+    if let Some(feature @ ("lsp" | "repl")) = d.cmd.first().map(String::as_str)
+        && !d.requires_features.iter().any(|f| f == feature)
     {
-        d.requires_features.push("lsp".to_string());
+        d.requires_features.push(feature.to_string());
     }
     Ok(d)
 }

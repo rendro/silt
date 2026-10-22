@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 0
+-- requires-feature: tcp
 -- `tcp.TcpStream` is a valid parameter annotation.
 import tcp
 fn handle(s: tcp.TcpStream) -> Int { 1 }

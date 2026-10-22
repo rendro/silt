@@ -7,6 +7,8 @@
 //! such a list costs one lex, at its last line: twice the lines are
 //! about twice the time.
 
+#![cfg(feature = "repl")]
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};

@@ -1,13 +1,14 @@
 -- `.message()` dispatches for a variant of every stdlib error enum
 -- (the registry-driven `<Enum>.message` globals and trait-dispatch table).
--- PostgresError needs the postgres feature and is left out.
+-- The enums of modules a build may leave out are in cases of their own:
+-- HttpError and TcpError in
+-- round73_error_enum_registry_parity_tests__the_http_and_tcp_error_enum_messages_dispatch;
+-- PostgresError is left out.
 import io
 import json
 import toml
 import int
-import http
 import regex
-import tcp
 import time
 import bytes
 
@@ -16,9 +17,7 @@ fn main() {
   println(json.MissingField("name").message())
   println(toml.MissingField("key").message())
   println(int.Empty.message())
-  println(http.Timeout.message())
   println(regex.TooBig.message())
-  println(tcp.Closed.message())
   println(time.OutOfRange("month 13").message())
   println(bytes.InvalidHex("zz").message())
 }

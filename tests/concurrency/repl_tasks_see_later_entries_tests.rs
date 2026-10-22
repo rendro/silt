@@ -16,6 +16,8 @@
 //! while the session takes the later entries in), and with three tasks
 //! at once.
 
+#![cfg(feature = "repl")]
+
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};

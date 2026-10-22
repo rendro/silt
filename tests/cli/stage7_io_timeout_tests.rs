@@ -3,6 +3,8 @@
 //! when nothing else does. The program ends then, by the rule, with
 //! what the task did after its timeout.
 
+#![cfg(feature = "tcp")]
+
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -50,7 +52,6 @@ fn run_with_io_timeout(
 /// would keep the program alive for ever; with it the task gets
 /// `Timeout`, goes on, and the program ends when it has.
 #[test]
-#[cfg(feature = "tcp")]
 fn the_global_io_timeout_ends_a_wait_that_keeps_the_program_alive() {
     let source = r#"import task
 import tcp
@@ -75,7 +76,6 @@ fn main() {
 /// A task that fails after its I/O timed out, after `main` returned,
 /// still fails the run.
 #[test]
-#[cfg(feature = "tcp")]
 fn a_failure_after_the_global_io_timeout_fails_the_run() {
     let source = r#"import task
 import tcp
@@ -102,7 +102,6 @@ fn main() {
 /// its last item, and its connection is shut down, as after a
 /// `tcp.read` that timed out: the peer reads the end of it.
 #[test]
-#[cfg(feature = "tcp")]
 fn the_global_io_timeout_ends_the_read_of_a_stream() {
     let source = r#"import channel
 import bytes
@@ -142,7 +141,6 @@ fn main() {
 /// nothing returns the module's timeout error when its write has waited
 /// for `SILT_IO_TIMEOUT`.
 #[test]
-#[cfg(feature = "tcp")]
 fn the_global_io_timeout_ends_the_write_of_a_stream() {
     let source = r#"import bytes
 import stream

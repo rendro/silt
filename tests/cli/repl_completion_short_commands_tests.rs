@@ -7,6 +7,8 @@
 //! silently unreachable via completion. This test pins the fix so a
 //! regression that drops `:q` or `:h` from the builtin list fails here.
 
+#![cfg(feature = "repl")]
+
 use silt::repl::{builtin_names, completion_candidates_for_prefix};
 
 #[test]

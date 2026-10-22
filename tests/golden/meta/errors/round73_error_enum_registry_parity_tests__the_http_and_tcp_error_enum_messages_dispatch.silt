@@ -1,0 +1,13 @@
+-- requires-feature: http
+-- requires-feature: tcp
+-- `.message()` dispatches for a variant of the error enums of `http`
+-- and `tcp`, which a build without those cargo features does not have
+-- (the other stdlib error enums are in
+-- round73_error_enum_registry_parity_tests__every_error_enum_message_dispatches).
+import http
+import tcp
+
+fn main() {
+  println(http.Timeout.message())
+  println(tcp.Closed.message())
+}

@@ -159,6 +159,7 @@ fn watch_with_unknown_subcommand_is_rejected() {
     assert_gate_rejection(&["asdfasdf", "--watch"]);
 }
 
+#[cfg(feature = "watch")]
 #[test]
 fn watch_gate_error_names_runnable_subcommands() {
     // The error message must list the subcommands that DO support

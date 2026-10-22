@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 0
+-- requires-feature: tcp
 -- stderr-not-contains: error
 import bytes
 import tcp

@@ -175,6 +175,7 @@ fn hover_on_channel_message_returns_its_own_section() {
 /// Hover on a variant whose name another module has too shows its own
 /// enum's text: `tcp.Closed` is `TcpError`'s, and what the globals page
 /// says of `channel.Closed` is shown for `channel.Closed` only.
+#[cfg(feature = "tcp")]
 #[test]
 fn hover_on_a_variant_of_a_shared_name_shows_its_own_enum() {
     let mut client = LspClient::spawn();

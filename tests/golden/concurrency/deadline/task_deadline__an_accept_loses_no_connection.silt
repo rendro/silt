@@ -1,4 +1,5 @@
 -- timeout: 120
+-- requires-feature: tcp
 -- An accept under a deadline: a connection is given to the function,
 -- and `task.deadline` gives `Ok` of it, or it stays with the listener
 -- for the next accept. A client connects 100 times, about every 3 ms;

@@ -13,6 +13,7 @@
 //!           `SiltHelper::complete` filter logic over `builtin_names`.
 
 use silt::diagnostic::render_human;
+#[cfg(feature = "repl")]
 use silt::repl::{builtin_names, completion_candidates_for_prefix};
 use silt::source::SourceMap;
 use silt::vm::VmError;
@@ -44,6 +45,7 @@ fn test_runtime_error_multiline_message_is_one_note_and_help_is_structured() {
 
 // ── GAP #13: REPL completion includes the keywords it once lacked ────
 
+#[cfg(feature = "repl")]
 #[test]
 fn test_repl_builtin_names_includes_round59_missing_keywords() {
     // The keywords that round-58 left out of the REPL's completion
@@ -60,6 +62,7 @@ fn test_repl_builtin_names_includes_round59_missing_keywords() {
     }
 }
 
+#[cfg(feature = "repl")]
 #[test]
 fn test_repl_completion_for_p_suggests_pub() {
     // When the user types `p` and hits Tab, `pub` must be in the
@@ -73,6 +76,7 @@ fn test_repl_completion_for_p_suggests_pub() {
     );
 }
 
+#[cfg(feature = "repl")]
 #[test]
 fn test_repl_completion_for_each_new_keyword_prefix_suggests_it() {
     // Each of the round-59 keywords must be offered when the user

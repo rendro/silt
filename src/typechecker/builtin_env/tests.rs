@@ -206,6 +206,7 @@ fn main() {
 
 // ── HTTP module ─────────────────────────────────────────────────
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_get_type() {
     assert_no_errors(

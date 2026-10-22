@@ -13,6 +13,8 @@
 //! collected by polling a shared buffer with a bounded total timeout, so
 //! tests do not hang if watch mode misbehaves.
 
+#![cfg(feature = "watch")]
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
