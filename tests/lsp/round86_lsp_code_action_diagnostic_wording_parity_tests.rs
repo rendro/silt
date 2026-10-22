@@ -177,7 +177,8 @@ fn wrap_in_ok_wraps_the_tail_of_a_block_body() {
     assert!(parses(&fixed), "{fixed}");
 }
 
-/// A `?` in a function without a `Result` return type: wrapping the
+/// A `?` in a function without a `Result` return type (its error is the
+/// `?`'s, the function returns neither a Result nor an Option): wrapping the
 /// body in `Ok(...)` would not fix it, so no Ok-wrap is offered.
 #[test]
 fn no_wrap_in_ok_for_a_question_mark_in_a_unit_function() {
@@ -185,7 +186,7 @@ fn no_wrap_in_ok_for_a_question_mark_in_a_unit_function() {
     let source = "fn parse() -> Result(Int, String) { Ok(1) }\n\
                   fn get() {\n  let x = parse()?\n  println(x)\n}\n\
                   fn main() { get() }\n";
-    let actions = actions_for(uri, source, "expected Result");
+    let actions = actions_for(uri, source, "? operator can only be used");
     assert!(
         !actions
             .iter()
