@@ -89,20 +89,13 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
             }
         }
         // A variant without a section of its own shows what documents
-        // its enum, under a line that says whose it is: the enum's
-        // section of the errors page for a variant of the module's
-        // error enum, the enum's own section, or else the module's page.
-        let error_sections = iter_sections(ERRORS_PAGE);
+        // its enum (`type_docs`), under a line that says whose it is,
+        // or else the module's page.
         for module in registry.enabled_modules() {
             for ty in &module.type_decls {
-                let section = error_sections
-                    .iter()
-                    .find(|(keys, _)| {
-                        module.error == Some(ty.name) && keys.iter().any(|k| k == ty.name)
-                    })
-                    .map(|(_, body)| body.clone());
-                let below = section
-                    .or_else(|| docs.get(&format!("{}.{}", module.name, ty.name)).cloned())
+                let below = type_docs()
+                    .get(&format!("{}.{}", module.name, ty.name))
+                    .cloned()
                     .unwrap_or_else(|| strip_frontmatter(module.page).to_string());
                 for (variant, _) in ty.variants() {
                     let name = format!("{}.{variant}", module.name);
@@ -140,6 +133,44 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                     row.signature, row.summary
                 );
                 docs.insert(name, text);
+            }
+        }
+        docs
+    })
+}
+
+/// The docs of each type that a built module declares, by its name as
+/// it is reached (`json.Value`, `io.IoError`), where it has any: the
+/// errors page's section on the module's error enum, else the type's
+/// own section of a page.
+pub fn type_docs() -> &'static HashMap<String, String> {
+    static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    DOCS.get_or_init(|| {
+        let modules: Vec<&Module> = registry().enabled_modules().collect();
+        let names: HashSet<String> = modules
+            .iter()
+            .flat_map(|m| {
+                m.type_decls
+                    .iter()
+                    .map(|ty| format!("{}.{}", m.name, ty.name))
+            })
+            .collect();
+        let mut docs = HashMap::new();
+        for (_, page) in pages() {
+            for (keys, body) in iter_sections(page) {
+                for key in keys.into_iter().filter(|key| names.contains(key)) {
+                    docs.insert(key, body.clone());
+                }
+            }
+        }
+        let error_sections = iter_sections(ERRORS_PAGE);
+        for module in modules {
+            let Some(error) = module.error else { continue };
+            if let Some((_, body)) = error_sections
+                .iter()
+                .find(|(keys, _)| keys.iter().any(|k| k == error))
+            {
+                docs.insert(format!("{}.{error}", module.name), body.clone());
             }
         }
         docs

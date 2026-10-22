@@ -1,11 +1,13 @@
 //! Hover on a trait's name: its signature (the trait's header and its
 //! methods, without their default bodies) and its documentation, as a
-//! type shows its declaration.
+//! type shows its declaration. And hover on a type of a builtin module,
+//! which no file declares: its declaration and its documentation.
 
 use crate::ast::{
-    Decl, FnDecl, PatternKind, Qualifier, TraitDecl, TraitRef, TypeExpr, TypeExprKind, WhereClause,
+    Decl, FnDecl, PatternKind, Qualifier, TraitDecl, TraitRef, TypeBody, TypeDecl, TypeExpr,
+    TypeExprKind, WhereClause,
 };
-use crate::defs::TraitId;
+use crate::defs::{TraitId, TypeId};
 use crate::intern::resolve;
 
 use super::Server;
@@ -39,12 +41,10 @@ impl Server {
                     let program = crate::builtins::registry::parse(of.traits);
                     let decl = declared(&program.decls, |t| resolve(t.name) == name)?;
                     let section = self.builtin_docs.get(&format!("{module}.{name}"));
-                    let names = (of.type_decls.iter().map(|t| t.name))
-                        .chain(of.opaque.iter().map(|(name, _)| *name))
-                        .chain(of.trait_names.iter().copied())
-                        .collect();
-                    let q = Qualify { module, names };
-                    (written(decl, Some(&q)), section.map(|s| below_signature(s)))
+                    (
+                        written(decl, Some(&Qualify::of(of))),
+                        section.map(|s| below_signature(s)),
+                    )
                 }
             }
         } else {
@@ -60,6 +60,73 @@ impl Server {
         }
         Some(value)
     }
+}
+
+impl Server {
+    /// What hover shows for silt's own type `id`: a builtin module's
+    /// (`json.Value`) its declaration as the registry has it, written as
+    /// a program names it, and below it its documentation, if it has
+    /// any; a type of the prelude its documentation alone.
+    pub(super) fn builtin_type_hover_text(&self, doc: &Document, id: TypeId) -> Option<String> {
+        let module = doc.module.as_ref()?;
+        let def = self.projects.get(&module.project)?.session.defs().get(id.0);
+        let name = resolve(def.name);
+        let Some(module) = def.module.builtin_name() else {
+            return self.builtin_docs.get(&name).cloned();
+        };
+        let registry = crate::builtins::registry::registry();
+        let of = registry.modules.iter().find(|m| m.name == module)?;
+        let q = Qualify::of(of);
+        let program = crate::builtins::registry::parse(of.types);
+        let declaration = match program.decls.iter().find_map(|decl| match decl {
+            Decl::Type(td) if resolve(td.name) == name => Some(td),
+            _ => None,
+        }) {
+            Some(td) => type_declaration(td, &q),
+            // An opaque handle: its name and its type arguments.
+            None => {
+                let (_, arity) = of.opaque.iter().find(|(opaque, _)| *opaque == name)?;
+                let params: Vec<String> = (0..*arity)
+                    .map(|k| char::from(b'a' + k as u8).to_string())
+                    .collect();
+                match params.is_empty() {
+                    true => format!("type {module}.{name}"),
+                    false => format!("type {module}.{name}({})", params.join(", ")),
+                }
+            }
+        };
+        let mut value = format!("```silt\n{declaration}\n```");
+        if let Some(text) = crate::builtins::registry::docs::type_docs()
+            .get(&format!("{module}.{name}"))
+            .map(|section| below_signature(section))
+            .filter(|text| !text.is_empty())
+        {
+            value.push_str(&format!("\n\n---\n\n{text}"));
+        }
+        Some(value)
+    }
+}
+
+/// The declaration of a builtin module's type `td`, one variant or
+/// field a line, its names written as `q` qualifies them.
+fn type_declaration(td: &TypeDecl, q: &Qualify) -> String {
+    let mut header = format!("type {}", named(Some(q), None, td.name));
+    if !td.params.is_empty() {
+        let params: Vec<String> = td.params.iter().map(|p| resolve(*p)).collect();
+        header.push_str(&format!("({})", params.join(", ")));
+    }
+    let members: Vec<String> = match &td.body {
+        TypeBody::Enum(variants) => variants
+            .iter()
+            .map(|v| format!("  {}{},", v.name, args(Some(q), &v.fields)))
+            .collect(),
+        TypeBody::Record(fields) => fields
+            .iter()
+            .map(|f| format!("  {}: {},", f.name, type_expr(Some(q), &f.ty)))
+            .collect(),
+        TypeBody::Alias(target) => return format!("{header} = {}", type_expr(Some(q), target)),
+    };
+    assemble(&header, members.into_iter())
 }
 
 /// The trait of `decls` that `is` picks.
@@ -170,14 +237,39 @@ struct Qualify {
     names: Vec<&'static str>,
 }
 
-/// The name `name`, after the qualifier `module`, as a program writes
-/// it: with the module of `q` if it is one of its names.
-fn named(q: Option<&Qualify>, module: Option<Qualifier>, name: crate::intern::Symbol) -> String {
-    match q {
-        Some(q) if module.is_none() && q.names.contains(&resolve(name).as_str()) => {
-            format!("{}.{name}", q.module)
+impl Qualify {
+    /// The names of the builtin module `of`: its types, its opaque
+    /// handles and its traits.
+    fn of(of: &'static crate::builtins::registry::Module) -> Qualify {
+        let names = (of.type_decls.iter().map(|t| t.name))
+            .chain(of.opaque.iter().map(|(name, _)| *name))
+            .chain(of.trait_names.iter().copied())
+            .collect();
+        Qualify {
+            module: of.name,
+            names,
         }
-        _ => Qualifier::written(module, name),
+    }
+}
+
+/// The name `name`, after the qualifier `module`, as a program writes
+/// it: with the module of `q` if it is one of its names, with its own
+/// module if it is a type of another builtin module.
+fn named(q: Option<&Qualify>, module: Option<Qualifier>, name: crate::intern::Symbol) -> String {
+    let Some(q) = q.filter(|_| module.is_none()) else {
+        return Qualifier::written(module, name);
+    };
+    let text = resolve(name);
+    if q.names.contains(&text.as_str()) {
+        return format!("{}.{text}", q.module);
+    }
+    // A type of another builtin module (`DateTime` in `fs.FileStat`).
+    match crate::defs::builtin_types()
+        .iter()
+        .find(|(ty, _)| *ty == text)
+    {
+        Some((_, Some(other))) => format!("{other}.{text}"),
+        _ => text,
     }
 }
 

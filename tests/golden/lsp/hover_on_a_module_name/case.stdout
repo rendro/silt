@@ -83,17 +83,19 @@ module json
 
 Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 44:27
-```
-type Value {
+```silt
+type json.Value {
   Null,
   Bool(Bool),
   Int(Int),
   Float(Float),
   String(String),
-  Array(List(Value)),
-  Object(Map(String, Value)),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
 }
 ```
+
+---
 
 A JSON document as it is, for input whose shape is not known in advance:
 any document reads into it. Its variants are written through the module,
@@ -253,17 +255,19 @@ module json
 
 Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 60:15
-```
-type Value {
+```silt
+type json.Value {
   Null,
   Bool(Bool),
   Int(Int),
   Float(Float),
   String(String),
-  Array(List(Value)),
-  Object(Map(String, Value)),
+  Array(List(json.Value)),
+  Object(Map(String, json.Value)),
 }
 ```
+
+---
 
 A JSON document as it is, for input whose shape is not known in advance:
 any document reads into it. Its variants are written through the module,

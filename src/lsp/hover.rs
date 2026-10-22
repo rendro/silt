@@ -96,7 +96,7 @@ impl Server {
             return Some(markdown(value));
         }
         if let Some(ty) = named_type {
-            return self.builtin_type_docs(doc, ty).map(markdown);
+            return self.builtin_type_hover_text(doc, ty).map(markdown);
         }
 
         // A trait named (`Display` in `where a: Display`, in an impl's

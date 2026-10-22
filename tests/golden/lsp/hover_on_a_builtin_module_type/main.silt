@@ -1,0 +1,98 @@
+-- cmd: lsp
+-- lsp: hover 61:13
+-- lsp: hover 62:14
+-- lsp: hover 63:16
+-- lsp: hover 64:15
+-- lsp: hover 65:18
+-- lsp: hover 66:18
+-- lsp: hover 67:18
+-- lsp: hover 68:15
+-- lsp: hover 69:16
+-- lsp: hover 70:15
+-- lsp: hover 71:16
+-- lsp: hover 72:16
+-- lsp: hover 73:16
+-- lsp: hover 74:16
+-- lsp: hover 75:16
+-- lsp: hover 76:16
+-- lsp: hover 77:16
+-- lsp: hover 78:16
+-- lsp: hover 79:16
+-- lsp: hover 80:16
+-- lsp: hover 81:16
+-- lsp: hover 82:16
+-- lsp: hover 83:16
+-- lsp: hover 84:14
+-- lsp: hover 85:20
+-- lsp: hover 86:20
+-- lsp: hover 87:17
+-- lsp: hover 88:18
+-- lsp: hover 89:20
+-- lsp: hover 90:15
+-- lsp: hover 91:16
+-- lsp: hover 92:16
+-- lsp: hover 93:15
+-- lsp: hover 94:20
+-- Hover on the type of a builtin module after the dot shows its
+-- declaration as the registry has it, written as a program names it
+-- (`json.Value` inside `json.Value`), one variant or field a line, and
+-- below it the section of a reference page on it: its own (`json.Value`)
+-- or, for the module's error enum, the errors page's. An opaque handle
+-- shows its name and type arguments.
+import bytes
+import channel
+import crypto
+import encoding
+import float
+import fs
+import http
+import int
+import io
+import json
+import list
+import postgres
+import regex
+import task
+import tcp
+import time
+import toml
+import uuid
+
+fn f0(x: io.IoError) -> Int { 0 }
+fn f1(x: int.IntError) -> Int { 0 }
+fn f2(x: float.FloatError) -> Int { 0 }
+fn f3(x: list.Step(Int)) -> Int { 0 }
+fn f4(x: channel.ChannelResult(Int)) -> Int { 0 }
+fn f5(x: channel.ChannelOp(Int)) -> Int { 0 }
+fn f6(x: channel.Selected(Int)) -> Int { 0 }
+fn f7(x: task.TaskError) -> Int { 0 }
+fn f8(x: regex.RegexError) -> Int { 0 }
+fn f9(x: json.JsonError) -> Int { 0 }
+fn f10(x: json.Value) -> Int { 0 }
+fn f11(x: toml.TomlError) -> Int { 0 }
+fn f12(x: time.Instant) -> Int { 0 }
+fn f13(x: time.Date) -> Int { 0 }
+fn f14(x: time.Time) -> Int { 0 }
+fn f15(x: time.DateTime) -> Int { 0 }
+fn f16(x: time.Duration) -> Int { 0 }
+fn f17(x: time.Weekday) -> Int { 0 }
+fn f18(x: time.TimeError) -> Int { 0 }
+fn f19(x: http.Method) -> Int { 0 }
+fn f20(x: http.Response) -> Int { 0 }
+fn f21(x: http.Request) -> Int { 0 }
+fn f22(x: http.HttpError) -> Int { 0 }
+fn f23(x: fs.FileStat) -> Int { 0 }
+fn f24(x: postgres.PostgresError) -> Int { 0 }
+fn f25(x: postgres.Notification) -> Int { 0 }
+fn f26(x: bytes.BytesError) -> Int { 0 }
+fn f27(x: crypto.CryptoError) -> Int { 0 }
+fn f28(x: encoding.EncodingError) -> Int { 0 }
+fn f29(x: tcp.TcpError) -> Int { 0 }
+fn f30(x: uuid.UuidError) -> Int { 0 }
+fn f31(x: task.Handle(Int)) -> Int { 0 }
+fn f32(x: tcp.TcpStream) -> Int { 0 }
+fn f33(x: postgres.PgPool) -> Int { 0 }
+
+fn main() {
+  println(1)
+}
