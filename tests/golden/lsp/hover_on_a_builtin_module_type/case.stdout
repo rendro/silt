@@ -1,4 +1,4 @@
-> hover 61:13
+> hover 56:13
 ```silt
 type io.IoError {
   NotFound(String),
@@ -24,7 +24,7 @@ type io.IoError {
 | `UnexpectedEof` | — | reader hit EOF mid-record |
 | `WriteZero` | — | writer returned zero bytes |
 | `Other(String)` | platform message | unclassified platform error |
-> hover 62:14
+> hover 57:14
 ```silt
 type int.IntError {
   Empty,
@@ -46,7 +46,7 @@ Returned by `int.parse`.
 | `Overflow` | — | value exceeds type max |
 | `Underflow` | — | value below type min |
 | `Other(String)` | message | unclassified parse failure |
-> hover 63:16
+> hover 58:16
 ```silt
 type float.FloatError {
   Empty,
@@ -69,14 +69,14 @@ its own (`float.Empty` is not `int.Empty`).
 | `Overflow` | — | literal above the `Float` range |
 | `Underflow` | — | literal below the `Float` range |
 | `Other(String)` | message | unclassified parse failure |
-> hover 64:15
+> hover 59:15
 ```silt
 type list.Step(a) {
   Stop(a),
   Continue(a),
 }
 ```
-> hover 65:18
+> hover 60:18
 ```silt
 type channel.ChannelResult(a) {
   Message(a),
@@ -84,21 +84,21 @@ type channel.ChannelResult(a) {
   Closed,
 }
 ```
-> hover 66:18
+> hover 61:18
 ```silt
 type channel.ChannelOp(a) {
   Recv(Channel(a)),
   Send(Channel(a), a),
 }
 ```
-> hover 67:18
+> hover 62:18
 ```silt
 type channel.Selected(a) {
   Received(Channel(a), Option(a)),
   Sent(Channel(a)),
 }
 ```
-> hover 68:15
+> hover 63:15
 ```silt
 type task.TaskError {
   Timeout,
@@ -114,7 +114,7 @@ Returned by `task.deadline`.
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |
 | `Other(String)` | message | unclassified failure |
-> hover 69:16
+> hover 64:16
 ```silt
 type regex.RegexError {
   InvalidPattern(String, Int),
@@ -132,7 +132,7 @@ Returned by every `regex.*` function for a pattern that does not compile.
 | `InvalidPattern(String, Int)` | what is wrong, and the character of the pattern where: counted from 0, as `string.slice` counts | pattern did not parse |
 | `TooBig` | — | compiled pattern exceeded size budget |
 | `Other(String)` | message | unclassified failure |
-> hover 70:15
+> hover 65:15
 ```silt
 type json.JsonError {
   Syntax(String, Int),
@@ -150,7 +150,7 @@ type json.JsonError {
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 71:16
+> hover 66:16
 ```silt
 type json.Value {
   Null,
@@ -205,7 +205,7 @@ A record field of type `json.Value` keeps that part of the document as it
 is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
 is `json.Null`); a field of type `Option(json.Value)` may be left out.
-> hover 72:16
+> hover 67:16
 ```silt
 type toml.TomlError {
   Syntax(String, Int),
@@ -223,13 +223,13 @@ type toml.TomlError {
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong TOML type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 73:16
+> hover 68:16
 ```silt
 type time.Instant {
   epoch_ns: Int,
 }
 ```
-> hover 74:16
+> hover 69:16
 ```silt
 type time.Date {
   year: Int,
@@ -237,7 +237,7 @@ type time.Date {
   day: Int,
 }
 ```
-> hover 75:16
+> hover 70:16
 ```silt
 type time.Time {
   hour: Int,
@@ -246,20 +246,20 @@ type time.Time {
   ns: Int,
 }
 ```
-> hover 76:16
+> hover 71:16
 ```silt
 type time.DateTime {
   date: time.Date,
   time: time.Time,
 }
 ```
-> hover 77:16
+> hover 72:16
 ```silt
 type time.Duration {
   ns: Int,
 }
 ```
-> hover 78:16
+> hover 73:16
 ```silt
 type time.Weekday {
   Monday,
@@ -271,7 +271,7 @@ type time.Weekday {
   Sunday,
 }
 ```
-> hover 79:16
+> hover 74:16
 ```silt
 type time.TimeError {
   ParseFormat(String),
@@ -289,7 +289,7 @@ type time.TimeError {
 | `OutOfRange(String)` | message | field out of valid range (e.g. month=13) |
 | `InvalidFormat(String)` | what is wrong | the pattern of `time.format`, `time.format_date`, `time.parse` or `time.parse_date` is no format, or one from which no text could give the value (no time of day for a `DateTime`, no date, empty) |
 | `Other(String)` | message | unclassified failure |
-> hover 80:16
+> hover 75:16
 ```silt
 type http.Method {
   GET,
@@ -301,7 +301,7 @@ type http.Method {
   OPTIONS,
 }
 ```
-> hover 81:16
+> hover 76:16
 ```silt
 type http.Response {
   status: Int,
@@ -309,7 +309,7 @@ type http.Response {
   headers: Map(String, String),
 }
 ```
-> hover 82:16
+> hover 77:16
 ```silt
 type http.Request {
   method: http.Method,
@@ -319,7 +319,7 @@ type http.Request {
   body: Bytes,
 }
 ```
-> hover 83:16
+> hover 78:16
 ```silt
 type http.HttpError {
   Connect(String),
@@ -343,7 +343,7 @@ type http.HttpError {
 | `InvalidResponse(String)` | message | what the server sent is no HTTP, or its body is larger than 10 MiB |
 | `ClosedEarly` | — | the server went away before the response was complete |
 | `Other(String)` | message | unclassified transport error |
-> hover 84:14
+> hover 79:14
 ```silt
 type fs.FileStat {
   size: Int,
@@ -357,45 +357,7 @@ type fs.FileStat {
   created: Option(time.DateTime),
 }
 ```
-> hover 85:20
-```silt
-type postgres.PostgresError {
-  Connect(String),
-  Tls(String),
-  AuthFailed(String),
-  Query(String, String),
-  TypeMismatch(String, String, String),
-  NoSuchColumn(String),
-  Closed,
-  Timeout,
-  TxnAborted,
-  Other(String),
-}
-```
-
----
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `Connect(String)` | message | a connect that failed (refused port, unknown or unreachable host, missing database), URL parse, connect options, SQLSTATE class 08 |
-| `Tls(String)` | message | TLS handshake / a server without TLS when `sslmode` requires TLS / cert read / connector build |
-| `AuthFailed(String)` | message | SQLSTATE class 28: a role or password the server refuses |
-| `Query(String, String)` | message, SQLSTATE | server-reported error |
-| `TypeMismatch(String, String, String)` | column, expected, actual | a column whose type, or a cell whose value, does not fit the field it is decoded into |
-| `NoSuchColumn(String)` | column | a field with no column in the result; SQLSTATE 42703 |
-| `Closed` | — | connection dropped, or a transaction used after it ended |
-| `Timeout` | — | SQLSTATE 57014, a server that does not answer a connect, no free connection in the pool's 30 s |
-| `TxnAborted` | — | SQLSTATE 25P02 — rollback required |
-| `Other(String)` | message | unclassified pg error |
-> hover 86:20
-```silt
-type postgres.Notification {
-  channel: String,
-  payload: String,
-  pid: Int,
-}
-```
-> hover 87:17
+> hover 80:17
 ```silt
 type bytes.BytesError {
   InvalidUtf8(Int),
@@ -415,7 +377,7 @@ type bytes.BytesError {
 | `InvalidBase64(String)` | message | bad base64 string |
 | `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
 | `Other(String)` | message | unclassified failure |
-> hover 88:18
+> hover 81:18
 ```silt
 type crypto.CryptoError {
   InvalidLength(Int),
@@ -431,7 +393,7 @@ Returned by `crypto.random_bytes`.
 |---------|--------|---------|
 | `InvalidLength(Int)` | the length asked for | negative, or above the 1 MiB cap |
 | `Other(String)` | message | the OS CSPRNG failed |
-> hover 89:20
+> hover 82:20
 ```silt
 type encoding.EncodingError {
   InvalidPercent(String),
@@ -449,29 +411,7 @@ Returned by `encoding.url_decode` and `encoding.form_decode`.
 | `InvalidPercent(String)` | what and where | a `%` that two hex digits do not follow |
 | `InvalidUtf8(String)` | where | decoded bytes are not valid UTF-8 |
 | `Other(String)` | message | unclassified failure |
-> hover 90:15
-```silt
-type tcp.TcpError {
-  Connect(String),
-  Bind(String),
-  Tls(String),
-  Closed,
-  Timeout,
-  Other(String),
-}
-```
-
----
-
-| Variant | Fields | Meaning |
-|---------|--------|---------|
-| `Connect(String)` | message | `tcp.connect` made no connection (refused, unreachable, no such host) |
-| `Bind(String)` | message | `tcp.listen` bound no listener (address in use, not this machine's, no address) |
-| `Tls(String)` | message | TLS handshake failure |
-| `Closed` | — | connection closed, by this end or the other (also a reset, an abort, a broken pipe) |
-| `Timeout` | — | op exceeded its deadline |
-| `Other(String)` | message | unclassified socket failure |
-> hover 91:16
+> hover 83:16
 ```silt
 type uuid.UuidError {
   Invalid(String),
@@ -487,15 +427,7 @@ Returned by `uuid.parse`.
 |---------|--------|---------|
 | `Invalid(String)` | why | not a syntactically valid UUID |
 | `Other(String)` | message | unclassified failure |
-> hover 92:16
+> hover 84:16
 ```silt
 type task.Handle(a)
-```
-> hover 93:15
-```silt
-type tcp.TcpStream
-```
-> hover 94:20
-```silt
-type postgres.PgPool
 ```

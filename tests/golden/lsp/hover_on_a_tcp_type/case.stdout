@@ -1,0 +1,26 @@
+> hover 10:14
+```silt
+type tcp.TcpError {
+  Connect(String),
+  Bind(String),
+  Tls(String),
+  Closed,
+  Timeout,
+  Other(String),
+}
+```
+
+---
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Connect(String)` | message | `tcp.connect` made no connection (refused, unreachable, no such host) |
+| `Bind(String)` | message | `tcp.listen` bound no listener (address in use, not this machine's, no address) |
+| `Tls(String)` | message | TLS handshake failure |
+| `Closed` | — | connection closed, by this end or the other (also a reset, an abort, a broken pipe) |
+| `Timeout` | — | op exceeded its deadline |
+| `Other(String)` | message | unclassified socket failure |
+> hover 11:14
+```silt
+type tcp.TcpStream
+```
