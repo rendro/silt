@@ -63,7 +63,7 @@ impl Server {
         // member's type.
         if let Some(module) = module_qualifier_at(doc, cursor) {
             if let Some(view) = self.imported_module(doc, module) {
-                return Some(markdown(Self::module_hover(&view, module)));
+                return Some(markdown(Self::module_hover(&view)));
             }
             if let Some(value) = self.imported_builtin_module_hover(doc, module) {
                 return Some(markdown(value));

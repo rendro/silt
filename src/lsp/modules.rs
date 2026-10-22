@@ -21,6 +21,8 @@ use super::state::{DefInfo, Document};
 
 /// An imported module, as the session has it.
 pub(super) struct ModuleView {
+    /// The module's name, as `import` names it (not an alias).
+    pub(super) name: Symbol,
     pub(super) uri: Uri,
     /// Its top-level definitions, with the checker's types.
     pub(super) definitions: HashMap<Symbol, DefInfo>,
@@ -100,9 +102,8 @@ impl Server {
         self.module_view(doc, module_name)
     }
 
-    /// The hover of the module `module` of the program: its name and
-    /// file.
-    pub(super) fn module_hover(view: &ModuleView, module: Symbol) -> String {
+    /// The hover of a module of the program: its name and file.
+    pub(super) fn module_hover(view: &ModuleView) -> String {
         let file = view
             .uri
             .path()
@@ -113,13 +114,14 @@ impl Server {
             .to_string();
         format!(
             "```silt\nmodule {}\n```\n\n{file}",
-            crate::intern::resolve(module)
+            crate::intern::resolve(view.name)
         )
     }
 
     /// The hover of the module an import of the open document `doc`
-    /// names at byte `cursor` (`list` in `import list`): a module of the
-    /// program as `module_hover` shows it, one of silt's own as
+    /// names at byte `cursor` (`list` in `import list`, `time` and `t`
+    /// in `import time as t`): a module of the program as
+    /// `module_hover` shows it, one of silt's own as
     /// `builtin_module_hover` does.
     pub(super) fn imported_module_hover(&self, doc: &Document, cursor: usize) -> Option<String> {
         let program = doc.program.as_ref()?;
@@ -134,10 +136,14 @@ impl Server {
                 .strip_prefix("import")?;
             let start = span.start as usize + "import".len() + rest.len() - rest.trim_start().len();
             let end = start + crate::intern::resolve(module).len();
-            (start..=end).contains(&cursor).then_some(module)
+            let alias = match target {
+                ImportTarget::Alias(_, _, at) => at.start as usize..at.end as usize,
+                _ => 0..0,
+            };
+            ((start..end).contains(&cursor) || alias.contains(&cursor)).then_some(module)
         })?;
         if let Some(view) = self.module_view(doc, module) {
-            return Some(Self::module_hover(&view, module));
+            return Some(Self::module_hover(&view));
         }
         builtin_module_hover(module)
     }
@@ -215,6 +221,7 @@ impl Server {
             }
         };
         Some(ModuleView {
+            name: module_name,
             uri: self.uri_for_path(&target_module.path)?,
             definitions,
             members,

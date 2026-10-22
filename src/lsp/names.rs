@@ -99,19 +99,24 @@ fn import_item_defs(
     item: Symbol,
 ) -> Vec<DefId> {
     use crate::typechecker::names::Binding;
-    let target = session
+    let resolution = session
         .graph()
         .module(importer)
         .imports
         .iter()
-        .find_map(|import| match import.resolution {
-            ImportResolution::Module(id) if import.name == module => Some(id),
-            _ => None,
-        });
-    let Some(exports) = target
-        .and_then(|id| session.module_analysis(id))
-        .map(|analysis| &analysis.scope.exports)
-    else {
+        .find(|import| import.name == module)
+        .map(|import| &import.resolution);
+    // A builtin module's exports are the builtin scopes'.
+    let builtins = crate::typechecker::names::builtins().1;
+    let exports = match resolution {
+        Some(ImportResolution::Module(id)) => session
+            .module_analysis(*id)
+            .map(|analysis| &analysis.scope.exports),
+        Some(ImportResolution::Builtin) => ModuleId::builtin(&crate::intern::resolve(module))
+            .and_then(|id| builtins.modules.get(&id)),
+        _ => None,
+    };
+    let Some(exports) = exports else {
         return Vec::new();
     };
     [exports.values.get(&item), exports.types.get(&item)]
