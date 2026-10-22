@@ -198,7 +198,7 @@ repros/type_soundness/p2.silt	-	obsolete	fn lambda; ported: lang/soundness/p2.si
 repros/type_soundness/p3.silt	holds	reject E0301	a top-level channel is monomorphic
 repros/type_soundness/p4.silt	-	obsolete	fn lambda; ported: lang/soundness/p4.silt
 repros/type_soundness/q1.silt	holds	reject E0301	`return` inside a closure is the closure's
-repros/type_soundness/q2.silt	holds	reject E0301	`?` inside a closure is the closure's
+repros/type_soundness/q2.silt	holds	reject E0324	`?` inside a closure is the closure's
 repros/type_soundness/q3.silt	-	obsolete	`loop (i = 0, ...)` is not the loop syntax; ported: lang/soundness/q3.silt
 repros/type_soundness/q4.silt	holds	reject E0301	a generic record keeps its arguments
 repros/type_soundness/q5.silt	holds	reject E0301	a generic record keeps its arguments through an update

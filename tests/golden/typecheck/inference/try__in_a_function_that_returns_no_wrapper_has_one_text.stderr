@@ -1,0 +1,20 @@
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> try__in_a_function_that_returns_no_wrapper_has_one_text.silt:10:11
+    |
+ 10 |   let x = Some(1)?
+    |           ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Option(Int), but the enclosing function returns Box
+
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> try__in_a_function_that_returns_no_wrapper_has_one_text.silt:15:3
+    |
+ 15 |   r? + 1
+    |   ^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Result(Int, String), but the enclosing function returns Int
+
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> try__in_a_function_that_returns_no_wrapper_has_one_text.silt:19:11
+    |
+ 19 |   let x = h()?
+    |           ^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Option(Int), but the enclosing function returns Box

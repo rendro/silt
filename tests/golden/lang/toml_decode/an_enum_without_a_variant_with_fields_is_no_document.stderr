@@ -1,0 +1,21 @@
+error[type]: `toml.parse` cannot decode `Status`: a toml document is a table, and no variant of `Status` has fields
+ --> an_enum_without_a_variant_with_fields_is_no_document.silt:35:31
+    |
+ 35 |   let _ = toml.parse("a = 1", Status)
+    |                               ^^^^^^ `toml.parse` cannot decode `Status`: a toml document is a table, and no variant of `Status` has fields
+  = help: decode into a record type
+
+error[type]: `toml.parse` cannot decode `Mode`: a toml document is a table, and no variant of `Status` has fields
+ --> an_enum_without_a_variant_with_fields_is_no_document.silt:36:31
+    |
+ 36 |   let _ = toml.parse("a = 1", Mode)
+    |                               ^^^^ `toml.parse` cannot decode `Mode`: a toml document is a table, and no variant of `Status` has fields
+  = help: decode into a record type
+
+error[type]: `toml.parse` cannot decode `Status`: a toml document is a table, and no variant of `Status` has fields
+ --> an_enum_without_a_variant_with_fields_is_no_document.silt:37:25
+    |
+ 37 |   let _ = read("a = 1", Status)
+    |                         ^^^^^^ `toml.parse` cannot decode `Status`: a toml document is a table, and no variant of `Status` has fields
+  = note: `read` passes it to `toml.parse`
+  = help: decode into a record type

@@ -1,0 +1,13 @@
+error[type]: ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+ --> two_bounds_of_one_trait__the_help_names_the_bounds_as_written.silt:15:3
+    |
+ 15 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+  = help: the bounds `Conv(String)` and `Sub(Int)` both give `show`: call it from a function bounded by only one of them
+
+error[type]: ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+ --> two_bounds_of_one_trait__the_help_names_the_bounds_as_written.silt:19:3
+    |
+ 19 |   x.show()
+    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
+  = help: the bounds `Sub(Int)` and `Sub(String)` both give `show`: call it from a function bounded by only one of them

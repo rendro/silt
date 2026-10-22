@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A decoder's type argument written as a type applied to types
+-- (`List(Int)`, `Map(String, Int)`, `Set(Int)`, `Box(Int)`) or as a tuple
+-- of types is that type, and the decoder refuses it with its own error,
+-- not "is not callable": `json.parse` and `toml.parse` point a list to
+-- their `parse_list` and a map to their `parse_map`; the others say what
+-- to declare. A bare `List` is pointed to `json.parse_list` too, and a
+-- function with a `json.Decode` bound is refused by the decoder it gives
+-- the type to.
+import json
+import toml
+
+type Box(a) { v: a }
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  let _ = json.parse("[1]", List(Int))
+  let _ = json.parse("\{}", Map(String, Int))
+  let _ = json.parse("[1]", List)
+  let _ = json.parse("[1]", (Int, String))
+  let _ = json.parse("[1]", Set(Int))
+  let _ = json.parse("[1]", Box(Int))
+  let _ = json.parse_list("[[1]]", List(Int))
+  let _ = json.decode(json.Null, List(Int))
+  let _ = toml.parse("a = 1", List(Int))
+  let _ = toml.parse("a = 1", Map(String, Int))
+  let _ = toml.parse("a = 1", (Int, Int))
+  let _ = load("[1]", List(Int))
+}

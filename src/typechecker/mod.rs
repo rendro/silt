@@ -198,6 +198,14 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
+    /// The `?` uses that decided an open return type (an unannotated
+    /// function's or a closure's), with the operand's type: a body that
+    /// gives no Result or Option is then the `?`'s error.
+    pub(super) qmark_decided: HashMap<Span, Type>,
+    /// The uses that need one of several bounds of one trait of an
+    /// annotation variable at arguments not known yet, checked at the
+    /// end of the function's body (`settle_open_bound_uses`).
+    pub(super) open_bound_uses: Vec<(RigidId, TraitKey, Vec<Type>, Origin)>,
     /// Names of function declarations that were synthesized by parser
     /// error recovery (Option B). Populated in register_fn_decl when the
     /// FnDecl has `is_recovery_stub == true`. Used by the `ExprKind::Call`
@@ -346,6 +354,10 @@ pub struct TypeChecker {
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
+    /// The types the module names by their names: in a REPL cell its
+    /// own and those of the earlier cells not declared again since,
+    /// which a message writes by their names.
+    pub(super) named_types: std::collections::HashSet<crate::defs::DefId>,
     /// Whether the program is a host module's signatures: its
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
@@ -401,6 +413,8 @@ impl TypeChecker {
             callee_position: false,
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
+            qmark_decided: HashMap::new(),
+            open_bound_uses: Vec::new(),
             recovery_stub_names: std::collections::HashSet::new(),
             current_type_anno_span: None,
             wanted: Vec::new(),
@@ -442,6 +456,7 @@ impl TypeChecker {
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             is_cell: false,
+            named_types: std::collections::HashSet::new(),
             signatures_only: false,
             registry_rows: false,
             tables: Tables::default(),
@@ -1566,6 +1581,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     for binding in scope.types.values() {
         if let names::Binding::Def(id) = binding {
             checker.seen_traits.insert(*id);
+            checker.named_types.insert(*id);
         }
     }
     for binding in scope.values.values() {

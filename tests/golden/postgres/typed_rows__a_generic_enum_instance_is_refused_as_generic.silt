@@ -1,0 +1,20 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- A generic enum's instance given as the row type is refused for being
+-- generic, as toml.parse refuses it (no impl can be written for a
+-- generic type, so the enum help would not do): the instance is named
+-- with its arguments, and "an enum type".
+import postgres
+import toml
+
+type Gen(a) { G(a) }
+
+fn rows(db: postgres.PgPool) {
+  let _ = postgres.query(db, "SELECT 1", (), Gen(Int))
+  let _ = toml.parse("a = 1", Gen(Int))
+}
+
+fn main() {
+  println(1)
+}

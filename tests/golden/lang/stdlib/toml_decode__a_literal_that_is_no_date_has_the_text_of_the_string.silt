@@ -1,0 +1,19 @@
+-- A TOML date or time literal that is no date (or no time of day) has
+-- the message the same text in quotes has, with the format it expects:
+-- one text whichever way the document writes it.
+import time
+import toml
+
+type D { d: time.Date }
+type T { t: time.Time }
+type DT { at: time.DateTime }
+
+fn main() {
+  println(toml.parse("d = 07:32:00", D))
+  println(toml.parse("d = \"07:32:00\"", D))
+  println(toml.parse("d = 1979-05-27T07:32:00", D))
+  println(toml.parse("t = 1979-05-27", T))
+  println(toml.parse("t = \"1979-05-27\"", T))
+  println(toml.parse("at = 07:32:00", DT))
+  println(toml.parse("at = \"07:32:00\"", DT))
+}

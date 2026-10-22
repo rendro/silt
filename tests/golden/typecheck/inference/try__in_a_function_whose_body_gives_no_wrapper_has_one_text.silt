@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- `?` in a function with no written return type, or in a closure,
+-- decides that the function returns a Result or an Option; a body that
+-- gives neither (main's `()`, an unannotated function's `Int`, a
+-- closure's `Int`) is then the `?`'s error, with the text and note of a
+-- `?` in a function that returns neither. A function that declares a
+-- Result keeps the mismatch of its body, and a `?` of the other wrapper
+-- is still the mismatch.
+fn unannotated() {
+  Some(1)?
+}
+
+fn holds_a_closure() -> Int {
+  let f = { -> Some(1)? }
+  1
+}
+
+fn declared() -> Result(Int, String) {
+  let r: Result(Int, String) = Ok(1)
+  r?
+}
+
+fn other_wrapper() -> Option(Int) {
+  let x = Ok(1)?
+  Some(x)
+}
+
+fn main() {
+  let _ = Some(1)?
+}

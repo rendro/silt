@@ -330,7 +330,17 @@ fn begin<'a>(
         Value::BuiltinFn(id) => return write!(f, "<builtin:{id}>").map(|()| None),
         Value::HostFn(h) => return write!(f, "<host:{}>", h.name).map(|()| None),
         Value::VariantConstructor(tag) => return write!(f, "<constructor:{tag}>").map(|()| None),
-        Value::TypeDescriptor(ty) => return write!(f, "<type:{}>", ty.name).map(|()| None),
+        // A builtin module's type with its module (`<type:json.Value>`),
+        // as a program writes it; the program's own by its name.
+        Value::TypeDescriptor(ty) => {
+            let module = (crate::defs::builtin_types().get(ty.id.0.0 as usize))
+                .and_then(|(_, module)| *module);
+            return match module {
+                Some(module) => write!(f, "<type:{module}.{}>", ty.name),
+                None => write!(f, "<type:{}>", ty.name),
+            }
+            .map(|()| None);
+        }
         Value::PrimitiveDescriptor(name) => return write!(f, "<type:{name}>").map(|()| None),
         Value::Channel(ch) => return write!(f, "<channel:{}>", ch.id()).map(|()| None),
         Value::Handle(h) => return write!(f, "<handle:{}>", h.id).map(|()| None),

@@ -122,6 +122,21 @@ impl TypeChecker {
             Type::Map(..) => TypeRef::builtin("Map"),
             Type::Set(_) => TypeRef::builtin("Set"),
             Type::Channel(_) => TypeRef::builtin("Channel"),
+            // A tuple of types (`json.parse(text, (Int, String))`).
+            Type::Tuple(_) => {
+                let accepted = decoding.type_arguments(str::to_string);
+                return Some(
+                    Diagnostic::error(
+                        Code::Undecodable,
+                        span,
+                        format!(
+                            "`{builtin_name}` cannot decode `{}`: its type argument must be {accepted}",
+                            self.show_type(ty)
+                        ),
+                    )
+                    .with_help(decoding.family.type_argument_help()),
+                );
+            }
             _ => return None,
         };
         let family = decoding.family;
@@ -150,17 +165,13 @@ impl TypeChecker {
                 return None;
             }
             let enum_type = self.tables.is_enum(head);
-            if enum_type && !family.decodes_enums() {
-                return refusal(
-                    Code::Undecodable,
-                    format!(
-                        "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
-                    ),
-                    record_help,
-                );
-            }
+            // (A generic type first: no impl can be written for one, so
+            // the enum's help below could not be followed.)
             if self.tables.is_generic(head) {
-                let kind = if enum_type { "enum" } else { "record" };
+                let (kind, a_kind) = match enum_type {
+                    true => ("enum", "an enum"),
+                    false => ("record", "a record"),
+                };
                 let message = match written {
                     // Through an alias that gives the type its arguments
                     // (`type BI = Box(Int)`) the type is one instance;
@@ -169,15 +180,15 @@ impl TypeChecker {
                     Some(_) => format!(
                         "`{builtin_name}` cannot decode `{type_name}`: it names `{}`, \
                          an instance of the generic {kind} type `{}`, and a decoder reads \
-                         the fields of a {kind} type without parameters",
+                         the fields of {a_kind} type without parameters",
                         self.show_type(ty),
                         self.show_type(&Type::Generic(head, Vec::new()))
                     ),
                     // An instance that no alias names.
                     None if free_vars_in(ty).is_empty() => format!(
                         "`{builtin_name}` cannot decode `{}`: it is an instance of the \
-                         generic {kind} type `{type_name}`, and a decoder reads the fields of a \
-                         {kind} type without parameters",
+                         generic {kind} type `{type_name}`, and a decoder reads the fields of \
+                         {a_kind} type without parameters",
                         self.show_type(ty)
                     ),
                     None => format!(
@@ -186,6 +197,37 @@ impl TypeChecker {
                     ),
                 };
                 return refusal(Code::Undecodable, message, generic_help);
+            }
+            // (A row is decoded into a record of its columns, or by the
+            // type's own impl, which the program may write for its enum.)
+            if enum_type && !family.decodes_enums() {
+                return refusal(
+                    Code::Undecodable,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: it is an enum type, and enums have no decoder"
+                    ),
+                    &format!(
+                        "declare a record type, or write a `json.Decode` impl for `{}`",
+                        self.written_type(head)
+                    ),
+                );
+            }
+            // A toml document is a table: of an enum, only a variant
+            // with fields is one.
+            if enum_type
+                && decoding == Decoding::TOML_RECORD
+                && (self.tables.enums.get(&head))
+                    .is_some_and(|info| info.variants.iter().all(|v| v.field_types.is_empty()))
+            {
+                return refusal(
+                    Code::Undecodable,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: a toml document is a \
+                         table, and no variant of `{}` has fields",
+                        self.show_type(&Type::Generic(head, Vec::new()))
+                    ),
+                    record_help,
+                );
             }
             let found = self.undecodable_field(head, family, &mut HashSet::new())?;
             let (place, has, kind) = match found.in_variant {
@@ -245,12 +287,26 @@ impl TypeChecker {
         let is_container = crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&builtin);
         if is_container || (is_primitive && !decoding.primitives) {
             let accepted = decoding.type_arguments(str::to_string);
+            // A container type the call gives its arguments by its
+            // arguments (`List(Int)`).
+            let type_name = match written.is_none() && free_vars_in(ty).is_empty() {
+                true => self.show_type(ty),
+                false => type_name,
+            };
+            // `json.parse` and `toml.parse` read a list or a map with a
+            // function of their own.
+            let module = (builtin_name.strip_suffix(".parse")).filter(|_| !family.rows());
+            let help = match (module, ty) {
+                (Some(module), Type::List(_)) => format!("use `{module}.parse_list` for a list"),
+                (Some(module), Type::Map(..)) => format!("use `{module}.parse_map` for a map"),
+                _ => family.type_argument_help().to_string(),
+            };
             return refusal(
                 Code::Undecodable,
                 format!(
                     "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"
                 ),
-                family.type_argument_help(),
+                &help,
             );
         }
         None

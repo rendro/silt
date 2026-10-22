@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- A toml document is a table, and of an enum only a variant with fields
+-- is one: `toml.parse` of an enum none of whose variants has fields is
+-- refused at compile time (through an alias and a function that passes
+-- its type on too). An enum with a variant with fields, one with a
+-- `json.Decode` impl, and a fieldless enum as the element of
+-- `toml.parse_list` or the value of `toml.parse_map` (a string each)
+-- are accepted.
+import json
+import toml
+
+type Status { Active, Inactive }
+
+type Mode = Status
+
+type Step { Idle, Busy(Int) }
+
+type Level { Low, High }
+
+trait json.Decode for Level {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Object(_) -> Ok(High)
+      _ -> Ok(Low)
+    }
+  }
+}
+
+fn read(text: String, type a) -> Result(a, toml.TomlError) {
+  toml.parse(text, a)
+}
+
+fn main() {
+  let _ = toml.parse("a = 1", Status)
+  let _ = toml.parse("a = 1", Mode)
+  let _ = read("a = 1", Status)
+  let _ = toml.parse("variant = \"Busy\"\nfields = [1]", Step)
+  let _ = toml.parse("a = 1", Level)
+  let _ = toml.parse_list("s = [\"Active\"]", Status)
+  let _ = toml.parse_map("s = \"Active\"", Status)
+}

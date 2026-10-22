@@ -1,9 +1,6 @@
-error[type]: type mismatch: expected Result(_, String), got ()
- --> round93_inference_diagnostics__qmark_in_unit_fn_note.silt:12:3
+error[type]: ? operator can only be used inside a function that returns Result or Option
+ --> round93_inference_diagnostics__qmark_in_unit_fn_note.silt:12:11
     |
- 12 |   println(x)
-    |   ^^^^^^^^^^ type mismatch: expected Result(_, String), got ()
- ::: round93_inference_diagnostics__qmark_in_unit_fn_note.silt:11:11
-    |
- 11 |   let x = parse()?
-    |           -------- this `?` requires this function to return Result(_, String)
+ 12 |   let x = parse()?
+    |           ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
+  = note: the ?-ed expression is Result(Int, String), but the enclosing function returns ()

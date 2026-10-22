@@ -1,0 +1,77 @@
+error[type]: `a` is a type, and a type given as a value cannot be shown
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:36:5
+    |
+ 36 |   "{a}"
+    |     ^ `a` is a type, and a type given as a value cannot be shown
+
+error[type]: `json.Value` is a type, and a type given as a value cannot be shown
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:40:11
+    |
+ 40 |   println(json.Value)
+    |           ^^^^^^^^^^ `json.Value` is a type, and a type given as a value cannot be shown
+
+error[type]: `Int` is a type, and a type given as a value cannot be shown
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:41:13
+    |
+ 41 |   println("{Int}")
+    |             ^^^ `Int` is a type, and a type given as a value cannot be shown
+
+error[type]: `String` is a type, and a type given as a value cannot be shown
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:42:17
+    |
+ 42 |   println(shown(String))
+    |                 ^^^^^^ `String` is a type, and a type given as a value cannot be shown
+
+error[type]: `Int` is a type, and a type given as a value cannot be compared with `==`
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:43:16
+    |
+ 43 |   println(same(Int))
+    |                ^^^ `Int` is a type, and a type given as a value cannot be compared with `==`
+
+error[type]: `Float` is a type, and a type given as a value cannot be ordered
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:44:16
+    |
+ 44 |   println(less(Float))
+    |                ^^^^^ `Float` is a type, and a type given as a value cannot be ordered
+
+error[type]: `Bool` is a type, and a type given as a value cannot be hashed
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:45:18
+    |
+ 45 |   println(hashed(Bool))
+    |                  ^^^^ `Bool` is a type, and a type given as a value cannot be hashed
+
+error[type]: `Int` is a type, and a type given as a value does not implement trait 'Show'
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:46:16
+    |
+ 46 |   println(told(Int))
+    |                ^^^ `Int` is a type, and a type given as a value does not implement trait 'Show'
+
+error[type]: `Int` is a type, and a type given as a value cannot be encoded as json
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:47:26
+    |
+ 47 |   println(json.stringify(Int))
+    |                          ^^^ `Int` is a type, and a type given as a value cannot be encoded as json
+
+error[type]: type 'List(type Int)' does not implement trait 'Display': element is of type 'type Int', which does not
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:48:11
+    |
+ 48 |   println(list.sort([Int]))
+    |           ^^^^^^^^^^^^^^^^ type 'List(type Int)' does not implement trait 'Display': element is of type 'type Int', which does not
+
+error[type]: `Int` is a type, and a type given as a value cannot be ordered
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:48:21
+    |
+ 48 |   println(list.sort([Int]))
+    |                     ^^^^^ `Int` is a type, and a type given as a value cannot be ordered
+
+error[type]: `List` is a type, and a type given as a value cannot be shown
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:50:11
+    |
+ 50 |   println(List)
+    |           ^^^^ `List` is a type, and a type given as a value cannot be shown
+
+error[type]: `Int` is a type, and a type given as a value cannot be hashed
+ --> type_value__no_trait_and_no_message_names_its_internal_type.silt:51:11
+    |
+ 51 |   let _ = #[Int]
+    |           ^^^^^^ `Int` is a type, and a type given as a value cannot be hashed

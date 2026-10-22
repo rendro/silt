@@ -1,0 +1,25 @@
+error[type]: type mismatch: expected Value, got json.Value
+ --> <repl:4>:1:1
+   |
+ 1 | let y: Value = v
+   | ^^^^^^^^^^^^^^^^ type mismatch: expected Value, got json.Value
+error[type]: type mismatch: expected json.Value, got Value
+ --> <repl:5>:1:1
+   |
+ 1 | let z: json.Value = Value { x: 1 }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected json.Value, got Value
+error[type]: type mismatch: expected H, got <repl:6>.H
+ --> <repl:9>:1:1
+   |
+ 1 | let a: H = old
+   | ^^^^^^^^^^^^^^ type mismatch: expected H, got <repl:6>.H
+error[type]: type mismatch: expected Int, got <repl:6>.H
+ --> <repl:10>:1:1
+   |
+ 1 | let n: Int = old
+   | ^^^^^^^^^^^^^^^^ type mismatch: expected Int, got <repl:6>.H
+error[type]: type mismatch: expected Value, got H
+ --> <repl:11>:1:1
+   |
+ 1 | let b: Value = H { m: 1 }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected Value, got H

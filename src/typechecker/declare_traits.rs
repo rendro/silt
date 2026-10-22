@@ -1764,6 +1764,17 @@ impl TypeChecker {
                                         self.impl_trait_name(ti)
                                     )),
                                 );
+                                // (A bound refused beside the trait's
+                                // own bound of its trait is not the
+                                // method's: its body has the trait's,
+                                // and no second error comes of the two.)
+                                let of_trait = method_constraints.iter().any(|pred| {
+                                    matches!(pred, Pred::Trait { tr, subject, .. }
+                                        if tr == trait_name && *subject == Type::Var(tv))
+                                });
+                                if of_trait {
+                                    continue;
+                                }
                             }
                             method_constraints.push(Pred::bound(
                                 tv,

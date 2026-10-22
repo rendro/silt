@@ -556,7 +556,7 @@ impl TypeChecker {
     /// Check `operand?` now that the operand's type is known: it is a
     /// Result or an Option, whose payload is `result_ty`, and the
     /// function it is in returns the same wrapper.
-    fn try_operand(
+    pub(super) fn try_operand(
         &mut self,
         resolved: &Type,
         result_ty: &Type,
@@ -609,6 +609,7 @@ impl TypeChecker {
             // constrain it, exactly like the inline concrete path.
             Type::Var(_) => {
                 self.unify(&ret_resolved, &expected_wrapper, span);
+                self.qmark_decided.insert(span, resolved.clone());
             }
             // A Result or an Option, of either wrapper: a `?` of the
             // other one is the mismatch the inline path reports.
@@ -1356,16 +1357,16 @@ impl TypeChecker {
         traits: &[TraitKey],
         span: Span,
     ) {
-        self.ambiguous_method(method, on, traits, span);
         let in_scope = self.bounds.get(&r.var).cloned().unwrap_or_default();
         let above = |t: TraitKey| self.supertraits_of(t);
-        // The bounds no other one has as a supertrait: what the `where`
-        // clause says, the supertraits aside.
+        // The bounds no other one has as a supertrait at its arguments:
+        // what the `where` clause says, the supertraits aside
+        // (`where a: Sub(Int), a: Conv(String)` with `trait Sub(b):
+        // Conv(b)` says `Conv(String)`, and `Conv(Int)` comes of `Sub`).
         let said: Vec<&(TraitKey, Vec<Type>)> = (in_scope.iter())
-            .filter(|(t, _)| {
-                !in_scope
-                    .iter()
-                    .any(|(o, _)| o != t && above(*o).contains(t))
+            .filter(|bound| {
+                !(in_scope.iter())
+                    .any(|other| other != *bound && self.supers_at(other).contains(bound))
             })
             .collect();
         let giving: Vec<&(TraitKey, Vec<Type>)> = (said.iter().copied())
@@ -1377,11 +1378,46 @@ impl TypeChecker {
                 .collect(),
             _ => giving,
         };
+        let shown_args = |this: &Self, args: &[Type]| -> Vec<String> {
+            (args.iter())
+                .map(|a| this.show_type(&this.apply(&substitute_vars(a, &this.rigid_of))))
+                .collect()
+        };
+        // Two bounds of one trait at different arguments
+        // (`where a: Conv(Int), a: Conv(String)`): the bounds give the
+        // method, by their arguments.
+        let mut of_one_trait = traits.to_vec();
+        super::inference::distinct(&mut of_one_trait);
+        match of_one_trait.len() < traits.len() {
+            true => {
+                let mut given: Vec<String> = (in_scope.iter())
+                    .filter(|(t, _)| traits.contains(t))
+                    .map(|(t, args)| match shown_args(self, args) {
+                        args if args.is_empty() => self.show_trait(*t),
+                        args => format!("{}({})", self.show_trait(*t), args.join(", ")),
+                    })
+                    .collect();
+                given.sort();
+                given.dedup();
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousMethod,
+                        span,
+                        format!(
+                            "ambiguous method '{method}' on {on}: provided by bounds {}",
+                            given.join(", ")
+                        ),
+                    )
+                    .with_help(
+                        "say which is meant: annotate the receiver's type, or bound it with a `where` clause",
+                    ),
+                );
+            }
+            false => self.ambiguous_method(method, on, traits, span),
+        }
         let mut bounds: Vec<String> = (named.into_iter())
             .map(|(t, args)| {
-                let args: Vec<String> = (args.iter())
-                    .map(|a| self.show_type(&self.apply(&substitute_vars(a, &self.rigid_of))))
-                    .collect();
+                let args = shown_args(self, args);
                 match args.is_empty() {
                     true => format!("`{}`", self.written_trait(*t)),
                     false => format!("`{}({})`", self.written_trait(*t), args.join(", ")),
@@ -1403,6 +1439,33 @@ impl TypeChecker {
                  only one of them"
             )];
         }
+    }
+
+    /// The supertraits the bound `bound` brings into scope, at the
+    /// arguments it gives them, theirs too: what `declare_bound` adds
+    /// with it.
+    fn supers_at(&self, bound: &(TraitKey, Vec<Type>)) -> Vec<(TraitKey, Vec<Type>)> {
+        let mut found: Vec<(TraitKey, Vec<Type>)> = Vec::new();
+        let mut next = vec![bound.clone()];
+        while let Some((t, args)) = next.pop() {
+            let Some(info) = self.tables.traits.get(&t) else {
+                continue;
+            };
+            for (i, super_name) in info.supertraits.iter().enumerate() {
+                let super_args: Vec<Type> = match info.supertrait_args.get(i) {
+                    Some(exprs) if !exprs.is_empty() => (exprs.iter())
+                        .map(|te| super::inference::resolve_supertrait_arg(te, info, &args))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let reached = (*super_name, super_args);
+                if !found.contains(&reached) {
+                    found.push(reached.clone());
+                    next.push(reached);
+                }
+            }
+        }
+        found
     }
 
     /// The supertraits of the trait `t`, theirs too.
@@ -1585,7 +1648,12 @@ impl TypeChecker {
                         );
                         return;
                     }
-                    let message = self.gap_message(trait_name, &resolved, &gap);
+                    let message = match gap.is_whole() {
+                        true => self.type_value_message(trait_name, &[], &resolved),
+                        false => None,
+                    };
+                    let message =
+                        message.unwrap_or_else(|| self.gap_message(trait_name, &resolved, &gap));
                     self.error(Code::MissingTraitImpl, message, span);
                 }
                 None => {
@@ -1640,6 +1708,51 @@ impl TypeChecker {
                 .impl_methods
                 .get(head, intern(method), trait_name)
                 .is_none()
+    }
+
+    /// What a message says of `ty` that lacks the trait `tr` (at
+    /// `args`) if it is the type of a type given as a value
+    /// (`println(json.Value)`), which has no trait: the type as the
+    /// program writes it, and what cannot be done with it. `None` for
+    /// any other type.
+    pub(super) fn type_value_message(
+        &self,
+        tr: TraitKey,
+        args: &[Type],
+        ty: &Type,
+    ) -> Option<String> {
+        let Type::Generic(head, given) = ty else {
+            return None;
+        };
+        let [given] = given.as_slice() else {
+            return None;
+        };
+        if !head.is_builtin(crate::defs::TYPE_OF) {
+            return None;
+        }
+        // A type whose arguments the value leaves open (`List`) by its
+        // name alone.
+        let given = self.apply(given);
+        let shown = match &given {
+            _ if free_vars_in(&given).is_empty() => self.show_type(&given),
+            Type::List(_) => "List".to_string(),
+            Type::Set(_) => "Set".to_string(),
+            Type::Map(..) => "Map".to_string(),
+            Type::Channel(_) => "Channel".to_string(),
+            Type::Generic(r, _) => self.show_type(&Type::Generic(*r, Vec::new())),
+            other => self.show_type(other),
+        };
+        let what = match () {
+            _ if tr.is_builtin("Display") => "cannot be shown".to_string(),
+            _ if tr.is_builtin("Equal") => "cannot be compared with `==`".to_string(),
+            _ if tr.is_builtin("Compare") => "cannot be ordered".to_string(),
+            _ if tr.is_builtin("Hash") => "cannot be hashed".to_string(),
+            _ if tr.is_builtin("Encode") => "cannot be encoded as json".to_string(),
+            _ => format!("does not implement trait '{}'", self.show_bound(tr, args)),
+        };
+        Some(format!(
+            "`{shown}` is a type, and a type given as a value {what}"
+        ))
     }
 
     /// What a message says of a type that lacks the structural trait
@@ -1899,11 +2012,14 @@ impl TypeChecker {
                      statement, so the type is `()`, which does not implement the trait",
                     self.show_bound(trait_name, bound_trait_args)
                 ),
-                _ => format!(
-                    "type '{}' does not implement trait '{}'",
-                    self.show_type(&Type::Generic(type_name, vec![])),
-                    self.show_bound(trait_name, bound_trait_args)
-                ),
+                _ => (self.type_value_message(trait_name, bound_trait_args, &resolved))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "type '{}' does not implement trait '{}'",
+                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_bound(trait_name, bound_trait_args)
+                        )
+                    }),
             };
             self.error(Code::MissingTraitImpl, message, span);
             return;

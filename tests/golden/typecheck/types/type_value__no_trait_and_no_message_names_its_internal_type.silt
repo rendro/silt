@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- A type given as a value (`json.Value`, `Int`, a `type a` parameter)
+-- has no trait: what cannot be done with it is said of the type as the
+-- program writes it, for each trait and each way of asking for one (a
+-- call, an interpolation, a bound, a set's element, a sort), and no
+-- message names the checker's own name for the type of a type value.
+import json
+import list
+
+trait Show {
+  fn show(self) -> String
+}
+
+fn shown(x: a) -> String where a: Display {
+  "{x}"
+}
+
+fn same(x: a) -> Bool where a: Equal {
+  x == x
+}
+
+fn less(x: a) -> Bool where a: Compare {
+  x < x
+}
+
+fn hashed(x: a) -> Int where a: Hash {
+  x.hash()
+}
+
+fn told(x: a) -> String where a: Show {
+  x.show()
+}
+
+fn named(type a) -> String {
+  "{a}"
+}
+
+fn main() {
+  println(json.Value)
+  println("{Int}")
+  println(shown(String))
+  println(same(Int))
+  println(less(Float))
+  println(hashed(Bool))
+  println(told(Int))
+  println(json.stringify(Int))
+  println(list.sort([Int]))
+  println(named(Int))
+  println(List)
+  let _ = #[Int]
+}

@@ -1,0 +1,47 @@
+-- cmd: check
+-- exit: 1
+-- Two bounds of one trait at different arguments are two bounds: a
+-- method both give is ambiguous (on a value and on a `type a`), whether
+-- its type names the trait's argument or not, with the bounds help; a
+-- function that needs one of the two is given it, and one that needs a
+-- third is told the two that are declared.
+trait Conv(b) {
+  fn show(self) -> String
+  fn conv(self) -> b
+}
+
+trait Make(b) {
+  fn make() -> Self
+}
+
+fn shown(x: a) -> String where a: Conv(Int), a: Conv(String) {
+  x.show()
+}
+
+fn converted(x: a) -> String where a: Conv(Int) + Conv(String) {
+  x.conv()
+}
+
+fn made(type a) -> a where a: Make(Int), a: Make(String) {
+  a.make()
+}
+
+fn one(x: a) -> String where a: Conv(String) {
+  x.show()
+}
+
+fn passes(x: a) -> String where a: Conv(Int), a: Conv(String) {
+  one(x)
+}
+
+fn other(x: a) -> String where a: Conv(Bool) {
+  x.show()
+}
+
+fn wrong(x: a) -> String where a: Conv(Int), a: Conv(String) {
+  other(x)
+}
+
+fn main() {
+  println(1)
+}

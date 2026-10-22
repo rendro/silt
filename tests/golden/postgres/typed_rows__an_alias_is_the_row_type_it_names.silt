@@ -2,10 +2,12 @@
 -- requires-feature: postgres
 -- exit: 1
 -- stderr-contains: `postgres.query` cannot decode `MA`: it is an enum type, and enums have no decoder
+-- stderr-contains: help: declare a record type, or write a `json.Decode` impl for `Mood`
 -- stderr-not-contains: is not a value
 -- An alias is only another name: as a row type it is the type it names,
 -- checked as that type is. `UU` names a record and checks; `MA` names an
--- enum, which has no decoder.
+-- enum, which has no decoder: the help names the enum, the type an impl
+-- is written for.
 import postgres
 
 type U {

@@ -194,8 +194,10 @@ impl TypeChecker {
     /// and `v: Sub(Int)` with `trait Sub(a): Super(a)` says
     /// `v: Super(Int)`.
     pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
+        // (Two bounds of one trait at different arguments are two
+        // bounds: `where a: Conv(Int), a: Conv(String)`.)
         let in_scope = self.bounds.entry(var).or_default();
-        if in_scope.iter().any(|(t, _)| *t == trait_name) {
+        if in_scope.iter().any(|(t, a)| *t == trait_name && *a == args) {
             return;
         }
         in_scope.push((trait_name, args.clone()));
@@ -341,8 +343,9 @@ impl TypeChecker {
 
     /// Report that the declaration being checked does not declare
     /// `r: trait_name(args)`, which the use `origin` in it needs, unless
-    /// it does. The bound it declares for the trait is the only one `r`
-    /// has, so its arguments are the ones needed.
+    /// it does. Where it declares one bound for the trait, its arguments
+    /// are the ones needed; of several (`a: Conv(Int), a: Conv(String)`)
+    /// the one at the arguments needed, if one is.
     pub(super) fn require_declared_bound(
         &mut self,
         r: RigidId,
@@ -353,12 +356,15 @@ impl TypeChecker {
         if self.unknown_bounds.contains(&r.var) {
             return;
         }
-        let declared = self
-            .bounds
-            .get(&r.var)
-            .and_then(|bounds| bounds.iter().find(|(t, _)| *t == trait_name))
-            .map(|(_, declared)| declared.clone());
-        if let Some(declared) = declared {
+        let of_trait: Vec<Vec<Type>> = (self.bounds.get(&r.var).into_iter().flatten())
+            .filter(|(t, _)| *t == trait_name)
+            .map(|(_, declared)| declared.clone())
+            .collect();
+        if of_trait.len() > 1 {
+            self.several_bounds(r, trait_name, args, origin, false);
+            return;
+        }
+        if let Some(declared) = of_trait.into_iter().next() {
             if args.is_empty() || declared.len() != args.len() {
                 return;
             }
@@ -435,6 +441,69 @@ impl TypeChecker {
         )
         .with_help(format!("add `where {}: {bound}`", r.name));
         self.errors.push(diagnostic);
+    }
+
+    /// `require_declared_bound` where `r` has several bounds of
+    /// `trait_name` (`a: Conv(Int), a: Conv(String)`): the use needs the
+    /// one at its arguments. Arguments still unknown wait for the end of
+    /// the function's body (`settle`: `settle_open_bound_uses`), which
+    /// may decide them; unknown then, the use does not say which bound.
+    fn several_bounds(
+        &mut self,
+        r: RigidId,
+        trait_name: TraitKey,
+        args: &[Type],
+        origin: Origin,
+        settle: bool,
+    ) {
+        if args.is_empty() {
+            return;
+        }
+        let of_trait: Vec<Vec<Type>> = (self.bounds.get(&r.var).into_iter().flatten())
+            .filter(|(t, _)| *t == trait_name)
+            .map(|(_, declared)| {
+                (declared
+                    .iter()
+                    .map(|t| self.apply(&substitute_vars(t, &self.rigid_of))))
+                .collect()
+            })
+            .collect();
+        let needed: Vec<Type> = args.iter().map(|t| self.apply(t)).collect();
+        if of_trait.contains(&needed) {
+            return;
+        }
+        let open = needed.iter().any(|t| !free_vars_in(t).is_empty());
+        if open && !settle {
+            self.open_bound_uses.push((r, trait_name, needed, origin));
+            return;
+        }
+        let declared: Vec<String> = (of_trait.iter())
+            .map(|declared| format!("'{}'", self.show_bound(trait_name, declared)))
+            .collect();
+        let message = match open {
+            true => format!(
+                "type variable `{}` is declared to implement {}, and which of them this use \
+                 needs is not known",
+                r.name,
+                declared.join(" and ")
+            ),
+            false => format!(
+                "type variable `{}` is declared to implement {}, not '{}'",
+                r.name,
+                declared.join(" and "),
+                self.show_bound(trait_name, &needed)
+            ),
+        };
+        self.error(Code::MissingConstraint, message, origin.span);
+    }
+
+    /// Check the uses that wait for their arguments to choose among
+    /// several bounds of one trait (`several_bounds`): at the end of a
+    /// function's body, which decides what it can.
+    pub(super) fn settle_open_bound_uses(&mut self) {
+        for (r, trait_name, args, origin) in std::mem::take(&mut self.open_bound_uses) {
+            self.several_bounds(r, trait_name, &args, origin, true);
+        }
     }
 
     /// The methods named `field` that the bounds in scope give the
@@ -603,11 +672,12 @@ impl TypeChecker {
         if self.unknown_bounds.contains(&r.var) {
             return None;
         }
-        let bounds: Vec<TraitKey> = self
+        let mut bounds: Vec<TraitKey> = self
             .bounds
             .get(&r.var)
             .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
             .unwrap_or_default();
+        distinct(&mut bounds);
         if bounds.is_empty() {
             self.errors.push(
                 Diagnostic::error(
@@ -787,7 +857,7 @@ impl TypeChecker {
                 // The methods of the variable's bounds. The `where`
                 // clause promises an impl at every call; the call finds
                 // it at run time by the type the descriptor carries.
-                let Some(trait_names) = self
+                let Some(mut trait_names) = self
                     .bounds
                     .get(&r.var)
                     .map(|bounds| bounds.iter().map(|(t, _)| *t).collect::<Vec<TraitKey>>())
@@ -803,6 +873,7 @@ impl TypeChecker {
                     );
                     return None;
                 };
+                distinct(&mut trait_names);
                 let matches = self.bound_methods(*r, field);
                 if matches.is_empty() {
                     let traits_str = trait_names
@@ -1084,6 +1155,7 @@ impl TypeChecker {
         self.fn_frames.pop();
         env.pop();
         self.unify_body_result(&f.body, &body_type, &ret_type);
+        self.settle_open_bound_uses();
 
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
@@ -1111,7 +1183,7 @@ impl TypeChecker {
                 }
             }
         }
-        self.note_qmark_requirement_on_ret_mismatch(from, ret);
+        self.note_qmark_requirement_on_ret_mismatch(from, body_type, ret);
     }
 
     /// GAP (round 93): when the body/return-type unify fails AND the
@@ -1124,13 +1196,45 @@ impl TypeChecker {
     /// the inverse direction (got Result/Option, expected plain): both
     /// append a continuation line to the raw unify mismatch rather
     /// than emitting a separate diagnostic.
-    fn note_qmark_requirement_on_ret_mismatch(&mut self, err_count_before: usize, ret_ty: &Type) {
+    ///
+    /// Where the `?` itself decided the return type (an unannotated
+    /// function, a closure) and the body gives no Result or Option, the
+    /// function returns neither: that is the `?`'s error, the one text
+    /// of a `?` in such a function (`try_operand`).
+    fn note_qmark_requirement_on_ret_mismatch(
+        &mut self,
+        err_count_before: usize,
+        body_ty: &Type,
+        ret_ty: &Type,
+    ) {
         if self.errors.len() == err_count_before {
             return;
         }
         let Some(qspan) = self.current_qmark_spans.first().copied() else {
             return;
         };
+        let body_resolved = self.apply(body_ty);
+        let wrapper = |t: &Type| matches!(t, Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option"));
+        if let Some(operand) = self.qmark_decided.get(&qspan).cloned()
+            && !wrapper(&body_resolved)
+            && !matches!(body_resolved, Type::Var(_) | Type::Error | Type::Never)
+        {
+            let note = format!(
+                "the ?-ed expression is {}, but the enclosing function returns {}",
+                self.show_type(&self.apply(&operand)),
+                self.show_type(&body_resolved)
+            );
+            self.errors.truncate(err_count_before);
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidQuestion,
+                    qspan,
+                    "? operator can only be used inside a function that returns Result or Option",
+                )
+                .with_note(note),
+            );
+            return;
+        }
         // Only when the return type is actually Result/Option-shaped —
         // i.e. the shape `?` itself unifies into the return type. If the
         // user annotated something else, the `?` site already got its own
@@ -1293,6 +1397,109 @@ impl TypeChecker {
         };
         let def = self.defs.as_ref()?.get(id);
         (def.kind == crate::defs::DefKind::TypeAlias).then_some(def.name)
+    }
+
+    /// Whether `param`, a parameter of the callee of the call being
+    /// checked, is a `type a` parameter whose type a decoder decodes:
+    /// the callee owes, from the wanted predicates from `owed` on, a
+    /// decoder's check of `a` or `json.Decode` of it.
+    fn asks_decoding(&self, param: &Type, owed: usize) -> bool {
+        let Type::Generic(head, args) = self.apply(param) else {
+            return false;
+        };
+        let [Type::Var(v)] = args.as_slice() else {
+            return false;
+        };
+        if !head.is_builtin(crate::defs::TYPE_OF) {
+            return false;
+        }
+        self.wanted[owed..].iter().any(|wanted| match &wanted.goal {
+            Goal::Pred(Pred::Builtin {
+                check: BuiltinCheck::Decodes { .. },
+                subject,
+                ..
+            }) => *subject == Type::Var(*v),
+            Goal::Pred(Pred::Trait { tr, subject, .. }) => {
+                Self::is_decode(*tr) && *subject == Type::Var(*v)
+            }
+            _ => false,
+        })
+    }
+
+    /// The type `arg` writes as a value if it writes a type of types:
+    /// a type applied to types (`List(Int)`, `Map(String, Int)`,
+    /// `Box(Int)`) or a tuple of types (`(Int, String)`), at any depth.
+    /// `None` for any other expression, a type alone among them (its
+    /// value has its type already), and one whose arguments do not fit
+    /// the type.
+    fn spelled_type(&mut self, arg: &mut Expr, env: &mut TypeEnv) -> Option<Type> {
+        if !matches!(arg.kind, ExprKind::Call(..) | ExprKind::Tuple(_)) || !self.writes_types(arg) {
+            return None;
+        }
+        self.spell(arg, env)
+    }
+
+    /// Whether `e` is made of names of types only, applied to each
+    /// other or in tuples: what `spell` reads.
+    fn writes_types(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => {
+                let Some(crate::defs::Res::Def(id)) = e.res else {
+                    return false;
+                };
+                (self.defs.as_ref()).is_some_and(|defs| {
+                    matches!(
+                        defs.get(id).kind,
+                        crate::defs::DefKind::Type(_) | crate::defs::DefKind::TypeAlias
+                    )
+                })
+            }
+            ExprKind::Call(callee, args) => {
+                self.writes_types(callee) && args.iter().all(|a| self.writes_types(a))
+            }
+            ExprKind::Tuple(elems) => elems.iter().all(|e| self.writes_types(e)),
+            _ => false,
+        }
+    }
+
+    /// The type `e`, which `writes_types`, writes.
+    fn spell(&mut self, e: &mut Expr, env: &mut TypeEnv) -> Option<Type> {
+        match &mut e.kind {
+            ExprKind::Call(callee, args) => {
+                let head = self.spell(callee, env)?;
+                let args: Vec<Type> = (args.iter_mut())
+                    .map(|a| self.spell(a, env))
+                    .collect::<Option<_>>()?;
+                // (A type whose parameters the value leaves open.)
+                let open = |t: &Type| matches!(t, Type::Var(_));
+                match (head, args.as_slice()) {
+                    (Type::List(p), [t]) if open(&p) => Some(Type::List(Box::new(t.clone()))),
+                    (Type::Set(p), [t]) if open(&p) => Some(Type::Set(Box::new(t.clone()))),
+                    (Type::Channel(p), [t]) if open(&p) => Some(Type::Channel(Box::new(t.clone()))),
+                    (Type::Map(pk, pv), [k, v]) if open(&pk) && open(&pv) => {
+                        Some(Type::Map(Box::new(k.clone()), Box::new(v.clone())))
+                    }
+                    (Type::Generic(r, params), _)
+                        if !params.is_empty()
+                            && params.len() == args.len()
+                            && params.iter().all(open) =>
+                    {
+                        Some(Type::Generic(r, args))
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::Tuple(elems) => (elems.iter_mut())
+                .map(|e| self.spell(e, env))
+                .collect::<Option<_>>()
+                .map(Type::Tuple),
+            _ => match self.infer_expr(e, env) {
+                Type::Generic(head, args) if head.is_builtin(crate::defs::TYPE_OF) => {
+                    args.first().map(|t| self.apply(t))
+                }
+                _ => None,
+            },
+        }
     }
 
     /// The name a callee is written with, for a message about a call of
@@ -1518,7 +1725,19 @@ impl TypeChecker {
                     {
                         self.expected_closure = Some(expected);
                     }
-                    let arg_ty = self.infer_expr(arg, env);
+                    // A decoder's type argument written as a type of
+                    // types (`List(Int)`, `(Int, String)`) is that type,
+                    // which the decoder's own check refuses.
+                    let spelled = match param {
+                        Some(param) if self.asks_decoding(param, owed_before) => {
+                            self.spelled_type(arg, env)
+                        }
+                        _ => None,
+                    };
+                    let arg_ty = match spelled {
+                        Some(ty) => Type::type_of(ty),
+                        None => self.infer_expr(arg, env),
+                    };
                     self.expected_closure = None;
                     given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {
@@ -2524,33 +2743,17 @@ impl TypeChecker {
 
                 // ? operator on Result(a,e) returns a, propagates Err(e)
                 // ? operator on Option(a) returns a, propagates None
+                // (The one check, also of an operand known only later:
+                // `try_operand`.)
                 match &inner_ty {
-                    Type::Generic(name, args) if name.is_builtin("Result") && args.len() == 2 => {
-                        if let Some(expected_ret) = self.current_return_type.clone() {
-                            let err_ty = args[1].clone();
-                            let fresh_ok = self.fresh_var();
-                            let expected_result = Type::builtin("Result", vec![fresh_ok, err_ty]);
-                            self.unify(&expected_ret, &expected_result, span);
-                        } else {
-                            self.error(Code::InvalidQuestion,
-                                "? operator can only be used inside a function that returns Result or Option".to_string(),
-                                span,
-                            );
-                        }
-                        args[0].clone()
-                    }
-                    Type::Generic(name, args) if name.is_builtin("Option") && args.len() == 1 => {
-                        if let Some(expected_ret) = self.current_return_type.clone() {
-                            let fresh_inner = self.fresh_var();
-                            let expected_option = Type::option(fresh_inner);
-                            self.unify(&expected_ret, &expected_option, span);
-                        } else {
-                            self.error(Code::InvalidQuestion,
-                                "? operator can only be used inside a function that returns Result or Option".to_string(),
-                                span,
-                            );
-                        }
-                        args[0].clone()
+                    Type::Generic(name, args)
+                        if (name.is_builtin("Result") && args.len() == 2)
+                            || (name.is_builtin("Option") && args.len() == 1) =>
+                    {
+                        let ok = args[0].clone();
+                        let ret = self.current_return_type.clone();
+                        self.try_operand(&inner_ty, &ok, ret, span);
+                        ok
                     }
                     // An operand already reported (or from a module that
                     // failed to load): nothing more to say.
@@ -3960,4 +4163,17 @@ pub(super) fn type_of_var(ty: &Type) -> Option<Type> {
         Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(type_of_var),
         _ => None,
     }
+}
+
+/// `traits` with each trait once, in the order of their first places
+/// (two bounds of one trait at different arguments name it twice).
+pub(super) fn distinct(traits: &mut Vec<TraitKey>) {
+    let mut seen: Vec<TraitKey> = Vec::new();
+    traits.retain(|t| {
+        let first = !seen.contains(t);
+        if first {
+            seen.push(*t);
+        }
+        first
+    });
 }

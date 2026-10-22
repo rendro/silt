@@ -17,11 +17,12 @@ error[type]: undefined variable 'Option'
  17 |   let _ = json.parse("1", Option(C))
     |                           ^^^^^^ undefined variable 'Option'
 
-error[type]: `type List(_)` is not callable
+error[type]: `json.parse_list` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
  --> a_type_argument_error_is_the_only_error.silt:18:34
     |
  18 |   let _ = json.parse_list("[1]", List(Int))
-    |                                  ^^^^^^^^^ `type List(_)` is not callable
+    |                                  ^^^^^^^^^ `json.parse_list` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> a_type_argument_error_is_the_only_error.silt:21:20

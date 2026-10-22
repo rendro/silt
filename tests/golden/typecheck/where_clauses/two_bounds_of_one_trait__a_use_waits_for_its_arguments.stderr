@@ -1,0 +1,5 @@
+error[type]: type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', and which of them this use needs is not known
+ --> two_bounds_of_one_trait__a_use_waits_for_its_arguments.silt:23:8
+    |
+ 23 |   gen2(x, ys)
+    |        ^ type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', and which of them this use needs is not known

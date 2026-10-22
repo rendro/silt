@@ -95,7 +95,8 @@ record with a field no decoder exists for is a compile error that names the
 field and its type (or the field of a record type it names that has none);
 so is an enum with a variant whose field has none (the error names the
 variant), or a type the function does not take (such as
-`toml.parse(text, Int)`). The check applies equally to a
+`toml.parse(text, Int)`, or `toml.parse(text, List(Int))`, whose error points to
+`toml.parse_list`). The check applies equally to a
 decoder imported by name (`import toml.{ parse }`) and to one called through
 a module alias, and a type is refused whatever a document would hold (an
 `Option` field whose key is left out, an empty list or map too).
@@ -153,7 +154,10 @@ variant = "Paused"
 ```
 
 An enum type may be the type argument (at the top of `toml.parse` only a
-variant with fields is a table), the elements of `toml.parse_list`, the
+variant with fields is a table: an enum none of whose variants has fields,
+and that has no `json.Decode` impl, is a compile error, "`toml.parse` cannot
+decode `Status`: a toml document is a table, and no variant of `Status` has
+fields"), the elements of `toml.parse_list`, the
 values of `toml.parse_map`, and the type of a field anywhere in a record or
 in another enum's variant. A document that is no variant of the enum is an
 `Err` with the texts of `json.parse`, toml's names of the kinds of values and
@@ -207,10 +211,11 @@ that `json.parse` accepts for each of those field types:
 
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an `Other`
-that names the text, from a string
-`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`
-and from a literal
-`invalid time '23:59:60': a leap second (second 60) is not read`.
+that names the text, from a string and from a literal alike:
+`invalid time '23:59:60' (expected HH:MM:SS): a leap second (second 60) is not read`.
+A date or a time that is none has one message whether it is written in
+quotes or as a literal: `d = 07:32:00` for a `Date` field `d` is
+`invalid date '07:32:00' (expected YYYY-MM-DD): input contains invalid characters at d`.
 
 ```silt
 import toml
@@ -351,7 +356,7 @@ follows:
 |-------|------------|
 | `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
-| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a key whose value is `None` is left out |
+| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
 | a record | a table of its fields, in the order the type declares them; a field that is `None` is left out (TOML has no null), and reads back as `None` |
 | `Some(x)` | `x`, as `x` is written |
 | `None` in an array (a list, a tuple, the fields of a variant) | nothing: `Err(Other("toml.stringify: TOML has no null: a None in an array"))` |
