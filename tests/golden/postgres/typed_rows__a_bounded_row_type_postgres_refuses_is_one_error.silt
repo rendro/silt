@@ -1,0 +1,46 @@
+-- requires-feature: postgres
+-- cmd: check
+-- exit: 1
+-- A function bounded `where a: json.Decode` that gives `a` to
+-- `postgres.query`, `postgres.stream` or `postgres.cursor`, called with
+-- a type the postgres function refuses, gets that refusal alone, with
+-- the note naming the function that passes it on, also through two
+-- more functions. A type only `json.Decode` refuses (a `Bytes` field)
+-- still gets the bound's refusal.
+import json
+import postgres
+
+type L = List(Int)
+type Raw { b: Bytes }
+
+fn pq(db: postgres.PgPool, type a) where a: json.Decode {
+  postgres.query(db, "SELECT 1", (), a)
+}
+
+fn ps(db: postgres.PgPool, type a) where a: json.Decode {
+  postgres.stream(db, "SELECT 1", (), a)
+}
+
+fn pc(tx: postgres.PgTx, type a) where a: json.Decode {
+  postgres.cursor(tx, "SELECT 1", (), 10, a)
+}
+
+fn pq2(db: postgres.PgPool, type a) where a: json.Decode {
+  pq(db, a)
+}
+
+fn pq3(db: postgres.PgPool, type a) where a: json.Decode {
+  pq2(db, a)
+}
+
+fn rows(db: postgres.PgPool, tx: postgres.PgTx) {
+  let _ = pq(db, L)
+  let _ = ps(db, L)
+  let _ = pc(tx, L)
+  let _ = pq3(db, L)
+  let _ = pq3(db, Raw)
+}
+
+fn main() {
+  println(1)
+}

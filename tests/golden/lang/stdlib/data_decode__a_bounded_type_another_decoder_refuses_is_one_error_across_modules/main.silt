@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A `json.Decode`-bounded function of another module that gives `a` to
+-- `toml.parse`, called with a type `toml.parse` refuses, gets that
+-- refusal alone, directly and through a second function.
+import lib
+
+type L = List(Int)
+
+fn main() {
+  let _ = lib.tl("n = 1", L)
+  let _ = lib.deep("n = 1", L)
+}

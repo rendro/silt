@@ -1,0 +1,61 @@
+-- cmd: check
+-- exit: 1
+-- A function bounded `where a: json.Decode` that gives `a` to a decoder
+-- of another family (`toml.parse` and its `_list` / `_map` forms),
+-- called with a type that decoder refuses, gets that decoder's refusal
+-- alone, with the note naming the function that passes it on: no
+-- second error from the bound. So through a function that calls such a
+-- function, through a trait method, and where the body gives `a` to
+-- `json.parse` too.
+import json
+import toml
+
+type L = List(Int)
+
+fn tl(t: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  toml.parse(t, a)
+}
+
+fn tll(t: String, type a) -> Result(List(a), toml.TomlError) where a: json.Decode {
+  toml.parse_list(t, a)
+}
+
+fn tlm(t: String, type a) -> Result(Map(String, a), toml.TomlError) where a: json.Decode {
+  toml.parse_map(t, a)
+}
+
+fn deep(t: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  tl(t, a)
+}
+
+fn both(t: String, type a) where a: json.Decode {
+  let _ = json.parse(t, a)
+  let _ = toml.parse(t, a)
+}
+
+trait Load {
+  fn get(self, t: String, type a) -> Result(a, toml.TomlError) where a: json.Decode
+}
+
+type S { n: Int }
+
+trait Load for S {
+  fn get(self, t: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+    toml.parse(t, a)
+  }
+}
+
+fn via(x: s, type a) -> Result(a, toml.TomlError) where s: Load, a: json.Decode {
+  x.get("n = 1", a)
+}
+
+fn main() {
+  let _ = tl("n = 1", L)
+  let _ = tll("n = 1", L)
+  let _ = tlm("n = 1", L)
+  let _ = deep("n = 1", L)
+  let _ = both("n = 1", L)
+  let _ = tl("n = 1", Set(Int))
+  let _ = S { n: 1 }.get("n = 1", L)
+  let _ = via(S { n: 1 }, L)
+}

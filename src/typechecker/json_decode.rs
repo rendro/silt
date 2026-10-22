@@ -13,6 +13,7 @@
 //!
 //! [`Decoding`]: crate::builtins::registry::decoding::Decoding
 
+use super::builtin_checks::refused_argument;
 use super::solve::Origin;
 use super::*;
 use crate::builtins::registry::decoding::Decoding;
@@ -142,6 +143,13 @@ impl TypeChecker {
         }
         for gap in std::mem::take(&mut self.decode_gaps) {
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &gap.subject);
+            // A decoder the bound's body hands the type to (`toml.parse`,
+            // `postgres.query`) refused it here: that refusal, with the
+            // note naming the function that passes it on, is the one
+            // error.
+            if (self.lacking).contains(&refused_argument(gap.origin.span, &ty)) {
+                continue;
+            }
             let decoder = self.asking_decoder(gap.asker);
             // The function or method that passes the type on, as the use
             // writes it (`store.load`).
