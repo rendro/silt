@@ -27,13 +27,18 @@
 //! talks to `silt lsp`, runs `silt test` without a file argument, or
 //! compares the output of two commands.
 
+#[cfg(feature = "lsp")]
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+#[cfg(feature = "lsp")]
+use std::process::{Child, ChildStdin};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "lsp")]
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "lsp")]
 use serde_json::{Value, json};
 
 /// Upper bound for one run of the binary, and for one answer of the
@@ -172,6 +177,7 @@ impl Drop for Project {
 
 // ── Talking to the language server ───────────────────────────────────
 
+#[cfg(feature = "lsp")]
 fn reader_loop(stdout: std::process::ChildStdout, tx: std::sync::mpsc::Sender<Value>) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -206,6 +212,7 @@ fn reader_loop(stdout: std::process::ChildStdout, tx: std::sync::mpsc::Sender<Va
 
 /// A `silt lsp` process, started by this test and ended by this test:
 /// on drop it kills exactly the process it spawned, through its handle.
+#[cfg(feature = "lsp")]
 struct Lsp {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -214,6 +221,7 @@ struct Lsp {
     next_id: u64,
 }
 
+#[cfg(feature = "lsp")]
 impl Lsp {
     /// Start the server and complete the `initialize` handshake.
     fn start(label: &str) -> Lsp {
@@ -423,6 +431,7 @@ impl Lsp {
     }
 }
 
+#[cfg(feature = "lsp")]
 impl Drop for Lsp {
     fn drop(&mut self) {
         // Ends the one process this value spawned, if it still runs.
@@ -435,6 +444,7 @@ impl Drop for Lsp {
 /// The position of the first `needle` in `text`, as the language server
 /// protocol counts: 0-based line, and UTF-16 code units from the start
 /// of that line.
+#[cfg(feature = "lsp")]
 fn position_of(text: &str, needle: char) -> (u32, u32) {
     let offset = text.find(needle).expect("the text contains the character");
     let before = &text[..offset];
@@ -449,6 +459,7 @@ fn position_of(text: &str, needle: char) -> (u32, u32) {
 ///
 /// The server must publish one error whose range is that character,
 /// must answer the hover, and must go on serving.
+#[cfg(feature = "lsp")]
 fn assert_survives_rejected_character(label: &str, text: &str, rejected: char) {
     let mut lsp = Lsp::start(label);
     let uri = format!("file:///wave1_tooling/{label}.silt");
@@ -500,6 +511,7 @@ fn assert_survives_rejected_character(label: &str, text: &str, rejected: char) {
 
 /// The reported case: a typographic quotation mark, as pasted from a
 /// word processor.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_a_typographic_quotation_mark() {
     assert_survives_rejected_character("smart_quote", "fn main() {\n  println(“hello”)\n}\n", '“');
@@ -507,6 +519,7 @@ fn lsp_survives_a_typographic_quotation_mark() {
 
 /// Characters of two, three and four bytes, where an identifier or an
 /// expression is expected.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_rejected_characters_of_every_width() {
     assert_survives_rejected_character("lambda", "fn main() {\n  let f = λx\n}\n", 'λ');
@@ -516,6 +529,7 @@ fn lsp_survives_rejected_characters_of_every_width() {
 
 /// A no-break space looks like a space and is rejected like any other
 /// character the lexer does not know.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_a_no_break_space() {
     assert_survives_rejected_character(
@@ -527,6 +541,7 @@ fn lsp_survives_a_no_break_space() {
 
 /// The rejected character inside a string interpolation, and after the
 /// dot of a field access.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_rejected_characters_inside_expressions() {
     assert_survives_rejected_character(
@@ -539,6 +554,7 @@ fn lsp_survives_rejected_characters_inside_expressions() {
 
 /// The rejected character as the first and as the last character of the
 /// document, the latter without a line break behind it.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_rejected_characters_at_the_ends_of_the_document() {
     assert_survives_rejected_character("first_character", "日本\n", '日');
@@ -549,6 +565,7 @@ fn lsp_survives_rejected_characters_at_the_ends_of_the_document() {
 /// columns and code point columns apart: characters outside the basic
 /// multilingual plane, an accented letter, CRLF line ends, and a
 /// byte order mark.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_rejected_characters_behind_other_non_ascii_text() {
     assert_survives_rejected_character(
@@ -570,6 +587,7 @@ fn lsp_survives_rejected_characters_behind_other_non_ascii_text() {
 
 /// Guard: a valid document with non-ASCII text in a string and in a
 /// comment is analysed as before.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_guard_valid_non_ascii_text_has_no_diagnostics() {
     let mut lsp = Lsp::start("valid_non_ascii");
@@ -594,6 +612,7 @@ fn lsp_guard_valid_non_ascii_text_has_no_diagnostics() {
 
 /// Guard: an ASCII character that the lexer rejects gets a range of one
 /// column, as before.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_guard_rejected_ascii_character_keeps_its_range() {
     assert_survives_rejected_character("ascii", "fn main() {\n  let s = @\n}\n", '@');
@@ -604,6 +623,7 @@ fn lsp_guard_rejected_ascii_character_keeps_its_range() {
 /// A request for a position behind the last line of a document that
 /// does not end with a line break. The offset computed for it was one
 /// byte past the end of the text, and signature help sliced with it.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_answers_requests_for_a_position_behind_the_last_line() {
     let mut lsp = Lsp::start("behind_last_line");
@@ -649,6 +669,7 @@ fn lsp_answers_requests_for_a_position_behind_the_last_line() {
 /// Whether the handler copes with that range or fails on it, the server
 /// must answer the request, a failure with the code for an internal
 /// error (-32603), and must go on serving.
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_survives_a_request_whose_handler_fails() {
     let mut lsp = Lsp::start("stale_diagnostic");

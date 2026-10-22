@@ -51,12 +51,15 @@
 //! VM-side predicate directly.
 
 use silt::runtime::handle::TaskHandle;
+#[cfg(feature = "tcp")]
 use silt::scheduler::test_support::InProcessRunner;
 use silt::value::Value;
 use silt::vm::Vm;
 use std::sync::Arc;
+#[cfg(feature = "tcp")]
 use std::time::Duration;
 
+#[cfg(feature = "tcp")]
 #[test]
 fn polymorphic_interp_of_tcp_listener_is_rejected() {
     // `tcp.listen` yields a `TcpListener` (an opaque resource left

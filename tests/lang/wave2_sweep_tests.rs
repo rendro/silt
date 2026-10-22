@@ -20,13 +20,18 @@
 //! Every test runs the built `silt` binary on files in a fresh temporary
 //! directory, with a timeout, and asserts on exit status and output.
 
+#[cfg(feature = "lsp")]
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+#[cfg(feature = "lsp")]
+use std::process::{Child, ChildStdin};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "lsp")]
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "lsp")]
 use serde_json::{Value, json};
 
 /// Upper bound for one run of the binary. A run that exceeds it is
@@ -103,6 +108,7 @@ fn run_in(cwd: &Path, out_dir: &Path, subcommand: &str, target: &Path) -> Outcom
 // 3. Code action on a stale diagnostic
 // ════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "lsp")]
 struct Lsp {
     child: Child,
     stdin: ChildStdin,
@@ -110,6 +116,7 @@ struct Lsp {
     next_id: u64,
 }
 
+#[cfg(feature = "lsp")]
 impl Lsp {
     fn spawn() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
@@ -223,6 +230,7 @@ impl Lsp {
     }
 }
 
+#[cfg(feature = "lsp")]
 impl Drop for Lsp {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -233,6 +241,7 @@ impl Drop for Lsp {
 /// A diagnostic computed for an earlier version of the text can point
 /// anywhere, including into a multi-byte character or at the last byte
 /// of the file. The server must answer with no actions, not fail.
+#[cfg(feature = "lsp")]
 #[test]
 fn a_stale_arrow_diagnostic_next_to_a_multibyte_character_gets_no_action() {
     let mut lsp = Lsp::spawn();

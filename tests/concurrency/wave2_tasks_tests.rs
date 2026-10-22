@@ -31,6 +31,8 @@
 //! Tests named `guard_*` pin behaviour that must not change; they pass
 //! with and without the fix. All other tests fail without it.
 
+#![cfg(feature = "repl")]
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};

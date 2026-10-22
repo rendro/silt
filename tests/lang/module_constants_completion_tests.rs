@@ -18,15 +18,6 @@
 //! the same framing helpers as `tests/lsp/lsp.rs`, because `dot_completions`
 //! is a private method on the LSP server struct.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::thread;
-use std::time::{Duration, Instant};
-
-use serde_json::{Value, json};
-
 use silt::module;
 
 // ── L8: direct tests against `builtin_module_constants` ───────────
@@ -100,267 +91,284 @@ fn float_functions_do_not_duplicate_constants() {
 // `dot_completions` end-to-end (the method itself is private on the
 // server struct).
 
-static REQ_COUNTER: AtomicU64 = AtomicU64::new(1);
-static URI_COUNTER: AtomicU64 = AtomicU64::new(1);
-const READ_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(feature = "lsp")]
+mod lsp_harness {
+    use serde_json::{Value, json};
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::{Child, ChildStdin, Command, Stdio};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-fn next_id() -> u64 {
-    REQ_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
+    static REQ_COUNTER: AtomicU64 = AtomicU64::new(1);
+    static URI_COUNTER: AtomicU64 = AtomicU64::new(1);
+    const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn unique_uri() -> String {
-    let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("file:///tmp/silt_module_constants_test_{n}.silt")
-}
-
-type ServerMessage = Value;
-
-struct LspClient {
-    child: Child,
-    stdin: ChildStdin,
-    rx: Receiver<ServerMessage>,
-}
-
-impl LspClient {
-    fn spawn() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-            .arg("lsp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn silt lsp");
-        let stdin = child.stdin.take().expect("no stdin on child");
-        let stdout = child.stdout.take().expect("no stdout on child");
-        let (tx, rx) = channel::<ServerMessage>();
-        thread::spawn(move || reader_loop(stdout, tx));
-        LspClient { child, stdin, rx }
+    fn next_id() -> u64 {
+        REQ_COUNTER.fetch_add(1, Ordering::SeqCst)
     }
 
-    fn send_raw(&mut self, msg: &Value) {
-        let body = serde_json::to_string(msg).expect("serialize");
-        let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        self.stdin
-            .write_all(framed.as_bytes())
-            .expect("write to child stdin");
-        self.stdin.flush().expect("flush child stdin");
+    fn unique_uri() -> String {
+        let n = URI_COUNTER.fetch_add(1, Ordering::SeqCst);
+        format!("file:///tmp/silt_module_constants_test_{n}.silt")
     }
 
-    fn send_request(&mut self, id: u64, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }));
+    type ServerMessage = Value;
+
+    struct LspClient {
+        child: Child,
+        stdin: ChildStdin,
+        rx: Receiver<ServerMessage>,
     }
 
-    fn send_notification(&mut self, method: &str, params: Value) {
-        self.send_raw(&json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }));
-    }
+    impl LspClient {
+        fn spawn() -> Self {
+            let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+                .arg("lsp")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn silt lsp");
+            let stdin = child.stdin.take().expect("no stdin on child");
+            let stdout = child.stdout.take().expect("no stdout on child");
+            let (tx, rx) = channel::<ServerMessage>();
+            thread::spawn(move || reader_loop(stdout, tx));
+            LspClient { child, stdin, rx }
+        }
 
-    fn recv_response_for(&self, id: u64) -> ServerMessage {
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for response id={id}");
-            }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return msg;
-                    }
+        fn send_raw(&mut self, msg: &Value) {
+            let body = serde_json::to_string(msg).expect("serialize");
+            let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+            self.stdin
+                .write_all(framed.as_bytes())
+                .expect("write to child stdin");
+            self.stdin.flush().expect("flush child stdin");
+        }
+
+        fn send_request(&mut self, id: u64, method: &str, params: Value) {
+            self.send_raw(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params,
+            }));
+        }
+
+        fn send_notification(&mut self, method: &str, params: Value) {
+            self.send_raw(&json!({
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+            }));
+        }
+
+        fn recv_response_for(&self, id: u64) -> ServerMessage {
+            let deadline = Instant::now() + READ_TIMEOUT;
+            loop {
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                if remaining.is_zero() {
+                    panic!("timed out waiting for response id={id}");
                 }
-                Err(RecvTimeoutError::Timeout) => panic!("timed out waiting for response id={id}"),
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
+                match self.rx.recv_timeout(remaining) {
+                    Ok(msg) => {
+                        if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
+                            return msg;
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        panic!("timed out waiting for response id={id}")
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        panic!("silt lsp server closed its stdout unexpectedly");
+                    }
                 }
             }
         }
-    }
 
-    fn initialize(&mut self) {
-        let id = next_id();
-        self.send_request(
-            id,
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": null,
-                "capabilities": {},
-            }),
-        );
-        let _ = self.recv_response_for(id);
-        self.send_notification("initialized", json!({}));
-    }
+        fn initialize(&mut self) {
+            let id = next_id();
+            self.send_request(
+                id,
+                "initialize",
+                json!({
+                    "processId": null,
+                    "rootUri": null,
+                    "capabilities": {},
+                }),
+            );
+            let _ = self.recv_response_for(id);
+            self.send_notification("initialized", json!({}));
+        }
 
-    fn did_open_and_wait(&mut self, uri: &str, source: &str) {
-        self.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "silt",
-                    "version": 1,
-                    "text": source,
+        fn did_open_and_wait(&mut self, uri: &str, source: &str) {
+            self.send_notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "silt",
+                        "version": 1,
+                        "text": source,
+                    }
+                }),
+            );
+            let deadline = Instant::now() + READ_TIMEOUT;
+            loop {
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                if remaining.is_zero() {
+                    panic!("timed out waiting for publishDiagnostics for {uri}");
                 }
-            }),
-        );
-        let deadline = Instant::now() + READ_TIMEOUT;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_millis(0));
-            if remaining.is_zero() {
-                panic!("timed out waiting for publishDiagnostics for {uri}");
+                match self.rx.recv_timeout(remaining) {
+                    Ok(msg) => {
+                        if msg.get("id").is_none()
+                            && msg.get("method").and_then(|v| v.as_str())
+                                == Some("textDocument/publishDiagnostics")
+                            && msg.pointer("/params/uri").and_then(|v| v.as_str()) == Some(uri)
+                        {
+                            return;
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        panic!("timed out waiting for publishDiagnostics for {uri}");
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        panic!("silt lsp server closed its stdout unexpectedly");
+                    }
+                }
             }
-            match self.rx.recv_timeout(remaining) {
-                Ok(msg) => {
-                    if msg.get("id").is_none()
-                        && msg.get("method").and_then(|v| v.as_str())
-                            == Some("textDocument/publishDiagnostics")
-                        && msg.pointer("/params/uri").and_then(|v| v.as_str()) == Some(uri)
-                    {
+        }
+
+        fn shutdown(mut self) {
+            let id = next_id();
+            self.send_request(id, "shutdown", json!(null));
+            let _ = self.rx.recv_timeout(READ_TIMEOUT);
+            self.send_notification("exit", json!(null));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match self.child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) if Instant::now() >= deadline => {
+                        let _ = self.child.kill();
+                        let _ = self.child.wait();
+                        return;
+                    }
+                    Ok(None) => thread::sleep(Duration::from_millis(20)),
+                    Err(_) => {
+                        let _ = self.child.kill();
+                        let _ = self.child.wait();
                         return;
                     }
                 }
-                Err(RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for publishDiagnostics for {uri}");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("silt lsp server closed its stdout unexpectedly");
-                }
             }
         }
     }
 
-    fn shutdown(mut self) {
+    impl Drop for LspClient {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut content_length: Option<usize> = None;
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => return,
+                    Ok(_) => {}
+                    Err(_) => return,
+                }
+                if line == "\r\n" || line == "\n" || line.is_empty() {
+                    break;
+                }
+                if let Some(rest) = line
+                    .strip_prefix("Content-Length:")
+                    .or_else(|| line.strip_prefix("content-length:"))
+                    && let Ok(n) = rest.trim().parse::<usize>()
+                {
+                    content_length = Some(n);
+                }
+            }
+            let Some(n) = content_length else {
+                return;
+            };
+            let mut body = vec![0u8; n];
+            if reader.read_exact(&mut body).is_err() {
+                return;
+            }
+            let Ok(val) = serde_json::from_slice::<Value>(&body) else {
+                return;
+            };
+            if tx.send(val).is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Ask the server for completions at (line, character) in a freshly-opened
+    /// document and return the list of `label` strings from the response.
+    pub(super) fn dot_completion_labels(source: &str, line: u32, character: u32) -> Vec<String> {
+        let mut client = LspClient::spawn();
+        client.initialize();
+        let uri = unique_uri();
+        client.did_open_and_wait(&uri, source);
+
         let id = next_id();
-        self.send_request(id, "shutdown", json!(null));
-        let _ = self.rx.recv_timeout(READ_TIMEOUT);
-        self.send_notification("exit", json!(null));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(20)),
-                Err(_) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-            }
-        }
-    }
-}
+        client.send_request(
+            id,
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+        );
+        let resp = client.recv_response_for(id);
+        assert!(
+            resp.get("error").is_none(),
+            "completion request returned an error: {resp}"
+        );
 
-impl Drop for LspClient {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
+        let result = resp
+            .get("result")
+            .expect("completion response must have a `result` field");
+        assert!(
+            !result.is_null(),
+            "expected non-null completion result at a valid dot-completion position"
+        );
 
-fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        let mut content_length: Option<usize> = None;
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => return,
-                Ok(_) => {}
-                Err(_) => return,
-            }
-            if line == "\r\n" || line == "\n" || line.is_empty() {
-                break;
-            }
-            if let Some(rest) = line
-                .strip_prefix("Content-Length:")
-                .or_else(|| line.strip_prefix("content-length:"))
-                && let Ok(n) = rest.trim().parse::<usize>()
-            {
-                content_length = Some(n);
-            }
-        }
-        let Some(n) = content_length else {
-            return;
+        let items: Vec<Value> = if let Some(arr) = result.as_array() {
+            arr.clone()
+        } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
+            arr.clone()
+        } else {
+            panic!("unexpected completion result shape: {result}");
         };
-        let mut body = vec![0u8; n];
-        if reader.read_exact(&mut body).is_err() {
-            return;
-        }
-        let Ok(val) = serde_json::from_slice::<Value>(&body) else {
-            return;
-        };
-        if tx.send(val).is_err() {
-            return;
-        }
+
+        let labels = items
+            .iter()
+            .filter_map(|it| it.get("label").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+
+        client.shutdown();
+        labels
     }
 }
 
-/// Ask the server for completions at (line, character) in a freshly-opened
-/// document and return the list of `label` strings from the response.
-fn dot_completion_labels(source: &str, line: u32, character: u32) -> Vec<String> {
-    let mut client = LspClient::spawn();
-    client.initialize();
-    let uri = unique_uri();
-    client.did_open_and_wait(&uri, source);
-
-    let id = next_id();
-    client.send_request(
-        id,
-        "textDocument/completion",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        }),
-    );
-    let resp = client.recv_response_for(id);
-    assert!(
-        resp.get("error").is_none(),
-        "completion request returned an error: {resp}"
-    );
-
-    let result = resp
-        .get("result")
-        .expect("completion response must have a `result` field");
-    assert!(
-        !result.is_null(),
-        "expected non-null completion result at a valid dot-completion position"
-    );
-
-    let items: Vec<Value> = if let Some(arr) = result.as_array() {
-        arr.clone()
-    } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
-        arr.clone()
-    } else {
-        panic!("unexpected completion result shape: {result}");
-    };
-
-    let labels = items
-        .iter()
-        .filter_map(|it| it.get("label").and_then(|v| v.as_str()).map(String::from))
-        .collect();
-
-    client.shutdown();
-    labels
-}
+#[cfg(feature = "lsp")]
+use lsp_harness::dot_completion_labels;
 
 // ── G5: LSP dot-completion surfaces module constants ───────────────
 
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_dot_completion_after_math_includes_pi_and_e() {
     // Source has the cursor placed right after the dot in `math.` on line 2.
@@ -382,6 +390,7 @@ fn lsp_dot_completion_after_math_includes_pi_and_e() {
     );
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_dot_completion_after_math_still_includes_functions() {
     // Regression check for G5: adding constants to the completion list
@@ -397,6 +406,7 @@ fn lsp_dot_completion_after_math_still_includes_functions() {
     }
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_dot_completion_after_float_includes_all_constants() {
     // `float.` must surface every constant of the module.
@@ -412,6 +422,7 @@ fn lsp_dot_completion_after_float_includes_all_constants() {
     }
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_dot_completion_after_float_still_includes_functions() {
     // Regression check: float.parse / float.round / etc. must keep showing up.
