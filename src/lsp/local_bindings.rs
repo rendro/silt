@@ -21,6 +21,12 @@ use super::state::{LocalBinding, PatternName};
 
 // ── Local binding collection (for hover/goto on locals) ──────────────
 
+/// `ty`, unless it is only a type variable the checker left unresolved,
+/// which is no type to show.
+fn known(ty: &Type) -> Option<Type> {
+    (!matches!(ty, Type::Var(_))).then(|| ty.clone())
+}
+
 /// What the walk of a module's bindings reads, and what it finds.
 struct Collect<'a> {
     records: &'a RecordFields,
@@ -29,6 +35,9 @@ struct Collect<'a> {
     tables: Option<&'a Tables>,
     bindings: Vec<LocalBinding>,
     names: Vec<PatternName>,
+    /// Whether the pattern being walked matches a value whose type the
+    /// checker left a variable (see `collect_matched`).
+    untyped: bool,
 }
 
 /// Every local binding of `program`, and every constructor its patterns
@@ -48,6 +57,7 @@ pub(super) fn collect_local_bindings(
         tables,
         bindings: Vec::new(),
         names: Vec::new(),
+        untyped: false,
     };
     for decl in &program.decls {
         match decl {
@@ -115,12 +125,13 @@ fn param_bindings(params: &[Param], types: Option<&[Type]>, body: &Expr, out: &m
     let body_end = body.span.end as usize;
     let types = types.filter(|types| types.len() == params.len());
     for (i, param) in params.iter().enumerate() {
-        let ty = match (&param.pattern.kind, types) {
-            (_, Some(types)) => Some(types[i].clone()),
-            (PatternKind::Ident(name), None) => find_param_type(body, *name),
-            _ => None,
-        };
-        collect_pattern_bindings(&param.pattern, body_start, ty.as_ref(), body_end, out);
+        match (&param.pattern.kind, types.map(|types| &types[i])) {
+            (PatternKind::Ident(name), None | Some(Type::Var(_))) => {
+                let ty = find_param_type(body, *name);
+                collect_pattern_bindings(&param.pattern, body_start, ty.as_ref(), body_end, out);
+            }
+            (_, ty) => collect_matched(&param.pattern, body_start, ty, body_end, out),
+        }
     }
 }
 
@@ -251,6 +262,25 @@ fn collect_local_bindings_in_expr(expr: &Expr, scope_end: usize, out: &mut Colle
     }
 }
 
+/// Collect what the pattern `p` binds, matched against a value of type
+/// `ty`, as [`collect_pattern_bindings`] does. A type the checker left a
+/// variable is no type to show: the names `p` binds then show none (not
+/// the type of the expression around them).
+fn collect_matched(
+    p: &Pattern,
+    visible_from: usize,
+    ty: Option<&Type>,
+    scope_end: usize,
+    out: &mut Collect,
+) {
+    let Some(Type::Var(_)) = ty else {
+        return collect_pattern_bindings(p, visible_from, ty, scope_end, out);
+    };
+    let was = std::mem::replace(&mut out.untyped, true);
+    collect_pattern_bindings(p, visible_from, None, scope_end, out);
+    out.untyped = was;
+}
+
 /// Collect the identifiers introduced by a (let/match/when) pattern, each
 /// at its own span, visible from `visible_from` to `scope_end`.
 fn collect_pattern_bindings(
@@ -264,8 +294,8 @@ fn collect_pattern_bindings(
         // `_` has the type of what it matches.
         PatternKind::Wildcard => out.names.push(PatternName {
             span: pattern.span,
-            ty: expr_ty.cloned(),
-            matched: expr_ty.cloned(),
+            ty: expr_ty.and_then(known),
+            matched: expr_ty.and_then(known),
         }),
         PatternKind::Ident(name) if resolve(*name) != "_" => {
             out.bindings.push(LocalBinding {
@@ -277,6 +307,13 @@ fn collect_pattern_bindings(
                 ty: expr_ty.cloned(),
                 same_as: None,
             });
+            if out.untyped {
+                out.names.push(PatternName {
+                    span: pattern.span,
+                    ty: None,
+                    matched: None,
+                });
+            }
         }
         PatternKind::Tuple(pats) => {
             // Propagate element types when the value's type is a tuple of
@@ -346,9 +383,15 @@ fn collect_pattern_bindings(
                 },
                 ty,
             });
+            // (The fields of `Ok`, `Err` and `Some` have always been
+            // given as they are, a variable too.)
+            let prelude = matches!(resolve(*name).as_str(), "Ok" | "Err" | "Some");
             for (i, p) in args.iter().enumerate() {
                 let field = fields.as_ref().and_then(|fields| fields.get(i));
-                collect_pattern_bindings(p, visible_from, field, scope_end, out);
+                match prelude {
+                    true => collect_pattern_bindings(p, visible_from, field, scope_end, out),
+                    false => collect_matched(p, visible_from, field, scope_end, out),
+                }
             }
         }
         PatternKind::Record { fields, .. } => {
@@ -367,8 +410,8 @@ fn collect_pattern_bindings(
                     let ty = lookup_field_ty(*name);
                     out.names.push(PatternName {
                         span: *name_span,
-                        ty: ty.clone(),
-                        matched: ty.clone(),
+                        ty: ty.as_ref().and_then(known),
+                        matched: ty.as_ref().and_then(known),
                     });
                     collect_pattern_bindings(p, visible_from, ty.as_ref(), scope_end, out);
                 } else {
@@ -403,8 +446,8 @@ fn collect_pattern_bindings(
                     let ty = lookup_field_ty(*name);
                     out.names.push(PatternName {
                         span: *name_span,
-                        ty: ty.clone(),
-                        matched: ty.clone(),
+                        ty: ty.as_ref().and_then(known),
+                        matched: ty.as_ref().and_then(known),
                     });
                     collect_pattern_bindings(p, visible_from, ty.as_ref(), scope_end, out);
                 } else {
@@ -449,9 +492,14 @@ fn collect_pattern_bindings(
         }
         PatternKind::Map(entries) => {
             // Round-101: map-pattern values bind (`#{ "k": v }` binds
-            // `v`); keys are string literals, never binders.
+            // `v`); keys are string literals, never binders. A value
+            // has the map's value type.
+            let value_ty = match expr_ty {
+                Some(Type::Map(_, value)) => Some(&**value),
+                _ => None,
+            };
             for (_, p) in entries {
-                collect_pattern_bindings(p, visible_from, None, scope_end, out);
+                collect_matched(p, visible_from, value_ty, scope_end, out);
             }
         }
         PatternKind::List(pats, rest) => {

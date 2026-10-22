@@ -5,7 +5,9 @@ use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 use super::Server;
 use crate::intern::resolve;
 
-use super::ast_walk::{find_ident_at_offset, find_type_at_offset, has_unresolved_vars};
+use super::ast_walk::{
+    find_ident_at_offset, find_type_at_offset, has_unresolved_vars, rejected_type_value_at,
+};
 use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
@@ -92,6 +94,13 @@ impl Server {
             return Some(markdown(value));
         }
         if let Some(ty) = named_type {
+            // (A type of the prelude named as a value the checker
+            // rejects, `Option` in `(Option, 1)`, has none.)
+            let prelude = crate::typechecker::names::builtin_def(ty.0)
+                .is_some_and(|def| def.module == crate::session::ModuleId::PRELUDE);
+            if prelude && rejected_type_value_at(program, cursor) {
+                return None;
+            }
             return self.builtin_type_hover_text(doc, ty).map(markdown);
         }
 

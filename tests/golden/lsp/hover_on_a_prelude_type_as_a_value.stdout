@@ -1,0 +1,14 @@
+11:19 error undefined variable 'Option'
+11:27 error undefined variable 'Bytes'
+> hover 10:16
+```silt
+type List(a)
+```
+> hover 10:22
+```silt
+type Set(a)
+```
+> hover 11:19
+(nothing)
+> hover 11:27
+(nothing)

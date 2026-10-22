@@ -234,6 +234,7 @@ impl Server {
                     doc.program = None;
                     doc.definitions.clear();
                     doc.locals.clear();
+                    doc.pattern_names.clear();
                     let diagnostics = vec![analysis_failed_diagnostic()];
                     self.published.insert(uri.clone(), diagnostics.clone());
                     self.publish_diagnostics(uri.clone(), diagnostics);
@@ -390,6 +391,7 @@ impl Server {
                 doc.program = None;
                 doc.definitions.clear();
                 doc.locals.clear();
+                doc.pattern_names.clear();
             }
         }
         doc.module = Some(module);

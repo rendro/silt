@@ -1,36 +1,42 @@
 -- cmd: lsp
--- lsp: hover 59:14
--- lsp: hover 59:21
--- lsp: hover 59:26
--- lsp: hover 60:14
--- lsp: hover 60:27
--- lsp: hover 61:9
--- lsp: hover 68:19
--- lsp: type-definition 68:19
--- lsp: hover 68:26
--- lsp: hover 69:12
--- lsp: hover 69:19
--- lsp: hover 69:46
--- lsp: hover 69:53
--- lsp: hover 70:19
--- lsp: hover 77:10
--- lsp: type-definition 77:10
+-- lsp: hover 67:14
+-- lsp: hover 67:21
+-- lsp: hover 67:26
+-- lsp: hover 68:14
+-- lsp: hover 68:27
+-- lsp: hover 69:9
+-- lsp: hover 76:19
+-- lsp: type-definition 76:19
+-- lsp: hover 76:26
 -- lsp: hover 77:12
--- lsp: hover 78:10
--- lsp: hover 78:14
--- lsp: hover 84:8
--- lsp: hover 84:10
--- lsp: hover 84:13
--- lsp: hover 89:17
--- lsp: hover 89:21
--- lsp: hover 93:10
--- lsp: hover 93:12
--- lsp: hover 102:5
--- lsp: hover 104:13
--- lsp: hover 104:18
--- lsp: hover 104:21
--- lsp: hover 106:10
--- lsp: hover 106:15
+-- lsp: hover 77:19
+-- lsp: hover 77:46
+-- lsp: hover 77:53
+-- lsp: hover 78:19
+-- lsp: hover 85:10
+-- lsp: type-definition 85:10
+-- lsp: hover 85:12
+-- lsp: hover 86:10
+-- lsp: hover 86:14
+-- lsp: hover 92:8
+-- lsp: hover 92:10
+-- lsp: hover 92:13
+-- lsp: hover 97:17
+-- lsp: hover 97:21
+-- lsp: hover 101:10
+-- lsp: hover 101:12
+-- lsp: hover 110:5
+-- lsp: hover 112:13
+-- lsp: hover 112:18
+-- lsp: hover 112:21
+-- lsp: hover 114:10
+-- lsp: hover 114:15
+-- lsp: hover 121:13
+-- lsp: type-definition 121:13
+-- lsp: hover 121:17
+-- lsp: hover 126:13
+-- lsp: hover 126:16
+-- lsp: hover 128:14
 -- A constructor in a pattern shows what an expression that names it
 -- shows: a variant with fields a function to the type of the value it
 -- matches, one without that type, and the variant's docs; not the type
@@ -39,7 +45,9 @@
 -- Builtin and program enums, qualified and bare, nested, generic, in a
 -- `match`, a `let`, a `when let`, a parameter, a closure's parameter.
 -- A record's name in a pattern shows its declaration. A field's name in
--- a record pattern has the field's type, `_` the type of what it matches.
+-- a record pattern has the field's type, `_` the type of what it matches;
+-- a map pattern's value the map's value type. A name whose type is still
+-- a variable (`_`, `y` in `unknown`) shows nothing.
 -- (The head of an arm's pattern keeps the scrutinee's type.)
 import json
 import shapes
@@ -108,6 +116,20 @@ fn record(p: Pt, o: Option(Pt)) -> Int {
   }
 }
 
+fn maps(m: Map(String, Pair(Int))) -> Int {
+  match m {
+    #{ "k": One(v) } -> v
+    _ -> 0
+  }
+}
+
+fn unknown((n, _), k: Int, p) -> Int {
+  match p {
+    Some(One(y)) -> n + k
+    _ -> 0
+  }
+}
+
 fn main() {
   println(decode(Ok(json.Null)))
   println(nested(B(None)))
@@ -116,4 +138,6 @@ fn main() {
   println(when_let(None))
   println(param(B(None)))
   println(record(Pt { a: 1, b: 2 }, None))
+  println(maps(#{}))
+  println(unknown((1, "s"), 2, Some(One(3.0))))
 }

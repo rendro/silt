@@ -1,4 +1,4 @@
-> hover 59:14
+> hover 67:14
 ```silt
 Fn(String, Int) -> JsonError
 ```
@@ -13,15 +13,15 @@ A variant of `json.JsonError`, reached as `json.Syntax`.
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 59:21
+> hover 67:21
 ```silt
 String
 ```
-> hover 59:26
+> hover 67:26
 ```silt
 Int
 ```
-> hover 60:14
+> hover 68:14
 ```silt
 Fn(String) -> JsonError
 ```
@@ -36,111 +36,129 @@ A variant of `json.JsonError`, reached as `json.MissingField`.
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 60:27
+> hover 68:27
 ```silt
 String
 ```
-> hover 61:9
+> hover 69:9
 ```silt
 JsonError
 ```
-> hover 68:19
+> hover 76:19
 ```silt
 Fn(Float) -> Shape
 ```
-> type-definition 68:19
+> type-definition 76:19
 shapes.silt:1:10-1:15
-> hover 68:26
+> hover 76:26
 ```silt
 Float
 ```
-> hover 69:12
+> hover 77:12
 ```silt
 Fn(Float) -> Shape
 ```
-> hover 69:19
+> hover 77:19
 ```silt
 Float
 ```
-> hover 69:46
+> hover 77:46
 ```silt
 Fn(Float) -> Shape
 ```
-> hover 69:53
+> hover 77:53
 ```silt
 Float
 ```
-> hover 70:19
+> hover 78:19
 ```silt
 Shape
 ```
-> hover 77:10
+> hover 85:10
 ```silt
 Fn(String, String) -> Pair(String)
 ```
-> type-definition 77:10
-main.silt:49:6-49:10
-> hover 77:12
+> type-definition 85:10
+main.silt:57:6-57:10
+> hover 85:12
 ```silt
 String
 ```
-> hover 78:10
+> hover 86:10
 ```silt
 Fn(String) -> Pair(String)
 ```
-> hover 78:14
+> hover 86:14
 ```silt
 String
 ```
-> hover 84:8
+> hover 92:8
 ```silt
 Fn(Int, Int) -> Two(Int)
 ```
-> hover 84:10
+> hover 92:10
 ```silt
 Int
 ```
-> hover 84:13
+> hover 92:13
 ```silt
 Int
 ```
-> hover 89:17
+> hover 97:17
 ```silt
 Fn(Float) -> Pair(Float)
 ```
-> hover 89:21
+> hover 97:21
 ```silt
 Float
 ```
-> hover 93:10
+> hover 101:10
 ```silt
 Fn(Option(Shape)) -> Box
 ```
-> hover 93:12
+> hover 101:12
 ```silt
 Option(Shape)
 ```
-> hover 102:5
+> hover 110:5
 ```silt
 type Pt { a: Int, b: Int }
 ```
-> hover 104:13
+> hover 112:13
 ```silt
 type Pt { a: Int, b: Int }
 ```
-> hover 104:18
+> hover 112:18
 ```silt
 Int
 ```
-> hover 104:21
+> hover 112:21
 ```silt
 Int
 ```
-> hover 106:10
+> hover 114:10
 ```silt
 type Pt { a: Int, b: Int }
 ```
-> hover 106:15
+> hover 114:15
 ```silt
 Int
 ```
+> hover 121:13
+```silt
+Fn(Int) -> Pair(Int)
+```
+> type-definition 121:13
+main.silt:57:6-57:10
+> hover 121:17
+```silt
+Int
+```
+> hover 126:13
+```silt
+Int
+```
+> hover 126:16
+(nothing)
+> hover 128:14
+(nothing)

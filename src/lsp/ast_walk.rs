@@ -124,6 +124,42 @@ fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
 }
 
+/// Whether the name at byte `cursor` is an expression (a name used as a
+/// value) that the checker gave no type a value of a type has: one it
+/// rejected (`Option` in `(Option, 1)`), not one it took as a type value
+/// (`Int` in `json.parse(s, Int)`).
+pub(super) fn rejected_type_value_at(program: &Program, cursor: usize) -> bool {
+    fn walk(expr: &Expr, cursor: usize, found: &mut Option<bool>) {
+        if (expr.span.start as usize..expr.span.end as usize).contains(&cursor) {
+            *found = Some(match (&expr.kind, &expr.ty) {
+                (ExprKind::Ident(_), Some(Type::Generic(name, _))) => {
+                    !name.is_builtin(crate::defs::TYPE_OF)
+                }
+                (ExprKind::Ident(_), _) => true,
+                _ => false,
+            });
+        }
+        visit_expr_children(expr, |child| walk(child, cursor, found));
+    }
+    let mut found = None;
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
+            Decl::Let { value, .. } => walk(value, cursor, &mut found),
+            Decl::TraitImpl(ti) => ti
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            Decl::Trait(t) => t
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            _ => {}
+        }
+    }
+    found.unwrap_or(false)
+}
+
 /// The field access whose field name holds byte `cursor` (`p.age` with
 /// the cursor on `age`), as the receiver's type and the field: one the
 /// checker selected as a field, not a method.
