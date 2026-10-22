@@ -50,7 +50,7 @@ type Channel(a)
 ```
 > hover 30:67
 ```silt
-type Unit
+type Unit = ()
 ```
 > hover 32:16
 ```silt

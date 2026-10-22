@@ -119,6 +119,10 @@ fn prelude_type_declaration(name: &str) -> Option<String> {
     }) {
         return Some(type_declaration(td, None));
     }
+    // Programs write `()` for it: say the two are one type.
+    if name == "Unit" {
+        return Some("type Unit = ()".to_string());
+    }
     let params = match crate::types::builtins::lookup(name)?.arity? {
         0 => "",
         1 => "(a)",
