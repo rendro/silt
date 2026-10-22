@@ -49,7 +49,8 @@ pub(super) struct LocalBinding {
 }
 
 /// A name a pattern writes that binds nothing: a constructor (`Circle`
-/// in `Some(Circle(r)) ->`), a field's name (`x` in `P { x: a }`), `_`.
+/// in `Some(Circle(r)) ->`), a record's name (`P` in `P { x: a }`), a
+/// field's name (`x`), `_`.
 pub(super) struct PatternName {
     /// Where it is.
     pub(super) span: crate::source::Span,

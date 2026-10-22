@@ -101,26 +101,6 @@ fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     {
         *best = Some(ty.clone());
     }
-    // A match arm's pattern is inside the match but is no expression: on
-    // the head name of an arm's constructor or record pattern
-    // (`Circle(r) -> ...`), the type is the scrutinee's, the innermost
-    // node that has one. A binder inside the pattern is a local binding,
-    // which the callers look up first.
-    if let ExprKind::Match {
-        expr: Some(scrutinee),
-        arms,
-    } = &expr.kind
-    {
-        for arm in arms {
-            if let Some(head) = pattern_head_span(&arm.pattern)
-                && let Some(ref ty) = scrutinee.ty
-            {
-                if (head.start as usize..head.end as usize).contains(&cursor) {
-                    *best = Some(ty.clone());
-                }
-            }
-        }
-    }
     visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
 }
 
@@ -191,19 +171,6 @@ pub(super) fn find_field_access_at(program: &Program, cursor: usize) -> Option<(
         }
     }
     found
-}
-
-/// The span of the head name of a constructor or record pattern.
-fn pattern_head_span(pattern: &Pattern) -> Option<crate::source::Span> {
-    match &pattern.kind {
-        PatternKind::Constructor { name_span, .. }
-        | PatternKind::Record {
-            name: Some(_),
-            name_span,
-            ..
-        } => Some(*name_span),
-        _ => None,
-    }
 }
 
 /// Find the identifier name at the cursor byte offset.

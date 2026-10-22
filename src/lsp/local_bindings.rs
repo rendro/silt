@@ -220,11 +220,6 @@ fn collect_local_bindings_in_expr(expr: &Expr, scope_end: usize, out: &mut Colle
                     arm_end,
                     out,
                 );
-                // (The head of an arm's pattern has the scrutinee's
-                // type: see `find_type_at_offset`.)
-                if let PatternKind::Constructor { name_span, .. } = &arm.pattern.kind {
-                    out.names.retain(|c| c.span != *name_span);
-                }
                 if let Some(ref g) = arm.guard {
                     collect_local_bindings_in_expr(g, arm_end, out);
                 }
@@ -394,7 +389,22 @@ fn collect_pattern_bindings(
                 }
             }
         }
-        PatternKind::Record { fields, .. } => {
+        PatternKind::Record {
+            name,
+            name_span,
+            fields,
+            ..
+        } => {
+            // The record's name has the type of the value it matches,
+            // when it is known (hover shows the record's declaration: a
+            // type's name is looked up first).
+            if let (Some(_), Some(ty)) = (name, expr_ty) {
+                out.names.push(PatternName {
+                    span: *name_span,
+                    ty: Some(ty.clone()),
+                    matched: Some(ty.clone()),
+                });
+            }
             // Propagate each declared field's type when the value's type
             // is a nominal record, so hover on a destructured field shows
             // the right type.
