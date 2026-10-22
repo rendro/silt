@@ -1,0 +1,10 @@
+import json
+import toml
+
+pub fn tl(t: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  toml.parse(t, a)
+}
+
+pub fn deep(t: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  tl(t, a)
+}

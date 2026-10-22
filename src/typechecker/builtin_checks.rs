@@ -35,6 +35,14 @@ struct UndecodableField {
     nested: bool,
 }
 
+/// The key in `lacking` of a builtin's refusal of the type `ty` at
+/// `span`: a type given to a function whose body hands it to a decoder
+/// that refused it owes no `json.Decode` refusal of its bound there
+/// (`settle_decode_gaps`).
+pub(super) fn refused_argument(span: Span, ty: &Type) -> (Span, String) {
+    (span, format!("builtin argument {}", shown(ty)))
+}
+
 impl TypeChecker {
     /// Check `subject`, the type of an argument of a builtin, as `check`
     /// says, for a use at `origin`. The function or method that passes
@@ -79,10 +87,7 @@ impl TypeChecker {
         // One refusal for one type at one place: a definition that gives
         // its type parameter to two decoders that both refuse the type
         // says the first.
-        if !self
-            .lacking
-            .insert((span, format!("builtin argument {}", shown(&ty))))
-        {
+        if !self.lacking.insert(refused_argument(span, &ty)) {
             return;
         }
         if let Some(passer) = passer {

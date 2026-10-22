@@ -1,0 +1,63 @@
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:53:23
+    |
+ 53 |   let _ = tl("n = 1", L)
+    |                       ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `tl` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse_list` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:54:24
+    |
+ 54 |   let _ = tll("n = 1", L)
+    |                        ^ `toml.parse_list` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `tll` passes it to `toml.parse_list`
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `toml.parse_map` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:55:24
+    |
+ 55 |   let _ = tlm("n = 1", L)
+    |                        ^ `toml.parse_map` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `tlm` passes it to `toml.parse_map`
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:56:25
+    |
+ 56 |   let _ = deep("n = 1", L)
+    |                         ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `deep` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:57:25
+    |
+ 57 |   let _ = both("n = 1", L)
+    |                         ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `both` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `Set(Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:58:23
+    |
+ 58 |   let _ = tl("n = 1", Set(Int))
+    |                       ^^^^^^^^ `toml.parse` cannot decode `Set(Int)`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `tl` passes it to `toml.parse`
+  = help: declare a record type with a field of the type you want, and decode into the record
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:59:35
+    |
+ 59 |   let _ = S { n: 1 }.get("n = 1", L)
+    |                                   ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `S.get` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:60:27
+    |
+ 60 |   let _ = via(S { n: 1 }, L)
+    |                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `via` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
