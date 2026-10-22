@@ -724,7 +724,7 @@ pub(crate) enum Limit {
     Own(std::time::Duration),
     /// Never: the server's accept, the end of a transaction.
     #[cfg_attr(
-        not(any(feature = "tcp", feature = "postgres", feature = "test-hooks")),
+        not(any(feature = "http", feature = "postgres", feature = "test-hooks")),
         allow(dead_code)
     )]
     None,
@@ -789,7 +789,7 @@ pub(crate) type Close = Box<dyn FnOnce() -> bool + Send>;
 
 impl Leave {
     /// [`Leave::Returns`] with `interrupt` alone.
-    #[cfg(any(test, feature = "tcp", feature = "postgres"))]
+    #[cfg(any(test, feature = "http", feature = "postgres"))]
     pub(crate) fn interrupts(interrupt: impl FnOnce(&Wanted) + Send + 'static) -> Leave {
         Leave::Returns {
             interrupt: Some(Box::new(interrupt)),
