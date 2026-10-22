@@ -1,0 +1,26 @@
+> hover 19:12
+```silt
+String
+```
+> hover 19:27
+```silt
+String
+```
+> hover 20:16
+```silt
+()
+```
+> hover 20:27
+```silt
+()
+```
+> hover 24:12
+```silt
+()
+```
+> hover 24:10
+```silt
+module sh
+```
+
+shapes.silt

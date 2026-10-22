@@ -5,8 +5,7 @@ use lsp_types::{GotoDefinitionResponse, Location, Range};
 use super::Server;
 use super::ast_walk::find_field_access_at;
 use super::conversions::position_to_offset;
-use super::local_bindings::nearest_local_binding_for;
-use super::modules::{qualifier_at, type_qualifier_at};
+use super::modules::module_qualifier_at;
 
 impl Server {
     /// Where the name under the cursor is declared: a local's binder, a
@@ -49,9 +48,7 @@ impl Server {
         }
         // The module before a dot (`helpers` in `helpers.div`, and in a
         // type, `helpers.Pt`): its file.
-        let module = qualifier_at(program, cursor)
-            .or_else(|| type_qualifier_at(&doc.source.text, cursor))
-            .filter(|module| nearest_local_binding_for(&doc.locals, *module, cursor).is_none())?;
+        let module = module_qualifier_at(doc, cursor)?;
         let view = self.imported_module(doc, module)?;
         Some(GotoDefinitionResponse::Scalar(Location::new(
             view.uri,

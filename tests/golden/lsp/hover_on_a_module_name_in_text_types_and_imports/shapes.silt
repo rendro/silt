@@ -1,0 +1,10 @@
+-- A shape's area.
+pub trait Area {
+  fn area(self) -> Int
+}
+
+pub type Square { side: Int }
+
+pub fn unit() -> Square {
+  Square { side: 1 }
+}

@@ -9,11 +9,13 @@ use lsp_types::Uri;
 
 use crate::ast::{Decl, ImportTarget, Program};
 use crate::intern::Symbol;
+use crate::lexer::{Tok, Token};
 use crate::session::{ImportResolution, ModuleAnalysis};
 
 use super::Server;
 use super::definitions::build_definitions;
 use super::fields::RecordFields;
+use super::local_bindings::nearest_local_binding_for;
 use super::project::path_key;
 use super::state::{DefInfo, Document};
 
@@ -250,32 +252,47 @@ pub(super) fn qualified_access_at(program: &Program, cursor: usize) -> Option<(S
     find_qualified_access(program, |_, member| member.contains(&cursor))
 }
 
-/// The receiver `module` of a qualified access `module.member` whose
-/// receiver holds `cursor`, when it is a plain identifier.
-/// The name before a dot at byte `cursor` of `source` when a capitalised
-/// name follows the dot: the module of a qualified type name written in
-/// an annotation (`helpers` in `q: helpers.PtA`), which is no expression.
-pub(super) fn type_qualifier_at(source: &str, cursor: usize) -> Option<Symbol> {
-    let is_name = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let bytes = source.as_bytes();
-    if cursor > bytes.len() {
-        return None;
-    }
-    let start = bytes[..cursor]
-        .iter()
-        .rposition(|b| !is_name(*b))
-        .map_or(0, |at| at + 1);
-    let end = cursor
-        + bytes[cursor..]
-            .iter()
-            .position(|b| !is_name(*b))
-            .unwrap_or(bytes.len() - cursor);
-    let (dot, next) = (bytes.get(end)?, bytes.get(end + 1)?);
-    (start < end && *dot == b'.' && next.is_ascii_uppercase())
-        .then(|| crate::intern::intern(&source[start..end]))
+/// The name before a dot at byte `cursor` of the open document `doc`
+/// that names a module, if one does (`geo` in `geo.mk`, `json` in
+/// `json.Encode`) and is no local of that name.
+pub(super) fn module_qualifier_at(doc: &Document, cursor: usize) -> Option<Symbol> {
+    qualifier_at(doc.program.as_ref()?, cursor)
+        .or_else(|| type_qualifier_at(doc.tokens(), cursor))
+        .filter(|name| nearest_local_binding_for(&doc.locals, *name, cursor).is_none())
 }
 
-pub(super) fn qualifier_at(program: &Program, cursor: usize) -> Option<Symbol> {
+/// The name before a dot at byte `cursor` when a capitalised name
+/// follows the dot, as the lexer reads `tokens`: the module of a
+/// qualified type name written in an annotation (`helpers` in `q:
+/// helpers.PtA`), which is no expression. Not in a string or a comment,
+/// which are no names, and not on the dot.
+fn type_qualifier_at(tokens: &[Tok], cursor: usize) -> Option<Symbol> {
+    let at = tokens
+        .iter()
+        .position(|tok| (tok.span.start as usize..tok.span.end as usize).contains(&cursor))?;
+    match tokens.get(at..at + 3)? {
+        [
+            Tok {
+                kind: Token::Ident(module),
+                ..
+            },
+            Tok {
+                kind: Token::Dot, ..
+            },
+            Tok {
+                kind: Token::Ident(name),
+                ..
+            },
+        ] if crate::intern::resolve(*name).starts_with(|c: char| c.is_ascii_uppercase()) => {
+            Some(*module)
+        }
+        _ => None,
+    }
+}
+
+/// The receiver `module` of a qualified access `module.member` whose
+/// receiver holds `cursor`, when it is a plain identifier.
+fn qualifier_at(program: &Program, cursor: usize) -> Option<Symbol> {
     find_qualified_access(program, |receiver, _| receiver.contains(&cursor)).map(|(m, _)| m)
 }
 

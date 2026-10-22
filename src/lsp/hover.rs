@@ -9,8 +9,7 @@ use super::ast_walk::{find_ident_at_offset, find_type_at_offset, has_unresolved_
 use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
-use super::local_bindings::nearest_local_binding_for;
-use super::modules::{qualified_access_at, qualifier_at, type_qualifier_at};
+use super::modules::{module_qualifier_at, qualified_access_at};
 use super::workspace::Named;
 
 impl Server {
@@ -62,10 +61,7 @@ impl Server {
         // The name of an imported module before a dot (`geo` in
         // `geo.mk`, `json` in `json.Encode`): the module, not the
         // member's type.
-        if let Some(module) =
-            qualifier_at(program, cursor).or_else(|| type_qualifier_at(&doc.source.text, cursor))
-            && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
-        {
+        if let Some(module) = module_qualifier_at(doc, cursor) {
             if let Some(view) = self.imported_module(doc, module) {
                 return Some(markdown(Self::module_hover(&view, module)));
             }

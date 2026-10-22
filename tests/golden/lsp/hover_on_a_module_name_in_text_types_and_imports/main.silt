@@ -1,0 +1,34 @@
+-- cmd: lsp
+-- lsp: hover 19:12
+-- lsp: hover 19:27
+-- lsp: hover 20:16
+-- lsp: hover 20:27
+-- lsp: hover 24:12
+-- lsp: hover 24:10
+-- A module's name in a string or a comment is text, and the dot is no
+-- name: neither shows the module.
+import json
+import list
+import time as t
+import shapes as sh
+import json.{ Value, stringify }
+
+type Box { w: Int }
+
+fn main() {
+  let a = "json.Value and sh.Square"
+  let b = 1 -- json.Value sh.Square
+  let json = Box { w: 1 }
+  let v: json.Value = stringify(1) |> to_value
+  let f = { list: Box -> list.w }
+  let s: sh.Square = sh.unit()
+  println(f(json))
+  println(t.hours(s.side))
+  println(a)
+  println(b)
+  println(v)
+}
+
+fn to_value(text: String) -> Value {
+  json.String(text)
+}
