@@ -740,13 +740,8 @@ impl TypeChecker {
             }
         }
         for use_ in std::mem::take(&mut self.via_waiting) {
-            // The type the call gives the method, by the alias the call
-            // names it by, if by one.
-            let places = given_type(&self.apply(&use_.need.method_ty))
-                .zip(self.decode_aliases.get(&use_.origin.span).copied())
-                .map(|(given, alias)| (given, use_.origin, Some(alias)))
-                .into_iter()
-                .collect();
+            // The types the call gives the method, each at its argument.
+            let places = (self.via_places.get(&use_.origin.span).cloned()).unwrap_or_default();
             let placing = Placing {
                 passer: use_.passer,
                 origin: use_.origin,
@@ -900,16 +895,6 @@ impl TypeChecker {
             }
         }
         settled
-    }
-}
-
-/// The first type `ty`, a method's type at a call, gives as a type
-/// argument (`TypeOf(t)`).
-fn given_type(ty: &Type) -> Option<Type> {
-    match ty {
-        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args.first().cloned(),
-        Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(given_type),
-        _ => None,
     }
 }
 

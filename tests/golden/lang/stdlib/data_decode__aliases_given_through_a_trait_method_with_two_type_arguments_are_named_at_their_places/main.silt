@@ -1,0 +1,32 @@
+-- cmd: check
+-- exit: 1
+-- A call of a function of another module that calls a trait method
+-- with two type arguments on a value of a bounded type: each type that
+-- `toml.parse` refuses is reported at the argument that gives it, named
+-- by the alias that argument names, as through a function that gives
+-- both to `toml.parse` itself. A type the function gives the method
+-- itself (`Int`), which the impl of the type the call gives refuses, is
+-- not named by the call's alias.
+import lib
+
+type L = List(Int)
+
+type Rec {
+  n: Int,
+}
+
+type Raw {
+  b: Bytes,
+}
+
+type RA = Raw
+
+fn main() {
+  lib.via(lib.T { n: 1 }, Rec, L)
+  lib.direct(Rec, L)
+  lib.via(lib.T { n: 1 }, L, Rec)
+  lib.direct(L, Rec)
+  lib.via(lib.T { n: 1 }, Rec, RA)
+  lib.fixed(lib.T { n: 1 }, L)
+  lib.fixed(lib.T { n: 1 }, RA)
+}

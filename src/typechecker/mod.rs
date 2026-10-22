@@ -119,6 +119,10 @@ pub struct TypeChecker {
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
+    /// The types a call of a trait method gives the method, each at the
+    /// argument that gives it with the alias it names it by, by the
+    /// place of the call's first.
+    pub(super) via_places: HashMap<Span, builtin_needs::Places>,
     /// The row variables of the signatures of the module's functions
     /// (each by the variable it is in the function's scheme).
     pub(super) sig_rows: std::collections::HashSet<TyVar>,
@@ -390,6 +394,7 @@ impl TypeChecker {
             bound_askers: HashMap::new(),
             bound_impls: HashMap::new(),
             decode_aliases: HashMap::new(),
+            via_places: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
             anon_waiting: Vec::new(),

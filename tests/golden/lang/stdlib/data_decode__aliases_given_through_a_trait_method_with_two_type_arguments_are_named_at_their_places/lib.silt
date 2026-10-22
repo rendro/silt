@@ -1,0 +1,30 @@
+import json
+import toml
+
+pub trait Two {
+  fn get(self, type a, type b) -> () where a: json.Decode, b: json.Decode
+}
+
+pub type T {
+  n: Int,
+}
+
+trait Two for T {
+  fn get(self, type a, type b) -> () where a: json.Decode, b: json.Decode {
+    let _ = toml.parse("n = 1", a)
+    let _ = toml.parse("n = 1", b)
+  }
+}
+
+pub fn via(x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
+  x.get(a, b)
+}
+
+pub fn direct(type a, type b) where a: json.Decode, b: json.Decode {
+  let _ = toml.parse("n = 1", a)
+  let _ = toml.parse("n = 1", b)
+}
+
+pub fn fixed(x: s, type b) where s: Two, b: json.Decode {
+  x.get(Int, b)
+}

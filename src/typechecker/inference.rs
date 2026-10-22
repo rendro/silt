@@ -1686,15 +1686,27 @@ impl TypeChecker {
                                     self.decode_aliases.insert(arg.span, alias);
                                 }
                             }
-                            // (A trait method's call: what the method of
-                            // the receiver's impl gives a decoder is
-                            // decided with the module's bodies.)
-                            Goal::Pred(Pred::Via { .. }) => {
-                                if let Some(alias) = alias {
-                                    self.decode_aliases.insert(arg.span, alias);
-                                }
-                            }
                             _ => {}
+                        }
+                        // A trait method's call: what the method of the
+                        // receiver's impl gives a decoder is decided with
+                        // the module's bodies, each type at the argument
+                        // that gives it, by the alias that names it.
+                        if let Goal::Pred(Pred::Via { method_ty, .. }) = &self.wanted[k].goal {
+                            let origin = self.wanted[k].origin;
+                            let places: Vec<_> = (type_of_vars(&self.apply(method_ty)).into_iter())
+                                .filter_map(|v| {
+                                    let i = (params.iter().skip(implicit_self))
+                                        .position(|param| free_vars_in(param).contains(&v))?;
+                                    let arg = args.get(i)?;
+                                    let origin = Origin {
+                                        span: arg.span,
+                                        ..origin
+                                    };
+                                    Some((Type::Var(v), origin, self.alias_named(arg)))
+                                })
+                                .collect();
+                            (self.via_places.entry(arg.span).or_default()).extend(places);
                         }
                     }
                 }
@@ -4170,6 +4182,23 @@ pub(super) fn type_of_var(ty: &Type) -> Option<Type> {
             .cloned(),
         Type::Fun(params, ret) => params.iter().chain([&**ret]).find_map(type_of_var),
         _ => None,
+    }
+}
+
+/// Each type variable `ty` gives as a type argument (`TypeOf(a)`), in
+/// order.
+fn type_of_vars(ty: &Type) -> Vec<TyVar> {
+    match ty {
+        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => match args.first() {
+            Some(Type::Var(v)) => vec![*v],
+            _ => Vec::new(),
+        },
+        Type::Fun(params, ret) => params
+            .iter()
+            .chain([&**ret])
+            .flat_map(type_of_vars)
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
