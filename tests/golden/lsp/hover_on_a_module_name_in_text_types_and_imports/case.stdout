@@ -1,26 +1,44 @@
-> hover 19:12
+> hover 26:12
 ```silt
 String
 ```
-> hover 19:27
+> hover 26:27
 ```silt
 String
 ```
-> hover 20:16
+> hover 27:16
 ```silt
 ()
 ```
-> hover 20:27
+> hover 27:27
 ```silt
 ()
 ```
-> hover 24:12
+> hover 31:12
 ```silt
 ()
 ```
-> hover 24:10
+> hover 31:10
 ```silt
 module sh
 ```
 
 shapes.silt
+> hover 29:10
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 29:14
+```silt
+()
+```
+> hover 30:26
+```silt
+Box
+```
+> hover 32:13
+```silt
+Box
+```

@@ -254,11 +254,15 @@ pub(super) fn qualified_access_at(program: &Program, cursor: usize) -> Option<(S
 
 /// The name before a dot at byte `cursor` of the open document `doc`
 /// that names a module, if one does (`geo` in `geo.mk`, `json` in
-/// `json.Encode`) and is no local of that name.
+/// `json.Encode`): in an expression, a receiver that is no local of
+/// that name; in a type or a pattern, a qualifier, which is a module
+/// whatever local is spelled like it.
 pub(super) fn module_qualifier_at(doc: &Document, cursor: usize) -> Option<Symbol> {
-    qualifier_at(doc.program.as_ref()?, cursor)
-        .or_else(|| type_qualifier_at(doc.tokens(), cursor))
-        .filter(|name| nearest_local_binding_for(&doc.locals, *name, cursor).is_none())
+    match qualifier_at(doc.program.as_ref()?, cursor) {
+        Some(name) => Some(name)
+            .filter(|name| nearest_local_binding_for(&doc.locals, *name, cursor).is_none()),
+        None => type_qualifier_at(doc.tokens(), cursor),
+    }
 }
 
 /// The name before a dot at byte `cursor` when a capitalised name

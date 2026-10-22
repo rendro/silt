@@ -1,12 +1,19 @@
 -- cmd: lsp
--- lsp: hover 19:12
--- lsp: hover 19:27
--- lsp: hover 20:16
--- lsp: hover 20:27
--- lsp: hover 24:12
--- lsp: hover 24:10
+-- lsp: hover 26:12
+-- lsp: hover 26:27
+-- lsp: hover 27:16
+-- lsp: hover 27:27
+-- lsp: hover 31:12
+-- lsp: hover 31:10
+-- lsp: hover 29:10
+-- lsp: hover 29:14
+-- lsp: hover 30:26
+-- lsp: hover 32:13
 -- A module's name in a string or a comment is text, and the dot is no
 -- name: neither shows the module.
+-- In a type the name before the dot is a module whatever local is
+-- spelled like it (`json` of `let json`); in an expression it is the
+-- local (`list.w`, `f(json)`).
 import json
 import list
 import time as t
