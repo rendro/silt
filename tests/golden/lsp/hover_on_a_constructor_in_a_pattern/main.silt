@@ -1,0 +1,150 @@
+-- cmd: lsp
+-- lsp: hover 74:14
+-- lsp: hover 74:21
+-- lsp: hover 74:26
+-- lsp: hover 75:14
+-- lsp: hover 75:27
+-- lsp: hover 76:9
+-- lsp: hover 83:5
+-- lsp: type-definition 83:5
+-- lsp: hover 83:19
+-- lsp: type-definition 83:19
+-- lsp: hover 83:26
+-- lsp: hover 84:12
+-- lsp: hover 84:19
+-- lsp: hover 84:46
+-- lsp: hover 84:53
+-- lsp: hover 85:19
+-- lsp: hover 86:5
+-- lsp: hover 92:10
+-- lsp: type-definition 92:10
+-- lsp: hover 92:12
+-- lsp: hover 93:10
+-- lsp: hover 93:14
+-- lsp: hover 99:8
+-- lsp: hover 99:10
+-- lsp: hover 99:13
+-- lsp: hover 104:17
+-- lsp: hover 104:21
+-- lsp: hover 108:10
+-- lsp: hover 108:12
+-- lsp: hover 117:5
+-- lsp: type-definition 117:5
+-- lsp: hover 119:13
+-- lsp: type-definition 119:13
+-- lsp: hover 119:18
+-- lsp: hover 119:21
+-- lsp: hover 121:10
+-- lsp: type-definition 121:10
+-- lsp: hover 121:15
+-- lsp: hover 128:13
+-- lsp: type-definition 128:13
+-- lsp: hover 128:17
+-- lsp: hover 133:13
+-- lsp: hover 133:16
+-- lsp: hover 135:14
+-- A constructor in a pattern shows what an expression that names it
+-- shows: a variant with fields a function to the type of the value it
+-- matches, one without that type, and the variant's docs; not the type
+-- of the expression around the pattern. Its type definition is its
+-- enum. A name the pattern binds inside it has the type of its field.
+-- Builtin and program enums, qualified and bare, nested, generic, in a
+-- `match`, a `let`, a `when let`, a parameter, a closure's parameter.
+-- A record's name in a pattern shows its declaration. A field's name in
+-- a record pattern has the field's type, `_` the type of what it matches;
+-- a map pattern's value the map's value type. A name whose type is still
+-- a variable (`_`, `y` in `unknown`) shows nothing.
+-- The head of an arm's pattern too (`B` in `B(Some(...)) ->`); the type
+-- definition of a record's name in a pattern is the record.
+import json
+import shapes
+import shapes.{ Circle }
+import string
+
+type Pair(a) { P(a, a), One(a) }
+
+type Two(a) { T(a, a) }
+
+type Pt { a: Int, b: Int }
+
+type Box { B(Option(shapes.Shape)) }
+
+fn decode(r: Result(json.Value, json.JsonError)) -> Int {
+  match r {
+    Err(json.Syntax(msg, at)) -> at
+    Err(json.MissingField(f)) -> string.length(f)
+    Err(_) -> 1
+    Ok(_) -> 2
+  }
+}
+
+fn nested(b: Box) -> Float {
+  match b {
+    B(Some(shapes.Circle(r))) -> r
+    B(Some(Circle(q))) | B(Some(shapes.Shape.Square(q))) -> q
+    B(Some(shapes.Dot)) -> 0.0
+    B(None) -> 1.0
+  }
+}
+
+fn generic(p: Option(Pair(String))) -> String {
+  match p {
+    Some(P(x, _)) -> x
+    Some(One(y)) -> y
+    None -> ""
+  }
+}
+
+fn bound(t: (Two(Int), Int)) -> Int {
+  let (T(a, c), _) = t
+  a + c
+}
+
+fn when_let(o: Option(Pair(Float))) -> Float {
+  when let Some(One(v)) = o else { return 0.0 }
+  v
+}
+
+fn param(B(inner): Box) -> Int {
+  match inner {
+    Some(_) -> 1
+    None -> 0
+  }
+}
+
+fn record(p: Pt, o: Option(Pt)) -> Int {
+  let n = match p {
+    Pt { a, b } -> a + b
+  }
+  let f = { Pt { a: k, b } -> k + b }
+  match o {
+    Some(Pt { a: x, b }) -> x + b + f(p) + n
+    None -> n
+  }
+}
+
+fn maps(m: Map(String, Pair(Int))) -> Int {
+  match m {
+    #{ "k": One(v) } -> v
+    _ -> 0
+  }
+}
+
+fn unknown((n, _), k: Int, p) -> Int {
+  match p {
+    Some(One(y)) -> n + k
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(decode(Ok(json.Null)))
+  println(nested(B(None)))
+  println(generic(None))
+  println(bound((T(1, 3), 2)))
+  println(when_let(None))
+  println(param(B(None)))
+  println(record(Pt { a: 1, b: 2 }, None))
+  println(maps(#{}))
+  println(unknown((1, "s"), 2, Some(One(3.0))))
+}

@@ -122,6 +122,12 @@ is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
 is `json.Null`); a field of type `Option(json.Value)` may be left out.
 > hover 30:22
+```silt
+Fn(a) -> String
+```
+
+---
+
 ```
 json.stringify(value: a) -> String where a: Encode
 ```

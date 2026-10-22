@@ -1,0 +1,13 @@
+-- cmd: lsp
+-- lsp: hover 10:16
+-- lsp: hover 10:22
+-- lsp: hover 11:19
+-- lsp: hover 11:27
+-- A type of the prelude named as a value shows its declaration only
+-- where the checker takes it as a type value (`List`, `Set`), not where
+-- it rejects the name (`Option`, `Bytes`: undefined variables).
+fn main() {
+  let taken = (List, Set)
+  let rejected = (Option, Bytes)
+  println(1)
+}

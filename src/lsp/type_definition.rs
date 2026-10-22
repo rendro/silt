@@ -28,10 +28,16 @@ impl Server {
 
         let cursor = position_to_offset(&doc.source, &pos);
         // A binder (`let p`, a parameter `p`) has the type of its binding;
-        // anything else the type of the innermost expression there.
-        let ty = match find_local_binding_at_offset(&doc.locals, cursor) {
-            Some(binding) => binding.ty.clone()?,
-            None => find_type_at_offset(program, cursor)?,
+        // another name of a pattern the type of the value it matches (a
+        // constructor's, `Circle` in `Circle(r) ->`, its enum); anything
+        // else the type of the innermost expression there.
+        let matched = doc
+            .pattern_name_at(cursor)
+            .and_then(|name| name.matched.clone());
+        let ty = match (find_local_binding_at_offset(&doc.locals, cursor), matched) {
+            (Some(binding), _) => binding.ty.clone()?,
+            (None, Some(matched)) => matched,
+            (None, None) => find_type_at_offset(program, cursor)?,
         };
         // The declaration of the type's head, or, for a type with no
         // declaration of its own (`List(P)`, `Option(P)`), of the first

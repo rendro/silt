@@ -511,6 +511,36 @@ impl Tables {
         })
     }
 
+    /// The types of the fields of the variant `variant` of the enum type
+    /// `ty` at the enum's type arguments `args` (`Some` of `Option(Int)`:
+    /// `[Int]`); `None` if `ty` has no such variant.
+    pub fn variant_fields_at(
+        &self,
+        ty: TypeRef,
+        args: &[Type],
+        variant: Symbol,
+    ) -> Option<Vec<Type>> {
+        let info = self.enums.get(&ty)?;
+        let fields = &info
+            .variants
+            .iter()
+            .find(|v| v.name == variant)?
+            .field_types;
+        let at: HashMap<TyVar, Type> = (info.param_var_ids.iter().copied())
+            .zip(args.iter().cloned())
+            .collect();
+        Some(fields.iter().map(|t| substitute_vars(t, &at)).collect())
+    }
+
+    /// The scheme of the definition `id`: a builtin's as the builtin
+    /// scope binds it, a module's as its check left it.
+    pub fn scheme_of(&self, id: crate::defs::DefId) -> Option<Scheme> {
+        match names::builtin_def(id) {
+            Some(def) => builtin_scheme(&def),
+            None => self.schemes.get(&id).cloned(),
+        }
+    }
+
     /// Every method a value has, as (the type impls key the value's type
     /// by, the method's name): those of the impls that take `self`, and those of the
     /// structural traits (of a builtin type, the traits it is stamped

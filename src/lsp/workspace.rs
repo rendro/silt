@@ -20,13 +20,15 @@ use std::path::PathBuf;
 
 use lsp_types::{Location, SymbolInformation, SymbolKind, Uri};
 
-use crate::ast::{Decl, FnDecl, PatternKind, Program, Selection, TypeBody, TypeDecl};
+use crate::ast::{Decl, FnDecl, ImportTarget, PatternKind, Program, Selection, TypeBody, TypeDecl};
 use crate::defs::{DefId, DefKind, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
 use crate::session::{ModuleId, Session};
 use crate::source::{SourceFile, Span};
+use crate::types::Type;
 
 use super::Server;
+use super::ast_walk::written_general;
 use super::conversions::span_to_range;
 use super::local_bindings::nearest_local_binding_for;
 use super::names::{DefUse, Names};
@@ -245,6 +247,32 @@ impl Server {
                 DefKind::TypeAlias => Some(crate::defs::TypeId(id)),
                 _ => None,
             }
+        })
+    }
+
+    /// The type of what an item of an import of the open document `uri`
+    /// names at byte `cursor` (`map` in `import list.{ map }`), as its
+    /// definition has it: general in its type variables, which are
+    /// written as letters (`Fn(List(a), Fn(a) -> b) -> List(b)`).
+    pub(super) fn import_item_type_at(&self, uri: &Uri, cursor: usize) -> Option<Type> {
+        let doc = self.documents.get(uri)?;
+        let on_item = doc.program.as_ref()?.decls.iter().any(|decl| match decl {
+            Decl::Import(ImportTarget::Items(_, items), _) => {
+                items.iter().any(|(_, span)| holds(*span, cursor))
+            }
+            _ => false,
+        });
+        if !on_item {
+            return None;
+        }
+        let (_, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
+            return None;
+        };
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        keys.iter().find_map(|key| {
+            let scheme = session.tables().scheme_of(def_of_key(session, key)?)?;
+            Some(written_general(&scheme))
         })
     }
 

@@ -7,7 +7,7 @@
 
 use crate::ast::*;
 use crate::intern::{Symbol, intern};
-use crate::types::Type;
+use crate::types::{RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
 
 // ── Type display helpers ───────────────────────────────────────────
 
@@ -24,6 +24,21 @@ pub(super) fn has_unresolved_vars(ty: &Type) -> bool {
         Type::Map(k, v) => has_unresolved_vars(k) || has_unresolved_vars(v),
         _ => false,
     }
+}
+
+/// The type of the scheme `scheme` with its type variables written as
+/// letters, in the order they first appear (`Fn(a, Fn(a) -> b) -> b`).
+pub(super) fn written_general(scheme: &Scheme) -> Type {
+    let letters: std::collections::HashMap<TyVar, Type> = free_vars_in(&scheme.ty)
+        .into_iter()
+        .filter(|var| scheme.vars.contains(var))
+        .zip(b'a'..=b'z')
+        .map(|(var, letter)| {
+            let name = intern(&char::from(letter).to_string());
+            (var, Type::Rigid(RigidId { var, name }))
+        })
+        .collect();
+    substitute_vars(&scheme.ty, &letters)
 }
 
 // ── AST walkers (offset-based) ─────────────────────────────────────
@@ -86,27 +101,43 @@ fn find_type_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Type>) {
     {
         *best = Some(ty.clone());
     }
-    // A match arm's pattern is inside the match but is no expression: on
-    // the head name of an arm's constructor or record pattern
-    // (`Circle(r) -> ...`), the type is the scrutinee's, the innermost
-    // node that has one. A binder inside the pattern is a local binding,
-    // which the callers look up first.
-    if let ExprKind::Match {
-        expr: Some(scrutinee),
-        arms,
-    } = &expr.kind
-    {
-        for arm in arms {
-            if let Some(head) = pattern_head_span(&arm.pattern)
-                && let Some(ref ty) = scrutinee.ty
-            {
-                if (head.start as usize..head.end as usize).contains(&cursor) {
-                    *best = Some(ty.clone());
+    visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
+}
+
+/// Whether the name at byte `cursor` is an expression (a name used as a
+/// value) that the checker gave no type a value of a type has: one it
+/// rejected (`Option` in `(Option, 1)`), not one it took as a type value
+/// (`Int` in `json.parse(s, Int)`).
+pub(super) fn rejected_type_value_at(program: &Program, cursor: usize) -> bool {
+    fn walk(expr: &Expr, cursor: usize, found: &mut Option<bool>) {
+        if (expr.span.start as usize..expr.span.end as usize).contains(&cursor) {
+            *found = Some(match (&expr.kind, &expr.ty) {
+                (ExprKind::Ident(_), Some(Type::Generic(name, _))) => {
+                    !name.is_builtin(crate::defs::TYPE_OF)
                 }
-            }
+                (ExprKind::Ident(_), _) => true,
+                _ => false,
+            });
+        }
+        visit_expr_children(expr, |child| walk(child, cursor, found));
+    }
+    let mut found = None;
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
+            Decl::Let { value, .. } => walk(value, cursor, &mut found),
+            Decl::TraitImpl(ti) => ti
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            Decl::Trait(t) => t
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            _ => {}
         }
     }
-    visit_expr_children(expr, |child| find_type_in_expr(child, cursor, best));
+    found.unwrap_or(false)
 }
 
 /// The field access whose field name holds byte `cursor` (`p.age` with
@@ -140,19 +171,6 @@ pub(super) fn find_field_access_at(program: &Program, cursor: usize) -> Option<(
         }
     }
     found
-}
-
-/// The span of the head name of a constructor or record pattern.
-fn pattern_head_span(pattern: &Pattern) -> Option<crate::source::Span> {
-    match &pattern.kind {
-        PatternKind::Constructor { name_span, .. }
-        | PatternKind::Record {
-            name: Some(_),
-            name_span,
-            ..
-        } => Some(*name_span),
-        _ => None,
-    }
 }
 
 /// Find the identifier name at the cursor byte offset.

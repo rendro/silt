@@ -48,6 +48,22 @@ pub(super) struct LocalBinding {
     pub(super) same_as: Option<usize>,
 }
 
+/// A name a pattern writes that binds nothing: a constructor (`Circle`
+/// in `Some(Circle(r)) ->`), a record's name (`P` in `P { x: a }`), a
+/// field's name (`x`), `_`.
+pub(super) struct PatternName {
+    /// Where it is.
+    pub(super) span: crate::source::Span,
+    /// What hover shows: a constructor's type as an expression that
+    /// names it has (a variant with fields a function to the type of
+    /// the value it matches, `Fn(Float) -> Shape`; one without that
+    /// type); a field's type; the type of what `_` matches.
+    pub(super) ty: Option<Type>,
+    /// The type of the value it matches (of a field's name, the
+    /// field's): what its type definition is.
+    pub(super) matched: Option<Type>,
+}
+
 impl LocalBinding {
     /// The binding this binder is a site of, by the byte its first
     /// binder starts at.
@@ -78,6 +94,8 @@ pub(super) struct Document {
     pub(super) definitions: HashMap<Symbol, DefInfo>,
     /// Local bindings (let, params, match/when) with approximate source positions.
     pub(super) locals: Vec<LocalBinding>,
+    /// The names its patterns write that bind nothing.
+    pub(super) pattern_names: Vec<PatternName>,
     /// The tokens of `source`, made when a request first asks for them
     /// (see `tokens`) and kept until the text changes (`set_text`).
     pub(super) lexed: std::cell::OnceCell<Lexed>,
@@ -91,6 +109,14 @@ impl Document {
             .lexed
             .get_or_init(|| Lexer::new(FileId::default(), &self.source.text).tokenize())
             .tokens
+    }
+
+    /// The name a pattern writes at byte `cursor` that binds nothing, if
+    /// one does.
+    pub(super) fn pattern_name_at(&self, cursor: usize) -> Option<&PatternName> {
+        let holds =
+            |c: &&PatternName| (c.span.start as usize..c.span.end as usize).contains(&cursor);
+        self.pattern_names.iter().find(holds)
     }
 
     /// Give the document the text `source`.

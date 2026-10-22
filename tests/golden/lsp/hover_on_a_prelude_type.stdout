@@ -1,0 +1,62 @@
+> hover 24:12
+```silt
+type List(a)
+```
+> hover 24:17
+```silt
+type Int
+```
+> hover 26:18
+```silt
+type String
+```
+> hover 26:33
+```silt
+type Float
+```
+> hover 26:46
+```silt
+type Set(a)
+```
+> hover 28:18
+```silt
+type Bool
+```
+> hover 28:30
+```silt
+type Map(k, v)
+```
+> hover 28:42
+```silt
+type Bytes
+```
+> hover 30:9
+```silt
+type Option(a) {
+  Some(a),
+  None,
+}
+```
+> hover 30:25
+```silt
+type Result(a, e) {
+  Ok(a),
+  Err(e),
+}
+```
+> hover 30:50
+```silt
+type Channel(a)
+```
+> hover 30:67
+```silt
+type Unit
+```
+> hover 32:16
+```silt
+type Int
+```
+> hover 37:61
+```silt
+type Int
+```

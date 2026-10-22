@@ -72,7 +72,8 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     let file = sources.add(SourceName::Path(path.clone()), text.clone());
     let (program, _) = parse_text(file, &text);
     let definitions = build_definitions(&program, None, &RecordFields::new());
-    let locals = collect_local_bindings(&program, &text, None, &RecordFields::new());
+    let (locals, pattern_names) =
+        collect_local_bindings(&program, &text, None, &RecordFields::new(), None);
     Document {
         source: SourceFile::new(SourceName::Path(path.clone()), text),
         key: path_key(&path),
@@ -82,6 +83,7 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
         program: Some(Arc::new(program)),
         definitions,
         locals,
+        pattern_names,
         lexed: std::cell::OnceCell::new(),
     }
 }
@@ -128,6 +130,7 @@ impl Server {
                 program: None,
                 definitions: HashMap::new(),
                 locals: Vec::new(),
+                pattern_names: Vec::new(),
                 lexed: std::cell::OnceCell::new(),
             });
         doc.set_text(source);
@@ -231,6 +234,7 @@ impl Server {
                     doc.program = None;
                     doc.definitions.clear();
                     doc.locals.clear();
+                    doc.pattern_names.clear();
                     let diagnostics = vec![analysis_failed_diagnostic()];
                     self.published.insert(uri.clone(), diagnostics.clone());
                     self.publish_diagnostics(uri.clone(), diagnostics);
@@ -374,11 +378,12 @@ impl Server {
                 let records = project.session.tables().record_fields();
                 doc.definitions =
                     build_definitions(&checked.ast, Some(&checked.top_level), &records);
-                doc.locals = collect_local_bindings(
+                (doc.locals, doc.pattern_names) = collect_local_bindings(
                     &checked.ast,
                     &doc.source.text,
                     Some(&checked.top_level),
                     &records,
+                    Some(project.session.tables()),
                 );
                 doc.program = Some(checked.ast.clone());
             }
@@ -386,6 +391,7 @@ impl Server {
                 doc.program = None;
                 doc.definitions.clear();
                 doc.locals.clear();
+                doc.pattern_names.clear();
             }
         }
         doc.module = Some(module);

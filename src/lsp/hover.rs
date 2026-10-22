@@ -5,7 +5,9 @@ use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 use super::Server;
 use crate::intern::resolve;
 
-use super::ast_walk::{find_ident_at_offset, find_type_at_offset, has_unresolved_vars};
+use super::ast_walk::{
+    find_ident_at_offset, find_type_at_offset, has_unresolved_vars, rejected_type_value_at,
+};
 use super::conversions::char_offset_at;
 use super::fields::{RecordFields, find_field_type_at_offset};
 use super::local_bindings::find_local_binding_at_offset;
@@ -92,6 +94,13 @@ impl Server {
             return Some(markdown(value));
         }
         if let Some(ty) = named_type {
+            // (A type of the prelude named as a value the checker
+            // rejects, `Option` in `(Option, 1)`, has none.)
+            let prelude = crate::typechecker::names::builtin_def(ty.0)
+                .is_some_and(|def| def.module == crate::session::ModuleId::PRELUDE);
+            if prelude && rejected_type_value_at(program, cursor) {
+                return None;
+            }
             return self.builtin_type_hover_text(doc, ty).map(markdown);
         }
 
@@ -103,7 +112,17 @@ impl Server {
             return Some(markdown(value));
         }
 
-        let ty = find_type_at_offset(program, cursor);
+        // A name in a pattern is no expression: a constructor (`Syntax` in
+        // `Err(json.Syntax(m, at)) ->`) has the type an expression that
+        // names it has, a field's name its field's type, `_` the type of
+        // what it matches; not the one of the expression around the
+        // pattern. Nor is an item of an import (`map` in `import list.{
+        // map }`): it has its definition's type, general.
+        let ty = match doc.pattern_name_at(cursor) {
+            Some(name) => name.ty.clone(),
+            None => find_type_at_offset(program, cursor)
+                .or_else(|| self.import_item_type_at(uri, cursor)),
+        };
 
         // If the cursor is on a binding-site (e.g. `fn foo` declaration name)
         // and we have a definition for that symbol, prefer the definition's
