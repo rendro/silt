@@ -60,13 +60,18 @@ impl Server {
         }
 
         // The name of an imported module before a dot (`geo` in
-        // `geo.mk`): the module, not the member's type.
+        // `geo.mk`, `json` in `json.Encode`): the module, not the
+        // member's type.
         if let Some(module) =
             qualifier_at(program, cursor).or_else(|| type_qualifier_at(&doc.source.text, cursor))
             && nearest_local_binding_for(&doc.locals, module, cursor).is_none()
-            && let Some(view) = self.imported_module(doc, module)
         {
-            return Some(markdown(Self::module_hover(&view, module)));
+            if let Some(view) = self.imported_module(doc, module) {
+                return Some(markdown(Self::module_hover(&view, module)));
+            }
+            if let Some(value) = self.imported_builtin_module_hover(doc, module) {
+                return Some(markdown(value));
+            }
         }
 
         // The module an import names (`list` in `import list`).

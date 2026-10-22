@@ -117,8 +117,8 @@ impl Server {
 
     /// The hover of the module an import of the open document `doc`
     /// names at byte `cursor` (`list` in `import list`): a module of the
-    /// program as `module_hover` shows it, one of silt's own with the
-    /// first paragraph of its reference page.
+    /// program as `module_hover` shows it, one of silt's own as
+    /// `builtin_module_hover` does.
     pub(super) fn imported_module_hover(&self, doc: &Document, cursor: usize) -> Option<String> {
         let program = doc.program.as_ref()?;
         let text = &doc.source.text;
@@ -137,17 +137,29 @@ impl Server {
         if let Some(view) = self.module_view(doc, module) {
             return Some(Self::module_hover(&view, module));
         }
-        let name = crate::intern::resolve(module);
-        let page = crate::builtins::registry::registry()
-            .enabled_modules()
-            .find(|m| m.name == name)?
-            .page;
-        let about = crate::builtins::registry::docs::strip_frontmatter(page)
-            .split("\n\n")
-            .map(str::trim)
-            .find(|paragraph| !paragraph.is_empty() && !paragraph.starts_with('#'))
-            .unwrap_or_default();
-        Some(format!("```silt\nmodule {name}\n```\n\n{about}"))
+        builtin_module_hover(module)
+    }
+
+    /// The hover of the builtin module the name `name` stands for in the
+    /// open document `doc`, as the checker binds it: the one `import
+    /// name` imports, or `import m as name` (of two, the first in the
+    /// one order of imports).
+    pub(super) fn imported_builtin_module_hover(
+        &self,
+        doc: &Document,
+        name: Symbol,
+    ) -> Option<String> {
+        let program = doc.program.as_ref()?;
+        let module = crate::ast::imports_in_order(&program.decls)
+            .into_iter()
+            .find_map(|decl| match decl {
+                Decl::Import(ImportTarget::Alias(module, alias, _), _) if *alias == name => {
+                    Some(*module)
+                }
+                Decl::Import(ImportTarget::Module(module), _) if *module == name => Some(*module),
+                _ => None,
+            })?;
+        builtin_module_hover(module)
     }
 
     /// The module that binds `name` bare in the open document `doc`
@@ -222,6 +234,14 @@ impl Server {
             .or_else(|| found(false))
             .or_else(|| super::path_to_file_uri(path))
     }
+}
+
+/// The hover of silt's own module `module`, if its feature is built: its
+/// name and the sentence that opens its reference page.
+fn builtin_module_hover(module: Symbol) -> Option<String> {
+    let name = crate::intern::resolve(module);
+    let about = crate::builtins::registry::docs::module_docs().get(name.as_str())?;
+    Some(format!("```silt\nmodule {name}\n```\n\n{about}"))
 }
 
 /// The `(module, member)` of the qualified access `module.member` whose

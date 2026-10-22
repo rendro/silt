@@ -146,6 +146,35 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
     })
 }
 
+/// What an editor says of each builtin module whose feature is built
+/// (`json` in `import json`, in `json.parse`, in `json.Encode`): the
+/// first sentence of the first paragraph of the module's part of its
+/// page (under its `# json` heading), on one line.
+pub fn module_docs() -> &'static HashMap<&'static str, String> {
+    static DOCS: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
+    DOCS.get_or_init(|| {
+        let mut docs = HashMap::new();
+        for module in registry().enabled_modules() {
+            let paragraph: Vec<&str> = strip_frontmatter(module.page)
+                .lines()
+                .skip_while(|line| heading_module(line).is_none_or(|m| m.name != module.name))
+                .skip(1)
+                .take_while(|line| !line.starts_with("# "))
+                .skip_while(|line| line.trim().is_empty() || line.starts_with('#'))
+                .take_while(|line| !line.trim().is_empty())
+                .flat_map(|line| line.split_whitespace())
+                .collect();
+            let paragraph = paragraph.join(" ");
+            let sentence = match paragraph.find(". ") {
+                Some(end) => &paragraph[..=end],
+                None => &paragraph,
+            };
+            docs.insert(module.name, sentence.to_string());
+        }
+        docs
+    })
+}
+
 /// Strip a leading YAML frontmatter block (`---\n…\n---\n`, plus the
 /// blank lines that follow it) off a page: it is metadata for the docs
 /// website, and an editor would render it as a stray rule followed by
@@ -601,6 +630,31 @@ mod tests {
             problems
                 .contains(&"no table of type arguments of the page lists `toml.parse`".to_string()),
             "{problems:?}"
+        );
+    }
+
+    /// Every built module has a sentence of its own: the one that opens
+    /// its part of the page, also where the page is shared (`env` and
+    /// `fs` are on `io`'s page, below `io`'s part).
+    #[test]
+    fn every_builtin_module_has_the_first_sentence_of_its_own_part() {
+        let docs = module_docs();
+        for module in registry().enabled_modules() {
+            let text = &docs[module.name];
+            assert!(
+                text.ends_with('.') && !text.contains('\n') && text.len() > 10,
+                "`{}`: {text:?}",
+                module.name
+            );
+        }
+        assert_eq!(
+            docs["json"],
+            "Parse JSON strings into typed silt values and serialize values to JSON."
+        );
+        assert_eq!(docs["env"], "Environment variable access.");
+        assert_eq!(
+            docs["option"],
+            "Functions for transforming and querying `Option(a)` values without pattern matching."
         );
     }
 

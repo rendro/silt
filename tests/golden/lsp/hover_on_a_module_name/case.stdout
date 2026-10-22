@@ -1,0 +1,284 @@
+> hover 41:7
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 41:12
+```silt
+trait json.Encode {
+  fn encode(self) -> json.Value
+}
+```
+
+---
+
+What `json.stringify` and `json.pretty` need of the value they write. A
+type has it by its structure, as it has `Display`: `Int`, `Float`, `String`,
+`Bool`, `()`, a `json.Value`, a `Date`, a `Time` and a `DateTime` have it; a
+list, a tuple, an `Option` and a record or enum type (the program's or a
+builtin module's) have it when their parts do; a map when its values do (a
+key is written as its text). `Bytes`, a set, a function, a channel and a
+handle have none. A function that hands a value of a type variable to
+`json.stringify` says so, as for `Display`; one without annotations is
+inferred to need it:
+
+```silt
+import json
+
+fn send(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn main() {
+  println(send([1, 2])) -- [1,2]
+}
+```
+
+Without the `where` clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+```
+
+A program names the trait with its module, `json.Encode`.
+
+Write `trait json.Encode for T` to replace the structural form of `T`, in
+the module that declares `T` (as a `Display` impl is written; an impl for
+a builtin type is an error, a builtin type keeps its own form). Its
+`encode` gives the `json.Value` the type is written as, wherever a value of
+the type is inside what is written: at the top, in a list, as a map's
+value, in a record's or a variant's field. A `Some` around it stays
+structural (`Some(x)` is written as `x` is), and a type that holds a
+function may have a written impl. An impl for a generic type is allowed;
+what it asks of the type's arguments it says in a `where` clause.
+
+```silt
+import json
+
+type Money {
+  cents: Int,
+}
+
+trait json.Encode for Money {
+  fn encode(self) -> json.Value {
+    json.Int(self.cents)
+  }
+}
+
+type Order {
+  id: Int,
+  total: Money,
+}
+
+fn main() {
+  println(json.stringify(Order { id: 7, total: Money { cents: 1250 } }))
+  -- {"id":7,"total":1250}, not {"id":7,"total":{"cents":1250}}
+}
+```
+> hover 42:22
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 42:35
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 45:34
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 45:48
+```silt
+module shapes
+```
+
+shapes.silt
+> hover 46:3
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 46:8
+```silt
+Fn(a) -> String
+```
+
+---
+
+```
+json.stringify(value: a) -> String where a: Encode
+```
+
+Serializes a value to a compact JSON string. Each kind of value is
+written as follows:
+
+| Value | Written as |
+|-------|------------|
+| `Int`, `Float`, `String`, `Bool` | a number, a string, `true` or `false` |
+| `List(a)`, a tuple | an array: `(1, "a")` is `[1,"a"]` |
+| `Map(k, v)` | an object; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
+| a record | an object of its fields, in the order the type declares them: `{"name":"Ada","age":36}` |
+| `Some(x)` | `x`, as `x` is written |
+| `None`, `()` | `null` |
+| any other variant (of `Result` too) | `{"fields":[...],"variant":"Name"}`; a variant without fields is the string `"Name"` |
+| `json.Value` | the JSON it holds: `json.Int(1)` is `1`, `json.Null` is `null` |
+| `Date`, `Time`, `DateTime` | the text silt shows of them: `"2026-10-19"`, `"12:30:00"` (with a fractional second only when the value has one: `"12:30:00.250000000"`) and `"2026-10-19T12:30:00"` |
+| `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |
+
+The keys of a map, and so of a `json.Object`, are written in sorted order;
+the fields of a record in the order its type declares them. `json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
+the same type, a record into its record type, and a variant into its enum
+type when the program declares it (see [Enums](#enums)); a variant of a
+builtin enum and `()` are written but not read back.
+
+`json.stringify` and `json.pretty` write the same values: those of a type
+that has [`json.Encode`](#jsonencode). A type with no json form is a compile
+error that names the way down to the part that has none, wherever in the
+value it is: `Bytes`, a `Set`, a function (the constructor of a variant,
+such as `Some`, is one), a channel, a task handle, a TCP listener or stream.
+
+```text
+type 'List(Reply)' does not implement trait 'json.Encode': element > field 'body' is of type 'Bytes', which does not
+```
+
+To send bytes as JSON, turn them into text first (`bytes.to_string`,
+`bytes.to_hex` or `bytes.to_base64`); to send a set, make a list of it
+(`set.to_list`).
+
+```silt
+import json
+import time
+
+fn main() {
+  let data = #{ "key": [1, 2, 3] }
+  println(json.stringify(data))
+  -- {"key":[1,2,3]}
+  println(json.stringify(#{ 1.0: "one" })) -- {"1.0":"one"}
+  println(json.stringify(time.Date { year: 2026, month: 10, day: 19 }))
+  -- "2026-10-19"
+}
+```
+> hover 50:9
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 52:9
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 52:14
+```silt
+Int
+```
+
+---
+
+A variant of `json.JsonError`, reached as `json.Syntax`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
+| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
+| `MissingField(String)` | the field's path | required field absent |
+| `Other(String)` | message | unclassified parse failure |
+> hover 58:10
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 58:15
+(nothing)
+> hover 59:10
+```silt
+module shapes
+```
+
+shapes.silt
+> hover 59:26
+```silt
+module shapes
+```
+
+shapes.silt
+> hover 60:11
+```silt
+module list
+```
+
+Functions for working with ordered, immutable lists (`List(a)`).
+> hover 60:16
+```silt
+Fn(List(Int), Fn(Int) -> Int) -> List(Int)
+```
+
+---
+
+```
+list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
+```
+
+Returns a new list with `f` applied to each element.
+
+```silt
+import list
+
+fn main() {
+  let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+  println(doubled) -- [2, 4, 6]
+}
+```
+> hover 61:11
+```silt
+module time
+```
+
+Dates, times, instants, durations, formatting, parsing, and arithmetic.
+> hover 62:11
+```silt
+module env
+```
+
+Environment variable access.
+> hover 33:8
+```silt
+module json
+```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+> hover 34:8
+```silt
+module list
+```
+
+Functions for working with ordered, immutable lists (`List(a)`).
+> hover 35:8
+```silt
+module time
+```
+
+Dates, times, instants, durations, formatting, parsing, and arithmetic.
+> hover 36:8
+```silt
+module env
+```
+
+Environment variable access.
+> hover 37:8
+```silt
+module shapes
+```
+
+shapes.silt
