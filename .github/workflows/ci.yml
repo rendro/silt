@@ -149,10 +149,9 @@ jobs:
 
   test-default-features:
     # Everything else runs with --all-features. This job runs the unit
-    # tests and the golden corpus against the default build, then
-    # against a build with no features at all; golden cases that need an
-    # optional feature declare `-- requires-feature:` and are skipped
-    # there. Last, every test target must still build without features.
+    # tests and the golden corpus against the default build; golden cases
+    # that need an optional feature declare `-- requires-feature:` and
+    # are skipped here.
     name: Test default features
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -170,9 +169,29 @@ jobs:
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --no-fail-fast --lib --bin silt --test golden
+
+  test-no-default-features:
+    # The same against a build with no features at all, beside the job
+    # above; then every test target must still build without features.
+    # It reads that job's cache and saves none: the repository's cache
+    # is over its limit.
+    name: Test no default features
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-default-features
+          save-if: false
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
       - name: cargo nextest (no default features)
         run: |
-          CI=1 perl -e 'alarm 900; exec @ARGV or die "exec: $!"' \
+          CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
             cargo nextest run --no-default-features --no-fail-fast --lib --bin silt --test golden
       - name: cargo build --tests (no default features)
         run: cargo build --no-default-features --tests
