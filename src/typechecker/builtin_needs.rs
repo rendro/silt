@@ -66,6 +66,8 @@ pub(crate) struct ViaUse {
     pub(super) need: ViaNeed,
     pub(super) passer: Option<Symbol>,
     pub(super) origin: Origin,
+    /// The types the call gives the method, each at its argument.
+    pub(super) places: Places,
     pub(super) in_body: Option<Symbol>,
 }
 
@@ -154,12 +156,14 @@ impl TypeChecker {
     /// A call of a trait method owed (`Pred::Via`), its receiver known
     /// now: on an annotation variable, a need of the body the call is in
     /// (`in_body`); on a type, decided with the module's bodies
-    /// (`via_waiting`), at `origin`, naming `passer`. Whether a need grew.
+    /// (`via_waiting`), at `origin` (each type the call gives at its
+    /// place in `places`), naming `passer`. Whether a need grew.
     pub(super) fn via_owed(
         &mut self,
         need: ViaNeed,
         passer: Option<Symbol>,
         origin: Origin,
+        places: Places,
         in_body: Option<Symbol>,
     ) -> bool {
         match self.apply(&need.receiver) {
@@ -170,6 +174,7 @@ impl TypeChecker {
                     need,
                     passer,
                     origin,
+                    places,
                     in_body,
                 });
                 false
@@ -740,10 +745,19 @@ impl TypeChecker {
             }
         }
         for use_ in std::mem::take(&mut self.via_waiting) {
+            // (A type the calling function writes as the method's type
+            // argument itself, `x.one(List(Int))`, is none the call
+            // gives: no place names it.)
+            let mut written = Vec::new();
+            written_type_arguments(&use_.need.method_ty, &mut written);
+            let written: Vec<Type> = written.iter().map(|ty| self.apply(ty)).collect();
+            let places = (use_.places.into_iter())
+                .filter(|(given, ..)| !written.contains(&self.apply(given)))
+                .collect();
             let placing = Placing {
                 passer: use_.passer,
                 origin: use_.origin,
-                places: Vec::new(),
+                places,
             };
             self.apply_via(&use_.need, use_.in_body, Some(&placing));
         }
@@ -1008,6 +1022,27 @@ fn match_type(pattern: &Type, ty: &Type, vars: &[TyVar], mapping: &mut HashMap<T
         (Type::Map(xk, xv), Type::Map(yk, yv)) => {
             match_type(xk, yk, vars, mapping);
             match_type(xv, yv, vars, mapping);
+        }
+        _ => {}
+    }
+}
+
+/// The type arguments (`TypeOf(t)`) of `ty`, a method's type at a call,
+/// that name no type variable: the types the calling function writes,
+/// gathered into `out`.
+fn written_type_arguments(ty: &Type, out: &mut Vec<Type>) {
+    match ty {
+        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+            out.extend(
+                (args.first())
+                    .filter(|arg| free_vars_in(arg).is_empty())
+                    .cloned(),
+            );
+        }
+        Type::Fun(params, ret) => {
+            for part in params.iter().chain([&**ret]) {
+                written_type_arguments(part, out);
+            }
         }
         _ => {}
     }

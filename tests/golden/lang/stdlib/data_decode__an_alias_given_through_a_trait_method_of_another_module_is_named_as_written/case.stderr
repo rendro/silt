@@ -1,0 +1,63 @@
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:28:27
+    |
+ 28 |   lib.via(lib.T { n: 1 }, L)
+    |                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.via` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:29:23
+    |
+ 29 |   lib.direct("n = 1", L)
+    |                       ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.direct` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:30:31
+    |
+ 30 |   lib.T { n: 1 }.get("n = 1", L)
+    |                               ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `T.get` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:31:28
+    |
+ 31 |   lib.deep(lib.T { n: 1 }, L)
+    |                            ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.deep` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `LL`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:32:27
+    |
+ 32 |   lib.via(lib.T { n: 1 }, LL)
+    |                           ^^ `toml.parse` cannot decode `LL`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.via` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `NL`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ --> main.silt:33:27
+    |
+ 33 |   lib.via(lib.T { n: 1 }, NL)
+    |                           ^^ `toml.parse` cannot decode `NL`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+  = note: `lib.via` passes it to `toml.parse`
+  = help: use `toml.parse_list` for a list
+
+error[type]: `toml.parse` cannot decode `BL`: it names `lib.Box(List(Int))`, an instance of the generic record type `lib.Box`, and a decoder reads the fields of a record type without parameters
+ --> main.silt:34:27
+    |
+ 34 |   lib.via(lib.T { n: 1 }, BL)
+    |                           ^^ `toml.parse` cannot decode `BL`: it names `lib.Box(List(Int))`, an instance of the generic record type `lib.Box`, and a decoder reads the fields of a record type without parameters
+  = note: `lib.via` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
+ --> main.silt:35:27
+    |
+ 35 |   lib.via(lib.T { n: 1 }, RA)
+    |                           ^^ `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
+  = note: `lib.via` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

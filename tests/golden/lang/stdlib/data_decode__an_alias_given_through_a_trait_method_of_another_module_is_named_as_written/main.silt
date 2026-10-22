@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A type a call names by an alias, given through a function of another
+-- module that calls a trait method on a value of a bounded type, is
+-- named in `toml.parse`'s refusal as the call writes it: the same as
+-- through a function that gives it to `toml.parse` itself, and through
+-- the trait method called directly. An alias of an alias, an alias of a
+-- list of an alias and an alias of an instance of another module's
+-- generic type are named by their own names; a record's field refusal
+-- too.
+import lib
+
+type L = List(Int)
+
+type LL = L
+
+type NL = List(L)
+
+type BL = lib.Box(L)
+
+type Raw {
+  b: Bytes,
+}
+
+type RA = Raw
+
+fn main() {
+  lib.via(lib.T { n: 1 }, L)
+  lib.direct("n = 1", L)
+  lib.T { n: 1 }.get("n = 1", L)
+  lib.deep(lib.T { n: 1 }, L)
+  lib.via(lib.T { n: 1 }, LL)
+  lib.via(lib.T { n: 1 }, NL)
+  lib.via(lib.T { n: 1 }, BL)
+  lib.via(lib.T { n: 1 }, RA)
+}

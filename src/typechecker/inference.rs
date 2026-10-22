@@ -1688,6 +1688,33 @@ impl TypeChecker {
                             }
                             _ => {}
                         }
+                        // A trait method's call: what the method of the
+                        // receiver's impl gives a decoder is decided with
+                        // the module's bodies, each type at the type
+                        // argument of the call that gives it, by the alias
+                        // that names it (as through a function: of two
+                        // that give one type, the first).
+                        if let Goal::Pred(Pred::Via { .. }) = &self.wanted[k].goal {
+                            let origin = self.wanted[k].origin;
+                            self.wanted[k].places = (params.iter().skip(implicit_self))
+                                .zip(args.iter())
+                                .filter_map(|(param, arg)| {
+                                    let given = match self.apply(param) {
+                                        Type::Generic(name, given)
+                                            if name.is_builtin(crate::defs::TYPE_OF) =>
+                                        {
+                                            given.first().cloned()?
+                                        }
+                                        _ => return None,
+                                    };
+                                    let origin = Origin {
+                                        span: arg.span,
+                                        ..origin
+                                    };
+                                    Some((given, origin, self.alias_named(arg)))
+                                })
+                                .collect();
+                        }
                     }
                 }
                 // The same for a type given to an annotation variable of

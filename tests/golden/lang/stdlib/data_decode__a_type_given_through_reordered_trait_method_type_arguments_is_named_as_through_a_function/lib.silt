@@ -1,0 +1,56 @@
+import json
+import toml
+
+pub trait Three {
+  fn get(self, type a, type b, type c) -> () where a: json.Decode, b: json.Decode, c: json.Decode
+}
+
+pub type T {
+  n: Int,
+}
+
+trait Three for T {
+  fn get(self, type a, type b, type c) -> () where a: json.Decode, b: json.Decode, c: json.Decode {
+    let _ = toml.parse("n = 1", c)
+  }
+}
+
+pub fn rev(x: s, type a, type b, type c)
+  where
+    s: Three,
+    a: json.Decode,
+    b: json.Decode,
+    c: json.Decode {
+  x.get(c, b, a)
+}
+
+pub fn swap(x: s, type a, type b, type c)
+  where
+    s: Three,
+    a: json.Decode,
+    b: json.Decode,
+    c: json.Decode {
+  rev(x, b, c, a)
+}
+
+pub fn twice(x: s, type a, type b) where s: Three, a: json.Decode, b: json.Decode {
+  x.get(b, a, a)
+  x.get(a, a, b)
+}
+
+pub fn direct(type a, type b, type c) where a: json.Decode, b: json.Decode, c: json.Decode {
+  let _ = toml.parse("n = 1", c)
+}
+
+pub fn drev(type a, type b, type c) where a: json.Decode, b: json.Decode, c: json.Decode {
+  direct(c, b, a)
+}
+
+pub fn dswap(type a, type b, type c) where a: json.Decode, b: json.Decode, c: json.Decode {
+  drev(b, c, a)
+}
+
+pub fn dtwice(type a, type b) where a: json.Decode, b: json.Decode {
+  direct(b, a, a)
+  direct(a, a, b)
+}

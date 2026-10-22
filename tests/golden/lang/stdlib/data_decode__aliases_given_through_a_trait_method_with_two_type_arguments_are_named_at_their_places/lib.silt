@@ -1,0 +1,64 @@
+import json
+import toml
+
+pub trait Two {
+  fn get(self, type a, type b) -> () where a: json.Decode, b: json.Decode
+}
+
+pub type T {
+  n: Int,
+}
+
+trait Two for T {
+  fn get(self, type a, type b) -> () where a: json.Decode, b: json.Decode {
+    let _ = toml.parse("n = 1", a)
+    let _ = toml.parse("n = 1", b)
+  }
+}
+
+pub fn via(x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
+  x.get(a, b)
+}
+
+pub fn direct(type a, type b) where a: json.Decode, b: json.Decode {
+  let _ = toml.parse("n = 1", a)
+  let _ = toml.parse("n = 1", b)
+}
+
+pub fn fixed(x: s, type b) where s: Two, b: json.Decode {
+  x.get(Int, b)
+}
+
+pub fn pair(x: s, p: (a, b), type a, type b) where s: Two, a: json.Decode, b: json.Decode {
+  x.get(a, b)
+}
+
+pub fn dpair(p: (a, b), type a, type b) where a: json.Decode, b: json.Decode {
+  direct(a, b)
+}
+
+pub fn first(p: (b, a), x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
+  x.get(a, b)
+}
+
+pub fn dfirst(p: (b, a), type a, type b) where a: json.Decode, b: json.Decode {
+  direct(a, b)
+}
+
+pub fn twice(x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
+  x.get(b, b)
+  x.get(a, a)
+}
+
+pub fn dtwice(type a, type b) where a: json.Decode, b: json.Decode {
+  direct(b, b)
+  direct(a, a)
+}
+
+pub fn own(x: s, type a) where s: Two, a: json.Decode {
+  x.get(Int, Int)
+}
+
+pub fn down(type a) where a: json.Decode {
+  direct(Int, Int)
+}
