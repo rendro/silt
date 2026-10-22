@@ -1686,6 +1686,14 @@ impl TypeChecker {
                                     self.decode_aliases.insert(arg.span, alias);
                                 }
                             }
+                            // (A trait method's call: what the method of
+                            // the receiver's impl gives a decoder is
+                            // decided with the module's bodies.)
+                            Goal::Pred(Pred::Via { .. }) => {
+                                if let Some(alias) = alias {
+                                    self.decode_aliases.insert(arg.span, alias);
+                                }
+                            }
                             _ => {}
                         }
                     }

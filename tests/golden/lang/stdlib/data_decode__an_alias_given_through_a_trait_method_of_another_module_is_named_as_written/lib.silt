@@ -1,0 +1,32 @@
+import json
+import toml
+
+pub trait Load {
+  fn get(self, t: String, type a) -> () where a: json.Decode
+}
+
+pub type T {
+  n: Int,
+}
+
+trait Load for T {
+  fn get(self, t: String, type a) -> () where a: json.Decode {
+    let _ = toml.parse(t, a)
+  }
+}
+
+pub fn via(x: s, type a) where s: Load, a: json.Decode {
+  x.get("n = 1", a)
+}
+
+pub fn deep(x: s, type a) where s: Load, a: json.Decode {
+  via(x, a)
+}
+
+pub fn direct(t: String, type a) where a: json.Decode {
+  let _ = toml.parse(t, a)
+}
+
+pub type Box(x) {
+  v: x,
+}
