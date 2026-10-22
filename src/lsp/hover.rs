@@ -96,6 +96,14 @@ impl Server {
                 .map(|docs| markdown(docs.clone()));
         }
 
+        // A trait named (`Display` in `where a: Display`, in an impl's
+        // header, in its own declaration): its signature and its doc.
+        if let Some(tr) = self.trait_named_at(uri, cursor)
+            && let Some(value) = self.trait_hover_text(doc, tr)
+        {
+            return Some(markdown(value));
+        }
+
         let ty = find_type_at_offset(program, cursor);
 
         // If the cursor is on a binding-site (e.g. `fn foo` declaration name)

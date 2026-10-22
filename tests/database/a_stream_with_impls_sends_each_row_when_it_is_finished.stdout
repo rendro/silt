@@ -1,0 +1,14 @@
+the first row of slow impls:
+  Ok(Some(Ok(S {slow: Slow {n: 1}})))
+an impl that waits for the reader:
+  read 1
+  read 2
+  read 3
+  read 4
+  read 5
+an impl that sleeps, read under a deadline:
+  Err(the function was ended by its deadline)
+  the next statement: Ok([One {n: 1}])
+an impl that calls env.set:
+  0 rows
+  F8P_SEEN: None

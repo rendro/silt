@@ -48,6 +48,7 @@ pub use crate::types::{Scheme, TraitKey, TyVar, Type, TypeRef};
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 pub use builtin_env::*;
+pub use builtin_traits::builtin_trait_decls;
 use builtin_traits::*;
 use declare_fns::FnSig;
 use env::TypeEnv;

@@ -1,0 +1,18 @@
+every row:
+  5000 rows in order, then (end)
+an impl's Err at row 600:
+  599 rows in order, then Err(postgres type mismatch on column `code`: expected Option(Code), got jsonb: no code: 7)
+  then None
+the decoder's error at row 600:
+  599 rows in order, then Err(postgres type mismatch on column `n`: expected Int, got NULL)
+  then None
+an impl's failure at row 600:
+  599 rows in order, then (end)
+closed after 300 rows:
+  300 rows, closed
+  the next statement: [R {n: 1, code: Some(Code {digits: 1})}]
+in a transaction:
+  2000 rows in order, then (end)
+  Ok(())
+an impl that waits:
+  300 rows, their sum 90300

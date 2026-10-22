@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use r2d2::Pool;
 use tokio_postgres::config::SslMode;
 use tokio_postgres::types::ToSql;
@@ -42,7 +42,7 @@ use super::data;
 use super::decode::Decoder;
 use super::typed::{Arg, Map, Ret, Type, builtins};
 use crate::runtime::handle::TaskHandle;
-use crate::runtime::sync::{Arm, Wait};
+use crate::runtime::sync::{Arm, Outcome, Wait};
 use crate::runtime::sync::{Channel, Close, TrySend};
 use crate::scheduler::Scheduler;
 use crate::typeinfo::{BuiltinVariant, bv, ty};
@@ -1256,7 +1256,7 @@ fn open_stream(
     // it waits next.)
     if !vm.takes_nothing_new() {
         // Rows of a type that holds parts the program's impls decode
-        // are finished by a task each (`Helper`).
+        // are finished by a task for each batch of them (`Helper`).
         let helper = rows::reaches_impl(&decoding.1, &decoding.2, &decoding.0).then(|| Helper {
             vm: vm.spawn_child(),
             owner: scheduler.current_owner(),
@@ -1902,7 +1902,6 @@ impl ToFill {
             Some((filling, cursor)) => Ok(Step::Run(Box::new(Filler {
                 filling,
                 cursor,
-                one_row: false,
                 calling: false,
             }))),
             None => Ok(Step::Done(value)),
@@ -1917,8 +1916,6 @@ impl ToFill {
 struct Filler {
     filling: Filling,
     cursor: Option<u64>,
-    /// Its value is the one row it finishes, not a list (a stream's).
-    one_row: bool,
     /// Whether a call is under way.
     calling: bool,
 }
@@ -1938,10 +1935,6 @@ impl Native for Filler {
                 self.calling = true;
                 vm.call_written_decode(slot, json)
             }
-            Fill::Done(Ok(rows)) if self.one_row => Ok(Step::Done(ok(rows
-                .into_iter()
-                .next()
-                .unwrap_or(Value::Unit)))),
             Fill::Done(Ok(rows)) => Ok(Step::Done(ok(Value::list(rows)))),
             Fill::Done(Err(error)) => {
                 if let Some(id) = self.cursor {
@@ -2004,8 +1997,9 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>, wanted: 
 // transaction).
 
 /// What finishes the rows of a stream that wait for the program's
-/// `json.Decode` impls: a task for each row, which the worker waits for
-/// (the impls are silt code, which no thread of the I/O pool runs).
+/// `json.Decode` impls: a task for each batch of them (the impls are
+/// silt code, which no thread of the I/O pool runs), which sends each
+/// row to the stream as soon as it is finished ([`Finisher`]).
 struct Helper {
     /// The VM the tasks are made of.
     vm: Vm,
@@ -2014,47 +2008,146 @@ struct Helper {
 }
 
 impl Helper {
-    /// The row that `partial`, of a result `plan` decodes, is once the
-    /// impls have given their parts, or its error; or (`Err`) the
-    /// failure of an impl, `None` if the program ended first.
-    fn fill(
+    /// Start the task that finishes the rows `rows` of the stream `ch`,
+    /// of a result `plan` decodes, and sends them; `waits`, the
+    /// transaction of a stream of one.
+    fn start(
         &mut self,
         scheduler: &Scheduler,
-        rt: &Arc<Runtime>,
-        plan: &Plan,
-        partial: rows::Partial,
-    ) -> Result<Result<Value, Value>, Option<VmError>> {
+        (rt, plan): (&Arc<Runtime>, &Plan),
+        rows: Vec<Row>,
+        ch: &Arc<Channel>,
+        waits: Option<Arc<TxCell>>,
+    ) -> Result<Arc<TaskHandle>, VmError> {
         let id = self.vm.next_task_id();
         let handle = Arc::new(TaskHandle::with_owner(id, self.owner));
         let mut child = self.vm.spawn_child();
         child.spawned = true;
-        let rows = vec![Row::Partial(partial)];
-        child.push_native_frame(Box::new(Filler {
+        child.push_native_frame(Box::new(Finisher {
             filling: Filling::new(rt.clone(), plan.impls().clone(), rows, None),
-            cursor: None,
-            one_row: true,
-            calling: false,
+            ch: ch.clone(),
+            waits,
+            ready: std::collections::VecDeque::new(),
+            next: None,
+            state: Finishing::Ready,
         }));
         scheduler
             .submit(id, child, handle.clone())
-            .map_err(|e| Some(VmError::new(e)))?;
+            .map_err(VmError::new)?;
+        Ok(handle)
+    }
+
+    /// Wait for the task `handle` of a batch to end: how it ended if not
+    /// with every row sent (or its stream closed): the error of the row
+    /// after them (`Ok`), which the stream ends with; or the failure of
+    /// an impl (`Err`), `None` if the program ended first.
+    fn ended(scheduler: &Scheduler, handle: &TaskHandle) -> Option<Result<Value, Option<VmError>>> {
         let wait = Wait::new(vec![Arm::Cell(handle.done())]);
         let _ = scheduler.block_thread(wait, crate::scheduler::Blocks::Thread);
         match handle.try_get() {
-            Some(Ok(Value::Variant(result))) if result.is(bv::OK) => {
-                Ok(Ok(result.fields().first().cloned().unwrap_or(Value::Unit)))
-            }
+            Some(Ok(Value::Variant(result))) if result.is(bv::OK) => None,
             Some(Ok(Value::Variant(result))) if result.is(bv::ERR) => {
-                Ok(Err(result.fields().first().cloned().unwrap_or(Value::Unit)))
+                Some(Ok(result.fields().first().cloned().unwrap_or(Value::Unit)))
             }
-            Some(Ok(_)) => Err(Some(VmError::type_confusion(
-                "a row was finished as no Result",
-            ))),
+            Some(Ok(_)) => Some(Err(Some(VmError::type_confusion(
+                "a batch of rows was finished as no Result",
+            )))),
             Some(Err(failure)) => {
                 handle.mark_joined();
-                Err(Some(failure))
+                Some(Err(Some(failure)))
             }
-            None => Err(None),
+            None => Some(Err(None)),
+        }
+    }
+}
+
+/// The frame of the task that finishes a batch of a stream's rows: it
+/// calls the impls each row waits for, in order, and sends each row as
+/// soon as it is finished, waiting for room as the worker does. A row is
+/// not begun once the stream is closed: no impl runs for it. Its value
+/// is `Ok(())`, or `Err` of a row that has none (the worker sends it).
+struct Finisher {
+    filling: Filling,
+    ch: Arc<Channel>,
+    /// The transaction of a stream of one: while the task waits for
+    /// room, the transaction's statements fail rather than wait for it.
+    waits: Option<Arc<TxCell>>,
+    /// The rows finished and not yet sent.
+    ready: std::collections::VecDeque<Value>,
+    /// What comes after them.
+    next: Option<Fill>,
+    state: Finishing,
+}
+
+/// What a [`Finisher`] waits for.
+enum Finishing {
+    Ready,
+    /// The impl it called.
+    Calling,
+    /// Room for the row it sends.
+    Sending,
+}
+
+impl Native for Finisher {
+    fn name(&self) -> &str {
+        "postgres.stream"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        match std::mem::replace(&mut self.state, Finishing::Ready) {
+            Finishing::Ready => {}
+            Finishing::Calling => {
+                let given = vm.decode_returned(&input)?;
+                self.next = Some(self.filling.next(Some(given)));
+            }
+            Finishing::Sending => {
+                if let Some(cell) = &self.waits {
+                    cell.stream_waits(None);
+                }
+                if let crate::runtime::sync::Fired::Arm(_, Outcome::Closed(_)) = vm.woken()? {
+                    return Ok(Step::Done(ok(Value::Unit)));
+                }
+            }
+        }
+        loop {
+            while let Some(row) = self.ready.pop_front() {
+                let row = Value::variant(bv::OK, vec![row]);
+                match self.ch.try_send(row, vm.scheduler().wake()) {
+                    TrySend::Sent => {}
+                    TrySend::Closed(_) => return Ok(Step::Done(ok(Value::Unit))),
+                    TrySend::Full(row) => {
+                        if let Some(cell) = &self.waits {
+                            cell.stream_waits(Some(self.ch.clone()));
+                        }
+                        self.state = Finishing::Sending;
+                        return Ok(Step::Park(Wait::new(vec![Arm::Send(self.ch.clone(), row)])));
+                    }
+                }
+            }
+            let next = match self.next.take() {
+                Some(next) => next,
+                None => self.filling.next(None),
+            };
+            self.ready.extend(self.filling.take_done());
+            if !self.ready.is_empty() {
+                self.next = Some(next);
+                continue;
+            }
+            match next {
+                Fill::Call(slot, json) => {
+                    if self.filling.starts_row() && self.ch.is_closed() {
+                        return Ok(Step::Done(ok(Value::Unit)));
+                    }
+                    self.state = Finishing::Calling;
+                    return vm.call_written_decode(slot, json);
+                }
+                Fill::Done(Ok(rows)) if rows.is_empty() => return Ok(Step::Done(ok(Value::Unit))),
+                Fill::Done(Ok(rows)) => {
+                    self.ready.extend(rows);
+                    self.next = Some(Fill::Done(Ok(Vec::new())));
+                }
+                Fill::Done(Err(error)) => return Ok(Step::Done(err(error))),
+            }
         }
     }
 }
@@ -2119,46 +2212,126 @@ fn do_stream_worker(
         };
         match conn.wait(conn.client().query_raw(&statement, bind.iter().copied())) {
             Ok(rows) => {
+                // Rows are read a batch at a time: the rows that have come
+                // when the first of them is read, up to a channel's worth.
+                // A batch with rows that wait for impls goes to a task of
+                // its own (`Helper`), which runs them and sends each row as
+                // soon as it is finished, while the next batch is read; a
+                // batch goes out once the one before it has ended.
                 let mut rows = std::pin::pin!(rows);
-                loop {
+                let mut batch: Vec<Row> = Vec::new();
+                let mut running: Option<Arc<TaskHandle>> = None;
+                // Wait for the batch that runs, if one does; `false` when
+                // the stream ended with it.
+                let settle = |running: &mut Option<Arc<TaskHandle>>| -> bool {
+                    let Some(handle) = running.take() else {
+                        return true;
+                    };
+                    match Helper::ended(&scheduler, &handle) {
+                        None => true,
+                        // A row that cannot be decoded ends the stream.
+                        Some(Ok(e)) => {
+                            let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                            false
+                        }
+                        // An impl failed: the stream ends with its
+                        // failure, as a stream stage does. (Or the
+                        // program ended meanwhile.)
+                        Some(Err(failure)) => {
+                            let failure = failure.map(Arc::new);
+                            ch.close(Close { failure }, scheduler.wake());
+                            false
+                        }
+                    }
+                };
+                // Send the batch, or start its task; `false` when the
+                // stream ended.
+                let mut flush = |batch: &mut Vec<Row>, running: &mut Option<Arc<TaskHandle>>| {
+                    let rows = std::mem::take(batch);
+                    if !settle(running) {
+                        return false;
+                    }
+                    if rows.iter().all(|row| matches!(row, Row::Done(_))) {
+                        for row in rows {
+                            if let Row::Done(value) = row
+                                && !send_or_stop(Value::variant(bv::OK, vec![value]))
+                            {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                    let started = match &mut helper {
+                        Some(helper) => {
+                            helper.start(&scheduler, (&rt, &plan), rows, &ch, waits.clone())
+                        }
+                        // (A row waits for impls only in a stream that
+                        // has a helper: a guard.)
+                        None => Err(VmError::type_confusion("a row waits for no impl")),
+                    };
+                    match started {
+                        Ok(handle) => {
+                            *running = Some(handle);
+                            true
+                        }
+                        Err(failure) => {
+                            let failure = Some(Arc::new(failure));
+                            ch.close(Close { failure }, scheduler.wake());
+                            false
+                        }
+                    }
+                };
+                let read_all = loop {
                     if ch.is_closed() {
                         break false;
                     }
-                    match conn.wait(rows.next()) {
-                        Some(Ok(found)) => match plan.row(&rt, &found).map(|row| match row {
-                            Row::Done(value) => Ok(Ok(value)),
-                            Row::Partial(partial) => match &mut helper {
-                                Some(helper) => helper.fill(&scheduler, &rt, &plan, partial),
-                                None => Err(None),
-                            },
-                        }) {
-                            Ok(Ok(Ok(value))) => {
-                                if !send_or_stop(Value::variant(bv::OK, vec![value])) {
+                    let next = match batch.len() {
+                        0 => conn.wait(rows.next()),
+                        n if n < STREAM_CHANNEL_CAPACITY => match rows.next().now_or_never() {
+                            Some(next) => next,
+                            None => {
+                                if !flush(&mut batch, &mut running) {
                                     break false;
                                 }
+                                continue;
                             }
-                            // A row that cannot be decoded ends the stream.
-                            Err(e) | Ok(Ok(Err(e))) => {
-                                let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                        },
+                        _ => {
+                            if !flush(&mut batch, &mut running) {
                                 break false;
                             }
-                            // An impl failed: the stream ends with its
-                            // failure, as a stream stage does. (Or the
-                            // program ended meanwhile.)
-                            Ok(Err(failure)) => {
-                                let failure = failure.map(Arc::new);
-                                ch.close(Close { failure }, scheduler.wake());
+                            continue;
+                        }
+                    };
+                    match next {
+                        Some(Ok(found)) => match plan.row(&rt, &found) {
+                            Ok(row) => batch.push(row),
+                            // A row that cannot be decoded ends the
+                            // stream, after the rows before it.
+                            Err(e) => {
+                                if flush(&mut batch, &mut running) && settle(&mut running) {
+                                    let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                                }
                                 break false;
                             }
                         },
-                        None => break true,
+                        None => {
+                            let _ = flush(&mut batch, &mut running) && settle(&mut running);
+                            break true;
+                        }
                         Some(Err(e)) => {
-                            let wrapped = Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
-                            let _ = send_or_stop(wrapped);
+                            if flush(&mut batch, &mut running) && settle(&mut running) {
+                                let wrapped =
+                                    Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
+                                let _ = send_or_stop(wrapped);
+                            }
                             break true;
                         }
                     }
-                }
+                };
+                // (A batch that still runs ends before the stream does.)
+                let _ = settle(&mut running);
+                read_all
             }
             Err(e) => {
                 // A parameter the encoder could not send: no statement

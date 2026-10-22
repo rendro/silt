@@ -1,0 +1,7 @@
+error[runtime]: deadlock on main thread: channel receive with no counterparty
+ --> a_stream_whose_impl_waits_forever_is_a_deadlock.silt:38:38
+    |
+ 38 |         Ok(rows) -> println("first: {channel.receive(rows)}")
+    |                                      ^^^^^^^^^^^^^^^^^^^^^ deadlock on main thread: channel receive with no counterparty
+  = help: task <handle:0> waits to receive from <channel:1>
+  = help: a thread of the runtime waits for task <handle:0> to end

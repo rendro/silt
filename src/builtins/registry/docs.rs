@@ -73,6 +73,10 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                     names.insert(format!("{}.{variant}", module.name));
                 }
             }
+            // So is a trait (`json.Encode`).
+            for name in &module.trait_names {
+                names.insert(format!("{}.{name}", module.name));
+            }
         }
         // A name's own section, in whichever page has it.
         for (_, page) in pages() {

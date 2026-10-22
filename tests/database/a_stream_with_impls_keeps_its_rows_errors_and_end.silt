@@ -1,0 +1,162 @@
+-- The rows of a stream that the program's `json.Decode` impls finish
+-- come as they would one by one, also past the first few hundred (the
+-- worker finishes them a batch at a time): every row, in order, rows
+-- with a part an impl decodes and rows without one mixed; the `Err` of
+-- an impl at row 600 after the 599 rows before it, and then the end;
+-- the decoder's own error at row 600 the same; an impl that fails at
+-- row 600 ends the stream after the 599 rows before it; a stream closed
+-- after 300 rows stops, and the pool's next statement runs; a stream
+-- in a transaction; and an impl that waits (it sleeps, and joins a task
+-- it spawns) finishes its rows all the same.
+import channel
+import env
+import json
+import postgres
+import string
+import task
+import time
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Code { digits: text })
+      json.Int(n) -> match n {
+        0 -> Ok(Code { digits: "{100 / n}" })
+        _ -> Err(json.Other("no code: {n}"))
+      }
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { n: Int, code: Option(Code) }
+
+type Slow { n: Int }
+
+trait json.Decode for Slow {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> {
+        time.sleep(time.ms(1))
+        let t = task.spawn { -> n * 2 }
+        Ok(Slow { n: task.join(t) })
+      }
+      _ -> Err(json.Other("no number here"))
+    }
+  }
+}
+
+type S { slow: Slow }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+-- Whether row `row` is the `n`th: its code is its number as text, or
+-- `None` for every third.
+fn is_row(row: R, n: Int) -> Bool {
+  let code = match n % 3 {
+    0 -> None
+    _ -> Some(Code { digits: "{n}" })
+  }
+  row.n == n && row.code == code
+}
+
+-- Read `rows` to their end: how many came in order, and what ended them.
+fn drain(rows: Channel(Result(R, postgres.PostgresError))) {
+  let (n, end) = loop n = 0 {
+    match channel.receive(rows) {
+      Some(Ok(row)) -> match is_row(row, n + 1) {
+        true -> loop(n + 1)
+        false -> (n, "row {n + 1} is out of order: {row}")
+      }
+      Some(Err(e)) -> (n, "Err({e.message()})")
+      None -> (n, "(end)")
+    }
+  }
+  println("  {n} rows in order, then {end}")
+  match end == "(end)" {
+    true -> ()
+    false -> println("  then {channel.receive(rows)}")
+  }
+}
+
+-- Stream rows 1 to 5000, row 600's `n` and `code` as `n` and `code`
+-- (SQL) say.
+fn stream(db: postgres.PgPool, n: String, code: String) {
+  let sql = "SELECT CASE WHEN g = 600 THEN :n ELSE g END AS n, CASE WHEN g = 600 THEN :code WHEN g % 3 = 0 THEN NULL ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 5000) g"
+  let sql = string.replace(string.replace(sql, ":n", n), ":code", code)
+  match postgres.stream(db, sql, (), R) {
+    Ok(rows) -> drain(rows)
+    Err(e) -> println(e.message())
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      println("every row:")
+      stream(db, "g", "NULL")
+      println("an impl's Err at row 600:")
+      stream(db, "g", "to_jsonb(7)")
+      println("the decoder's error at row 600:")
+      stream(db, "NULL", "NULL")
+      println("an impl's failure at row 600:")
+      stream(db, "g", "to_jsonb(0)")
+      println("closed after 300 rows:")
+      match postgres.stream(db, "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 300000) g", (), R) {
+        Ok(rows) -> {
+          let n = loop n = 0 {
+            match n {
+              300 -> n
+              _ -> match channel.receive(rows) {
+                Some(Ok(_)) -> loop(n + 1)
+                _ -> n
+              }
+            }
+          }
+          channel.close(rows)
+          println("  {n} rows, closed")
+        }
+        Err(e) -> println(e.message())
+      }
+      match postgres.query(db, "SELECT 1 AS n, to_jsonb('1'::text) AS code", (), R) {
+        Ok(rows) -> println("  the next statement: {rows}")
+        Err(e) -> println(e.message())
+      }
+      println("in a transaction:")
+      let done = postgres.transact(db) { tx ->
+        match postgres.stream(tx, "SELECT g AS n, CASE WHEN g % 3 = 0 THEN NULL ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 2000) g", (), R) {
+          Ok(rows) -> drain(rows)
+          Err(e) -> println(e.message())
+        }
+        Ok(())
+      }
+      println("  {done}")
+      println("an impl that waits:")
+      match postgres.stream(db, "SELECT to_jsonb(g) AS slow FROM generate_series(1, 300) g", (), S) {
+        Ok(rows) -> {
+          let (n, sum) = loop n = 0, sum = 0 {
+            match channel.receive(rows) {
+              Some(Ok(row)) -> loop(n + 1, sum + row.slow.n)
+              Some(Err(e)) -> {
+                println(e.message())
+                (n, sum)
+              }
+              None -> (n, sum)
+            }
+          }
+          println("  {n} rows, their sum {sum}")
+        }
+        Err(e) -> println(e.message())
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println(e.message())
+  }
+}

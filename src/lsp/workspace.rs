@@ -248,6 +248,29 @@ impl Server {
         })
     }
 
+    /// The trait that the name at byte `cursor` of the open document
+    /// `uri` names (`Display` in `where a: Display`, `json.Encode` in
+    /// `trait json.Encode for P`), if it names one: one of silt's own
+    /// too, which has no declaration in a file.
+    pub(super) fn trait_named_at(&self, uri: &Uri, cursor: usize) -> Option<crate::defs::TraitId> {
+        let (span, Target::Defs(keys)) = self.target_at(uri, cursor)? else {
+            return None;
+        };
+        let doc = self.documents.get(uri)?;
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        // (The name written there is the trait's own: a method's name at
+        // a call is the method, whatever it resolves through.)
+        let written = doc.source.text.get(span.start as usize..span.end as usize);
+        keys.iter().find_map(|key| {
+            let def = session.defs().get(def_of_key(session, key)?);
+            match def.kind {
+                DefKind::Trait(tr) if written == Some(resolve_sym(def.name).as_str()) => Some(tr),
+                _ => None,
+            }
+        })
+    }
+
     /// The builtin definition the name at byte `cursor` of the open
     /// document `uri` means, as it is reached qualified: `io.NotFound`,
     /// `list.map`; a name of the prelude bare.

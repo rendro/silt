@@ -451,7 +451,7 @@ enum PlanKind {
     Record {
         ty: Arc<TypeInfo>,
         /// The type of each field, and its column.
-        fields: Vec<(FieldType, ColumnPlan)>,
+        fields: Arc<[(FieldType, ColumnPlan)]>,
     },
     /// Each row a `json.Object` of its columns; with the slot of a
     /// written `decode`, what that makes of it.
@@ -558,7 +558,7 @@ impl Plan {
                 }
                 PlanKind::Record {
                     ty: ty.clone(),
-                    fields,
+                    fields: fields.into(),
                 }
             }
         };
@@ -597,14 +597,25 @@ impl Plan {
                         Err(error) => return failed(values, cells, error),
                     };
                     let r = Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
-                    let value = cell(&r, c, &c.col, field, raw);
+                    // (A document is kept as it was read, for the cell's
+                    // second reading.)
+                    let (value, doc) = match (&c.col, raw) {
+                        (Col::Json | Col::Jsonb, Some(raw)) => match document(&c.col, raw) {
+                            Ok(doc) => (of_document(&r, c, field, &doc), Some(doc)),
+                            Err(_) => (Err(malformed_document(&r, c, field)), None),
+                        },
+                        _ => (cell(&r, c, &c.col, field, raw), None),
+                    };
                     let holes = r.into_holes();
                     if !holes.is_empty() {
+                        let read = match doc {
+                            Some(doc) => Read::Document(doc),
+                            None => Read::Raw(raw.unwrap_or_default().to_vec()),
+                        };
                         cells.push(Deferred {
                             at,
-                            field: field.clone(),
-                            column: c.clone(),
-                            raw: raw.unwrap_or_default().to_vec(),
+                            fields: fields.clone(),
+                            read,
                             holes,
                         });
                     }
@@ -756,28 +767,37 @@ pub(super) enum Partial {
 /// A cell of a `json` or `jsonb` column (or an array of them) whose
 /// document holds parts that impls of the program decode.
 pub(super) struct Deferred {
-    /// The field it fills, by its place in the record.
+    /// The field it fills, by its place in the record (of the plan's
+    /// fields, `fields`).
     at: usize,
-    field: FieldType,
-    column: ColumnPlan,
-    /// The cell as the server sent it (never NULL: a NULL is no
-    /// document).
-    raw: Vec<u8>,
+    fields: Arc<[(FieldType, ColumnPlan)]>,
+    read: Read,
     /// The parts, in the order the decoder came to them.
     holes: Vec<Hole>,
 }
 
+/// A deferred cell as it is read again: its document as it was read
+/// (a `json` or `jsonb` column's), or the cell as the server sent it
+/// (an array of documents; never NULL: a NULL is no document).
+enum Read {
+    Document(serde_json::Value),
+    Raw(Vec<u8>),
+}
+
 impl Partial {
-    /// The calls of written `decode`s the row waits for, in order: the
-    /// slot of each, and the `json.Value` it is given.
-    fn calls(&self) -> Vec<(u16, Value)> {
-        match self {
-            Partial::Record { cells, .. } => (cells.iter())
-                .flat_map(|cell| cell.holes.iter())
-                .map(|hole| (hole.slot, hole.json.clone()))
-                .collect(),
-            Partial::Decoded { slot, json } => vec![(*slot, json.clone())],
-        }
+    /// The `call`th call of a written `decode` the row waits for, in
+    /// order: the slot, and the `json.Value` it is given (which the row
+    /// keeps no more); `None` past the last.
+    fn call(&mut self, call: usize) -> Option<(u16, Value)> {
+        let hole = match self {
+            Partial::Record { cells, .. } => (cells.iter_mut())
+                .flat_map(|cell| cell.holes.iter_mut())
+                .nth(call)?,
+            Partial::Decoded { slot, json } => {
+                return (call == 0).then(|| (*slot, std::mem::replace(json, Value::Unit)));
+            }
+        };
+        Some((hole.slot, std::mem::replace(&mut hole.json, Value::Unit)))
     }
 
     /// The row, now that the impls have given `given` (`Ok` of a value,
@@ -814,9 +834,12 @@ impl Partial {
         for cell in cells {
             let parts: Vec<_> = given.by_ref().take(cell.holes.len()).collect();
             let r = Reader::with_impls(rt, &written, Holes::Supply(parts.into_iter()));
-            let c = &cell.column;
-            let value = self::cell(&r, c, &c.col, &cell.field, Some(&cell.raw))
-                .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
+            let (field, c) = &cell.fields[cell.at];
+            let value = match &cell.read {
+                Read::Document(doc) => of_document(&r, c, field, doc),
+                Read::Raw(raw) => self::cell(&r, c, &c.col, field, Some(raw)),
+            };
+            let value = value.map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
             if let Some(place) = values.get_mut(cell.at) {
                 *place = value;
             } else {
@@ -841,8 +864,8 @@ pub(super) struct Filling {
     /// The error of the row after them that has no value, if one has
     /// none.
     error: Option<Value>,
-    /// The row at hand, the calls it waits for, and what they gave.
-    at_hand: Option<(Partial, Vec<(u16, Value)>, Vec<Result<Value, Value>>)>,
+    /// The row at hand, and what the calls it waits for gave so far.
+    at_hand: Option<(Partial, Vec<Result<Value, Value>>)>,
 }
 
 /// What the task does next for rows that wait for impls.
@@ -871,19 +894,29 @@ impl Filling {
         }
     }
 
+    /// The rows finished so far, taken out: they are not given again.
+    pub(super) fn take_done(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.done)
+    }
+
+    /// Whether the call [`Filling::next`] just asked for is the first of
+    /// its row.
+    pub(super) fn starts_row(&self) -> bool {
+        matches!(&self.at_hand, Some((_, gave)) if gave.is_empty())
+    }
+
     /// What comes next, `given` what the last call returned (`Ok` of
     /// the value, or `Err` of the `JsonError` it returned).
     pub(super) fn next(&mut self, given: Option<Result<Value, Value>>) -> Fill {
-        if let (Some(given), Some((_, _, gave))) = (given, &mut self.at_hand) {
+        if let (Some(given), Some((_, gave))) = (given, &mut self.at_hand) {
             gave.push(given);
         }
         loop {
-            if let Some((partial, calls, gave)) = self.at_hand.take() {
+            if let Some((mut partial, gave)) = self.at_hand.take() {
                 let failed = matches!(gave.last(), Some(Err(_)));
-                if let (false, Some((slot, json))) = (failed, calls.get(gave.len())) {
-                    let call = Fill::Call(*slot, json.clone());
-                    self.at_hand = Some((partial, calls, gave));
-                    return call;
+                if let (false, Some((slot, json))) = (failed, partial.call(gave.len())) {
+                    self.at_hand = Some((partial, gave));
+                    return Fill::Call(slot, json);
                 }
                 match partial.finish(&self.rt, &self.impls, gave) {
                     Ok(value) => self.done.push(value),
@@ -892,10 +925,7 @@ impl Filling {
             }
             match self.rows.next() {
                 Some(Row::Done(value)) => self.done.push(value),
-                Some(Row::Partial(partial)) => {
-                    let calls = partial.calls();
-                    self.at_hand = Some((partial, calls, Vec::new()));
-                }
+                Some(Row::Partial(partial)) => self.at_hand = Some((partial, Vec::new())),
                 None => {
                     return Fill::Done(match self.error.take() {
                         Some(error) => Err(error),
@@ -905,6 +935,25 @@ impl Filling {
             }
         }
     }
+}
+
+/// The value of the type `field` that `doc` is, the document of a cell
+/// of the column `c` (`json` or `jsonb`, or an array of them), as
+/// json.parse decodes it: `null` is an `Option`'s `None`.
+fn of_document(
+    rt: &Reader,
+    c: &ColumnPlan,
+    field: &FieldType,
+    doc: &serde_json::Value,
+) -> Result<Value, Mismatch> {
+    json::decode_field(rt, doc, field)
+        .map_err(|why| Mismatch::new(rt, field, of_a_document(c, why)))
+}
+
+/// The mismatch of a cell of the column `c` whose document the server
+/// sent malformed.
+fn malformed_document(rt: &Reader, c: &ColumnPlan, field: &FieldType) -> Mismatch {
+    Mismatch::new(rt, field, of_a_document(c, MALFORMED.into()))
 }
 
 /// A cell as the server sent it, in the binary format: `None` for NULL.
@@ -952,9 +1001,8 @@ fn cell(
         // A document is the field's as json.parse decodes it: `null` is
         // an `Option`'s `None`.
         (Col::Json | Col::Jsonb, _) => {
-            let in_document = |why: String| Mismatch::new(rt, field, of_a_document(c, why));
-            let document = document(col, raw).map_err(|_| in_document(MALFORMED.into()))?;
-            json::decode_field(rt, &document, field).map_err(in_document)?
+            let document = document(col, raw).map_err(|_| malformed_document(rt, c, field))?;
+            of_document(rt, c, field, &document)?
         }
         (_, F::Option(inner)) => {
             Value::variant(bv::SOME, vec![cell(rt, c, col, inner, Some(raw))?])

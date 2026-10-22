@@ -254,4 +254,9 @@ cases!(
     a_row_type_with_an_impl_is_decoded_by_it,
     a_stream_ends_at_an_impls_error,
     channel_each_raises_the_failure_of_a_streams_impl,
+    a_stream_with_impls_keeps_its_rows_errors_and_end,
+    a_stream_with_impls_ends_with_its_reader,
+    a_stream_with_impls_sends_each_row_when_it_is_finished,
+    a_stream_whose_impl_waits_forever_is_a_deadlock,
+    a_statement_behind_its_own_unread_stream_of_impls_fails,
 );

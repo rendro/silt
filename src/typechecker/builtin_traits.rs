@@ -3,8 +3,8 @@
 
 use super::*;
 
-/// The declarations of the five builtin traits, as a program would
-/// write them.
+/// The declarations of the builtin traits of the prelude, as a program
+/// would write them, with the documentation an editor shows for each.
 ///
 /// Round 62 (item 3 of type-design improvements) — built-in trait
 /// registration was previously a separate code path that hand-rolled
@@ -23,7 +23,7 @@ use super::*;
 /// - `Error: Display { fn message(self) -> String }`, with a default:
 ///   an impl may leave `message` out, and the VM then shows the value
 ///   as `display` does.
-pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
+pub fn builtin_trait_decls() -> Vec<TraitDecl> {
     let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
     let other_sym = intern("other");
@@ -110,7 +110,12 @@ pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
-            doc: None,
+            doc: Some(
+                "How a value is shown: `println`, `print`, interpolation, `.display()`\n\
+                 and `string.from` show it so. A type has it by its structure, or by an\n\
+                 impl written in the module that declares the type."
+                    .to_string(),
+            ),
         },
         // trait Compare: Equal { fn compare(self, other: Self) -> Int }
         // What is ordered can be compared for equality.
@@ -138,7 +143,11 @@ pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
-            doc: None,
+            doc: Some(
+                "The order of values: `<`, `>`, `<=` and `>=` need it. A type made of\n\
+                 types that have it has it by its structure; an impl is an error."
+                    .to_string(),
+            ),
         },
         // trait Equal { fn equal(self, other: Self) -> Bool }
         TraitDecl {
@@ -159,7 +168,11 @@ pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
-            doc: None,
+            doc: Some(
+                "Whether two values are equal: `==` and `!=` need it. A type made of\n\
+                 types that have it has it by its structure; an impl is an error."
+                    .to_string(),
+            ),
         },
         // trait Number {}: the types arithmetic is on, Int and Float.
         TraitDecl {
@@ -172,7 +185,11 @@ pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
-            doc: None,
+            doc: Some(
+                "The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`,\n\
+                 `%` and unary `-` need it. No other type has it."
+                    .to_string(),
+            ),
         },
         // trait Hash { fn hash(self) -> Int }
         TraitDecl {
@@ -190,7 +207,11 @@ pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
-            doc: None,
+            doc: Some(
+                "A value as a map's key or a set's element. A type made of types that\n\
+                 have it has it by its structure; an impl is an error."
+                    .to_string(),
+            ),
         },
         // trait Error: Display { fn message(self) -> String { self.display() } }
         TraitDecl {
@@ -209,7 +230,11 @@ pub(super) fn builtin_trait_decls() -> Vec<TraitDecl> {
             assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
-            doc: None,
+            doc: Some(
+                "An error a program reports: `message` says what went wrong. An impl\n\
+                 may leave it out: it is then the value as `display` shows it."
+                    .to_string(),
+            ),
         },
     ]
 }

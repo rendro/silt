@@ -1,0 +1,90 @@
+-- cmd: lsp
+-- lsp: hover 41:48
+-- lsp: hover 41:57
+-- lsp: hover 41:76
+-- lsp: hover 41:85
+-- lsp: hover 41:95
+-- lsp: hover 68:8
+-- lsp: hover 72:8
+-- lsp: hover 76:13
+-- lsp: hover 51:13
+-- lsp: hover 51:8
+-- lsp: hover 58:8
+-- lsp: hover 35:35
+-- lsp: hover 86:25
+-- lsp: hover 87:14
+-- lsp: hover 88:17
+-- lsp: hover 89:25
+-- lsp: definition 41:76
+-- lsp: definition 41:85
+-- lsp: definition 68:8
+-- lsp: definition 72:8
+-- Hover on a trait's name shows the trait's signature, its methods
+-- without their default bodies, and its documentation, as hover on a
+-- type does: in a `where` clause (a builtin trait, a builtin module's
+-- `json.Encode`, a program's trait, one of another module named with
+-- it), in an impl's header, as a supertrait, at its declaration. A
+-- method's signature written on several lines keeps its lines.
+-- Definition goes to a program trait's declaration; one of silt's own
+-- has no file. A method's name at a call is the method, not its trait
+-- (on a record literal, a binding, a call's value), and a builtin
+-- module's trait is written as a program names it (`json.Value`).
+import json
+import shapes
+
+fn read(x: a) -> a where a: json.Decode {
+  x
+}
+
+type Box { w: Int }
+
+fn show(x: a, y: b, z: c, w: d) where a: json.Encode + Display, b: shapes.Area, c: Sized, d: Compare {
+  ()
+}
+
+-- Says how big.
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int { self.size() * 2 }
+}
+
+trait Big: Sized {
+  fn big(self) -> Bool
+}
+
+-- Pairs of things.
+--
+-- Two of them.
+trait Pairs(b) {
+  type Item
+  fn pair(
+    self,
+    other: b,
+  ) -> (Self, b) where b: Display {
+    (self, other)
+  }
+}
+
+trait Sized for Box {
+  fn size(self) -> Int { self.w }
+}
+
+trait Display for Box {
+  fn display(self) -> String { "box" }
+}
+
+trait json.Encode for Box {
+  fn encode(self) -> json.Value { json.Int(self.w) }
+}
+
+fn mk() -> Box {
+  Box { w: 2 }
+}
+
+fn main() {
+  let b = Box { w: 1 }
+  println(Box { w: 1 }.size())
+  println(b.size())
+  println(mk().size())
+  println(Box { w: 1 }.display())
+}
