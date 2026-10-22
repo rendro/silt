@@ -54,3 +54,11 @@ pub fn dtwice(type a, type b) where a: json.Decode, b: json.Decode {
   direct(b, b)
   direct(a, a)
 }
+
+pub fn own(x: s, type a) where s: Two, a: json.Decode {
+  x.get(Int, Int)
+}
+
+pub fn down(type a) where a: json.Decode {
+  direct(Int, Int)
+}

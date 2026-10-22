@@ -6,10 +6,11 @@
 -- by the alias that argument names, as through a function that gives
 -- both to `toml.parse` itself. A type the function gives the method
 -- itself (`Int`), which the impl of the type the call gives refuses, is
--- not named by the call's alias. A type is at the type argument that
--- gives it, not at a value of a tuple of the types, before or after the
--- receiver; and where two type arguments give one type, the first names
--- it, once.
+-- not named by the call's alias, also where the call gives the same
+-- type by an alias (`I`) the method is not given. A type is at the type
+-- argument that gives it, not at a value of a tuple of the types, before
+-- or after the receiver; and where two type arguments give one type, the
+-- first names it, once.
 import lib
 
 type L = List(Int)
@@ -17,6 +18,8 @@ type L = List(Int)
 type L2 = List(String)
 
 type L3 = List(Int)
+
+type I = Int
 
 type Rec {
   n: Int,
@@ -42,4 +45,6 @@ fn main() {
   lib.dfirst((["x"], [1]), L, L2)
   lib.twice(lib.T { n: 1 }, L, L3)
   lib.dtwice(L, L3)
+  lib.own(lib.T { n: 1 }, I)
+  lib.down(I)
 }

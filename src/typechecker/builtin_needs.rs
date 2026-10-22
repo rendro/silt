@@ -745,10 +745,19 @@ impl TypeChecker {
             }
         }
         for use_ in std::mem::take(&mut self.via_waiting) {
+            // (A type the calling function writes as the method's type
+            // argument itself, `x.one(List(Int))`, is none the call
+            // gives: no place names it.)
+            let mut written = Vec::new();
+            written_type_arguments(&use_.need.method_ty, &mut written);
+            let written: Vec<Type> = written.iter().map(|ty| self.apply(ty)).collect();
+            let places = (use_.places.into_iter())
+                .filter(|(given, ..)| !written.contains(&self.apply(given)))
+                .collect();
             let placing = Placing {
                 passer: use_.passer,
                 origin: use_.origin,
-                places: use_.places,
+                places,
             };
             self.apply_via(&use_.need, use_.in_body, Some(&placing));
         }
@@ -1020,6 +1029,27 @@ fn match_type(pattern: &Type, ty: &Type, vars: &[TyVar], mapping: &mut HashMap<T
 
 /// The type the first type argument (`TypeOf(t)`) of the function type
 /// `ty` gives: `t`.
+/// The type arguments (`TypeOf(t)`) of `ty`, a method's type at a call,
+/// that name no type variable: the types the calling function writes,
+/// gathered into `out`.
+fn written_type_arguments(ty: &Type, out: &mut Vec<Type>) {
+    match ty {
+        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+            out.extend(
+                (args.first())
+                    .filter(|arg| free_vars_in(arg).is_empty())
+                    .cloned(),
+            );
+        }
+        Type::Fun(params, ret) => {
+            for part in params.iter().chain([&**ret]) {
+                written_type_arguments(part, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn type_of_first(ty: &Type) -> Option<Type> {
     match ty {
         Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => args.first().cloned(),
