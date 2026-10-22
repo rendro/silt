@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: import json\ntype P { x: Int }\nInt\njson.Value\nP\nlet t = json.Value\nt\n[json.Value]\n:quit\n
+-- A type given as a value is shown as a program writes the type: a
+-- builtin module's type with its module (`<type:json.Value>`), wherever
+-- the value is, and a prelude type and the program's own by their names.
