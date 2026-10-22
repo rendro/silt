@@ -11,6 +11,8 @@
 //! and then sleeps, and the file is rewritten while that initial run is
 //! still asleep. The rewrite must trigger a rerun.
 
+#![cfg(feature = "watch")]
+
 use std::fs;
 use std::io::Read;
 use std::path::Path;

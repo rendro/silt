@@ -121,6 +121,7 @@ fn lexer_keyword_literals_const_equals_expected_set() {
     );
 }
 
+#[cfg(feature = "repl")]
 #[test]
 fn repl_keywords_contain_core_set() {
     // Round-64 G4: src/repl.rs no longer inlines keyword string

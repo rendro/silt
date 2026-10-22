@@ -12,6 +12,8 @@
 //! do its initial run and one rerun, and checks that the captured stderr
 //! holds no clear-screen escape.
 
+#![cfg(feature = "watch")]
+
 use std::fs;
 use std::io::Read;
 use std::process::{Command, Stdio};

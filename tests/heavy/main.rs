@@ -11,17 +11,22 @@ mod fmt_property_sweep_tests;
 mod init_order_sweep;
 mod integration;
 mod lexer_scaling;
+#[cfg(feature = "lsp")]
 mod lsp_workspace_perf;
+#[cfg(feature = "http")]
 #[path = "../support/port_file.rs"]
 mod port_file;
 #[path = "../support/quiet.rs"]
 mod quiet;
 mod quiet_tests;
+#[cfg(feature = "lsp")]
 #[path = "../lsp/rename_sweep.rs"]
 mod rename_sweep;
+#[cfg(feature = "lsp")]
 mod rename_sweep_examples;
 mod repl_paste;
 mod repl_session;
 mod runtime_scaling;
+#[cfg(feature = "lsp")]
 #[path = "../lsp/support.rs"]
 mod support;

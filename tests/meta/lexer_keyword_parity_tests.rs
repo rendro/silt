@@ -47,6 +47,7 @@ fn lexer_keywords_const_matches_lexer_behaviour() {
     }
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn lsp_rename_rejects_every_keyword() {
     for kw in lexer::KEYWORDS.iter().chain(lexer::KEYWORD_LITERALS) {

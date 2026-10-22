@@ -103,29 +103,33 @@ fn test_silt_run_banner_consistency_all_paths() {
     // Path 2: `silt run --help`           — help path (stdout)
     let (help_line, _, _) = silt_usage_line(&["run", "--help"]);
 
-    // Path 3: `silt run --watch`          — watch dry-validation path (stderr)
-    //         (requires `watch` feature, which is on by default)
-    let (watch_line, _, _) = silt_usage_line(&["run", "--watch"]);
-
-    // Path 4: `silt run --watch --disassemble` (no file)
-    //         — missing-file-after-flags path (stderr)
-    //         This goes through the watch dry-validation path too
-    //         because of the --watch flag; ensure it still matches.
-    let (watch_disasm_line, _, _) = silt_usage_line(&["run", "--watch", "--disassemble"]);
-
     // All four must be byte-identical — the single-source-of-truth lock.
     assert_eq!(
         no_args_line, help_line,
         "`silt run` no-args banner must match `silt run --help` banner"
     );
-    assert_eq!(
-        no_args_line, watch_line,
-        "`silt run` no-args banner must match `silt run --watch` banner"
-    );
-    assert_eq!(
-        no_args_line, watch_disasm_line,
-        "`silt run` no-args banner must match `silt run --watch --disassemble` banner"
-    );
+
+    // Paths 3 and 4 need the `watch` feature: without it, `--watch`
+    // says that the feature is not built.
+    if cfg!(feature = "watch") {
+        // Path 3: `silt run --watch`          — watch dry-validation path (stderr)
+        let (watch_line, _, _) = silt_usage_line(&["run", "--watch"]);
+
+        // Path 4: `silt run --watch --disassemble` (no file)
+        //         — missing-file-after-flags path (stderr)
+        //         This goes through the watch dry-validation path too
+        //         because of the --watch flag; ensure it still matches.
+        let (watch_disasm_line, _, _) = silt_usage_line(&["run", "--watch", "--disassemble"]);
+
+        assert_eq!(
+            no_args_line, watch_line,
+            "`silt run` no-args banner must match `silt run --watch` banner"
+        );
+        assert_eq!(
+            no_args_line, watch_disasm_line,
+            "`silt run` no-args banner must match `silt run --watch --disassemble` banner"
+        );
+    }
 
     // And all must mention the full flag set — [--watch] AND [--disassemble].
     assert!(

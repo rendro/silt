@@ -86,6 +86,7 @@ fn test_silt_disasm_no_file_outside_package_prints_canonical_banner() {
 
 /// `silt disasm --watch` outside a package with no file should print
 /// the same canonical banner via the watch dry-validation path.
+#[cfg(feature = "watch")]
 #[test]
 fn test_silt_disasm_watch_no_file_outside_package_prints_canonical_banner() {
     let tmp = std::env::temp_dir().join("silt_cli_round26_disasm_watch_no_file");
@@ -282,6 +283,7 @@ fn test_silt_add_unknown_flag_emits_help_nudge() {
 
 /// Default builds compile `tcp` in (see Cargo.toml `default = [...]`).
 /// The `Enabled features:` line in `silt --help` must include it.
+#[cfg(feature = "tcp")]
 #[test]
 fn test_silt_help_enabled_features_lists_tcp_in_default_build() {
     let output = silt_cmd()

@@ -3,6 +3,8 @@
 //! (round-77 REPL-1), not a builtin module's variants or functions until
 //! the module is imported, and then through it.
 
+#![cfg(feature = "repl")]
+
 use silt::repl::{Repl, builtin_names, completion_candidates_for_prefix};
 use silt::session::ProjectSetup;
 

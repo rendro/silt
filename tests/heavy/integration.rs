@@ -1,5 +1,6 @@
 use silt::value::Value;
 
+#[cfg(feature = "http")]
 use crate::port_file::PortFile;
 
 /// The Float `f`, a finite number, as a value.
@@ -133,6 +134,7 @@ fn main() {
 
 // ── http.serve concurrency ──────────────────────────────────────
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_non_blocking_in_task() {
     // Spawn http.serve in a task; verify other tasks can still run.
@@ -169,6 +171,7 @@ fn main() {
     assert_eq!(result, Value::String("ready".into()));
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_concurrent_requests() {
     // Start a server on the main thread (it blocks), send concurrent
@@ -233,6 +236,7 @@ fn main() {{
 
 // ── http.serve functional tests ─────────────────────────────────
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_basic_get_response() {
     // Start a server that echoes a fixed body, make a GET request, verify
@@ -285,6 +289,7 @@ fn main() {{
     assert_eq!(body, "hello from silt");
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_returns_custom_status_code() {
     // Handler returns a 404 status — verify the client sees it.
@@ -336,6 +341,7 @@ fn main() {{
     assert_eq!(body, "not found");
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_echoes_request_path() {
     // Handler echoes back the request path in the body.
@@ -391,6 +397,7 @@ fn main() {{
     }
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_echoes_query_string() {
     // Handler echoes back the query string from the request.
@@ -443,6 +450,7 @@ fn main() {{
     assert_eq!(body, "q=silt&page=1");
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_reads_request_body() {
     // POST a body to the server and verify the handler receives it.
@@ -493,6 +501,7 @@ fn main() {{
     assert_eq!(body, "request body content");
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_reads_request_method() {
     // Handler pattern-matches on the request method and returns its name.
@@ -571,6 +580,7 @@ fn main() {{
     assert_eq!(resp.body_mut().read_to_string().unwrap(), "got-delete");
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_sets_response_headers() {
     // Handler sets custom response headers — verify the client sees them.
@@ -636,6 +646,7 @@ fn main() {{
     );
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_routing_by_path() {
     // Handler routes requests based on path, returning different responses.
@@ -707,6 +718,7 @@ fn main() {{
     assert_eq!(resp.body_mut().read_to_string().unwrap(), "not found");
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_concurrent_requests_stress() {
     // Stress test: 20 concurrent requests, each with a unique path.
@@ -767,6 +779,7 @@ fn main() {{
     }
 }
 
+#[cfg(feature = "http")]
 #[test]
 fn test_http_serve_from_task_with_silt_client() {
     // Start the server in a spawned task, then use http.get() from another

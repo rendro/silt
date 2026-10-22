@@ -3,6 +3,8 @@
 //! One test binary; each module was a separate test crate before. Modules
 //! that talk to the server use the shared client in `support`.
 
+#![cfg(feature = "lsp")]
+
 mod support;
 
 mod builtin_signature_help_tests;

@@ -11,6 +11,8 @@
 //! No size and no time is asserted, only that the last thousand entries
 //! add at most so many times what the first thousand add.
 
+#![cfg(feature = "repl")]
+
 /// The entries of a session of `rounds` rounds, and the number of
 /// entries entered when each round's marker line is printed. With
 /// `waiting`, the task of each round waits for as long as the session

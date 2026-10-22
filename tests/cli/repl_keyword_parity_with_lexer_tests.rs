@@ -9,6 +9,8 @@
 //! completion would silently miss it. These tests ensure that the
 //! REPL stays in sync with the lexer's keyword set.
 
+#![cfg(feature = "repl")]
+
 #[test]
 fn repl_builtin_names_is_superset_of_lexer_keywords() {
     let names: std::collections::HashSet<String> =

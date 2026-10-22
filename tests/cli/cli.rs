@@ -478,6 +478,7 @@ fn test_fmt_empty_file() {
 /// Returns `Err(())` if the child had to be killed by the timeout
 /// guard — this surfaces a watch-loop hang as a test failure instead
 /// of letting it block CI indefinitely.
+#[cfg(feature = "watch")]
 fn run_silt_with_timeout(
     args: &[&str],
     wait: std::time::Duration,
@@ -529,6 +530,7 @@ fn run_silt_with_timeout(
 
 // ── F16: `silt run --watch` (no file) exits non-zero with usage ────
 
+#[cfg(feature = "watch")]
 #[test]
 fn test_run_watch_without_file_exits_non_zero_with_usage() {
     // A passing fix returns within ~100 ms; 3 s is a generous guard
@@ -558,6 +560,7 @@ fn test_run_watch_without_file_exits_non_zero_with_usage() {
 
 // ── F16: `silt check --watch` (no file) exits non-zero with usage ──
 
+#[cfg(feature = "watch")]
 #[test]
 fn test_check_watch_without_file_exits_non_zero_with_usage() {
     let wait = std::time::Duration::from_secs(3);
@@ -582,6 +585,7 @@ fn test_check_watch_without_file_exits_non_zero_with_usage() {
 
 // ── F16 bonus: `silt run --watch --help` prints help and exits 0 ───
 
+#[cfg(feature = "watch")]
 #[test]
 fn test_run_watch_help_exits_zero_with_help() {
     // --help combined with --watch used to be treated the same as a
@@ -725,6 +729,7 @@ fn test_init_unknown_flag() {
     );
 }
 
+#[cfg(feature = "repl")]
 #[test]
 fn test_repl_unknown_flag() {
     let output = silt_cmd()
@@ -742,6 +747,7 @@ fn test_repl_unknown_flag() {
     );
 }
 
+#[cfg(feature = "lsp")]
 #[test]
 fn test_lsp_unknown_flag() {
     let output = silt_cmd()

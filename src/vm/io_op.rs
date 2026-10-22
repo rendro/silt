@@ -860,7 +860,7 @@ impl IoOp {
     /// thread is done with it, so a waiter that goes now sees the value
     /// (`Leave::Returns`'s `give_back` runs in its `Drop`). The value
     /// alone (`cell`) comes a moment before that.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "http"))]
     pub(crate) fn finished(&self) -> bool {
         *self.state.phase.lock() == Phase::Finished
     }
