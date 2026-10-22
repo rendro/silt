@@ -1,0 +1,44 @@
+-- exit: 1
+-- The impl of a stream's row waits for a channel nobody sends to, and
+-- main waits for the row: a deadlock, which names the task that runs
+-- the impl and the stream's worker that waits for it.
+import channel
+import env
+import json
+import postgres
+
+type Stuck { n: Int }
+
+trait json.Decode for Stuck {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> {
+        let never: Channel(Int) = channel.new(0)
+        let _ = channel.receive(never)
+        Ok(Stuck { n: n })
+      }
+      _ -> Err(json.Other("no number here"))
+    }
+  }
+}
+
+type S { stuck: Stuck }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      match postgres.stream(db, "SELECT to_jsonb(g) AS stuck FROM generate_series(1, 3) g", (), S) {
+        Ok(rows) -> println("first: {channel.receive(rows)}")
+        Err(e) -> println(e.message())
+      }
+    }
+    Err(e) -> println(e.message())
+  }
+}

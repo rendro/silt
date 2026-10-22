@@ -244,14 +244,14 @@ One data layer, one override: a record or enum type with a written
 
 The impls are the program's code, which the task that called
 `postgres.query` or `postgres.cursor_next` runs, after the rows are read
-(a failure of an impl is that task's). In a stream, the stream's worker
-runs them before it sends the rows, the rows that have come at a time
-(at most as many as the channel holds), in order: an impl's `Err` is
-that row's `Err`, after the rows before it, and the stream ends there,
-as at a row the decoder refuses; no impl runs for a row once the stream
-is closed; an impl that fails ends the stream with its failure, as a
-failing stream stage does: `channel.each` raises it, a plain
-`channel.receive` sees `None`.
+(a failure of an impl is that task's). In a stream, a task of the
+stream's own runs them, for the rows that have come at a time (at most
+as many as the channel holds), and sends each row as soon as its impls
+are done, in order: an impl's `Err` is that row's `Err`, after the rows
+before it, and the stream ends there, as at a row the decoder refuses;
+no impl runs for a row once the stream is closed; an impl that fails
+ends the stream with its failure, as a failing stream stage does:
+`channel.each` raises it, a plain `channel.receive` sees `None`.
 
 `postgres.execute` gives the number of rows the statement affected (for
 a statement that affects no rows, such as `CREATE TABLE`, `0`). A

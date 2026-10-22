@@ -1,0 +1,4 @@
+first row: Some(Ok(M {n: Num {n: 1}}))
+the statement: Other(postgres: a stream of this transaction is still open; read or close it first)
+execute: postgres: a stream of this transaction is still open; read or close it first
+transact: Ok([N {n: 2}])

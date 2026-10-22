@@ -1,0 +1,181 @@
+-- The impls of a stream's rows run as task code, and each row goes out
+-- as soon as its impls are done, not with the rows after it:
+-- - the first row of 200, whose impls sleep 20 ms each, comes within
+--   a `task.deadline` of 2 s;
+-- - the impl of row n waits until the reader has read row n - 1 (the
+--   reader leaves a marker file after each row): each row is read
+--   before the next row's impl runs;
+-- - an impl that sleeps 1 s, read under a `task.deadline` of 100 ms:
+--   the deadline's `Err`, and once the stream is closed the pool's next
+--   statement runs;
+-- - an impl that calls `env.set` fails, as it does in a spawned task:
+--   the stream ends with no row, and the environment is as it was.
+import channel
+import env
+import fs
+import io
+import json
+import postgres
+import task
+import time
+
+type Slow { n: Int }
+
+trait json.Decode for Slow {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> {
+        time.sleep(time.ms(20))
+        Ok(Slow { n: n })
+      }
+      _ -> Err(json.Other("no number here"))
+    }
+  }
+}
+
+type S { slow: Slow }
+
+type Sleepy { n: Int }
+
+trait json.Decode for Sleepy {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> {
+        time.sleep(time.ms(1000))
+        Ok(Sleepy { n: n })
+      }
+      _ -> Err(json.Other("no number here"))
+    }
+  }
+}
+
+type Z { sleepy: Sleepy }
+
+fn marker(n: Int) -> String {
+  "f8p_marker_{n}.tmp"
+}
+
+type Step { n: Int }
+
+trait json.Decode for Step {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> {
+        let seen = loop tries = 0 {
+          match n == 1 || fs.exists(marker(n - 1)) {
+            true -> true
+            false -> match tries < 400 {
+              true -> {
+                time.sleep(time.ms(5))
+                loop(tries + 1)
+              }
+              false -> false
+            }
+          }
+        }
+        match seen {
+          true -> Ok(Step { n: n })
+          false -> Err(json.Other("row {n - 1} was not read before row {n}'s impl ran"))
+        }
+      }
+      _ -> Err(json.Other("no number here"))
+    }
+  }
+}
+
+type T { step: Step }
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> {
+        env.set("F8P_SEEN", text)
+        Ok(Code { digits: text })
+      }
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { code: Code }
+
+type One { n: Int }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{"max_pool_size": 1}) {
+    Ok(db) -> {
+      println("the first row of slow impls:")
+      match postgres.stream(db, "SELECT to_jsonb(g) AS slow FROM generate_series(1, 200) g", (), S) {
+        Ok(rows) -> {
+          let first = task.deadline(time.ms(2000)) { -> channel.receive(rows) }
+          println("  {first}")
+          channel.close(rows)
+        }
+        Err(e) -> println(e.message())
+      }
+      println("an impl that waits for the reader:")
+      match postgres.stream(db, "SELECT to_jsonb(g) AS step FROM generate_series(1, 5) g", (), T) {
+        Ok(rows) -> {
+          channel.each(rows) { row ->
+            match row {
+              Ok(r) -> {
+                println("  read {r.step.n}")
+                let _ = io.write_file(marker(r.step.n), "")
+              }
+              Err(e) -> println("  Err {e.message()}")
+            }
+          }
+        }
+        Err(e) -> println(e.message())
+      }
+      loop n = 1 {
+        match n <= 5 {
+          true -> {
+            let _ = fs.remove(marker(n))
+            loop(n + 1)
+          }
+          false -> ()
+        }
+      }
+      println("an impl that sleeps, read under a deadline:")
+      match postgres.stream(db, "SELECT to_jsonb(g) AS sleepy FROM generate_series(1, 3) g", (), Z) {
+        Ok(rows) -> {
+          let first = task.deadline(time.ms(100)) { -> channel.receive(rows) }
+          println("  {first}")
+          channel.close(rows)
+        }
+        Err(e) -> println(e.message())
+      }
+      println("  the next statement: {postgres.query(db, "SELECT 1 AS n", (), One)}")
+      println("an impl that calls env.set:")
+      match postgres.stream(db, "SELECT to_jsonb(g::text) AS code FROM generate_series(1, 3) g", (), R) {
+        Ok(rows) -> {
+          let n = loop n = 0 {
+            match channel.receive(rows) {
+              Some(Ok(_)) -> loop(n + 1)
+              Some(Err(e)) -> {
+                println("  Err {e.message()}")
+                n
+              }
+              None -> n
+            }
+          }
+          println("  {n} rows")
+        }
+        Err(e) -> println(e.message())
+      }
+      println("  F8P_SEEN: {env.get("F8P_SEEN")}")
+      postgres.close(db)
+    }
+    Err(e) -> println(e.message())
+  }
+}
