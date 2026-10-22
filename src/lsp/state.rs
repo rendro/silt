@@ -105,6 +105,14 @@ impl Document {
             .tokens
     }
 
+    /// The constructor a pattern names at byte `cursor`, if one does.
+    pub(super) fn pattern_constructor_at(&self, cursor: usize) -> Option<&PatternConstructor> {
+        let holds = |c: &&PatternConstructor| {
+            (c.span.start as usize..c.span.end as usize).contains(&cursor)
+        };
+        self.pattern_constructors.iter().find(holds)
+    }
+
     /// Give the document the text `source`.
     pub(super) fn set_text(&mut self, source: SourceFile) {
         self.source = source;

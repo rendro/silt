@@ -1,33 +1,36 @@
 -- cmd: lsp
--- lsp: hover 45:14
--- lsp: hover 45:21
--- lsp: hover 45:26
--- lsp: hover 46:14
--- lsp: hover 46:27
--- lsp: hover 54:19
--- lsp: hover 54:26
--- lsp: hover 55:12
--- lsp: hover 55:19
--- lsp: hover 55:46
--- lsp: hover 55:53
--- lsp: hover 56:19
--- lsp: hover 63:10
--- lsp: hover 63:12
--- lsp: hover 64:10
--- lsp: hover 64:14
--- lsp: hover 70:8
--- lsp: hover 70:10
--- lsp: hover 70:13
--- lsp: hover 75:17
--- lsp: hover 75:21
--- lsp: hover 79:10
--- lsp: hover 79:12
+-- lsp: hover 48:14
+-- lsp: hover 48:21
+-- lsp: hover 48:26
+-- lsp: hover 49:14
+-- lsp: hover 49:27
+-- lsp: hover 57:19
+-- lsp: type-definition 57:19
+-- lsp: hover 57:26
+-- lsp: hover 58:12
+-- lsp: hover 58:19
+-- lsp: hover 58:46
+-- lsp: hover 58:53
+-- lsp: hover 59:19
+-- lsp: hover 66:10
+-- lsp: type-definition 66:10
+-- lsp: hover 66:12
+-- lsp: hover 67:10
+-- lsp: hover 67:14
+-- lsp: hover 73:8
+-- lsp: hover 73:10
+-- lsp: hover 73:13
+-- lsp: hover 78:17
+-- lsp: hover 78:21
+-- lsp: hover 82:10
+-- lsp: hover 82:12
 -- A constructor in a pattern shows what an expression that names it
 -- shows: a variant with fields a function to the type of the value it
 -- matches, one without that type, and the variant's docs; not the type
--- of the expression around the pattern. A name the pattern binds inside
--- it has the type of its field. Builtin and program enums, qualified and
--- bare, nested, generic, in a `match`, a `let`, a `when`, a parameter.
+-- of the expression around the pattern. Its type definition is its
+-- enum. A name the pattern binds inside it has the type of its field.
+-- Builtin and program enums, qualified and bare, nested, generic, in a
+-- `match`, a `let`, a `when let`, a parameter.
 -- (The head of an arm's pattern keeps the scrutinee's type.)
 import json
 import shapes

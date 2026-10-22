@@ -108,11 +108,7 @@ impl Server {
         // it has, not the one of the expression around the pattern. Nor
         // is an item of an import (`map` in `import list.{ map }`): it
         // has its definition's type, general.
-        let in_pattern = doc
-            .pattern_constructors
-            .iter()
-            .find(|c| (c.span.start as usize..c.span.end as usize).contains(&cursor));
-        let ty = match in_pattern {
+        let ty = match doc.pattern_constructor_at(cursor) {
             Some(constructor) => constructor.ty.clone(),
             None => find_type_at_offset(program, cursor)
                 .or_else(|| self.import_item_type_at(uri, cursor)),

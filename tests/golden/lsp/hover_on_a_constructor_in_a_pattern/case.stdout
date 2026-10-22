@@ -1,4 +1,4 @@
-> hover 45:14
+> hover 48:14
 ```silt
 Fn(String, Int) -> JsonError
 ```
@@ -13,15 +13,15 @@ A variant of `json.JsonError`, reached as `json.Syntax`.
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 45:21
+> hover 48:21
 ```silt
 String
 ```
-> hover 45:26
+> hover 48:26
 ```silt
 Int
 ```
-> hover 46:14
+> hover 49:14
 ```silt
 Fn(String) -> JsonError
 ```
@@ -36,79 +36,83 @@ A variant of `json.JsonError`, reached as `json.MissingField`.
 | `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
 | `MissingField(String)` | the field's path | required field absent |
 | `Other(String)` | message | unclassified parse failure |
-> hover 46:27
+> hover 49:27
 ```silt
 String
 ```
-> hover 54:19
+> hover 57:19
 ```silt
 Fn(Float) -> Shape
 ```
-> hover 54:26
+> type-definition 57:19
+shapes.silt:1:10-1:15
+> hover 57:26
 ```silt
 Float
 ```
-> hover 55:12
+> hover 58:12
 ```silt
 Fn(Float) -> Shape
 ```
-> hover 55:19
+> hover 58:19
 ```silt
 Float
 ```
-> hover 55:46
+> hover 58:46
 ```silt
 Fn(Float) -> Shape
 ```
-> hover 55:53
+> hover 58:53
 ```silt
 Float
 ```
-> hover 56:19
+> hover 59:19
 ```silt
 Shape
 ```
-> hover 63:10
+> hover 66:10
 ```silt
 Fn(String, String) -> Pair(String)
 ```
-> hover 63:12
+> type-definition 66:10
+main.silt:40:6-40:10
+> hover 66:12
 ```silt
 String
 ```
-> hover 64:10
+> hover 67:10
 ```silt
 Fn(String) -> Pair(String)
 ```
-> hover 64:14
+> hover 67:14
 ```silt
 String
 ```
-> hover 70:8
+> hover 73:8
 ```silt
 Fn(Int, Int) -> Two(Int)
 ```
-> hover 70:10
+> hover 73:10
 ```silt
 Int
 ```
-> hover 70:13
+> hover 73:13
 ```silt
 Int
 ```
-> hover 75:17
+> hover 78:17
 ```silt
 Fn(Float) -> Pair(Float)
 ```
-> hover 75:21
+> hover 78:21
 ```silt
 Float
 ```
-> hover 79:10
+> hover 82:10
 ```silt
 Fn(Option(Shape)) -> Box
 ```
-> hover 79:12
+> hover 82:12
 ```silt
 Option(Shape)
 ```
