@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A function of another module that calls a trait method with its type
+-- arguments in another order, directly, through a second function or
+-- twice: `toml.parse`'s refusal of the type the call gives is at the
+-- argument that gives it and named by its alias, and where two
+-- arguments give the same type, by the first, as through functions
+-- that give the types to `toml.parse` themselves.
+import lib
+
+type X1 {
+  b: Bytes,
+}
+
+type X2 {
+  b: Bytes,
+}
+
+type R1 = X1
+
+type R2 = X2
+
+type R3 = X1
+
+fn main() {
+  lib.rev(lib.T { n: 1 }, R1, R2, R3)
+  lib.drev(R1, R2, R3)
+  lib.rev(lib.T { n: 1 }, R1, R1, R1)
+  lib.drev(R1, R1, R1)
+  lib.rev(lib.T { n: 1 }, X1, X2, R3)
+  lib.drev(X1, X2, R3)
+  lib.swap(lib.T { n: 1 }, R2, R1, R3)
+  lib.dswap(R2, R1, R3)
+  lib.twice(lib.T { n: 1 }, R1, R3)
+  lib.dtwice(R1, R3)
+}

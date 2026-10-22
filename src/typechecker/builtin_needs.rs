@@ -650,7 +650,11 @@ impl TypeChecker {
                 _ => false,
             });
             if let Some((span, ..)) = place {
-                self.wanted[k].origin.span = *span;
+                // (The types the call gives the method go with it.)
+                let at = std::mem::replace(&mut self.wanted[k].origin.span, *span);
+                if let Some(places) = self.via_places.remove(&at) {
+                    (self.via_places.entry(*span).or_default()).extend(places);
+                }
             }
         }
     }

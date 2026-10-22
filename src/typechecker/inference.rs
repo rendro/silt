@@ -1691,10 +1691,14 @@ impl TypeChecker {
                         // A trait method's call: what the method of the
                         // receiver's impl gives a decoder is decided with
                         // the module's bodies, each type at the argument
-                        // that gives it, by the alias that names it.
+                        // that gives it, by the alias that names it (in
+                        // the order of the arguments: of two that give
+                        // one type, the first names it, as through a
+                        // function).
                         if let Goal::Pred(Pred::Via { method_ty, .. }) = &self.wanted[k].goal {
                             let origin = self.wanted[k].origin;
-                            let places: Vec<_> = (type_of_vars(&self.apply(method_ty)).into_iter())
+                            let mut places: Vec<_> = (type_of_vars(&self.apply(method_ty)))
+                                .into_iter()
                                 .filter_map(|v| {
                                     let i = (params.iter().skip(implicit_self))
                                         .position(|param| free_vars_in(param).contains(&v))?;
@@ -1703,9 +1707,11 @@ impl TypeChecker {
                                         span: arg.span,
                                         ..origin
                                     };
-                                    Some((Type::Var(v), origin, self.alias_named(arg)))
+                                    Some((i, (Type::Var(v), origin, self.alias_named(arg))))
                                 })
                                 .collect();
+                            places.sort_by_key(|(i, _)| *i);
+                            let places = places.into_iter().map(|(_, place)| place);
                             (self.via_places.entry(arg.span).or_default()).extend(places);
                         }
                     }
