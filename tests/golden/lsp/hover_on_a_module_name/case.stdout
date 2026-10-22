@@ -235,7 +235,7 @@ module json
 Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 54:14
 ```silt
-Int
+Fn(String, Int) -> JsonError
 ```
 
 ---

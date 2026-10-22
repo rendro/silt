@@ -25,9 +25,10 @@ use crate::defs::{DefId, DefKind, Res};
 use crate::intern::{Symbol, resolve as resolve_sym};
 use crate::session::{ModuleId, Session};
 use crate::source::{SourceFile, Span};
-use crate::types::{RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
+use crate::types::Type;
 
 use super::Server;
+use super::ast_walk::written_general;
 use super::conversions::span_to_range;
 use super::local_bindings::nearest_local_binding_for;
 use super::names::{DefUse, Names};
@@ -62,21 +63,6 @@ pub(super) enum Target {
 /// Whether byte `cursor` is in `span` or directly behind it.
 fn holds(span: Span, cursor: usize) -> bool {
     span.start as usize <= cursor && cursor <= span.end as usize
-}
-
-/// The type of the scheme `scheme` with its type variables written as
-/// letters, in the order they first appear (`Fn(a, Fn(a) -> b) -> b`).
-fn written_general(scheme: &Scheme) -> Type {
-    let letters: HashMap<TyVar, Type> = free_vars_in(&scheme.ty)
-        .into_iter()
-        .filter(|var| scheme.vars.contains(var))
-        .zip(b'a'..=b'z')
-        .map(|(var, letter)| {
-            let name = crate::intern::intern(&char::from(letter).to_string());
-            (var, Type::Rigid(RigidId { var, name }))
-        })
-        .collect();
-    substitute_vars(&scheme.ty, &letters)
 }
 
 /// The session-independent name of the definition `id` of `session`.

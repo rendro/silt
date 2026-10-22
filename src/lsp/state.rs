@@ -48,6 +48,16 @@ pub(super) struct LocalBinding {
     pub(super) same_as: Option<usize>,
 }
 
+/// A constructor a pattern names (`Circle` in `Some(Circle(r)) ->`),
+/// with its type as an expression that names it has: a variant with
+/// fields a function to the type of the value it matches
+/// (`Fn(Float) -> Shape`), one without that type.
+pub(super) struct PatternConstructor {
+    /// Where its name is.
+    pub(super) span: crate::source::Span,
+    pub(super) ty: Option<Type>,
+}
+
 impl LocalBinding {
     /// The binding this binder is a site of, by the byte its first
     /// binder starts at.
@@ -78,6 +88,8 @@ pub(super) struct Document {
     pub(super) definitions: HashMap<Symbol, DefInfo>,
     /// Local bindings (let, params, match/when) with approximate source positions.
     pub(super) locals: Vec<LocalBinding>,
+    /// The constructors its patterns name.
+    pub(super) pattern_constructors: Vec<PatternConstructor>,
     /// The tokens of `source`, made when a request first asks for them
     /// (see `tokens`) and kept until the text changes (`set_text`).
     pub(super) lexed: std::cell::OnceCell<Lexed>,

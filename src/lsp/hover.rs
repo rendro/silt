@@ -103,10 +103,20 @@ impl Server {
             return Some(markdown(value));
         }
 
-        // An item of an import (`map` in `import list.{ map }`) is in no
-        // expression: it has its definition's type, general.
-        let ty =
-            find_type_at_offset(program, cursor).or_else(|| self.import_item_type_at(uri, cursor));
+        // A constructor in a pattern (`Syntax` in `Err(json.Syntax(m, at))
+        // ->`) is no expression: it has the type an expression that names
+        // it has, not the one of the expression around the pattern. Nor
+        // is an item of an import (`map` in `import list.{ map }`): it
+        // has its definition's type, general.
+        let in_pattern = doc
+            .pattern_constructors
+            .iter()
+            .find(|c| (c.span.start as usize..c.span.end as usize).contains(&cursor));
+        let ty = match in_pattern {
+            Some(constructor) => constructor.ty.clone(),
+            None => find_type_at_offset(program, cursor)
+                .or_else(|| self.import_item_type_at(uri, cursor)),
+        };
 
         // If the cursor is on a binding-site (e.g. `fn foo` declaration name)
         // and we have a definition for that symbol, prefer the definition's

@@ -7,7 +7,7 @@
 
 use crate::ast::*;
 use crate::intern::{Symbol, intern};
-use crate::types::Type;
+use crate::types::{RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
 
 // ── Type display helpers ───────────────────────────────────────────
 
@@ -24,6 +24,21 @@ pub(super) fn has_unresolved_vars(ty: &Type) -> bool {
         Type::Map(k, v) => has_unresolved_vars(k) || has_unresolved_vars(v),
         _ => false,
     }
+}
+
+/// The type of the scheme `scheme` with its type variables written as
+/// letters, in the order they first appear (`Fn(a, Fn(a) -> b) -> b`).
+pub(super) fn written_general(scheme: &Scheme) -> Type {
+    let letters: std::collections::HashMap<TyVar, Type> = free_vars_in(&scheme.ty)
+        .into_iter()
+        .filter(|var| scheme.vars.contains(var))
+        .zip(b'a'..=b'z')
+        .map(|(var, letter)| {
+            let name = intern(&char::from(letter).to_string());
+            (var, Type::Rigid(RigidId { var, name }))
+        })
+        .collect();
+    substitute_vars(&scheme.ty, &letters)
 }
 
 // ── AST walkers (offset-based) ─────────────────────────────────────

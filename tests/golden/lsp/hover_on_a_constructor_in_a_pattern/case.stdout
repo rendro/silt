@@ -1,0 +1,114 @@
+> hover 45:14
+```silt
+Fn(String, Int) -> JsonError
+```
+
+---
+
+A variant of `json.JsonError`, reached as `json.Syntax`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
+| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
+| `MissingField(String)` | the field's path | required field absent |
+| `Other(String)` | message | unclassified parse failure |
+> hover 45:21
+```silt
+String
+```
+> hover 45:26
+```silt
+Int
+```
+> hover 46:14
+```silt
+Fn(String) -> JsonError
+```
+
+---
+
+A variant of `json.JsonError`, reached as `json.MissingField`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Syntax(String, Int)` | message, byte offset | syntactically invalid JSON |
+| `TypeMismatch(String, String)` | expected, actual (ending with the value's path) | wrong JSON type for target |
+| `MissingField(String)` | the field's path | required field absent |
+| `Other(String)` | message | unclassified parse failure |
+> hover 46:27
+```silt
+String
+```
+> hover 54:19
+```silt
+Fn(Float) -> Shape
+```
+> hover 54:26
+```silt
+Float
+```
+> hover 55:12
+```silt
+Fn(Float) -> Shape
+```
+> hover 55:19
+```silt
+Float
+```
+> hover 55:46
+```silt
+Fn(Float) -> Shape
+```
+> hover 55:53
+```silt
+Float
+```
+> hover 56:19
+```silt
+Shape
+```
+> hover 63:10
+```silt
+Fn(String, String) -> Pair(String)
+```
+> hover 63:12
+```silt
+String
+```
+> hover 64:10
+```silt
+Fn(String) -> Pair(String)
+```
+> hover 64:14
+```silt
+String
+```
+> hover 70:8
+```silt
+Fn(Int, Int) -> Two(Int)
+```
+> hover 70:10
+```silt
+Int
+```
+> hover 70:13
+```silt
+Int
+```
+> hover 75:17
+```silt
+Fn(Float) -> Pair(Float)
+```
+> hover 75:21
+```silt
+Float
+```
+> hover 79:10
+```silt
+Fn(Option(Shape)) -> Box
+```
+> hover 79:12
+```silt
+Option(Shape)
+```
