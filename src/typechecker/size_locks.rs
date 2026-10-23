@@ -1,7 +1,6 @@
-//! Round 50 audit: after removing the never-read informational
-//! fields (`_name`, `_params`) from `EnumInfo`, `RecordInfo`, and
-//! `TraitInfo`, these assertions lock the struct sizes so that
-//! accidentally re-adding a purely informational field (which
+//! These assertions lock the sizes of `EnumInfo`, `RecordInfo`, and
+//! `TraitInfo` so that
+//! accidentally adding a purely informational field (which
 //! would bloat the typechecker HashMaps storing thousands of
 //! these per compilation) fails fast at test time.
 //!

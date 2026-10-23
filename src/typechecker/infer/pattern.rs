@@ -304,12 +304,12 @@ impl TypeChecker {
 
     // ── Pattern type binding ────────────────────────────────────────
 
-    /// BROKEN (soundness): duplicate bindings within a single conjunctive
+    /// Duplicate bindings within a single conjunctive
     /// pattern scope (tuple elements, constructor args, record fields,
-    /// list elements, fn param list) used to silently shadow each other
-    /// — `let (a, a) = (1, 2)` typechecked and bound `a = 2` at runtime;
-    /// `fn f(a: Int, a: Int)` typechecked with no error; `match (1, 2) {
-    /// (x, x) -> x }` typechecked. Walk the pattern once before type
+    /// list elements, fn param list) are errors, for soundness: they
+    /// would silently shadow each other (`let (a, a) = (1, 2)` binding
+    /// `a = 2` at runtime, `fn f(a: Int, a: Int)`, `match (1, 2) {
+    /// (x, x) -> x }`). Walk the pattern once before type
     /// binding and emit a diagnostic for every duplicate.
     ///
     /// Or-patterns (`p1 | p2`) are intentionally exempted: the same name
@@ -357,16 +357,13 @@ impl TypeChecker {
         }
     }
 
-    /// BROKEN (round 52): duplicate explicit-sub field names in a record
-    /// pattern (e.g. `Point { x: a, x: b }`) slipped past the round-51
-    /// binder-dedup guard because the shorthand form `{ x, x }` binds the
-    /// same name twice (caught by `check_pattern_duplicate_bindings`) but
-    /// the explicit-sub form binds distinct names (`a` and `b`). The
-    /// field-name duplicate itself was never checked. Record literals and
-    /// record type declarations already enforce this rule; the
-    /// record-pattern arm is the missing sibling. Walk `fields` once and
-    /// emit one diagnostic per duplicate field name, anchored at the
-    /// second occurrence.
+    /// A field named twice in a record pattern (`Point { x: a, x: b }`)
+    /// is an error, as in record literals and record type declarations.
+    /// The binder check (`check_pattern_duplicate_bindings`) catches
+    /// only the shorthand `{ x, x }`, which binds one name twice; the
+    /// explicit-sub form binds distinct names (`a` and `b`). Walk
+    /// `fields` once and emit one diagnostic per duplicate field name,
+    /// anchored at the second occurrence.
     pub(super) fn check_record_pattern_duplicate_fields(
         &mut self,
         fields: &[(Symbol, Span, Option<Pattern>)],

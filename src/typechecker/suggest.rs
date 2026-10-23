@@ -1,6 +1,6 @@
 //! "did you mean ...?" suggestion helper for type-checker diagnostics.
 //!
-//! Closes round-17 deferred finding #4: when the type checker emits
+//! When the type checker emits
 //! `undefined variable 'TYPO'` or `module 'MOD' has no member 'TYPO'`,
 //! it should append a `did you mean \`CANDIDATE\`?` hint when
 //! a close-enough identifier exists in scope. This module owns the
@@ -41,8 +41,8 @@ pub(super) fn levenshtein(a: &str, b: &str) -> usize {
 /// - Exact matches to `typo` are filtered out (never suggest yourself).
 /// - For a pair (typo, candidate), define `max = typo.len().max(cand.len())`.
 /// - Short pairs (`max <= 5`) accept Levenshtein distance `<= 1`.
-///   Round-24 tightened this from `<= 2` after the audit surfaced
-///   low-signal hits like `foo` → `Bool` (d=2). Genuine 1-edit typos
+///   (`<= 2` would give low-signal hits like `foo` → `Bool`,
+///   d=2.) Genuine 1-edit typos
 ///   on very short names still pass (`fo` → `for`, `namee` → `name`).
 ///   Two-edit typos on slightly longer names remain covered by the
 ///   scaled rule below: `pintln` → `println` (d=1, max=7, 1*3 <= 7),

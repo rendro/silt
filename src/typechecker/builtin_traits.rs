@@ -6,14 +6,10 @@ use super::*;
 /// The declarations of the builtin traits of the prelude, as a program
 /// would write them, with the documentation an editor shows for each.
 ///
-/// Round 62 (item 3 of type-design improvements) — built-in trait
-/// registration was previously a separate code path that hand-rolled
-/// `TraitInfo` entries directly, bypassing the duplicate-method check,
-/// supertrait/where-clause processing, and any future feature added to
-/// `register_trait_decl`. This function returns the same `TraitDecl`
-/// shape a parser would produce for hand-written user code, so the
-/// unified `register_trait_decl_inner` pipeline handles built-ins and
-/// user traits identically.
+/// It returns the same `TraitDecl` shape a parser produces for a trait
+/// a program writes, so `register_trait_decl_inner` registers the
+/// builtins and the user traits one way (the duplicate-method check,
+/// supertraits, where clauses).
 ///
 /// The five built-ins:
 /// - `Display`: `fn display(self) -> String` (signature only).
@@ -282,7 +278,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Primitives + List: all four.
     register_structural_traits_for(
         checker,
-        // Round 75 TYPE-3 LATENT: canonical key for the unit type is
+        // The canonical key for the unit type is
         // "Unit" (matches canonical_name(Type::Unit) and
         // dispatch_type_for_value(Value::Unit)); an impl target `()`
         // names it too.

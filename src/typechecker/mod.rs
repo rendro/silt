@@ -33,7 +33,7 @@ mod tables;
 mod typeexpr;
 mod unify;
 mod unused;
-// `pub(crate)`: round 93 — `module::sibling_module_suggestion` reuses
+// `pub(crate)`: `module::sibling_module_suggestion` reuses
 // the shared did-you-mean threshold policy for import-path hints.
 pub(crate) mod suggest;
 
@@ -196,7 +196,7 @@ pub struct TypeChecker {
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
     pub(super) unknown_receiver: Option<(Type, Symbol)>,
-    /// Spans of `?` uses in the current fn/lambda body (round 93). When the
+    /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
     /// of leaving a bare header-located mismatch. Saved/restored around
@@ -908,8 +908,8 @@ impl TypeChecker {
         // First pass: pre-register every type name with a placeholder
         // body. This makes recursive type references (e.g.
         // `type Expr { Add(Expr, Expr), ... }`) resolve during variant /
-        // field type resolution — without this, the B3 unknown-type
-        // check introduced in round 60 would reject the self-reference
+        // field type resolution — without this, the unknown-type
+        // check would reject the self-reference
         // because `self.tables.enums` / `self.tables.records` don't contain the name
         // until after the body is processed. The real registration loop
         // below overwrites the placeholders.

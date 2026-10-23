@@ -104,7 +104,7 @@ impl TypeChecker {
 
     /// The type `ty` written bare, with a fresh type variable for each
     /// of its parameters, so that distinct uses do not share the
-    /// template variables (T1 audit fix): `List` is `List(a)`, `Box`
+    /// template variables: `List` is `List(a)`, `Box`
     /// `Box(a)`. An alias is a `Type::Generic(alias, args)` head the
     /// canonicaliser expands. `None` for a type with no such instance
     /// (`Tuple`, `Fn`).
@@ -126,8 +126,7 @@ impl TypeChecker {
                 "Set" => return Some(Type::Set(Box::new(self.fresh_var()))),
                 "Channel" => return Some(Type::Channel(Box::new(self.fresh_var()))),
                 // Opaque resource / value types from builtin
-                // modules: the shape the builtin schemes produce
-                // (round 72 GAP G1).
+                // modules: the shape the builtin schemes produce.
                 _ if let Some(arity) = opaque_arity(builtin) => {
                     let args = (0..arity).map(|_| self.fresh_var()).collect();
                     return Some(Type::Generic(ty, args));
@@ -298,7 +297,7 @@ impl TypeChecker {
                         param_vars.insert(*name, tv.clone());
                         return tv;
                     }
-                    // B3 (round 60): an uppercase name that refers to
+                    // An uppercase name that refers to
                     // nothing is reported here rather than becoming a
                     // ghost type that cascades into "does not implement
                     // Display" and "type mismatch" far from the
@@ -355,8 +354,7 @@ impl TypeChecker {
                         ("Channel", 0 | 1) => return Type::Channel(Box::new(arg(self))),
                         // Opaque arity-0 builtin types accept the
                         // empty-paren surface form `Bytes()` (mirrors
-                        // `List()`/`Map()` etc.) and report `Bytes(Int)`
-                        // (round 72 GAP G1).
+                        // `List()`/`Map()` etc.) and report `Bytes(Int)`.
                         (b, n) if let Some(arity) = opaque_arity(b) => {
                             if n == arity {
                                 return Type::Generic(ty.expect("a builtin type"), resolved_args);
@@ -374,12 +372,12 @@ impl TypeChecker {
                         _ => {}
                     }
                 }
-                // B2: enforce arity for user-declared parameterized
-                // records, enums and aliases. A mismatched arity used to
-                // be dropped at unify time, leaving a runtime type error
+                // Enforce arity for user-declared parameterized
+                // records, enums and aliases: a mismatched arity dropped
+                // at unify time would leave a runtime type error
                 // at first use of the field. A parameterless record has
                 // arity 0, so `Point(Bool)` is reported too.
-                // B3 (round 60): the generic form `Frobnitz(Int)` for an
+                // The generic form `Frobnitz(Int)` for an
                 // undeclared `Frobnitz` reports "unknown type
                 // 'Frobnitz'" at the annotation span, matching the
                 // bare-name path.
