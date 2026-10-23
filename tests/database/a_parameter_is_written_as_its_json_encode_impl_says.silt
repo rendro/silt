@@ -40,7 +40,7 @@ fn main() {
       println(postgres.execute(db, "SELECT $1::jsonb", (m,)))
       match postgres.stream(db, "SELECT $1::jsonb::text AS v", ((m, "a"),), Out) {
         Ok(rows) -> println("a stream: {channel.receive(rows)}")
-        Err(e) -> println("a stream: {e.message()}")
+        Err(e) -> println("a stream: {Error.message(e)}")
       }
       let read = postgres.transact(db) { tx ->
         let c = postgres.cursor(tx, "SELECT $1::jsonb::text AS v", (#{"price": m},), 2, Out)?
@@ -50,6 +50,6 @@ fn main() {
       }
       println("a cursor: {read}")
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

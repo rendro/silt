@@ -19,7 +19,7 @@ trait Runner for Repo {
 }
 
 fn run_with(r: r, c: a, ps: p) -> Result(Int, postgres.PostgresError) where r: Runner {
-  r.run(c, ps)
+  Runner.run(r, c, ps)
 }
 
 fn main() {

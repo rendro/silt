@@ -3,5 +3,5 @@
 import shapes
 fn main() {
   println(shapes.described(shapes.square(2)))
-  println(shapes.square(3).describe())
+  println(shapes.Describe.describe(shapes.square(3)))
 }

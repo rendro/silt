@@ -19,10 +19,10 @@ fn from_toml(text: String, type a) -> Result(a, toml.TomlError) {
 fn main() {
   match from_json("\{\"name\": \"b\", \"items\": \"oops\"\}", Bag) {
     Ok(v) -> println(v.name)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
   match from_toml("name = \"b\"\nitems = \"oops\"\n", Bag) {
     Ok(v) -> println(v.name)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

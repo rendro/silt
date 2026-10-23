@@ -118,6 +118,6 @@ fn main() {
   task.join(writer)
   match got {
     Ok(resp) -> show("  http.get gets", resp.body)
-    Err(e) -> println("  http.get: {e.message()}")
+    Err(e) -> println("  http.get: {Error.message(e)}")
   }
 }

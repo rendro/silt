@@ -1,5 +1,5 @@
 type Point { x: Int, y: Int, }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
     let p = Point { x: 1, y: 2 }
     let q = Point { x: 1, y: 3 }

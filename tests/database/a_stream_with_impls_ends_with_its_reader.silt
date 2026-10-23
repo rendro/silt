@@ -37,7 +37,7 @@ fn url() -> String {
 fn first(rows: Channel(Result(R, postgres.PostgresError))) -> String {
   match channel.receive(rows) {
     Some(Ok(row)) -> "the first row: {row}"
-    Some(Err(e)) -> e.message()
+    Some(Err(e)) -> Error.message(e)
     None -> "no row"
   }
 }
@@ -55,16 +55,16 @@ fn main() {
             let _ = channel.receive(never)
             "the function ended"
           }
-          Err(e) -> e.message()
+          Err(e) -> Error.message(e)
         }
       }
       match late {
         Ok(said) -> println(said)
-        Err(e) -> println("task.deadline: {e.message()}")
+        Err(e) -> println("task.deadline: {Error.message(e)}")
       }
       match postgres.query(pool, "SELECT 1 AS n, to_jsonb('1'::text) AS code", (), R) {
         Ok(rows) -> println("the next statement: {rows}")
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       let got: Channel(String) = channel.new(1)
       let reader = task.spawn { ->
@@ -75,7 +75,7 @@ fn main() {
             let _ = channel.receive(never)
             ()
           }
-          Err(e) -> channel.send(got, e.message())
+          Err(e) -> channel.send(got, Error.message(e))
         }
       }
       match channel.receive(got) {
@@ -85,6 +85,6 @@ fn main() {
       task.cancel(reader)
       println("the reader is cancelled, main returns")
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

@@ -40,7 +40,7 @@ fn test_string_from() {
 }
 
 fn test_display_method() {
-  let _ = long().display()
+  let _ = "{long()}"
 }
 
 fn test_inspect() {

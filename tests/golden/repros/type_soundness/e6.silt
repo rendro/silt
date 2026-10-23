@@ -2,6 +2,6 @@
 import list
 fn main() {
   let xs = [1, 2, 3]
-  let ys = list.map(xs) { x -> x.display() }
+  let ys = list.map(xs) { x -> "{x}" }
   println(ys)
 }

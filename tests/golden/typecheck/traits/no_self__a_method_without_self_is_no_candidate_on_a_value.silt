@@ -42,11 +42,11 @@ trait Rd for P {
 }
 
 fn bounded(x: a) -> Int where a: Mk, a: Rd {
-  x.decode(10)
+  Rd.decode(x, 10)
 }
 
 fn unknown(x) {
-  x.decode(20)
+  Rd.decode(x, 20)
 }
 
 fn first(x: a) -> a {
@@ -54,15 +54,15 @@ fn first(x: a) -> a {
 }
 
 fn later(x: a) -> Int where a: Mk + Rd {
-  let f = { y -> first(y).decode(30) }
+  let f = { y -> Rd.decode(first(y), 30) }
   f(x)
 }
 
 fn main() {
   let s = "a"
-  println(s.decode(3))
+  println(Rd.decode(s, 3))
   println(bounded(s))
   println(unknown(s))
   println(later(s))
-  println(P { n: 5 }.decode(40))
+  println(Rd.decode(P { n: 5 }, 40))
 }

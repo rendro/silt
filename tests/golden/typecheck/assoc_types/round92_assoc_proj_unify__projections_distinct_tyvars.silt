@@ -16,7 +16,7 @@ trait Stream for Wrap {
 }
 
 fn pick(x: a, y: b) where a: Stream, b: Stream {
-  let xs = [x.first(), y.first()]
+  let xs = [Stream.first(x), Stream.first(y)]
   xs
 }
 

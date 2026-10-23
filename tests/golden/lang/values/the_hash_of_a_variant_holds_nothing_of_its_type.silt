@@ -19,11 +19,11 @@ type There {
 }
 
 fn main() {
-  println(Dot.hash() == Point.hash())
-  println(Box(3, 4).hash() == Rect(3, 4).hash())
-  println([Box(3, 4), Dot].hash() == [Rect(3, 4), Point].hash())
+  println(Hash.hash(Dot) == Hash.hash(Point))
+  println(Hash.hash(Box(3, 4)) == Hash.hash(Rect(3, 4)))
+  println(Hash.hash([Box(3, 4), Dot]) == Hash.hash([Rect(3, 4), Point]))
   -- Which variant it is, and its fields, are in the hash.
-  println(Dot.hash() == Box(0, 0).hash())
-  println(Box(3, 4).hash() == Box(4, 3).hash())
-  println(Between { v: 1 }.hash() == Between { v: 1 }.hash())
+  println(Hash.hash(Dot) == Hash.hash(Box(0, 0)))
+  println(Hash.hash(Box(3, 4)) == Hash.hash(Box(4, 3)))
+  println(Hash.hash(Between { v: 1 }) == Hash.hash(Between { v: 1 }))
 }

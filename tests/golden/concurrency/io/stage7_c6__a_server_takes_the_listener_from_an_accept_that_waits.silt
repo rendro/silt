@@ -20,7 +20,7 @@ fn main() {
   let waiting = task.spawn { ->
     match tcp.accept(listener) {
       Ok(_) -> "a connection"
-      Err(e) -> e.message()
+      Err(e) -> Error.message(e)
     }
   }
   let server = task.spawn { ->
@@ -31,7 +31,7 @@ fn main() {
   println("the accept: {task.join(waiting)}")
   match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
     Ok(r) -> println("the client: {r.status} {text(r.body)}")
-    Err(e) -> println("the client: {e.message()}")
+    Err(e) -> println("the client: {Error.message(e)}")
   }
   task.cancel(server)
 }

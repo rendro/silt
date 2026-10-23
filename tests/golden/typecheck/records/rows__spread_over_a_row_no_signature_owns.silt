@@ -12,5 +12,5 @@ trait Tag { fn tag(self, p: {name: String, ...r}) -> {name: String, ...r} }
 trait Tag for Int { fn tag(self, p: {name: String, ...r}) -> {name: String, ...r} { {...p} } }
 fn main() {
   let f: Fn({name: String, ...r}) -> {name: String, ...r} = { p -> {...p} }
-  println(1.tag(Person { name: "a", age: 1 }))
+  println(Tag.tag(1, Person { name: "a", age: 1 }))
 }

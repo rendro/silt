@@ -13,6 +13,6 @@ fn main() {
   task.join(h)
   match io.read_file("round78_write.txt") {
     Ok(s) -> println(s)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

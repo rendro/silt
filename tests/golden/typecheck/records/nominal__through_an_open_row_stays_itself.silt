@@ -10,7 +10,7 @@ fn older(p: Person) -> Person { p.{ age: p.age + 1 } }
 fn main() {
   let q = id_name(Person { name: "Bob", age: 42 })
   println(q.age)
-  println(q.greet())
+  println(Greet.greet(q))
   println(older(q).age)
   println(name_of(q))
   match q { Person { name, age } -> println("{name} {age}") }

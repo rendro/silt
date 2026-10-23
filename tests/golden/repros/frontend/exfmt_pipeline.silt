@@ -160,7 +160,7 @@ fn main() {
   -- Read the log file; `return` in an Err arm bails out of main.
   let content = match io.read_file("examples/log.txt") {
     Ok(c) -> c
-    Err(e) -> return println("Error reading log file: {e.message()}")
+    Err(e) -> return println("Error reading log file: {Error.message(e)}")
   }
   let lines = content
   |> string.split("\n")

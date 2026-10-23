@@ -144,7 +144,7 @@ fn main() {
   -- Read the config file
   let text = match io.read_file("examples/app.conf") {
     Ok(t) -> t
-    Err(e) -> return println("Error reading examples/app.conf: {e.message()}")
+    Err(e) -> return println("Error reading examples/app.conf: {Error.message(e)}")
   }
   println("=== Parsing config file ===")
   println("")

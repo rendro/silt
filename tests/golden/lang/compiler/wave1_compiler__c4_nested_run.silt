@@ -13,6 +13,6 @@ type Outer { inners: List(Inner) }
 fn main() {
   match json.parse_list("[]", Outer) {
     Ok(v) -> println(v)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

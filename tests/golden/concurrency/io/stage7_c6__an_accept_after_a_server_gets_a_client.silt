@@ -35,9 +35,9 @@ fn main() {
           tcp.close(conn)
           "a client"
         }
-        Err(e) -> "a connection that says nothing: {e.message()}"
+        Err(e) -> "a connection that says nothing: {Error.message(e)}"
       }
-      Err(e) -> "no connection: {e.message()}"
+      Err(e) -> "no connection: {Error.message(e)}"
     }
     let _ = task.join(client)
     match got {

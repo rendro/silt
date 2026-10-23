@@ -92,10 +92,10 @@ fn main() {
     Ok(db) -> {
       match row(db) {
         Ok(_) -> ()
-        Err(e) -> println("failed: {e.message()}")
+        Err(e) -> println("failed: {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

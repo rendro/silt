@@ -16,7 +16,7 @@ trait Load for T {
 }
 
 pub fn via(x: s, type a) where s: Load, a: json.Decode {
-  x.get("n = 1", a)
+  Load.get(x, "n = 1", a)
 }
 
 pub fn deep(x: s, type a) where s: Load, a: json.Decode {

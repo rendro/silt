@@ -1,8 +1,8 @@
 type Wrapped(a) { value: a }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
-fn h(a: a) -> Int where a: Hash { a.hash() }
-fn d(a: a) -> String where a: Display { a.display() }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
+fn d(a: a) -> String where a: Display { "{a}" }
 fn main() {
     let w = Wrapped { value: 5 }
     let v = Wrapped { value: 7 }
@@ -10,6 +10,6 @@ fn main() {
     println(eq_gen(w, v))
     let _ = h(w)
     println(d(w))
-    println(w.compare(v))
-    println(w.equal(v))
+    println(Compare.compare(w, v))
+    println(w == v)
 }

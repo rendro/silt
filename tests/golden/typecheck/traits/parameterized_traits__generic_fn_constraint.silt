@@ -14,7 +14,7 @@ trait Convertible(Int) for String {
 }
 
 fn unpack(x: a, type b) -> b where a: Convertible(b) {
-    x.convert()
+    Convertible.convert(x)
 }
 
 fn main() {

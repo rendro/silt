@@ -13,13 +13,13 @@ trait IntoAppError for io.IoError {
 }
 
 fn load(path: String) -> Result(String, AppError) {
-  let raw = result.map_err(io.read_file(path), io.IoError.into_app_error)?
+  let raw = result.map_err(io.read_file(path), IntoAppError.into_app_error)?
   Ok(raw)
 }
 
 fn main() {
-  println(lib.Shape.describe(lib.Shape.Circle(1)))
-  println(lib.Pt.describe(lib.Pt { x: 2 }))
+  println(lib.Describe.describe(lib.Shape.Circle(1)))
+  println(lib.Describe.describe(lib.Pt { x: 2 }))
   match load("/nonexistent/silt/golden") {
     Ok(_) -> println("ok")
     Err(AppError.IoProblem(_)) -> println("io problem")

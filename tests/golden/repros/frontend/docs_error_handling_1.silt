@@ -7,6 +7,6 @@ fn main() {
     Ok(content) -> println("loaded {string.length(content)} bytes")
     Err(io.NotFound(path)) -> println("file does not exist: {path}")
     Err(io.PermissionDenied(path)) -> println("denied: {path}")
-    Err(e) -> println("error: {e.message()}")
+    Err(e) -> println("error: {Error.message(e)}")
   }
 }

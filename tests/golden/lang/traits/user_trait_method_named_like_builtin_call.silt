@@ -10,7 +10,7 @@ trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }
 trait Ranked { fn compare(self, other: Self) -> Int }
 trait Ranked for Int { fn compare(self, other: Self) -> Int { 99 } }
-fn described(x: t) -> String where t: Describe { x.display() }
+fn described(x: t) -> String where t: Describe { Describe.display(x) }
 fn main() {
   println(5.display())
   println(5.compare(6))

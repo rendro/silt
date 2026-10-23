@@ -38,8 +38,8 @@ error[type]: type mismatch: expected a, got Int
 error[type]: type mismatch: expected t, got Int
  --> rigid_variable_mismatch__names_the_variable.silt:24:3
     |
- 24 |   s.area()
-    |   ^^^^^^^^ type mismatch: expected t, got Int
+ 24 |   Shape.area(s)
+    |   ^^^^^^^^^^^^^ type mismatch: expected t, got Int
  ::: rigid_variable_mismatch__names_the_variable.silt:23:15
     |
  23 | fn area_of(s: t) -> t where t: Shape {

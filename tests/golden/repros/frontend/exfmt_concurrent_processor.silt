@@ -102,7 +102,7 @@ fn main() {
               }
               Err(err_info) -> {
                 let (path, err) = err_info
-                println("[Worker {worker_id}] FAILED {path}: {err.message()}")
+                println("[Worker {worker_id}] FAILED {path}: {Error.message(err)}")
                 loop(collected + 1, successes, failures + 1)
               }
             }

@@ -8,5 +8,5 @@ trait Error for MyErr {}
 
 fn main() {
     let e = Boom
-    println(e.message())
+    println(Error.message(e))
 }

@@ -5,7 +5,7 @@ trait Convert({a: Int, b: String}) for Int {
   fn convert(self) -> {a: Int, b: String} { {a: self, b: "x"} }
 }
 fn use_it(x: a) -> Int where a: Convert({a: Int, b: String}) {
-  let r = x.convert()
+  let r = Convert.convert(x)
   r.a
 }
 fn main() { println(use_it(7)) }

@@ -32,7 +32,7 @@ trait Greet for Shape {
 }
 
 fn main() {
-  println(Circle(5.0).greet()) -- hi from a circle of radius 5.0
+  println(Greet.greet(Circle(5.0))) -- hi from a circle of radius 5.0
 }
 ```
 
@@ -214,8 +214,8 @@ trait Show for Item {
 }
 
 fn main() {
-  println(Item { v: 1 }.show()) -- default
-  println(Item { v: 1 }.debug()) -- item-debug
+  println(Show.show(Item { v: 1 })) -- default
+  println(Show.debug(Item { v: 1 })) -- item-debug
 }
 ```
 
@@ -249,7 +249,7 @@ trait Describable {
   fn name(self) -> String
   -- the default uses name()
   fn greet(self) -> String {
-    "hi, {self.name()}"
+    "hi, {Describable.name(self)}"
   }
 }
 
@@ -264,7 +264,7 @@ trait Describable for Person {
 }
 
 fn main() {
-  println(Person { who: "alice" }.greet()) -- hi, alice
+  println(Describable.greet(Person { who: "alice" })) -- hi, alice
 }
 ```
 
@@ -367,13 +367,13 @@ trait Greet for Int {
 trait Greet for Box(a) where a: Greet {
   fn greet(self) -> String {
     match self {
-      Box(inner) -> inner.greet()
+      Box(inner) -> Greet.greet(inner)
     }
   }
 }
 
 fn main() {
-  println(Box(5).greet()) -- int-greet
+  println(Greet.greet(Box(5))) -- int-greet
 }
 ```
 
@@ -437,7 +437,7 @@ trait Peek for Int {
 
 trait Peek for Cell(a) where a: Peek {
   fn peek(self) -> Int {
-    self.value.peek()
+    Peek.peek(self.value)
   }
 }
 ```
@@ -497,7 +497,7 @@ trait Monoid for Int {
 
 fn main() {
   let zero = Int.empty() -- concrete dispatch
-  let five = Int.combine(2, 3)
+  let five = Monoid.combine(2, 3)
   println("{zero} {five}")
 }
 ```
@@ -526,6 +526,7 @@ writing a one-line closure around `x.method()`:
 
 ```silt
 import list
+import string
 
 type Celsius {
   c: Float,
@@ -539,7 +540,7 @@ trait Display for Celsius {
 
 fn main() {
   let temps = [Celsius { c: 20.0 }, Celsius { c: 25.5 }]
-  let rendered = list.map(temps, Celsius.display)
+  let rendered = list.map(temps, string.from)
   list.each(rendered) { line -> println(line) }
 }
 ```
@@ -820,12 +821,12 @@ import list
 
 -- CORRECT: 'a' appears in the parameter annotation
 fn print_all(items: List(a)) where a: Display {
-  items |> list.each { item -> println(item.display()) }
+  items |> list.each { item -> println("{item}") }
 }
 
 -- ERROR: 'a' is unbound -- no annotation on x
 fn f(x) where a: Display {
-  println(x.display())
+  println("{x}")
 }
 ```
 

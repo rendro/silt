@@ -17,7 +17,7 @@ trait Two for T {
 }
 
 pub fn via(x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
-  x.get(a, b)
+  Two.get(x, a, b)
 }
 
 pub fn direct(type a, type b) where a: json.Decode, b: json.Decode {
@@ -26,11 +26,11 @@ pub fn direct(type a, type b) where a: json.Decode, b: json.Decode {
 }
 
 pub fn fixed(x: s, type b) where s: Two, b: json.Decode {
-  x.get(Int, b)
+  Two.get(x, Int, b)
 }
 
 pub fn pair(x: s, p: (a, b), type a, type b) where s: Two, a: json.Decode, b: json.Decode {
-  x.get(a, b)
+  Two.get(x, a, b)
 }
 
 pub fn dpair(p: (a, b), type a, type b) where a: json.Decode, b: json.Decode {
@@ -38,7 +38,7 @@ pub fn dpair(p: (a, b), type a, type b) where a: json.Decode, b: json.Decode {
 }
 
 pub fn first(p: (b, a), x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
-  x.get(a, b)
+  Two.get(x, a, b)
 }
 
 pub fn dfirst(p: (b, a), type a, type b) where a: json.Decode, b: json.Decode {
@@ -46,8 +46,8 @@ pub fn dfirst(p: (b, a), type a, type b) where a: json.Decode, b: json.Decode {
 }
 
 pub fn twice(x: s, type a, type b) where s: Two, a: json.Decode, b: json.Decode {
-  x.get(b, b)
-  x.get(a, a)
+  Two.get(x, b, b)
+  Two.get(x, a, a)
 }
 
 pub fn dtwice(type a, type b) where a: json.Decode, b: json.Decode {
@@ -56,7 +56,7 @@ pub fn dtwice(type a, type b) where a: json.Decode, b: json.Decode {
 }
 
 pub fn own(x: s, type a) where s: Two, a: json.Decode {
-  x.get(Int, Int)
+  Two.get(x, Int, Int)
 }
 
 pub fn down(type a) where a: json.Decode {

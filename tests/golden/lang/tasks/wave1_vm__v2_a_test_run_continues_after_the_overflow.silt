@@ -12,14 +12,14 @@ trait Deep for Int {
   fn go(self) -> Int {
     match self {
       0 -> 0
-      _ -> 1 + (self - 1).go()
+      _ -> 1 + Deep.go(self - 1)
     }
   }
 }
 
 fn test_a_recursion_far_beyond_the_budget() {
-  test.assert_eq(200000.go(), 200000)
+  test.assert_eq(Deep.go(200000), 200000)
 }
 fn test_b_moderate_recursion_afterwards() {
-  test.assert_eq(500.go(), 500)
+  test.assert_eq(Deep.go(500), 500)
 }

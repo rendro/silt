@@ -32,7 +32,7 @@ fn sessions(db: postgres.PgPool) -> String {
   match postgres.query(db, sql, (), N) {
     Ok([row]) -> "{row.n}"
     Ok(rows) -> "{rows}"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 
@@ -50,12 +50,12 @@ fn main() {
       sleepers |> list.each { t ->
         match task.join(t) {
           Ok(_) -> ()
-          Err(e) -> println("a statement at once: {e.message()}")
+          Err(e) -> println("a statement at once: {Error.message(e)}")
         }
       }
       println("after two statements at once: {sessions(db)}")
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

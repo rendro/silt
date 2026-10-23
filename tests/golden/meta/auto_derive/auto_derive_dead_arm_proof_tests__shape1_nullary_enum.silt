@@ -1,15 +1,15 @@
 -- The auto-derived Compare/Equal/Hash/Display of a nullary enum,
 -- through `where` bounds and qualified `Type.method` calls.
 type Color { Red, Green, Blue, }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
-fn h(a: a) -> Int where a: Hash { a.hash() }
-fn d(a: a) -> String where a: Display { a.display() }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
+fn d(a: a) -> String where a: Display { "{a}" }
 fn main() {
     println(cmp_gen(Red, Green))
     println(eq_gen(Red, Green))
     let _ = h(Red)
     println(d(Red))
-    println(Color.compare(Red, Green))
-    println(Color.equal(Red, Green))
+    println(Compare.compare(Red, Green))
+    println(Red == Green)
 }

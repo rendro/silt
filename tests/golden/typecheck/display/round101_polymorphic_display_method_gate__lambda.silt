@@ -3,5 +3,5 @@
 -- stderr-contains: does not implement trait 'Display'
 -- stderr-contains: 'Fn'
 -- stderr-not-contains: required for string interpolation
-fn show(x: a) -> String where a: Display { x.display() }
+fn show(x: a) -> String where a: Display { "{x}" }
 fn main() { println(show({ y -> y })) }

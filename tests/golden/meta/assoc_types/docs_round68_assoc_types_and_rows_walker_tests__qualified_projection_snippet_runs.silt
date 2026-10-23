@@ -11,7 +11,7 @@ trait Producer for Wrap {
 }
 
 fn first_out(w: Wrap) -> <Wrap as Producer>::Out {
-  w.produce()
+  Producer.produce(w)
 }
 
 fn main() {

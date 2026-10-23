@@ -30,7 +30,7 @@ trait Container for Holder {
 }
 
 fn shown(c: c) -> String where c: Container {
-  "first is {c.first()}"
+  "first is {Container.first(c)}"
 }
 
 let a = shown(Holder { t: T { n: 1 } })

@@ -7,5 +7,5 @@ trait Wrap for Box(a) {
 }
 fn main() {
   let b = Box(99)
-  println(b.unwrap())
+  println(Wrap.unwrap(b))
 }

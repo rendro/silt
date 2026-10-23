@@ -9,6 +9,6 @@ fn main() {
   println(bytes.to_base64(bytes.from_string("hello")))
   match bytes.from_base64("!!!not base64!!!") {
     Ok(_) -> println("wrong: should error")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

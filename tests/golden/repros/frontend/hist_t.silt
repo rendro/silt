@@ -21,9 +21,9 @@ trait Display for Expr {
   fn display(self) -> String {
     match self {
       Num(n) -> "{n}"
-      Add(l, r) -> "({l.display()} + {r.display()})"
-      Mul(l, r) -> "({l.display()} * {r.display()})"
-      Neg(e) -> "(-{e.display()})"
+      Add(l, r) -> "({l} + {r})"
+      Mul(l, r) -> "({l} * {r})"
+      Neg(e) -> "(-{e})"
     }
   }
 }
@@ -206,17 +206,17 @@ fn main() {
   examples
   |> list.each { (label, expr) ->
     println("--- {label} ---")
-    println("  Pretty:     {expr.display()}")
+    println("  Pretty:     {expr}")
     println("  Eval:       {eval(expr)}")
     let s = simplify(expr)
-    println("  Simplified: {s.display()}")
+    println("  Simplified: {s}")
     println("  Eval(simp): {eval(s)}")
     let rpn = to_rpn(expr)
     let rpn_str = string.join(rpn, " ")
     println("  RPN:        {rpn_str}")
     -- Round-trip: from_rpn(to_rpn(expr)) should equal original
     let roundtrip = from_rpn(rpn)
-    println("  Roundtrip:  {roundtrip.display()}")
+    println("  Roundtrip:  {roundtrip}")
     println("  RT eval:    {eval(roundtrip)}")
     println("  Complexity: {complexity(expr)}")
     println("  Depth:      {depth(expr)}")
@@ -226,10 +226,10 @@ fn main() {
   -- Demonstrate deep pattern matching
   println("=== Deep Pattern Matching ===\n")
   let nested = Add(Mul(Num(1), Add(Num(2), Num(3))), Neg(Num(4)))
-  println("Expression: {nested.display()}")
+  println("Expression: {nested}")
   -- Deep match: recognize specific shapes
   let description = match nested {
-    Add(Mul(Num(1), inner), _) -> "addition with 1*({inner.display()}) on left"
+    Add(Mul(Num(1), inner), _) -> "addition with 1*({inner}) on left"
     Add(_, Neg(Num(n))) -> "addition with -{n} on right"
     _ -> "other"
   }
@@ -240,7 +240,7 @@ fn main() {
   test_exprs
   |> list.each { expr ->
     let cls = complexity(expr)
-    println("  {expr.display()} -> {cls}")
+    println("  {expr} -> {cls}")
   }
   -- Build from RPN
   println("\n=== From RPN ===\n")
@@ -248,7 +248,7 @@ fn main() {
   let rpn_str = string.join(rpn_input, " ")
   let parsed = from_rpn(rpn_input)
   println("  RPN input:  {rpn_str}")
-  println("  Parsed:     {parsed.display()}")
+  println("  Parsed:     {parsed}")
   println("  Eval:       {eval(parsed)}")
   -- Demonstrate negative pattern simplification
   println("\n=== Negative Pattern Simplification ===\n")
@@ -256,7 +256,7 @@ fn main() {
   neg_examples
   |> list.each { (label, expr) ->
     let s = simplify(expr)
-    println("  {label} -> simplified: {s.display()} = {eval(s)}")
+    println("  {label} -> simplified: {s} = {eval(s)}")
   }
   println("\nDone!")
 }

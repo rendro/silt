@@ -12,7 +12,7 @@ fn main() {
   let b = Version { major: 1, minor: 10 }
   println(a < b)
   println(a == Version { major: 1, minor: 2 })
-  println(a.compare(b))
+  println(Compare.compare(a, b))
   println(map.get(#{ a: "old", b: "new" }, b))
-  println(a.display())
+  println("{a}")
 }

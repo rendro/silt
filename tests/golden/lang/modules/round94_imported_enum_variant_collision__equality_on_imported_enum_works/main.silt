@@ -6,5 +6,5 @@ fn main() {
   let y = sb.mkb()
   println(x == sa.mka())
   println(y == sb.mkb())
-  println(x.hash() == sa.mka().hash())
+  println(Hash.hash(x) == Hash.hash(sa.mka()))
 }

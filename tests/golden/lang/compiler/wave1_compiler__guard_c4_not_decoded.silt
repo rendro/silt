@@ -9,6 +9,6 @@ fn main() {
   println(set.length(b.items))
   match json.parse("\{\"text\": \"t\"\}", Label) {
     Ok(v) -> println(v.text)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

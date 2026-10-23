@@ -3,4 +3,4 @@ trait Baz for Fun { fn baz(self) -> String { "baz" } }
 
 pub fn triple(x: Int) -> Int { x * 3 }
 
-pub fn inner() -> String { triple.baz() }
+pub fn inner() -> String { Baz.baz(triple) }

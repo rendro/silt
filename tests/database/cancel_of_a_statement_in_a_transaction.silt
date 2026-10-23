@@ -31,14 +31,14 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
         Some(Err(e)) -> {
-          println("count: {e.message()}")
+          println("count: {Error.message(e)}")
           -1
         }
         _ -> n
       }
     }
     Err(e) -> {
-      println("count: {e.message()}")
+      println("count: {Error.message(e)}")
       -1
     }
   }
@@ -86,7 +86,7 @@ fn main() {
           }
           match ended {
             Ok(said) -> println("the task went on with {said}")
-            Err(e) -> println("the task went on with {e.message()}")
+            Err(e) -> println("the task went on with {Error.message(e)}")
           }
         }
         println("statements that wait for it in the server: {until(pool, waiting(), 1)}")
@@ -102,6 +102,6 @@ fn main() {
       let _ = postgres.execute(pool, "DROP TABLE silt_database_cancel_tx", ())
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

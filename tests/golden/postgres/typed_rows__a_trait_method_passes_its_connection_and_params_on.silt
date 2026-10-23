@@ -13,5 +13,5 @@ trait Runner for Repo {
   fn run(self, c: a, ps: p) -> Result(Int, postgres.PostgresError) { postgres.execute(c, "SELECT 1", ps) }
 }
 fn main() {
-  println(Repo { url: "" }.run("x", 5))
+  println(Runner.run(Repo { url: "" }, "x", 5))
 }

@@ -20,14 +20,14 @@ trait Display for IoError {
 
 fn main() {
   let mine = Oops("x")
-  println(mine.message())
-  println(mine.display())
+  println(Error.message(mine))
+  println("{mine}")
   println(mine)
   match io.read_file("does-not-exist.txt") {
     Ok(_) -> println("read")
     Err(e) -> {
-      println(e.message())
-      println(e.display())
+      println(Error.message(e))
+      println("{e}")
       println(e)
     }
   }

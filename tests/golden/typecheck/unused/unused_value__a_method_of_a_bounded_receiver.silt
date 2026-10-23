@@ -14,7 +14,7 @@ trait Greet for Int {
 }
 
 fn hello(x) {
-  x.greet()
+  Greet.greet(x)
   2
 }
 

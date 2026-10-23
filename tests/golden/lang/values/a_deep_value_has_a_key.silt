@@ -45,8 +45,8 @@ fn main() {
   println(a == c)
   println(a < c)
   println(c < a)
-  println(a.hash() == b.hash())
-  println(a.hash() == c.hash())
+  println(Hash.hash(a) == Hash.hash(b))
+  println(Hash.hash(a) == Hash.hash(c))
   println(set.length(set.from_list([a, b, c])))
 
   let p = chain(50000, 0)
@@ -55,6 +55,6 @@ fn main() {
   println(p == q)
   println(p == r)
   println(p < r)
-  println(p.hash() == q.hash())
+  println(Hash.hash(p) == Hash.hash(q))
   println(set.length(set.from_list([p, q, r])))
 }

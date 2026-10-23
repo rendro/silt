@@ -11,6 +11,6 @@ fn main() {
   println("r == g: {r == g}")
   println("sorted: {list.sort([g, r])}")
   println("set size: {set.length(set.from_list([r, g]))}")
-  println("compare: {r.compare(g)}")
+  println("compare: {Compare.compare(r, g)}")
   println("display: {shapes.show(r)}")
 }

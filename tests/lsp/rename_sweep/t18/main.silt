@@ -3,7 +3,7 @@ import impls.{ Area }
 import shapes.{ Shape, Box, Dot }
 
 fn twice(x: a) -> Int where a: Area {
-  x.area() * 2
+  Area.area(x) * 2
 }
 
 fn main() {

@@ -7,6 +7,6 @@ fn main() {
   println(a == P { year: 5 })
   println(a < b)
   println(b < a)
-  println(a.compare(b))
-  println(a.hash() == P { year: 5 }.hash())
+  println(Compare.compare(a, b))
+  println(Hash.hash(a) == Hash.hash(P { year: 5 }))
 }

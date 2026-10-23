@@ -5,5 +5,5 @@ trait Greet for ExtFloat { fn greet(self) -> String { "ext" } }
 fn g(x) { x / 2.0 }
 fn main() {
   let c = g(4.0)
-  println(c.greet())
+  println(Greet.greet(c))
 }

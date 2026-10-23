@@ -3,4 +3,4 @@ pub trait Conv { type Out
 pub type Pt { x: Int }
 trait Conv for Pt { type Out = Int
   fn conv(self) -> Int { self.x } }
-pub fn run(v: t) -> String where t: Conv { "{v.conv()}" }
+pub fn run(v: t) -> String where t: Conv { "{Conv.conv(v)}" }

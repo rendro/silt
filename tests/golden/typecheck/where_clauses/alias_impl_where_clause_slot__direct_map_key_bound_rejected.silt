@@ -11,7 +11,7 @@ trait Keyed for Map(k, v) where k: Marked {
   fn total(self) -> Int { map.length(self) }
 }
 
-fn go(x: b) -> Int where b: Keyed { x.total() }
+fn go(x: b) -> Int where b: Keyed { Keyed.total(x) }
 
 fn main() {
   println(go(#{ "a": 7 }))

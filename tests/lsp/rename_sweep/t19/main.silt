@@ -35,13 +35,13 @@ fn apply(f: Fn(Meters) -> Meters, pair: (Meters, Int)) -> {m: Meters, n: Int} {
 }
 
 fn get(c: t) -> <t as Container>::Item where t: Container {
-  c.unwrap()
+  Container.unwrap(c)
 }
 
 fn main() {
   let w: Wide = Box { item: Meters(2) }
   let g = { x: Meters -> x }
-  let r = apply(g, (w.unwrap(), 3))
+  let r = apply(g, (Container.unwrap(w), 3))
   let v: List(Meters) = [r.m]
   let k = (Meters(4) as Meters)
   println(get(k) + get(Box { item: 1 }) + r.n)

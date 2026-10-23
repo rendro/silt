@@ -58,9 +58,9 @@ fn main() {
   match http.get("http://127.0.0.1:8080/") {
     Ok(resp) -> match bytes.to_string(resp.body) {
       Ok(text) -> println(text)
-      Err(e) -> println("the body is no text: {e.message()}")
+      Err(e) -> println("the body is no text: {Error.message(e)}")
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 ```
@@ -143,7 +143,7 @@ fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {bytes.length(resp.body)}")
     Err(http.Timeout) -> println("timed out; retry later")
-    Err(e) -> println("Network error: {e.message()}")
+    Err(e) -> println("Network error: {Error.message(e)}")
   }
 }
 ```
@@ -424,9 +424,9 @@ fn main() {
             body: bytes.from_string(json.stringify(user)),
             headers: #{ "Content-Type": "application/json" },
           }
-          Err(e) -> reply(400, e.message())
+          Err(e) -> reply(400, Error.message(e))
         }
-        Err(e) -> reply(400, e.message())
+        Err(e) -> reply(400, Error.message(e))
       }
 
       _ -> reply(404, "Not found")

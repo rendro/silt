@@ -8,6 +8,6 @@ type Pixel { x: Int, c: Color }
 fn main() {
   match toml.parse("x = 1\nc = \"Red\"\n", Pixel) {
     Ok(v) -> println("{v.x} {v.c}")
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

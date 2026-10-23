@@ -27,7 +27,7 @@ fn made(type a) -> a where a: Make(Int), a: Make(String) {
 }
 
 fn one(x: a) -> String where a: Conv(String) {
-  x.show()
+  Conv.show(x)
 }
 
 fn passes(x: a) -> String where a: Conv(Int), a: Conv(String) {
@@ -35,7 +35,7 @@ fn passes(x: a) -> String where a: Conv(Int), a: Conv(String) {
 }
 
 fn other(x: a) -> String where a: Conv(Bool) {
-  x.show()
+  Conv.show(x)
 }
 
 fn wrong(x: a) -> String where a: Conv(Int), a: Conv(String) {

@@ -112,7 +112,7 @@ import int
 fn main() {
   match int.parse("42") {
     Ok(n) -> println(n)
-    Err(e) -> println("parse error: {e.message()}")
+    Err(e) -> println("parse error: {Error.message(e)}")
   }
 
   -- Pattern-match on specific failure modes:
@@ -344,7 +344,7 @@ import float
 fn main() {
   match float.parse("3.14") {
     Ok(f) -> println(f)
-    Err(e) -> println("error: {e.message()}")
+    Err(e) -> println("error: {Error.message(e)}")
   }
 }
 ```

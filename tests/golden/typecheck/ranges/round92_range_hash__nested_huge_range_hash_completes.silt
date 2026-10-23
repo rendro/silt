@@ -2,10 +2,10 @@
 type R { xs: List(Int) }
 fn main() {
   let t = (1, 0..4000000000)
-  let th = t.hash()
+  let th = Hash.hash(t)
   println("tuple hashed ok")
   let r = R { xs: 0..4000000000 }
-  let rh = r.hash()
+  let rh = Hash.hash(r)
   println("record hashed ok")
   println(th == th)
   println(rh == rh)

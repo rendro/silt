@@ -22,5 +22,5 @@ fn main() {
     postgres.TypeMismatch("meta", "Meta", "NULL"),
     postgres.TypeMismatch("meta", "Meta", "jsonb: expected a record at n"),
   ]
-  mismatches |> list.each { e -> println(e.message()) }
+  mismatches |> list.each { e -> println(Error.message(e)) }
 }

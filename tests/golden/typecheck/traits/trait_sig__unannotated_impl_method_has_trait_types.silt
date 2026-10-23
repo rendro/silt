@@ -8,5 +8,5 @@
 trait Scale { fn scale(self, by: Int) -> Int }
 trait Scale for Int { fn scale(self, by) { self * by } }
 trait Scale for Bool { fn scale(self, by) { "unannotated string" } }
-fn total(x: a, y: a) -> Int where a: Scale { x.scale(2) + y.scale(3) }
+fn total(x: a, y: a) -> Int where a: Scale { Scale.scale(x, 2) + Scale.scale(y, 3) }
 fn main() { println(total(1, 2)) }

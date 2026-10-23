@@ -3,7 +3,7 @@ import shapes
 pub trait Area {
   fn area(self) -> Int
   fn told(self) -> String {
-    "{label}{self.area()}"
+    "{label}{Area.area(self)}"
   }
 }
 
@@ -27,5 +27,5 @@ let scale = {
 let label = "area "
 
 pub fn measure(x: a) -> Int where a: Area {
-  x.area()
+  Area.area(x)
 }

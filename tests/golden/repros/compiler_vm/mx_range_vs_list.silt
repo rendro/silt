@@ -10,12 +10,12 @@ fn main() {
   println("r == l: {r == l}")
   println("display: {r} vs {l}")
   println("inspect: {io.inspect(r)} vs {io.inspect(l)}")
-  println(".display(): {r.display()} vs {l.display()}")
-  println("hash eq: {r.hash() == l.hash()}")
+  println(".display(): {r} vs {l}")
+  println("hash eq: {Hash.hash(r) == Hash.hash(l)}")
   println("set: {set.from_list([r, l])}")
   println("json: {json.stringify(r)} vs {json.stringify(l)}")
   println("empty: {5..1} == []: {5..1 == []}")
-  println("compare: {r.compare(l)}  r < l: {r < l}")
+  println("compare: {Compare.compare(r, l)}  r < l: {r < l}")
   let m = #{ r: "range" }
   println(map.get(m, l))
 }

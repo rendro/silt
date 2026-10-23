@@ -9,18 +9,18 @@ trait Source {
   type Item
   fn next(self) -> Self::Item
   fn skip(self) -> String {
-    self.next()
+    Source.next(self)
     "skipped"
   }
 }
 
 fn drain(s: a) -> String where a: Source {
-  s.next()
+  Source.next(s)
   "drained"
 }
 
 fn drain_inferred(s) {
-  s.next()
+  Source.next(s)
   "drained"
 }
 
@@ -32,7 +32,7 @@ trait Source for Int {
 }
 
 fn main() {
-  println(1.skip())
+  println(Source.skip(1))
   println(drain(1))
   println(drain_inferred(1))
 }

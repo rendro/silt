@@ -565,7 +565,7 @@ fn main() {
   let input = """{"name": "Alice", "age": 30}"""
   match json.parse(input, User) {
     Ok(user) -> println(user.name)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -613,7 +613,7 @@ fn main() {
   let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
   match json.parse_list(input, Point) {
     Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -637,7 +637,7 @@ fn main() {
   let input = """{"x": 10, "y": 20}"""
   match json.parse_map(input, Int) {
     Ok(m) -> println(map.get(m, "x")) -- Some(10)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```

@@ -2,6 +2,6 @@
 trait Mk { fn mk(self, other) -> Self }
 trait Mk for Int { fn mk(self, other) { other } }
 fn main() {
-  let n: Int = 1.mk("not int")
+  let n: Int = Mk.mk(1, "not int")
   println(n + 1)
 }

@@ -5,8 +5,8 @@
 -- is owed with its argument.
 trait Conv(to) { fn conv(self) -> to }
 trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
-fn s(x: a, y: b) -> b where a: Conv(b) { x.conv() }
+fn s(x: a, y: b) -> b where a: Conv(b) { Conv.conv(x) }
 type Box(a) { Box(a) }
-trait Conv(String) for Box(a) where a: Conv(String) { fn conv(self) -> String { match self { Box(i) -> i.conv() } } }
+trait Conv(String) for Box(a) where a: Conv(String) { fn conv(self) -> String { match self { Box(i) -> Conv.conv(i) } } }
 fn w(y) { s(Box(y), "q") }
 fn main() { println(w(true)) }

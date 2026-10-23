@@ -3,9 +3,9 @@
 trait Named { fn name(self) -> String }
 trait Loud: Named {
   fn volume(self) -> Int
-  fn shout(self) -> String { "{self.name()}{self.bangs()}" }
+  fn shout(self) -> String { "{Named.name(self)}{Loud.bangs(self)}" }
   fn bangs(self) -> String {
-    match self.volume() > 1 {
+    match Loud.volume(self) > 1 {
       true -> "!!"
       false -> "!"
     }
@@ -21,6 +21,6 @@ trait Loud for Cat {
   fn bangs(self) -> String { "?" }
 }
 fn main() {
-  println(Dog { n: "rex" }.shout())
-  println(Cat { n: "tom" }.shout())
+  println(Loud.shout(Dog { n: "rex" }))
+  println(Loud.shout(Cat { n: "tom" }))
 }

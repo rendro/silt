@@ -2,6 +2,6 @@ import util.{ triple }
 import util
 
 fn main() {
-  println(triple.baz())
+  println(util.Baz.baz(triple))
   println(util.triple(2))
 }

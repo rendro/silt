@@ -112,11 +112,11 @@ fn main() {
   -- Read both files, bailing out if either is missing.
   let old_content = match io.read_file("examples/data/original.txt") {
     Ok(content) -> content
-    Err(e) -> panic("Error reading original.txt: {e.message()}")
+    Err(e) -> panic("Error reading original.txt: {Error.message(e)}")
   }
   let new_content = match io.read_file("examples/data/modified.txt") {
     Ok(content) -> content
-    Err(e) -> panic("Error reading modified.txt: {e.message()}")
+    Err(e) -> panic("Error reading modified.txt: {Error.message(e)}")
   }
   -- Split into lines, filter out trailing empty line from final newline
   let old_lines = old_content

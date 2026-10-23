@@ -3,5 +3,5 @@ trait Tag { fn tag(self) -> String }
 trait Tag for Box { fn tag(self) -> String { "box" } }
 fn main() {
   let b = Box { value: 42 }
-  println(b.tag())
+  println(Tag.tag(b))
 }

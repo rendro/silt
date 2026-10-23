@@ -14,7 +14,7 @@ trait Loader {
   fn text(self) -> String
   fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode
   fn load_by_closure(self, type a) -> Result(a, json.JsonError) where a: json.Decode {
-    let g = { t -> self.load(t) }
+    let g = { t -> Loader.load(self, t) }
     g(a)
   }
 }
@@ -29,7 +29,7 @@ trait Loader for Src {
 }
 
 fn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
-  let g = { t -> l.load(t) }
+  let g = { t -> Loader.load(l, t) }
   g(b)
 }
 
@@ -37,5 +37,5 @@ fn main() {
   let src = Src { s: "\{\"n\": 1}" }
   let _ = go(src, Fine)
   let _ = go(src, Blob)
-  let _ = src.load_by_closure(Blob)
+  let _ = Loader.load_by_closure(src, Blob)
 }

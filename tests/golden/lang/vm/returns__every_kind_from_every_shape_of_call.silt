@@ -103,31 +103,31 @@ trait Kinds {
   fn variant(self) -> Shape
   fn closure(self) -> Fn(Int) -> Int
   fn default_int(self) -> Int {
-    self.int()
+    Kinds.int(self)
   }
   fn default_float(self) -> Float {
-    self.float()
+    Kinds.float(self)
   }
   fn default_bool(self) -> Bool {
-    self.bool()
+    Kinds.bool(self)
   }
   fn default_unit(self) -> () {
-    self.unit()
+    Kinds.unit(self)
   }
   fn default_string(self) -> String {
-    self.string()
+    Kinds.string(self)
   }
   fn default_list(self) -> List(Int) {
-    self.list()
+    Kinds.list(self)
   }
   fn default_record(self) -> Point {
-    self.record()
+    Kinds.record(self)
   }
   fn default_variant(self) -> Shape {
-    self.variant()
+    Kinds.variant(self)
   }
   fn default_closure(self) -> Fn(Int) -> Int {
-    self.closure()
+    Kinds.closure(self)
   }
 }
 
@@ -241,24 +241,24 @@ fn main() {
 
   println("a method and a default method")
   let p = Point { x: 1, y: 2 }
-  println(p.int())
-  println(p.float())
-  println(p.bool())
-  println(p.unit())
-  println(p.string())
-  println(p.list())
-  println(p.record())
-  println(p.variant())
-  println(p.closure()(2))
-  println(p.default_int())
-  println(p.default_float())
-  println(p.default_bool())
-  println(p.default_unit())
-  println(p.default_string())
-  println(p.default_list())
-  println(p.default_record())
-  println(p.default_variant())
-  println(p.default_closure()(2))
+  println(Kinds.int(p))
+  println(Kinds.float(p))
+  println(Kinds.bool(p))
+  println(Kinds.unit(p))
+  println(Kinds.string(p))
+  println(Kinds.list(p))
+  println(Kinds.record(p))
+  println(Kinds.variant(p))
+  println(Kinds.closure(p)(2))
+  println(Kinds.default_int(p))
+  println(Kinds.default_float(p))
+  println(Kinds.default_bool(p))
+  println(Kinds.default_unit(p))
+  println(Kinds.default_string(p))
+  println(Kinds.default_list(p))
+  println(Kinds.default_record(p))
+  println(Kinds.default_variant(p))
+  println(Kinds.default_closure(p)(2))
 
   println("a function a builtin calls back")
   println(list.map([1, 2]) { x -> x + 6 })

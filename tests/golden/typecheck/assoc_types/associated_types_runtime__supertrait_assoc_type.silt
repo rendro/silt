@@ -20,5 +20,5 @@ trait Sub for Wrap {
 
 fn main() {
   let w = Wrap { v: 41 }
-  println(w.first())
+  println(Sub.first(w))
 }

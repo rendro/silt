@@ -1,7 +1,7 @@
 -- verdict: same
 trait Same { fn same(self) -> Self }
 trait Same for String { fn same(self) -> Self { self } }
-fn coerce(x) { x.same() }
+fn coerce(x) { Same.same(x) }
 type Shape { Circle(Int), Sq(Int) }
 fn main() {
   let s: Shape = coerce("callme")

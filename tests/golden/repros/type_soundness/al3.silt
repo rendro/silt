@@ -6,11 +6,11 @@ trait Greet for Float { fn greet(self) -> String { "float" } }
 trait Greet for ExtFloat { fn greet(self) -> String { "ext" } }
 fn g(x) { x / 2.0 }
 fn main() {
-  println((1..3).greet())
+  println(Greet.greet(1..3))
   let a = 1.0 / 2.0
-  println(a.greet())
+  println(Greet.greet(a))
   let b = 1.0 + 2.0
-  println(b.greet())
+  println(Greet.greet(b))
   let c = g(4.0)
-  println(c.greet())
+  println(Greet.greet(c))
 }

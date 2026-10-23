@@ -2,10 +2,10 @@
 -- value runs its own type's impls (F1).
 import a
 import b
-fn show(x: t) -> String where t: Display { x.display() }
+fn show(x: t) -> String where t: Display { "{x}" }
 fn main() {
-  println(a.mk().display())
-  println(b.mk().display())
+  println("{a.mk()}")
+  println("{b.mk()}")
   println(show(a.mk()))
   println(show(b.mk()))
   println(a.mk() == a.mk())

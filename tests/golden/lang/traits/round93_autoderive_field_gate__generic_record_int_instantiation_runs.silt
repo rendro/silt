@@ -4,6 +4,6 @@ fn main() {
     let b = Box{v: 2}
     println(a < b)
     println(a == b)
-    println(a.compare(b))
-    println(a.hash() == a.hash())
+    println(Compare.compare(a, b))
+    println(Hash.hash(a) == Hash.hash(a))
 }

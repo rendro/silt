@@ -3,10 +3,10 @@
 -- order (stage 5 verifier F1).
 import b
 import a
-fn show(x: t) -> String where t: Display { x.display() }
+fn show(x: t) -> String where t: Display { "{x}" }
 fn main() {
-  println(a.mk().display())
-  println(b.mk().display())
+  println("{a.mk()}")
+  println("{b.mk()}")
   println(show(a.mk()))
   println(show(b.mk()))
 }

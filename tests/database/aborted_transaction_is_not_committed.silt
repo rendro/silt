@@ -23,14 +23,14 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
         Some(Err(e)) -> {
-          println("count: {e.message()}")
+          println("count: {Error.message(e)}")
           -1
         }
         _ -> n
       }
     }
     Err(e) -> {
-      println("count: {e.message()}")
+      println("count: {Error.message(e)}")
       -1
     }
   }
@@ -39,7 +39,7 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
 fn said(answer: Result(a, postgres.PostgresError)) -> String {
   match answer {
     Ok(_) -> "Ok"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 
@@ -71,6 +71,6 @@ fn main() {
       let _ = postgres.execute(pool, "DROP TABLE silt_database_aborted", ())
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

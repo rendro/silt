@@ -27,7 +27,7 @@ fn main() {
           Ok(rows) -> {
             let first = match channel.receive(rows) {
               Some(Ok(_)) -> "the reader has a row"
-              Some(Err(e)) -> e.message()
+              Some(Err(e)) -> Error.message(e)
               _ -> "no row"
             }
             channel.send(got, first)
@@ -36,7 +36,7 @@ fn main() {
             let _ = channel.receive(got)
             ()
           }
-          Err(e) -> channel.send(got, "postgres.stream: {e.message()}")
+          Err(e) -> channel.send(got, "postgres.stream: {Error.message(e)}")
         }
       }
       match channel.receive(got) {
@@ -46,6 +46,6 @@ fn main() {
       task.cancel(reader)
       println("the reader is cancelled, main returns")
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

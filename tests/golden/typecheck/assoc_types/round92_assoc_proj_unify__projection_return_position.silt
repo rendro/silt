@@ -11,7 +11,7 @@ trait Stream for Wrap {
 }
 
 fn grab(s: a) -> <a as Stream>::Item where a: Stream {
-  s.first()
+  Stream.first(s)
 }
 
 fn main() {

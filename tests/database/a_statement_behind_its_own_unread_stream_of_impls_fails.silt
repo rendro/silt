@@ -44,11 +44,11 @@ fn main() {
         match postgres.query(tx, "SELECT 1::int8 AS n", (), N) {
           Ok(found) -> println("the statement ran: {found}")
           Err(postgres.Other(text)) -> println("the statement: Other({text})")
-          Err(e) -> println("the statement: {e.message()}")
+          Err(e) -> println("the statement: {Error.message(e)}")
         }
         match postgres.execute(tx, "SELECT 1", ()) {
           Ok(n) -> println("execute ran: {n}")
-          Err(e) -> println("execute: {e.message()}")
+          Err(e) -> println("execute: {Error.message(e)}")
         }
         channel.close(rows)
         postgres.query(tx, "SELECT 2::int8 AS n", (), N)
@@ -56,6 +56,6 @@ fn main() {
       println("transact: {done}")
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

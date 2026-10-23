@@ -15,7 +15,7 @@ let a = f()
 fn f() -> Int { g() + 1 }
 fn g() -> Int { b }
 let b = a + 1
-let table = P { n: 1 }.size()
+let table = Size.size(P { n: 1 })
 let own = own + 1
 let fine = 3
 fn main() { println(a + table + own + fine) }

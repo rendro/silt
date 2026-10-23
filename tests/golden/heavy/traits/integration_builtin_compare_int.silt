@@ -1,5 +1,5 @@
 import io
-fn program() { 3.compare(5) }
+fn program() { Compare.compare(3, 5) }
 
 fn main() {
   println(io.inspect(program()))

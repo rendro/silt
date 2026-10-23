@@ -19,7 +19,7 @@ trait Sink for Printer {
 
 fn main() {
   let p = Printer { name: "p" }
-  p.emit()
-  let u: () = p.emit()
+  Sink.emit(p)
+  let u: () = Sink.emit(p)
   println("done {u}")
 }

@@ -9,12 +9,12 @@ trait Deep for Int {
   fn go(self) -> Int {
     match self {
       0 -> 0
-      _ -> 1 + (self - 1).go()
+      _ -> 1 + Deep.go(self - 1)
     }
   }
 }
 
 fn main() {
-  let t = task.spawn { -> 200000.go() }
+  let t = task.spawn { -> Deep.go(200000) }
   println(task.join(t))
 }

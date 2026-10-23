@@ -8,7 +8,7 @@ trait Cast for Fn {
   fn cast(self) -> Fn(Int) -> Solo { self }
 }
 fn main() {
-  let f = { n -> n * 2 }.cast()
+  let f = Cast.cast({ n -> n * 2 })
   match f(21) {
     Solo(s) -> println("got {s}")
   }

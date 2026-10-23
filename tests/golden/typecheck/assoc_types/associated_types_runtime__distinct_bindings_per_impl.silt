@@ -18,7 +18,7 @@ trait Stream for B {
 
 fn main() {
   let a = A { x: 9 }
-  println(a.first())
+  println(Stream.first(a))
   let b = B { y: "bee" }
-  println(b.first())
+  println(Stream.first(b))
 }

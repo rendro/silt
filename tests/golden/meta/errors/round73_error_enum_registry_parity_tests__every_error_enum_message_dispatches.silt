@@ -13,11 +13,11 @@ import time
 import bytes
 
 fn main() {
-  println(io.NotFound("missing.txt").message())
-  println(json.MissingField("name").message())
-  println(toml.MissingField("key").message())
-  println(int.Empty.message())
-  println(regex.TooBig.message())
-  println(time.OutOfRange("month 13").message())
-  println(bytes.InvalidHex("zz").message())
+  println(Error.message(io.NotFound("missing.txt")))
+  println(Error.message(json.MissingField("name")))
+  println(Error.message(toml.MissingField("key")))
+  println(Error.message(int.Empty))
+  println(Error.message(regex.TooBig))
+  println(Error.message(time.OutOfRange("month 13")))
+  println(Error.message(bytes.InvalidHex("zz")))
 }

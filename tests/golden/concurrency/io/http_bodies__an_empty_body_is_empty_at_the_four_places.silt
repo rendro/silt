@@ -79,7 +79,7 @@ fn main() {
   let server = task.spawn { -> http.serve(listener, answer) }
   match http.request(http.POST, "http://127.0.0.1:{port}/", bytes.empty(), #{}) {
     Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
-    Err(e) -> println("  http.request: {e.message()}")
+    Err(e) -> println("  http.request: {Error.message(e)}")
   }
 
   println("a client written by hand to http.serve")
@@ -105,6 +105,6 @@ fn main() {
   println("  the request on the wire: {length_line(sent)}, {bytes.length(body_of(sent) |> option.unwrap_or(bytes.empty()))} bytes after the head")
   match got {
     Ok(resp) -> println("  http.request gets: {resp.status}, {bytes.length(resp.body)} bytes, equal to bytes.empty(): {resp.body == bytes.empty()}")
-    Err(e) -> println("  http.request: {e.message()}")
+    Err(e) -> println("  http.request: {Error.message(e)}")
   }
 }

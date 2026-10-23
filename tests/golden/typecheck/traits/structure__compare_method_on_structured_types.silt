@@ -2,9 +2,9 @@
 -- has the trait by its structure.
 type Pt { x: Int, y: Int }
 fn main() {
-  println(Some(1).compare(Some(2)))
-  println(Ok(2).compare(Ok(1)))
-  println(None.equal(Some(1)))
-  println(Pt { x: 1, y: 2 }.compare(Pt { x: 1, y: 3 }))
-  println(Some((1, "a")).hash() == Some((1, "a")).hash())
+  println(Compare.compare(Some(1), Some(2)))
+  println(Compare.compare(Ok(2), Ok(1)))
+  println(None == Some(1))
+  println(Compare.compare(Pt { x: 1, y: 2 }, Pt { x: 1, y: 3 }))
+  println(Hash.hash(Some((1, "a"))) == Hash.hash(Some((1, "a"))))
 }

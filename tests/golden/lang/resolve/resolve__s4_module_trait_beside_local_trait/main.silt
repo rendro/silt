@@ -8,8 +8,8 @@ type X { X(Int) }
 type Y { Y(Int) }
 trait lib.Describe for X { fn describe(self) -> String { "lib" } }
 trait Describe for Y { fn describe(self) -> Int { 7 } }
-fn show(a: a) -> String where a: lib.Describe { a.describe() }
-fn count(a: a) -> Int where a: Describe { a.describe() }
+fn show(a: a) -> String where a: lib.Describe { lib.Describe.describe(a) }
+fn count(a: a) -> Int where a: Describe { Describe.describe(a) }
 fn main() {
   println(show(X(1)))
   println(count(Y(2)) + 1)

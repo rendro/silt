@@ -7,10 +7,10 @@ import b
 fn main() {
   let p = a.make(1)
   let q = b.make(2)
-  println(p.display())
-  println(q.display())
-  println(a.Pt.display(p))
-  println(b.Pt.display(q))
-  println(p.scale())
-  println(q.scale())
+  println("{p}")
+  println("{q}")
+  println("{p}")
+  println("{q}")
+  println(a.Scale.scale(p))
+  println(b.Scale.scale(q))
 }

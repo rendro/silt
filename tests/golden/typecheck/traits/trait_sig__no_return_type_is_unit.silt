@@ -6,4 +6,4 @@
 -- stderr-contains: trait_sig__no_return_type_is_unit.silt:8:34
 trait Sz { fn sz(self) }
 trait Sz for Int { fn sz(self) { "str" } }
-fn main() { println(1.sz()) }
+fn main() { println(Sz.sz(1)) }

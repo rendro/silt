@@ -15,7 +15,7 @@ fn tail(r: Holder, n: Int, acc: Int) -> Int {
 fn main() {
   let h = Holder { run: { x -> x + 1 }, name: "h" }
   println(h.run(1))
-  println(h.describe())
+  println(Describe.describe(h))
   let r = {run: { x -> x * 2 }, inner: {go: { s -> "go {s}" }}}
   println(r.run(4))
   println(r.inner.go("on"))

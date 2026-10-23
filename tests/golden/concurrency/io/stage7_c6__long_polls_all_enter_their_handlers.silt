@@ -35,7 +35,7 @@ fn main() {
     task.spawn { ->
       match http.get("http://127.0.0.1:{port}/wait") {
         Ok(r) -> "{r.status} {text(r.body)}"
-        Err(e) -> "error: {e.message()}"
+        Err(e) -> "error: {Error.message(e)}"
       }
     }
   }

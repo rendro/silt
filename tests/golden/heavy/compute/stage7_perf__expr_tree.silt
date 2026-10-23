@@ -27,9 +27,9 @@ trait Size for Expr {
     match self {
       Num(_) -> 1
       Var(_) -> 1
-      Add(l, r) -> 1 + l.size() + r.size()
-      Mul(l, r) -> 1 + l.size() + r.size()
-      Neg(e) -> 1 + e.size()
+      Add(l, r) -> 1 + Size.size(l) + Size.size(r)
+      Mul(l, r) -> 1 + Size.size(l) + Size.size(r)
+      Neg(e) -> 1 + Size.size(e)
     }
   }
 }
@@ -84,7 +84,7 @@ fn build(depth, seed) {
 fn main() {
   let tree = build(16, 1)
   let small = simplify(tree)
-  println("{tree.size()} {small.size()}")
+  println("{Size.size(tree)} {Size.size(small)}")
   let total = loop i = 0, acc = 0 {
     match i >= 60 {
       true -> acc

@@ -8,4 +8,4 @@ trait Carry(c) { fn carry(self) -> c }
 trait Holds(b): Carry(List(b)) { fn hold(self) -> b }
 trait Carry(List(String)) for Bag { fn carry(self) -> List(String) { ["x"] } }
 trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
-fn main() { println("{(Bag { n: 1 }).hold()}") }
+fn main() { println("{Holds.hold(Bag { n: 1 })}") }

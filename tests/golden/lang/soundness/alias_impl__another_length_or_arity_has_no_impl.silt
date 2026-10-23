@@ -18,8 +18,8 @@ trait T for P2 {
 }
 trait U { fn ap(self) -> Int }
 trait U for Op { fn ap(self) -> Int { self(1) + 1 } }
-fn s(x: a) -> Int where a: T { x.sum() }
-fn u(x: a) -> Int where a: U { x.ap() }
+fn s(x: a) -> Int where a: T { T.sum(x) }
+fn u(x: a) -> Int where a: U { U.ap(x) }
 fn two(a: Int, b: Int) -> Int { a + b }
 fn tag(n: Int) -> Tag { Tag("t") }
 fn main() {

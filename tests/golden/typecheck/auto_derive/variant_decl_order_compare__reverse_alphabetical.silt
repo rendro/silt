@@ -1,6 +1,6 @@
 -- Declaration order, not alphabetical: Z < A.
 type Backwards { Z, Y, A, }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
     println(cmp_gen(Z, A))
 }

@@ -29,16 +29,16 @@ fn main() {
         match got {
           -- In time: the program closes its listener itself.
           Ok(Ok(ch)) -> channel.close(ch)
-          Ok(Err(e)) -> println("listen: {e.message()}")
+          Ok(Err(e)) -> println("listen: {Error.message(e)}")
           Err(_) -> ()
         }
       }
       match postgres.query(db, "SELECT 1 AS n", (), json.Value) {
         Ok(rows) -> println("the pool serves: {list.length(rows)} row")
-        Err(e) -> println("query: {e.message()}")
+        Err(e) -> println("query: {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

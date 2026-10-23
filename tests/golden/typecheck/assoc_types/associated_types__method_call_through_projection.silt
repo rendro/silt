@@ -14,7 +14,7 @@ trait Producer for Wrap {
 }
 
 fn use_it(w: Wrap) -> Int {
-  w.produce()
+  Producer.produce(w)
 }
 
 fn main() {}

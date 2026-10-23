@@ -3,7 +3,7 @@ type P { x: Int, y: Int }
 trait Display for P {
   fn display(self) -> String { "P!" }
 }
-fn show(p: P) -> String { p.display() }
+fn show(p: P) -> String { "{p}" }
 fn main() {
   println(show({ x: 1, y: 2 }))
 }

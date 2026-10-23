@@ -15,7 +15,7 @@ fn len(m: Meters) -> String {
   }
 }
 fn main() {
-  let (m, _) = (Feet { v: 3, unit: "ft" }, 0).cast()
+  let (m, _) = Cast.cast((Feet { v: 3, unit: "ft" }, 0))
   println(len(m))
   let Meters { v, .. } = m
   println(v)

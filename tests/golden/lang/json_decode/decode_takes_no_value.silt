@@ -15,7 +15,7 @@ trait Load for String {
 }
 
 fn main() {
-  let _ = "x".decode("y")
+  let _ = Load.decode("x", "y")
   let p = P { x: 1 }
   println(p.decode(json.Null))
 }

@@ -1,5 +1,6 @@
 -- verdict: same
 import list
+import string
 
 type Celsius { c: Float }
 
@@ -9,6 +10,6 @@ trait Display for Celsius {
 
 fn main() {
   let temps = [Celsius { c: 20.0 }, Celsius { c: 25.5 }]
-  let rendered = list.map(temps, Celsius.display)
+  let rendered = list.map(temps, string.from)
   list.each(rendered) { line -> println(line) }
 }

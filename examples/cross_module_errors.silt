@@ -57,11 +57,11 @@ fn main() {
     Err(e) -> match e {
       -- Granular handling per domain.
       ConfigRead(io.NotFound(path)) -> println("create a config at: {path}")
-      ConfigRead(inner) -> println("config file: {inner.message()}")
-      ConfigParse(inner) -> println("config JSON invalid: {inner.message()}")
+      ConfigRead(inner) -> println("config file: {Error.message(inner)}")
+      ConfigParse(inner) -> println("config JSON invalid: {Error.message(inner)}")
       ApiCall(http.Timeout) -> println("API timed out — retry later")
-      ApiCall(inner) -> println("API call failed: {inner.message()}")
-      ApiResponse(inner) -> println("API response invalid: {inner.message()}")
+      ApiCall(inner) -> println("API call failed: {Error.message(inner)}")
+      ApiResponse(inner) -> println("API response invalid: {Error.message(inner)}")
       Custom(msg) -> println("app: {msg}")
     }
   }

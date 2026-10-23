@@ -30,7 +30,7 @@ fn size_all(ts: List(Tree(b))) {
 }
 fn say(x: a, n: Int) where a: Loud {
   match n {
-    0 -> x.loud()
+    0 -> Loud.loud(x)
     _ -> echo(x, n - 1)
   }
 }

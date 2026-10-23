@@ -17,5 +17,5 @@ trait Run for H {
 fn main() {
   let h = H { run: 1, name: "n" }
   println(h.run)
-  println(h.stop())
+  println(Run.stop(h))
 }

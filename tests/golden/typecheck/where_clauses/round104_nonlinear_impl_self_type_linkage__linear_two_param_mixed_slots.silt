@@ -6,5 +6,5 @@ trait First for Two(a, b) where a: Display {
     "{x}"
   }
 }
-fn head_of(x: p) -> String where p: First { x.first_str() }
+fn head_of(x: p) -> String where p: First { First.first_str(x) }
 fn main() { println(head_of((7, "seven"))) }

@@ -35,12 +35,12 @@ fn same(a: a, b: a) -> Bool where a: Equal {
 
 fn main() {
   let p = Plain { n: 1 }
-  println(p.equal(p))
+  println(p == p)
   println(same(p, p))
   println(p == p)
-  println(p.rank())
+  println(Ranked.rank(p))
   let h = Held { f: { x -> x } }
-  println(h.equal(h))
+  println(h == h)
   println(same(h, h))
   println(h == h)
 }

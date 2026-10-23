@@ -2,5 +2,5 @@
 -- stderr-contains: error[type]: type 'Color' does not implement trait 'Compare': variant 'Holding' payload #1 is of type 'Channel(Int)', which does not
 import channel
 type Color { Red, Green, Holding(Channel(Int)), }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() { println(cmp_gen(Red, Green)) }

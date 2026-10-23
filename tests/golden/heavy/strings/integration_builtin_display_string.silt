@@ -1,5 +1,6 @@
 import io
-fn program() { "hello".display() }
+import string
+fn program() { string.from("hello") }
 
 fn main() {
   println(io.inspect(program()))

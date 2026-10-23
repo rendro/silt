@@ -6,7 +6,7 @@
 -- stderr-contains: type '{x: Int, y: Int}' does not implement trait 'MyTrait'
 trait MyTrait { fn ident(self) -> Int }
 trait MyTrait for Int { fn ident(self) { self } }
-fn use_it(x: a) -> Int where a: MyTrait { x.ident() }
+fn use_it(x: a) -> Int where a: MyTrait { MyTrait.ident(x) }
 fn main() {
   let r = {x: 1, y: 2}
   println(use_it(r))

@@ -6,10 +6,10 @@ trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
 trait Greet for Box(a) where a: Greet {
   fn greet(self) -> String {
-    match self { Box(inner) -> inner.greet() }
+    match self { Box(inner) -> Greet.greet(inner) }
   }
 }
-fn use_box(b: Box(a)) -> String where a: Greet { b.greet() }
+fn use_box(b: Box(a)) -> String where a: Greet { Greet.greet(b) }
 fn main() {
   let bad = Box("hello")
   println(use_box(bad))

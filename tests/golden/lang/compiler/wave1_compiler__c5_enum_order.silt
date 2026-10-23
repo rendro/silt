@@ -3,7 +3,7 @@ fn first() {
 }
 
 fn describe() {
-  Color.Green.display()
+  "{Color.Green}"
 }
 
 type Color { Red, Green }

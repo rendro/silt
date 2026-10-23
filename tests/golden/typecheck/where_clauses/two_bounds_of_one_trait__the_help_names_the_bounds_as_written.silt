@@ -20,7 +20,7 @@ fn subs(x: a) -> String where a: Sub(Int), a: Sub(String) {
 }
 
 fn same(x: a) -> String where a: Sub(Int), a: Conv(Int) {
-  x.show()
+  Conv.show(x)
 }
 
 fn main() {

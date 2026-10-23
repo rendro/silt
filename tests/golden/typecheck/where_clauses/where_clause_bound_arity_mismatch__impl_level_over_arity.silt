@@ -9,11 +9,11 @@ trait Use for List(a) where a: Cast(Int, String) {
     fn use_it(self) -> Float {
       match self {
           [] -> 0.0
-          [x, ..rest] -> x.cast() + rest.use_it()
+          [x, ..rest] -> x.cast() + Use.use_it(rest)
       }
     }
 }
 fn main() {
     let xs: List(Int) = [1]
-    println(xs.use_it())
+    println(Use.use_it(xs))
 }

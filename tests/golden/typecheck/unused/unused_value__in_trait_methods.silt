@@ -5,8 +5,8 @@
 trait Describe {
   fn name(self) -> String
   fn twice(self) -> String {
-    self.name()
-    "{self.name()} {self.name()}"
+    Describe.name(self)
+    "{Describe.name(self)} {Describe.name(self)}"
   }
 }
 
@@ -18,5 +18,5 @@ trait Describe for Int {
 }
 
 fn main() {
-  println(3.twice())
+  println(Describe.twice(3))
 }

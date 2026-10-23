@@ -11,4 +11,4 @@ trait Loud {
 }
 type Dog { label: String }
 trait Loud for Dog { fn volume(self) -> Int { 2 } }
-fn main() { println(Dog { label: "rex" }.shout()) }
+fn main() { println(Loud.shout(Dog { label: "rex" })) }

@@ -11,8 +11,8 @@ trait Stream for Wrap {
 }
 
 fn same(s: a) -> Bool where a: Stream {
-  let x = s.first()
-  let y = s.first()
+  let x = Stream.first(s)
+  let y = Stream.first(s)
   x == y
 }
 

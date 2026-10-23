@@ -1,5 +1,5 @@
 type Tree(a) { Leaf, Node(Tree(a), Tree(a)), }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
     let l: Tree(Int) = Leaf
     let n: Tree(Int) = Node(Leaf, Leaf)

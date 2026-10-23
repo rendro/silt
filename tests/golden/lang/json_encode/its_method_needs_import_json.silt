@@ -24,7 +24,7 @@ fn main() {
   println(B(2).encode())
   println(A.encode())
   println(G { v: [1] }.encode())
-  println(o.display())
+  println("{o}")
   println(o.encode())
   println((1, 2).encode())
   println(1.encode())

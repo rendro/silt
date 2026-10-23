@@ -146,7 +146,7 @@ or call a method no `where` clause promises:
 fn one(x: a) -> a { 1 }                    -- ERROR: expected a, got Int
 fn second(x: a, y: b) -> a { y }           -- ERROR: expected a, got b
 fn show(x: a) -> String { x.display() }    -- ERROR: `a` has no trait bound
-fn show(x: a) -> String where a: Display { x.display() }   -- ok
+fn show(x: a) -> String where a: Display { "{x}" }   -- ok
 ```
 
 An annotation in the body that writes one of the signature's variables
@@ -381,7 +381,7 @@ import list
 import string
 
 fn shout(items: List(a)) -> List(String) where a: Display {
-  items |> list.map { x -> x.display() |> string.to_upper }
+  items |> list.map { x -> "{x}" |> string.to_upper }
 }
 ```
 
@@ -399,7 +399,7 @@ type Box(a) {
 trait Display for Box(a) where a: Display {
   fn display(self) -> String {
     match self {
-      Box(inner) -> "Box({inner.display()})"
+      Box(inner) -> "Box({inner})"
     }
   }
 }
@@ -456,7 +456,7 @@ trait Child(a): Parent(a) {
 }
 
 fn use_parent(x: b, type a) -> a where b: Child(a) {
-  x.parent_method() -- returns a, bound by Child's arg
+  Parent.parent_method(x) -- returns a, bound by Child's arg
 }
 ```
 
@@ -800,7 +800,7 @@ trait Convert(Int) for String {
 }
 
 fn into(x: a, type b) -> b where a: Convert(b) {
-  x.convert()
+  Convert.convert(x)
 }
 ```
 

@@ -11,6 +11,6 @@ fn main() {
   let raw = "\{\"title\": \"hi\", \"tags\": [\"a\", \"b\"], \"n\": 3\}"
   match json.parse(raw, Post) {
     Ok(p) -> println("ok: {p.title} {p.tags} {p.n}")
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

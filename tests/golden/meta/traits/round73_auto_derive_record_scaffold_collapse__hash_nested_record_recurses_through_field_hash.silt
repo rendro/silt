@@ -1,7 +1,7 @@
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
-fn h(a: a) -> Int where a: Hash { a.hash() }
-fn d(a: a) -> String where a: Display { a.display() }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
+fn d(a: a) -> String where a: Display { "{a}" }
 type Inner { x: Int }
 type Wrap { r: Inner, tag: Int }
 fn main() {

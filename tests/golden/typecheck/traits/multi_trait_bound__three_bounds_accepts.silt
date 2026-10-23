@@ -16,8 +16,8 @@ trait MyOrd for Int {
 trait MyShow for Int { fn my_show(self) -> String { "int" } }
 
 fn use_three(x: a, y: a) -> String where a: MyEq + MyOrd + MyShow {
-  match x.my_eq(y) {
-    true -> x.my_show()
+  match MyEq.my_eq(x, y) {
+    true -> MyShow.my_show(x)
     false -> "diff"
   }
 }

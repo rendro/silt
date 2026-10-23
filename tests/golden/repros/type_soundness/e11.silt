@@ -6,5 +6,5 @@ trait Greet for P { fn greet(self) -> String { "p" } }
 fn main() {
   let ps = [P { v: 1 }]
   -- pipe form
-  ps |> list.map { p -> p.greet() } |> println
+  ps |> list.map { p -> Greet.greet(p) } |> println
 }

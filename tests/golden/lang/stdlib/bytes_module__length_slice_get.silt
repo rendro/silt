@@ -5,7 +5,7 @@ fn main() {
   println([a, b])
   match bytes.to_string(bytes.slice(bytes.from_string("hello world"), 6, 11)) {
     Ok(t) -> println(t)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   println(bytes.length(bytes.slice(bytes.from_string("hello"), 2, 2)))
   -- a start past the end gives nothing; an end past the length is the length

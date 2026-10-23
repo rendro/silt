@@ -9,5 +9,5 @@ fn main() {
   let h = H { f: { n -> n } }
   println(Y(Box(h)))
   println(Z == Z)
-  println([Box(h)].display())
+  println("{[Box(h)]}")
 }

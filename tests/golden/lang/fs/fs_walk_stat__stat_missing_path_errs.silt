@@ -2,6 +2,6 @@ import fs
 fn main() {
     match fs.stat("does_not_exist") {
         Ok(_) -> println("unexpected Ok")
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
     }
 }

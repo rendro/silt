@@ -9,7 +9,7 @@ fn main() {
       println(v)
       println(json.stringify(v))
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   println(json.parse("""{"k": 1, "k": 2}""", json.Value))
   println(json.parse("7", json.Value))

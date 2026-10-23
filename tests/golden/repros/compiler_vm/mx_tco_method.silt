@@ -13,6 +13,6 @@ trait Counter for Int {
 }
 fn plain(n) { count(n, 0) }
 fn main() {
-  println(5.run())
+  println(Counter.run(5))
   println(plain(5))
 }

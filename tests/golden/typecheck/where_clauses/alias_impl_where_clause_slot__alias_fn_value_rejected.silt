@@ -13,7 +13,7 @@ trait Keys for Named(a) where a: Display {
   fn k(self) -> Int { map.length(self) }
 }
 
-fn go(x: b) -> Int where b: Keys { x.k() }
+fn go(x: b) -> Int where b: Keys { Keys.k(x) }
 
 fn main() {
   println(go(#{ "a": { x -> x + 1 } }))

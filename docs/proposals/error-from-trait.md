@@ -230,7 +230,7 @@ trait IntoAppError for json.JsonError {
 fn load_config(path: String) -> Result(Config, AppError) {
   let raw = result.map_err(io.read_file(path), io.IoError.into_app_error)?
   -- OR using a closure to make the conversion name visible on the value side:
-  let cfg = result.map_err(json.parse(raw, Config)) { e -> e.into_app_error() }?
+  let cfg = result.map_err(json.parse(raw, Config)) { e -> IntoAppError.into_app_error(e) }?
   Ok(cfg)
 }
 ```

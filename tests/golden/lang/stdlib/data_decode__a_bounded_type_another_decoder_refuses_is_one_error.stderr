@@ -47,10 +47,10 @@ error[type]: `toml.parse` cannot decode `Set(Int)`: its type argument must be a 
   = help: declare a record type with a field of the type you want, and decode into the record
 
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
- --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:59:35
+ --> data_decode__a_bounded_type_another_decoder_refuses_is_one_error.silt:59:41
     |
- 59 |   let _ = S { n: 1 }.get("n = 1", L)
-    |                                   ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
+ 59 |   let _ = Load.get(S { n: 1 }, "n = 1", L)
+    |                                         ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
   = note: `S.get` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 

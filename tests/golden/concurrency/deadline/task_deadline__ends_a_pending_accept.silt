@@ -14,8 +14,8 @@ fn main() {
   match task.deadline(time.ms(50), { -> tcp.accept(listener) }) {
     Err(task.Timeout) -> println("the deadline passed")
     Ok(Ok(_)) -> println("accepted a connection")
-    Ok(Err(e)) -> println("tcp: {e.message()}")
-    Err(e) -> println(e.message())
+    Ok(Err(e)) -> println("tcp: {Error.message(e)}")
+    Err(e) -> println(Error.message(e))
   }
   -- The listener is as it was: a connection is accepted.
   when let Ok(_) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else { panic("cannot connect") }

@@ -6,7 +6,7 @@ trait Keep { fn keep(self, p: {name: String, ...r}) -> {name: String, ...r} { p 
 trait Keep for Int {}
 type Person { name: String, age: Int }
 fn main() {
-  println(1.name_of({name: "a", age: 1}))
-  println(1.keep(Person { name: "b", age: 2 }).age)
-  println(1.keep({name: "c", z: true}).z)
+  println(Namer.name_of(1, {name: "a", age: 1}))
+  println(Keep.keep(1, Person { name: "b", age: 2 }).age)
+  println(Keep.keep(1, {name: "c", z: true}).z)
 }

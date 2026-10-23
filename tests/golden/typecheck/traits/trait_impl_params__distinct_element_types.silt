@@ -6,5 +6,5 @@ trait Unwrap for Box(a) {
 fn main() {
   let b = Box(99)
   let c = Box("hello")
-  println(b.get() + c.get())
+  println(Unwrap.get(b) + Unwrap.get(c))
 }

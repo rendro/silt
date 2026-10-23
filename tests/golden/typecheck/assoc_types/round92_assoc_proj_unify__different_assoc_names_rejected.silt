@@ -9,7 +9,7 @@ trait Pair {
 }
 
 fn bad(s: a) -> <a as Pair>::First where a: Pair {
-  s.second()
+  Pair.second(s)
 }
 
 fn main() {

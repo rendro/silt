@@ -33,29 +33,29 @@ trait Loader for Other {
 
 trait Loader for Box(t) where t: Loader {
   fn load(self, type a) -> Result(a, json.JsonError) {
-    self.v.load(a)
+    Loader.load(self.v, a)
   }
 }
 
 fn both(x, y, t) {
-  let _ = Box { v: x }.load(t)
-  Box { v: y }.load(t)
+  let _ = Loader.load(Box { v: x }, t)
+  Loader.load(Box { v: y }, t)
 }
 
 fn go(l, t) {
-  l.load(t)
+  Loader.load(l, t)
 }
 
 fn go_annotated(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
-  l.load(b)
+  Loader.load(l, b)
 }
 
 fn returned(l) {
-  { t -> l.load(t) }
+  { t -> Loader.load(l, t) }
 }
 
 fn kept(l) {
-  H { f: { t -> l.load(t) } }
+  H { f: { t -> Loader.load(l, t) } }
 }
 
 fn apply1(f, t) {
@@ -76,5 +76,5 @@ fn main() {
   let _ = g(Blob)
   let h = kept(src)
   let _ = h.f(Blob)
-  let _ = apply1({ t -> src.load(t) }, Blob)
+  let _ = apply1({ t -> Loader.load(src, t) }, Blob)
 }

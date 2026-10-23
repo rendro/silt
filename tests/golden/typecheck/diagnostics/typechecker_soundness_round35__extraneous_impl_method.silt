@@ -10,5 +10,5 @@ trait Greeter for Int {
   fn secret(self) -> Int { 42 }
 }
 fn main() {
-  println((1).greet())
+  println(Greeter.greet(1))
 }

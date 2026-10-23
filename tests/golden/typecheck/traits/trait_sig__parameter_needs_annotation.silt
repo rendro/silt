@@ -7,4 +7,4 @@
 -- stderr-contains: a trait declares complete signatures
 trait Mk { fn mk(self, other) -> Self }
 trait Mk for Int { fn mk(self, other) { other } }
-fn main() { println(1.mk(2)) }
+fn main() { println(Mk.mk(1, 2)) }

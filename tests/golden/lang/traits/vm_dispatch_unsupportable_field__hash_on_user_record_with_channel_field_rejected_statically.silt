@@ -2,7 +2,7 @@
 -- stderr-contains: error[type]: type 'Holder' does not implement trait 'Hash': field 'ch' is of type 'Channel(Int)', which does not
 import channel
 type Holder { id: String, ch: Channel(Int) }
-fn h(x: a) -> Int where a: Hash { x.hash() }
+fn h(x: a) -> Int where a: Hash { Hash.hash(x) }
 fn main() {
     let c = channel.new(1)
     let hol = Holder { id: "x", ch: c }

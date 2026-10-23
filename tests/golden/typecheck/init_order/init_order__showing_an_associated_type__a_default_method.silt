@@ -17,7 +17,7 @@ trait Container {
   type Item: Display
   fn first(self) -> Self::Item
   fn shown(self) -> String {
-    "first is {self.first()}"
+    "first is {Container.first(self)}"
   }
 }
 
@@ -32,7 +32,7 @@ trait Container for Holder {
   }
 }
 
-let a = Holder { t: T { n: 1 } }.shown()
+let a = Container.shown(Holder { t: T { n: 1 } })
 
 let unit = {
   println("unit")

@@ -27,7 +27,7 @@ type RA = Raw
 fn main() {
   lib.via(lib.T { n: 1 }, L)
   lib.direct("n = 1", L)
-  lib.T { n: 1 }.get("n = 1", L)
+  lib.Load.get(lib.T { n: 1 }, "n = 1", L)
   lib.deep(lib.T { n: 1 }, L)
   lib.via(lib.T { n: 1 }, LL)
   lib.via(lib.T { n: 1 }, NL)

@@ -10,5 +10,5 @@ trait Show2 for Pair(a) where a: Display {
     "{x} and {y}"
   }
 }
-fn describe(x: p) -> String where p: Show2 { x.show2() }
+fn describe(x: p) -> String where p: Show2 { Show2.show2(x) }
 fn main() { println(describe((1, "z"))) }

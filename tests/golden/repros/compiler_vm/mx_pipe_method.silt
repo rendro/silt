@@ -9,6 +9,6 @@ trait Adder for Acc {
 type Color { Red, Green }
 fn main() {
   let a = Acc { base: 100 }
-  println(a.add(5))
-  println(5 |> a.add())
+  println(Adder.add(a, 5))
+  println(Adder.add(a, 5))
 }

@@ -6,7 +6,7 @@
 import other
 type P { n: Int }
 trait other.Tag for P { fn tag(self) -> String { "main.P.tag {late}" } }
-fn tg(x: a) -> String where a: other.Tag { x.tagged() }
+fn tg(x: a) -> String where a: other.Tag { other.Tag.tagged(x) }
 let v = tg(P { n: 1 })
 let late = {
   println("late")

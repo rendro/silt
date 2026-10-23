@@ -8,6 +8,6 @@ import http
 import tcp
 
 fn main() {
-  println(http.Timeout.message())
-  println(tcp.Closed.message())
+  println(Error.message(http.Timeout))
+  println(Error.message(tcp.Closed))
 }

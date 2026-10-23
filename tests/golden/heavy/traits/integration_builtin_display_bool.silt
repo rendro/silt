@@ -1,5 +1,5 @@
 import io
-fn program() { true.display() }
+fn program() { "{true}" }
 
 fn main() {
   println(io.inspect(program()))

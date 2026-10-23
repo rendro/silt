@@ -20,7 +20,7 @@ fn until_closed(conn: tcp.TcpStream) -> String {
         0 -> "the client closed the connection"
         _ -> loop()
       }
-      Err(e) -> "the read failed: {e.message()}"
+      Err(e) -> "the read failed: {Error.message(e)}"
     }
   }
 }
@@ -38,7 +38,7 @@ fn main() {
       println("connect: connected")
     }
     Err(postgres.Timeout) -> println("connect: Timeout")
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
   when let Ok(conn) = task.join(server) else {
     panic("cannot accept")

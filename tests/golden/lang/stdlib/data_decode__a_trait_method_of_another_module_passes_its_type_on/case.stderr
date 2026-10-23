@@ -1,23 +1,23 @@
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
- --> main.silt:14:18
+ --> main.silt:14:26
     |
- 14 |   println(s.load(Blob))
-    |                  ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ 14 |   println(Loader.load(s, Blob))
+    |                          ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `Src.load` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
- --> main.silt:15:17
+ --> main.silt:15:25
     |
- 15 |   println(s.own(Blob))
-    |                 ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ 15 |   println(Loader.own(s, Blob))
+    |                         ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `Src.own` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
- --> main.silt:16:26
+ --> main.silt:16:25
     |
- 16 |   println(src.Src.own(s, Blob))
-    |                          ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ 16 |   println(Loader.own(s, Blob))
+    |                         ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `Src.own` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

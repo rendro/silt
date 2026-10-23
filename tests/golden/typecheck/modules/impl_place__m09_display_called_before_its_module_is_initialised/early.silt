@@ -1,7 +1,8 @@
 import types.{ Tag }
+import string
 pub fn show(x: a) -> String where a: Display {
-  x.display()
+  "{x}"
 }
-pub let text = Tag { name: "e" }.display()
+pub let text = string.from(Tag { name: "e" })
 pub let text2 = show(Tag { name: "e2" })
-pub let text3 = Tag.display(Tag { name: "e3" })
+pub let text3 = string.from(Tag { name: "e3" })

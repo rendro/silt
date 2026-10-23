@@ -12,6 +12,6 @@ type Bag { name: String, items: Set(Int) }
 fn main() {
   match parse("""{"name": "b", "items": [1]}""", Bag) {
     Ok(b) -> println(b.name)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

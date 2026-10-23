@@ -1,7 +1,7 @@
 pub trait Tag {
   fn tag(self) -> String
   fn tagged(self) -> String {
-    "<{self.tag()}>"
+    "<{Tag.tag(self)}>"
   }
 }
 

@@ -1,5 +1,5 @@
 error[type]: the impl of trait 'Display' for type 'types.Tag' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'types', which declares the type
- --> main.silt:10:1
+ --> main.silt:11:1
     |
- 10 | trait Display for Tag {
+ 11 | trait Display for Tag {
     | ^^^^^^^^^^^^^^^^^^^^^^^ the impl of trait 'Display' for type 'types.Tag' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'types', which declares the type

@@ -17,6 +17,6 @@ fn main() {
   match run(time.seconds(60), { -> [1, 2, 3] }) {
     Ok(xs) -> println(xs)
     Err(task.Timeout) -> println("timed out")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

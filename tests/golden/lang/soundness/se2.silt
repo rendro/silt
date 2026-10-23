@@ -11,7 +11,7 @@ trait Get for P {
   }
 }
 fn main() {
-  println(P { v: 1 }.get())
+  println(Get.get(P { v: 1 }))
   let g = { x -> self }
   println(1)
 }

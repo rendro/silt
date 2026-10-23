@@ -78,10 +78,10 @@ fn main() {
   match io.read_file("settings.json") {
     Ok(content) -> match json.parse(content, Config) {
       Ok(cfg) -> println("loaded: {cfg.name}")
-      Err(e) -> println("parse error: {e.message()}")
+      Err(e) -> println("parse error: {Error.message(e)}")
     }
     Err(io.NotFound(path)) -> println("no config at {path} — run `silt init` first")
-    Err(e) -> println("read error: {e.message()}")
+    Err(e) -> println("read error: {Error.message(e)}")
   }
 }
 ```
@@ -129,9 +129,9 @@ fn main() {
       (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
         Ok(text) -> match json.parse(text, Todo) {
           Ok(todo) -> reply(201, todo)
-          Err(e) -> reply(400, #{ "error": e.message() })
+          Err(e) -> reply(400, #{ "error": Error.message(e) })
         }
-        Err(e) -> reply(400, #{ "error": e.message() })
+        Err(e) -> reply(400, #{ "error": Error.message(e) })
       }
       _ -> reply(404, #{ "error": "Not found" })
     }

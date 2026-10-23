@@ -6,5 +6,5 @@ trait Display for Color {
 
 fn main() {
   let r = Red
-  println(r.display())
+  println("{r}")
 }

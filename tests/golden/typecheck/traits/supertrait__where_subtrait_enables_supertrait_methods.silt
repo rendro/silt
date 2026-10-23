@@ -21,9 +21,9 @@ trait Ord2 for Foo {
 
 -- This should typecheck because Eq2 is a supertrait of Ord2.
 fn cmp(a: t, b: t) -> Bool where t: Ord2 {
-  match a.eq2(b) {
+  match Eq2.eq2(a, b) {
     true -> false
-    false -> a.lt2(b)
+    false -> Ord2.lt2(a, b)
   }
 }
 

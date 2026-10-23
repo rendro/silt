@@ -6,6 +6,6 @@
 trait Loud { fn loud(self) -> String }
 trait Loud for Int { fn loud(self) -> String { "INT" } }
 trait Shw { fn shw(self, x: a) -> String }
-trait Shw for Bool { fn shw(self, x: a) -> String where a: Loud { x.loud() } }
-fn call(s: t, v: String) -> String where t: Shw { s.shw(v) }
+trait Shw for Bool { fn shw(self, x: a) -> String where a: Loud { Loud.loud(x) } }
+fn call(s: t, v: String) -> String where t: Shw { Shw.shw(s, v) }
 fn main() { println(call(true, "s")) }

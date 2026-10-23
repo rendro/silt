@@ -12,6 +12,6 @@ trait Namer for Color {
   }
 }
 fn main() {
-  println(Red.name("!"))
-  println("!" |> Red.name())
+  println(Namer.name(Red, "!"))
+  println(Namer.name(Red, "!"))
 }

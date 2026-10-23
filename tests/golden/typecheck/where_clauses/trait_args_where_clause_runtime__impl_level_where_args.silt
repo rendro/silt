@@ -11,14 +11,14 @@ trait UseIt for List(a) where a: Conv(Int) {
       match self {
           [] -> 0
           [x, ..rest] -> {
-            let n: Int = x.conv()
-            n + rest.use_it()
+            let n: Int = Conv.conv(x)
+            n + UseIt.use_it(rest)
           }
       }
     }
 }
 fn main() {
     let xs: List(Int) = [1, 2, 3]
-    let r: Int = xs.use_it()
+    let r: Int = UseIt.use_it(xs)
     println(r)
 }

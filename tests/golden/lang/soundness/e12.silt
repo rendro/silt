@@ -5,7 +5,7 @@ trait Greet { fn greet(self) -> String }
 trait Greet for P { fn greet(self) -> String { "p" } }
 fn main() {
   let ps = [P { v: 1 }]
-  let f = { p -> p.greet() }
+  let f = { p -> Greet.greet(p) }
   println(f(P { v: 2 }))
   println(list.map(ps, f))
 }

@@ -20,7 +20,7 @@ fn text(body: Bytes) -> String {
 fn get(url) {
   match http.get(url) {
     Ok(r) -> "{r.status} {text(r.body)}"
-    Err(e) -> "error: {e.message()}"
+    Err(e) -> "error: {Error.message(e)}"
   }
 }
 
@@ -36,7 +36,7 @@ fn main() {
   let refused = 1..100 |> list.map { _ ->
     match tcp.accept(listener) {
       Ok(_) -> "a connection"
-      Err(e) -> e.message()
+      Err(e) -> Error.message(e)
     }
   }
   println(refused |> list.unique)
@@ -52,9 +52,9 @@ fn main() {
   match tcp.accept(listener) {
     Ok(conn) -> match tcp.read_exact(conn, 5) {
       Ok(hello) -> println("accepted a client that sent {bytes.length(hello)} bytes")
-      Err(e) -> println("accepted a connection that says nothing: {e.message()}")
+      Err(e) -> println("accepted a connection that says nothing: {Error.message(e)}")
     }
-    Err(e) -> println("accept: {e.message()}")
+    Err(e) -> println("accept: {Error.message(e)}")
   }
   let _ = task.join(client)
 

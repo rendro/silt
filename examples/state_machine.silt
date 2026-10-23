@@ -46,13 +46,13 @@ trait Display for Event {
 
 -- Print a labeled displayable value (uses where clause)
 fn print_labeled(label: String, value: a) where a: Display {
-  println("{label}: {value.display()}")
+  println("{label}: {value}")
 }
 
 -- Print a list of displayable items with a header (uses where clause)
 fn print_items(header: String, items: List(a)) where a: Display {
   println(header)
-  items |> list.each { item -> println("  - {item.display()}") }
+  items |> list.each { item -> println("  - {item}") }
 }
 
 -- Look up item info from inventory; returns (quantity, price) or None
@@ -154,7 +154,7 @@ fn run_machine(events, initial_state, initial_inventory) {
         _ -> (state2, inventory2)
       }
       let (new_state, message, new_inv) = transition(state3, event, inventory3)
-      let new_log = list.append(log2, (step2, event.display(), state3, new_state, message))
+      let new_log = list.append(log2, (step2, "{event}", state3, new_state, message))
       (new_state, new_inv, step2 + 1, new_log)
     }
   let (_final_state, _final_inv, _step, log) = outcome
@@ -206,7 +206,7 @@ fn main() {
         _ -> "{step}"
       }
       println("[{step_str}] Event: {event_str}")
-      println("     {old_state.display()} -> {new_state.display()}")
+      println("     {old_state} -> {new_state}")
       println("     >> {message}")
       println("")
     }

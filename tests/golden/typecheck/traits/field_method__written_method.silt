@@ -8,13 +8,13 @@
 type H { run: Fn(Int) -> Int, n: Int }
 trait Run { fn run(self, x: Int) -> Int }
 trait Run for H { fn run(self, x: Int) -> Int { -1 } }
-fn bounded(r: a, x: Int) -> Int where a: Run { r.run(x) }
-fn inferred(r, x) { r.run(x) }
+fn bounded(r: a, x: Int) -> Int where a: Run { Run.run(r, x) }
+fn inferred(r, x) { Run.run(r, x) }
 fn main() {
   let h = H { run: { x -> x + 1 }, n: 0 }
   println(h.run(1))
   println(bounded(h, 1))
   println(inferred(h, 1))
-  let k = { r -> r.run(2) }
+  let k = { r -> Run.run(r, 2) }
   println(k(h))
 }

@@ -7,36 +7,36 @@ trait Keep {
   fn name(self) -> String
   fn both(self) -> String
   fn pick(self, o: Self) -> Self
-  fn twice(self) -> String { "{self.name()} {self.name()}" }
+  fn twice(self) -> String { "{Keep.name(self)} {Keep.name(self)}" }
 }
 trait Keep for Fn {
   fn keep(self) -> Self { self }
   fn name(self) -> String { "fn" }
-  fn both(self) -> String { "{self.name()}+{self.keep().name()}" }
+  fn both(self) -> String { "{Keep.name(self)}+{Keep.name(Keep.keep(self))}" }
   fn pick(self, o: Self) -> Self { o }
 }
 trait Keep for Tuple {
   fn keep(self) -> Self { self }
   fn name(self) -> String { "tuple" }
-  fn both(self) -> String { self.name() }
+  fn both(self) -> String { Keep.name(self) }
   fn pick(self, o: Self) -> Self { o }
 }
 fn cents(n: Int) -> Cents { Cents(n) }
 fn other(n: Int) -> Cents { Cents(n + 1) }
-fn k(x: a) -> a where a: Keep { x.keep() }
+fn k(x: a) -> a where a: Keep { Keep.keep(x) }
 fn main() {
-  let f = cents.keep()
+  let f = Keep.keep(cents)
   let Cents(n) = f(3)
   println(n)
-  println(cents.both())
-  println(cents.twice())
-  let g = cents.pick(other)
+  println(Keep.both(cents))
+  println(Keep.twice(cents))
+  let g = Keep.pick(cents, other)
   println(g(1))
-  let (a, b) = (1, "x").keep()
+  let (a, b) = Keep.keep((1, "x"))
   println("{a} {b}")
-  println((1, 2).pick((3, 4)))
+  println(Keep.pick((1, 2), (3, 4)))
   let h = k(cents)
   println(h(9))
   println(k((1, 2)))
-  println({ x -> x + 1 }.name())
+  println(Keep.name({ x -> x + 1 }))
 }

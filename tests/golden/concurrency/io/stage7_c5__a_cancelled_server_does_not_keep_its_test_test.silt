@@ -15,7 +15,7 @@ import test
 fn get(url) {
   match http.get(url) {
     Ok(r) -> r.status
-    Err(e) -> panic(e.message())
+    Err(e) -> panic(Error.message(e))
   }
 }
 

@@ -13,5 +13,5 @@ trait Codec for T {
 }
 
 pub fn show(t: T) -> String {
-  t.encode()
+  Codec.encode(t)
 }

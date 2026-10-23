@@ -3,6 +3,7 @@
 -- stderr-contains: error[type]: duplicate implementation of trait 'Display' for type 'types.Tag'
 -- A second written Display impl for an imported type is a duplicate.
 import types.{ Tag }
+import string
 
 trait Display for Tag {
   fn display(self) -> String {
@@ -11,5 +12,5 @@ trait Display for Tag {
 }
 
 fn main() {
-  println(Tag { name: "silt" }.display())
+  println(string.from(Tag { name: "silt" }))
 }

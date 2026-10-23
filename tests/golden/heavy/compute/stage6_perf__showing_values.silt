@@ -37,7 +37,7 @@ fn run(n: Int, acc: Int) -> Int {
       let s = scene(n)
       let a = "{s}"
       let b = string.from((n, Some(s.shapes), #{ "k": [n, n] }))
-      let c = s.shapes.display()
+      let c = "{s.shapes}"
       let d = "{n} {s.name} {Point { x: n, y: n }} {[1, 2, 3]} {Some(n)}"
       run(n - 1, acc + string.length(a) + string.length(b) + string.length(c) + string.length(d))
     }

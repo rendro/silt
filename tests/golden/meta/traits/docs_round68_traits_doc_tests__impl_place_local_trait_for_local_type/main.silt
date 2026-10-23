@@ -7,5 +7,5 @@ trait Greet for Color {
 
 fn main() {
   let c: Color = Red
-  println(c.greet())
+  println(Greet.greet(c))
 }

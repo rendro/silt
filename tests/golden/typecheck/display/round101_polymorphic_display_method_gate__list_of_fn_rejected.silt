@@ -5,5 +5,5 @@
 -- a list of functions has none, as for `println`.
 fn main() {
   let f = { y -> y }
-  println([f].display())
+  println("{[f]}")
 }

@@ -6,7 +6,7 @@ pub fn mk(w: Int) -> Int {
 }
 
 pub fn label(s: a) -> String where a: Named {
-  s.name()
+  Named.name(s)
 }
 
 pub fn pt() -> g.Point {

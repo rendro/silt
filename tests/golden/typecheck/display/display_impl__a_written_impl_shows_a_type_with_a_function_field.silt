@@ -17,7 +17,7 @@ trait Display for F {
 }
 
 fn main() {
-  println(MyErr { code: 1 }.message())
+  println(Error.message(MyErr { code: 1 }))
   println(F { f: { x -> x + 1 } })
   println([F { f: { x -> x + 2 } }])
 }

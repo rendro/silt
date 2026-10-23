@@ -12,5 +12,5 @@ trait Container for Box {
 
 fn main() {
   let b = Box { v: 5 }
-  println(b.first())
+  println(Container.first(b))
 }

@@ -17,10 +17,10 @@ fn main() {
     Ok(pool) -> {
       match postgres.query(pool, "SELECT 1 AS one", (), One) {
         Ok(rows) -> println(rows)
-        Err(e) -> println("query: {e.message()}")
+        Err(e) -> println("query: {Error.message(e)}")
       }
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

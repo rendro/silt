@@ -12,11 +12,11 @@ fn main() {
   println(string.length(json.stringify(#{"v": deep})))
   match toml.stringify(#{"v": deep}) {
     Ok(text) -> println("written: {string.length(text)}")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   let shallow = list.fold(1..400, json.Int(1), { acc, _ -> json.Array([acc]) })
   match toml.stringify(#{"v": shallow}) {
     Ok(text) -> println("written: {string.length(text)}")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

@@ -1,7 +1,7 @@
 -- A record with a tuple field is ordered: a tuple has Compare when its
 -- parts do.
 type Point { n: Int, t: (Int, Int), }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
     let p = Point { n: 1, t: (0, 0) }
     let q = Point { n: 2, t: (0, 0) }

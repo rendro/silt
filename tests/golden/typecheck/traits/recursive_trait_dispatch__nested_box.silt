@@ -3,8 +3,8 @@ trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "leaf" } }
 trait Greet for Box(a) where a: Greet {
   fn greet(self) -> String {
-    match self { Box(inner) -> "[{inner.greet()}]" }
+    match self { Box(inner) -> "[{Greet.greet(inner)}]" }
   }
 }
 
-fn main() { println(Box(Box(99)).greet()) }
+fn main() { println(Greet.greet(Box(Box(99)))) }

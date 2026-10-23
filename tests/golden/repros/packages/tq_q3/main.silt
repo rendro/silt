@@ -8,6 +8,6 @@ fn main() {
   println(a)
   println(b)
   println(a == b)
-  println(a.area())
+  println(shapes.Area.area(a))
   println(c.area())
 }

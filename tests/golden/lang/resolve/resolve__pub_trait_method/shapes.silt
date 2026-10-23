@@ -10,4 +10,4 @@ trait Describe for Square {
 
 pub fn square(side: Int) -> Square { Square { side: side } }
 
-pub fn described(s: Square) -> String { s.describe() }
+pub fn described(s: Square) -> String { Describe.describe(s) }

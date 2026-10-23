@@ -1,7 +1,7 @@
 import t
 
 pub fn f(v: a) -> String where a: t.T {
-  "f: {v.m()}"
+  "f: {t.T.m(v)}"
 }
 
 pub fn shown(v: a) -> String where a: Display {

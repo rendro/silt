@@ -6,13 +6,13 @@ trait Deep for Int {
   fn go(self) -> Int {
     match self {
       0 -> 0
-      _ -> 1 + (self - 1).go()
+      _ -> 1 + Deep.go(self - 1)
     }
   }
 }
 fn main() {
-  println(1000.go())
-  println(5000.go())
-  println(20000.go())
-  println(90000.go())
+  println(Deep.go(1000))
+  println(Deep.go(5000))
+  println(Deep.go(20000))
+  println(Deep.go(90000))
 }

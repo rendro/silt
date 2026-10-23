@@ -12,5 +12,5 @@ trait Foo for Ints {
 fn helper(x) { x + 1 }
 fn main() {
   let n: String = helper(1)
-  println([1, 2].foo())
+  println(Foo.foo([1, 2]))
 }

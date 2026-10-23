@@ -11,7 +11,7 @@ trait Show for Bool {
   } }
 }
 fn main() {
-  println((1).show())
-  println(("x").show())
-  println(true.show())
+  println(Show.show(1))
+  println(Show.show("x"))
+  println(Show.show(true))
 }

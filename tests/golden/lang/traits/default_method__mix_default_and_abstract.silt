@@ -11,6 +11,6 @@ trait Display2 for Item {
 
 fn main() {
   let it = Item { v: 1 }
-  println(it.show())
-  println(it.debug())
+  println(Display2.show(it))
+  println(Display2.debug(it))
 }

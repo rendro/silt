@@ -2,7 +2,7 @@
 import list
 fn main() {
   let xs = [1, 2, 3]
-  let ys = list.map(xs, { x: Int -> x.display() })
+  let ys = list.map(xs, { x: Int -> "{x}" })
   println(ys)
-  println(1.display())
+  println("{1}")
 }

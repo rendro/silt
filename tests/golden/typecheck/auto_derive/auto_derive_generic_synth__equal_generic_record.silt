@@ -1,5 +1,5 @@
 type Wrapped(a) { value: a }
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
 fn main() {
     let p = Wrapped { value: 1 }
     let q = Wrapped { value: 1 }

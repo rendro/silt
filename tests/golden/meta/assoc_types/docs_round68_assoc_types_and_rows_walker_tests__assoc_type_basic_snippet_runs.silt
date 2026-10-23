@@ -15,5 +15,5 @@ trait Stream for Wrap {
 
 fn main() {
   let w = Wrap { v: 7 }
-  println(w.first())
+  println(Stream.first(w))
 }

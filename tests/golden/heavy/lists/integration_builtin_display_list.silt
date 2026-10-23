@@ -1,5 +1,5 @@
 import io
-fn program() { [1, 2, 3].display() }
+fn program() { "{[1, 2, 3]}" }
 
 fn main() {
   println(io.inspect(program()))

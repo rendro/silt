@@ -8,5 +8,5 @@ trait Measurable {
 trait Measurable for String {
   fn measure(self) -> Int { 0 }
 }
-fn measure_it(x: a) -> Int where a: Measurable { x.measure() }
+fn measure_it(x: a) -> Int where a: Measurable { Measurable.measure(x) }
 fn main() { println(measure_it(42)) }

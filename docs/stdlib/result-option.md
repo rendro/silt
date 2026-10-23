@@ -137,7 +137,7 @@ fn load(path: String) -> Result(String, AppError) {
 fn main() {
   match load("missing.txt") {
     Ok(s) -> println(s)
-    Err(IoWrap(e)) -> println(e.message())
+    Err(IoWrap(e)) -> println(Error.message(e))
   }
 }
 ```

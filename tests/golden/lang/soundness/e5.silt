@@ -3,7 +3,7 @@
 -- stderr-contains: error[type]: type mismatch: expected Int, got String
 -- Port of repros/type_soundness/e5.silt, in brace closures.
 fn main() {
-  let f = { x -> x.display() }
+  let f = { x -> "{x}" }
   let n: Int = f(1)
   println(n)
 }

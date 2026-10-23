@@ -8,7 +8,7 @@ trait Describe for Pt { fn display(self) -> String { "described" } }
 trait Ranked { fn compare(self, other: Self) -> Int }
 trait Ranked for Pt { fn compare(self, other: Self) -> Int { 99 } }
 fn show_it(a: a) -> String where a: Display { "{a}" }
-fn rank(a: a, b: a) -> Int where a: Ranked { a.compare(b) }
+fn rank(a: a, b: a) -> Int where a: Ranked { Ranked.compare(a, b) }
 fn main() {
   println("{Pt { x: 1 }}")
   println(show_it(Pt { x: 2 }))

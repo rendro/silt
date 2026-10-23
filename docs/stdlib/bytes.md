@@ -66,7 +66,7 @@ fn main() {
   let greeting = bytes.concat_all([hello, space, world])
   match bytes.to_string(greeting) {
     Ok(s) -> println(s) -- hello world
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 
   -- Slicing (half-open; an index past the end is the end)

@@ -74,13 +74,13 @@ fn main() {
             loop(())
           }
           Err(e) -> {
-            println("accept error: {e.message()}")
+            println("accept error: {Error.message(e)}")
             loop(())
           }
         }
       }
     }
-    Err(e) -> println("listen error: {e.message()}")
+    Err(e) -> println("listen error: {Error.message(e)}")
   }
 }
 ```
@@ -203,7 +203,7 @@ fn main() {
       let _ = tcp.write(conn, bytes.from_string("hello"))
       tcp.close(conn)
     }
-    Err(e) -> println("connect_tls err: {e.message()}")
+    Err(e) -> println("connect_tls err: {Error.message(e)}")
   }
 }
 ```
@@ -249,7 +249,7 @@ fn serve(conn, cert, key) {
       let _ = tcp.write(tls, bytes.from_string("hello over TLS\n"))
       tcp.close(tls)
     }
-    Ok(Err(e)) -> println("handshake failed: {e.message()}")
+    Ok(Err(e)) -> println("handshake failed: {Error.message(e)}")
     Err(_) -> println("the client took too long")
   }
 }
@@ -273,7 +273,7 @@ fn main() {
         let _ = task.spawn { -> serve(conn, cert, key) }
         loop(())
       }
-      Err(e) -> println("accept failed: {e.message()}")
+      Err(e) -> println("accept failed: {Error.message(e)}")
     }
   }
 }
@@ -327,7 +327,7 @@ fn main() {
       let _ = tcp.write(tls, bytes.from_string("hello, authenticated client"))
       tcp.close(tls)
     }
-    Err(e) -> println("mTLS handshake failed: {e.message()}")
+    Err(e) -> println("mTLS handshake failed: {Error.message(e)}")
   }
 }
 ```

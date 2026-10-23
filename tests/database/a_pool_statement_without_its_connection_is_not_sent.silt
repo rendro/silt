@@ -29,7 +29,7 @@ fn main() {
         println(
           match late {
             Ok(_) -> "the insert came back"
-            Err(e) -> "task.deadline: {e.message()}"
+            Err(e) -> "task.deadline: {Error.message(e)}"
           },
         )
         Ok(())
@@ -37,16 +37,16 @@ fn main() {
       println(
         match done {
           Ok(_) -> "main's transaction: Ok"
-          Err(e) -> "main's transaction: {e.message()}"
+          Err(e) -> "main's transaction: {Error.message(e)}"
         },
       )
       time.sleep(time.ms(300))
       match postgres.query(pool, "SELECT count(*)::int AS n FROM silt_late_statement", (), json.Value) {
         Ok(rows) -> println("rows: {rows}")
-        Err(e) -> println("count: {e.message()}")
+        Err(e) -> println("count: {Error.message(e)}")
       }
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

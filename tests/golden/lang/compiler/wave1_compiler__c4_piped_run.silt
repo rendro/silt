@@ -12,6 +12,6 @@ fn main() {
   let r = "\{\"items\": \"oops\"\}" |> json.parse(Bag)
   match r {
     Ok(v) -> println(v)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

@@ -8,5 +8,5 @@ trait Wrapper for Box(a) {}
 
 fn main() {
   let b = Box { value: 42 }
-  println(b.describe())
+  println(Wrapper.describe(b))
 }

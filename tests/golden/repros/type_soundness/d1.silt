@@ -3,7 +3,7 @@
 trait Same { fn same(self) -> Self }
 trait Same for String { fn same(self) -> Self { self } }
 
-fn coerce(x) { x.same() }
+fn coerce(x) { Same.same(x) }
 
 fn main() {
   let n: Int = coerce("not an int")

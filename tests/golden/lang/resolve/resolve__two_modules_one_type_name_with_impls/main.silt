@@ -7,12 +7,12 @@
 import a
 import b
 fn both(p: a.Pt, q: b.Pt) -> String {
-  "{p.display()} / {q.display()} / {p.x} {q.y}"
+  "{p} / {q} / {p.x} {q.y}"
 }
 fn main() {
-  println(a.mk().display())
-  println(b.mk().display())
-  println(a.Pt.display(a.mk()))
+  println("{a.mk()}")
+  println("{b.mk()}")
+  println("{a.mk()}")
   println(both(a.mk(), b.mk()))
   println(a.mk())
   println(b.mk())

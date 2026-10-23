@@ -27,7 +27,7 @@ fn main() {
     }
     let answer = match http.get(url) {
       Ok(r) -> text(r.body)
-      Err(e) -> e.message()
+      Err(e) -> Error.message(e)
     }
     task.cancel(server)
     match answer == "round {round}" {

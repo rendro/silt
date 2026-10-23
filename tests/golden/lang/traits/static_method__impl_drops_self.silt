@@ -19,5 +19,5 @@ trait Vals for Int {
 }
 
 fn main() {
-  println(7.total())
+  println(Vals.total(7))
 }

@@ -29,13 +29,13 @@ fn drain(db: postgres.PgPool, sql: String) {
           loop()
         }
         Some(Err(e)) -> {
-          println("  Err: {e.message()}")
+          println("  Err: {Error.message(e)}")
           loop()
         }
         None -> println("  closed")
       }
     }
-    Err(e) -> println("  stream: {e.message()}")
+    Err(e) -> println("  stream: {Error.message(e)}")
   }
 }
 
@@ -71,10 +71,10 @@ fn main() {
       }
       match refused {
         Ok(rows) -> println("a cursor that does not fit: {rows}")
-        Err(e) -> println("a cursor that does not fit: {e.message()}")
+        Err(e) -> println("a cursor that does not fit: {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

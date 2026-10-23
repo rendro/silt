@@ -45,9 +45,9 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
- --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:79:40
+ --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:79:48
     |
- 79 |   let _ = apply1({ t -> src.load(t) }, Blob)
-    |                                        ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ 79 |   let _ = apply1({ t -> Loader.load(src, t) }, Blob)
+    |                                                ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `apply1` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

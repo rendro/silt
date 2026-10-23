@@ -7,7 +7,7 @@
 -- stderr-contains: add `where c: SomeTrait`
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
-fn hello(x: a) -> String where a: Greet { x.greet() }
+fn hello(x: a) -> String where a: Greet { Greet.greet(x) }
 fn partly(x: b) { hello(x) }
 fn method(x: c) -> String { x.greet() }
 fn main() { println(partly(1)) }

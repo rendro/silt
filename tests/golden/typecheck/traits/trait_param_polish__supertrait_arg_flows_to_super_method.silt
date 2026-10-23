@@ -17,7 +17,7 @@ trait Child(Int) for Holder {
 }
 
 fn call_parent(x: b, type a) -> a where b: Child(a) {
-    x.parent_fn()
+    Parent.parent_fn(x)
 }
 
 fn main() {

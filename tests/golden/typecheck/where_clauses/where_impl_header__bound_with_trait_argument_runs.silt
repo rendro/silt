@@ -8,7 +8,7 @@ trait Foo for Box(a) where a: Conv(Int) {
     fn do_it(self) -> Int {
       match self {
           Wrap(x) -> {
-            let n: Int = x.conv()
+            let n: Int = Conv.conv(x)
             n + 100
           }
       }
@@ -16,5 +16,5 @@ trait Foo for Box(a) where a: Conv(Int) {
 }
 fn main() {
     let b: Box(String) = Wrap("five")
-    println(b.do_it())
+    println(Foo.do_it(b))
 }

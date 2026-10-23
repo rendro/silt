@@ -3,7 +3,7 @@
 -- stderr-not-contains: error
 import a
 
-fn announce(x: a) -> String where a: a.Greet { x.greet() }
+fn announce(x: a) -> String where a: a.Greet { a.Greet.greet(x) }
 
 fn main() {
   announce(7)

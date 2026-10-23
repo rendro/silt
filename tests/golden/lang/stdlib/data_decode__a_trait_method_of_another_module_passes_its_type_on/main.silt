@@ -11,7 +11,7 @@ type Blob { data: Bytes }
 
 fn main() {
   let s = src.Src { s: "\{}" }
-  println(s.load(Blob))
-  println(s.own(Blob))
-  println(src.Src.own(s, Blob))
+  println(Loader.load(s, Blob))
+  println(Loader.own(s, Blob))
+  println(Loader.own(s, Blob))
 }

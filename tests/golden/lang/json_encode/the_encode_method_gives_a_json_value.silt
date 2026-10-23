@@ -13,11 +13,11 @@ import json
 type Money { cents: Int }
 
 fn main() {
-  let a: Int = 5.encode()
-  let b: json.Value = Money { cents: 1 }.encode()
+  let a: Int = json.Encode.encode(5)
+  let b: json.Value = json.Encode.encode(Money { cents: 1 })
   println(b)
 }
 
-fn via(x: a) -> Int where a: json.Encode { x.encode() }
+fn via(x: a) -> Int where a: json.Encode { json.Encode.encode(x) }
 
 fn f() { { x -> x }.encode() }

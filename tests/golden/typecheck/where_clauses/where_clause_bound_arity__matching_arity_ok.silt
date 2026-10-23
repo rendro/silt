@@ -4,7 +4,7 @@ trait Cast(to) {
 trait Cast(Float) for Int {
   fn cast(self) -> Float { 1.0 }
 }
-fn g(x: a) -> Float where a: Cast(Float) { x.cast() }
+fn g(x: a) -> Float where a: Cast(Float) { Cast.cast(x) }
 fn main() {
   println(g(42))
 }

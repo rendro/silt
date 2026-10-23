@@ -1,5 +1,5 @@
 -- verdict: same
-fn show(x) { x.display() }
+fn show(x) { "{x}" }
 fn main() {
   let f = fn(y) { y }
   println(show(f) + 1)

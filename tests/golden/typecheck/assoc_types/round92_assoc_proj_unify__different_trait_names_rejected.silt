@@ -12,7 +12,7 @@ trait B {
 }
 
 fn bad(s: a) -> <a as A>::Item where a: A + B {
-  s.bi()
+  B.bi(s)
 }
 
 fn main() {

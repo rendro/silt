@@ -5,7 +5,7 @@ trait Display for Temp {
 }
 fn main() {
   let t = Temp { degrees: 21 }
-  println(t.display())
+  println("{t}")
   println("{t}")
   println(t)
   let s = "now: {t}"

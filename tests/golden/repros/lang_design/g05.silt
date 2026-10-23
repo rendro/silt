@@ -1,5 +1,5 @@
 -- verdict: same
-fn describe(x) { x.display() }
+fn describe(x) { "{x}" }
 fn id(x) { x }
 fn main() {
   println(describe(1))

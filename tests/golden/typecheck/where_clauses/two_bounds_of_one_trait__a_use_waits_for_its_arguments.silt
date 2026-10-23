@@ -12,7 +12,7 @@ type T { n: Int }
 trait Conv(b) for T {
   fn show(self) -> String { "T {self.n}" }
 }
-fn gen2(x: a, y: List(c)) -> String where a: Conv(c) { x.show() }
+fn gen2(x: a, y: List(c)) -> String where a: Conv(c) { Conv.show(x) }
 fn both(x: a, ys) -> String where a: Conv(Int), a: Conv(String) {
   let r = gen2(x, ys)
   let _ = [1] == ys

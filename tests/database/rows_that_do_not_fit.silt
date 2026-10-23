@@ -61,7 +61,7 @@ fn said(e: postgres.PostgresError) -> String {
     postgres.Other(text) -> "Other({text})"
     _ -> "another error"
   }
-  "{variant}\n  {e.message()}"
+  "{variant}\n  {Error.message(e)}"
 }
 
 fn show(what: String, answer: Result(List(a), postgres.PostgresError)) where a: Display {
@@ -111,6 +111,6 @@ fn main() {
       let _ = postgres.execute(db, "DROP TABLE pg2_fit", ())
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

@@ -28,15 +28,15 @@ fn lt(x: a, y: a) -> Bool where a: Compare {
 }
 
 fn cmp(x: a, y: a) -> Int where a: Compare {
-  x.compare(y)
+  Compare.compare(x, y)
 }
 
 fn same(x: a, y: a) -> Bool where a: Equal {
-  x == y && x.equal(y)
+  x == y && (x == y)
 }
 
 fn hashes(x: a, y: a) -> Bool where a: Hash {
-  x.hash() == y.hash()
+  Hash.hash(x) == Hash.hash(y)
 }
 
 fn main() {
@@ -44,24 +44,24 @@ fn main() {
   let b = Version { minor: 2, major: 0 }
   -- `minor` is declared first: it decides.
   println(a < b)
-  println(a.compare(b))
+  println(Compare.compare(a, b))
   println(lt(a, b))
   println(cmp(b, a))
-  println(Version.compare(a, a))
+  println(Compare.compare(a, a))
   println(list.sort([b, a, b]) == [a, b, b])
   -- Variants by declaration, then payload.
   println(Square(9) < Circle(0))
-  println(Circle(1).compare(Circle(2)))
+  println(Compare.compare(Circle(1), Circle(2)))
   println(cmp(Dot, Square(1)))
   println(list.sort([Dot, Circle(2), Square(3), Circle(1)]))
   -- Equal and Hash agree, alone and inside containers.
   let x = Tagged { tag: "t", item: [Some(a), None] }
   let y = Tagged { tag: "t", item: [Some(Version { minor: 1, major: 9 }), None] }
   println(x == y)
-  println(x.equal(y))
+  println(x == y)
   println(same(x, y))
   println(hashes(x, y))
-  println(x.hash() == y.hash())
+  println(Hash.hash(x) == Hash.hash(y))
   println(set.length(#[x, y]))
   println(map.get(#{x: "found"}, y))
   println((a, [Dot]) == (a, [Dot]))
@@ -69,9 +69,9 @@ fn main() {
   println(same(x, Tagged { tag: "u", item: [] }))
   -- Floats: 0.0 and -0.0 are equal, hash alike and order as equal.
   println(0.0 == -0.0)
-  println(0.0.equal(-0.0))
+  println(0.0 == -0.0)
   println(hashes(0.0, -0.0))
-  println(0.0.compare(-0.0))
+  println(Compare.compare(0.0, -0.0))
   println(set.length(#[0.0, -0.0]))
   println([1.5, -0.0] == [1.5, 0.0])
   println(1.5 < 2.5 && cmp(1.5, 2.5) == -1)

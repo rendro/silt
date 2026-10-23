@@ -20,7 +20,7 @@ fn build(n) {
 fn work() {
   let a = build(30)
   let b = build(30)
-  a.hash() == b.hash()
+  Hash.hash(a) == Hash.hash(b)
 }
 
 fn main() {

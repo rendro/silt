@@ -73,7 +73,7 @@ FROM generate_series(1, 2) g
     Ok(db) -> {
       match postgres.query(db, sql, (), Row) {
         Ok(rows) -> list.each(rows) { r -> println(r) }
-        Err(e) -> println("query: {e.message()}")
+        Err(e) -> println("query: {Error.message(e)}")
       }
       let read = postgres.transact(db) { tx ->
         let c = postgres.cursor(tx, sql, (), 1, Row)?
@@ -85,10 +85,10 @@ FROM generate_series(1, 2) g
       println("a cursor: {read}")
       match postgres.stream(db, sql, (), Row) {
         Ok(rows) -> channel.each(rows) { r -> println("a stream: {r}") }
-        Err(e) -> println("a stream: {e.message()}")
+        Err(e) -> println("a stream: {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

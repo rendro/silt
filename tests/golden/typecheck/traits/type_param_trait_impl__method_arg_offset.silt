@@ -18,7 +18,7 @@ fn use_it() {
     -- Passing a record type here exercises: receiver=Int flows
     -- into the self slot via dispatch_method_entry; the explicit
     -- arg Box unifies against the `type a` slot (params[1]).
-    let _ = 42.cast(Box)
+    let _ = Cast.cast(42, Box)
 }
 
 fn main() {}

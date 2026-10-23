@@ -12,7 +12,7 @@ fn main() {
   println("a: Red < Blue = {a.red_lt_blue()}, sorted {a.sorted()}, distinct {a.distinct()}")
   println("b: Blue < Red = {b.blue_lt_red()}, sorted {b.sorted()}, distinct {b.distinct()}")
   println("a.red() < a.blue() = {a.red() < a.blue()}; b.red() < b.blue() = {b.red() < b.blue()}")
-  println("a compare: {a.red().compare(a.blue())}; b compare: {b.red().compare(b.blue())}")
+  println("a compare: {Compare.compare(a.red(), a.blue())}; b compare: {Compare.compare(b.red(), b.blue())}")
   let ma = map.from_entries([(a.blue(), "blue"), (a.red(), "red")])
   let mb = map.from_entries([(b.blue(), "blue"), (b.red(), "red")])
   println("a keys: {map.keys(ma)}; b keys: {map.keys(mb)}")

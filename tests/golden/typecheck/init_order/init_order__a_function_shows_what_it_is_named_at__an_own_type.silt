@@ -16,7 +16,7 @@ fn label(x: a) -> String where a: Display {
 }
 
 fn dlabel(x: a) -> String where a: Display {
-  x.display()
+  "{x}"
 }
 
 fn slabel(x: a) -> String where a: Display {

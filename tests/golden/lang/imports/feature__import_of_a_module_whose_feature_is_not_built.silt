@@ -9,7 +9,7 @@ import postgres
 fn main() {
   match postgres.connect("postgres://localhost/app") {
     Ok(_) -> println("connected")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   let e = postgres.PostgresError.Connect("nope")
   println(e)

@@ -30,7 +30,7 @@ fn pair((a, b): (Int, Int), P { x, y }) {
 
 trait Scale {
   fn scale(self, by: Int) -> Int {
-    self.size() * by
+    Scale.size(self) * by
   }
   fn size(self) -> Int
 }
