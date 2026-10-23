@@ -92,7 +92,9 @@ silt test --filter string       -- runs only test_string_length
 The filter matches against the function name (not the file name). A file with
 no matching test is skipped entirely: it is not compiled and nothing is
 reported for it. A file whose tests cannot be listed, because it cannot be read
-or has a syntax error, is still reported, and its error fails the run.
+or has a syntax error, is still reported, and its error fails the run. A
+filter that matches no test at all is a mistake, a typo say, and fails the run:
+`silt test` writes `no test matches --filter 'pattern'` and exits with status 1.
 
 ## Assertions
 
