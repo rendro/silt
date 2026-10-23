@@ -196,6 +196,13 @@ jobs:
     name: Create Release
     needs: [prepare, build, playground]
     runs-on: ubuntu-latest
+    # The attestation is signed with the run's OIDC token and stored
+    # with the repository.
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
@@ -218,6 +225,16 @@ jobs:
           cd artifacts
           sha256sum silt-$TAG-*.tar.gz silt-$TAG-*.zip > silt-$TAG-SHA256SUMS
           cat silt-$TAG-SHA256SUMS
+
+      # A signed statement for every archive that this workflow run, at
+      # this commit, built it: `gh attestation verify <archive> --repo
+      # rendro/silt` checks one.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            artifacts/silt-*.tar.gz
+            artifacts/silt-*.zip
 
       - name: Create release
         uses: softprops/action-gh-release@v2
