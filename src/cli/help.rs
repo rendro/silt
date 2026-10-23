@@ -86,6 +86,10 @@ pub(crate) fn usage_text() -> String {
         "silt add <name> --git <url> [--rev|--branch|--tag <ref>]",
         "Add a git-based dependency to silt.toml",
     ));
+    out.push_str(&line(
+        "silt remove <name>",
+        "Remove a dependency from silt.toml and silt.lock",
+    ));
     out.push('\n');
     out.push_str("Global flags:\n");
     out.push_str(&line(

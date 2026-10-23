@@ -221,6 +221,7 @@ silt self-update           -- update the silt binary to the latest release
 silt update [<dep-name>]   -- regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>  -- add a path-based dependency to silt.toml
 silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dependency to silt.toml
+silt remove <name>         -- remove a dependency from silt.toml and silt.lock
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-run the command when a file of the program (a module it imports, `silt.toml` or `silt.lock`) changes. A run that is still going, such as a server, is stopped first.

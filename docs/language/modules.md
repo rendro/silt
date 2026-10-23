@@ -229,7 +229,8 @@ The entry point is `src/main.silt`, and every `.silt` file directly in
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url>`. After adding, imports from
-the dependency package work exactly like local modules.
+the dependency package work exactly like local modules. `silt remove <name>`
+takes one out of `silt.toml` and `silt.lock` again.
 
 `import x` in a module of a package means, in this order: the builtin
 module `x`; the dependency whose key under `[dependencies]` in this
