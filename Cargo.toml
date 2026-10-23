@@ -16,7 +16,7 @@ name = "silt"
 path = "src/lib.rs"
 
 [features]
-default = ["repl", "lsp", "watch", "local-clock", "http", "tcp"]
+default = ["repl", "lsp", "watch", "local-clock", "http", "tcp", "tcp-tls"]
 repl = ["dep:rustyline"]
 lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
@@ -25,7 +25,7 @@ http = ["tcp", "dep:ureq", "dep:httparse"]
 postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
-tcp-tls = ["tcp", "dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
+tcp-tls = ["tcp", "dep:rustls", "dep:webpki-roots"]
 # Exposes what tests outside the crate read of the I/O pool (its size,
 # what a panicking operation completes with) and are told of a
 # connection's writes. Always enabled under `cfg(test)`.
@@ -73,7 +73,6 @@ uuid = { version = "1", features = ["v4", "v7"] }
 native-tls = { version = "0.2", optional = true }
 postgres-native-tls = { version = "0.5", optional = true }
 rustls = { version = "0.23", optional = true, default-features = false, features = ["std", "ring"] }
-rustls-pemfile = { version = "2", optional = true }
 webpki-roots = { version = "0.26", optional = true }
 
 # Unix-only: used solely by `main()` to reset SIGPIPE to SIG_DFL so that
@@ -111,6 +110,11 @@ rcgen = "0.13"
 # Packs the answers of the client's gzip tests. The version is the one
 # the lock file holds for the transport library, so no crate is added.
 flate2 = "=1.1.9"
+
+# A release binary carries no symbol table: a smaller download. (A
+# panic's backtrace then names no functions.)
+[profile.release]
+strip = true
 
 [lints.clippy]
 # Newer clippy (1.95+) flags long compound types like `OnceLock<RwLock<HashMap<...>>>`

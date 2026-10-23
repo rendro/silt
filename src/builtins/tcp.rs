@@ -71,6 +71,7 @@ mod tls {
     use std::net::TcpStream;
     use std::sync::Arc;
 
+    use rustls::pki_types::pem::{self, PemObject};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
     use rustls::server::WebPkiClientVerifier;
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
@@ -286,8 +287,7 @@ mod tls {
     }
 
     fn parse_cert_chain(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
-        let mut reader = std::io::BufReader::new(pem);
-        let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut reader).collect();
+        let certs: Result<Vec<_>, _> = CertificateDer::pem_slice_iter(pem).collect();
         let certs = certs.map_err(|e| format!("parse cert chain: {e}"))?;
         if certs.is_empty() {
             return Err("cert PEM contains no certificates".into());
@@ -296,10 +296,10 @@ mod tls {
     }
 
     fn parse_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>, String> {
-        let mut reader = std::io::BufReader::new(pem);
-        rustls_pemfile::private_key(&mut reader)
-            .map_err(|e| format!("parse private key: {e}"))?
-            .ok_or_else(|| "key PEM contains no private key".into())
+        PrivateKeyDer::from_pem_slice(pem).map_err(|e| match e {
+            pem::Error::NoItemsFound => "key PEM contains no private key".into(),
+            e => format!("parse private key: {e}"),
+        })
     }
 
     /// Newtype wrappers so we can implement `Read`/`Write` for both client

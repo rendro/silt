@@ -820,6 +820,48 @@ mod tests {
         assert!(hover.is_some(), "expected hover for `add` at the call site");
     }
 
+    /// Hover on a function of a cargo feature that the build lacks
+    /// shows its signature and summary and names the feature. No build
+    /// that CI tests lacks one of a built module's functions (the
+    /// default features have them all), so the server is given the
+    /// text of one, `tcp.frobnicate`, which the checker does not know,
+    /// as it does not know such a function.
+    #[test]
+    fn hover_on_a_function_whose_feature_is_not_built_names_the_feature() {
+        let mut server = make_server();
+        let mut docs = server.builtin_docs.clone();
+        let text = crate::builtins::registry::docs::unbuilt_text(
+            "tcp.frobnicate",
+            "fn frobnicate(conn: TcpStream) -> Int",
+            "Frobnicate a connection",
+            "tcp-frob",
+        );
+        docs.insert("tcp.frobnicate".to_string(), text);
+        server.builtin_docs = Box::leak(Box::new(docs));
+        let source = "import tcp\n\nfn main() {\n  let f = tcp.frobnicate\n}\n";
+        let uri = open_document(&mut server, source);
+        let params = lsp_types::HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: Position::new(3, 15),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hover = server.hover(params).expect("a hover on `tcp.frobnicate`");
+        let lsp_types::HoverContents::Markup(markup) = hover.contents else {
+            panic!("expected markdown, got {:?}", hover.contents);
+        };
+        assert!(
+            markup.value.contains(
+                "```silt\nfn frobnicate(conn: TcpStream) -> Int\n```\n\nFrobnicate a connection\n\n\
+                 `tcp.frobnicate` is not part of this build of silt: it needs the cargo feature \
+                 `tcp-frob`."
+            ),
+            "{}",
+            markup.value
+        );
+    }
+
     #[test]
     fn test_completion_includes_builtins_and_user_names() {
         let mut server = make_server();

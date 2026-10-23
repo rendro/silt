@@ -127,16 +127,19 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                     false => module.feature,
                 };
                 let Some(feature) = feature else { continue };
-                let needs = crate::module::needs_feature(&format!("`{name}`"), feature);
-                let text = format!(
-                    "```silt\n{}\n```\n\n{}\n\n{needs}.",
-                    row.signature, row.summary
-                );
+                let text = unbuilt_text(&name, row.signature, row.summary, feature);
                 docs.insert(name, text);
             }
         }
         docs
     })
+}
+
+/// What an editor shows for the function `name` of a cargo feature that
+/// this build lacks: its signature and summary, and what it needs.
+pub(crate) fn unbuilt_text(name: &str, signature: &str, summary: &str, feature: &str) -> String {
+    let needs = crate::module::needs_feature(&format!("`{name}`"), feature);
+    format!("```silt\n{signature}\n```\n\n{summary}\n\n{needs}.")
 }
 
 /// The docs of each type that a built module declares, by its name as
