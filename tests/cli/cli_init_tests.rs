@@ -222,7 +222,8 @@ fn test_init_lib_creates_a_library_that_checks_and_is_imported() {
         stdout.starts_with("created silt package `shapes`:\n"),
         "{stdout}"
     );
-    assert!(stdout.contains("src/lib.silt\n"), "{stdout}");
+    let lib_line = format!("src{}lib.silt\n", std::path::MAIN_SEPARATOR);
+    assert!(stdout.contains(&lib_line), "{stdout}");
     assert!(
         stdout.ends_with("\n  check: silt check\n  test:  silt test\n"),
         "{stdout}"
