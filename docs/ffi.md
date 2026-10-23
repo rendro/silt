@@ -468,3 +468,12 @@ match vm.run_program(&program) {
 
 Silt code has no access to the host filesystem, network or environment
 beyond what the stdlib and your host modules provide.
+
+**The environment.** `env.set` and `env.remove` change the environment
+of your whole process. The `Vm` refuses them while anything of its own
+may read the environment (another task of the program, an I/O operation
+of its own), but it cannot see your threads, nor another `Vm`'s. While a
+`Vm` runs a program, read the environment on your other threads only
+through `std::env` (which takes the lock that the change takes), never
+through the C library (`getenv`, or a C library that calls it), and do
+not run two programs that change it at once.

@@ -412,16 +412,20 @@ pub(crate) mod fs {
 pub(crate) mod env {
     use super::*;
 
-    /// Refuses a change of the environment from a task: it is the
-    /// process's, a task that reads it would race with the change, and
-    /// libc's setenv/unsetenv are not synchronized. Only the program's
-    /// own thread changes it.
-    fn own_thread_only(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
-        match vm.spawned {
-            true => Err(VmError::new(format!(
-                "{name} cannot be called from a spawned task"
+    /// Refuses a change of the environment while anything else of the
+    /// program may read it: another task, or an I/O operation, one
+    /// that nobody waits for any more included: a thread that reads it
+    /// through the C library (`getenv`: a name lookup, a TLS library)
+    /// is not synchronized with `setenv`, and does not take the lock
+    /// that `std::env` takes. (A spawned task is never alone: the
+    /// program's own thread is live.)
+    fn alone(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
+        match vm.runtime.scheduler.alone() && vm.runtime.io_pool.quiet() {
+            true => Ok(()),
+            false => Err(VmError::new(format!(
+                "{name} cannot change the environment while other tasks or I/O are running: \
+                 set it before spawning tasks"
             ))),
-            false => Ok(()),
         }
     }
 
@@ -445,24 +449,26 @@ pub(crate) mod env {
         }
 
         fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
-            own_thread_only(vm, "env.set")?;
             variable_name("env.set", key)?;
             if value.contains('\0') {
                 return Err(VmError::new(format!(
                     "env.set: the value of a variable holds no NUL character, got {value:?}"
                 )));
             }
-            // SAFETY: Only reachable from the main thread (guarded above).
+            alone(vm, "env.set")?;
+            // SAFETY: no other thread of the program runs silt code or an
+            // I/O operation (`alone`), so none of them reads the
+            // environment while it changes. The threads of an embedder
+            // are its own to keep off it (docs/ffi.md).
             unsafe { std::env::set_var(key, value) };
             Ok(())
         }
 
         fn remove(vm, name: &str) -> Result<(), VmError> {
-            own_thread_only(vm, "env.remove")?;
             variable_name("env.remove", name)?;
-            // Idempotent by contract: std::env::remove_var does not
-            // error when the variable was not set, so we don't need to
-            // pre-check with env::var. SAFETY: main thread (guarded).
+            alone(vm, "env.remove")?;
+            // Removing a variable that is not set does nothing.
+            // SAFETY: as for `env.set`.
             unsafe { std::env::remove_var(name) };
             Ok(())
         }

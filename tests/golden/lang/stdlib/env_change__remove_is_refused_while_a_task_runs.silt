@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: env.remove cannot change the environment while other tasks or I/O are running: set it before spawning tasks
+-- stderr-not-contains: not reached
+-- env.remove is refused like env.set while another task has not
+-- ended.
+import channel
+import env
+import task
+
+fn main() {
+  let go = channel.new(0)
+  let worker = task.spawn { -> channel.receive(go) }
+  env.remove("SILT_ENV_CHANGE_B")
+  println("not reached")
+  channel.send(go, 1)
+  task.join(worker)
+}

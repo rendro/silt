@@ -180,16 +180,14 @@ fn main() { result.map_ok(Ok(6), { v -> v * 7 }) }
 }
 
 // ════════════════════════════════════════════════════════════════════
-// env.set spawn-thread guard — src/builtins/io.rs:338-342
+// env.set from a spawned task — src/builtins/io.rs (`env::set`)
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
 fn test_env_set_from_spawned_task_rejected() {
-    // Locks src/builtins/io.rs:338-342 — env.set refuses to run from
-    // a scheduled task (prevents std::env::set_var UB on worker
-    // threads). The error from the task propagates through task.join
-    // as "joined task failed: <original>" (src/builtins/concurrency.rs
-    // lines 418-421, 438-441).
+    // Locks src/builtins/io.rs (`env::set`): env.set refuses to run from
+    // a spawned task, which is never alone (the program's own thread is
+    // live). The error from the task propagates through task.join.
     let err = run_err(
         r#"
 import env
@@ -203,7 +201,10 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("env.set cannot be called from a spawned task"),
+        err.contains(
+            "env.set cannot change the environment while other tasks or I/O are running: set \
+             it before spawning tasks"
+        ),
         "expected env.set spawn rejection, got: {err}"
     );
 }

@@ -705,6 +705,23 @@ impl Scheduler {
         External(self.inner.clone(), group)
     }
 
+    /// Whether the calling thread is the only one at work for the
+    /// scheduler, of every owner: no spawned task has not ended, no
+    /// other thread runs silt code, and no [`External`] lives (no I/O
+    /// operation that somebody waits for). An operation whose waiter
+    /// is gone is not seen here: see `IoPool::quiet`.
+    pub(crate) fn alone(&self) -> bool {
+        let inner = &self.inner;
+        let own = usize::from(COUNTED.with(Cell::get));
+        let groups = inner.groups.lock();
+        let count = |of: fn(&Group) -> &AtomicUsize| -> usize {
+            groups.values().map(|g| of(g).load(Ordering::SeqCst)).sum()
+        };
+        inner.spawned.load(Ordering::SeqCst) == 0
+            && count(|g| &g.live) <= own
+            && count(|g| &g.external) == 0
+    }
+
     /// The program's own code has returned: wait until the program has
     /// ended. That is when none of its tasks can go on: each of them
     /// has ended or waits, and no sleep, timeout or I/O operation of theirs
