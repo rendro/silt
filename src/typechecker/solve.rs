@@ -1769,6 +1769,10 @@ impl TypeChecker {
             .trait_impl_set
             .contains(&(trait_name, type_name))
         {
+            // The impl for every type was reported.
+            if self.blanket_traits.contains(&trait_name) {
+                return;
+            }
             // An operator's own operand: the operator's message.
             if let Some(op) = origin.op {
                 self.error(

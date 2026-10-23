@@ -365,6 +365,9 @@ pub struct TypeChecker {
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// The traits of the module's rejected impls for every type
+    /// (`trait T for a`): a type that lacks one is not reported again.
+    pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
@@ -473,6 +476,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
+            blanket_traits: std::collections::HashSet::new(),
             is_cell: false,
             named_types: std::collections::HashSet::new(),
             signatures_only: false,

@@ -984,6 +984,11 @@ impl TypeChecker {
             );
             self.unresolved_impl_methods
                 .extend(ti.methods.iter().map(|m| m.name));
+            if name_str.starts_with(char::is_lowercase)
+                && let Some(tr) = self.impl_trait(ti)
+            {
+                self.blanket_traits.insert(tr);
+            }
             return;
         };
         let target_type = canonical_head(&self.tables.resolver, written);
