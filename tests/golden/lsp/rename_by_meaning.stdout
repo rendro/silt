@@ -7,7 +7,8 @@ rename_by_meaning.silt:52:3-52:8 => Sizable
 rename_by_meaning.silt:52:23-52:28 => Sizable
 rename_by_meaning.silt:100:86-100:91 => Sizable
 > rename 52:10 resize
-(nothing)
+rename_by_meaning.silt:34:6-34:11 => resize
+rename_by_meaning.silt:52:9-52:14 => resize
 > definition 52:10
 rename_by_meaning.silt:34:6-34:11
 > definition 52:30

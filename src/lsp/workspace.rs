@@ -58,6 +58,10 @@ pub(super) enum Target {
     /// The local binding of the document whose name starts at this byte
     /// (see `local_bindings.rs`).
     Local(usize),
+    /// The method `name` of the trait `tr`: its declaration in the
+    /// trait, its impls' methods, its calls (`Tr.name(..)`,
+    /// `T.name(..)`).
+    Method { tr: DefKey, name: Symbol },
 }
 
 /// Whether byte `cursor` is in `span` or directly behind it.
@@ -108,6 +112,33 @@ fn in_recovery_stub(program: &Program, at: usize) -> bool {
         Decl::Trait(t) => t.methods.iter().any(stub_at),
         Decl::TraitImpl(ti) => ti.methods.iter().any(stub_at),
         _ => false,
+    })
+}
+
+/// The method whose name a trait or an impl of `program` declares at
+/// byte `at`: its span, its trait and its name.
+fn method_declared_at(
+    program: &Program,
+    session: &Session,
+    module: ModuleId,
+    at: usize,
+) -> Option<(Span, DefId, Symbol)> {
+    program.decls.iter().find_map(|decl| {
+        let (tr, methods) = match decl {
+            Decl::TraitImpl(ti) => match ti.trait_res {
+                Some(Res::Def(tr)) => (tr, &ti.methods),
+                _ => return None,
+            },
+            Decl::Trait(t) => {
+                let defs = session.defs();
+                let tr = (defs.of_module(module).iter().copied())
+                    .find(|id| defs.get(*id).span == t.name_span)?;
+                (tr, &t.methods)
+            }
+            _ => return None,
+        };
+        let m = methods.iter().find(|m| holds(m.name_span, at))?;
+        Some((m.name_span, tr, m.name))
     })
 }
 
@@ -193,6 +224,21 @@ impl Server {
         if declared.is_some() {
             return declared;
         }
+        // A method: at a call, or where a trait or an impl writes it.
+        if let Some(used) = names.methods.iter().find(|m| holds(m.span, cursor)) {
+            let tr = match used.selection {
+                Selection::Impl { tr, .. }
+                | Selection::Native { tr }
+                | Selection::Dynamic { tr, .. } => tr,
+                Selection::Field | Selection::FieldCall => return None,
+            };
+            let tr = def_key(session, tr.0);
+            return Some((used.span, Target::Method { tr, name: used.name }));
+        }
+        if let Some((span, tr, name)) = method_declared_at(doc.program.as_ref()?, session, module, cursor) {
+            let tr = def_key(session, tr);
+            return Some((span, Target::Method { tr, name }));
+        }
         let local = names.locals.iter().find(|l| holds(l.span, cursor))?;
         Some((local.span, Target::Local(local.binding(&doc.locals)?)))
     }
@@ -206,6 +252,7 @@ impl Server {
         };
         let keys = match target {
             Target::Local(_) => return Named::Local,
+            Target::Method { .. } => return Named::Other,
             Target::Defs(keys) => keys,
         };
         let info = keys.iter().find_map(|key| {
@@ -326,6 +373,8 @@ impl Server {
                 .iter()
                 .any(|key| matches!(key, DefKey::Builtin(_)))
                 .then(|| "is a builtin and cannot be renamed".to_string()),
+            Target::Method { tr, .. } => matches!(tr, DefKey::Builtin(_))
+                .then(|| "is a method of a builtin trait and cannot be renamed".to_string()),
             Target::Local(binding) => {
                 let doc = self.documents.get(uri)?;
                 let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
@@ -349,6 +398,12 @@ impl Server {
     ) -> Vec<Place> {
         let mut places = match target {
             Target::Local(binding) => self.local_places(uri, *binding, include_definition),
+            Target::Method { tr, name } => {
+                self.check_importers();
+                (self.method_places(tr, *name, include_definition).into_iter())
+                    .map(|(place, _)| place)
+                    .collect()
+            }
             Target::Defs(keys) => {
                 if self.def_uses.is_none() {
                     self.check_importers();
@@ -423,6 +478,12 @@ impl Server {
                     .into_iter()
                     .collect()
             }
+            Target::Method { tr, name } => self
+                .method_places(tr, *name, true)
+                .into_iter()
+                .filter(|(_, declaration)| *declaration)
+                .map(|(place, _)| place.location)
+                .collect(),
             Target::Defs(keys) => {
                 let mut locations: Vec<Location> = Vec::new();
                 for key in keys {
@@ -451,6 +512,73 @@ impl Server {
         let source = session.sources().get(module.file?)?;
         let uri = self.uri_for_path(&module.path)?;
         Some(Location::new(uri, span_to_range(&span, source)))
+    }
+
+    /// Every place that names the method `name` of the trait `tr` in
+    /// the checked modules of every session: its calls, and with
+    /// `include_definition` its declaration in the trait and the
+    /// methods of its impls, each with whether it is a declaration.
+    fn method_places(
+        &self,
+        tr: &DefKey,
+        name: Symbol,
+        include_definition: bool,
+    ) -> Vec<(Place, bool)> {
+        let mut places = Vec::new();
+        for project in self.projects.values() {
+            let session = &project.session;
+            let Some(tr) = def_of_key(session, tr) else {
+                continue;
+            };
+            let trait_def = session.defs().get(tr);
+            for module in session.graph().modules() {
+                let Some(analysis) = session.module_analysis(module.id) else {
+                    continue;
+                };
+                let source = module.file.and_then(|file| session.sources().get(file));
+                let (Some(uri), Some(source)) = (self.uri_for_path(&module.path), source) else {
+                    continue;
+                };
+                let place = |span: Span, declaration: bool| {
+                    let location = Location::new(uri.clone(), span_to_range(&span, source));
+                    let place = Place {
+                        location,
+                        punned: false,
+                    };
+                    (place, declaration)
+                };
+                let names = Names::of(&analysis.ast, session, module.id);
+                for used in names.methods.iter().filter(|m| m.name == name) {
+                    let of = match used.selection {
+                        Selection::Impl { tr, .. }
+                        | Selection::Native { tr }
+                        | Selection::Dynamic { tr, .. } => tr.0,
+                        Selection::Field | Selection::FieldCall => continue,
+                    };
+                    if of == tr {
+                        places.push(place(used.span, false));
+                    }
+                }
+                if !include_definition {
+                    continue;
+                }
+                for decl in &analysis.ast.decls {
+                    let methods = match decl {
+                        Decl::Trait(t)
+                            if trait_def.module == module.id && t.name_span == trait_def.span =>
+                        {
+                            &t.methods
+                        }
+                        Decl::TraitImpl(ti) if ti.trait_res == Some(Res::Def(tr)) => &ti.methods,
+                        _ => continue,
+                    };
+                    for m in methods.iter().filter(|m| m.name == name) {
+                        places.push(place(m.name_span, true));
+                    }
+                }
+            }
+        }
+        places
     }
 
     /// The declaration of the method whose name at a call holds byte
@@ -744,6 +872,7 @@ impl Server {
                     .is_some_and(|program| in_recovery_stub(program, *binding));
                 return own.filter(|_| in_stub);
             }
+            Target::Method { tr, .. } => std::slice::from_ref(tr),
             Target::Defs(keys) => keys,
         };
         if own.is_some() {
@@ -781,6 +910,12 @@ impl Server {
                     .local_places(uri, *binding, true)
                     .into_iter()
                     .map(|place| place.location)
+                    .collect();
+            }
+            Target::Method { tr, name } => {
+                return (self.method_places(tr, *name, true).into_iter())
+                    .map(|(place, _)| place.location)
+                    .filter(|location| location.uri == *uri)
                     .collect();
             }
             Target::Defs(keys) => keys,
@@ -821,6 +956,25 @@ impl Server {
     /// renamed name would be taken for that, or that for it.
     pub(super) fn rename_clash(&mut self, uri: &Uri, target: &Target, new: &str) -> Option<String> {
         let new_sym = crate::intern::intern(new);
+        // A method is named only after its trait or type: what can clash
+        // is another method of the trait.
+        if let Target::Method { tr, .. } = target {
+            let taken = self.projects.values().any(|project| {
+                let session = &project.session;
+                def_of_key(session, tr).is_some_and(|id| {
+                    let def = session.defs().get(id);
+                    session.module_analysis(def.module).is_some_and(|analysis| {
+                        analysis.ast.decls.iter().any(|decl| match decl {
+                            Decl::Trait(t) if t.name_span == def.span => {
+                                t.methods.iter().any(|m| m.name == new_sym)
+                            }
+                            _ => false,
+                        })
+                    })
+                })
+            });
+            return taken.then(|| format!("the trait already has a method `{new}`"));
+        }
         let places = self.places_of(uri, target, true);
         // One of silt's own names, visible in every module: a builtin
         // function, type, trait or constructor.

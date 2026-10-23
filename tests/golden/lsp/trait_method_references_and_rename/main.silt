@@ -1,0 +1,24 @@
+-- cmd: lsp
+-- lsp: references 22:24
+-- lsp: references 16:6
+-- lsp: rename 23:17 surface
+-- lsp: rename 22:19 Measured
+-- References and rename of a trait's method go to its declaration in
+-- the trait, the methods of its impls (in any module) and its calls,
+-- by the trait's name, qualified or imported; a rename of the trait
+-- renames its name at the calls, not the method's.
+import shapes
+import shapes.{ Area, Square }
+
+type Circle { r: Int }
+
+trait Area for Circle {
+  fn area(self) -> Int {
+    self.r * self.r * 3
+  }
+}
+
+fn main() {
+  println(shapes.Area.area(Square { side: 2 }))
+  println(Area.area(Circle { r: 1 }) + Area.twice(Circle { r: 1 }))
+}

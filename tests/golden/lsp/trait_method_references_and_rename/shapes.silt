@@ -1,0 +1,14 @@
+pub type Square { side: Int }
+
+pub trait Area {
+  fn area(self) -> Int
+  fn twice(self) -> Int {
+    Area.area(self) * 2
+  }
+}
+
+trait Area for Square {
+  fn area(self) -> Int {
+    self.side * self.side
+  }
+}
