@@ -287,3 +287,19 @@ fn test_init_lib_refuses_to_overwrite_lib() {
     );
     assert!(!dir.join("silt.toml").exists(), "nothing is written");
 }
+
+#[test]
+fn test_init_help_tells_of_lib() {
+    let out = silt_cmd().args(["init", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.starts_with("Usage: silt init [--lib]\n"), "{help}");
+    assert!(
+        help.contains("with --lib\nsrc/lib.silt, a library"),
+        "{help}"
+    );
+    assert!(
+        help.contains("  --lib    A library: src/lib.silt instead of src/main.silt\n"),
+        "{help}"
+    );
+}

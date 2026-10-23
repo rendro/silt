@@ -11,8 +11,9 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("Usage: silt init [--lib]");
             println!();
             println!("Create a new silt package in the current directory.");
-            println!("Writes silt.toml and src/main.silt; the package name is");
-            println!("derived from the directory name.");
+            println!("Writes silt.toml and src/main.silt, a program, or with --lib");
+            println!("src/lib.silt, a library for other packages to import; the");
+            println!("package name is derived from the directory name.");
             println!();
             println!("Options:");
             println!("  --lib    A library: src/lib.silt instead of src/main.silt");
