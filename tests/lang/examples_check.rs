@@ -393,7 +393,7 @@ fn help_descriptions_are_the_docs() {
     for command in COMMANDS {
         let line = help_text
             .lines()
-            .find(|line| line.trim_start().split_whitespace().nth(1) == Some(command))
+            .find(|line| line.split_whitespace().nth(1) == Some(command))
             .unwrap_or_else(|| panic!("`silt --help` has no line for `{command}`:\n{help_text}"));
         let usage = line.trim_start();
         let description = usage

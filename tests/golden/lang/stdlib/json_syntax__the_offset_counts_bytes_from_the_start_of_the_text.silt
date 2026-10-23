@@ -1,0 +1,24 @@
+-- json.Syntax holds the 0-based byte offset in the whole text of where
+-- the parser stopped (the text's length for one that ends too soon), as
+-- toml.Syntax does: on a later line too. (It held the column in the
+-- line, counted from 1.)
+import json
+
+fn show(text: String) {
+  match json.parse(text, json.Value) {
+    Ok(_) -> println("ok")
+    Err(json.Syntax(message, at)) -> println("byte {at}: {message}")
+    Err(e) -> println("other: {e.message()}")
+  }
+}
+
+fn main() {
+  show("[1,}")
+  show("""{"a":1""")
+  show("""{
+  "name": "x",
+  "n": 1,
+  "tags": [1 2]
+}""")
+  show("[1,\n\n2,\n x]")
+}

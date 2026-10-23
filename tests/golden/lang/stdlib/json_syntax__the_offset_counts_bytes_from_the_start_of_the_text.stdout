@@ -1,0 +1,4 @@
+byte 3: expected value at line 1 column 4
+byte 6: EOF while parsing an object at line 1 column 6
+byte 40: expected `,` or `]` at line 4 column 14
+byte 9: expected value at line 4 column 2
