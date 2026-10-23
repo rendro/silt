@@ -313,7 +313,7 @@ fs.copy(from: String, to: String) -> Result((), IoError)
 ```
 
 Copies a file from `from` to `to`. Returns `Ok(())` on success or
-`Err(message)` on failure.
+`Err(IoError)` on failure.
 
 ```silt
 import fs
@@ -437,7 +437,7 @@ fs.remove(path: String) -> Result((), IoError)
 ```
 
 Removes a file or an empty directory. Returns `Ok(())` on success or
-`Err(message)` on failure.
+`Err(IoError)` on failure.
 
 ```silt
 import fs

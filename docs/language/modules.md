@@ -273,7 +273,7 @@ your editor. The built-in modules:
 | `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
 | `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
 | `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
+| `task` | Tasks: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
 | `regex` | Compiled regular expressions and replacement helpers |
 | `json` | Type-directed JSON parsing and emission |
 | `toml` | TOML parsing and emission |

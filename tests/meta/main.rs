@@ -17,6 +17,7 @@ mod editor_grammar_modules_tests;
 mod editor_grammar_number_literals_tests;
 mod editor_grammar_primitives_tests;
 mod editor_grammar_string_escapes_tests;
+mod error_codes_page_tests;
 mod keyword_list_parity_tests;
 mod lexer_keyword_parity_tests;
 mod release_asset_name_parity_tests;
