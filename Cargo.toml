@@ -52,6 +52,9 @@ sha2 = "0.10"
 md-5 = "0.10"
 blake2 = "0.10"
 hmac = "0.12"
+# Constant-time comparison (`crypto.constant_time_eq`); already in the
+# graph through the RustCrypto crates.
+subtle = "2"
 getrandom = "0.2"
 percent-encoding = "2"
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
