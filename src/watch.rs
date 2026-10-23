@@ -114,10 +114,12 @@ impl WatchSet {
                 lock,
                 host: Vec::new(),
             });
-            if let Ok(packages) = session.packages()
-                && packages.lock == LockChange::Updated
-            {
-                eprintln!("Updating silt.lock for new dependencies in silt.toml");
+            match session.packages().map(|packages| packages.lock) {
+                Ok(LockChange::Updated) => {
+                    eprintln!("Updating silt.lock for new dependencies in silt.toml")
+                }
+                Ok(LockChange::Rewritten) => eprintln!("Updating silt.lock"),
+                _ => {}
             }
             match session.open(&entry) {
                 Ok(file) => {

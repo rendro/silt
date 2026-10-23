@@ -1007,11 +1007,27 @@ fn test_lockfile_with_an_absolute_path_is_rewritten_relative() {
     assert_ne!(old, relative, "the test did not make an absolute lock");
     fs::write(&lock_path, &old).unwrap();
 
+    // A command that never writes the lock takes the old form: it pins
+    // the same directory.
+    let out = silt_cmd()
+        .args(["disasm", "src/main.silt"])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "disasm with the absolute lock failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(read_lockfile(&lock_path), old, "disasm wrote the lock");
+
+    // A command that writes it writes it relative, and says only that.
     let out = silt_cmd().arg("run").current_dir(&app).output().unwrap();
     assert!(
         out.status.success(),
         "run with the absolute lock failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "Updating silt.lock\n");
     assert_eq!(read_lockfile(&lock_path), relative);
 }

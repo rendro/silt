@@ -142,8 +142,11 @@ pub enum LockChange {
     Unchanged,
     /// Written where there was none.
     Created,
-    /// Rewritten.
+    /// Rewritten: it pins other packages or sources.
     Updated,
+    /// Rewritten with the same pins, written anew (a path that an old
+    /// lockfile wrote absolute).
+    Rewritten,
 }
 
 /// Resolve the package graph of the project whose `silt.toml` is in
@@ -223,10 +226,12 @@ pub fn resolve_packages(
                     ),
                 )]);
             }
-            if created {
-                LockChange::Created
-            } else {
-                LockChange::Updated
+            match existing {
+                _ if created => LockChange::Created,
+                Some(old) if old.same_places(&fresh, &resolver.nodes[root.0 as usize].root) => {
+                    LockChange::Rewritten
+                }
+                _ => LockChange::Updated,
             }
         }
     };
@@ -494,7 +499,13 @@ impl Resolver<'_> {
             let name = intern::resolve(manifest.package.name);
             let entries: Vec<&LockedPackage> =
                 lock.packages.iter().filter(|p| p.name == name).collect();
-            if !entries.iter().any(|p| p.source == locked) {
+            // (A path is compared by the directory it names: an old lock
+            // wrote it absolute.)
+            let project = &self.nodes[0].root;
+            if !entries
+                .iter()
+                .any(|p| p.source.same_place(&locked, project))
+            {
                 let reason = if entries.is_empty() {
                     "it has no pin for this source"
                 } else {
