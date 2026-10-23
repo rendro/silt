@@ -1638,16 +1638,7 @@ impl Vm {
             return self.enter_step(step);
         }
         // No impl has the method for the receiver's type: what the
-        // call does then goes by the method's name. Called through a
-        // type (`a.display(x)` for a `type a`, `t.compare(x, y)` for a
-        // type held in `t`), the descriptor only chose the type: the
-        // value the method is of is the first argument.
-        let argc = if descriptor_receiver && argc > 1 {
-            self.stack.remove(receiver_slot);
-            argc - 1
-        } else {
-            argc
-        };
+        // call does then goes by the method's name.
         let receiver = self.stack[receiver_slot].clone();
         let slots = self.view.entry.clone();
         // (The compiler checks each function against the globals of
@@ -1663,16 +1654,6 @@ impl Vm {
             return Err(VmError::type_confusion(format!(
                 "the call of method '{method_name}' names a trait the program does not have"
             )));
-        }
-        // `display` of a value whose parts a written impl may show.
-        if method_name == "display"
-            && argc == 1
-            && slots.any_shown()
-            && Self::value_implements_display(&receiver)
-        {
-            self.stack.truncate(receiver_slot);
-            let step = self.shown(&receiver)?;
-            return self.enter_step(step);
         }
         // `encode` of a value whose type has no written `json.Encode`
         // impl: its structural form, with the impls of its parts.

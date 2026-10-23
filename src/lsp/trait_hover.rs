@@ -31,8 +31,13 @@ impl Server {
                 // It is written as a program names it: the trait and the
                 // module's types with the module (`json.Value`).
                 Some(q) => {
-                    let section = self.builtin_docs.get(&format!("{}.{}", q.module, decl.name));
-                    (written(&decl, Some(&q)), section.map(|s| below_signature(s)))
+                    let section = self
+                        .builtin_docs
+                        .get(&format!("{}.{}", q.module, decl.name));
+                    (
+                        written(&decl, Some(&q)),
+                        section.map(|s| below_signature(s)),
+                    )
                 }
             }
         } else {
@@ -105,7 +110,10 @@ impl Server {
                     false => session.module_analysis(*id).map(|a| &a.scope.exports),
                 }?;
                 let name = crate::intern::intern(t);
-                exports.values.get(&name).or_else(|| exports.types.get(&name))
+                exports
+                    .values
+                    .get(&name)
+                    .or_else(|| exports.types.get(&name))
             }
         };
         let Some(Binding::Def(id)) = binding else {
@@ -149,7 +157,13 @@ pub(super) struct TraitMethod {
 fn takes_self(f: &FnDecl) -> bool {
     f.params.iter().any(|p| {
         matches!(&p.pattern.kind, PatternKind::Ident(name) if resolve(*name) == "self")
-            || matches!(&p.ty, Some(TypeExpr { kind: TypeExprKind::SelfType, .. }))
+            || matches!(
+                &p.ty,
+                Some(TypeExpr {
+                    kind: TypeExprKind::SelfType,
+                    ..
+                })
+            )
     })
 }
 

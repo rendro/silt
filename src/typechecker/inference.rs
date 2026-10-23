@@ -216,50 +216,29 @@ impl TypeChecker {
         &mut self,
         recv: &Type,
         method: Symbol,
-        on_type: bool,
         span: Span,
     ) -> Option<Type> {
-        let (tr, others, result) = match resolve(method).as_str() {
-            // (Called through the type only: it takes no `self`.)
-            "decode" if !on_type => return None,
-            "compare" => ("Compare", 1, Some(Type::Int)),
-            "equal" => ("Equal", 1, Some(Type::Bool)),
-            "hash" => ("Hash", 0, Some(Type::Int)),
-            "display" => ("Display", 0, Some(Type::String)),
-            "encode" => (
-                "Encode",
-                0,
-                Some(Type::Generic(TypeRef::builtin("Value"), vec![])),
-            ),
-            "decode" => ("Decode", 0, None),
-            _ => return None,
-        };
-        let tr = TraitKey::builtin(tr);
+        // (The structural methods that take a value of the type are
+        // called through their traits; through the type, `decode`.)
+        if resolve(method) != "decode" {
+            return None;
+        }
+        let tr = TraitKey::builtin("Decode");
         let head = self.type_name_for_impl(&self.apply(recv))?;
         // (A trait of a builtin module, where the module checked does
-        // not import it, gives no method: `.encode()` needs `import
+        // not import it, gives no method: `T.decode` needs `import
         // json`.)
         if !self.by_structure(tr, head) || self.unreached(tr).is_some() {
             return None;
         }
-        let ty = match result {
-            Some(result) => {
-                let mut params = vec![recv.clone()];
-                params.extend(std::iter::repeat_n(recv.clone(), others));
-                Type::Fun(params, Box::new(result))
-            }
-            None => {
-                let info = self.tables.traits.get(&tr)?;
-                let (_, declared) = info.methods.iter().find(|(name, _)| *name == method)?;
-                let mapping = HashMap::from([(info.self_var, recv.clone())]);
-                substitute_vars(declared, &mapping)
-            }
+        let ty = {
+            let info = self.tables.traits.get(&tr)?;
+            let (_, declared) = info.methods.iter().find(|(name, _)| *name == method)?;
+            let mapping = HashMap::from([(info.self_var, recv.clone())]);
+            substitute_vars(declared, &mapping)
         };
         // (A refusal of `T.decode` names it so.)
-        let callee = match tr.is_builtin("Decode") {
-            true => intern(&format!("{head}.{method}")),
-            false => method,
-        };
+        let callee = intern(&format!("{head}.{method}"));
         self.want(
             Pred::Trait {
                 tr,
@@ -273,7 +252,6 @@ impl TypeChecker {
                 op: None,
             },
         );
-        self.last_field_access_was_method = true;
         self.method_trait = Some(tr);
         Some(ty)
     }
@@ -579,17 +557,17 @@ impl TypeChecker {
         (owner != self.module).then_some(module)
     }
 
-    /// Resolve a method on a type descriptor (`TypeOf(inner)`). The
-    /// descriptor is a type carrier — lookup uses `inner`'s effective type
-    /// name (for concrete inners) or the active trait constraints (for a
-    /// type variable inner). Returns the method's function type with all
-    /// `Self` references substituted to `inner`.
+    /// Resolve a method that makes a value on a type descriptor
+    /// (`TypeOf(inner)`, `a.empty()`). The descriptor is a type carrier —
+    /// lookup uses `inner`'s effective type name (for concrete inners) or
+    /// the active trait constraints (for a type variable inner). Returns
+    /// the method's function type with all `Self` references substituted
+    /// to `inner`; a method that takes a value of the type is reported
+    /// (it is called through its trait).
     ///
-    /// Unlike value-receiver dispatch, the descriptor does NOT occupy an
-    /// argument slot of the method. Callers signal this by leaving
-    /// `last_field_access_was_method = false` after this returns, so the
-    /// downstream Call arm unifies args with params[0..] rather than
-    /// params[1..].
+    /// The descriptor occupies no parameter of the method:
+    /// `receiver_taken` stays false, so the call unifies its arguments
+    /// with all of the method's parameters.
     pub(super) fn resolve_type_descriptor_method(
         &mut self,
         inner: &Type,
@@ -673,7 +651,7 @@ impl TypeChecker {
                 // the effective type name (same path as
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
-                let entry = self.method_entry(name, field, true)?;
+                let entry = self.method_entry(name, field)?;
                 if let Some(tr) = self.entry_trait(&entry, field)
                     && self.self_param(tr, field).is_some()
                 {
@@ -687,7 +665,7 @@ impl TypeChecker {
                     self.private_method(trait_name, field, span);
                     return Some(Type::Error);
                 }
-                if self.ambiguous_method_call(name, field, true, span) {
+                if self.ambiguous_method_call(name, field, span) {
                     return Some(Type::Error);
                 }
                 if self.of_every_shape(name, &entry, field, span) {
@@ -793,7 +771,7 @@ impl TypeChecker {
             if let Some(entry) = entry {
                 self.method_trait = Some(tr);
                 self.trait_call_self.insert(span, recv.clone());
-                self.last_field_access_was_method = true;
+                self.receiver_taken = true;
                 let owed_before = self.wanted.len();
                 let scheme = self.method_scheme(&entry);
                 let ty = self.instantiate_method(&scheme, field, span);
@@ -861,7 +839,7 @@ impl TypeChecker {
         );
         self.method_trait = Some(tr);
         self.trait_call_self.insert(span, self_ty);
-        self.last_field_access_was_method = receiver.is_some();
+        self.receiver_taken = receiver.is_some();
         let method_ty = self.instantiate_method(&scheme, field, span);
         self.apply(&method_ty)
     }
@@ -1012,11 +990,9 @@ impl TypeChecker {
         }
     }
 
-    /// `T.method` where the method is one of a builtin structural trait
-    /// that the type `ty`, of the instance `inner`, has by its structure
-    /// (`Int.display`, `P.compare`): the method `structural_method`
-    /// gives a value of `inner`. Written through the type, every
-    /// parameter is an argument of the call, the receiver too.
+    /// `T.decode` where the type `ty`, of the instance `inner`, has
+    /// `json.Decode` by its structure: the method `structural_method`
+    /// gives `inner`.
     fn structural_type_method(
         &mut self,
         ty: TypeRef,
@@ -1024,8 +1000,7 @@ impl TypeChecker {
         field: Symbol,
         span: Span,
     ) -> Type {
-        let method = self.structural_method(inner, field, true, span);
-        self.last_field_access_was_method = false;
+        let method = self.structural_method(inner, field, span);
         match method {
             Some(method) => self.apply(&method),
             // The type has the method by its structure, so the
@@ -1671,7 +1646,7 @@ impl TypeChecker {
         // Reset the method-dispatch flag so a stale value from an
         // earlier field access does not leak into this call, and read it
         // before the arguments are checked (they may overwrite it).
-        self.last_field_access_was_method = false;
+        self.receiver_taken = false;
         self.named_use = Self::callee_label(callee).map(|label| Origin {
             span,
             callee: Some(label),
@@ -1699,9 +1674,9 @@ impl TypeChecker {
         self.callee_position = false;
         self.named_use = None;
         let callee_ty = self.apply(&callee_ty);
-        let is_method_call = self.last_field_access_was_method;
-        self.last_field_access_was_method = false;
-        // `x.m(args)` where the type of `x` is unknown: the call waits
+        let receiver_taken_by_callee = self.receiver_taken;
+        self.receiver_taken = false;
+        // `x.f(args)` where the type of `x` is unknown: the call waits
         // for it.
         if let Some((recv, name)) = self.unknown_receiver.take() {
             let args: Vec<Type> = args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
@@ -1727,7 +1702,7 @@ impl TypeChecker {
                 // A method call supplies `self` implicitly
                 // (`dispatch_method_entry` has unified it with the
                 // receiver), so the arguments line up with `params[1..]`.
-                let implicit_self = usize::from(is_method_call);
+                let implicit_self = usize::from(receiver_taken_by_callee);
                 // (A method has its `self`: `takes_no_self` refused the
                 // access otherwise.)
                 let written_params = match through_trait {
@@ -1866,7 +1841,7 @@ impl TypeChecker {
                             CallForm::BarePipe => span,
                         };
                         // A parameter the callee calls as a statement.
-                        let statement = match is_method_call {
+                        let statement = match receiver_taken_by_callee {
                             true => None,
                             false => self.statement_unit(callee, i),
                         };
@@ -1924,7 +1899,9 @@ impl TypeChecker {
                                     let shown = format!("`{}.{method}`", self.show_trait(tr));
                                     (shown, written_params, args.len())
                                 }
-                                (_, Some(name)) => (format!("`{name}`"), written_params, args.len()),
+                                (_, Some(name)) => {
+                                    (format!("`{name}`"), written_params, args.len())
+                                }
                                 _ => ("function".to_string(), written_params, args.len()),
                             };
                             let message = format!(
@@ -2293,7 +2270,7 @@ impl TypeChecker {
             }
 
             ExprKind::FieldAccess(obj, field, _) => {
-                self.last_field_access_was_method = false;
+                self.receiver_taken = false;
                 let field = *field;
                 // What the resolver said the access names: nothing (it
                 // reported why, or the module failed to load), a variant
@@ -2361,8 +2338,8 @@ impl TypeChecker {
                     expr.ty = Some(ty.clone());
                     return ty;
                 }
-                // `Type.method`: a method of a type, called through it
-                // (`Shape.describe`, `m.Shape.describe`, `Int.display`).
+                // `Type.method`: a method that makes a value, called
+                // through its type (`Int.empty`, `m.Shape.default`).
                 let type_ref = match (&obj.kind, obj.res) {
                     (ExprKind::Ident(name), None) => self.named_type(None, *name),
                     (ExprKind::Ident(_) | ExprKind::FieldAccess(..), res) => self.res_type(res),
@@ -2370,7 +2347,7 @@ impl TypeChecker {
                 };
                 if let Some(ty) = type_ref {
                     let key = (canonical_head(&self.tables.resolver, ty), field);
-                    if let Some(entry) = self.method_entry(key.0, key.1, true) {
+                    if let Some(entry) = self.method_entry(key.0, key.1) {
                         if let Some(trait_name) = entry.trait_name
                             && self.private_owner(trait_name).is_some()
                         {
@@ -2385,14 +2362,14 @@ impl TypeChecker {
                         {
                             // (The help names a trait whose method is
                             // called: a program's before `Display`.)
-                            let tr = (self.method_providers(key.0, field, true).into_iter())
+                            let tr = (self.method_providers(key.0, field).into_iter())
                                 .find(|t| uncallable_builtin(*t, field, "x").is_none())
                                 .unwrap_or(tr);
                             self.through_its_trait(&resolve(ty.name), tr, field, span);
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
-                        if self.ambiguous_method_call(key.0, field, true, span) {
+                        if self.ambiguous_method_call(key.0, field, span) {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
@@ -2445,7 +2422,7 @@ impl TypeChecker {
 
                 // Could be record.field — infer the object type
                 let obj_ty = self.infer_expr(obj, env);
-                self.last_field_access_was_method = false;
+                self.receiver_taken = false;
                 let obj_ty = self.apply(&obj_ty);
                 // Canonicalise before dispatch so a receiver whose type
                 // is written through an alias lands in the arm of the

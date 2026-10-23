@@ -814,9 +814,7 @@ impl Vm {
 
     /// Whether a runtime value's type has a Display impl — the single
     /// runtime-side oracle for the string-interpolation Display gate
-    /// (`Op::DisplayValue`, src/vm/run.rs) and the polymorphic
-    /// `.display()` method gate (`dispatch_trait_method`'s "display"
-    /// arm, src/vm/dispatch.rs).
+    /// (`Op::DisplayValue`, src/vm/run.rs).
     ///
     /// This mirrors the typechecker's compile-time gate: the typechecker
     /// reduces a *concrete* operand to its canonical name

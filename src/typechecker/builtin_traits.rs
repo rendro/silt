@@ -213,7 +213,7 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                     .to_string(),
             ),
         },
-        // trait Error: Display { fn message(self) -> String { self.display() } }
+        // trait Error: Display { fn message(self) -> String { "{self}" } }
         TraitDecl {
             name: intern("Error"),
             name_span: dummy_span,

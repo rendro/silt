@@ -25,9 +25,9 @@ pub(crate) enum Goal {
     /// A predicate a use owes.
     Pred(Pred),
     /// `recv.name(args)`, with the result `result`, where the receiver's
-    /// type was unknown at the call: which method or function-typed
-    /// field it calls is decided when the receiver's type is (`select`),
-    /// and when the definition is generalised if it still is not.
+    /// type was unknown at the call: the function-typed field it calls
+    /// is checked when the receiver's type is known (`select_call`), and
+    /// when the definition is generalised if it still is not.
     Select {
         recv: Type,
         name: Symbol,
@@ -1048,7 +1048,7 @@ impl TypeChecker {
         self.close_level();
     }
 
-    /// Decide each call `x.m(args)` of the scope just left whose
+    /// Decide each call `x.f(args)` of the scope just left whose
     /// receiver is still unknown and is the scope's to generalise: `x` is
     /// a record with a function in its field `m`.
     pub(super) fn default_selects(&mut self) {
@@ -2234,14 +2234,13 @@ impl TypeChecker {
         self.builtin_imports.contains(&module) || self.seen_traits.contains(&t.id.0)
     }
 
-    /// The traits that give the type `ty` a method `method`, in the
-    /// order of their names: those of the session's impls, and the
-    /// structural trait whose method it is when no impl of that trait
-    /// is written for the type, for a call through the type (`on_type`,
-    /// `T.method(..)`) or on a value (`on_a_value`).
-    pub(super) fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
+    /// The traits that give the type `ty` a method `method` for a call
+    /// through the type (`T.method(..)`), in the order of their names:
+    /// those of the session's impls, and the structural trait whose
+    /// method it is when no impl of that trait is written for the type.
+    pub(super) fn method_providers(&self, ty: TypeRef, method: Symbol) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
-        if let Some(tr) = self.structural_provider(ty, method, on_type)
+        if let Some(tr) = self.structural_provider(ty, method)
             && !traits.contains(&tr)
         {
             traits.push(tr);
@@ -2251,7 +2250,7 @@ impl TypeChecker {
         // a value of the type is called through its trait, so it is no
         // candidate where another trait gives the type a method of the
         // name that makes one.
-        if on_type && traits.iter().any(|t| self.self_param(*t, method).is_none()) {
+        if traits.iter().any(|t| self.self_param(*t, method).is_none()) {
             traits.retain(|t| self.self_param(*t, method).is_none());
         }
         traits
@@ -2260,18 +2259,10 @@ impl TypeChecker {
     /// The structural trait whose method `method` the type `ty` has by
     /// its structure: one of their names, of a type that has the name
     /// (`Tables::has_structural_name`) and no written impl of the trait.
-    /// A structural method that takes no `self` (`decode`) is no method
-    /// of a call on a value (not `on_type`): such a call means another
-    /// trait's method of the name, if one has it.
-    fn structural_provider(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Option<TraitKey> {
+    fn structural_provider(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
         let name = resolve(method);
         let (tr_name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == name)?;
         let tr = TraitKey::builtin(tr_name);
-        let takes_self =
-            (self.tables.traits.get(&tr)).is_none_or(|info| info.receivers.contains(&method));
-        if !on_type && !takes_self {
-            return None;
-        }
         (self.tables.has_structural_name(tr, ty)
             && self.by_structure(tr, ty)
             && self.unreached(tr).is_none())
@@ -2308,13 +2299,8 @@ impl TypeChecker {
     /// reach by its imports it has not. It is decided from the impls'
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
-    pub(super) fn method_entry(
-        &self,
-        ty: TypeRef,
-        method: Symbol,
-        on_type: bool,
-    ) -> Option<MethodEntry> {
-        let providers = self.method_providers(ty, method, on_type);
+    pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
+        let providers = self.method_providers(ty, method);
         let tr = match self.meant_provider(&providers) {
             Ok(tr) => tr?,
             Err(candidates) => candidates[0],
@@ -2341,10 +2327,9 @@ impl TypeChecker {
         &mut self,
         ty: TypeRef,
         method: Symbol,
-        on_type: bool,
         span: Span,
     ) -> bool {
-        let providers = self.method_providers(ty, method, on_type);
+        let providers = self.method_providers(ty, method);
         let Err(traits) = self.meant_provider(&providers) else {
             return false;
         };
@@ -2352,16 +2337,13 @@ impl TypeChecker {
         self.ambiguous_method(method, &on, &traits, span);
         // Called through the type (`T.decode(v)`), there is no receiver
         // to annotate: a function bounded by the trait says which (a
-        // program's trait where one is among them, `Pretty` over `Display`).
-        if on_type {
-            let named = (traits.iter())
-                .find(|t| crate::defs::builtin_trait_of_id(t.id.0).is_none())
-                .or(traits.first())
-                .map(|t| self.show_trait(*t))
-                .unwrap_or_default();
-            let Some(last) = self.errors.last_mut() else {
-                return true;
-            };
+        // program's trait where one is among them).
+        let named = (traits.iter())
+            .find(|t| crate::defs::builtin_trait_of_id(t.id.0).is_none())
+            .or(traits.first())
+            .map(|t| self.show_trait(*t))
+            .unwrap_or_default();
+        if let Some(last) = self.errors.last_mut() {
             last.help = vec![format!(
                 "say which is meant: call it through a function bounded by the trait you mean, \
                  `where a: {named}`"

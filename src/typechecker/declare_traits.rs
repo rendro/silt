@@ -656,13 +656,13 @@ impl TypeChecker {
     /// another module. Why, for the impl of trait `T` for type `Y`,
     /// written in module `I` (`T`'s or `Y`'s):
     ///
-    /// - A call that names the impl where it is written (`y.m()` with
-    ///   `y: Y`, `Y.m`), in a module `X`: `X` has `T` and `Y` in its
+    /// - A call that names the impl where it is written (`T.m(y)` with
+    ///   `y: Y`), in a module `X`: `X` has `T` and `Y` in its
     ///   types. A type comes into a module's types only through what
     ///   the module imports, and a method of `T` is selected only where
     ///   `T`'s module is imported, directly or through imports
     ///   (`method_entry`). So `X` imports `I`, or is `I`.
-    /// - A call decided where the code runs (`x.m()` with `x: a where
+    /// - A call decided where the code runs (`T.m(x)` with `x: a where
     ///   a: T`, a default method, the formatter for `Display`), in a
     ///   module that need not import `Y`'s module. If `I` is `T`'s
     ///   module, the calling code names `T`, so its module imports `I`,

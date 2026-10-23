@@ -48,8 +48,8 @@
 //!
 //! 4. A `Display` impl the formatter calls. Showing a value
 //!    (interpolation, a builtin whose signature asks `Display` of its
-//!    argument, called or handed on as a value, and `.display()` on a
-//!    type with no impl of its own) calls the written `Display` impl of
+//!    argument, called or handed on as a value) calls the written
+//!    `Display` impl of
 //!    every part of the value that has one. The parts a value of a type
 //!    can have are the type's: its arguments, and, for a record or an
 //!    enum of the module, the types of its fields, and theirs. Showing
@@ -118,7 +118,7 @@ struct Node<'a> {
 const OUTSIDE: usize = 0;
 
 /// Whether a value of the type `ty` is made of builtin types only, all
-/// known: a builtin trait's method on it (`[1, 2].display()`) calls no
+/// known: a builtin trait's method on it (`Hash.hash([1, 2])`) calls no
 /// code a program writes.
 fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
     let all = |parts: &[Type]| parts.iter().all(|t| builtin_through(checker, t));
@@ -608,11 +608,17 @@ impl TypeChecker {
                     kind: ExprKind::FieldAccess(recv, method, _),
                     sel,
                     res,
+                    span,
                     ..
                 }) = mention.expr
                 else {
                     return;
                 };
+                // The type the method is of: the receiver's, or, called
+                // through the trait (`Hash.hash(x)`), the type its
+                // argument of type `Self` has.
+                let recv_ty: Option<Type> = (recv.ty.clone())
+                    .or_else(|| self.trait_call_self.get(span).map(|t| self.apply(t)));
                 // The method of the impl of `tr` for `ty`: the impl's
                 // own, the trait's default, or code outside the module
                 // (but a builtin trait's method on a value, of the type
@@ -632,22 +638,21 @@ impl TypeChecker {
                     }
                 };
                 match sel {
-                    Some(Selection::Impl { tr, ty }) => one_impl(*tr, *ty, recv.ty.as_ref()),
+                    Some(Selection::Impl { tr, ty }) => one_impl(*tr, *ty, recv_ty.as_ref()),
                     // A receiver decided where the code runs: every
                     // impl of the method in the module, the trait's
                     // default, and, for a trait of another module or a
                     // builtin one, impls and defaults outside it.
-                    // (`display` of such a receiver shows it, `encode`
-                    // writes it, `decode` of a type decodes into it.)
+                    // (`encode` of such a receiver writes it, `decode` of
+                    // a type decodes into it.)
                     Some(Selection::Dynamic { tr })
-                        if [display, encode, decode]
+                        if [encode, decode]
                             .iter()
                             .any(|t| t.id == *tr && *method == method_of(*t))
-                            && recv.ty.is_some() =>
+                            && recv_ty.is_some() =>
                     {
-                        if let Some(ty) = &recv.ty
-                            && let Some(tr) =
-                                [display, encode, decode].into_iter().find(|t| t.id == *tr)
+                        if let Some(ty) = &recv_ty
+                            && let Some(tr) = [encode, decode].into_iter().find(|t| t.id == *tr)
                         {
                             show(tr, ty);
                         }
@@ -660,20 +665,19 @@ impl TypeChecker {
                             add(OUTSIDE);
                         }
                     }
-                    // The VM's own method of a builtin trait: `display`
-                    // shows the receiver, `encode` writes it, `decode` of
-                    // a type decodes into it; the others call no code a
-                    // program writes.
+                    // The VM's own method of a builtin trait: `encode`
+                    // writes the receiver, `decode` of a type decodes into
+                    // it; the others call no code a program writes.
                     Some(Selection::Native { tr }) => {
-                        if let Some(ty) = &recv.ty
-                            && let Some(tr) =
-                                [display, encode, decode].into_iter().find(|t| t.id == *tr)
+                        if let Some(ty) = &recv_ty
+                            && let Some(tr) = [encode, decode].into_iter().find(|t| t.id == *tr)
                         {
                             show(tr, ty);
                         }
                     }
                     Some(Selection::Field | Selection::FieldCall) => {}
-                    // `Type.method`: that impl's method.
+                    // `Type.method`, a method that makes a value: that
+                    // impl's method.
                     None => {
                         if recv.ty.is_none()
                             && let Some(crate::defs::Res::Def(id)) = res
@@ -686,7 +690,7 @@ impl TypeChecker {
                             match ty {
                                 Some(ty) => {
                                     let ty = canonical_head(&self.tables.resolver, ty);
-                                    // (`Int.display`: a type without
+                                    // (`Int.empty`: a type without
                                     // parameters is all of the value's.)
                                     let whole = Type::Generic(ty, Vec::new());
                                     let of = matches!(

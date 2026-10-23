@@ -1024,13 +1024,24 @@ impl TypeChecker {
             // ── Open row × a type with no fields ─────────────────────
             // What a dot after a value of unknown type asked for (`x.f`,
             // `x.f(..)`): the value's type has no field.
-            (Type::AnonRecord { fields, tail: RowTail::Var(_) }, other)
-            | (other, Type::AnonRecord { fields, tail: RowTail::Var(_) })
-                if !matches!(
-                    other,
-                    Type::AnonRecord { .. } | Type::Var(_) | Type::Error | Type::Never
-                ) && !matches!(other, Type::Generic(name, _) if self.tables.records.contains_key(name))
-                    && !fields.is_empty() =>
+            (
+                Type::AnonRecord {
+                    fields,
+                    tail: RowTail::Var(_),
+                },
+                other,
+            )
+            | (
+                other,
+                Type::AnonRecord {
+                    fields,
+                    tail: RowTail::Var(_),
+                },
+            ) if !matches!(
+                other,
+                Type::AnonRecord { .. } | Type::Var(_) | Type::Error | Type::Never
+            ) && !matches!(other, Type::Generic(name, _) if self.tables.records.contains_key(name))
+                && !fields.is_empty() =>
             {
                 let field = *fields.keys().next().expect("a field");
                 let shown = self.show_type(other);

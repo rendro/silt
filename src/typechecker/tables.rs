@@ -47,8 +47,8 @@ pub(super) struct TraitInfo {
     /// Implementing this trait on a type requires every supertrait to also
     /// be implemented for the same type (validated in
     /// `validate_trait_impls`). `expand_with_supertraits` walks this list
-    /// transitively to enable supertrait method calls inside `where`
-    /// clauses.
+    /// transitively, so a `where` bound gives its supertraits' bounds
+    /// too.
     pub(super) supertraits: Vec<TraitKey>,
     /// Parallel to `supertraits`: the TypeExpr args supplied to each
     /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
@@ -62,9 +62,8 @@ pub(super) struct TraitInfo {
     /// type for `Self` and its trait arguments for the parameters.
     pub(super) methods: Vec<(Symbol, Type)>,
     /// The methods that take a receiver: those whose first parameter is
-    /// written `self`. This is the one fact of whether `x.m(..)` may
-    /// call a method; a method without `self` is called on a type
-    /// (`Int.make(1)`), whatever its parameters are.
+    /// written `self`. An impl writes `self` where its trait does, and
+    /// only there.
     pub(super) receivers: std::collections::HashSet<Symbol>,
     /// The bounds each method's own `where` clauses put on its type
     /// variables, with the bound's trait arguments. They are part of the
@@ -277,7 +276,7 @@ pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey);
 /// The methods of the session's impls: one row for each method of each
 /// impl, by its type, its name and its trait, entered by the module that
 /// writes the impl. The impls of two traits that each have a method `m`
-/// for one type are two rows; what `x.m()` means in a module is decided
+/// for one type are two rows; what `T.m(..)` means in a module is decided
 /// from the rows each time (`TypeChecker::method_entry`), never written
 /// back. `providers` is an index of the rows, kept with them.
 #[derive(Clone, Default)]

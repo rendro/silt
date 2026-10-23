@@ -107,8 +107,8 @@ impl Server {
         // A method named through its trait (`size` in `Sized.size(b)`):
         // the method as its trait declares it, and its doc comment.
         if let Some((tr, method)) = super::ast_walk::find_trait_method_at(program, cursor)
-            && let Some(m) = (self.trait_call_methods(doc, tr).into_iter())
-                .find(|m| m.name == method)
+            && let Some(m) =
+                (self.trait_call_methods(doc, tr).into_iter()).find(|m| m.name == method)
         {
             let mut value = format!("```silt\n{}\n```", m.label);
             if let Some(text) = m.doc.filter(|text| !text.is_empty()) {

@@ -187,7 +187,8 @@ pub struct TypeChecker {
     /// to a builtin, which a use of it then names in a note.
     pub(super) passing_on: Option<Symbol>,
     /// Whether the expression checked next is the callee of a call:
-    /// `x.m` there is a method call, anywhere else a field.
+    /// `x.f` there is a call of the function a field holds, which waits
+    /// for the type of `x` (`unknown_receiver`).
     pub(super) callee_position: bool,
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
@@ -282,13 +283,12 @@ pub struct TypeChecker {
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
     pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey), FnSig>,
-    /// Set by the FieldAccess arm of infer_expr: `true` when the last
-    /// FieldAccess resolved via method dispatch (trait method table),
-    /// `false` when it resolved via record-field or module-qualified
-    /// lookup.  Read by the Call arm immediately after inferring the
-    /// callee to decide arity semantics (method call adds implicit self;
-    /// field/module calls do not).
-    pub(super) last_field_access_was_method: bool,
+    /// Set by the inference of a call through a trait (`Greet.greet(x)`)
+    /// whose argument of type `Self` was checked with the callee
+    /// (`trait_receiver`): read by `check_call` right after the callee,
+    /// the call's other arguments line up with the method's parameters
+    /// after that one.
+    pub(super) receiver_taken: bool,
     /// The trait whose method the field access being inferred calls,
     /// which `infer_expr` records on the access (`Expr::res`): the
     /// compiler keys the call by it.
@@ -439,7 +439,7 @@ impl TypeChecker {
             let_order: Vec::new(),
             let_rings: Vec::new(),
             impl_sigs: HashMap::new(),
-            last_field_access_was_method: false,
+            receiver_taken: false,
             method_trait: None,
             trait_call_self: HashMap::new(),
             trait_receiver: None,
