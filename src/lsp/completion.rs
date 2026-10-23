@@ -50,7 +50,7 @@ impl Server {
                 return Some(CompletionResponse::Array(items));
             }
             let builtin = self.bound_builtin_module(doc, &prefix, cursor);
-            // Round 81: the document's program was parsed from the user's
+            // The document's program was parsed from the user's
             // exact source. A partial expression at the cursor (`xs.|`)
             // is a parse error that the parser's recovery currently turns
             // into an empty function-body stub — every earlier `let`
@@ -220,7 +220,7 @@ impl Server {
     /// Produce completions after a `.` — either module functions, record
     /// fields, or methods available on the receiver's inferred type.
     ///
-    /// DX-G4 (round 81): when the LSP can confidently infer the type of
+    /// DX-G4: when the LSP can confidently infer the type of
     /// the receiver expression (a let-bound local with an annotation, or
     /// an identifier whose type was recovered from the typed AST), the
     /// emitted method set is narrowed to only those methods registered
@@ -532,7 +532,7 @@ impl Server {
     /// `pos` completed by a placeholder identifier, so the surrounding
     /// statements survive parser recovery.
     ///
-    /// Background (round 81 DX-G4): when the cursor sits at a partial
+    /// Background: when the cursor sits at a partial
     /// `xs.|`, the parser's `expect_ident()` after the `.` errors out,
     /// and `parse_let_stmt`'s `?` propagates the failure all the way to
     /// `parse_fn_decl`, which leaves a *recovery stub* for

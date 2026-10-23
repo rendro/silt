@@ -16,7 +16,7 @@ pub(crate) fn ok(v: Value) -> Value {
 
 /// Convert a 4-bit nibble (0..=15) to its ASCII hex character.
 ///
-/// Round 64 collapsed two near-identical helpers — `bytes::hex_char`
+/// It replaces two near-identical helpers — `bytes::hex_char`
 /// (lowercase) and `encoding::upper_hex` (uppercase) — that differed
 /// only in the alphabetic case of the `'a'..='f'` digits. The two old
 /// bodies are both implemented here so byte-identical output is

@@ -269,7 +269,7 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
 /// crate: `silt add` (src/cli/add.rs) delegates here so the path form
 /// it records in `silt.toml` (and prints on success) is normalized by
 /// exactly the same rules lockfile resolution applies when it later
-/// resolves that dep path. Audit round 101 LATENT: this body used to
+/// resolves that dep path. This body used to
 /// be mirrored in src/cli/paths.rs; keep it unmirrored — a lock test
 /// (tests/meta/round101_normalize_path_dedup_tests.rs) asserts the
 /// `Component::ParentDir` pop-or-push loop appears exactly once under

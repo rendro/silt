@@ -524,7 +524,7 @@ pub enum Stmt {
 ///
 /// `trait_name_span` points at the trait-name identifier in source so
 /// LSP rename / references / goto-def can land precisely on the trait
-/// reference (round-75 DX-4 fix).
+/// reference.
 #[derive(Debug, Clone)]
 pub struct WhereClause {
     pub type_param: Symbol,
@@ -634,8 +634,8 @@ pub enum TypeBody {
 pub struct EnumVariant {
     pub name: Symbol,
     /// Span of the variant-name identifier itself (the `Circle` in
-    /// `Circle(Int)`). Mirrors `FnDecl::name_span` / `TypeDecl::name_span`
-    /// (round-63 B1): LSP rename / references / goto-def need the name
+    /// `Circle(Int)`). Mirrors `FnDecl::name_span` / `TypeDecl::name_span`:
+    /// LSP rename / references / goto-def need the name
     /// token's range, not the enclosing decl's `type`-keyword span —
     /// without it, renaming a variant from a usage site rewrote the
     /// `type` keyword.
@@ -699,7 +699,7 @@ pub struct TraitDecl {
     pub name: Symbol,
     /// Span of the trait-name identifier (the `Foo` in
     /// `trait Foo { ... }`). Distinct from `span`, which points at the
-    /// `trait` keyword. Round-75 DX-2: LSP rename / references / goto-def
+    /// `trait` keyword. LSP rename / references / goto-def
     /// need the *identifier* range so rename edits replace the name and
     /// not the keyword. For synthesized TraitDecls (built-in trait
     /// signatures) this falls back to `span`.
@@ -717,7 +717,7 @@ pub struct TraitDecl {
     /// that may reference the enclosing trait's own params:
     /// `trait Sub(a): Super(a)`. Each reference's span points at the
     /// supertrait-name identifier in source so LSP rename / references
-    /// can edit the supertrait reference (round-75 DX-4).
+    /// can edit the supertrait reference.
     pub supertraits: Vec<TraitRef>,
     /// Where bounds on the trait's own type parameters, e.g.
     /// `trait HashTable(k) where k: Hash + Equal { ... }`. Every impl
@@ -746,7 +746,7 @@ pub struct TraitImpl {
     pub trait_res: Option<Res>,
     /// Span of the trait-name identifier in `trait <Name> for ...`.
     /// Used by LSP rename / references so cursor on the impl's trait
-    /// reference resolves to the trait declaration (round-75 DX-4).
+    /// reference resolves to the trait declaration.
     pub trait_name_span: Span,
     /// Arguments supplied to the trait at impl time:
     /// `trait TryInto(Int) for String { ... }` yields `[Int]`.
@@ -905,8 +905,8 @@ pub enum Decl {
         /// counter = 42`). `None` when the binding is a destructuring
         /// pattern (`let (a, b) = ...`, `let User { name } = ...`, etc.)
         /// — those have no single name to point at, so LSP rename through
-        /// the let bails. Mirrors `FnDecl::name_span` / `TypeDecl::name_span`
-        /// (round-63 B1); without it, `span` (the `let` keyword) gets used
+        /// the let bails. Mirrors `FnDecl::name_span` / `TypeDecl::name_span`;
+        /// without it, `span` (the `let` keyword) gets used
         /// for rename / references and corrupts the keyword.
         name_span: Option<Span>,
         /// Doc comment immediately preceding the decl token. See `FnDecl::doc`.

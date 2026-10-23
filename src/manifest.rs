@@ -352,8 +352,8 @@ pub fn is_silt_identifier(name: &str) -> bool {
 ///   - `Manifest::load` (rejects bad names already on disk)
 ///   - `silt::cli::init` (rejects bad names before writing silt.toml; e.g.
 ///     `mkdir io && cd io && silt init` previously silently produced a
-///     manifest whose `name = "io"` collided with the stdlib `io` module —
-///     round-75 DX-5 GAP fix).
+///     manifest whose `name = "io"` collided with the stdlib `io`
+///     module).
 ///
 /// The error wording mirrors what `silt add` already emits for
 /// builtin-colliding dep names (see `src/cli/add.rs:273-279`) so init,
@@ -390,7 +390,7 @@ pub fn validate_package_name(name: &str) -> Result<(), String> {
 ///
 /// A package/dependency named after a reserved word lexes as that keyword
 /// rather than a `Token::Ident`, so `import loop` can never parse — the
-/// same import-shadowing footgun that round-75 fixed for builtin module
+/// same import-shadowing footgun that is refused for builtin module
 /// names. Rejecting up front (init / add / Manifest::load) keeps the
 /// failure where the user can act on it instead of surfacing as a
 /// confusing parser diagnostic far from the offending name.

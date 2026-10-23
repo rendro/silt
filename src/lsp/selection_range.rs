@@ -19,7 +19,7 @@ use super::conversions::{offsets_to_range, position_to_offset};
 
 /// A byte-offset extent `[start, end)` collected during the AST walk:
 /// the extent of a node's span. A decl-level element of the chain
-/// encloses the cursor (round-84 lock; tier-2
+/// encloses the cursor (locked by
 /// `selection_range_returns_nested_chain`).
 #[derive(Copy, Clone)]
 struct Extent {
@@ -110,7 +110,7 @@ fn collect_decl_ranges(decl: &Decl, cursor: usize, out: &mut Vec<Extent>) {
                 try_push_body_extent(method.span, &method.body, cursor, out);
             }
         }
-        // Round-83 GAP fix: the decl is pushed only when it holds the
+        // The decl is pushed only when it holds the
         // cursor, so an unrelated decl never becomes the outermost
         // element of a chain (a chain parent encloses its child —
         // Shift+Alt+→ semantics).
@@ -138,7 +138,6 @@ fn collect_expr_ranges(expr: &Expr, cursor: usize, out: &mut Vec<Extent>) {
 /// Shared boilerplate used by `Decl::Fn`, `Decl::Let`, and each
 /// `Decl::TraitImpl` method arm: push the decl's extent when it holds
 /// the cursor, and recurse into the body for nested expression ranges.
-/// Round-85 BLOAT-DUP fix.
 fn try_push_body_extent(decl_span: Span, body: &Expr, cursor: usize, out: &mut Vec<Extent>) {
     let extent = Extent::of(decl_span);
     if extent.holds(cursor) {
