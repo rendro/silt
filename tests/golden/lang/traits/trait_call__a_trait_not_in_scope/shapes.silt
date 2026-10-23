@@ -1,0 +1,3 @@
+pub type Sq { side: Int }
+pub trait Area { fn area(self) -> Int }
+trait Area for Sq { fn area(self) -> Int { self.side * self.side } }

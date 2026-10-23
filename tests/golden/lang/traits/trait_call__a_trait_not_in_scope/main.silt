@@ -1,0 +1,10 @@
+-- exit: 1
+-- A trait of an imported module written by its bare name: it is not in
+-- scope, and the help imports it.
+-- stderr-contains: error[type]: trait 'Area' is not in scope
+-- stderr-contains: help: import it: `import shapes.{ Area }`
+import shapes
+fn main() {
+  let s = shapes.Sq { side: 3 }
+  println(Area.area(s))
+}
