@@ -1,6 +1,6 @@
 import io
 import result
-fn program() { result.map_ok(Err("x"), { v -> v + 1 }) }
+fn program() { result.map(Err("x"), { v -> v + 1 }) }
 
 fn main() {
   println(io.inspect(program()))

@@ -1,0 +1,37 @@
+-- A list pattern's rest is `..name`, which binds the elements after
+-- those named, or a bare `..`, which matches them without a name: as
+-- the whole pattern, after elements, nested, in an or-pattern, and as
+-- the last arm of an exhaustive match.
+fn shape(xs: List(Int)) -> String {
+  match xs {
+    [] -> "empty"
+    [a] -> "one: {a}"
+    [a, b, ..] -> "two or more, from {a}, {b}"
+  }
+}
+
+fn rest_of(xs: List(Int)) -> List(Int) {
+  match xs {
+    [_, ..rest] -> rest
+    [..] -> []
+  }
+}
+
+fn heads(xss: List(List(Int))) -> String {
+  match xss {
+    [[x, ..], [y, ..], ..] -> "{x} {y}"
+    [[] | [_, ..], ..] | [] -> "no two heads"
+  }
+}
+
+fn main() {
+  println(shape([]))
+  println(shape([1]))
+  println(shape([1, 2]))
+  println(shape([1, 2, 3]))
+  println(rest_of([1, 2, 3]))
+  println(rest_of([]))
+  println(heads([[1, 2], [3]]))
+  println(heads([[1], []]))
+  println(heads([]))
+}

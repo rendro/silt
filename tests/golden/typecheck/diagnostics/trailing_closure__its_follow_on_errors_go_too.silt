@@ -1,0 +1,20 @@
+-- exit: 1
+-- When the closure on the next line was meant for the call above, the
+-- errors that only follow from its standing alone go: that its
+-- parameters' types cannot be inferred, that it is the value of its
+-- block (a function's last line), that the call above it is unused.
+-- One error per mistake is left, the call's, with the help.
+import list
+
+fn total(xs: List(Int)) -> Int {
+  xs |> list.fold(0)
+  { acc, x -> acc + x }
+}
+
+fn main() {
+  let n = list.fold([1, 2], 0)
+  { acc, x -> acc + x }
+  println("{n} {total([3])}")
+  [1] |> list.each
+  { x -> println(x) }
+}

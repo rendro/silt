@@ -8,5 +8,5 @@ version = "0.1.0"
 [[package]]
 name = "mathutil"
 version = "0.1.0"
-source = { path = "/home/klaus/dev/silt-wt/stage-8-part2/tests/lsp/rename_sweep/pkg2/mathutil" }
+source = { path = "mathutil" }
 checksum = "sha256:40268400aa0b13f3f2cabe15e84707b4ce3d319bac1675a39f2f42f38cfb7a3a"

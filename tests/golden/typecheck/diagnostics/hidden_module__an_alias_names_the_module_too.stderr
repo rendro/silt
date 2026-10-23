@@ -1,0 +1,12 @@
+error[type]: unknown method 'length' on List
+ --> hidden_module__an_alias_names_the_module_too.silt:9:11
+   |
+ 9 |   println(list.length(list))
+   |           ^^^^^^^^^^^ unknown method 'length' on List
+
+error[type]: unknown method 'length' on List
+ --> hidden_module__an_alias_names_the_module_too.silt:11:11
+    |
+ 11 |   println(l.length(l))
+    |           ^^^^^^^^ unknown method 'length' on List
+  = help: `l` here is the local from line 10, which hides the module `list` (imported as `l`); rename the local

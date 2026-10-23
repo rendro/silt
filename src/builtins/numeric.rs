@@ -93,9 +93,13 @@ pub(crate) fn int_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 }
 
 /// What `FloatError`'s `message` says of the variant `tag` with
-/// `fields`: `None` if they are no variant of it.
+/// `fields`: `None` if they are no variant of it. It has the variants
+/// of `IntError` and `NotFinite`.
 pub(crate) fn float_error_text(tag: &str, fields: &[Value]) -> Option<String> {
-    parse_error_text(tag, fields)
+    match (tag, fields) {
+        ("NotFinite", []) => Some("not a finite number".to_string()),
+        _ => parse_error_text(tag, fields),
+    }
 }
 
 /// Build a `Float` from the result of a float operation, raising the
@@ -200,17 +204,17 @@ pub(crate) mod float {
             match s.trim().parse::<f64>() {
                 // Rust also parses `"inf"`, `"NaN"` and out-of-range
                 // literals such as `"1e400"` (to ±infinity). None of them
-                // is a `Float`: a spelled-out infinity or NaN is not a
-                // number silt reads, and an out-of-range literal
-                // overflows the way `int.parse` does (`Underflow` below
-                // the range, `Overflow` above it).
+                // is a `Float`: a spelled-out infinity or NaN is
+                // `NotFinite`, and an out-of-range literal overflows the
+                // way `int.parse` does (`Underflow` below the range,
+                // `Overflow` above it).
                 Ok(n) => match Float::new(n) {
                     Some(n) => Value::variant(bv::OK, vec![Value::Float(n)]),
                     None => {
                         let spelled = s.trim().trim_start_matches(['+', '-']);
                         let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                         {
-                            Value::variant(bv::FLOAT_INVALID_DIGIT, vec![Value::Int(0)])
+                            Value::variant(bv::FLOAT_NOT_FINITE, vec![])
                         } else if n < 0.0 {
                             Value::variant(bv::FLOAT_UNDERFLOW, vec![])
                         } else {

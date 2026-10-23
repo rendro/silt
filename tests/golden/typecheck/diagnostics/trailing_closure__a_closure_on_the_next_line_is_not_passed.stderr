@@ -1,0 +1,27 @@
+error[type]: `apply` expects 2 arguments, got 1
+ --> trailing_closure__a_closure_on_the_next_line_is_not_passed.silt:14:11
+    |
+ 14 |   let a = apply(1)
+    |           ^^^^^^^^ `apply` expects 2 arguments, got 1
+  = help: a closure on the next line is not passed to `apply`; start it on the same line: `apply(...) { x -> ... }`
+
+error[type]: cannot pipe into function taking 2 arguments
+ --> trailing_closure__a_closure_on_the_next_line_is_not_passed.silt:16:11
+    |
+ 16 |   let b = [1, 2] |> list.map
+    |           ^^^^^^^^^^^^^^^^^^ cannot pipe into function taking 2 arguments
+  = help: a closure on the next line is not passed to `list.map`; start it on the same line: `|> list.map { n -> ... }`
+
+error[type]: function expects 2 arguments, got 1
+ --> trailing_closure__a_closure_on_the_next_line_is_not_passed.silt:18:3
+    |
+ 18 |   list.each([1])
+    |   ^^^^^^^^^^^^^^ function expects 2 arguments, got 1
+  = help: a closure on the next line is not passed to `list.each`; start it on the same line: `list.each(...) { _ -> ... }`
+
+error[type]: function expects 3 arguments, got 2
+ --> trailing_closure__a_closure_on_the_next_line_is_not_passed.silt:20:11
+    |
+ 20 |   let c = [(1, "a")] |> list.fold("")
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ function expects 3 arguments, got 2
+  = help: a closure on the next line is not passed to `list.fold`; start it on the same line: `|> list.fold(...) { acc, (k, _) -> ... }`

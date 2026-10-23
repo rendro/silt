@@ -4156,6 +4156,24 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// The rest of a list pattern after its `..` (at `dots`): nothing,
+    /// which is `..` and binds no name (a wildcard at the `..`), or a
+    /// name, `..rest`.
+    fn parse_list_rest(&mut self, dots: Span) -> Result<Pattern> {
+        match self.peek().clone() {
+            Token::Comma | Token::RBracket => Ok(Pattern::new(PatternKind::Wildcard, dots)),
+            Token::Ident(name) if name != intern::intern("_") && !is_constructor(name) => {
+                let span = self.advance().span;
+                Ok(Pattern::new(PatternKind::Ident(name), span))
+            }
+            _ => Err(Diagnostic::error(
+                Code::ExpectedToken,
+                self.span(),
+                "a list pattern's rest is `..` or `..name`",
+            )),
+        }
+    }
+
     /// A field of a record pattern: `name` or `name: pattern`.
     fn parse_field_pattern(&mut self) -> Result<(Symbol, Span, Option<Pattern>)> {
         let (field_name, field_span) = self.expect_ident()?;
@@ -4324,8 +4342,8 @@ impl<'src> Parser<'src> {
                     |p| {
                         p.nothing_after_rest(rest.is_some(), "..", ']', "a list pattern")?;
                         if p.at(&Token::DotDot) {
-                            p.advance(); // consume ..
-                            rest = Some(Box::new(p.parse_pattern()?));
+                            let dots = p.advance().span;
+                            rest = Some(Box::new(p.parse_list_rest(dots)?));
                             return Ok(None);
                         }
                         p.parse_pattern().map(Some)

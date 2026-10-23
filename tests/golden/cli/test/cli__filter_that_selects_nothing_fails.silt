@@ -1,0 +1,5 @@
+-- cmd: test --filter xyz_nonexistent_filter
+-- exit: 1
+-- A filter that selects no test fails the run, and says so on stderr.
+fn test_a() { }
+fn main() { }

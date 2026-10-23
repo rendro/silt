@@ -1,0 +1,20 @@
+error[type]: function expects 3 arguments, got 2
+ --> trailing_closure__its_follow_on_errors_go_too.silt:10:3
+    |
+ 10 |   xs |> list.fold(0)
+    |   ^^^^^^^^^^^^^^^^^^ function expects 3 arguments, got 2
+  = help: a closure on the next line is not passed to `list.fold`; start it on the same line: `|> list.fold(...) { acc, x -> ... }`
+
+error[type]: function expects 3 arguments, got 2
+ --> trailing_closure__its_follow_on_errors_go_too.silt:15:11
+    |
+ 15 |   let n = list.fold([1, 2], 0)
+    |           ^^^^^^^^^^^^^^^^^^^^ function expects 3 arguments, got 2
+  = help: a closure on the next line is not passed to `list.fold`; start it on the same line: `list.fold(...) { acc, x -> ... }`
+
+error[type]: cannot pipe into function taking 2 arguments
+ --> trailing_closure__its_follow_on_errors_go_too.silt:18:3
+    |
+ 18 |   [1] |> list.each
+    |   ^^^^^^^^^^^^^^^^ cannot pipe into function taking 2 arguments
+  = help: a closure on the next line is not passed to `list.each`; start it on the same line: `|> list.each { x -> ... }`
