@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: error[type]: type mismatch
+-- stderr-not-contains: option.to_result
+-- `?` on a Result in a function that returns an Option is a mismatch
+-- too, but not the one the Option help is for: no help.
+import int
+
+fn parsed(s: String) -> Option(Int) {
+  let n = int.parse(s)?
+  Some(n)
+}
+
+fn main() {
+  println(parsed("1"))
+}
