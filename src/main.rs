@@ -15,8 +15,9 @@
 //!   - "Format source code"
 //!   - "Run test functions"
 //!   - "Interactive REPL"
-//!   - "Create a new silt package in this directory"
+//!   - "Create a new silt package (a library with --lib) in this directory"
 //!   - "Start the language server"
+//!   - "Remove a dependency from silt.toml and silt.lock"
 
 use std::env;
 use std::process;
