@@ -1218,13 +1218,23 @@ impl Vm {
                         ok!(self.show(&msg, |_, text| Err(VmError::new(format!("panic: {text}")))));
                     go_on!(ok!(self.enter_step(step)));
                 }
-                Instr::CallMethod { method, argc, of } => {
+                Instr::CallMethod {
+                    method,
+                    argc,
+                    of,
+                    at,
+                } => {
                     save!();
-                    go_on!(ok!(self.call_method(method, argc, of, false)));
+                    go_on!(ok!(self.call_method(method, argc, of, at, false)));
                 }
-                Instr::TailCallMethod { method, argc, of } => {
+                Instr::TailCallMethod {
+                    method,
+                    argc,
+                    of,
+                    at,
+                } => {
                     save!();
-                    go_on!(ok!(self.call_method(method, argc, of, true)));
+                    go_on!(ok!(self.call_method(method, argc, of, at, true)));
                 }
                 Instr::Slide { slot } => {
                     // Keep the top value and cut the frame back to
@@ -1571,12 +1581,14 @@ impl Vm {
         method: u16,
         argc: usize,
         trait_index: u16,
+        at: usize,
         tail: bool,
     ) -> Result<DispatchResult, VmError> {
         let receiver_slot = self.stack.len() - argc;
         // (The receiver is looked at where it is: a method of an impl
-        // is found by its type alone.)
-        let receiver = &self.stack[receiver_slot];
+        // is found by its type alone. It is the argument `at`, the
+        // first of the method's of type `Self`.)
+        let receiver = &self.stack[receiver_slot + at];
         let receiver_type = crate::types::canonical::dispatch_type_for_value(receiver);
         // Descriptor-as-receiver (e.g. `Int.default()`,
         // `body.decode(Todo)` where the descriptor is piped in) is
@@ -1660,16 +1672,7 @@ impl Vm {
             return self.enter_step(step);
         }
         // No impl has the method for the receiver's type: what the
-        // call does then goes by the method's name. Called through a
-        // type (`a.display(x)` for a `type a`, `t.compare(x, y)` for a
-        // type held in `t`), the descriptor only chose the type: the
-        // value the method is of is the first argument.
-        let argc = if descriptor_receiver && argc > 1 {
-            self.stack.remove(receiver_slot);
-            argc - 1
-        } else {
-            argc
-        };
+        // call does then goes by the method's name.
         let receiver = self.stack[receiver_slot].clone();
         let slots = self.view.entry.clone();
         // (The compiler checks each function against the globals of
@@ -1685,16 +1688,6 @@ impl Vm {
             return Err(VmError::type_confusion(format!(
                 "the call of method '{method_name}' names a trait the program does not have"
             )));
-        }
-        // `display` of a value whose parts a written impl may show.
-        if method_name == "display"
-            && argc == 1
-            && slots.any_shown()
-            && Self::value_implements_display(&receiver)
-        {
-            self.stack.truncate(receiver_slot);
-            let step = self.shown(&receiver)?;
-            return self.enter_step(step);
         }
         // `encode` of a value whose type has no written `json.Encode`
         // impl: its structural form, with the impls of its parts.

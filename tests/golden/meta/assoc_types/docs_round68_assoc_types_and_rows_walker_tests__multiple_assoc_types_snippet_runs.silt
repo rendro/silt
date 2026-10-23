@@ -17,6 +17,6 @@ trait Pair for IntStringPair {
 
 fn main() {
   let p = IntStringPair { a: 13, b: "ok" }
-  println(p.first())
-  println(p.second())
+  println(Pair.first(p))
+  println(Pair.second(p))
 }

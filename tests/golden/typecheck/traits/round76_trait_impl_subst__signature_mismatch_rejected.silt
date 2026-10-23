@@ -4,7 +4,7 @@
 trait Foo(a) { fn produce(self) -> a }
 trait Foo(Int) for String { fn produce(self) -> String { "haha" } }
 fn use_foo(s: a) -> Int where a: Foo(Int) {
-  s.produce()
+  Foo.produce(s)
 }
 fn main() {
   let s: String = "hi"

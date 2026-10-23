@@ -9,4 +9,4 @@
 trait Wrap { fn wrap(self, x: a) -> List(a) }
 trait Wrap for Int { fn wrap(self, x: b) -> List(b) { [x] } }
 trait Wrap for Bool { fn wrap(self, x: Int) -> List(Int) { [x] } }
-fn main() { println(1.wrap("s")) }
+fn main() { println(Wrap.wrap(1, "s")) }

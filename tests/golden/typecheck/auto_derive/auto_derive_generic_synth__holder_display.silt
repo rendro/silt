@@ -1,5 +1,5 @@
 type Holder(a) { value: a }
-fn d(a: a) -> String where a: Display { a.display() }
+fn d(a: a) -> String where a: Display { "{a}" }
 fn main() {
     let h = Holder { value: 5 }
     println(d(h))

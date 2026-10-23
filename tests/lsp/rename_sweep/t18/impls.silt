@@ -16,6 +16,6 @@ trait Area for shapes.Shape {
 pub fn total(xs: List(shapes.Shape)) -> Int {
   match xs {
     [] -> 0
-    [x, ..rest] -> x.area() + total(rest)
+    [x, ..rest] -> Area.area(x) + total(rest)
   }
 }

@@ -25,9 +25,9 @@ pub(crate) enum Goal {
     /// A predicate a use owes.
     Pred(Pred),
     /// `recv.name(args)`, with the result `result`, where the receiver's
-    /// type was unknown at the call: which method or function-typed
-    /// field it calls is decided when the receiver's type is (`select`),
-    /// and when the definition is generalised if it still is not.
+    /// type was unknown at the call: the function-typed field it calls
+    /// is checked when the receiver's type is known (`select_call`), and
+    /// when the definition is generalised if it still is not.
     Select {
         recv: Type,
         name: Symbol,
@@ -377,59 +377,8 @@ impl TypeChecker {
         }
     }
 
-    /// A method call whose receiver was a type variable when it was
-    /// inferred and is the type `type_name` now: `true` when the type has
-    /// the method. The call's trait is recorded by its span
-    /// (`deferred_method_traits`), which `resolve_all_types` writes on
-    /// the access; a call that sees the method in two traits is
-    /// ambiguous, as anywhere.
-    pub(super) fn deferred_method_call(
-        &mut self,
-        type_name: TypeRef,
-        field: Symbol,
-        obj_ty: &Type,
-        result_ty: &Type,
-        span: Span,
-    ) -> bool {
-        let Some(entry) = self.method_entry(type_name, field, false) else {
-            return false;
-        };
-        let instantiated = self.dispatch_method_entry(&entry, field, obj_ty, span);
-        if let Some(t) = self.method_trait.take() {
-            self.deferred_method_traits.insert(span, t);
-        }
-        let method_ty = self.apply(&instantiated);
-        self.unify_deferred_method(result_ty, &method_ty, span);
-        true
-    }
-
-    /// Unify the type a method call on an unknown receiver was given
-    /// (`result_ty`) with the method it turned out to call.
-    ///
-    /// Method types include `self` as the first param. When the call
-    /// site originally saw this field access as an unknown Var, it
-    /// unified the var with a function type built from the *explicit*
-    /// args only (no receiver). Strip `self` when adapting.
-    pub(super) fn unify_deferred_method(&mut self, result_ty: &Type, method_ty: &Type, span: Span) {
-        let result_resolved = self.apply(result_ty);
-        match (&result_resolved, method_ty) {
-            (Type::Fun(call_params, call_ret), Type::Fun(method_params, method_ret))
-                if method_params.len() == call_params.len() + 1 =>
-            {
-                for (cp, mp) in call_params.iter().zip(method_params.iter().skip(1)) {
-                    self.unify(cp, mp, span);
-                }
-                self.unify(call_ret, method_ret, span);
-            }
-            _ => {
-                self.unify(result_ty, method_ty, span);
-            }
-        }
-    }
-
     /// Decide what `recv.field(args)` calls, now that the receiver's type
-    /// is known: a method of the type (its impls, or the bounds of an
-    /// annotation variable), or the function a field of the record holds.
+    /// is known: the function a field of the record holds.
     fn select_call(
         &mut self,
         recv: &Type,
@@ -438,21 +387,12 @@ impl TypeChecker {
         result: Type,
         span: Span,
     ) {
-        let obj_ty = recv.clone();
         let result_ty = Type::Fun(args, Box::new(result));
         let resolved =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(recv));
         match &resolved {
             Type::Error | Type::Never => {}
             Type::Var(_) => unreachable!("a selection waits while its receiver is unknown"),
-            // The receiver became an annotation variable: it has the
-            // methods of its bounds, and nothing else.
-            Type::Rigid(r) => {
-                if let Some((trait_name, method_ty)) = self.bound_method(*r, field, span) {
-                    self.deferred_method_traits.insert(span, trait_name);
-                    self.unify_deferred_method(&result_ty, &method_ty, span);
-                }
-            }
             Type::AnonRecord { fields: af, tail } => {
                 if let Some(field_ty) = af.get(&field) {
                     let ft = field_ty.clone();
@@ -464,17 +404,9 @@ impl TypeChecker {
                     };
                     self.unify(&resolved, &extended, span);
                 } else {
-                    // ERR-GAP (round 81 F2): match the sibling Record /
-                    // Generic deferred sites and append a did-you-mean
-                    // hint when a near-edit-distance field exists.
                     let candidates: Vec<(Symbol, Type)> =
                         af.iter().map(|(k, v)| (*k, v.clone())).collect();
-                    let base = format!("anon record has no field '{field}'");
-                    self.error_help(
-                        Code::NoSuchField,
-                        format_record_field_suggestion(base, field, &candidates),
-                        span,
-                    );
+                    self.no_field(&resolved, field, None, &candidates, span);
                 }
             }
             Type::Generic(type_name, type_args) => {
@@ -513,47 +445,13 @@ impl TypeChecker {
                     self.unify(&result_ty, &field_ty, span);
                     return;
                 }
-                // Also check the method table for trait methods.
-                if self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span) {
-                    return;
-                }
-                // A method of a structural trait the type has no entry
-                // for.
-                if let Some(method_ty) = self.structural_method(&obj_ty, field, false, span) {
-                    self.last_field_access_was_method = false;
-                    if let Some(t) = self.method_trait.take() {
-                        self.deferred_method_traits.insert(span, t);
-                    }
-                    self.unify_deferred_method(&result_ty, &method_ty, span);
-                    return;
-                }
-                // GAP (round 35 F7): thread did-you-mean suggestion
-                // through the Generic/named-record deferred path.
-                let shown = self.show_type(&Type::Generic(type_name, vec![]));
-                let base = format!("unknown field or method '{field}' on type {shown}");
-                let msg = if let Some(rec_info) = self.tables.records.get(&type_name) {
-                    format_record_field_suggestion(base, field, &rec_info.fields)
-                } else {
-                    (base, None)
-                };
-                self.error_help(Code::UnknownField, msg, span);
+                let fields = (self.tables.records.get(&type_name))
+                    .map(|rec| rec.fields.clone())
+                    .unwrap_or_default();
+                self.no_field(&resolved, field, None, &fields, span);
             }
-            // A builtin type (`Int`, `List`, ...): its trait methods.
-            _ => {
-                if let Some(type_name) = self.type_name_for_impl(&resolved)
-                    && self.deferred_method_call(type_name, field, &obj_ty, &result_ty, span)
-                {
-                    return;
-                }
-                self.error(
-                    Code::UnknownField,
-                    format!(
-                        "unknown field or method '{field}' on type {}",
-                        self.show_type(&resolved)
-                    ),
-                    span,
-                );
-            }
+            // Any other type has no fields.
+            _ => self.no_field(&resolved, field, None, &[], span),
         }
     }
 
@@ -1161,14 +1059,10 @@ impl TypeChecker {
         self.close_level();
     }
 
-    /// Decide each call `x.m(args)` of the scope just left whose
-    /// receiver is still unknown and is the scope's to generalise. When
-    /// exactly one trait the module sees declares a method `m`, the call
-    /// is that method's and `x` is bounded by the trait
-    /// (`fn g(x) { x.greet() }` is `a -> String where a: Greet`). When
-    /// none does, `x` is a record with a function in its field `m`. When
-    /// several do, the receiver needs an annotation.
-    pub(super) fn default_selects(&mut self, wait_if_several: bool) {
+    /// Decide each call `x.f(args)` of the scope just left whose
+    /// receiver is still unknown and is the scope's to generalise: `x` is
+    /// a record with a function in its field `m`.
+    pub(super) fn default_selects(&mut self) {
         let mine: Vec<usize> = (self.closed_mark..self.wanted.len())
             .filter(|&i| {
                 !self.wanted[i].solved
@@ -1193,9 +1087,7 @@ impl TypeChecker {
                 continue;
             };
             // (An earlier one of these may have decided this receiver.)
-            if matches!(self.apply(&recv), Type::Var(_))
-                && !(wait_if_several && self.traits_declaring(name).len() > 1)
-            {
+            if matches!(self.apply(&recv), Type::Var(_)) {
                 self.wanted[i].solved = true;
                 let call_ty = Type::Fun(args, Box::new(result));
                 self.default_select(&recv, name, call_ty, origin.span);
@@ -1205,127 +1097,14 @@ impl TypeChecker {
         self.close_level();
     }
 
-    /// The traits in sight that declare a method `name` a call on a
-    /// value may mean (`on_a_value`), in the order of their names.
-    fn traits_declaring(&self, name: Symbol) -> Vec<TraitKey> {
-        let mut traits: Vec<TraitKey> = self
-            .tables
-            .traits
-            .iter()
-            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == name))
-            .map(|(t, _)| *t)
-            .filter(|t| self.sees_trait(*t))
-            .collect();
-        traits.sort_by_key(|t| self.show_trait(*t));
-        self.on_a_value(traits, |t| *t, name)
-    }
-
-    /// Of `candidates` (each of the trait `trait_of` says) for a call of
-    /// `method` on a value, those the call may mean: a method without
-    /// `self` is never one, of any trait. Where none takes `self`, the
-    /// first alone, which the call reports as taking none.
-    pub(super) fn on_a_value<C>(
-        &self,
-        mut candidates: Vec<C>,
-        trait_of: impl Fn(&C) -> TraitKey,
-        method: Symbol,
-    ) -> Vec<C> {
-        let takes_self = |c: &C| {
-            (self.tables.traits.get(&trait_of(c)))
-                .is_none_or(|info| info.receivers.contains(&method))
-        };
-        match candidates.iter().any(takes_self) {
-            true => candidates.retain(takes_self),
-            false => candidates.truncate(1),
-        }
-        candidates
-    }
-
+    /// `x.name(..)` whose receiver nothing decided: `x` is a record with
+    /// a function of the call's type in its field `name`.
     fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
-        let traits = self.traits_declaring(name);
-        match traits.as_slice() {
-            [] => {
-                let row = Type::AnonRecord {
-                    fields: std::collections::BTreeMap::from([(name, call_ty)]),
-                    tail: RowTail::Var(self.fresh_tyvar_id()),
-                };
-                self.unify(recv, &row, span);
-            }
-            [tr] => {
-                let info = self.tables.traits[tr].clone();
-                let (_, method_ty) = info
-                    .methods
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .expect("the trait declares the method");
-                // A method without `self` is not what a value's `.{name}`
-                // calls, and says nothing of the receiver.
-                let receiver = info.receivers.contains(&name);
-                let on_type = on_type_call("SomeType", name, method_ty);
-                if self.takes_no_self(receiver, name, &on_type, span) {
-                    return;
-                }
-                // The trait's parameters are what the receiver's impl
-                // will say; the method's own variables are new.
-                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-                mapping.insert(info.self_var, recv.clone());
-                let params: Vec<Type> = info
-                    .param_var_ids
-                    .iter()
-                    .map(|v| {
-                        let fresh = self.fresh_var();
-                        mapping.insert(*v, fresh.clone());
-                        fresh
-                    })
-                    .collect();
-                let ty = substitute_vars(method_ty, &mapping);
-                // (And what the method of the receiver's impl asks.)
-                let preds: Vec<Pred> = info
-                    .method_bounds
-                    .get(&name)
-                    .into_iter()
-                    .flatten()
-                    .map(|pred| pred.substitute(&mapping))
-                    .chain([Pred::Via {
-                        tr: *tr,
-                        method: name,
-                        receiver: recv.clone(),
-                        method_ty: ty.clone(),
-                        passer: None,
-                        at: None,
-                    }])
-                    .collect();
-                let own: Vec<TyVar> = free_vars_in(method_ty)
-                    .into_iter()
-                    .filter(|v| !mapping.contains_key(v))
-                    .collect();
-                let scheme = Scheme {
-                    vars: own,
-                    preds,
-                    ty,
-                };
-                let origin = Origin {
-                    span,
-                    callee: Some(name),
-                    op: None,
-                };
-                self.want(
-                    Pred::Trait {
-                        tr: *tr,
-                        args: params,
-                        subject: recv.clone(),
-                        asker: None,
-                    },
-                    origin,
-                );
-                let method_ty = self.instantiate_method(&scheme, name, span);
-                self.deferred_method_traits.insert(span, *tr);
-                self.unify_deferred_method(&call_ty, &method_ty, span);
-            }
-            several => {
-                self.ambiguous_method(name, "a value whose type is not known", several, span);
-            }
-        }
+        let row = Type::AnonRecord {
+            fields: std::collections::BTreeMap::from([(name, call_ty)]),
+            tail: RowTail::Var(self.fresh_tyvar_id()),
+        };
+        self.unify(recv, &row, span);
     }
 
     /// Report that `method`, called on `on` (`type 'Int'`, `a value
@@ -2466,40 +2245,35 @@ impl TypeChecker {
         self.builtin_imports.contains(&module) || self.seen_traits.contains(&t.id.0)
     }
 
-    /// The traits that give the type `ty` a method `method`, in the
-    /// order of their names: those of the session's impls, and the
-    /// structural trait whose method it is when no impl of that trait
-    /// is written for the type, for a call through the type (`on_type`,
-    /// `T.method(..)`) or on a value (`on_a_value`).
-    fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
+    /// The traits that give the type `ty` a method `method` for a call
+    /// through the type (`T.method(..)`), in the order of their names:
+    /// those of the session's impls, and the structural trait whose
+    /// method it is when no impl of that trait is written for the type.
+    pub(super) fn method_providers(&self, ty: TypeRef, method: Symbol) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
-        if let Some(tr) = self.structural_provider(ty, method, on_type)
+        if let Some(tr) = self.structural_provider(ty, method)
             && !traits.contains(&tr)
         {
             traits.push(tr);
         }
         traits.sort_by_key(|t| self.show_trait(*t));
-        match on_type {
-            true => traits,
-            false => self.on_a_value(traits, |t| *t, method),
+        // Through the type, a method that makes a value: one that takes
+        // a value of the type is called through its trait, so it is no
+        // candidate where another trait gives the type a method of the
+        // name that makes one.
+        if traits.iter().any(|t| self.self_param(*t, method).is_none()) {
+            traits.retain(|t| self.self_param(*t, method).is_none());
         }
+        traits
     }
 
     /// The structural trait whose method `method` the type `ty` has by
     /// its structure: one of their names, of a type that has the name
     /// (`Tables::has_structural_name`) and no written impl of the trait.
-    /// A structural method that takes no `self` (`decode`) is no method
-    /// of a call on a value (not `on_type`): such a call means another
-    /// trait's method of the name, if one has it.
-    fn structural_provider(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Option<TraitKey> {
+    fn structural_provider(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
         let name = resolve(method);
         let (tr_name, _) = STRUCTURAL_METHODS.iter().find(|(_, m)| *m == name)?;
         let tr = TraitKey::builtin(tr_name);
-        let takes_self =
-            (self.tables.traits.get(&tr)).is_none_or(|info| info.receivers.contains(&method));
-        if !on_type && !takes_self {
-            return None;
-        }
         (self.tables.has_structural_name(tr, ty)
             && self.by_structure(tr, ty)
             && self.unreached(tr).is_none())
@@ -2536,13 +2310,8 @@ impl TypeChecker {
     /// reach by its imports it has not. It is decided from the impls'
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
-    pub(super) fn method_entry(
-        &self,
-        ty: TypeRef,
-        method: Symbol,
-        on_type: bool,
-    ) -> Option<MethodEntry> {
-        let providers = self.method_providers(ty, method, on_type);
+    pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
+        let providers = self.method_providers(ty, method);
         let tr = match self.meant_provider(&providers) {
             Ok(tr) => tr?,
             Err(candidates) => candidates[0],
@@ -2558,47 +2327,9 @@ impl TypeChecker {
                 method_type: Type::Error,
                 structural: true,
                 trait_name: None,
-                receiver: true,
                 preds: Vec::new(),
             }),
         }
-    }
-
-    /// Whether a value of the type `ty` has a method `method`, whatever
-    /// the module checked may call.
-    pub(super) fn has_method(&self, ty: TypeRef, method: Symbol) -> bool {
-        !self.method_providers(ty, method, false).is_empty()
-    }
-
-    /// The names of the methods of the type `ty`.
-    pub(super) fn method_names(&self, ty: TypeRef) -> Vec<Symbol> {
-        let mut names: Vec<Symbol> = self
-            .tables
-            .impl_methods
-            .keys()
-            .filter(|(of, _, _)| *of == ty)
-            .map(|(_, method, _)| *method)
-            .collect();
-        for (_, method) in STRUCTURAL_METHODS {
-            let method = intern(method);
-            if self.structural_provider(ty, method, false).is_some() {
-                names.push(method);
-            }
-        }
-        names.sort();
-        names.dedup();
-        names
-    }
-
-    /// Keep that the type `ty` was reported at `span` to have no method
-    /// `method`: a trait of a module that is not imported may have one,
-    /// which is known once the whole program is checked.
-    pub(super) fn note_unknown_method(&mut self, span: Span, ty: TypeRef, method: Symbol) {
-        self.tables
-            .unknown_methods
-            .entry(self.module)
-            .or_default()
-            .push((span, ty, method));
     }
 
     /// Whether a call of `method` of `ty` is ambiguous here; if so, it is
@@ -2607,10 +2338,9 @@ impl TypeChecker {
         &mut self,
         ty: TypeRef,
         method: Symbol,
-        on_type: bool,
         span: Span,
     ) -> bool {
-        let providers = self.method_providers(ty, method, on_type);
+        let providers = self.method_providers(ty, method);
         let Err(traits) = self.meant_provider(&providers) else {
             return false;
         };
@@ -2618,16 +2348,13 @@ impl TypeChecker {
         self.ambiguous_method(method, &on, &traits, span);
         // Called through the type (`T.decode(v)`), there is no receiver
         // to annotate: a function bounded by the trait says which (a
-        // program's trait where one is among them, `Pretty` over `Display`).
-        if on_type {
-            let named = (traits.iter())
-                .find(|t| crate::defs::builtin_trait_of_id(t.id.0).is_none())
-                .or(traits.first())
-                .map(|t| self.show_trait(*t))
-                .unwrap_or_default();
-            let Some(last) = self.errors.last_mut() else {
-                return true;
-            };
+        // program's trait where one is among them).
+        let named = (traits.iter())
+            .find(|t| crate::defs::builtin_trait_of_id(t.id.0).is_none())
+            .or(traits.first())
+            .map(|t| self.show_trait(*t))
+            .unwrap_or_default();
+        if let Some(last) = self.errors.last_mut() {
             last.help = vec![format!(
                 "say which is meant: call it through a function bounded by the trait you mean, \
                  `where a: {named}`"

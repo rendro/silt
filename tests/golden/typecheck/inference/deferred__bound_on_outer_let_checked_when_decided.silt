@@ -7,7 +7,7 @@
 import channel
 trait Loud { fn loud(self) -> String }
 trait Loud for Int { fn loud(self) -> String { "int!" } }
-fn shout(x: a) -> String where a: Loud { x.loud() }
+fn shout(x: a) -> String where a: Loud { Loud.loud(x) }
 let ch = channel.new(4)
 fn drain() {
   match channel.receive(ch) {

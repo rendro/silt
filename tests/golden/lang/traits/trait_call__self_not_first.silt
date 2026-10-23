@@ -1,0 +1,29 @@
+-- A method whose argument of type Self is not its first is called
+-- through its trait like any other: the impl is the one for that
+-- argument's type, known where the call is written or found where it
+-- runs (a bounded type variable, a closure's parameter, a function
+-- value, a piped value).
+import list
+trait Scale {
+  fn scale(by: Int, x: Self) -> Self
+}
+trait Scale for Int {
+  fn scale(by: Int, x: Self) -> Self { by * x }
+}
+type V { n: Int }
+trait Scale for V {
+  fn scale(by: Int, x: Self) -> Self { V { n: by + x.n } }
+}
+fn twice(x: a) -> a where a: Scale { Scale.scale(2, x) }
+fn last(x: a) -> a where a: Scale { Scale.scale(3, x) }
+fn main() {
+  println(Scale.scale(2, 5))
+  println(Scale.scale(2, V { n: 1 }))
+  println(twice(5))
+  println(twice(V { n: 1 }))
+  println(list.map([1, 2], { x -> Scale.scale(10, x) }))
+  let f = Scale.scale
+  println(f(3, V { n: 4 }))
+  println(2 |> Scale.scale(V { n: 7 }))
+  println(last(V { n: 0 }))
+}

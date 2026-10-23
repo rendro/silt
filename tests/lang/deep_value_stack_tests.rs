@@ -91,7 +91,7 @@ fn deep_values_compare_order_and_hash() {
             &[
                 "a == b",
                 "a < b",
-                "a.hash() == b.hash()",
+                "Hash.hash(a) == Hash.hash(b)",
                 "set.length(set.from_list([a, b]))",
             ]
         ),

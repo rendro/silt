@@ -30,5 +30,5 @@ fn main() {
   println(g(P { x: 1, y: 2 }))
   println(h((5, 6)))
   println(k(Wrap(4), P { x: 1, y: 0 }))
-  println(P { x: 1, y: 2 }.sum((10, 20)))
+  println(Sum.sum(P { x: 1, y: 2 }, (10, 20)))
 }

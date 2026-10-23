@@ -20,8 +20,8 @@ fn zero_of(type b) -> b where b: Vals {
 }
 
 fn main() {
-  println(Int.total(7))
-  println(7.total())
+  println(Vals.total(7))
+  println(Vals.total(7))
   println(Int.zero())
   println(zero_of(Int))
 }

@@ -32,7 +32,7 @@ type Holder {
   w: Wrap,
 }
 
-let label = Some(Holder { w: Wrap { t: 1 } }).display()
+let label = string.from(Some(Holder { w: Wrap { t: 1 } }))
 
 fn main() {
   println(total)

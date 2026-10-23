@@ -9,4 +9,4 @@ trait Area {
 }
 type Sq { side: Float }
 trait Area for Sq { fn area(self) -> Float { self.side * self.side } }
-fn main() { println(Sq { side: 2.0 }.area()) }
+fn main() { println(Area.area(Sq { side: 2.0 })) }

@@ -1,4 +1,4 @@
-fn d(a: a) -> String where a: Display { a.display() }
+fn d(a: a) -> String where a: Display { "{a}" }
 fn main() {
     println(d(Some(42)))
     let n: Option(Int) = None

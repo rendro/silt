@@ -8,7 +8,7 @@ fn program() {
   match json.parse("\{\"name\": \"Alice\"\}", User) {
     Ok(_) -> "unexpected"
     Err(json.MissingField(f)) -> f
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 

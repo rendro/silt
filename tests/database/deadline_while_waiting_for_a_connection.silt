@@ -31,8 +31,8 @@ fn main() {
         println(
           match late {
             Ok(Ok(said)) -> "the function ended with {said}"
-            Ok(Err(e)) -> "the function ended with {e.message()}"
-            Err(e) -> "task.deadline: {e.message()}"
+            Ok(Err(e)) -> "the function ended with {Error.message(e)}"
+            Err(e) -> "task.deadline: {Error.message(e)}"
           },
         )
         postgres.query(tx, "SELECT 1", (), json.Value)
@@ -40,11 +40,11 @@ fn main() {
       println(
         match done {
           Ok(_) -> "main's transaction: Ok"
-          Err(e) -> "main's transaction: {e.message()}"
+          Err(e) -> "main's transaction: {Error.message(e)}"
         },
       )
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

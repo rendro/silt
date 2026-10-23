@@ -6,6 +6,6 @@ trait B { fn show(self) -> String }
 trait A for Int { fn show(self) -> String { "int" } }
 trait B for String { fn show(self) -> String { self } }
 fn main() {
-  println((5).show())
-  println(("hi").show())
+  println(A.show(5))
+  println(B.show("hi"))
 }

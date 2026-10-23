@@ -6,6 +6,6 @@ import a
 import helper
 import list
 fn main() {
-  println([5] |> list.map { y -> y.show() })
+  println([5] |> list.map { y -> a.Show.show(y) })
   println(helper.via_b(6))
 }

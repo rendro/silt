@@ -23,8 +23,8 @@ fn main() {
   println(big == big)
   println(big == list.tail(big))
   println(big < list.tail(big))
-  println(big.hash() == (1..9223372036854775807).hash())
-  println(big.hash() == list.tail(big).hash())
+  println(Hash.hash(big) == Hash.hash(1..9223372036854775807))
+  println(Hash.hash(big) == Hash.hash(list.tail(big)))
   match big {
     [a, b, ..rest] -> println("{a}, {b}, then {list.length(rest)} more")
     _ -> println("no match")

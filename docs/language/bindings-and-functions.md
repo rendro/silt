@@ -81,7 +81,7 @@ fn main() {
   let _ = task.spawn { -> println("in the background") }
   match io.write_file("out.txt", "data") {
     Ok(_) -> println("saved")
-    Err(e) -> println("not saved: {e.message()}")
+    Err(e) -> println("not saved: {Error.message(e)}")
   }
 }
 ```
@@ -185,9 +185,9 @@ What a `let`'s value can reach is decided by four rules:
   module's impls give that module's traits (and the builtin traits):
   a `let` that mentions another module's function is initialised after
   every `let` those methods read.
-- **A method call on a value whose type is a bounded type variable
-  (`fn f(x: a) where a: Label { x.label() }`) reaches every impl of the
-  method in the module**, whichever value the call is given.
+- **A call through a trait with a value whose type is a bounded type
+  variable (`fn f(x: a) where a: Label { Label.label(x) }`) reaches every
+  impl of the method in the module**, whichever value the call is given.
 - **A `let` that is a plain value runs nothing.** A plain value is a
   literal, a name, a closure, or a list, tuple, record, map, set or
   variant made of plain values. Such a `let` needs only the top-level
@@ -216,7 +216,7 @@ A closure handed to a function is not a plain value: `let f = wrap({ n
 -> ... f(n - 1) ... })` runs `wrap`, which may call the closure.
 
 - **Showing a value reaches the `Display` impls of its parts.**
-  Interpolation, `println`, `string.from` and `.display()` call the
+  Interpolation, `println` and `string.from` call the
   `Display` impl written for each type the value is made of: its own,
   its fields', its type arguments'. A value of an unknown type (a type
   variable, an associated type such as `Self::Item`) may be of any

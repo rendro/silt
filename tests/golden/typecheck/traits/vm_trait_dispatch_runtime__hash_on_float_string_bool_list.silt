@@ -1,5 +1,5 @@
 -- `.hash()` through a Hash bound runs on Float, String, Bool and List.
-fn h(a: a) -> Int where a: Hash { a.hash() }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
 fn main() {
   println(h(3.14) == h(3.14))
   println(h("abc") == h("abc"))

@@ -1,0 +1,53 @@
+-- cmd: check
+-- exit: 1
+-- Through the type a call means a method that makes a value: of a
+-- method `decode` that makes a String and one that takes a String,
+-- `String.decode(4)` is the first, with no ambiguity (the other is
+-- called through its trait). Two traits that each give the type a
+-- method `make` that makes a value are ambiguous, with the help to call
+-- it through a bounded function.
+trait Mk {
+  fn decode(v: Int) -> Self
+}
+
+trait Rd {
+  fn decode(self, n: Int) -> Int
+}
+
+trait Mk for String {
+  fn decode(v: Int) -> Self {
+    "{v}"
+  }
+}
+
+trait Rd for String {
+  fn decode(self, n: Int) -> Int {
+    n + 1
+  }
+}
+
+trait Make {
+  fn make(v: Int) -> Self
+}
+
+trait Build {
+  fn make(v: Int) -> Self
+}
+
+trait Make for Int {
+  fn make(v: Int) -> Self {
+    v
+  }
+}
+
+trait Build for Int {
+  fn make(v: Int) -> Self {
+    v
+  }
+}
+
+fn main() {
+  let t: String = String.decode(4)
+  println(t)
+  println(Int.make(1))
+}

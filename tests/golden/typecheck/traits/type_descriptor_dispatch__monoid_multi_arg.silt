@@ -13,7 +13,7 @@ trait Monoid for Int {
 
 fn use_it() {
     let e = Int.empty()
-    let c = Int.combine(1, 2)
+    let c = Monoid.combine(1, 2)
 }
 
 fn main() {}

@@ -46,7 +46,7 @@ trait Load for S {
 }
 
 fn via(x: s, type a) -> Result(a, toml.TomlError) where s: Load, a: json.Decode {
-  x.get("n = 1", a)
+  Load.get(x, "n = 1", a)
 }
 
 fn main() {
@@ -56,6 +56,6 @@ fn main() {
   let _ = deep("n = 1", L)
   let _ = both("n = 1", L)
   let _ = tl("n = 1", Set(Int))
-  let _ = S { n: 1 }.get("n = 1", L)
+  let _ = Load.get(S { n: 1 }, "n = 1", L)
   let _ = via(S { n: 1 }, L)
 }

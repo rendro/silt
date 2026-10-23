@@ -3,5 +3,5 @@
 -- stderr-contains: error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Hash': element is of type 'Fn(_) -> _', which does not
 fn main() {
   let xs = [{ y -> y }]
-  println(xs.hash())
+  println(Hash.hash(xs))
 }

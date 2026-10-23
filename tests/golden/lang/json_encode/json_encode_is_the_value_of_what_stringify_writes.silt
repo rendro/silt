@@ -24,7 +24,7 @@ trait json.Encode for Pair(a) where a: json.Encode {
 }
 
 fn twice(x: a) -> List(json.Value) where a: json.Encode {
-  [x.encode(), json.encode(x)]
+  [json.Encode.encode(x), json.encode(x)]
 }
 
 fn same(x: a) -> Bool where a: json.Encode {
@@ -41,13 +41,13 @@ fn main() {
   println(json.encode((1, "a")))
   println(json.encode(P { x: 1, total: Money { cents: 5 }, tags: ["t"] }))
   println(json.encode(Pair { left: Money { cents: 1 }, right: Money { cents: 2 } }))
-  println(5.encode())
-  println(Money { cents: 9 }.encode())
+  println(json.Encode.encode(5))
+  println(json.Encode.encode(Money { cents: 9 }))
   println(twice(Money { cents: 3 }))
   println(twice([1, 2]))
   println(json.stringify(json.encode(P { x: 1, total: Money { cents: 5 }, tags: [] })))
   println(json.stringify(P { x: 1, total: Money { cents: 5 }, tags: [] }))
   println([same(1), same(1.0e21), same(-0.5), same("s"), same([Some(1), None]), same(#{"k": 1.5}), same(time.date(2026, 10, 21)), same(P { x: 1, total: Money { cents: 5 }, tags: ["a"] })])
-  let f = Money.encode
+  let f = json.Encode.encode
   println(f(Money { cents: 4 }))
 }

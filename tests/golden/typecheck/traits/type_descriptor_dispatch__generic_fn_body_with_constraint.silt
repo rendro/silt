@@ -14,7 +14,7 @@ trait Monoid for Int {
 }
 
 fn reduce(xs: List(a), type a) -> a where a: Monoid {
-    list.fold(xs, a.empty()) { acc, x -> a.combine(acc, x) }
+    list.fold(xs, a.empty()) { acc, x -> Monoid.combine(acc, x) }
 }
 
 fn use_it() {

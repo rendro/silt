@@ -3,10 +3,10 @@
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
 trait Greet for Bool { fn greet(self) -> String { "bool" } }
-fn g(x) { x.greet() }
+fn g(x) { Greet.greet(x) }
 fn main() {
   println(g(1))
   println(g(true))
-  let h = { y -> "{y.greet()}!" }
+  let h = { y -> "{Greet.greet(y)}!" }
   println(h(2))
 }

@@ -1,7 +1,7 @@
 -- exit: 1
 -- stderr-contains: error[type]: type 'Doc' does not implement trait 'Compare': field 'meta' is of type 'Map(String, Int)', which does not
 type Doc { meta: Map(String, Int) }
-fn cmp_gen(x: a, y: a) -> Int where a: Compare { x.compare(y) }
+fn cmp_gen(x: a, y: a) -> Int where a: Compare { Compare.compare(x, y) }
 fn main() {
     let d = Doc { meta: #{"a": 1} }
     println(cmp_gen(d, d))

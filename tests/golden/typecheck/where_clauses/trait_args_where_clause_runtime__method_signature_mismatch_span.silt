@@ -9,4 +9,4 @@ trait Foo(a) { fn bar(self: a) -> Int }
 trait Foo(String) for String {
   fn bar(self) -> String { "hello" }
 }
-fn main() { println("x".bar()) }
+fn main() { println(Foo.bar("x")) }

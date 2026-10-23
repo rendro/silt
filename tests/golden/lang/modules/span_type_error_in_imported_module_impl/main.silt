@@ -6,5 +6,5 @@
 import b
 fn main() {
   let c = b.Cat { name: "c" }
-  println(c.speak())
+  println(b.Speak.speak(c))
 }

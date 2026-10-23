@@ -11,6 +11,6 @@ trait Monoid for Int {
 
 fn main() {
   let zero = Int.empty()                 -- concrete dispatch
-  let five = Int.combine(2, 3)
+  let five = Monoid.combine(2, 3)
   println("{zero} {five}")
 }

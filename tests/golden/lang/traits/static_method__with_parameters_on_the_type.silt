@@ -20,15 +20,15 @@ trait Mk for Int {
 }
 
 fn build(n: Int, type a) -> a where a: Mk {
-  a.make(n).twice()
+  Mk.twice(a.make(n))
 }
 
 fn main() {
   println(Int.make(4))
-  println(Int.join(1, 2))
+  println(Mk.join(1, 2))
   println(build(5, Int))
   let f = Int.make
   println(f(3))
-  println(4.twice())
-  println(Int.twice(4))
+  println(Mk.twice(4))
+  println(Mk.twice(4))
 }

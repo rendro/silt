@@ -34,9 +34,9 @@ Every fallible `io` / `fs` function returns `Result(T, IoError)`.
 | `Other(msg)`             | everything else                            |
 
 `IoError` implements the built-in `Error` trait, so every value exposes
-`.message() -> String` for a human-readable summary. Most call sites
+`Error.message(e) -> String` for a human-readable summary. Most call sites
 destructure specific variants when they need to branch (e.g. "create a
-default when the file does not exist") and fall through to `.message()`
+default when the file does not exist") and fall through to `Error.message`
 otherwise. See [stdlib errors](errors.md) for the shared `Error` trait.
 
 See also [bytes](bytes.md) for reading/writing binary data.
@@ -101,7 +101,7 @@ fn main() {
   match io.read_file("data.txt") {
     Ok(contents) -> println(contents)
     Err(io.NotFound(path)) -> println("no such file: {path}")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -126,7 +126,7 @@ fn main() {
   match io.read_line() {
     Ok(name) -> println("Hello, {name}!")
     Err(io.UnexpectedEof) -> println("(EOF)")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -149,7 +149,7 @@ import io
 fn main() {
   match io.write_file("output.txt", "hello") {
     Ok(_) -> println("written")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -328,7 +328,7 @@ import fs
 fn main() {
   match fs.copy("original.txt", "backup.txt") {
     Ok(_) -> println("copied")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -410,7 +410,7 @@ import list
 fn main() {
   match fs.list_dir(".") {
     Ok(entries) -> list.each(entries) { name -> println(name) }
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -431,7 +431,7 @@ import fs
 fn main() {
   match fs.mkdir("output/reports") {
     Ok(_) -> println("directory created")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -452,7 +452,7 @@ import fs
 fn main() {
   match fs.remove("temp.txt") {
     Ok(_) -> println("removed")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -473,7 +473,7 @@ import fs
 fn main() {
   match fs.rename("old_name.txt", "new_name.txt") {
     Ok(_) -> println("renamed")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -540,7 +540,7 @@ fn main() {
         None -> println("creation time not tracked on this filesystem")
       }
     }
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -584,7 +584,7 @@ import fs
 fn main() {
   match fs.read_link("link") {
     Ok(target) -> println("points at {target}")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -624,7 +624,7 @@ import fs
 fn main() {
   match fs.walk("src") {
     Ok(paths) -> println("{paths}")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -663,7 +663,7 @@ import fs
 fn main() {
   match fs.glob("src/**/*.silt") {
     Ok(files) -> println("{files}")
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```

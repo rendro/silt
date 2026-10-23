@@ -28,6 +28,6 @@ fn main() {
   println(said(toml.stringify(#{"v": json.Array([json.Null])})))
   match json.parse("\{\"name\": \"silt\", \"tags\": [\"a\", \"b\"]}", json.Value) {
     Ok(parsed) -> println(said(toml.stringify(parsed)))
-    Err(e) -> println("parse: {e.message()}")
+    Err(e) -> println("parse: {Error.message(e)}")
   }
 }

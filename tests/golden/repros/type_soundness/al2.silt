@@ -5,5 +5,5 @@ trait Greet { fn greet(self) -> String }
 trait Greet for Meters { fn greet(self) -> String { "m" } }
 trait Greet for Int { fn greet(self) -> String { "i" } }
 fn main() {
-  println(5.greet())
+  println(Greet.greet(5))
 }

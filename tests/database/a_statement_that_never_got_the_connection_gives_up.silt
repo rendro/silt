@@ -31,17 +31,17 @@ fn main() {
         let late = task.deadline(time.ms(200)) { -> postgres.query(tx, "SELECT 1::int8 AS n", (), N) }
         match late {
           Ok(answer) -> println("the waiting statement answered: {answer}")
-          Err(e) -> println("the waiting statement: {e.message()}")
+          Err(e) -> println("the waiting statement: {Error.message(e)}")
         }
         match task.join(sleeper) {
           Ok(_) -> println("the running statement: Ok")
-          Err(e) -> println("the running statement: {e.message()}")
+          Err(e) -> println("the running statement: {Error.message(e)}")
         }
         postgres.query(tx, "SELECT 2::int8 AS n", (), N)
       }
       println("transact: {done}")
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

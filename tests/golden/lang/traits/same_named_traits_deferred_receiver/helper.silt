@@ -1,2 +1,2 @@
 import b
-pub fn via_b(x: Int) -> String { x.show() }
+pub fn via_b(x: Int) -> String { b.Show.show(x) }

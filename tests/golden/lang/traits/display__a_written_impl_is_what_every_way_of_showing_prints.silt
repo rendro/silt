@@ -17,21 +17,21 @@ trait Display for Temp {
 trait Error for Temp {}
 
 fn show(x: a) -> String where a: Display {
-  x.display()
+  "{x}"
 }
 
 fn main() {
   let t = Temp { degrees: 21 }
-  println(t.display())
+  println("{t}")
   println("{t}")
   println(t)
   println(string.from(t))
   println(show(t))
-  println(t.message())
+  println(Error.message(t))
   print(t)
   println("")
   println([t])
   println("{[t]}")
-  println([t].display())
+  println("{[t]}")
   println(show([t]))
 }

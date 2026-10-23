@@ -7,9 +7,9 @@ fn main() {
     match bytes.from_hex("0{d}") {
       Ok(b) -> match bytes.to_string(b) {
         Ok(s) -> println(encoding.form_encode([("k", s)]))
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
-      Err(e) -> println(e.message())
+      Err(e) -> println(Error.message(e))
     }
   }
 }

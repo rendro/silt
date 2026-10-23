@@ -38,7 +38,7 @@ import tcp
 fn main() -> String {{
   match tcp.connect_tls("{unused_port}", "localhost") {{
     Ok(_) -> "unexpected ok"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }}
 }}
 "#
@@ -71,16 +71,16 @@ fn main() -> String {
         match tcp.accept(listener) {
           Ok(conn) -> match tcp.tls_server(conn, bad_cert, bad_key) {
             Ok(_) -> "wrong: server expected to fail"
-            Err(e) -> e.message()
+            Err(e) -> Error.message(e)
           }
-          Err(e) -> e.message()
+          Err(e) -> Error.message(e)
         }
       })
       time.sleep(time.ms(50))
       let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
       task.join(server)
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#

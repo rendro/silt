@@ -11,7 +11,7 @@ trait Display for Shape {
 }
 
 fn show(x: a) where a: Display {
-  x.display()
+  "{x}"
 }
 
 fn program() {

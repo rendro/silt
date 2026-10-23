@@ -17,7 +17,7 @@ trait Counter for Int {
 fn main() {
   let h = task.spawn({ ->
     let n = 7
-    n.bump()
+    Counter.bump(n)
   })
   println(task.join(h))
 }

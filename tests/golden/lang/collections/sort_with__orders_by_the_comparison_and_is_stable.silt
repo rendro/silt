@@ -7,20 +7,20 @@ import list
 fn by_key(a: (Int, Int), b: (Int, Int)) -> Int {
   let (x, _) = a
   let (y, _) = b
-  x.compare(y)
+  Compare.compare(x, y)
 }
 
 fn main() {
-  println(list.sort_with([]) { a, b -> a.compare(b) })
-  println(list.sort_with([5]) { a, b -> a.compare(b) })
-  println(list.sort_with([5, 3, 9, 1, 7]) { a, b -> a.compare(b) })
-  println(list.sort_with([5, 3, 9, 1, 7]) { a, b -> b.compare(a) })
+  println(list.sort_with([]) { a, b -> Compare.compare(a, b) })
+  println(list.sort_with([5]) { a, b -> Compare.compare(a, b) })
+  println(list.sort_with([5, 3, 9, 1, 7]) { a, b -> Compare.compare(a, b) })
+  println(list.sort_with([5, 3, 9, 1, 7]) { a, b -> Compare.compare(b, a) })
   -- Any Int counts, not only -1, 0 and 1.
-  println(list.sort_with([2, 1, 3]) { a, b -> a.compare(b) * 1000000 })
+  println(list.sort_with([2, 1, 3]) { a, b -> Compare.compare(a, b) * 1000000 })
   -- All equal: the order of the list.
   println(list.sort_with(["c", "a", "b"]) { _, _ -> 0 })
   -- A range.
-  println(list.sort_with(1..6) { a, b -> b.compare(a) })
+  println(list.sort_with(1..6) { a, b -> Compare.compare(b, a) })
   -- Every length from 0 to 40, keys with many ties: the same as sort_by.
   let lengths = 0..40
   let all_same = lengths |> list.all { n ->

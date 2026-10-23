@@ -9,6 +9,6 @@ fn first(p: Pair(Int)) -> Int {
 }
 
 fn main() {
-  println(5.describe())
+  println(Describe.describe(5))
   println(first((1, 2)))
 }

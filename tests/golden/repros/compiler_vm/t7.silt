@@ -15,5 +15,5 @@ fn plain(base, (dx, dy), scale) {
 
 fn main() {
   println(plain(1, (2, 3), 10))
-  println(1.shift((2, 3), 10))
+  println(Shift.shift(1, (2, 3), 10))
 }

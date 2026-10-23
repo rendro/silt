@@ -1,6 +1,6 @@
 -- verdict: same
 import list
-fn describe(x: a) -> String where a: Display { x.display() }
+fn describe(x: a) -> String where a: Display { "{x}" }
 fn biggest(xs: List(a)) -> List(a) where a: Compare { list.sort(xs) }
 fn id(x) { x }
 fn main() {

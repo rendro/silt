@@ -3,7 +3,7 @@
 -- lsp: references 22:7
 -- lsp: definition 23:3
 -- lsp: rename 27:13 first
--- lsp: references 33:19
+-- lsp: references 33:24
 -- lsp: references 40:21
 -- lsp: definition 41:26
 -- lsp: references 46:22
@@ -30,7 +30,7 @@ fn pair((a, b): (Int, Int), P { x, y }) {
 
 trait Scale {
   fn scale(self, by: Int) -> Int {
-    self.size() * by
+    Scale.size(self) * by
   }
   fn size(self) -> Int
 }

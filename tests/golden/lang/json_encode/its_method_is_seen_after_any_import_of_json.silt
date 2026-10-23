@@ -2,12 +2,12 @@
 -- visible, a selective one too, as a `pub` trait of a module is after
 -- `import m.{ mk }`. (Without any import of json there is no `encode`:
 -- its_method_needs_import_json.)
-import json.{ stringify }
+import json.{ stringify, Encode }
 
 type P { x: Int }
 
 fn main() {
   println(stringify(P { x: 1 }))
-  println(P { x: 1 }.encode())
-  println(1.encode())
+  println(Encode.encode(P { x: 1 }))
+  println(Encode.encode(1))
 }

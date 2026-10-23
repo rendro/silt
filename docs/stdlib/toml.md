@@ -22,7 +22,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 Every fallible `toml.*` call returns `Result(T, TomlError)`. The `TomlError`
 enum has four variants you can pattern-match on, or fall back to
-`e.message()` when you just want a rendered string (`trait Error for
+`Error.message(e)` when you just want a rendered string (`trait Error for
 TomlError` is wired in):
 
 | Variant | Fields | Meaning |
@@ -230,7 +230,7 @@ fn main() {
   let input = "name = \"Alice\"\nage = 30\nactive = true\n"
   match toml.parse(input, User) {
     Ok(user) -> println(user.name)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -264,7 +264,7 @@ fn main() {
   let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
   match toml.parse_list(input, Point) {
     Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -291,7 +291,7 @@ fn main() {
   let input = "x = 10\ny = 20\n"
   match toml.parse_map(input, Int) {
     Ok(m) -> println(map.get(m, "x")) -- Some(10)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -336,7 +336,7 @@ fn main() {
   let data = #{ "name": "silt", "version": "1.0" }
   match toml.pretty(data) {
     Ok(s) -> println(s)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```
@@ -389,7 +389,7 @@ fn main() {
   let data = Package { name: "silt", version: "1.0" }
   match toml.stringify(data) {
     Ok(s) -> println(s)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```

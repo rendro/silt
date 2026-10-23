@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- A method of a structural trait called through its trait
+-- (`Compare.compare`, `Hash.hash`), or taken as a value, has the type it
+-- has for a value of the argument's type: the arguments, their number
+-- and the result are checked.
+import list
+
+type P {
+  x: Int,
+}
+
+fn main() {
+  println(Compare.compare(1, 2.0))
+  let n: String = Hash.hash("s")
+  let hashes: List(String) = list.map(["a", "b"], Hash.hash)
+  println(Compare.compare(P { x: 1 }, 3))
+  println(Compare.compare())
+  println(Hash.hash((1, 2)))
+  println("{n} {hashes}")
+}

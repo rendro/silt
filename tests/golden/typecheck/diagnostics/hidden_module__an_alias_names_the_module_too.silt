@@ -1,7 +1,8 @@
 -- exit: 1
 -- A local named like a module's alias hides the module imported as
 -- that name: the help names the module and the alias. A local named
--- like the module itself hides nothing here: no help for it.
+-- like the module itself hides nothing here: its help is the one for a
+-- function of the module, not the hidden-module one.
 import list as l
 
 fn main() {

@@ -7,7 +7,7 @@ trait Deep for Int {
   fn go(self) -> Int {
     match self {
       0 -> 0
-      _ -> 1 + (self - 1).go()
+      _ -> 1 + Deep.go(self - 1)
     }
   }
 }
@@ -21,7 +21,7 @@ fn deep(n) {
 }
 
 fn main() {
-  let a = task.spawn { -> 6.go() }
+  let a = task.spawn { -> Deep.go(6) }
   let b = task.spawn { -> deep(6) }
   println("method {task.join(a)}")
   println("fold {task.join(b)}")

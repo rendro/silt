@@ -20,7 +20,7 @@ fn build(n) {
 fn work() {
   let a = build(50)
   let b = build(50)
-  a.display()
+  "{a}"
 }
 
 fn main() {

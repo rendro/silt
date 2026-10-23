@@ -31,7 +31,7 @@ trait Source for Counter {
 }
 
 fn main() {
-  Disk { name: "a" }.next()
-  Counter { n: 1 }.next()
+  Source.next(Disk { name: "a" })
+  Source.next(Counter { n: 1 })
   println("done")
 }

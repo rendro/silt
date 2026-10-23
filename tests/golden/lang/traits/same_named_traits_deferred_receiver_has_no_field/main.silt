@@ -1,0 +1,13 @@
+-- exit: 1
+-- A dot after a value whose type becomes Int only once the closure is
+-- inferred names a field, which Int has not, where both modules' trait
+-- `Show` have a method `show`: the help names the first.
+-- stderr-contains: error[type]: type 'Int' has no field 'show'
+-- stderr-contains: help: `show` is a method of trait `a.Show`: call it as `a.Show.show(y)`
+-- stderr-contains: --> main.silt:12:34
+import a
+import b
+import list
+fn main() {
+  println([5] |> list.map { y -> y.show() })
+}

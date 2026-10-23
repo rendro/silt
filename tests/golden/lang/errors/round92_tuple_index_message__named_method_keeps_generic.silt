@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown method 'frobnicate'
+-- stderr-contains: type '(Int, Int)' has no field 'frobnicate'
 -- stderr-not-contains: tuple indexing
 fn main() {
   let t = (1, 2)

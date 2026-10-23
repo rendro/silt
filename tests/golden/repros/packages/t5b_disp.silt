@@ -1,10 +1,11 @@
 -- verdict: same
+import string
 type Node { Leaf(String), Nil }
 trait Display for Node {
   fn display(self) -> String { "custom" }
 }
 fn main() {
   println("{Leaf("x")}")
-  println(Leaf("x").display())
+  println(string.from(Leaf("x")))
   println(Leaf("x"))
 }

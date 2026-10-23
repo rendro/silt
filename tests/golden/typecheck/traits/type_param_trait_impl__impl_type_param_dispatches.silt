@@ -16,7 +16,7 @@ trait Decodable for String {
 }
 
 fn use_it(body: String) {
-    let _ = body.decode(Todo)
+    let _ = Decodable.decode(body, Todo)
 }
 
 fn main() {}

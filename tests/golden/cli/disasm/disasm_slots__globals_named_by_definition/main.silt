@@ -8,10 +8,11 @@
 -- stdout-contains: ; util.secret
 -- stdout-contains: ; Pt.display
 import util
+import string
 type Pt { x: Int }
 trait Display for Pt { fn display(self) -> String { "pt" } }
 let limit = 3
 fn main() {
   println(util.helper(limit))
-  println(Pt { x: 1 }.display())
+  println(string.from(Pt { x: 1 }))
 }

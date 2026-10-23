@@ -175,8 +175,8 @@ println(alice.name) -- Alice
 
 An anonymous record is shown as it is written, without a name, its
 fields in the order of their names: `println(alice)` prints
-`{age: 30, name: Alice}`. A closed one has `==`, `.equal()`, `.hash()`
-and `.display()` when its fields do, and no order (`<`, `.compare()`).
+`{age: 30, name: Alice}`. A closed one has `Equal` (`==`), `Hash` and
+`Display` when its fields do, and no order (`<`, `Compare.compare`).
 
 The type of `alice` is the structural type `{name: String, age: Int}`,
 which can also appear in any annotation:
@@ -289,9 +289,8 @@ let r: {name: String, age: Int} = Person { name: "x", age: 3 }
 `time.Date { ... }`.)
 
 A value whose fields are read is a record, and `p.greet()` on it calls
-a function held in a field `greet`. A method of a declared record is
-not a field: a function that reads `p.name` and calls `p.greet()` needs
-its parameter annotated, `p: Person`, to call the method.
+a function held in a field `greet`. A method of a trait is not a field:
+it is called through its trait, `Greet.greet(p)`.
 
 A row variable stands for the rest of a record's fields, not for a
 type, so the only bounds it takes are the traits a record has when its

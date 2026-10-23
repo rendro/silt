@@ -1,8 +1,9 @@
 -- cmd: check
 -- exit: 1
--- The help of a method two bounds give names the bounds as the `where`
--- clause writes them: `Sub(Int)`, whose supertrait `Conv(Int)` gives the
--- method, and `Conv(String)`; two bounds of a subtrait are named so too.
+-- A call through a trait whose argument two bounds give differently is
+-- ambiguous: `Sub(Int)` gives `Conv(Int)` through its supertrait, beside
+-- `Conv(String)`, and two bounds of a subtrait give two too; a bound and
+-- a subtrait's bound at one argument are one.
 trait Conv(b) {
   fn show(self) -> String
 }
@@ -12,15 +13,15 @@ trait Sub(b): Conv(b) {
 }
 
 fn mixed(x: a) -> String where a: Sub(Int), a: Conv(String) {
-  x.show()
+  Conv.show(x)
 }
 
 fn subs(x: a) -> String where a: Sub(Int), a: Sub(String) {
-  x.show()
+  Conv.show(x)
 }
 
 fn same(x: a) -> String where a: Sub(Int), a: Conv(Int) {
-  x.show()
+  Conv.show(x)
 }
 
 fn main() {

@@ -19,10 +19,10 @@ fn from_toml(text: String, type a) -> Result(a, toml.TomlError) {
 fn main() {
   match from_json("""{"name": "o", "inner": {"tags": [[1]]}}""", Outer) {
     Ok(v) -> println(v.name)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   match from_toml("name = \"o\"\n[inner]\ntags = [[1]]\n", Outer) {
     Ok(v) -> println(v.name)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

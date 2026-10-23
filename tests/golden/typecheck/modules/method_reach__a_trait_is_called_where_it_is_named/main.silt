@@ -1,0 +1,10 @@
+-- A trait's method is called where the trait is named: `m` names it
+-- through its module, `a.Tag`; `main` imports it by name, though `m`
+-- already imports its module.
+import a.{ Tag }
+import m
+
+fn main() {
+  println(Tag.tag(3))
+  println(m.both(4))
+}

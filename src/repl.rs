@@ -727,7 +727,7 @@ mod tests {
             );
         }
         // The session is what it was.
-        assert_eq!(value(&mut repl, "U(1).m()"), "a");
+        assert_eq!(value(&mut repl, "A.m(U(1))"), "a");
         assert_eq!(value(&mut repl, "f(U(2))"), "U(2)");
     }
 

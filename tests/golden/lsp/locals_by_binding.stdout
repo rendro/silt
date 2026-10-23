@@ -10,9 +10,9 @@ locals_by_binding.silt:22:7-22:8
 locals_by_binding.silt:26:10-26:11 => first
 locals_by_binding.silt:27:13-27:14 => first
 locals_by_binding.silt:28:17-28:18 => first
-> references 33:19
+> references 33:24
 locals_by_binding.silt:32:18-32:20
-locals_by_binding.silt:33:19-33:21
+locals_by_binding.silt:33:24-33:26
 > references 40:21
 locals_by_binding.silt:40:9-40:10
 locals_by_binding.silt:40:21-40:22

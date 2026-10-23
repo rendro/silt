@@ -39,7 +39,7 @@ trait Container for Int {
 
 fn main() {
   let x: Int = 7
-  println(x.unwrap())
+  println(Container.unwrap(x))
 }
 "#;
 

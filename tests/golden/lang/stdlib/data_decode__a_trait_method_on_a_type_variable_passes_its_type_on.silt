@@ -16,10 +16,10 @@ trait Loader {
   fn text(self) -> String
   fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode
   fn load_via_load(self, type a) -> Result(a, json.JsonError) where a: json.Decode {
-    self.load(a)
+    Loader.load(self, a)
   }
   fn load_twice(self, type a) -> Result(a, json.JsonError) where a: json.Decode {
-    self.load_via_load(a)
+    Loader.load_via_load(self, a)
   }
 }
 
@@ -34,15 +34,15 @@ trait Loader for Src {
 
 trait Loader for Box(t) where t: Loader {
   fn text(self) -> String {
-    self.inner.text()
+    Loader.text(self.inner)
   }
   fn load(self, type a) -> Result(a, json.JsonError) {
-    self.inner.load(a)
+    Loader.load(self.inner, a)
   }
 }
 
 fn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
-  l.load(b)
+  Loader.load(l, b)
 }
 
 fn go2(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
@@ -50,7 +50,7 @@ fn go2(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decod
 }
 
 fn go3(l, b) {
-  l.load(b)
+  Loader.load(l, b)
 }
 
 fn generic_all_the_way(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
@@ -63,8 +63,8 @@ fn main() {
   let _ = go(src, Blob)
   let _ = go2(src, Blob)
   let _ = go3(src, Blob)
-  let _ = src.load_via_load(Blob)
-  let _ = src.load_twice(Blob)
-  let _ = Box { inner: src }.load(Blob)
+  let _ = Loader.load_via_load(src, Blob)
+  let _ = Loader.load_twice(src, Blob)
+  let _ = Loader.load(Box { inner: src }, Blob)
   let _ = go(Box { inner: Box { inner: src } }, Blob)
 }

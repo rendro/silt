@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A private trait of another module cannot be named, so its methods
+-- cannot be called there.
+import shapes
+fn main() {
+  println(shapes.Secret.secret(shapes.square(1)))
+}

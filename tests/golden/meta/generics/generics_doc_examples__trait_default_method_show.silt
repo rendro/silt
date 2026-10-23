@@ -10,6 +10,6 @@ trait Show for Item {
 }
 
 fn main() {
-  println(Item { v: 1 }.show())
-  println(Item { v: 1 }.debug())
+  println(Show.show(Item { v: 1 }))
+  println(Show.debug(Item { v: 1 }))
 }

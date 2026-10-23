@@ -1,5 +1,5 @@
 type Point { x: Int, y: Int, }
-fn h(a: a) -> Int where a: Hash { a.hash() }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
 fn main() {
     let p = Point { x: 1, y: 2 }
     println(h(p))

@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: unknown field or method 'area' on type other.Shape
--- other.Shape has no area method; shapes.Shape, imported too, has: the
--- message names the type by its module.
+-- stderr-contains: error[type]: type 'other.Shape' has no field 'area'
+-- other.Shape has no field `area`; shapes.Shape, imported too, has an
+-- `Area` impl: the message names the type by its module.
 import other
 import shapes
 fn main() {

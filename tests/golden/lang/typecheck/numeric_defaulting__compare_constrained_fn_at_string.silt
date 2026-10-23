@@ -2,7 +2,7 @@
 -- exit: 0
 -- stderr-not-contains: error
 fn pick(a: a, b: a) -> a where a: Compare {
-  match a.compare(b) {
+  match Compare.compare(a, b) {
     1 -> a
     _ -> b
   }

@@ -1,5 +1,5 @@
 -- Hashing the same Int twice gives the same result.
-fn h(a: a) -> Int where a: Hash { a.hash() }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
 fn main() {
   let a = h(42)
   let b = h(42)

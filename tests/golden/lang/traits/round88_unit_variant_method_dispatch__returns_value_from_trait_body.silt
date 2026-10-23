@@ -5,4 +5,4 @@ trait Display for Color {
   fn display(self) -> String { "round88-ok" }
 }
 
-fn main() { println(Red.display()) }
+fn main() { println("{Red}") }

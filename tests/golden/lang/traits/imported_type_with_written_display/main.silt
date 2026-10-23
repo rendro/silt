@@ -7,6 +7,6 @@ import types.{ Tag }
 
 fn main() {
   let t = Tag { name: "silt" }
-  println(t.display())
-  println("{t.display()}")
+  println("{t}")
+  println("{t}")
 }

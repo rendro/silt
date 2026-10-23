@@ -79,8 +79,8 @@ trait Display {
 
 ---
 
-How a value is shown: `println`, `print`, interpolation, `.display()`
-and `string.from` show it so. A type has it by its structure, or by an
+How a value is shown: `println`, `print`, interpolation and
+`string.from` show it so. A type has it by its structure, or by an
 impl written in the module that declares the type.
 > hover 41:76
 ```silt
@@ -134,8 +134,8 @@ trait Display {
 
 ---
 
-How a value is shown: `println`, `print`, interpolation, `.display()`
-and `string.from` show it so. A type has it by its structure, or by an
+How a value is shown: `println`, `print`, interpolation and
+`string.from` show it so. A type has it by its structure, or by an
 impl written in the module that declares the type.
 > hover 76:13
 ```silt
@@ -357,26 +357,29 @@ fn main() {
 written, else as `json.decode(value, T)` does. For a `type a` with the
 bound, `a.decode(value)`. It takes no value of the type: `x.decode(..)` on
 a value is no call of it.
-> hover 86:25
+> hover 86:18
 ```silt
-Fn(Box) -> Int
+fn size(self) -> Int
+```
+> hover 87:18
+```silt
+fn size(self) -> Int
+```
+> hover 88:18
+```silt
+fn size(self) -> Int
+```
+> hover 86:12
+```silt
+trait Sized {
+  fn size(self) -> Int
+  fn twice(self) -> Int
+}
 ```
 
 ---
 
 Says how big.
-> hover 87:14
-```silt
-Fn(Box) -> Int
-```
-> hover 88:17
-```silt
-Fn(Box) -> Int
-```
-> hover 89:25
-```silt
-Fn(Box) -> String
-```
 > definition 41:76
 shapes.silt:2:11-2:15
 > definition 41:85

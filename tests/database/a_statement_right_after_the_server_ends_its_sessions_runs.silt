@@ -62,7 +62,7 @@ fn rounds(db: postgres.PgPool, observer: postgres.PgPool, then: Fn() -> ()) -> L
       then()
       match postgres.query(db, "SELECT 1::int8 AS n", (), N) {
         Ok(_) -> "ok"
-        Err(e) -> e.message()
+        Err(e) -> Error.message(e)
       }
     }
     |> list.filter { answer -> answer != "ok" }

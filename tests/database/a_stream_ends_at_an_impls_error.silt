@@ -52,12 +52,12 @@ fn main() {
       println("an Err:")
       match postgres.stream(db, string.replace(sql, ":k", "7"), (), R) {
         Ok(rows) -> drain(rows)
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       println("a failure:")
       match postgres.stream(db, string.replace(sql, ":k", "0"), (), R) {
         Ok(rows) -> drain(rows)
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       println("closed:")
       match postgres.stream(db, "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 100000) g", (), R) {
@@ -66,10 +66,10 @@ fn main() {
           channel.close(rows)
           println("  closed")
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       postgres.close(db)
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

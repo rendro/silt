@@ -1,6 +1,6 @@
 trait Scale {
   fn scale(self, by: Int) -> Int {
-    self.size() * by
+    Scale.size(self) * by
   }
   fn size(self) -> Int
 }
@@ -16,10 +16,10 @@ trait Scale for Box {
 }
 
 fn twice(x: a) -> Int where a: Scale {
-  x.scale(2) + x.size()
+  Scale.scale(x, 2) + Scale.size(x)
 }
 
 fn main() {
   let b = Box { w: 3 }
-  println(b.scale(2) + twice(b) + b.size())
+  println(Scale.scale(b, 2) + twice(b) + Scale.size(b))
 }

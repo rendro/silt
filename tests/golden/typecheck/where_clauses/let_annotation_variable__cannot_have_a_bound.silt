@@ -5,7 +5,7 @@
 -- stderr-not-contains: enclosing function
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
-fn hello(x: a) -> String where a: Greet { x.greet() }
+fn hello(x: a) -> String where a: Greet { Greet.greet(x) }
 fn main() {
   let f: Fn(a) -> String = hello
   println(f(3))

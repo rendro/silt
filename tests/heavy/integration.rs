@@ -815,9 +815,9 @@ fn main() {
     let body = match http.get("http://127.0.0.1:{port}/test") {
       Ok(resp) -> match bytes.to_string(resp.body) {
         Ok(text) -> text
-        Err(e) -> "the body is no text: {e.message()}"
+        Err(e) -> "the body is no text: {Error.message(e)}"
       }
-      Err(e) -> "the request failed: {e.message()}"
+      Err(e) -> "the request failed: {Error.message(e)}"
     }
     channel.send(result_ch, body)
   })

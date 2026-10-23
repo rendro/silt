@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[type]: method `total` takes 1 parameter in this impl, but trait `Vals` declares it with 0
 -- stderr-contains: help: trait `Vals` declares `total` without `self`: it is called on the type (`Int.total()`), not on a value
--- stderr-contains: error[type]: method `total` takes no `self`
+-- stderr-contains: error[type]: type 'b' has no field 'total'
 -- stderr-not-contains: panicked
 trait Vals {
   fn total() -> Int

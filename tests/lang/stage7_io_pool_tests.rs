@@ -455,8 +455,8 @@ fn main() {{
   match task.deadline(time.ms(300), {{ -> fill(conn, chunk, 256) }}) {{
     Err(task.Timeout) -> println("timed out")
     Ok(Ok(_)) -> println("the peer took everything")
-    Ok(Err(e)) -> println("a write failed: {{e.message()}}")
-    Err(e) -> println("a write failed: {{e.message()}}")
+    Ok(Err(e)) -> println("a write failed: {{Error.message(e)}}")
+    Err(e) -> println("a write failed: {{Error.message(e)}}")
   }}
   match tcp.write(conn, chunk) {{
     Err(tcp.Closed) -> println("closed")
@@ -563,7 +563,7 @@ fn main() {{
   tries(100)
   match io.read_file("{file}") {{
     Ok(_) -> println("read the file")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }}
 }}
 "#

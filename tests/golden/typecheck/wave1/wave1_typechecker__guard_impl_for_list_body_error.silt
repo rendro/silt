@@ -7,4 +7,4 @@ trait Foo { fn foo(self) -> Int }
 trait Foo for List(a) {
   fn foo(self) -> Int { "not an int" }
 }
-fn main() { println([1, 2].foo()) }
+fn main() { println(Foo.foo([1, 2])) }

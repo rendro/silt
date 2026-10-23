@@ -52,10 +52,10 @@ fn main() {
     Ok(db) -> {
       match counts(db) {
         Ok(left) -> println("left: {left}")
-        Err(e) -> println("failed: {e.message()}")
+        Err(e) -> println("failed: {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

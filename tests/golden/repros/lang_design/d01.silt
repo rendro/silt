@@ -4,11 +4,11 @@ type E { A(Int, String), B, C(P) }
 fn main() {
   let p = P { x: 1, y: 2.0, s: "hi" }
   println(p)
-  println(p.display())
+  println("{p}")
   println("{p}")
   println([p])
   println(C(p))
-  println(C(p).display())
+  println("{C(p)}")
   println("{C(p)}")
   println(A(1, "s"))
   println(Some("s"))
@@ -17,6 +17,6 @@ fn main() {
   println(#{"k": "v"})
   println("s")
   println(Some(2.0))
-  println(2.0.display())
+  println("{2.0}")
   println(Ok(()))
 }

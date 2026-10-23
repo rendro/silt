@@ -10,8 +10,8 @@ trait Bar for List(a) {
   fn bar(self) -> Int { 8 }
 }
 fn main() {
-  println([1, 2].foo())
-  println((1..3).foo())
-  println((1..3).bar())
-  println([4, 5].bar())
+  println(Foo.foo([1, 2]))
+  println(Foo.foo(1..3))
+  println(Bar.bar(1..3))
+  println(Bar.bar([4, 5]))
 }

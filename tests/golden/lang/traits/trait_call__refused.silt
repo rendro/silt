@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- What a call through a trait refuses: a method the trait does not
+-- have, Display's and Equal's methods (interpolation and == do that),
+-- a method that takes no value of the type (it is called on a type),
+-- and an argument whose type has no impl, also through an
+-- unannotated function that calls it, and a call with too many
+-- arguments, which counts the one of type Self.
+trait Greet {
+  fn greet(self) -> String
+}
+trait Greet for Int {
+  fn greet(self) -> String { "int {self}" }
+}
+trait Monoid {
+  fn empty() -> Self
+}
+fn hello(x) { Greet.greet(x) }
+fn main() {
+  println(Greet.gret(5))
+  println(Display.display(5))
+  println(Equal.equal(5, 5))
+  let e = Monoid.empty()
+  println(Greet.greet("s"))
+  println(hello("t"))
+  println(Greet.greet(1, 2))
+  println(2 |> Greet.greet(1))
+}

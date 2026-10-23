@@ -19,7 +19,7 @@ fn main() {
     other -> println(other)
   }
   match encoding.form_decode("%FF=1") {
-    Err(e) -> println("form_decode: {e.message()}")
+    Err(e) -> println("form_decode: {Error.message(e)}")
     Ok(pairs) -> println(pairs)
   }
   match crypto.random_bytes(-1) {
@@ -27,7 +27,7 @@ fn main() {
     _ -> println("something else")
   }
   match crypto.random_bytes(2000000) {
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
     Ok(_) -> println("two million bytes")
   }
   match uuid.parse("not-a-uuid") {

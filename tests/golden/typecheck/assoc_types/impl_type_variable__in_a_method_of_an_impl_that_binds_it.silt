@@ -22,7 +22,7 @@ trait Container {
   fn holds(self, x: Self::Item) -> Bool
   fn all(self) -> List(Self::Item)
   fn twice(self) -> (Self::Item, Self::Item) {
-    (self.unwrap(), self.unwrap())
+    (Container.unwrap(self), Container.unwrap(self))
   }
 }
 
@@ -45,35 +45,35 @@ trait Container for Pair(a, b) where a: Equal, b: Equal {
     (self.right, self.left)
   }
   fn holds(self, x: (b, a)) -> Bool {
-    self.unwrap() == x
+    Container.unwrap(self) == x
   }
   fn all(self) -> List((b, a)) {
-    [self.unwrap()]
+    [Container.unwrap(self)]
   }
 }
 
 fn first(c: c) -> <c as Container>::Item where c: Container {
-  c.unwrap()
+  Container.unwrap(c)
 }
 
 fn main() {
   let w = Box { item: 2 }
-  println(w.unwrap() + 1)
-  println(w.holds(2))
-  println(list.map(w.all(), { n -> n * 10 }))
-  let (p, q) = w.twice()
+  println(Container.unwrap(w) + 1)
+  println(Container.holds(w, 2))
+  println(list.map(Container.all(w), { n -> n * 10 }))
+  let (p, q) = Container.twice(w)
   println(p + q)
   println(first(w) + 5)
   let s = Box { item: "s" }
-  println("{s.unwrap()}!")
-  println(s.holds("t"))
+  println("{Container.unwrap(s)}!")
+  println(Container.holds(s, "t"))
   println(first(s))
   let pr = Pair { left: 1, right: "r" }
-  let (r, l) = pr.unwrap()
+  let (r, l) = Container.unwrap(pr)
   println("{r} {l + 1}")
-  println(pr.holds(("r", 1)))
-  let ((r2, l2), _) = pr.twice()
+  println(Container.holds(pr, ("r", 1)))
+  let ((r2, l2), _) = Container.twice(pr)
   println("{r2} {l2 + 2}")
-  println(Box.unwrap(Box { item: 4 }) + 1)
-  println(Box { item: Box { item: 7 } }.unwrap().unwrap() + 1)
+  println(Container.unwrap(Box { item: 4 }) + 1)
+  println(Container.unwrap(Container.unwrap(Box { item: Box { item: 7 } })) + 1)
 }

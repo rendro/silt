@@ -21,7 +21,7 @@ pub fn rev(x: s, type a, type b, type c)
     a: json.Decode,
     b: json.Decode,
     c: json.Decode {
-  x.get(c, b, a)
+  Three.get(x, c, b, a)
 }
 
 pub fn swap(x: s, type a, type b, type c)
@@ -34,8 +34,8 @@ pub fn swap(x: s, type a, type b, type c)
 }
 
 pub fn twice(x: s, type a, type b) where s: Three, a: json.Decode, b: json.Decode {
-  x.get(b, a, a)
-  x.get(a, a, b)
+  Three.get(x, b, a, a)
+  Three.get(x, a, a, b)
 }
 
 pub fn direct(type a, type b, type c) where a: json.Decode, b: json.Decode, c: json.Decode {

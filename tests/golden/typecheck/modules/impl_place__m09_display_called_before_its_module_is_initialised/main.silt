@@ -6,6 +6,7 @@
 -- impl is the one error: the type keeps its structural Display.
 import early
 import types.{ Tag }
+import string
 
 trait Display for Tag {
   fn display(self) -> String {
@@ -19,6 +20,6 @@ fn main() {
   println(early.text)
   println(early.text2)
   println(early.text3)
-  println(Tag { name: "m" }.display())
+  println(string.from(Tag { name: "m" }))
   println(early.show(Tag { name: "m2" }))
 }

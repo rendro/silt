@@ -1,16 +1,16 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: method `make` takes no `self` — call it on the type instead: `Int.make(..)`
--- stderr-contains: error[type]: method `join` takes no `self` — call it on the type instead: `Int.join(..)`
+-- stderr-contains: help: `make` is a method of trait `Mk` that makes a value: call it on the type, `Int.make(..)`
+-- stderr-contains: help: `join` is a method of trait `Mk`: call it as `Mk.join(x, ..)`
 -- stderr-contains: :33:11
 -- stderr-contains: :34:11
 -- stderr-contains: :35:11
 -- stderr-contains: :36:11
 -- stderr-not-contains: expects
--- A method without `self` is called on the type, whatever parameters it
--- has: on a value of the type it is refused, with one argument too few
--- (it used to check and run, the receiver taken for the first
--- parameter) and with all of them (it was "expects 0 arguments").
+-- A dot after a value is a field, whatever methods its type has: a
+-- method that makes a value is called on the type, one that takes Self
+-- through its trait (a call on a value used to take the receiver for
+-- the first parameter, or say "expects 0 arguments").
 trait Mk {
   fn make(n: Int) -> Self
   fn join(a: Self, b: Self) -> Self

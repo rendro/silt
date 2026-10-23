@@ -7,6 +7,6 @@ fn main() {
             println(s.is_symlink)
             println(s.size >= 0)
         }
-        Err(e) -> println("err: {e.message()}")
+        Err(e) -> println("err: {Error.message(e)}")
     }
 }

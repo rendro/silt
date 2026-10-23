@@ -35,7 +35,7 @@ fn main() {
         let named = ["content-encoding", "content-length", "etag"] |> list.filter { name -> map.contains(resp.headers, name) }
         println("{method} {path}: {resp.status}, {bytes.length(resp.body)} bytes, of the three headers: {named}")
       }
-      Err(e) -> println("{method} {path}: Err {e.message()}")
+      Err(e) -> println("{method} {path}: Err {Error.message(e)}")
     }
   }
   task.cancel(server)

@@ -17,6 +17,6 @@ trait Foo for Box(a) where a: T(Int) {
 }
 fn main() {
     let b: Box(Unit) = Wrap(())
-    let r: Int = b.do_it()
+    let r: Int = Foo.do_it(b)
     println(r)
 }

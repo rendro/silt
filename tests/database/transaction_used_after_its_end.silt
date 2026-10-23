@@ -20,7 +20,7 @@ fn said(answer: Result(a, postgres.PostgresError)) -> String {
   match answer {
     Ok(_) -> "Ok"
     Err(postgres.Closed) -> "Closed"
-    Err(e) -> "another error: {e.message()}"
+    Err(e) -> "another error: {Error.message(e)}"
   }
 }
 
@@ -56,6 +56,6 @@ fn main() {
       }
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

@@ -12,11 +12,11 @@ fn int_cmp(a: Int, b: Int) -> Int { match {
 fn main() {
   let a = P { v: 1 }
   let b = P { v: 2 }
-  println(a.equal(b))
   println(a == b)
-  println(a.compare(b))
+  println(a == b)
+  println(Compare.compare(a, b))
   println(a < b)
-  println(a.display())
+  println("{a}")
   println("{a}")
   println(a)
   println(list.sort([a, b]))

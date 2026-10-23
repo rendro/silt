@@ -1,9 +1,10 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: method `describe` of the impl for every `Fn` is called on a value: write `x.describe(..)`, not `Fn.describe`
--- stderr-contains: method `describe` of the impl for every `Tuple` is called on a value: write `x.describe(..)`, not `Tuple.describe`
--- The impl for every function is found by the receiver. Written through
--- the type its method would take a `self` of any type: refused.
+-- stderr-contains: type 'Fn' has no method 'describe'
+-- stderr-contains: type 'Tuple' has no method 'describe'
+-- stderr-contains: help: `describe` is a method of trait `D`: call it as `D.describe(x)`
+-- The impl for every function is found by the argument of type Self:
+-- the method is called through its trait, never through the type.
 trait D { fn describe(self) -> String }
 trait D for Fn { fn describe(self) -> String { "fn" } }
 trait D for Tuple { fn describe(self) -> String { "tuple" } }

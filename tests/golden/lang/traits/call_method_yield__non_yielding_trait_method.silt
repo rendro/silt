@@ -10,5 +10,5 @@ trait Describe for Counter {
 
 fn main() {
   let c = Counter { n: 42 }
-  println(c.describe())
+  println(Describe.describe(c))
 }

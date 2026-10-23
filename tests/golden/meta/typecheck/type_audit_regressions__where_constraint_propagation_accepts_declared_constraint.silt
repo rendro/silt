@@ -6,6 +6,6 @@ trait Showable {
 trait Showable for Int {
   fn present(self) -> String { "i" }
 }
-fn show(x: a) -> String where a: Showable { x.present() }
+fn show(x: a) -> String where a: Showable { Showable.present(x) }
 fn indirect(x: a) -> String where a: Showable { show(x) }
 fn main() { println(indirect(5)) }

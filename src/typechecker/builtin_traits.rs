@@ -111,8 +111,8 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
             is_pub: true,
             span: dummy_span,
             doc: Some(
-                "How a value is shown: `println`, `print`, interpolation, `.display()`\n\
-                 and `string.from` show it so. A type has it by its structure, or by an\n\
+                "How a value is shown: `println`, `print`, interpolation and\n\
+                 `string.from` show it so. A type has it by its structure, or by an\n\
                  impl written in the module that declares the type."
                     .to_string(),
             ),
@@ -213,7 +213,7 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                     .to_string(),
             ),
         },
-        // trait Error: Display { fn message(self) -> String { self.display() } }
+        // trait Error: Display { fn message(self) -> String { "{self}" } }
         TraitDecl {
             name: intern("Error"),
             name_span: dummy_span,

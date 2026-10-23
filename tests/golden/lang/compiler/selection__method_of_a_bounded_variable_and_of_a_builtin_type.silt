@@ -6,8 +6,8 @@ type Cat { name: String }
 type Dog { name: String }
 trait Speak {
   fn word(self) -> String
-  fn twice(self) -> String { "{self.word()} {self.word()}" }
-  fn loud(self) -> String { "{self.twice()}!" }
+  fn twice(self) -> String { "{Speak.word(self)} {Speak.word(self)}" }
+  fn loud(self) -> String { "{Speak.twice(self)}!" }
 }
 trait Speak for Cat { fn word(self) -> String { "meow" } }
 trait Speak for Dog {
@@ -15,19 +15,19 @@ trait Speak for Dog {
   fn loud(self) -> String { "WOOF" }
 }
 trait Speak for Int { fn word(self) -> String { "{self}" } }
-fn all(x: a) -> String where a: Speak { "{x.word()} / {x.twice()} / {x.loud()}" }
+fn all(x: a) -> String where a: Speak { "{Speak.word(x)} / {Speak.twice(x)} / {Speak.loud(x)}" }
 fn main() {
   println(all(Cat { name: "c" }))
   println(all(Dog { name: "d" }))
   println(all(7))
-  println(Cat { name: "c" }.loud())
-  println(Dog { name: "d" }.loud())
-  println(Dog { name: "d" }.twice())
-  println(Cat.twice(Cat { name: "c" }))
-  println(3.display())
-  println([1, 2].display())
-  println(Int.display(5))
-  println(Cat { name: "c" }.equal(Cat { name: "c" }))
-  println((1, "a").compare((1, "b")))
-  println(Some(2).hash() == Some(2).hash())
+  println(Speak.loud(Cat { name: "c" }))
+  println(Speak.loud(Dog { name: "d" }))
+  println(Speak.twice(Dog { name: "d" }))
+  println(Speak.twice(Cat { name: "c" }))
+  println("{3}")
+  println("{[1, 2]}")
+  println("{5}")
+  println(Cat { name: "c" } == Cat { name: "c" })
+  println(Compare.compare((1, "a"), (1, "b")))
+  println(Hash.hash(Some(2)) == Hash.hash(Some(2)))
 }

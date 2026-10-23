@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown method 'foo'
+-- stderr-contains: type 'Int' has no field 'foo'
 fn main() {
   let x = 42
   let _ = x.foo

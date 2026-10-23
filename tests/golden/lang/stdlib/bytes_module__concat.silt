@@ -4,7 +4,7 @@ fn main() {
   let b = bytes.from_string("world")
   match bytes.to_string(bytes.concat(a, b)) {
     Ok(s) -> println(s)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   let h = bytes.from_string("hello")
   println(bytes.concat(h, bytes.empty()) == h)
@@ -16,6 +16,6 @@ fn main() {
   ]
   match bytes.to_string(bytes.concat_all(parts)) {
     Ok(s) -> println(s)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

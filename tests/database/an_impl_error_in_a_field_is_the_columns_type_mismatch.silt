@@ -38,7 +38,7 @@ fn url() -> String {
 fn show(r: Result(a, postgres.PostgresError)) -> String where a: Display {
   match r {
     Ok(v) -> "Ok({v})"
-    Err(e) -> "Err({e.message()})"
+    Err(e) -> "Err({Error.message(e)})"
   }
 }
 
@@ -65,6 +65,6 @@ fn main() {
       println("transact: {read}")
       postgres.close(db)
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

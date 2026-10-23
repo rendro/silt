@@ -26,6 +26,6 @@ fn main() {
   give_up(tcp.local_port(listener), 70)
   match io.read_file("io_op__a_given_up_tls_connect_frees_its_thread.silt") {
     Ok(text) -> println("read the file: {string.length(text) > 0}")
-    Err(e) -> println("read_file: {e.message()}")
+    Err(e) -> println("read_file: {Error.message(e)}")
   }
 }

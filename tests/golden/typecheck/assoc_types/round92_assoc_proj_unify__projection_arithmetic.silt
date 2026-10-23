@@ -11,7 +11,7 @@ trait Stream for Wrap {
 }
 
 fn add_two(s: a) where a: Stream {
-  s.first() + s.first()
+  Stream.first(s) + Stream.first(s)
 }
 
 fn main() {

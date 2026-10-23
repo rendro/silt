@@ -4,4 +4,4 @@
 -- stderr-contains: variant 'Wrap'
 type W { Wrap(Map(String, Int)), Empty }
 fn mk() -> W { Wrap(#{"a": 1}) }
-fn main() { println(mk().compare(mk())) }
+fn main() { println(Compare.compare(mk(), mk())) }

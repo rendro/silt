@@ -35,7 +35,7 @@ fn main() {
       println(text)
       println(toml.parse(text, Moment) == Ok(m))
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   match toml.stringify(f) {
     Ok(text) -> {
@@ -43,7 +43,7 @@ fn main() {
       println(toml.parse(text, Moment))
       println(toml.parse(text, Moment) == Ok(f))
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 
   let n = Nested {
@@ -59,7 +59,7 @@ fn main() {
       println(text)
       println(toml.parse(text, Nested) == Ok(n))
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 
   let past = Day { d: time.Date { year: -1, month: 1, day: 1 } }
@@ -68,6 +68,6 @@ fn main() {
       print(text)
       println(toml.parse(text, Day) == Ok(past))
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

@@ -8,11 +8,11 @@ import list
 import json
 fn main() {
   let n = 42
-  println([string.from(n), string.from(n), "{n}", n.display(), io.inspect(n), json.stringify(n)])
+  println([string.from(n), string.from(n), "{n}", "{n}", io.inspect(n), json.stringify(n)])
   let f = 2.0
-  println([string.from(f), string.from(f), "{f}", f.display(), io.inspect(f), json.stringify(f)])
+  println([string.from(f), string.from(f), "{f}", "{f}", io.inspect(f), json.stringify(f)])
   let s = "hi"
-  println([string.from(s), "{s}", s.display(), io.inspect(s), json.stringify(s)])
+  println([string.from(s), "{s}", "{s}", io.inspect(s), json.stringify(s)])
   let xs = ["a", "b c", ""]
   println(string.from(xs))
   println(io.inspect(xs))

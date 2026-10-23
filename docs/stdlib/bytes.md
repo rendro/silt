@@ -66,7 +66,7 @@ fn main() {
   let greeting = bytes.concat_all([hello, space, world])
   match bytes.to_string(greeting) {
     Ok(s) -> println(s) -- hello world
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 
   -- Slicing (half-open; an index past the end is the end)
@@ -96,7 +96,7 @@ fn main() {
 
 Every fallible `bytes.*` call returns `Result(T, BytesError)`. The enum
 exposes these variants keyed by the structural failure; pattern-match
-for granular handling or fall back to `e.message()`:
+for granular handling or fall back to `Error.message(e)`:
 
 | Variant | Fields | Raised by |
 |---------|--------|-----------|

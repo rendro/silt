@@ -14,5 +14,5 @@ fn main() {
   println(Result.compare(Ok(1), Ok(2)))
   println(Map.compare(1, 2))
   println(time.Weekday.nope(1))
-  println(Option.display(Some(1)))
+  println("{Some(1)}")
 }

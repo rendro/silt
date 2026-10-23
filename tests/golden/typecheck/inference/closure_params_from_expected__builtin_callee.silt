@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: unknown method 'missing' on type Int
+-- stderr-contains: error[type]: type 'Int' has no field 'missing'
 -- The closure's parameter is the list's element type, known from the
 -- argument before it.
 import list

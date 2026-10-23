@@ -3,9 +3,9 @@ trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int-greet" } }
 trait Greet for Box(a) where a: Greet {
   fn greet(self) -> String {
-    match self { Box(inner) -> inner.greet() }
+    match self { Box(inner) -> Greet.greet(inner) }
   }
 }
 fn main() {
-  println(Box(5).greet())
+  println(Greet.greet(Box(5)))
 }

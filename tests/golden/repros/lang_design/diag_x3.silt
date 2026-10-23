@@ -1,5 +1,6 @@
 -- verdict: same
+import string
 fn main() {
-  let f = Int.display
+  let f = string.from
   println(f(5))
 }

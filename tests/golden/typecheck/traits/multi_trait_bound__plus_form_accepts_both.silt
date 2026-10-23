@@ -13,9 +13,9 @@ trait MyOrd for Int {
   }
 }
 fn use_both(x: a, y: a) -> Int where a: MyEq + MyOrd {
-  match x.my_eq(y) {
+  match MyEq.my_eq(x, y) {
     true -> 0
-    false -> x.my_cmp(y)
+    false -> MyOrd.my_cmp(x, y)
   }
 }
 fn main() { println(use_both(3, 7)) }

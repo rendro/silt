@@ -6,7 +6,7 @@
 trait MyTrait { fn ident(self) -> Int }
 trait MyTrait for Int { fn ident(self) { self } }
 type Foo { x: Int }
-fn use_it(x: a) -> Int where a: MyTrait { x.ident() }
+fn use_it(x: a) -> Int where a: MyTrait { MyTrait.ident(x) }
 fn main() {
   let r = Foo { x: 1 }
   println(use_it(r))

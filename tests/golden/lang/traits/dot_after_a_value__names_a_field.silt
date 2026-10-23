@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- A dot after a value names a field. Where the value's type has none of
+-- the name, the error says so; the help names the trait in sight that
+-- has a method of the name and the call to write, with the receiver as
+-- written when it is a name (`Greet.greet(n)`) and `x` otherwise; or
+-- the builtin module of the type with a function of the name. Also
+-- through a function whose parameter's type is unknown, which takes a
+-- record with the field.
+import list
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "g" } }
+trait Pair { fn pair(self, other: Self) -> String }
+trait Pair for Int { fn pair(self, other: Self) -> String { "p" } }
+fn h(x) { x.frobnicate() }
+fn main() {
+  let n = 5
+  println(n.frobnicate())
+  println(n.greet())
+  println((n + 1).greet())
+  println(n.pair(6))
+  let xs = [1, 2]
+  println(xs.length())
+  println([1].length())
+  println("s".length())
+  println(h(1))
+  let g = n.greet
+}

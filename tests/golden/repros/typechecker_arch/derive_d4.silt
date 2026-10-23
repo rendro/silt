@@ -11,9 +11,9 @@ trait Compare for Name {
 fn main() {
   let a = Name { s: "a" }
   let b = Name { s: "b" }
-  println(a.equal(b))
   println(a == b)
-  println(a.compare(b))
+  println(a == b)
+  println(Compare.compare(a, b))
   println(a < b)
   println(list.sort([b, a]))
   println(set.length(set.from_list([a, b])))

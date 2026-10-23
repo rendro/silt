@@ -10,7 +10,7 @@ fn attempt(listener, addr, cert_text) {
   let cert = bytes.from_string(cert_text)
   match tcp.tls_server(conn, cert, bytes.from_string("not a key")) {
     Ok(_) -> println("a TLS connection")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   tcp.close(client)
 }

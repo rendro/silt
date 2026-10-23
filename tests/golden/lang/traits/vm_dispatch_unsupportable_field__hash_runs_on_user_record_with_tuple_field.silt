@@ -5,7 +5,7 @@
 import int
 import result
 type Pair { t: (Int, Int) }
-fn h(x: a) -> Int where a: Hash { x.hash() }
+fn h(x: a) -> Int where a: Hash { Hash.hash(x) }
 fn main() {
     let p = Pair { t: (1, 2) }
     let v = h(p)

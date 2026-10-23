@@ -1,7 +1,7 @@
 type Pair(a, b) { Tup(a, b), }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
-fn h(a: a) -> Int where a: Hash { a.hash() }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
 fn main() {
     println(cmp_gen(Tup(1, "a"), Tup(2, "b")))
     println(eq_gen(Tup(1, "x"), Tup(1, "x")))

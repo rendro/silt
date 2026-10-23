@@ -5,7 +5,7 @@ trait Loud for Int { fn loud(self) -> String { "INT" } }
 
 trait Combined { fn combined(self) -> String }
 trait Combined for Int {
-  fn combined(self) -> String { "{self.greet()}-{self.loud()}" }
+  fn combined(self) -> String { "{Greet.greet(self)}-{Loud.loud(self)}" }
 }
 
-fn main() { println((1).combined()) }
+fn main() { println(Combined.combined(1)) }

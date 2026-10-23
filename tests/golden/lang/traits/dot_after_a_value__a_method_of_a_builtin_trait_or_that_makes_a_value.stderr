@@ -1,0 +1,27 @@
+error[type]: type 'a' has no field 'empty'
+ --> dot_after_a_value__a_method_of_a_builtin_trait_or_that_makes_a_value.silt:8:36
+   |
+ 8 | fn of(x: a) -> a where a: Monoid { x.empty() }
+   |                                    ^^^^^^^ type 'a' has no field 'empty'
+  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `a.empty()`, where `a` is a `type a` parameter
+
+error[type]: type 'Int' has no field 'display'
+ --> dot_after_a_value__a_method_of_a_builtin_trait_or_that_makes_a_value.silt:11:11
+    |
+ 11 |   println(n.display())
+    |           ^^^^^^^^^ type 'Int' has no field 'display'
+  = help: show a value with interpolation, `"{n}"`, or with `string.from(n)`
+
+error[type]: type 'Int' has no field 'equal'
+ --> dot_after_a_value__a_method_of_a_builtin_trait_or_that_makes_a_value.silt:12:11
+    |
+ 12 |   println(n.equal(n))
+    |           ^^^^^^^ type 'Int' has no field 'equal'
+  = help: compare with `==`: `n == y`
+
+error[type]: type 'Int' has no field 'empty'
+ --> dot_after_a_value__a_method_of_a_builtin_trait_or_that_makes_a_value.silt:13:11
+    |
+ 13 |   println(n.empty())
+    |           ^^^^^^^ type 'Int' has no field 'empty'
+  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `Int.empty()`

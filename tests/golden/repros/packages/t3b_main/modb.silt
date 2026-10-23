@@ -3,4 +3,4 @@ trait Show { fn show(self) -> String }
 trait Show for Tok {
   fn show(self) -> String { "modb-Tok" }
 }
-pub fn describe() -> String { T(2).show() }
+pub fn describe() -> String { Show.show(T(2)) }

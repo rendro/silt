@@ -86,3 +86,49 @@ fn semantic_tokens_full_returns_classified_tokens() {
 
     client.shutdown();
 }
+
+/// A call through a trait (`Show.show(5)`): the trait's name is an
+/// INTERFACE token, the method's a FUNCTION token, each where it is
+/// written.
+#[test]
+fn semantic_tokens_of_a_call_through_a_trait() {
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_sem_tokens_trait_call.silt";
+    let src = "trait Show { fn show(self) -> String }\n\
+               trait Show for Int { fn show(self) -> String { \"i\" } }\n\
+               fn main() { println(Show.show(5)) }\n";
+    client.did_open_and_wait(uri, src);
+    let resp = client.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let data = resp
+        .pointer("/result/data")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("expected /result/data array; got: {resp}"));
+    let (mut line, mut start) = (0u64, 0u64);
+    let mut tokens: Vec<(u64, u64, u64, u64)> = Vec::new();
+    for chunk in data.as_chunks::<5>().0 {
+        let dl = chunk[0].as_u64().expect("deltaLine");
+        let ds = chunk[1].as_u64().expect("deltaStart");
+        match dl {
+            0 => start += ds,
+            _ => {
+                line += dl;
+                start = ds;
+            }
+        }
+        let len = chunk[2].as_u64().expect("length");
+        tokens.push((line, start, len, chunk[3].as_u64().expect("tokenType")));
+    }
+    // `fn main() { println(Show.show(5)) }`: `Show` at 20, `show` at 25.
+    assert!(
+        tokens.contains(&(2, 20, 4, TT_INTERFACE)),
+        "the trait's name: {tokens:?}"
+    );
+    assert!(
+        tokens.contains(&(2, 25, 4, TT_FUNCTION)),
+        "the method's name: {tokens:?}"
+    );
+    client.shutdown();
+}

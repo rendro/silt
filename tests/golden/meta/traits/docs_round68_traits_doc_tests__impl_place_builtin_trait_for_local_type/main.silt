@@ -8,5 +8,5 @@ trait Display for Color {
 
 fn main() {
   let c: Color = Red
-  println(c.display())
+  println("{c}")
 }

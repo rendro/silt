@@ -153,7 +153,7 @@ the fields once per result, before the statement runs:
   `Err(TypeMismatch(column, field type, column type))`, say
   `TypeMismatch("id", "Int", "float8")`: the column's type decides, not
   its values (an `Int` field is not filled from a `float8` column even
-  where the value is `2.0`). Its `message()` says how to go on:
+  where the value is `2.0`). `Error.message(e)` says how to go on:
   ``postgres type mismatch on column `id`: expected Int, got float8;
   cast it in SQL, for example id::text``. A field that only a json
   document fills (a record, a map, a tuple, a type with a `json.Decode`
@@ -464,11 +464,11 @@ fn main() {
       match users(db) {
         Ok(found) -> println("users: {found}")
         Err(postgres.TxnAborted) -> println("rolled back (transaction aborted, retry)")
-        Err(e) -> println("rolled back: {e.message()}")
+        Err(e) -> println("rolled back: {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }
 ```
@@ -603,5 +603,5 @@ needed) are:
 | `Other(msg)` | `String` | Catch-all for shapes we can't classify |
 
 `PostgresError` implements the stdlib `Error` trait, so if you don't want
-to pattern-match on variants you can always call `err.message()` to
+to pattern-match on variants you can always call `Error.message(err)` to
 get a formatted user-friendly string.

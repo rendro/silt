@@ -4,6 +4,6 @@ trait Baz for Fun { fn baz(self) -> String { "baz" } }
 fn double(x: Int) -> Int { x * 2 }
 
 fn main() {
-  println(double.baz())
+  println(Baz.baz(double))
   println(double(21))
 }

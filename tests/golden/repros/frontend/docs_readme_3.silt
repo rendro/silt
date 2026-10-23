@@ -8,9 +8,9 @@ fn main() {
   match io.read_file("settings.json") {
     Ok(content) -> match json.parse(content, Config) {
       Ok(cfg) -> println("loaded: {cfg.name}")
-      Err(e) -> println("parse error: {e.message()}")
+      Err(e) -> println("parse error: {Error.message(e)}")
     }
     Err(io.NotFound(path)) -> println("no config at {path} — run `silt init` first")
-    Err(e) -> println("read error: {e.message()}")
+    Err(e) -> println("read error: {Error.message(e)}")
   }
 }

@@ -1,7 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: takes no `self`
+-- stderr-contains: type 'Int' has no field 'default'
+-- stderr-contains: call it on the type, `Int.default()`
 trait Default {
     fn default() -> Self
 }

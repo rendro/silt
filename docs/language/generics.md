@@ -140,13 +140,13 @@ point to.
 Inside the function a type variable stands for a type the function does
 not know: the body must work for every type the caller may choose. It
 cannot treat an `a` as an `Int`, return a `b` where it promised an `a`,
-or call a method no `where` clause promises:
+or ask of it a trait no `where` clause promises:
 
 ```silt
 fn one(x: a) -> a { 1 }                    -- ERROR: expected a, got Int
 fn second(x: a, y: b) -> a { y }           -- ERROR: expected a, got b
-fn show(x: a) -> String { x.display() }    -- ERROR: `a` has no trait bound
-fn show(x: a) -> String where a: Display { x.display() }   -- ok
+fn show(x: a) -> String { "{x}" }          -- ERROR: `a` is not known to implement Display
+fn show(x: a) -> String where a: Display { "{x}" }   -- ok
 ```
 
 An annotation in the body that writes one of the signature's variables
@@ -225,12 +225,12 @@ fn parse(body: String, type a) -> Result(a, DecodeError) where a: Parse {
 }
 
 fn try_from(x: a, type b) -> b where a: Convertible(b) {
-  x.convert()
+  Convertible.convert(x)
 }
 ```
 
 Inside the body, the `type a` parameter doubles as a dispatch target for
-trait methods. `a.default()` invokes the `default` method of whichever
+the trait methods that make a value. `a.default()` invokes the `default` method of whichever
 `Default` impl matches the concrete type passed in — see
 [Trait methods on types](#trait-methods-on-types) below.
 `try_from` shows the companion pattern: a parameterized trait
@@ -381,7 +381,7 @@ import list
 import string
 
 fn shout(items: List(a)) -> List(String) where a: Display {
-  items |> list.map { x -> x.display() |> string.to_upper }
+  items |> list.map { x -> "{x}" |> string.to_upper }
 }
 ```
 
@@ -399,7 +399,7 @@ type Box(a) {
 trait Display for Box(a) where a: Display {
   fn display(self) -> String {
     match self {
-      Box(inner) -> "Box({inner.display()})"
+      Box(inner) -> "Box({inner})"
     }
   }
 }
@@ -442,9 +442,9 @@ trait HashTable(Fn(Int) -> Int) for OtherStore { ... }
 ```
 
 Supertraits can also reference the enclosing trait's params. The args
-flow automatically — a `where x: Child(Int)` constraint makes
-`Parent`'s methods callable on `x` with Parent's own params bound to
-the same `Int`:
+flow automatically — a `where x: Child(Int)` constraint lets `x` be
+given to `Parent`'s methods with Parent's own params bound to the same
+`Int`:
 
 ```silt
 trait Parent(a) {
@@ -456,7 +456,7 @@ trait Child(a): Parent(a) {
 }
 
 fn use_parent(x: b, type a) -> a where b: Child(a) {
-  x.parent_method() -- returns a, bound by Child's arg
+  Parent.parent_method(x) -- returns a, bound by Child's arg
 }
 ```
 
@@ -474,7 +474,7 @@ lowercase type variables bound elsewhere in the signature:
 
 ```silt
 fn try_from(x: a, type b) -> b where a: Convertible(b) {
-  x.convert()
+  Convertible.convert(x)
 }
 ```
 
@@ -494,7 +494,7 @@ supplied arguments when resolving method types at the call site.
 Constraints transitively include supertraits. Given a user-defined
 `Ordered` trait whose declaration names `Equal` as a supertrait
 (hypothetical user-defined trait, not built-in), a `where a: Ordered`
-bound makes methods from `Equal` callable on `a` as well:
+bound gives `a` what `Equal` gives as well:
 
 ```silt
 trait Ordered: Equal {
@@ -502,8 +502,8 @@ trait Ordered: Equal {
 }
 
 fn sorted_unique(xs: List(a)) -> List(a) where a: Ordered {
-  -- Both a.less(b) (from Ordered) and a.equal(b) (from the
-  -- transitively-included Equal supertrait) are callable here.
+  -- Both Ordered.less(a, b) and a == b (from the transitively-
+  -- included Equal supertrait) work here.
   ...
 }
 ```
@@ -532,9 +532,10 @@ error. See [Built-in Traits](traits.md#built-in-traits).
 
 ### Trait methods on types
 
-Some trait methods take no `self` and only return `Self` — constructors
-like `Default::default()` or `Monoid::empty()`. To invoke these without
-an instance, call them on a **type descriptor**: either a bare type
+Some trait methods take no value of the type and only make one —
+constructors like `default()` or `empty()`. A call through the trait
+could not say which impl it means, so these are called on a **type
+descriptor**: either a bare type
 name (`Int.default()`) or a `type a` parameter (`a.default()`):
 
 ```silt
@@ -563,19 +564,21 @@ The rules:
 - **Dispatch is by the descriptor's carried type name.** At runtime the
   descriptor `Int` resolves to the `Default` impl for `Int`; `Todo`
   resolves to `Default for Todo`; etc.
-- **The descriptor is a dispatch key, not an argument.** It doesn't
-  occupy a `self` slot. Method signatures that declare `Self` as a
-  parameter (e.g. `fn combine(a: Self, b: Self)`) receive only the
-  caller's explicit arguments.
+- **The descriptor is a dispatch key, not an argument.** It occupies no
+  parameter of the method: `a.empty()` passes nothing.
+- **A method that takes a value of the type is called through its
+  trait.** `Monoid.combine(x, y)` reaches the impl for the type of its
+  arguments; `a.combine(x, y)` and `Int.combine(1, 2)` are errors whose
+  help names that call.
 - **`where` constraints are required** for the generic path. Writing
   `fn f(type a) -> a { a.default() }` without `where a: Default`
   rejects at the call to `a.default()` — the compiler can't prove an
   impl exists.
-- **A method without `self` is called on a type, never on a value.**
-  `x.default()` on a value `x: a` is an error that names the call to
-  write: `a.default()`, with a `type a` parameter. Nor is it a candidate
-  for a call on a value: with `where a: Foo, a: Bar`, where only `Bar`'s
-  `build` takes `self`, `x.build()` is `Bar`'s.
+- **A method that makes a value is called on a type, never on a value
+  or through its trait.** `x.default()` on a value `x: a` is an error (a
+  dot after a value names a field) whose help names the call to write:
+  `a.default()`, with a `type a` parameter. `Default.default()` is an
+  error that says to call it on a type.
 - **Ambiguity across traits is rejected.** If both `Foo` and `Bar`
   declare a method `build` and `a` is constrained to `Foo + Bar`,
   calling `a.build()` errors with "ambiguous method 'build' on `type a`:
@@ -800,7 +803,7 @@ trait Convert(Int) for String {
 }
 
 fn into(x: a, type b) -> b where a: Convert(b) {
-  x.convert()
+  Convert.convert(x)
 }
 ```
 

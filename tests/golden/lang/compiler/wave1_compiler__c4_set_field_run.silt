@@ -11,6 +11,6 @@ type Bag { name: String, items: Set(Int) }
 fn main() {
   match json.parse("\{\"name\": \"b\", \"items\": \"oops\"\}", Bag) {
     Ok(v) -> println(v.name)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

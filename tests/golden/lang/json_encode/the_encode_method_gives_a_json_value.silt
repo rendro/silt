@@ -3,21 +3,21 @@
 -- stderr-contains: --> the_encode_method_gives_a_json_value.silt:16:16
 -- stderr-contains: --> the_encode_method_gives_a_json_value.silt:21:44
 -- stderr-contains: --> the_encode_method_gives_a_json_value.silt:23:10
--- stderr-contains: unknown method 'encode' on type Fn
+-- stderr-contains: has no field 'encode'
 -- stderr-not-contains: :17:
--- `.encode()` of a value whose type has `json.Encode` is a `json.Value`,
--- by a concrete type and through a bound, and a value of a type without
--- the trait has no such method. (It was taken as of any type.)
+-- `json.Encode.encode` of a value whose type has the trait is a
+-- `json.Value`, by a concrete type and through a bound; a dot after a
+-- value is a field. (It was taken as of any type.)
 import json
 
 type Money { cents: Int }
 
 fn main() {
-  let a: Int = 5.encode()
-  let b: json.Value = Money { cents: 1 }.encode()
+  let a: Int = json.Encode.encode(5)
+  let b: json.Value = json.Encode.encode(Money { cents: 1 })
   println(b)
 }
 
-fn via(x: a) -> Int where a: json.Encode { x.encode() }
+fn via(x: a) -> Int where a: json.Encode { json.Encode.encode(x) }
 
 fn f() { { x -> x }.encode() }

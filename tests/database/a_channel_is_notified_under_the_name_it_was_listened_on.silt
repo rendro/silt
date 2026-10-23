@@ -31,14 +31,14 @@ fn round_trip(db: postgres.PgPool, name: String) {
           match got {
             Ok(Some(n)) -> println("{name}: got {n.payload} on {n.channel}")
             Ok(None) -> println("{name}: the listener ended")
-            Err(e) -> println("{name}: nothing came ({e.message()})")
+            Err(e) -> println("{name}: nothing came ({Error.message(e)})")
           }
         }
-        Err(e) -> println("notify {name}: {e.message()}")
+        Err(e) -> println("notify {name}: {Error.message(e)}")
       }
       channel.close(ch)
     }
-    Err(e) -> println("listen {name}: {e.message()}")
+    Err(e) -> println("listen {name}: {Error.message(e)}")
   }
 }
 
@@ -49,11 +49,11 @@ fn refused(db: postgres.PgPool, name: String) {
       println("listen took it")
       channel.close(ch)
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   match postgres.notify(db, name, "x") {
     Ok(_) -> println("notify took it")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 
@@ -76,6 +76,6 @@ fn main() {
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

@@ -210,7 +210,7 @@ fn a_task_calls_a_method_of_an_impl_of_a_later_entry() {
     assert_tasks_see(
         "trait N { fn n(self) -> String }",
         "trait N for Int { fn n(self) -> String { \"int\" } }",
-        "5.n()",
+        "N.n(5)",
         "int",
     );
 }
@@ -222,7 +222,7 @@ fn a_task_calls_a_method_of_an_impl_of_a_later_entry() {
 #[test]
 fn a_task_finds_an_impl_of_a_later_entry_through_an_earlier_generic_function() {
     assert_tasks_see(
-        "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { v.n() }",
+        "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { N.n(v) }",
         "type Q { q: Int }\n\
          trait N for Int { fn n(self) -> String { \"int\" } }\n\
          trait N for Q { fn n(self) -> String { \"q{self.q}\" } }",
@@ -232,12 +232,12 @@ fn a_task_finds_an_impl_of_a_later_entry_through_an_earlier_generic_function() {
 }
 
 /// A `Display` impl of a later entry is used wherever the value is
-/// shown: in an interpolation and by `.display()`, inside a list. It
+/// shown: in an interpolation and by `string.from`, inside a list. It
 /// was not used, and nothing said so: `[Q {q: 2}]|[Q {q: 2}]`.
 #[test]
 fn a_task_shows_a_value_with_the_display_impl_of_a_later_entry() {
     assert_tasks_see(
-        "fn sh(v: a) -> String where a: Display { \"{v}|{v.display()}\" }",
+        "import string\nfn sh(v: a) -> String where a: Display { \"{v}|{string.from(v)}\" }",
         "type Q { q: Int }\ntrait Display for Q { fn display(self) -> String { \"Q!\" } }",
         "sh([Q { q: 2 }])",
         "[Q!]|[Q!]",
@@ -279,7 +279,7 @@ fn a_task_calls_a_method_of_a_trait_of_a_later_entry() {
     assert_tasks_see(
         "",
         "trait M { fn m(self) -> String }\ntrait M for Int { fn m(self) -> String { \"m{self}\" } }",
-        "{\n  let call = { y -> y.m() }\n  call(7)\n}",
+        "{\n  let call = { y -> M.m(y) }\n  call(7)\n}",
         "m7",
     );
 }
@@ -307,7 +307,7 @@ fn a_task_decodes_into_record_types_of_a_later_entry() {
 fn the_function_of_a_deadline_sees_later_entries_in_a_task_of_an_earlier_one() {
     assert_tasks_see(
         "import time\ntrait N { fn n(self) -> String }\n\
-         fn call(v: a) -> String where a: N { v.n() }",
+         fn call(v: a) -> String where a: N { N.n(v) }",
         "fn later() -> String { \"fn\" }\n\
          trait N for Int { fn n(self) -> String { \"int\" } }\n\
          type Q { q: Int }\n\
@@ -341,7 +341,7 @@ fn burn(n) {{
   }}
 }}
 trait N {{ fn n(self) -> String }}
-fn call(v: a) -> String where a: N {{ v.n() }}
+fn call(v: a) -> String where a: N {{ N.n(v) }}
 fn work(left) {{
   match left {{
     0 -> ()
@@ -546,11 +546,11 @@ fn work(left) {
   }
 }
 let worker = task.spawn { -> work(2) }
-channel.send(jobs, { -> 5.n() })
+channel.send(jobs, { -> N.n(5) })
 channel.receive(outs)
 trait N for Int { fn n(self) -> String { \"second\" } }
-5.n()
-channel.send(jobs, { -> 5.n() })
+N.n(5)
+channel.send(jobs, { -> N.n(5) })
 channel.receive(outs)
 task.join(worker)
 ",
@@ -755,7 +755,7 @@ fn a_session_sets_no_slot_twice() {
     for entry in [
         "import task\nimport channel\nimport io",
         "let jobs = channel.new(8)\nlet outs = channel.new(8)",
-        "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { v.n() }",
+        "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { N.n(v) }",
         "fn work() {\n  match channel.receive(jobs) {\n    Some(job) -> {\n      \
          channel.send(outs, job())\n      work()\n    }\n    None -> ()\n  }\n}",
         "let worker = task.spawn { -> work() }",
@@ -767,21 +767,21 @@ fn a_session_sets_no_slot_twice() {
     assert_eq!(
         run("let stamp = \"one\"\n\
              trait N for Int { fn n(self) -> String { \"first {stamp}\" } }\n\
-             let sent = channel.send(jobs, { -> \"{stamp} {5.n()} {call(5)}\" })\n\
+             let sent = channel.send(jobs, { -> \"{stamp} {N.n(5)} {call(5)}\" })\n\
              let got = channel.receive(outs)\n\
              let boom = 1 / 0"),
         failed("division by zero")
     );
     // The impl is gone with the entry, for the session and for the task.
-    assert!(run("5.n()").is_err());
+    assert!(run("N.n(5)").is_err());
     // It is written again, and differently.
     assert_eq!(
         run("trait N for Int { fn n(self) -> String { \"second\" } }"),
         ok("()")
     );
-    assert_eq!(run("\"{5.n()} {call(5)}\""), ok("second second"));
+    assert_eq!(run("\"{N.n(5)} {call(5)}\""), ok("second second"));
     assert_eq!(
-        run("channel.send(jobs, { -> \"{5.n()} {call(5)}\" })"),
+        run("channel.send(jobs, { -> \"{N.n(5)} {call(5)}\" })"),
         ok("()")
     );
     assert_eq!(run("channel.receive(outs)"), ok("Some(second second)"));
@@ -799,7 +799,7 @@ fn a_session_sets_no_slot_twice() {
     assert_eq!(run("channel.receive(outs)"), ok("Some(two tag-two)"));
     for entry in [
         "let stamp = \"again\"",
-        "fn call(v: a) -> String where a: N { \"again {v.n()}\" }",
+        "fn call(v: a) -> String where a: N { \"again {N.n(v)}\" }",
         "type Q { q: Int }",
         "trait N for Q { fn n(self) -> String { \"q\" } }",
         "type Q { r: Int }",

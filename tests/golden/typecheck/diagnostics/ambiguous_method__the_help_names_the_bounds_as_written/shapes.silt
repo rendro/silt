@@ -1,3 +1,0 @@
-pub trait Ar {
-  fn show(self) -> String
-}

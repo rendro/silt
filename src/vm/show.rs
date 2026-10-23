@@ -1,5 +1,5 @@
-//! Showing a value: `println`, `print`, interpolation, `.display()`,
-//! `string.from`, a panic's message.
+//! Showing a value: `println`, `print`, interpolation, `string.from`, a
+//! panic's message.
 //!
 //! A value is shown by the VM's formatter (`Value`'s `Display`), but a
 //! record or variant of a type the program wrote a `Display` impl for is

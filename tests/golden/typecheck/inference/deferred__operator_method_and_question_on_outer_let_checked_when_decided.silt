@@ -1,10 +1,10 @@
 -- cmd: check
 -- exit: 1
--- An operator, a method call and `?` on a value whose type a top-level
+-- An operator, a field call and `?` on a value whose type a top-level
 -- `let` leaves unknown are checked when a later function decides it.
 -- stderr-contains: operator '*' requires Int or Float, got 'String'
 -- stderr-contains: requires Int or Float, got 'String'
--- stderr-contains: unknown field or method 'loud' on type String
+-- stderr-contains: type 'String' has no field 'loud'
 -- stderr-contains: '?' operator requires Result or Option type, got 'String'
 import channel
 trait Loud { fn loud(self) -> String }

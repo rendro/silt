@@ -29,7 +29,7 @@ trait C1 for Bar {
 
 -- All three method calls must resolve via the C1 -> B1 -> A1 chain.
 fn use_all(x: t) -> Int where t: C1 {
-  x.a1() + x.b1() + x.c1()
+  A1.a1(x) + B1.b1(x) + C1.c1(x)
 }
 
 fn main() {

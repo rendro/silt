@@ -228,9 +228,8 @@ trait IntoAppError for json.JsonError {
 }
 
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw = result.map_err(io.read_file(path), io.IoError.into_app_error)?
-  -- OR using a closure to make the conversion name visible on the value side:
-  let cfg = result.map_err(json.parse(raw, Config)) { e -> e.into_app_error() }?
+  let raw = result.map_err(io.read_file(path), IntoAppError.into_app_error)?
+  let cfg = result.map_err(json.parse(raw, Config), IntoAppError.into_app_error)?
   Ok(cfg)
 }
 ```
@@ -239,9 +238,6 @@ This **works in silt today** because dispatch is by `Self` (each
 source type has one impl, no collision). Drawbacks:
 
 - One `trait IntoX` per target AppError type — doesn't reuse.
-- First-class method reference form (`IoError.into_app_error`) hits
-  the same limits as `AppError.from` when passed as a value, so the
-  closure form may still be needed at some call sites.
 
 Still ugly. But it's the best pattern available without compiler
 work.
@@ -294,7 +290,7 @@ an unknown tail risk of adjacent generic-trait regressions.
 | Unified `SiltError` stdlib type | Loses the module-specific pattern-match granularity the typed errors just shipped. |
 | Polymorphic variants (OCaml-style) | Requires a structural-typing extension to silt's nominal type system. Out of scope. |
 | **One trait per source type** (`trait IntoAppError { fn into_app_error(self) -> AppError }`) | Implementable today. Rejected as the *proposal* design because it doesn't scale — one new trait per target AppError. But it's the right **available-today workaround** and is documented above. |
-| **Inverted `trait IntoErr(target) for Source`** | Dispatches by Self. Works today for multi-source → one-target IF silt supports trait-param inference from target-type ascription (unverified). Rejected because call site becomes `io_err.into_err()` with target inferred from context — i.e. Rust's `.into()` with a different name, the very thing the proposal exists to reject. |
+| **Inverted `trait IntoErr(target) for Source`** | Dispatches by Self. Works today for multi-source → one-target IF silt supports trait-param inference from target-type ascription (unverified). Rejected because call site becomes `IntoErr.into_err(io_err)` with target inferred from context — i.e. Rust's `.into()` with a different name, the very thing the proposal exists to reject. |
 
 ## Non-goals clarified
 

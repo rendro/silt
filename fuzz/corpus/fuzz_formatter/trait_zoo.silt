@@ -52,7 +52,7 @@ trait Display for Color {
 trait Display for Styled {
   fn display(self) -> String {
     match self {
-      Styled(shape, color) -> "{shape.display()} in {color.display()}"
+      Styled(shape, color) -> "{shape} in {color}"
     }
   }
 }
@@ -97,7 +97,7 @@ trait Perimeter for Shape {
 -- Generic function with where clause
 
 fn describe(item: a) where a: Display {
-  item.display()
+  "{item}"
 }
 
 -- Format a float to 4 decimal places

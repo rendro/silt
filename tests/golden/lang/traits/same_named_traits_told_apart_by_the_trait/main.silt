@@ -1,0 +1,10 @@
+-- Two modules each declare a trait `Show` with `fn show` and implement
+-- it for Int. A call names the trait it means, so both are called here.
+import a
+import b
+fn main() {
+  println(a.Show.show(5))
+  println(b.Show.show(6))
+  println(a.use_show(7))
+  println(b.use_show(8))
+}

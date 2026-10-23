@@ -1,6 +1,6 @@
 -- Equal values hash equal; different ordinals hash differently.
 type Color { Red, Green, Blue, }
-fn h(a: a) -> Int where a: Hash { a.hash() }
+fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
 fn main() {
     println(h(Red) == h(Red))
     println(h(Red) != h(Green))

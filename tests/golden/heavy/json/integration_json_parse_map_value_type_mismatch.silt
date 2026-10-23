@@ -4,7 +4,7 @@ fn program() {
   match json.parse_map("\{\"a\": \"hello\", \"b\": \"world\"\}", Int) {
     Ok(_) -> "unexpected"
     Err(json.TypeMismatch(expected, actual)) -> "{expected}/{actual}"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 

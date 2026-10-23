@@ -8,11 +8,11 @@ fn main() {
   match io.read_file("/nonexistent/silt/r5") {
     Ok(_) -> println("ok")
     Err(e) -> {
-      println(io.IoError.message(e) == e.message())
-      println(IoError.message(e) == e.message())
-      println(IoError.display(e) == e.display())
-      let m = io.IoError.message
-      println(m(e) == e.message())
+      println(Error.message(e) == Error.message(e))
+      println(Error.message(e) == Error.message(e))
+      println("{e}" == "{e}")
+      let m = Error.message
+      println(m(e) == Error.message(e))
     }
   }
 }

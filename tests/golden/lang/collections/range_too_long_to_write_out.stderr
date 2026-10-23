@@ -27,8 +27,8 @@
     error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
      --> range_too_long_to_write_out.silt:43:11
         |
-     43 |   let _ = long().display()
-        |           ^^^^^^^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
+     43 |   let _ = "{long()}"
+        |           ^^^^^^^^^^ range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
   FAIL range_too_long_to_write_out.silt::test_inspect
     error[runtime]: range 0..10000000 has 10000001 elements; materializing more than 10000000 is not allowed
      --> range_too_long_to_write_out.silt:47:11

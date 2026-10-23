@@ -20,7 +20,7 @@ type Span {
 
 trait Display for Span {
   fn display(self) -> String {
-    "{self.low}..{self.high.display()}"
+    "{self.low}..{self.high}"
   }
 }
 
@@ -35,7 +35,7 @@ trait Display for Forecast {
 }
 
 fn both(x: a, y: b) -> String where a: Display, b: Display {
-  "<{x}> <{y.display()}>"
+  "<{x}> <{y}>"
 }
 
 fn main() {

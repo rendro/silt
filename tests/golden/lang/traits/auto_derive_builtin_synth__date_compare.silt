@@ -1,5 +1,5 @@
 import time
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
     match time.date(2025, 1, 15) {
         Ok(early) -> match time.date(2025, 6, 30) {

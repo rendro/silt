@@ -5,7 +5,7 @@ fn a(s) {
   let res = int.parse(s)
   when let Ok(n) = res else {
     match res {
-      Err(e) -> return Err("bad: {e.message()}")
+      Err(e) -> return Err("bad: {Error.message(e)}")
       Ok(_) -> panic("unreachable")
     }
   }

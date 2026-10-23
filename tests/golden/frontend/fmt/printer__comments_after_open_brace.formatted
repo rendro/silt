@@ -41,7 +41,7 @@ fn main() { -- entry point
     x * 2
   }
   println( -- everything
-    "{p.name()} {xs} {ys}",
+    "{Named.name(p)} {xs} {ys}",
   )
   let empty = [ -- nothing in it
   ]

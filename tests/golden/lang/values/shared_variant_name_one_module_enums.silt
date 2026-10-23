@@ -4,9 +4,9 @@ type Shape { Circle(Int), Sq }
 trait Display for Shape { fn display(self) -> String { "A-shape" } }
 type Form { Circle(Int), Tri(Int) }
 trait Display for Form { fn display(self) -> String { "B-form" } }
-fn show(x: t) -> String where t: Display { x.display() }
+fn show(x: t) -> String where t: Display { "{x}" }
 fn main() {
-  println(Shape.Circle(1).display())
-  println(Form.Circle(1).display())
+  println("{Shape.Circle(1)}")
+  println("{Form.Circle(1)}")
   println(show(Shape.Circle(1)))
 }

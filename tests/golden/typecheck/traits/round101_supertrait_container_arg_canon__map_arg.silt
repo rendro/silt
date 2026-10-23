@@ -6,6 +6,6 @@ trait Carry(Map(String, Int)) for Bag { fn carry(self) -> Map(String, Int) { #{"
 trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
 fn main() {
   let b = Bag { n: 1 }
-  println("{b.hold()}")
-  println("{b.carry()}")
+  println("{Holds.hold(b)}")
+  println("{Carry.carry(b)}")
 }

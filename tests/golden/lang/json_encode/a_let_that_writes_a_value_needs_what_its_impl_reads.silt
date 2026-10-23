@@ -16,7 +16,7 @@ trait json.Encode for T {
 fn send(x: a) -> String where a: json.Encode { json.stringify([x]) }
 
 let s = json.stringify(T { n: 1 })
-let e = T { n: 2 }.encode()
+let e = json.Encode.encode(T { n: 2 })
 let g = send(T { n: 3 })
 let t = toml.stringify(#{"k": T { n: 4 }})
 let m = json.encode(Some(T { n: 5 }))

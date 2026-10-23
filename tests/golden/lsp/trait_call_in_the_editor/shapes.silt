@@ -1,0 +1,13 @@
+pub type Square { side: Int }
+
+-- A shape's area.
+pub trait Area {
+  -- The area, in square units.
+  fn area(self) -> Int
+  fn scaled(self, by: Int) -> Int
+}
+
+trait Area for Square {
+  fn area(self) -> Int { self.side * self.side }
+  fn scaled(self, by: Int) -> Int { self.side * by }
+}

@@ -644,7 +644,7 @@ fn main() {
     _ -> "other"
   } })
   let words = "a b c" |> string.split(" ") |> list.map { w -> string.to_upper(w) }
-  println(u.greet())
+  println(Greet.greet(u))
   println("{classify(first)} {sum_to(4)} {words} {older.age} {nested}")
 }
 "#,

@@ -11,5 +11,5 @@ trait T for Int {
 }
 
 fn main() {
-  println("{1.m()} {2.m()}")
+  println("{T.m(1)} {T.m(2)}")
 }

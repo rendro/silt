@@ -32,9 +32,18 @@ trait Greet for Shape {
 }
 
 fn main() {
-  println(Circle(5.0).greet()) -- hi from a circle of radius 5.0
+  println(Greet.greet(Circle(5.0))) -- hi from a circle of radius 5.0
 }
 ```
+
+A method that takes a value of the implementing type (`self`, or a
+parameter of type `Self`) is called through its trait, as a module's
+function is: `Greet.greet(c)`, `c |> Greet.greet`,
+`list.map(shapes, Greet.greet)`. The call reaches the impl for the type
+of that argument. A trait of another module is named as its other items
+are: `shapes.Area.area(s)` after `import shapes`, or `Area.area(s)` after
+`import shapes.{ Area }`. A dot after a value always names a field (see
+[A dot after a value](#a-dot-after-a-value)).
 
 A trait declares complete signatures: every parameter but `self` has a
 type annotation, and a method declared without a return type returns
@@ -74,8 +83,8 @@ real built-in `Display` trait look identical and are shown in
 
 An impl gives a record type no method named like one of the record's
 fields, whether the impl writes the method or takes it as the trait's
-default: `job.run(5)` on a record is always a call of the function its
-field `run` holds.
+default: `job.run(5)` calls the function the field `run` holds, and a
+method of that name would read as the same thing.
 
 ```silt
 type Job {
@@ -137,23 +146,23 @@ trait Printable: Display + Hash {
 
 ### Constraint expansion
 
-Inside a `where a: Cmp2` body, methods from `Eq2` (the supertrait)
-are also callable on `a`:
+Inside a `where t: Cmp2` body, a value of type `t` is also given to the
+methods of `Eq2` (the supertrait), each called through its own trait:
 
 ```silt
 fn check(a: t, b: t) -> Bool where t: Cmp2 {
-  -- a.eq2(b) works because Eq2 is a supertrait of Cmp2
-  match a.eq2(b) {
+  -- Eq2.eq2(a, b) works because Eq2 is a supertrait of Cmp2
+  match Eq2.eq2(a, b) {
     true -> true
-    false -> a.lt2(b)
+    false -> Cmp2.lt2(a, b)
   }
 }
 ```
 
 The expansion is transitive: with `trait C: B { ... }` and
-`trait B: A { ... }`, a `where x: C` constraint enables methods from
-`A`, `B`, and `C` on `x`, and implementing `C` on a type requires impls
-of `A`, `B`, and `C`.
+`trait B: A { ... }`, a `where x: C` constraint lets `x` be given to the
+methods of `A`, `B`, and `C`, and implementing `C` on a type requires
+impls of `A`, `B`, and `C`.
 
 ### Errors
 
@@ -214,8 +223,8 @@ trait Show for Item {
 }
 
 fn main() {
-  println(Item { v: 1 }.show()) -- default
-  println(Item { v: 1 }.debug()) -- item-debug
+  println(Show.show(Item { v: 1 })) -- default
+  println(Show.debug(Item { v: 1 })) -- item-debug
 }
 ```
 
@@ -238,8 +247,8 @@ trait Show for Item {
 }
 ```
 
-Default bodies can call other trait methods on `self`, including
-abstract ones the impl is required to provide. Dispatch routes the call
+Default bodies can call other methods of the trait with `self`,
+including abstract ones the impl is required to provide. Dispatch routes the call
 to the impl's version, so the default acts as a template that
 specialises per impl:
 
@@ -249,7 +258,7 @@ trait Describable {
   fn name(self) -> String
   -- the default uses name()
   fn greet(self) -> String {
-    "hi, {self.name()}"
+    "hi, {Describable.name(self)}"
   }
 }
 
@@ -264,12 +273,12 @@ trait Describable for Person {
 }
 
 fn main() {
-  println(Person { who: "alice" }.greet()) -- hi, alice
+  println(Describable.greet(Person { who: "alice" })) -- hi, alice
 }
 ```
 
 Defaults compose with supertraits: a default body may call a supertrait
-method on `self`, and the obligation that the supertrait be implemented
+method with `self`, and the obligation that the supertrait be implemented
 is enforced as usual.
 
 Defaults work on parameterized impl targets too — `trait X for Box(a) { }`
@@ -343,8 +352,8 @@ instantiation only, name it with an alias (`type Ints = List(Int)`,
 
 ### Impl-level where clauses
 
-To call a trait method on an impl-bound type variable, declare the
-constraint on the **impl header** using a `where` clause. The constraint
+To give a value of an impl-bound type variable to a trait's method,
+declare the constraint on the **impl header** using a `where` clause. The constraint
 applies to every method in the impl and is also enforced at every call
 site — passing a `Box(v)` where `v`'s type does not implement the
 required trait is a compile-time error:
@@ -367,18 +376,18 @@ trait Greet for Int {
 trait Greet for Box(a) where a: Greet {
   fn greet(self) -> String {
     match self {
-      Box(inner) -> inner.greet()
+      Box(inner) -> Greet.greet(inner)
     }
   }
 }
 
 fn main() {
-  println(Box(5).greet()) -- int-greet
+  println(Greet.greet(Box(5))) -- int-greet
 }
 ```
 
-`Box("hello").greet()` is an error: type 'String' does not implement
-trait 'Greet'.
+`Greet.greet(Box("hello"))` is an error: type 'String' does not
+implement trait 'Greet'.
 
 Multi-trait bounds use `+` (or comma-separated clauses) — identical to
 fn-level `where`:
@@ -386,7 +395,7 @@ fn-level `where`:
 ```silt
 trait Greet for Box(a) where a: Greet + Loud {
   fn greet(self) -> String {
-    match self { Box(inner) -> "{inner.greet()}-{inner.loud()}" }
+    match self { Box(inner) -> "{Greet.greet(inner)}-{Loud.loud(inner)}" }
   }
 }
 
@@ -403,14 +412,14 @@ impl's method has the signature its trait declares, `where` clause
 included: it may restate a bound the trait declares for the method or
 the header declares (or a supertrait of one), with the same trait
 arguments, and may not add one, because a call through the
-trait (`fn f(x: t) where t: Greet { x.greet() }`) knows only the trait's
+trait (`fn f(x: t) where t: Greet { Greet.greet(x) }`) knows only the trait's
 signature and the header:
 
 ```silt
 trait Greet for Box(a) {
   fn greet(self) -> String where a: Greet {
     match self {
-      Box(inner) -> inner.greet()
+      Box(inner) -> Greet.greet(inner)
     }
   }
 }
@@ -437,7 +446,7 @@ trait Peek for Int {
 
 trait Peek for Cell(a) where a: Peek {
   fn peek(self) -> Int {
-    self.value.peek()
+    Peek.peek(self.value)
   }
 }
 ```
@@ -473,12 +482,14 @@ specification — including how trait parameters flow through `where` clauses
 and how multiple impls with different arguments coexist — lives in
 [Generics — Parameterized trait declarations](generics.md#parameterized-trait-declarations).
 
-## Static Trait Methods
+## Methods That Make a Value
 
-Some trait methods take no `self` and only return `Self` — constructors like
-`Default::default()` or `Monoid::empty()`. Invoke these by calling on a
-**type descriptor**: either a bare type name (`Int.empty()`) or a `type a`
-parameter inside a generic function (`a.empty()`):
+Some trait methods take no value of the type and only make one —
+constructors like `default()` or `empty()`. A call through the trait
+could not say which impl it means, so these are called on a **type**:
+either a bare type name (`Int.empty()`) or a `type a` parameter inside a
+generic function (`a.empty()`). A method that takes a value of the type
+is called through its trait (`Monoid.combine(2, 3)`), never on a type:
 
 ```silt
 trait Monoid {
@@ -497,32 +508,34 @@ trait Monoid for Int {
 
 fn main() {
   let zero = Int.empty() -- concrete dispatch
-  let five = Int.combine(2, 3)
+  let five = Monoid.combine(2, 3)
   println("{zero} {five}")
 }
 ```
 
-A method without `self` is called on a type, never on a value:
-`5.empty()` is an error that names the call to write (`Int.empty()`).
-Nor is it ever a candidate for a call on a value, of any trait: where
-another trait gives the type a method of the same name that takes
-`self`, `x.m(..)` calls that one, with no ambiguity; a call on the type
-(`T.m(..)`) has both. An impl writes the parameters its trait declares:
-one that adds or drops `self` (or any other parameter) is an error at
-the impl.
+`5.empty()` is an error: a dot after a value names a field, and the
+help names the call to write (`Int.empty()`). `Int.combine(2, 3)` is an
+error too: `type 'Int' has no method 'combine'`, with the help to call
+it as `Monoid.combine(x, ..)`. Through a type only the methods that make
+a value are candidates: of two traits that give a type a method of one
+name, one that makes a value and one that takes one, `T.m(..)` is the
+first; two that make one are ambiguous. An impl writes the parameters
+its trait declares: one that adds or drops `self` (or any other
+parameter) is an error at the impl.
 
-Dispatch is by the descriptor's carried type name — `Int.empty()` resolves
-to the `Monoid` impl for `Int`. Inside a generic function with
-`type a` and `where a: Monoid`, `a.empty()` dispatches to whichever impl
-matches the concrete type passed in. See
+Dispatch is by the type — `Int.empty()` resolves to the `Monoid` impl
+for `Int`. Inside a generic function with `type a` and
+`where a: Monoid`, `a.empty()` dispatches to whichever impl matches the
+concrete type passed in. See
 [Generics — Trait methods on types](generics.md#trait-methods-on-types) for
 the full rules.
 
 ## Method References
 
-Trait method names are first-class callable values: `TypeName.method` produces
-a function you can pass directly to a higher-order combinator. This avoids
-writing a one-line closure around `x.method()`:
+A method named through its trait is a function value, as a module's
+function is: `Trait.method` can be passed directly to a higher-order
+combinator. Where the type of its argument is known the value is the
+method of that impl; in generic code it finds the impl where it runs.
 
 ```silt
 import list
@@ -531,39 +544,68 @@ type Celsius {
   c: Float,
 }
 
-trait Display for Celsius {
-  fn display(self) -> String {
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for Celsius {
+  fn describe(self) -> String {
     "{self.c}°C"
   }
 }
 
 fn main() {
   let temps = [Celsius { c: 20.0 }, Celsius { c: 25.5 }]
-  let rendered = list.map(temps, Celsius.display)
+  let rendered = list.map(temps, Describe.describe)
   list.each(rendered) { line -> println(line) }
 }
 ```
 
-`value.method` without a call is not a function: a method is called.
-Write `Type.method`, or a closure, `{ x -> x.method() }`.
+A method that makes a value is taken through its type
+(`list.map(codes, AppError.from)`).
 
-## Calls on a value of unknown type
+## A dot after a value
 
-In a function whose parameter has no annotation, `x.m(..)` and `x.f` are
-decided by what is written, not by which names happen to exist:
+A dot after a value names a field, whatever methods traits declare:
 
-- `x.f` is a field: `fn name_of(p) { p.name }` takes any record with a
-  field `name`, whatever methods traits declare.
-- `r.f(..)` on a record with a field `f` calls the function the field
-  holds: a record type has no method named like one of its fields.
-- `x.m(..)` means the one trait in sight that declares a method `m`
-  taking `self`, and bounds `x` by it: `fn g(x) { x.greet() }` is
-  `fn g(x: a) -> String where a: Greet`. If no trait declares `m`, `x` is
-  a record whose field `m` holds a function. If several traits declare
-  an `m` that takes `self`, annotate `x`.
+- `p.name` is the record's field; `r.f(..)` calls the function the field
+  `f` holds.
+- In a function whose parameter has no annotation, `fn name_of(p) {
+  p.name }` takes any record with a field `name`.
+- A trait's method is called through the trait: `fn g(x) {
+  Greet.greet(x) }` is `fn g(x: a) -> String where a: Greet`, the bound
+  coming from the trait the call names.
+
+A dot that names nothing is an error that says what the value's type
+lacks, with the call to write where the name is a trait's method or a
+function of the type's builtin module:
+
+```silt
+import list
+
+trait Greet {
+  fn greet(self) -> String
+}
+
+trait Greet for Int {
+  fn greet(self) -> String {
+    "hi"
+  }
+}
+
+fn shown(n: Int, xs: List(Int)) {
+  println(n.frobnicate()) -- error: type 'Int' has no field 'frobnicate'
+  println(n.greet())
+  -- error: type 'Int' has no field 'greet'
+  -- help: `greet` is a method of trait `Greet`: call it as `Greet.greet(n)`
+  println(xs.length())
+  -- error: type 'List(Int)' has no field 'length'
+  -- help: `length` is a function of module `list`: call it as `list.length(xs)`
+}
+```
 
 When the type of `x` is decided later in the same definition (a closure's
-parameter by the call it is passed to), the call is checked against that
+parameter by the call it is passed to), the field is checked against that
 type.
 
 ## Built-in Traits
@@ -581,7 +623,7 @@ types arithmetic is on, `Int` and `Float`, and nothing else.
 | `Equal`   | Equality comparison              | by structure | no (an error) |
 | `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
 | `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
-| `Error`   | Error reporting (`message()`)    | types with an impl | yes |
+| `Error`   | Error reporting (`Error.message(e)`) | types with an impl | yes |
 | `Number`  | `+ - * / %` and unary `-`        | Int and Float only | no |
 
 Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
@@ -613,8 +655,7 @@ its fields in the order of their names). Write your own
 `Display` impl for a type of another module, or for a built-in type, is
 an error. A type that holds a function has no structural `Display`, and
 may be given a written one. There is one `Display`: `println`, `print`, interpolation,
-`.display()`, `string.from` and a panic's message all show a value the
-same way, and all use the impl you wrote, wherever a value of the type
+`string.from` and a panic's message all show a value the same way, and all use the impl you wrote, wherever a value of the type
 is inside what is shown (`println([t])`, `"{Some(t)}"`, a field of a
 record).
 
@@ -645,8 +686,10 @@ fields in the same order as `println`.
 
 `Equal`, `Hash` and `Compare` are **sealed**: they always come
 from a type's structure (a type gets them when every field
-supports them), and `==`, `<`, `.equal()`, `.compare()`, `.hash()` and
-map keys use exactly that structure. A record is ordered by its fields
+supports them), and `==`, `<`, `Compare.compare`, `Hash.hash` and map
+keys use exactly that structure. `Display`'s `display` and `Equal`'s
+`equal` are not called by a program: interpolation and `string.from`,
+and `==`, do what they would. A record is ordered by its fields
 in the order the type declares them, an enum by its variants in the
 order it declares them and then by their payloads. A
 hand-written `trait Equal for T`, `trait Compare for T` or
@@ -727,14 +770,16 @@ type is the one named first, `Box`.
 
 Two things follow. A type has at most one impl of a trait in a whole
 program, and every module sees the same one: no two modules can each
-write it. And the impl is there wherever it is called: a module that can
-call a method of a trait on a value of a type imports the module of the
-trait and the module of the type (directly, or through the modules it
-imports), and one of those two holds the impl. A value is shown, and a
-method answers, the same way in every module.
+write it. And the impl is there wherever it is called: a call names the
+trait, so its module is in the program, and so is the module of the
+type of a value the call is given; one of those two holds the impl. A
+value is shown, and a method answers, the same way in every module.
 
-A module calls the methods of the traits whose modules it imports,
-directly or through the modules it imports, and of the built-in traits.
+A module calls a trait's methods through the trait's name, which it
+names as any item: a trait it declares, one it imports by name
+(`import shapes.{ Area }`), one of a module it imports
+(`shapes.Area.area(s)`), or a built-in trait (`Compare`, `Hash`,
+`Error`; `json.Encode` after `import json`).
 
 ### In the trait's module
 
@@ -820,12 +865,12 @@ import list
 
 -- CORRECT: 'a' appears in the parameter annotation
 fn print_all(items: List(a)) where a: Display {
-  items |> list.each { item -> println(item.display()) }
+  items |> list.each { item -> println("{item}") }
 }
 
 -- ERROR: 'a' is unbound -- no annotation on x
 fn f(x) where a: Display {
-  println(x.display())
+  println("{x}")
 }
 ```
 

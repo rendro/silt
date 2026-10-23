@@ -38,7 +38,7 @@ fn main() {
   ["/text", "/set", "/empty", "/bytes"] |> list.each { path ->
     match http.get("http://127.0.0.1:{port}{path}") {
       Ok(resp) -> println("{path}: {bytes.to_hex(resp.body)}, content-type {map.get(resp.headers, "content-type")}")
-      Err(e) -> println("{path}: {e.message()}")
+      Err(e) -> println("{path}: {Error.message(e)}")
     }
   }
 

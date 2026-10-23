@@ -19,23 +19,23 @@ trait Loud: lib.Describe {
 
 trait Loud for Local {
   fn shout(self) -> String {
-    "{self.describe()}!"
+    "{lib.Describe.describe(self)}!"
   }
 }
 
 trait Loud for lib.Pt {
   fn shout(self) -> String {
-    "{self.describe()}!!"
+    "{lib.Describe.describe(self)}!!"
   }
 }
 
 fn show(a: a) -> String where a: lib.Describe {
-  a.describe()
+  lib.Describe.describe(a)
 }
 
 fn main() {
   println(show(L(1)))
   println(show(lib.Pt { x: 1, y: 2 }))
-  println(L(2).shout())
-  println(lib.Pt { x: 3, y: 4 }.shout())
+  println(Loud.shout(L(2)))
+  println(Loud.shout(lib.Pt { x: 3, y: 4 }))
 }

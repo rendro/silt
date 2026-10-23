@@ -72,7 +72,7 @@ fn show(what: String, got: Result(http.Response, http.HttpError)) {
       println("{what}: Ok, {length} bytes, the last is {bytes.get(resp.body, length - 1)}")
     }
     Err(http.InvalidResponse(why)) -> println("{what}: Err(InvalidResponse(\"{why}\"))")
-    Err(e) -> println("{what}: another error: {e.message()}")
+    Err(e) -> println("{what}: another error: {Error.message(e)}")
   }
 }
 

@@ -20,7 +20,7 @@ fn build(n) {
 fn work() {
   let a = build(1000)
   let b = build(1000)
-  a.compare(b)
+  Compare.compare(a, b)
 }
 
 fn main() {

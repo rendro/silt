@@ -65,7 +65,7 @@ impl TypeChecker {
         // trait.)
         self.decide_tries();
         self.default_rebuilds();
-        self.default_selects(true);
+        self.default_selects();
         for i in self.closed_mark..self.wanted.len() {
             if self.wanted[i].solved {
                 continue;

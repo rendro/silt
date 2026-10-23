@@ -35,8 +35,9 @@ error[parse]: expected declaration, found =
  6 | import Shape
    | ------------ module 'Shape' is imported here
 
-error[type]: unknown field or method 'describe' on type Shape
+error[type]: type 'Shape' has no field 'describe'
  --> main.silt:20:11
     |
  20 |   println(s.describe())
-    |           ^^^^^^^^^^ unknown field or method 'describe' on type Shape
+    |           ^^^^^^^^^^ type 'Shape' has no field 'describe'
+  = help: `describe` is a method of trait `Describe`: call it as `Describe.describe(s)`

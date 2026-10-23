@@ -8,7 +8,7 @@ trait Loud { fn loud(self) -> String }
 trait Loud for Int { fn loud(self) -> String { "int!" } }
 fn shout(x: a, n) where a: Loud {
   match n {
-    0 -> x.loud()
+    0 -> Loud.loud(x)
     _ -> relay(x, n - 1)
   }
 }

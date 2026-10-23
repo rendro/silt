@@ -7,7 +7,7 @@ import list
 type P { n: Int }
 trait Get {
   fn get(self) -> Int
-  fn twice(self) -> Int { self.get() * 2 }
+  fn twice(self) -> Int { Get.get(self) * 2 }
 }
 trait Get for P { fn get(self) -> Int { self.n + base } }
 let a = b + 1
@@ -18,7 +18,7 @@ let b = {
 }
 let e = {
   println("e")
-  P { n: 1 }.twice()
+  Get.twice(P { n: 1 })
 }
 let base = {
   println("base")

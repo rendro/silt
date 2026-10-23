@@ -53,7 +53,7 @@ trait Display for Color {
 trait Display for Styled {
   fn display(self) -> String {
     match self {
-      Styled(shape, color) -> "{shape.display()} in {color.display()}"
+      Styled(shape, color) -> "{shape} in {color}"
     }
   }
 }
@@ -98,7 +98,7 @@ trait Perimeter for Shape {
 
 -- Generic function with where clause
 fn describe(item: a) where a: Display {
-  item.display()
+  "{item}"
 }
 
 -- Format a float to 4 decimal places
@@ -123,16 +123,16 @@ fn main() {
   shapes
     |> list.each { s ->
       println("  {describe(s)}")
-      println("    Area:      {fmt(s.area())}")
-      println("    Perimeter: {fmt(s.perimeter())}")
+      println("    Area:      {fmt(Area.area(s))}")
+      println("    Perimeter: {fmt(Perimeter.perimeter(s))}")
     }
   -- Sort shapes by area
   println("")
   println("-- Sorted by Area (ascending) --")
-  let sorted = shapes |> list.sort_by { s -> s.area() }
-  sorted |> list.each { s -> println("  {describe(s)} -> area = {fmt(s.area())}") }
+  let sorted = shapes |> list.sort_by { s -> Area.area(s) }
+  sorted |> list.each { s -> println("  {describe(s)} -> area = {fmt(Area.area(s))}") }
   -- Total area
-  let total_area = shapes |> list.map { s -> s.area() } |> list.fold(0.0) { acc, a -> acc + a }
+  let total_area = shapes |> list.map { s -> Area.area(s) } |> list.fold(0.0) { acc, a -> acc + a }
   println("")
   println("Total area: {fmt(total_area)}")
   -- Colors and styled shapes

@@ -1,0 +1,19 @@
+-- A trait of another module is named as any of its items:
+-- `shapes.Area.area`, or `Area.area` after `import shapes.{ Area }`. Two
+-- traits that give Int a method of one name are told apart by their
+-- names.
+import shapes
+import other
+import shapes.{ Area }
+trait Greet { fn greet(self) -> String }
+trait Hail { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "hello {self}" } }
+trait Hail for Int { fn greet(self) -> String { "hail {self}" } }
+fn main() {
+  let s = shapes.square(3)
+  println(shapes.Area.area(s))
+  println(Area.area(s))
+  println(other.twice(s))
+  println(Greet.greet(1))
+  println(Hail.greet(1))
+}

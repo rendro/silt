@@ -115,7 +115,7 @@ fn main() {
   println(set.length(set.from_list([a, b, c, d])))
   let seen = map.set(map.set(#{}, a, "first"), c, "second")
   println(map.get(seen, b))
-  println(a.hash() == c.hash())
+  println(Hash.hash(a) == Hash.hash(c))
 
   -- A decoder builds the record its type declares.
   match json.parse("\{\"label\": \"j\", \"build\": 5, \"major\": 4}", Ver) {

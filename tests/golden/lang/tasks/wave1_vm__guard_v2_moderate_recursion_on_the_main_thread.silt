@@ -5,7 +5,7 @@ trait Deep for Int {
   fn go(self) -> Int {
     match self {
       0 -> 0
-      _ -> 1 + (self - 1).go()
+      _ -> 1 + Deep.go(self - 1)
     }
   }
 }
@@ -19,6 +19,6 @@ fn deep(n) {
 }
 
 fn main() {
-  println("method {500.go()}")
+  println("method {Deep.go(500)}")
   println("fold {deep(500)}")
 }

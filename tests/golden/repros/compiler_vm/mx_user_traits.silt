@@ -19,12 +19,12 @@ trait Hash for Money {
 fn main() {
   let a = Money { cents: 1 }
   let b = Money { cents: 2 }
-  println("display(): {a.display()}")
+  println("display(): {a}")
   println("interp: {a}")
   println(a)
   println("list interp: {[a]}")
-  println("equal(): {a.equal(b)}   ==: {a == b}")
-  println("compare(): {a.compare(b)}   <: {a < b}")
+  println("equal(): {a == b}   ==: {a == b}")
+  println("compare(): {Compare.compare(a, b)}   <: {a < b}")
   println("sort: {list.sort([a, b])}")
   println("set size: {set.length(set.from_list([a, b]))}")
   println("Some interp: {Some(a)}")

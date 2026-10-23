@@ -104,6 +104,19 @@ impl Server {
             return self.builtin_type_hover_text(doc, ty).map(markdown);
         }
 
+        // A method named through its trait (`size` in `Sized.size(b)`):
+        // the method as its trait declares it, and its doc comment.
+        if let Some((tr, method)) = super::ast_walk::find_trait_method_at(program, cursor)
+            && let Some(m) =
+                (self.trait_call_methods(doc, tr).into_iter()).find(|m| m.name == method)
+        {
+            let mut value = format!("```silt\n{}\n```", m.label);
+            if let Some(text) = m.doc.filter(|text| !text.is_empty()) {
+                value.push_str(&format!("\n\n---\n\n{text}"));
+            }
+            return Some(markdown(value));
+        }
+
         // A trait named (`Display` in `where a: Display`, in an impl's
         // header, in its own declaration): its signature and its doc.
         if let Some(tr) = self.trait_named_at(uri, cursor)

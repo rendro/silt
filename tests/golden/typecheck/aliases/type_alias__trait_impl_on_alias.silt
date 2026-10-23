@@ -4,5 +4,5 @@ trait PhDByteShow { fn pretty(self) -> String }
 trait PhDByteShow for PhDBytShow { fn pretty(self) -> String { "bytes" } }
 fn main() {
     let xs: PhDBytShow = [1, 2, 3]
-    println(xs.pretty())
+    println(PhDByteShow.pretty(xs))
 }

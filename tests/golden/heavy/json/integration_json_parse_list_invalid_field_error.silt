@@ -5,7 +5,7 @@ fn program() {
   match json.parse_list("[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]", Employee) {
     Ok(_) -> "unexpected"
     Err(json.TypeMismatch(expected, actual)) -> "{expected}/{actual}"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 

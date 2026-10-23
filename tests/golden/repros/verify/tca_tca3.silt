@@ -4,4 +4,4 @@ type Ints = List(Int)
 trait Foo for Ints {
   fn foo(self) -> Int { "not an int" }
 }
-fn main() { println([1, 2].foo()) }
+fn main() { println(Foo.foo([1, 2])) }

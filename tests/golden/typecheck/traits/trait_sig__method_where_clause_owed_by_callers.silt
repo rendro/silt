@@ -9,7 +9,7 @@
 trait Loud { fn loud(self) -> String }
 trait Loud for Int { fn loud(self) -> String { "INT" } }
 trait Shw { fn shw(self, x: a) -> String where a: Loud }
-trait Shw for Bool { fn shw(self, x) { x.loud() } }
-fn call(s: t, v: String) -> String where t: Shw { s.shw(v) }
-fn call_ok(s: t, v: Int) -> String where t: Shw { s.shw(v) }
-fn main() { println(true.shw("s")) }
+trait Shw for Bool { fn shw(self, x) { Loud.loud(x) } }
+fn call(s: t, v: String) -> String where t: Shw { Shw.shw(s, v) }
+fn call_ok(s: t, v: Int) -> String where t: Shw { Shw.shw(s, v) }
+fn main() { println(Shw.shw(true, "s")) }

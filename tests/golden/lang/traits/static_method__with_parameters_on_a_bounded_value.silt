@@ -1,11 +1,12 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: method `make` takes no `self` — call it on the type instead: `a.make(..)`, where `a` is a `type a` parameter
--- stderr-contains: error[type]: method `join` takes no `self` — call it on the type instead: `a.join(..)`, where `a` is a `type a` parameter
--- stderr-contains: :28:3
--- stderr-contains: :32:3
--- stderr-contains: :36:3
--- The same through a bound: a value of a bounded type variable.
+-- stderr-contains: help: `make` is a method of trait `Mk` that makes a value: call it on the type, `a.make(..)`, where `a` is a `type a` parameter
+-- stderr-contains: help: `join` is a method of trait `Mk`: call it as `Mk.join(x, ..)`
+-- stderr-contains: :29:3
+-- stderr-contains: :33:3
+-- stderr-contains: :37:3
+-- The same through a bound: a value of a bounded type variable has no
+-- fields; `join`, which takes Self, is called through its trait.
 trait Mk {
   fn make(n: Int) -> Self
   fn join(a: Self, b: Self) -> Self

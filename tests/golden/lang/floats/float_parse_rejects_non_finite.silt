@@ -7,7 +7,7 @@ fn main() {
   |> list.each { s ->
     match float.parse(s) {
       Ok(f) -> println("{s}: Ok({f})")
-      Err(e) -> println("{s}: {e.message()}")
+      Err(e) -> println("{s}: {Error.message(e)}")
     }
   }
 }

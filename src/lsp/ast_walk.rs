@@ -173,6 +173,45 @@ pub(super) fn find_field_access_at(program: &Program, cursor: usize) -> Option<(
     found
 }
 
+/// The method named through its trait whose name holds byte `cursor`
+/// (`size` in `Sized.size(b)`), as its trait and its name.
+pub(super) fn find_trait_method_at(
+    program: &Program,
+    cursor: usize,
+) -> Option<(crate::defs::TraitId, Symbol)> {
+    fn walk(expr: &Expr, cursor: usize, found: &mut Option<(crate::defs::TraitId, Symbol)>) {
+        if let ExprKind::FieldAccess(receiver, field, field_span) = &expr.kind
+            && (field_span.start as usize..=field_span.end as usize).contains(&cursor)
+            && receiver.ty.is_none()
+            && let Some(
+                Selection::Impl { tr, .. }
+                | Selection::Native { tr }
+                | Selection::Dynamic { tr, .. },
+            ) = expr.sel
+        {
+            *found = Some((tr, *field));
+        }
+        visit_expr_children(expr, |child| walk(child, cursor, found));
+    }
+    let mut found = None;
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => walk(&f.body, cursor, &mut found),
+            Decl::Let { value, .. } => walk(value, cursor, &mut found),
+            Decl::TraitImpl(ti) => ti
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            Decl::Trait(t) => t
+                .methods
+                .iter()
+                .for_each(|m| walk(&m.body, cursor, &mut found)),
+            _ => {}
+        }
+    }
+    found
+}
+
 /// Find the identifier name at the cursor byte offset.
 ///
 /// Visits `ExprKind::Ident` use-sites AND binding sites:

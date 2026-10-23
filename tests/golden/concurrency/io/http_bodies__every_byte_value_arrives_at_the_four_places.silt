@@ -83,7 +83,7 @@ fn main() {
   let server = task.spawn { -> http.serve(listener, answer) }
   match http.request(http.POST, "http://127.0.0.1:{port}/", upwards(), #{}) {
     Ok(resp) -> show("  http.request gets", resp.body)
-    Err(e) -> println("  http.request: {e.message()}")
+    Err(e) -> println("  http.request: {Error.message(e)}")
   }
 
   -- The client says that it closes, so the answer ends where the
@@ -110,6 +110,6 @@ fn main() {
   show("  the request on the wire", task.join(reader))
   match got {
     Ok(resp) -> show("  http.request gets", resp.body)
-    Err(e) -> println("  http.request: {e.message()}")
+    Err(e) -> println("  http.request: {Error.message(e)}")
   }
 }

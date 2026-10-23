@@ -9,14 +9,14 @@ fn main() {
       println(v)
       println(map.length(v.m))
     }
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
   match json.parse("\{\"m\": \{\"a\": \"one\"\}, \"t\": [1, 2]\}", M) {
     Ok(v) -> println(v)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
   match json.parse("\{\"m\": \{\"a\": 1\}, \"t\": [1, 2, 3]\}", M) {
     Ok(v) -> println(v)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

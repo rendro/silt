@@ -4,7 +4,7 @@
 -- Port of repros/type_soundness/z2.silt, in brace closures.
 type Box(a) { Box(a) }
 fn show(x) { "{x}" }
-fn show2(x) { x.display() }
+fn show2(x) { "{x}" }
 fn pr(x) { println(x) }
 fn main() {
   let f = { x -> x }

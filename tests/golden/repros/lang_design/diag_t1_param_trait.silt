@@ -9,6 +9,6 @@ trait Convert(Float) for String {
   fn convert(self) -> Float { 2.0 }
 }
 fn main() {
-  let a: Int = "x".convert()
+  let a: Int = Convert.convert("x")
   println(a)
 }

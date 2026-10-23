@@ -35,14 +35,14 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
         Some(Err(e)) -> {
-          println("count: {e.message()}")
+          println("count: {Error.message(e)}")
           -1
         }
         _ -> n
       }
     }
     Err(e) -> {
-      println("count: {e.message()}")
+      println("count: {Error.message(e)}")
       -1
     }
   }
@@ -84,7 +84,7 @@ fn main() {
                 let pad = string.length(row.pad)
                 "the first row: mark {row.silt_database_stream_closed_mark}, a pad of {pad}"
               }
-              Some(Err(e)) -> e.message()
+              Some(Err(e)) -> Error.message(e)
               _ -> "no row"
             },
           )
@@ -95,14 +95,14 @@ fn main() {
           println("closed by the receiver")
           println("sessions that run it after the close: {until(watch, running(), 0)}")
         }
-        Err(e) -> println("postgres.stream: {e.message()}")
+        Err(e) -> println("postgres.stream: {Error.message(e)}")
       }
       let after = count(pool, "SELECT 1")
       println("the pool answers after it: {after} row")
       postgres.close(pool)
       postgres.close(watch)
     }
-    (Err(e), _) -> println("connect: {e.message()}")
-    (_, Err(e)) -> println("connect: {e.message()}")
+    (Err(e), _) -> println("connect: {Error.message(e)}")
+    (_, Err(e)) -> println("connect: {Error.message(e)}")
   }
 }

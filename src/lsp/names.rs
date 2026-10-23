@@ -55,9 +55,10 @@ impl LocalName {
     }
 }
 
-/// A method name at a call or access on a value, `x.scale(2)`: no name
-/// of a definition (a method has none of its own), but the checker says
-/// which method it is.
+/// A method name at a call through its trait, `Sized.scale(x, 2)`, or
+/// on a type held in a value, `a.empty()`: no name of a definition (a
+/// method has none of its own), but the checker says which method it
+/// is.
 pub(super) struct MethodUse {
     pub(super) span: Span,
     pub(super) name: Symbol,
@@ -359,9 +360,9 @@ impl<'a> Names<'a> {
             ExprKind::FieldAccess(receiver, field, field_span) => {
                 // `m.f`, `m.Circle`, `Shape.Circle`: the member's own
                 // name, which the resolver resolved. (The span of a
-                // field access is its receiver's.) On a value the name
-                // is a field or a method: no name of a definition, and
-                // not of the trait the checker selected the method from.
+                // field access is its receiver's.) After a trait
+                // (`Sized.size`) the name is the method the checker
+                // selected; on a value it is a field.
                 let qualified = match receiver.res {
                     Some(Res::Module(_)) => true,
                     Some(Res::Def(id)) => self.table().get(id).is_type(),

@@ -8,5 +8,5 @@ trait Greeter for Item {}
 
 fn main() {
   let it = Item { v: 1 }
-  println(it.greet())
+  println(Greeter.greet(it))
 }

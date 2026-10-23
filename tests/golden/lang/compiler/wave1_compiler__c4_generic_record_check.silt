@@ -12,6 +12,6 @@ fn main() {
   let r: Result(Wrap(Int), json.JsonError) = json.parse("\{\"value\": \"x\"\}", Wrap)
   match r {
     Ok(w) -> println(w.value + 1)
-    Err(e) -> println("err: {e.message()}")
+    Err(e) -> println("err: {Error.message(e)}")
   }
 }

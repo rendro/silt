@@ -5,9 +5,9 @@ trait Two: Greet { fn two(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
 trait Two for Int { fn two(self) -> String { "2" } }
 trait Sh { fn sh(self, x: a) -> String where a: Two }
-trait Sh for Bool { fn sh(self, x: a) -> String where a: Greet { x.greet() } }
-trait Sh for Int { fn sh(self, x: a) -> String { "{x.greet()}{x.two()}" } }
+trait Sh for Bool { fn sh(self, x: a) -> String where a: Greet { Greet.greet(x) } }
+trait Sh for Int { fn sh(self, x: a) -> String { "{Greet.greet(x)}{Two.two(x)}" } }
 fn main() {
-  println(true.sh(1))
-  println(1.sh(1))
+  println(Sh.sh(true, 1))
+  println(Sh.sh(1, 1))
 }

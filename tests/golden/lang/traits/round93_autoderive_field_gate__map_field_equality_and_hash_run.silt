@@ -5,5 +5,5 @@ fn main() {
     let c = M{m: #{"a": 2}}
     println(a == b)
     println(a == c)
-    println(a.hash() == b.hash())
+    println(Hash.hash(a) == Hash.hash(b))
 }

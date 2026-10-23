@@ -12,7 +12,7 @@ trait Monoid for Int {
 
 fn program() {
   let x = Int.empty()
-  let y = Int.combine(3, 4)
+  let y = Monoid.combine(3, 4)
   x + y
 }
 

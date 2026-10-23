@@ -2315,7 +2315,7 @@ fn test_custom_display_trait() {
             }
             fn main() {
                 let s = Circle(5.0)
-                s.display()
+                "{s}"
             }
         "#,
     );
@@ -3403,13 +3403,13 @@ trait Step for C {
   fn go(self, k: Int) -> Int {
     match k {
       0 -> 1 / k
-      _ -> self.go(k - 1)
+      _ -> Step.go(self, k - 1)
     }
   }
 }
 fn main() {
   let c = C { n: 1 }
-  println(c.go(5))
+  println(Step.go(c, 5))
 }
 ";
         assert_eq!(
@@ -4406,6 +4406,7 @@ mod type_confusion {
                     method: 0,
                     argc: 1,
                     of: 0,
+                    at: 0,
                 },
                 span(),
             )
@@ -6148,10 +6149,20 @@ mod methods_in_place {
     }
 
     fn call(argc: u8, tail: bool) -> Asm<'static> {
-        let (method, argc, of) = (0, usize::from(argc), 0);
+        let (method, argc, of, at) = (0, usize::from(argc), 0, 0);
         match tail {
-            true => Asm::TailCallMethod { method, argc, of },
-            false => Asm::CallMethod { method, argc, of },
+            true => Asm::TailCallMethod {
+                method,
+                argc,
+                of,
+                at,
+            },
+            false => Asm::CallMethod {
+                method,
+                argc,
+                of,
+                at,
+            },
         }
     }
 

@@ -7,7 +7,7 @@
 #[test]
 fn every_builtin_enum_has_stamps_for_policy_permitted_traits() {
     use silt::typechecker::__trait_init_fingerprint_check_program;
-    let (impls, _) = __trait_init_fingerprint_check_program();
+    let impls = __trait_init_fingerprint_check_program();
     // Built-in enums that should have all four built-in trait stamps
     // (every variant arg type is Compare/Equal/Hash/Display-able).
     for type_name in [
@@ -58,7 +58,7 @@ fn every_builtin_enum_has_stamps_for_policy_permitted_traits() {
 #[test]
 fn every_builtin_record_has_stamps_for_policy_permitted_traits() {
     use silt::typechecker::__trait_init_fingerprint_check_program;
-    let (impls, _) = __trait_init_fingerprint_check_program();
+    let impls = __trait_init_fingerprint_check_program();
     // time records — all four built-in trait stamps via
     // `register_structural_traits_for(time, &[...], all_auto_traits)`.
     for type_name in ["Instant", "Date", "Time", "DateTime", "Duration"] {

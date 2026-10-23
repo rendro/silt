@@ -4,6 +4,6 @@ import a
 import b
 fn main() {
   println(b.sb(1))
-  println(2.show())
-  println(Int.show(3))
+  println(a.Show.show(2))
+  println(a.Show.show(3))
 }

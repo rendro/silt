@@ -11,5 +11,5 @@ trait Total for P2 {
     x + y
   }
 }
-fn sum_it(x: a) -> Int where a: Total { x.total() }
+fn sum_it(x: a) -> Int where a: Total { Total.total(x) }
 fn main() { println(sum_it(("a", "b"))) }

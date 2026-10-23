@@ -6,7 +6,7 @@ fn run_main() {
   match toml.parse(input, User) {
     Ok(_) -> "unexpected"
     Err(toml.TypeMismatch(expected, actual)) -> "{expected}/{actual}"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 

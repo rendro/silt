@@ -12,7 +12,7 @@ trait S {
 trait S for F {}
 fn main() {
   let x = F { f: { a -> a } }
-  println(x.s())
-  println(x.e())
-  println(x.c())
+  println(S.s(x))
+  println(S.e(x))
+  println(S.c(x))
 }

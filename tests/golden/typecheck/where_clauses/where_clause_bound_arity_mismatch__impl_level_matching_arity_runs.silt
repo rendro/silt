@@ -6,11 +6,11 @@ trait Use for List(a) where a: Conv(Int) {
     fn use_it(self) -> Int {
       match self {
           [] -> 0
-          [x, ..rest] -> x.conv() + rest.use_it()
+          [x, ..rest] -> Conv.conv(x) + Use.use_it(rest)
       }
     }
 }
 fn main() {
     let xs: List(Int) = [1, 2, 3]
-    println(xs.use_it())
+    println(Use.use_it(xs))
 }

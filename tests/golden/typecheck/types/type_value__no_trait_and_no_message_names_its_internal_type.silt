@@ -25,11 +25,11 @@ fn less(x: a) -> Bool where a: Compare {
 }
 
 fn hashed(x: a) -> Int where a: Hash {
-  x.hash()
+  Hash.hash(x)
 }
 
 fn told(x: a) -> String where a: Show {
-  x.show()
+  Show.show(x)
 }
 
 fn named(type a) -> String {

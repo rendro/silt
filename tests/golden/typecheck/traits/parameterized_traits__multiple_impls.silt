@@ -11,8 +11,8 @@ trait Wrap(String) for String {
 }
 
 fn main() {
-    let a: Int = 1.wrap()
-    let b: String = "x".wrap()
+    let a: Int = Wrap.wrap(1)
+    let b: String = Wrap.wrap("x")
     println(a)
     println(b)
 }

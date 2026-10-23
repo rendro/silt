@@ -24,6 +24,6 @@ fn main() {
   let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
 
   shapes
-  |> list.map { s -> (s.display(), area(s)) }
+  |> list.map { s -> ("{s}", area(s)) }
   |> list.each { pair -> println("{pair}") }
 }

@@ -10,5 +10,5 @@ fn main() {
   println((1, f) < (1, f))
   println(lt((1, f), (2, f)))
   println(list.sort([(1, #{ "a": 1 })]))
-  println((1, #[1]).compare((1, #[2])))
+  println(Compare.compare((1, #[1]), (1, #[2])))
 }

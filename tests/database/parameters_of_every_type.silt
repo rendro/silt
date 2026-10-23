@@ -31,7 +31,7 @@ fn url() -> String {
 fn show(db: postgres.PgPool, what: String, sql: String, ps: p) {
   match postgres.query(db, sql, ps, Out) {
     Ok(rows) -> println("{what}: {rows}")
-    Err(e) -> println("{what}: {e.message()}")
+    Err(e) -> println("{what}: {Error.message(e)}")
   }
 }
 
@@ -70,10 +70,10 @@ fn main() {
       show(db, "none", "SELECT 'no parameters' AS v", ())
       match postgres.query(db, "SELECT id FROM generate_series(1, 9) AS id WHERE id = ANY($1)", ([2, 5],), Ids) {
         Ok(rows) -> println("= ANY($1): {rows}")
-        Err(e) -> println("= ANY($1): {e.message()}")
+        Err(e) -> println("= ANY($1): {Error.message(e)}")
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

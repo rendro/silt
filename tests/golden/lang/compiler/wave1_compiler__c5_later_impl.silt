@@ -1,6 +1,7 @@
+import string
 type Money { cents: Int }
 
-let shown = Money { cents: 5 }.display()
+let shown = string.from(Money { cents: 5 })
 
 trait Display for Money {
   fn display(self) -> String {

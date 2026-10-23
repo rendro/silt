@@ -1,5 +1,5 @@
 import time
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
 fn main() {
     match time.date(2025, 1, 15) {
         Ok(d1) -> match time.time(8, 30, 0) {

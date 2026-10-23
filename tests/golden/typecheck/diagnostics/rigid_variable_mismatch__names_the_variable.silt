@@ -21,7 +21,7 @@ trait Shape {
 }
 
 fn area_of(s: t) -> t where t: Shape {
-  s.area()
+  Shape.area(s)
 }
 
 fn wrap(x: e) -> List(e) {

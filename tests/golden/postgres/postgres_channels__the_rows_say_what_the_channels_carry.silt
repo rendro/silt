@@ -16,7 +16,7 @@ fn rows(pool: postgres.PgPool) -> Int {
       match channel.receive(typed) {
         Some(Ok(row)) -> row.amount
         Some(Err(e)) -> {
-          println(e.message())
+          println(Error.message(e))
           0
         }
         _ -> 0
@@ -32,7 +32,7 @@ fn notes(pool: postgres.PgPool) -> String {
       Some(note) -> "{note.channel}: {note.payload} from {note.pid}"
       None -> "closed"
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 

@@ -89,7 +89,7 @@ fn main() {
   -- Read and parse CSV; bail out on IO errors with a rendered message.
   let content = match io.read_file("examples/data.csv") {
     Ok(text) -> text
-    Err(e) -> panic("Error reading data.csv: {e.message()}")
+    Err(e) -> panic("Error reading data.csv: {Error.message(e)}")
   }
   let lines = content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
   let data_lines = lines |> list.drop(1)

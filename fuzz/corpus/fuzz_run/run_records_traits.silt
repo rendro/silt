@@ -30,6 +30,6 @@ fn main() {
   println("{p} {q}")
   println([p, q])
   let shapes = [Circle(2), Rect(3, 4)]
-  println(list.map(shapes) { s -> s.area() })
+  println(list.map(shapes) { s -> Area.area(s) })
   q.x + q.y
 }

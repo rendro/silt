@@ -10,5 +10,5 @@ trait Greet for Int {
   fn say(self) -> String { "two" }
 }
 fn main() {
-  println((1).say())
+  println(Greet.say(1))
 }

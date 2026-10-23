@@ -2,9 +2,9 @@ type Cell(a) { value: a }
 trait Peek { fn peek(self) -> Int }
 trait Peek for Int { fn peek(self) -> Int { self } }
 trait Peek for Cell(a) where a: Peek {
-  fn peek(self) -> Int { self.value.peek() }
+  fn peek(self) -> Int { Peek.peek(self.value) }
 }
 fn main() {
   let c = Cell { value: 42 }
-  println(c.peek())
+  println(Peek.peek(c))
 }

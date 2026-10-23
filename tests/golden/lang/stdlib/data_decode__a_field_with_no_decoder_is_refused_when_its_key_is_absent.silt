@@ -22,7 +22,7 @@ fn from_toml(text: String, type a) -> Result(a, toml.TomlError) {
 fn show(r: Result(a, e)) where e: Error {
   match r {
     Ok(_) -> println("ok")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 

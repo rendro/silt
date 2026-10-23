@@ -1,5 +1,5 @@
 import io
-fn program() { 42.equal(42) }
+fn program() { 42 == 42 }
 
 fn main() {
   println(io.inspect(program()))

@@ -50,7 +50,7 @@ fn round(db: postgres.PgPool, observer: postgres.PgPool) -> Result(String, postg
   match postgres.query(db, "SELECT pg_backend_pid()::int8 AS pid", (), Pid) {
     Ok([row]) when row.pid != pid -> Ok("a new connection")
     Ok(_) -> Ok("the same connection")
-    Err(e) -> Ok("the statement failed: {e.message()}")
+    Err(e) -> Ok("the statement failed: {Error.message(e)}")
   }
 }
 
@@ -60,7 +60,7 @@ fn main() {
       let answers = 1..20 |> list.map { _ ->
         match round(db, observer) {
           Ok(answer) -> answer
-          Err(e) -> "the round failed: {e.message()}"
+          Err(e) -> "the round failed: {Error.message(e)}"
         }
       }
       let other = answers |> list.filter { a -> a != "a new connection" }

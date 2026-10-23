@@ -14,7 +14,7 @@ trait Pair for IntPair {
 }
 
 fn use_it(x: IntPair, y: IntPair) -> Int {
-  x.first() + y.first()
+  Pair.first(x) + Pair.first(y)
 }
 
 fn main() {}

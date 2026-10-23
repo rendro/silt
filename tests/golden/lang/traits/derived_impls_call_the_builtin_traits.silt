@@ -4,6 +4,7 @@
 -- field's type.
 import list
 import map
+import string
 trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }
 trait Ranked { fn compare(self, other: Self) -> Int }
@@ -14,15 +15,15 @@ trait Hashy { fn hash(self) -> Int }
 trait Hashy for Int { fn hash(self) -> Int { 7 } }
 type Pt { x: Int }
 type Wrap { p: Pt }
-fn by_bound(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn by_bound(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
-  println(Pt { x: 1 }.display())
+  println(string.from(Pt { x: 1 }))
   println(Pt { x: 1 } < Pt { x: 2 })
   println(by_bound(Pt { x: 1 }, Pt { x: 2 }))
-  println(Wrap { p: Pt { x: 1 } }.compare(Wrap { p: Pt { x: 2 } }))
+  println(Compare.compare(Wrap { p: Pt { x: 1 } }, Wrap { p: Pt { x: 2 } }))
   println([Pt { x: 2 }, Pt { x: 1 }] |> list.sort)
   println(Pt { x: 1 } == Pt { x: 1 })
-  println(Pt { x: 1 }.equal(Pt { x: 1 }))
-  println(Pt { x: 1 }.hash() == Pt { x: 2 }.hash())
+  println(Pt { x: 1 } == Pt { x: 1 })
+  println(Hash.hash(Pt { x: 1 }) == Hash.hash(Pt { x: 2 }))
   println(map.get(#{ Pt { x: 1 }: "a" }, Pt { x: 1 }))
 }

@@ -33,7 +33,7 @@ fn main() {
   list.each(["/?name=a%20b", "/?name=%ZZ", "/?name=%FF", "/?other=1", "/?name=c"]) { path ->
     match http.get("{base}{path}") {
       Ok(r) -> println("{r.status} {text(r.body)}")
-      Err(e) -> println("error: {e.message()}")
+      Err(e) -> println("error: {Error.message(e)}")
     }
   }
   task.cancel(server)

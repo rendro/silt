@@ -1,27 +1,27 @@
-error[type]: unknown method 'to_upper' on type String
- --> hidden_module__a_local_hides_an_imported_module.silt:12:3
+error[type]: type 'String' has no field 'to_upper'
+ --> hidden_module__a_local_hides_an_imported_module.silt:11:3
     |
- 12 |   string.to_upper(string)
-    |   ^^^^^^^^^^^^^^^ unknown method 'to_upper' on type String
-  = help: `string` here is the local from line 11, which hides the module `string`; rename the local
+ 11 |   string.to_upper(string)
+    |   ^^^^^^^^^^^^^^^ type 'String' has no field 'to_upper'
+  = help: `string` here is the local from line 10, which hides the module `string`; rename the local
 
-error[type]: unknown method 'length' on List
- --> hidden_module__a_local_hides_an_imported_module.silt:17:11
+error[type]: type 'List(Int)' has no field 'length'
+ --> hidden_module__a_local_hides_an_imported_module.silt:16:11
     |
- 17 |   println(list.length(list))
-    |           ^^^^^^^^^^^ unknown method 'length' on List
-  = help: `list` here is the local from line 16, which hides the module `list`; rename the local
+ 16 |   println(list.length(list))
+    |           ^^^^^^^^^^^ type 'List(Int)' has no field 'length'
+  = help: `list` here is the local from line 15, which hides the module `list`; rename the local
 
-error[type]: anon record has no field 'keys'
- --> hidden_module__a_local_hides_an_imported_module.silt:19:11
+error[type]: type '{size: Int}' has no field 'keys'
+ --> hidden_module__a_local_hides_an_imported_module.silt:18:11
     |
- 19 |   println(map.keys(map))
-    |           ^^^^^^^^ anon record has no field 'keys'
-  = help: `map` here is the local from line 18, which hides the module `map`; rename the local
+ 18 |   println(map.keys(map))
+    |           ^^^^^^^^ type '{size: Int}' has no field 'keys'
+  = help: `map` here is the local from line 17, which hides the module `map`; rename the local
 
-error[type]: unknown method 'reverse' on List
- --> hidden_module__a_local_hides_an_imported_module.silt:20:32
+error[type]: type 'List(Int)' has no field 'reverse'
+ --> hidden_module__a_local_hides_an_imported_module.silt:19:32
     |
- 20 |   let f = { list: List(Int) -> list.reverse(list) }
-    |                                ^^^^^^^^^^^^ unknown method 'reverse' on List
-  = help: `list` here is the local from line 20, which hides the module `list`; rename the local
+ 19 |   let f = { list: List(Int) -> list.reverse(list) }
+    |                                ^^^^^^^^^^^^ type 'List(Int)' has no field 'reverse'
+  = help: `list` here is the local from line 19, which hides the module `list`; rename the local

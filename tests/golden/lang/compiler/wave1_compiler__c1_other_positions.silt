@@ -41,7 +41,7 @@ fn main() {
     5 -> 50
     _ -> 0
   })
-  println(3.scale(match x {
+  println(Scale.scale(3, match x {
     5 -> 10
     _ -> 0
   }))

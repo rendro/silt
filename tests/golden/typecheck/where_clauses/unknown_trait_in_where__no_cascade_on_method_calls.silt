@@ -9,7 +9,7 @@
 -- stderr-not-contains: does not declare constraint
 type Box(a) { Box(a) }
 trait Loud { fn loud(self) -> String }
-fn shout(x: a) -> String where a: Loud { x.loud() }
+fn shout(x: a) -> String where a: Loud { Loud.loud(x) }
 fn f(x: a) -> String where a: Lowd { "{x.loud()}{shout(x)}" }
 trait Loud for Box(a) where a: Lowd {
   fn loud(self) -> String { match self { Box(v) -> v.loud() } }

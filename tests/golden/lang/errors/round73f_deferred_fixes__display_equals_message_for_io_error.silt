@@ -5,7 +5,7 @@ fn main() {
         Ok(_) -> ()
         Err(e) -> {
             let display_form = "{e}"
-            let message_form = e.message()
+            let message_form = Error.message(e)
             match display_form == message_form {
                 true -> println("EQUIV")
                 false -> {

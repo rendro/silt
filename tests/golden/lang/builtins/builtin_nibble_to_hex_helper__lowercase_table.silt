@@ -5,7 +5,7 @@ fn main() {
   list.each(digits) { d ->
     match bytes.from_hex("0{d}") {
       Ok(b) -> println(bytes.to_hex(b))
-      Err(e) -> println(e.message())
+      Err(e) -> println(Error.message(e))
     }
   }
 }

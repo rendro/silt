@@ -6,6 +6,6 @@ trait Equal for P {
 fn main() {
   let a = P { x: 1 }
   let b = P { x: 2 }
-  println(a.equal(b))
+  println(a == b)
   println(a == b)
 }

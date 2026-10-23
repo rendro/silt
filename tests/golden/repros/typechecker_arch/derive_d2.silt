@@ -1,4 +1,5 @@
 -- verdict: same
+import string
 type P { x: Int, y: String }
 type B(a) { v: a, w: Int }
 type E { A(Int, String), C }
@@ -10,16 +11,16 @@ fn main() {
   let p = P { x: 1, y: "s" }
   let b = B { v: 1, w: 2 }
   println(p)
-  println(p.display())
+  println("{p}")
   println("{p}")
   println(b)
-  println(b.display())
+  println("{b}")
   println("{b}")
   println(Wrap(1, "q"))
-  println(Wrap(1, "q").display())
+  println(string.from(Wrap(1, "q")))
   println("{Wrap(1, "q")}")
   println(A(1, "z"))
-  println(A(1, "z").display())
+  println(string.from(A(1, "z")))
   println("{A(1, "z")}")
   println([A(1, "z")])
   println([p])

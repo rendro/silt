@@ -10,7 +10,7 @@ trait Cast for Fn {
 }
 fn mk(n: Int) -> Point { Point { x: "px", y: "py" } }
 fn main() {
-  let f = mk.cast()
+  let f = Cast.cast(mk)
   let Wrap(n) = f(1)
   println(n + 1)
 }

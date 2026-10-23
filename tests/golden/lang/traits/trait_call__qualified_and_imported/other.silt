@@ -1,0 +1,2 @@
+import shapes.{ Area }
+pub fn twice(s: a) -> Int where a: Area { Area.area(s) * 2 }

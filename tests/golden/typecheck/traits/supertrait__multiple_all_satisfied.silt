@@ -20,10 +20,10 @@ trait Tr2 for Baz {
   fn t2(self) -> Int { self.v + 1 }
 }
 trait Both for Baz {
-  fn both(self) -> Int { self.t1() + self.t2() }
+  fn both(self) -> Int { Tr1.t1(self) + Tr2.t2(self) }
 }
 
 fn main() {
   let b = Baz { v: 5 }
-  println(b.both())
+  println(Both.both(b))
 }

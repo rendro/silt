@@ -7,7 +7,7 @@ fn main() {
   let ch = channel.new(1)
   let f = { ->
     match channel.try_receive(ch) {
-      channel.Message(m) -> m.greet()
+      channel.Message(m) -> Greet.greet(m)
       _ -> "none"
     }
   }

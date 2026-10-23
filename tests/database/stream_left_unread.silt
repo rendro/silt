@@ -26,14 +26,14 @@ fn main() {
         println(
           match channel.receive(rows) {
             Some(Ok(row)) -> "the first row is {row}"
-            Some(Err(e)) -> e.message()
+            Some(Err(e)) -> Error.message(e)
             _ -> "no row"
           },
         )
         println("main returns, the stream unread")
       }
-      Err(e) -> println("postgres.stream: {e.message()}")
+      Err(e) -> println("postgres.stream: {Error.message(e)}")
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

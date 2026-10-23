@@ -4,6 +4,6 @@
 -- A declared bound has its trait arguments: `a: Conv(String)` does not
 -- give `a: Conv(Int)`.
 trait Conv(to) { fn conv(self) -> to }
-fn need_int(x: a) -> Int where a: Conv(Int) { x.conv() }
+fn need_int(x: a) -> Int where a: Conv(Int) { Conv.conv(x) }
 fn f(x: a) -> Int where a: Conv(String) { need_int(x) }
 fn main() { println(1) }

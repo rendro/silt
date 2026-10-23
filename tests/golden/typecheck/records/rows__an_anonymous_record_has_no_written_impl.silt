@@ -7,8 +7,8 @@
 -- A message writes an anonymous record's type, not a name for it.
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "i" } }
-fn f(x) { x.greet() }
-fn g(x: a) -> String where a: Greet { x.greet() }
+fn f(x) { Greet.greet(x) }
+fn g(x: a) -> String where a: Greet { Greet.greet(x) }
 fn main() {
   println(f({name: "a"}))
   println(g({name: "a"}))

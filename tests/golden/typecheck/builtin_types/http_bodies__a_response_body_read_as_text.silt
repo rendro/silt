@@ -9,6 +9,6 @@ import string
 fn main() {
   match http.get("http://127.0.0.1:1/") {
     Ok(resp) -> println(string.length(resp.body))
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

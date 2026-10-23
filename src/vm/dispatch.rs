@@ -104,8 +104,10 @@ pub(super) fn resume_native(
 impl Vm {
     // ── Built-in trait methods on primitive types ──────────────────
 
-    /// Handle built-in trait methods like .display(), .equal(), .compare()
-    /// on primitive types. Returns Some(result) if handled, None otherwise.
+    /// The methods of the structural traits a program calls,
+    /// `Compare.compare` and `Hash.hash`, for a value whose type has the
+    /// trait by its structure. Returns Some(result) if handled, None
+    /// otherwise.
     pub(super) fn dispatch_trait_method(
         &self,
         receiver: &Value,
@@ -113,72 +115,6 @@ impl Vm {
         extra_args: &[Value],
     ) -> Option<Result<Value, VmError>> {
         match method {
-            "display" => {
-                if !extra_args.is_empty() {
-                    return Some(Err(VmError::new("display() takes no arguments".into())));
-                }
-                // Runtime Display gate — the .display() twin of the
-                // round-95 `Op::DisplayValue` gate (src/vm/run.rs
-                // ~:1457). For a *concrete* receiver the typechecker
-                // already rejects `.display()` on no-Display types
-                // ("unknown method 'display' on type Fn"), but silt
-                // enforces inferred trait bounds at the EXECUTION site
-                // for polymorphic code, so a Var-typed receiver reaches
-                // this arm ungated. Pre-fix, `fn show(x: a) -> String
-                // { x.display() }` over a lambda / channel / task handle
-                // silently rendered `<fn:..>` / `<channel:0>` /
-                // `<handle:0>` — while the equivalent interpolation
-                // `"{x}"` errored at runtime and the sibling `.equal()` /
-                // `.compare()` arms below carry their own runtime gates.
-                // Reject the same set here, sourced from the single
-                // oracle `Vm::value_implements_display` so the two
-                // execution-site gates cannot drift. Records, variants
-                // (incl. stdlib error enums) and every printable
-                // built-in pass the oracle and fall through unchanged.
-                if !Self::value_implements_display(receiver) {
-                    // Same canonical-name reporting as Op::DisplayValue:
-                    // function-shaped values collapse to "Fn" via
-                    // `dispatch_type_name`; the descriptor values
-                    // (whose canonical name is the *carried* type name)
-                    // fall back to their kind so the diagnostic names
-                    // the descriptor kind, not the reflected type.
-                    let name = match receiver {
-                        Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => {
-                            receiver.kind().to_string()
-                        }
-                        _ => crate::types::canonical::dispatch_type_name(receiver),
-                    };
-                    return Some(Err(VmError::new(format!(
-                        "type '{name}' does not implement Display"
-                    ))));
-                }
-                if let Err(too_long) = receiver.writable() {
-                    return Some(Err(too_long.into()));
-                }
-                Some(Ok(Value::String(self.display_value(receiver).into())))
-            }
-            "equal" => {
-                if extra_args.len() != 1 {
-                    return Some(Err(VmError::new("equal() takes 1 argument".into())));
-                }
-                // Execution-site backstop mirroring the `Op::Eq` gate
-                // (`equality_operand_violation`, src/vm/run.rs): an
-                // operand that is, or transitively contains, a
-                // function-shaped leaf has no Equal impl. A polymorphic
-                // wrapper (`fn eq(a: x, b: x) -> Bool { a.equal(b) }`)
-                // can launder such values past the typechecker's
-                // concrete-operand gate, and `PartialEq for Value` would
-                // silently answer by function and captures.
-                if receiver.contains_fn() || extra_args[0].contains_fn() {
-                    return Some(Err(VmError::new(
-                        "type 'Fn' does not implement Equal".into(),
-                    )));
-                }
-                // `Equal` is structural: `PartialEq for Value`
-                // (src/value/key.rs) is its one implementation, for `==`
-                // and for `.equal()`.
-                Some(Ok(Value::Bool(*receiver == extra_args[0])))
-            }
             "compare" => {
                 if extra_args.len() != 1 {
                     return Some(Err(VmError::new("compare() takes 1 argument".into())));
@@ -190,7 +126,7 @@ impl Vm {
                 // arm can defer to `Value::cmp`, which orders closures of
                 // two functions by the functions' addresses — an
                 // ASLR-nondeterministic result for a
-                // polymorphic `fn cmp(a: x, b: x) -> Int { a.compare(b) }`
+                // polymorphic `fn cmp(a: x, b: x) -> Int { Compare.compare(a, b) }`
                 // laundering a container of functions past the typechecker.
                 if receiver.contains_fn() || other.contains_fn() {
                     return Some(Err(VmError::new(
@@ -209,7 +145,7 @@ impl Vm {
                     // `Compare` is structural: `Ord for Value`
                     // (src/value/key.rs) orders records by their
                     // declared fields and variants by declaration, for
-                    // `<` and for `.compare()`.
+                    // `<` and for `Compare.compare`.
                     (Value::Variant(..), Value::Variant(..))
                     | (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     //
@@ -242,10 +178,10 @@ impl Vm {
                 if !extra_args.is_empty() {
                     return Some(Err(VmError::new("hash() takes no arguments".into())));
                 }
-                // Execution-site backstop mirroring the `"equal"` /
-                // `"compare"` arms above: a receiver that is, or
-                // transitively contains, a function-shaped leaf has no
-                // Hash (the checker rejects `[{ y -> y }].hash()`; a
+                // Execution-site backstop mirroring the `"compare"` arm
+                // above: a receiver that is, or transitively contains, a
+                // function-shaped leaf has no Hash (the checker rejects
+                // `Hash.hash([{ y -> y }])`; a
                 // function has none of the structural traits). The
                 // std `Hash` impl on `Value` hashes every closure as a
                 // constant discriminant tag ("not meaningfully

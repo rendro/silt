@@ -166,7 +166,7 @@ fn read_head(path) {
 ```
 
 Use `match` to handle the result. Every stdlib error enum (here `IoError`) implements the built-in
-`Error` trait, so you can pattern-match on specific variants and fall back to `.message()` for
+`Error` trait, so you can pattern-match on specific variants and fall back to `Error.message` for
 anything else:
 
 ```silt
@@ -177,7 +177,7 @@ fn main() {
   match io.read_file("app.json") {
     Ok(content) -> println("loaded {string.length(content)} characters")
     Err(io.NotFound(path)) -> println("file does not exist: {path}")
-    Err(e) -> println("error: {e.message()}")
+    Err(e) -> println("error: {Error.message(e)}")
   }
 }
 ```

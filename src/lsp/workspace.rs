@@ -462,7 +462,7 @@ impl Server {
         let method = names.methods.iter().find(|m| holds(m.span, cursor))?;
         let (tr, ty) = match method.selection {
             Selection::Impl { tr, ty } => (tr, Some(ty)),
-            Selection::Native { tr } | Selection::Dynamic { tr } => (tr, None),
+            Selection::Native { tr } | Selection::Dynamic { tr, .. } => (tr, None),
             Selection::Field | Selection::FieldCall => return None,
         };
         let named = |methods: &[FnDecl]| {

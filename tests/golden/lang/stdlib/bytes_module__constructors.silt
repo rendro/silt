@@ -5,11 +5,11 @@ fn main() {
   -- from_string / to_string round trip, ascii and multibyte
   match bytes.to_string(bytes.from_string("hello")) {
     Ok(s) -> println(s)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   match bytes.to_string(bytes.from_string("café 🎉")) {
     Ok(s) -> println(s)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   -- 0xff alone is not valid utf-8
   match bytes.from_list([255]) {

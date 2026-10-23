@@ -20,7 +20,7 @@ fn rows(db: postgres.PgPool, sql: String, type a) -> Result(List(a), postgres.Po
 fn show(r: Result(List(a), postgres.PostgresError)) {
   match r {
     Ok(rows) -> println("{list.length(rows)} rows")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 
@@ -30,6 +30,6 @@ fn main() {
       show(rows(db, "SELECT '\\x00ff'::bytea AS b, ARRAY['\\x01'::bytea] AS bs", Plain))
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

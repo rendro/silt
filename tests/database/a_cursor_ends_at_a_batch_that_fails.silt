@@ -32,6 +32,6 @@ fn main() {
       println("transact: {done}")
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

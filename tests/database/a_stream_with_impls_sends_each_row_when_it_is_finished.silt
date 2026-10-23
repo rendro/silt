@@ -120,7 +120,7 @@ fn main() {
           println("  {first}")
           channel.close(rows)
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       println("an impl that waits for the reader:")
       match postgres.stream(db, "SELECT to_jsonb(g) AS step FROM generate_series(1, 5) g", (), T) {
@@ -131,11 +131,11 @@ fn main() {
                 println("  read {r.step.n}")
                 let _ = io.write_file(marker(r.step.n), "")
               }
-              Err(e) -> println("  Err {e.message()}")
+              Err(e) -> println("  Err {Error.message(e)}")
             }
           }
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       loop n = 1 {
         match n <= 5 {
@@ -153,7 +153,7 @@ fn main() {
           println("  {first}")
           channel.close(rows)
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       println("  the next statement: {postgres.query(db, "SELECT 1 AS n", (), One)}")
       println("an impl that calls env.set:")
@@ -163,7 +163,7 @@ fn main() {
             match channel.receive(rows) {
               Some(Ok(_)) -> loop(n + 1)
               Some(Err(e)) -> {
-                println("  Err {e.message()}")
+                println("  Err {Error.message(e)}")
                 n
               }
               None -> n
@@ -171,11 +171,11 @@ fn main() {
           }
           println("  {n} rows")
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       println("  F8P_SEEN: {env.get("F8P_SEEN")}")
       postgres.close(db)
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

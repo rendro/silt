@@ -7,7 +7,7 @@ fn main() {
       println(bytes.to_hex(crypto.hmac_sha256(key, bytes.from_string("Hi There"))))
       println(bytes.to_hex(crypto.hmac_sha512(key, bytes.from_string("Hi There"))))
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   println(bytes.length(crypto.hmac_sha256(bytes.from_string("k"), bytes.from_string("m"))))
   println(bytes.length(crypto.hmac_sha512(bytes.from_string("k"), bytes.from_string("m"))))

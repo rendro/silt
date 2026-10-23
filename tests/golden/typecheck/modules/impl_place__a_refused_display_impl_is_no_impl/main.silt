@@ -17,7 +17,7 @@ fn need_d(x: a) -> Int where a: Display { 1 }
 
 fn main() {
   let t = Tag { name: "m" }
-  let _ = t.display()
+  let _ = "{t}"
   let _ = "{t}"
   println(t)
   let _ = need_d(t)

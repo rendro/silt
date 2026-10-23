@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: the impl of trait 'traits.Area' for type 'shapes.Square' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
--- stderr-contains: unknown field or method 'area' on type shapes.Square
+-- stderr-contains: type 'shapes.Square' does not implement trait 'traits.Area'
 -- An impl written elsewhere is no impl: nothing is called through it.
 import shapes.{ Square }
 import traits.{ Area }
@@ -13,5 +13,5 @@ trait Area for Square {
 }
 
 fn main() {
-  println(Square { side: 2 }.area())
+  println(Area.area(Square { side: 2 }))
 }

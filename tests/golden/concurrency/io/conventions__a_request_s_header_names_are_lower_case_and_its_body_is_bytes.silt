@@ -62,7 +62,7 @@ fn main() {
   println(ask(port, bytes.from_list([0, 255, 254, 104]) |> result.unwrap_or(bytes.empty())))
   match http.get("http://127.0.0.1:{port}/") {
     Ok(r) -> println("{map.get(r.headers, "x-answered-by")} {map.contains(r.headers, "X-Answered-By")}")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   task.cancel(server)
 }

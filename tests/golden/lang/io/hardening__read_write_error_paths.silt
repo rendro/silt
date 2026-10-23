@@ -7,7 +7,7 @@ fn main() {
   println(match io.read_file("silt_test_nonexistent_file_12345.txt") {
     Ok(_) -> "unexpected success"
     Err(e) -> match {
-      e.message() == "" -> "empty error"
+      Error.message(e) == "" -> "empty error"
       _ -> "has error message"
     }
   })

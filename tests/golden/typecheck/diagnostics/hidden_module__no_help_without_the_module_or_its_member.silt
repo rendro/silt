@@ -1,6 +1,6 @@
 -- exit: 1
--- stderr-contains: unknown method 'length' on List
--- stderr-contains: unknown method 'frobnicate' on List
+-- stderr-contains: type 'List(Int)' has no field 'length'
+-- stderr-contains: type 'List(Int)' has no field 'frobnicate'
 -- stderr-not-contains: hides the module
 -- No help about a hidden module when the module is not imported, or
 -- when it has no member of the name; a local with the field is used.

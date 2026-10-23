@@ -8,7 +8,7 @@ type Half {
 trait Sized {
   fn size(self) -> Int
   fn twice(self) -> Int {
-    let double = { n -> n + self.size() }
+    let double = { n -> n + Sized.size(self) }
     double(1) + 0
   }
 }
@@ -21,5 +21,5 @@ trait Sized for Half {
 }
 
 fn main() {
-  println(Half { n: 4 }.twice())
+  println(Sized.twice(Half { n: 4 }))
 }

@@ -27,7 +27,7 @@ trait Container for Box(a) where a: Equal {
 
 fn main() {
   let w = Box { item: 2 }
-  println(w.unwrap() + "x")
-  println(w.holds("two"))
-  let n: String = Box { item: 1 }.unwrap()
+  println(Container.unwrap(w) + "x")
+  println(Container.holds(w, "two"))
+  let n: String = Container.unwrap(Box { item: 1 })
 }

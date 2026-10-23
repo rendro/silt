@@ -583,7 +583,7 @@ fn main() {
     Ok(Ok(contents)) -> println(contents)
     Ok(Err(e)) -> println("the read failed: {e}")
     Err(task.Timeout) -> println("the read took too long")
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 ```

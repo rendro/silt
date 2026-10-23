@@ -84,7 +84,7 @@ fn main() {
   println("http.request")
   match http.request(http.HEAD, "http://127.0.0.1:{port}/", bytes.empty(), #{}) {
     Ok(resp) -> println("  gets {resp.status}, content-length {map.get(resp.headers, "content-length")}, {bytes.length(resp.body)} bytes")
-    Err(e) -> println("  {e.message()}")
+    Err(e) -> println("  {Error.message(e)}")
   }
 
   println("a client written by hand")

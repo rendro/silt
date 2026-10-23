@@ -9,7 +9,7 @@ trait Vals for Map(k, v) where v: Marked {
   fn total(self) -> Int { map.length(self) }
 }
 
-fn go(x: b) -> Int where b: Vals { x.total() }
+fn go(x: b) -> Int where b: Vals { Vals.total(x) }
 
 fn main() {
   println(go(#{ "a": 7 }))

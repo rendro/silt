@@ -36,7 +36,7 @@ fn said(answer: Result(postgres.PgPool, postgres.PostgresError), told: Bool) -> 
         _ -> "another error"
       }
       match told {
-        true -> "{variant}: {e.message()}"
+        true -> "{variant}: {Error.message(e)}"
         false -> variant
       }
     }

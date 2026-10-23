@@ -9,7 +9,7 @@ trait Down for Counter {
   fn down(self, k: Int) -> Int {
     match k {
       0 -> self.n
-      _ -> self.down(k - 1)
+      _ -> Down.down(self, k - 1)
     }
   }
 }
@@ -18,7 +18,7 @@ trait Ping for Counter {
   fn ping(self, k: Int) -> String {
     match k {
       0 -> "counter {self.n}"
-      _ -> Other { n: self.n }.ping(k - 1)
+      _ -> Ping.ping(Other { n: self.n }, k - 1)
     }
   }
 }
@@ -30,8 +30,8 @@ trait Ping for Other {
     }
   }
 }
-fn hop(c: Counter, k: Int) -> String { c.ping(k) }
+fn hop(c: Counter, k: Int) -> String { Ping.ping(c, k) }
 fn main() {
-  println(Counter { n: 7 }.down(1000000))
-  println(Counter { n: 0 }.ping(1000001))
+  println(Down.down(Counter { n: 7 }, 1000000))
+  println(Ping.ping(Counter { n: 0 }, 1000001))
 }

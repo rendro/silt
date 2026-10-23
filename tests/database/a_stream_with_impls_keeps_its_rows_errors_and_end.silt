@@ -75,7 +75,7 @@ fn drain(rows: Channel(Result(R, postgres.PostgresError))) {
         true -> loop(n + 1)
         false -> (n, "row {n + 1} is out of order: {row}")
       }
-      Some(Err(e)) -> (n, "Err({e.message()})")
+      Some(Err(e)) -> (n, "Err({Error.message(e)})")
       None -> (n, "(end)")
     }
   }
@@ -93,7 +93,7 @@ fn stream(db: postgres.PgPool, n: String, code: String) {
   let sql = string.replace(string.replace(sql, ":n", n), ":code", code)
   match postgres.stream(db, sql, (), R) {
     Ok(rows) -> drain(rows)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 
@@ -123,17 +123,17 @@ fn main() {
           channel.close(rows)
           println("  {n} rows, closed")
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       match postgres.query(db, "SELECT 1 AS n, to_jsonb('1'::text) AS code", (), R) {
         Ok(rows) -> println("  the next statement: {rows}")
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       println("in a transaction:")
       let done = postgres.transact(db) { tx ->
         match postgres.stream(tx, "SELECT g AS n, CASE WHEN g % 3 = 0 THEN NULL ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 2000) g", (), R) {
           Ok(rows) -> drain(rows)
-          Err(e) -> println(e.message())
+          Err(e) -> println(Error.message(e))
         }
         Ok(())
       }
@@ -145,7 +145,7 @@ fn main() {
             match channel.receive(rows) {
               Some(Ok(row)) -> loop(n + 1, sum + row.slow.n)
               Some(Err(e)) -> {
-                println(e.message())
+                println(Error.message(e))
                 (n, sum)
               }
               None -> (n, sum)
@@ -153,10 +153,10 @@ fn main() {
           }
           println("  {n} rows, their sum {sum}")
         }
-        Err(e) -> println(e.message())
+        Err(e) -> println(Error.message(e))
       }
       postgres.close(db)
     }
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

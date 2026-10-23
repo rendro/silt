@@ -15,10 +15,10 @@ fn find(db: a, ps: p) -> Result(List(User), postgres.PostgresError) {
 fn main() {
   match find(0, (1,)) {
     Ok(_) -> println("a tuple: Ok")
-    Err(e) -> println("a tuple: {e.message()}")
+    Err(e) -> println("a tuple: {Error.message(e)}")
   }
   match find(0, 1) {
     Ok(_) -> println("an Int: Ok")
-    Err(e) -> println("an Int: {e.message()}")
+    Err(e) -> println("an Int: {Error.message(e)}")
   }
 }

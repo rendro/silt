@@ -1,6 +1,6 @@
 error[type]: method 'sh' of the impl of 'Sh' for 'Int' adds the bound `a: Conv(Int)`, which the trait does not declare for it
  --> impl_method_bound__trait_argument_differs.silt:11:20
     |
- 11 | trait Sh for Int { fn sh(self, x: a) -> String where a: Conv(Int) { "{x.conv()}" } }
-    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method 'sh' of the impl of 'Sh' for 'Int' adds the bound `a: Conv(Int)`, which the trait does not declare for it
+ 11 | trait Sh for Int { fn sh(self, x: a) -> String where a: Conv(Int) { "{Conv.conv(x)}" } }
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method 'sh' of the impl of 'Sh' for 'Int' adds the bound `a: Conv(Int)`, which the trait does not declare for it
   = help: a call through the trait would not owe it: declare the bound on the method in trait 'Sh', or on the impl's header

@@ -141,14 +141,6 @@ struct Local {
 
 // ── Compiler errors ─────────────────────────────────────────────────
 
-/// Whether the method `method` of the trait `t`, one the VM has for
-/// every type, takes no value of the type: `decode` of `json.Decode`,
-/// called on a type (`T.decode(v)`) with the type's descriptor as the
-/// receiver.
-fn takes_no_self(t: crate::defs::TraitId, method: Symbol) -> bool {
-    crate::defs::builtin_trait_id("Decode") == Some(t) && resolve(method) == "decode"
-}
-
 /// A defect in silt: the program reached the compiler with an error the
 /// typechecker reports (a builtin module used without an import, a
 /// `loop(...)` outside a loop or with the wrong number of arguments). The
@@ -1334,46 +1326,79 @@ impl<'a> Compiler<'a> {
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
-            // `Int.display`, `Pt.compare` as a value, a method the VM has
-            // natively for the type: the function `{ a -> a.display() }`
-            // (`{ a, b -> a.compare(b) }` for the two-argument methods).
-            // The program wrote no closure there: the function has the
-            // method's name, `Int.display`, as a written method has.
+            // `Tr.m` as a value: the method of the one impl the checker
+            // selected, or the function `{ a, b -> Tr.m(a, b) }`, which
+            // finds it where it runs. The program wrote no closure there:
+            // the function has the method's name, `Tr.m`.
+            ExprKind::FieldAccess(of, method, _) if self.res_trait(of.res).is_some() => {
+                let tr = self.res_trait(of.res).expect("a trait");
+                if let Some(crate::ast::Selection::Impl { tr, ty }) = expr.sel
+                    && let Some(slot) = self.globals.method(tr, ty, &resolve(*method))
+                {
+                    self.emit(Asm::GetGlobal { slot }, span)?;
+                } else {
+                    let arity = match &expr.ty {
+                        Some(Type::Fun(params, _)) => params.len(),
+                        _ => return Err(checker_missed(span, "a trait method of no type")),
+                    };
+                    let names: Vec<Symbol> =
+                        (0..arity).map(|k| intern(&format!("__arg{k}__"))).collect();
+                    let ident = |name: Symbol| Expr::new(ExprKind::Ident(name), span);
+                    let call = Expr::new(
+                        ExprKind::Call(
+                            Box::new(expr.clone()),
+                            names.iter().map(|n| ident(*n)).collect(),
+                        ),
+                        span,
+                    );
+                    let lambda = Expr::new(
+                        ExprKind::Lambda {
+                            params: names
+                                .iter()
+                                .map(|n| crate::ast::Param {
+                                    kind: crate::ast::ParamKind::Data,
+                                    pattern: crate::ast::Pattern::new(
+                                        crate::ast::PatternKind::Ident(*n),
+                                        span,
+                                    ),
+                                    ty: None,
+                                })
+                                .collect(),
+                            body: Box::new(call),
+                        },
+                        span,
+                    );
+                    let method_name = format!("{}.{method}", self.units.defs.get(tr.0).name);
+                    let around = self
+                        .contexts
+                        .last_mut()
+                        .map(|context| std::mem::replace(&mut context.closures, method_name));
+                    let compiled = self.compile_expr(&lambda);
+                    if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                        context.closures = around;
+                    }
+                    compiled?;
+                }
+            }
+
+            // `T.decode` as a value, a method the VM has natively for the
+            // type: the function `{ v -> T.decode(v) }`. The program wrote
+            // no closure there: the function has the method's name,
+            // `T.decode`, as a written method has.
             ExprKind::FieldAccess(of, method, _)
-                if let Some(TypeMember::Native(tr)) = self.type_member(expr)? =>
+                if let Some(TypeMember::Native(_)) = self.type_member(expr)? =>
             {
                 let ty = match &of.kind {
                     ExprKind::Ident(ty) | ExprKind::FieldAccess(_, ty, _) => *ty,
                     _ => return Err(checker_missed(span, "a method of no named type")),
                 };
                 let method_name = format!("{ty}.{method}");
-                let names: &[&str] = match resolve(*method).as_str() {
-                    "compare" | "equal" => &["__self__", "__other__"],
-                    "decode" => &["__value__"],
-                    _ => &["__self__"],
-                };
+                let names: &[&str] = &["__value__"];
                 let ident = |name: &str| Expr::new(ExprKind::Ident(intern(name)), span);
-                let call = match takes_no_self(tr, *method) {
-                    // `T.decode` as a value: `{ v -> T.decode(v) }`.
-                    true => Expr::new(
-                        ExprKind::Call(Box::new(expr.clone()), vec![ident(names[0])]),
-                        span,
-                    ),
-                    false => {
-                        let mut access = Expr::new(
-                            ExprKind::FieldAccess(Box::new(ident(names[0])), *method, span),
-                            span,
-                        );
-                        access.sel = Some(crate::ast::Selection::Native { tr });
-                        Expr::new(
-                            ExprKind::Call(
-                                Box::new(access),
-                                names[1..].iter().map(|n| ident(n)).collect(),
-                            ),
-                            span,
-                        )
-                    }
-                };
+                let call = Expr::new(
+                    ExprKind::Call(Box::new(expr.clone()), vec![ident(names[0])]),
+                    span,
+                );
                 let lambda = Expr::new(
                     ExprKind::Lambda {
                         params: names
@@ -1929,9 +1954,11 @@ impl<'a> Compiler<'a> {
             self.emit(Asm::CallBuiltin { builtin, argc }, span)?;
         } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
             let member = self.type_member(callee)?;
-            if let Some(TypeMember::Native(t)) = member
-                && takes_no_self(t, *method)
-            {
+            if self.res_trait(receiver.res).is_some() {
+                // `Tr.m(args)`: the method of the impl the checker
+                // selected for the type of the arguments.
+                self.compile_trait_call(callee, *method, args, span, tail)?;
+            } else if let Some(TypeMember::Native(t)) = member {
                 // `T.decode(v)`: the VM's method of the type, which takes
                 // no value of it; the type's descriptor chooses it.
                 let Some(descriptor) = self.type_value(receiver.res) else {
@@ -1940,19 +1967,7 @@ impl<'a> Compiler<'a> {
                 let idx = self.add_constant(descriptor, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(*method, args.len() + 1, t, tail, span)?;
-            } else if let Some(TypeMember::Native(t)) = member {
-                // `Int.display(1)`, `Pt.compare(a, b)`: a method the VM
-                // has natively for the type, not a global; the first
-                // argument is the receiver.
-                if args.is_empty() {
-                    return Err(checker_missed(
-                        span,
-                        &format!("the call of '{method}' through its type with no receiver"),
-                    ));
-                }
-                self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(*method, args.len(), t, tail, span)?;
+                self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
             } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
@@ -1967,7 +1982,8 @@ impl<'a> Compiler<'a> {
                 let argc = args.len();
                 self.emit_call(argc, tail, span)?;
             } else {
-                // Method call on a value: expr.method(args)
+                // A field's function, or a method on a type held in a
+                // value (`a.empty()` for a `type a`).
                 self.compile_method_call(callee, receiver, *method, args, span, tail)?;
             }
         } else {
@@ -1979,8 +1995,48 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// Compile `receiver.method(args)`, a call on a value, as the
-    /// checker's `Selection` on `callee` says.
+    /// Compile `Tr.method(args)`, a call through a trait, as the
+    /// checker's `Selection` on `callee` says: the method of one impl,
+    /// a call of its global; else the method found where the code runs,
+    /// by the type of the first argument.
+    fn compile_trait_call(
+        &mut self,
+        callee: &Expr,
+        method: Symbol,
+        args: &[&Expr],
+        span: Span,
+        tail: bool,
+    ) -> Result<(), Diagnostic> {
+        use crate::ast::Selection;
+        match callee.sel {
+            Some(Selection::Impl { tr, ty })
+                if let Some(slot) = self.globals.method(tr, ty, &resolve(method)) =>
+            {
+                self.emit(Asm::GetGlobal { slot }, span)?;
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call(args.len(), tail, span)
+            }
+            // Found where the code runs, by the type of the argument of
+            // type `Self` (a builtin trait's is the first).
+            Some(Selection::Dynamic { tr, at }) if usize::from(at) < args.len() => {
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(method, args.len(), tr, usize::from(at), tail, span)
+            }
+            Some(Selection::Impl { tr, .. } | Selection::Native { tr }) if !args.is_empty() => {
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(method, args.len(), tr, 0, tail, span)
+            }
+            _ => Err(checker_missed(
+                span,
+                &format!("the call of '{method}' through its trait with no selection"),
+            )),
+        }
+    }
+
+    /// Compile `receiver.method(args)` as the checker's `Selection` on
+    /// `callee` says: the function a field holds, or, on a type held in
+    /// a value (`a.empty()` for a `type a`), the method of the type's
+    /// impl, found where the code runs.
     fn compile_method_call(
         &mut self,
         callee: &Expr,
@@ -2000,27 +2056,18 @@ impl<'a> Compiler<'a> {
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
-            // One impl's method: a call of its global, like a function's.
-            Some(Selection::Impl { tr, ty })
-                if let Some(slot) = self.globals.method(tr, ty, &resolve(method)) =>
-            {
-                self.emit(Asm::GetGlobal { slot }, span)?;
+            // The method is found where the code runs, by the type the
+            // descriptor carries.
+            Some(Selection::Dynamic { tr, .. }) => {
                 self.compile_operands(with_receiver)?;
-                self.emit_call(args.len() + 1, tail, span)
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
             }
-            // The method is found where the code runs, by the receiver's
-            // type. (An impl with no global is a builtin type's that the
-            // VM has natively.)
-            Some(
-                Selection::Impl { tr, .. } | Selection::Native { tr } | Selection::Dynamic { tr },
-            ) => {
-                self.compile_operands(with_receiver)?;
-                self.emit_call_method(method, args.len() + 1, tr, tail, span)
+            Some(Selection::Impl { .. } | Selection::Native { .. } | Selection::Field) | None => {
+                Err(checker_missed(
+                    span,
+                    &format!("the call of '{method}' with no selection"),
+                ))
             }
-            Some(Selection::Field) | None => Err(checker_missed(
-                span,
-                &format!("the call of '{method}' with no selection"),
-            )),
         }
     }
 
@@ -2442,13 +2489,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// Emit `CallMethod` of `method` of the trait `t` with `argc`
-    /// values (the receiver first) on the stack; in tail position
-    /// (`tail`), `TailCallMethod; Return`.
+    /// values on the stack, found by the type of the one at `at` (the
+    /// receiver); in tail position (`tail`), `TailCallMethod; Return`.
     fn emit_call_method(
         &mut self,
         method: Symbol,
         argc: usize,
         t: crate::defs::TraitId,
+        at: usize,
         tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
@@ -2466,10 +2514,26 @@ impl<'a> Compiler<'a> {
             limit_diagnostic(limit, span)
         })?;
         if tail {
-            self.emit(Asm::TailCallMethod { method, argc, of }, span)?;
+            self.emit(
+                Asm::TailCallMethod {
+                    method,
+                    argc,
+                    of,
+                    at,
+                },
+                span,
+            )?;
             self.emit(Asm::Return, span)
         } else {
-            self.emit(Asm::CallMethod { method, argc, of }, span)
+            self.emit(
+                Asm::CallMethod {
+                    method,
+                    argc,
+                    of,
+                    at,
+                },
+                span,
+            )
         }
     }
 
@@ -3722,14 +3786,15 @@ fn main() { list.length([1, 2, 3]) }
         let fns = compile(
             r#"
 type Foo { x: Int }
-trait Display for Foo {
-    fn display(self) -> String { "foo" }
+trait Show { fn show(self) -> String }
+trait Show for Foo {
+    fn show(self) -> String { "foo" }
 }
-fn shown(x: a) -> String where a: Display { x.display() }
+fn shown(x: a) -> String where a: Show { Show.show(x) }
 fn field(r: {f: Fn(Int) -> Int}) -> Int { r.f(1) }
 fn main() {
     let f = Foo { x: 1 }
-    f.display()
+    Show.show(f)
 }
 "#,
         );

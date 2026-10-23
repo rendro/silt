@@ -13,8 +13,8 @@ trait Container(String) for StrBox {
   fn get_val(self) -> String { self.v }
 }
 
-fn use_int(c: x) -> Int where x: Container(Int) { c.get_val() }
-fn use_str(c: y) -> String where y: Container(String) { c.get_val() }
+fn use_int(c: x) -> Int where x: Container(Int) { Container.get_val(c) }
+fn use_str(c: y) -> String where y: Container(String) { Container.get_val(c) }
 
 fn main() {
   let a = IntBox { v: 42 }

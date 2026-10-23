@@ -1,0 +1,17 @@
+pub trait Codec {
+  fn encode(self) -> String
+}
+
+pub type T {
+  x: Int,
+}
+
+trait Codec for T {
+  fn encode(self) -> String {
+    "t{self.x}"
+  }
+}
+
+pub fn show(t: T) -> String {
+  Codec.encode(t)
+}

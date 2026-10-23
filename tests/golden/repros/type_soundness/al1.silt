@@ -9,7 +9,7 @@ fn f(p: Pairs(Int)) -> Int { match p {
 } }
 fn main() {
   let m: Meters = 5
-  println(m.greet())
-  println(5.greet())
+  println(Greet.greet(m))
+  println(Greet.greet(5))
   println(f([(1, 2)]))
 }

@@ -9,5 +9,5 @@ type H { size: Int }
 trait Base for H {}
 trait Top for H { fn top(self) -> Int { self.size } }
 fn main() {
-  println(H { size: 2 }.top())
+  println(Top.top(H { size: 2 }))
 }

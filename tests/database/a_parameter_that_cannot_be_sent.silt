@@ -25,24 +25,24 @@ fn main() {
     Ok(db) -> {
       match postgres.query(db, "SELECT cardinality($1::bytea[])::text AS v", ([pic, pic],), Out) {
         Ok(rows) -> println("into a bytea[]: {rows}")
-        Err(e) -> println("into a bytea[]: {e.message()}")
+        Err(e) -> println("into a bytea[]: {Error.message(e)}")
       }
       match postgres.stream(db, "SELECT $1::jsonb::text AS v", ([pic],), Out) {
         Ok(rows) -> {
           match channel.receive(rows) {
             Some(Ok(row)) -> println("a stream into jsonb: {row}")
             Some(Err(postgres.Other(why))) -> println("a stream into jsonb: Other({why})")
-            Some(Err(e)) -> println("a stream into jsonb: {e.message()}")
+            Some(Err(e)) -> println("a stream into jsonb: {Error.message(e)}")
             None -> println("a stream into jsonb: closed")
           }
           println("then: {channel.receive(rows)}")
         }
-        Err(e) -> println("a stream into jsonb: {e.message()}")
+        Err(e) -> println("a stream into jsonb: {Error.message(e)}")
       }
       println("a query into jsonb:")
       let _ = postgres.query(db, "SELECT $1::jsonb::text AS v", ([pic],), Out)
       println("not reached")
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

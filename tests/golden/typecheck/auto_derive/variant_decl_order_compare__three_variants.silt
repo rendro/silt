@@ -1,5 +1,5 @@
 type Three { First, Second, Third, }
-fn cmp_gen(a: a, b: a) -> Int where a: Compare { a.compare(b) }
+fn cmp_gen(a: a, b: a) -> Int where a: Compare { Compare.compare(a, b) }
 fn main() {
     println(cmp_gen(First, Second))
     println(cmp_gen(Second, Third))

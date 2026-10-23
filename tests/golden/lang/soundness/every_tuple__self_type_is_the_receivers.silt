@@ -9,6 +9,6 @@ trait Same for Tuple {
   fn other(self, o: Self) -> Self { o }
 }
 fn main() {
-  let (Cents(k), _) = (Cents(1), 2).other((Hidden("s3cr3t"), 2, 3))
+  let (Cents(k), _) = Same.other((Cents(1), 2), (Hidden("s3cr3t"), 2, 3))
   println("bound: {k}")
 }

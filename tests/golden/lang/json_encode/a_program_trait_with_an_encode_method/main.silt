@@ -1,0 +1,10 @@
+-- A program's own trait with a method `encode` beside `json.Encode`:
+-- each call names its trait, in a module that imports json too.
+import codec.{ Codec, T, show }
+import json
+
+fn main() {
+  println(show(T { x: 1 }))
+  println(Codec.encode(T { x: 2 }))
+  println(json.Encode.encode(T { x: 3 }))
+}

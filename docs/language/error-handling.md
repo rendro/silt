@@ -36,7 +36,7 @@ catalog is in [`docs/stdlib/errors.md`](../stdlib/errors.md); hovering
 over an error type in your editor shows the same table.
 
 You can either pattern-match on a specific variant, or fall back to
-`.message()` for a rendered string:
+`Error.message` for a rendered string:
 
 ```silt
 import io
@@ -47,15 +47,15 @@ fn main() {
     Ok(content) -> println("loaded {string.length(content)} bytes")
     Err(io.NotFound(path)) -> println("file does not exist: {path}")
     Err(io.PermissionDenied(path)) -> println("denied: {path}")
-    Err(e) -> println("error: {e.message()}")
+    Err(e) -> println("error: {Error.message(e)}")
   }
 }
 ```
 
 Every stdlib error enum implements the built-in `Error` trait, which has
 `Display` as a supertrait and provides `message(self) -> String`. String
-interpolation `"{e}"` and `e.message()` produce the same text — silt routes
-the `Display` impl through `Error::message` for stdlib error enums so the two
+interpolation `"{e}"` and `Error.message(e)` produce the same text — silt routes
+the `Display` impl through `Error.message` for stdlib error enums so the two
 shapes never drift.
 
 ## The `?` Operator

@@ -7,10 +7,10 @@ trait Loud { fn loud(self) -> String }
 trait Loud for Int { fn loud(self) -> String { "INT" } }
 trait Greet for Box(a) where a: Greet + Loud {
   fn greet(self) -> String {
-    match self { Box(inner) -> inner.loud() }
+    match self { Box(inner) -> Loud.loud(inner) }
   }
 }
 fn main() {
   let b = Box(5)
-  println(b.greet())
+  println(Greet.greet(b))
 }

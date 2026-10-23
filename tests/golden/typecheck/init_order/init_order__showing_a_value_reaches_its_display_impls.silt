@@ -30,7 +30,7 @@ let a = "{Temp { degrees: 1 }}"
 
 let b = string.from(Wrap { inner: [Temp { degrees: 2 }] })
 
-let c = Node(Leaf(Temp { degrees: 3 }), Leaf(Temp { degrees: 4 })).display()
+let c = string.from(Node(Leaf(Temp { degrees: 3 }), Leaf(Temp { degrees: 4 })))
 
 let d = [Some(Temp { degrees: 5 })] |> list.map(string.from)
 
@@ -47,7 +47,7 @@ let f = show((Temp { degrees: 7 }, 1))
 
 let plain = {
   println("plain")
-  "{[1, 2]} {3.display()}"
+  "{[1, 2]} {3}"
 }
 
 let unit = {

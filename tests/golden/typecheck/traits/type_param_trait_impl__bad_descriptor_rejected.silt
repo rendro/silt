@@ -11,7 +11,7 @@ trait Tag for Int {
 }
 
 fn use_it() {
-    let _ = 42.tag("not a type")
+    let _ = Tag.tag(42, "not a type")
 }
 
 fn main() {}

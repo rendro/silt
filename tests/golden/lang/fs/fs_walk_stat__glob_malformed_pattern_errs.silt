@@ -4,7 +4,7 @@ fn main() {
     match fs.glob("src/[unterminated") {
         Ok(_) -> println("unexpected Ok")
         Err(e) -> {
-            let msg = e.message()
+            let msg = Error.message(e)
             println(string.starts_with(msg, "invalid input"))
         }
     }

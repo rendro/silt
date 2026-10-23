@@ -143,8 +143,8 @@ codes! {
     NoSuchField = "E0306", Type;
     MissingField = "E0307", Type;
     UnknownMethod = "E0308", Type;
-    /// A method called in a way it cannot be (a method without `self` on
-    /// a value).
+    /// A method called in a way it cannot be: through its trait, one
+    /// that takes no value of the type, or one of `Display` and `Equal`.
     InvalidMethodCall = "E0309", Type;
     /// A method several traits provide.
     AmbiguousMethod = "E0310", Type;

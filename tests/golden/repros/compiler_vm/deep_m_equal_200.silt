@@ -20,7 +20,7 @@ fn build(n) {
 fn work() {
   let a = build(200)
   let b = build(200)
-  a.equal(b)
+  a == b
 }
 
 fn main() {

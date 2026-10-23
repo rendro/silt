@@ -32,11 +32,11 @@ fn main() {
   println(json.pretty(Point { y: 2, x: 1 }))
   match toml.stringify(shape) {
     Ok(text) -> print(text)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   match toml.pretty(shape) {
     Ok(text) -> print(text)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
   println(json.stringify(#{ 9: "nine", 10: "ten" }))
   println(json.stringify(json.Object(#{ "b": json.Int(1), "a": json.Int(2) })))

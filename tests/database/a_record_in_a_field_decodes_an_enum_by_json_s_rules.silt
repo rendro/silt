@@ -28,7 +28,7 @@ fn url() -> String {
 fn show(r: Result(List(a), postgres.PostgresError)) where a: Display {
   match r {
     Ok(rows) -> println(rows)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }
 
@@ -43,6 +43,6 @@ fn main() {
       show(postgres.query(db, "SELECT json_build_object('state', $1::jsonb) AS inner", (Paused(4),), Wrapped))
       postgres.close(db)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

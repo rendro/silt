@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: unknown field or method 'nam' on type User
+-- stderr-contains: error[type]: type 'User' has no field 'nam'
 -- stderr-contains: did you mean `name`?
 type User { name: String, age: Int }
 fn main() {

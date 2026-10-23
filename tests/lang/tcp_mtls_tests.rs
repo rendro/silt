@@ -184,17 +184,17 @@ fn main() -> String {{
           Ok(ca) -> match tcp.accept(listener) {{
             Ok(conn) -> match tcp.tls_server_mtls(conn, cert, key, ca) {{
               Ok(_) -> "ok"
-              Err(e) -> "err:{{e.message()}}"
+              Err(e) -> "err:{{Error.message(e)}}"
             }}
-            Err(e) -> "accept:{{e.message()}}"
+            Err(e) -> "accept:{{Error.message(e)}}"
           }}
-          Err(e) -> "ca-parse:{{e.message()}}"
+          Err(e) -> "ca-parse:{{Error.message(e)}}"
         }}
-        Err(e) -> "key-parse:{{e.message()}}"
+        Err(e) -> "key-parse:{{Error.message(e)}}"
       }}
-      Err(e) -> "cert-parse:{{e.message()}}"
+      Err(e) -> "cert-parse:{{Error.message(e)}}"
     }}
-    Err(e) -> "listen:{{e.message()}}"
+    Err(e) -> "listen:{{Error.message(e)}}"
   }}
 }}
 "#,
@@ -357,13 +357,13 @@ fn serve(conn, cert, key, done) {{
       -- A TLS connection is not handed to tls_server again.
       let again = match tcp.tls_server(tls, cert, key) {{
         Ok(_) -> "a second handshake"
-        Err(e) -> e.message()
+        Err(e) -> Error.message(e)
       }}
       let _ = tcp.write(tls, bytes.from_string("hello over TLS"))
       tcp.close(tls)
       channel.send(done, "served; {{again}}")
     }}
-    Err(e) -> channel.send(done, "err:{{e.message()}}")
+    Err(e) -> channel.send(done, "err:{{Error.message(e)}}")
   }}
 }}
 

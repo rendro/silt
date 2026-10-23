@@ -9,5 +9,5 @@
 -- program is checked, not when it runs.
 fn main() {
   println(Int.parse("3"))
-  println(Int.display(3))
+  println("{3}")
 }

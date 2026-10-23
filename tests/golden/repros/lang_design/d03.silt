@@ -12,7 +12,7 @@ trait Display for Shape {
 
 fn main() {
   let s = Circle(5.0)
-  println(s.display())
+  println("{s}")
   println("{s}")
   println(s)
   println([s])

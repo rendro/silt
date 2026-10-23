@@ -3,11 +3,10 @@
 -- A parameter annotated with a type variable has the bounds its `where`
 -- clauses declare and no other, also when the return type is left out.
 -- stderr-contains: error[type]: type variable `b` is not known to implement trait 'Greet', which 'hello' needs
--- stderr-contains: no field or method 'greet' on a value of type `c`: the type variable has no trait bound
--- stderr-contains: add `where c: SomeTrait`
+-- stderr-contains: error[type]: type 'c' has no field 'greet'
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
-fn hello(x: a) -> String where a: Greet { x.greet() }
+fn hello(x: a) -> String where a: Greet { Greet.greet(x) }
 fn partly(x: b) { hello(x) }
 fn method(x: c) -> String { x.greet() }
 fn main() { println(partly(1)) }

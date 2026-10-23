@@ -2,6 +2,7 @@
 -- type held in a value, is the method of the type's values.
 import json
 import list
+import string
 
 type P {
   x: Int,
@@ -17,25 +18,25 @@ type Color {
 }
 
 fn shown(x: a, type a) -> String where a: Display {
-  a.display(x)
+  "{x}"
 }
 
 fn order(x: a, y: a, type a) -> Int where a: Compare {
-  a.compare(x, y)
+  Compare.compare(x, y)
 }
 
 fn main() {
-  println(Int.display(3))
-  println(Option.display(Some(1)))
-  println(Box.display(Box { v: "b" }))
-  println(Color.compare(Red, Green))
-  println(Float.equal(1.0, 1.0))
-  println(json.Value.display(json.Null))
-  println(list.map([1, 2], Int.display))
-  println(list.fold([P { x: 2 }, P { x: 1 }], 0, { acc, p -> acc + P.compare(p, P { x: 1 }) }))
+  println("{3}")
+  println("{Some(1)}")
+  println(string.from(Box { v: "b" }))
+  println(Compare.compare(Red, Green))
+  println(1.0 == 1.0)
+  println("{json.Null}")
+  println(list.map([1, 2], string.from))
+  println(list.fold([P { x: 2 }, P { x: 1 }], 0, { acc, p -> acc + Compare.compare(p, P { x: 1 }) }))
   let q = P
-  println(q.display(P { x: 4 }))
-  println(Int.hash(3) == 3.hash())
+  println(string.from(P { x: 4 }))
+  println(Hash.hash(3) == Hash.hash(3))
   println(shown(P { x: 5 }, P))
   println(order(2, 1, Int))
 }

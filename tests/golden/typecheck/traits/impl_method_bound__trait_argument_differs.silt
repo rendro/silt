@@ -8,5 +8,5 @@ trait Conv(to) { fn conv(self) -> to }
 trait Conv(String) for Int { fn conv(self) -> String { "i" } }
 trait Conv(Int) for Bool { fn conv(self) -> Int { 1 } }
 trait Sh { fn sh(self, x: a) -> String where a: Conv(String) }
-trait Sh for Int { fn sh(self, x: a) -> String where a: Conv(Int) { "{x.conv()}" } }
-fn main() { println(1.sh(1)) }
+trait Sh for Int { fn sh(self, x: a) -> String where a: Conv(Int) { "{Conv.conv(x)}" } }
+fn main() { println(Sh.sh(1, 1)) }

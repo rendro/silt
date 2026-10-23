@@ -17,10 +17,10 @@ fn show(c: Cents) -> String {
   }
 }
 fn main() {
-  let f = secret.cast()
+  let f = Cast.cast(secret)
   println(show(f(1)))
   let Cents(k) = f(2)
   println("bound: {k}")
-  let g = open.cast()
+  let g = Cast.cast(open)
   println(show(g(1)))
 }

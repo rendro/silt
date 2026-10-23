@@ -13,6 +13,6 @@ fn main() {
   let r = """{"name": "b", "items": [1]}""" |> parse(Bag)
   match r {
     Ok(b) -> println(b.name)
-    Err(e) -> println(e.message())
+    Err(e) -> println(Error.message(e))
   }
 }

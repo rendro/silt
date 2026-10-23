@@ -16,7 +16,7 @@ trait Sized {
 trait Named: Sized {
   fn name(self) -> String
   fn both(self, other: Self) -> Int {
-    self.size() + other.size()
+    Sized.size(self) + Sized.size(other)
   }
 }
 
@@ -44,7 +44,7 @@ fn depth(t: Tree(a)) -> Int {
 
 fn describe(x: t) -> String where t: Named + Sized {
   let n = 1
-  let s = "äö€😀 {x.name()} 😀 {x.size() + n} 😀 {n}"
+  let s = "äö€😀 {Named.name(x)} 😀 {Sized.size(x) + n} 😀 {n}"
   "{s} {n}"
 }
 
@@ -60,7 +60,7 @@ fn locals() -> Int {
 fn main() {
   let b = Box { w: 3 }
   println(describe(b))
-  println(b.both(Box { w: 4 }) + locals() + second)
+  println(Named.both(b, Box { w: 4 }) + locals() + second)
   let Box { w } = b
   println(w)
   let Box { w: width } = b

@@ -2,6 +2,7 @@
 import list
 import map
 import set
+import string
 type P { x: Int }
 type W { inner: P }
 type E { Wrap(P) }
@@ -19,17 +20,17 @@ fn main() {
   let q = P { x: 2 }
   println(p)
   println("{p}")
-  println(p.display())
+  println("{p}")
   println([p])
   println(Some(p))
   println((p, 1))
   println(W { inner: p })
-  println(W { inner: p }.display())
+  println(string.from(W { inner: p }))
   println(Wrap(p))
   println(#{ "k": p })
   println("--- equal (custom: always true)")
   println(p == q)
-  println(p.equal(q))
+  println(p == q)
   println([p] == [q])
   println(Some(p) == Some(q))
   println(W { inner: p } == W { inner: q })
@@ -37,7 +38,7 @@ fn main() {
   println(set.length(#[p, q]))
   println("--- compare (custom: reversed)")
   println(p < q)
-  println(p.compare(q))
+  println(Compare.compare(p, q))
   println(list.sort([p, q]))
   println([p] < [q])
   println(W { inner: p } < W { inner: q })

@@ -361,6 +361,13 @@ fn check(
         Instr::CallMethod { argc: 0, .. } | Instr::TailCallMethod { argc: 0, .. } => {
             return fail(format!("`{op}` has no receiver"));
         }
+        Instr::CallMethod { argc, at, .. } | Instr::TailCallMethod { argc, at, .. }
+            if at >= argc =>
+        {
+            return fail(format!(
+                "`{op}` finds its method by argument {at} of {argc}"
+            ));
+        }
         Instr::CallBuiltin { builtin: id, argc } => {
             // (The operand was checked above: it is a row.)
             if let Ok(row) = builtin(op, id) {
@@ -661,6 +668,7 @@ mod tests {
             1,
             lo,
             hi,
+            0,
             op(Op::Return),
         ];
         let function = Function::unverified(0, 0, code, vec![Value::String("foo".into())]);
@@ -692,7 +700,7 @@ mod tests {
     #[test]
     fn bad_13_method_call_without_a_receiver() {
         let [lo, hi] = 0u16.to_le_bytes();
-        let code = vec![op(Op::CallMethod), 0, 0, 0, lo, hi, op(Op::Return)];
+        let code = vec![op(Op::CallMethod), 0, 0, 0, lo, hi, 0, op(Op::Return)];
         assert_eq!(
             rejected(code, vec![Value::String("foo".into())]),
             "at offset 0: `CallMethod` has no receiver"
@@ -706,11 +714,28 @@ mod tests {
             5,
             lo,
             hi,
+            0,
             op(Op::Return),
         ];
         assert_eq!(
             rejected(code, vec![Value::String("foo".into())]),
             "at offset 1: `CallMethod` takes 5 values off a frame of 1"
+        );
+        // And by an argument it is not given.
+        let code = vec![
+            op(Op::Unit),
+            op(Op::CallMethod),
+            0,
+            0,
+            1,
+            lo,
+            hi,
+            1,
+            op(Op::Return),
+        ];
+        assert_eq!(
+            rejected(code, vec![Value::String("foo".into())]),
+            "at offset 1: `CallMethod` finds its method by argument 1 of 1"
         );
     }
 

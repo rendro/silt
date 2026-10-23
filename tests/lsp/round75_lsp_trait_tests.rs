@@ -166,7 +166,7 @@ fn rename_trait_updates_impl_header_and_where_clause() {
     // references stale.
     let source = "trait Greet {\n  fn hello(self) -> String\n}\n\
                   trait Greet for Int {\n  fn hello(self) -> String { \"hi\" }\n}\n\
-                  fn x(n: a) -> String where a: Greet {\n  n.hello()\n}\n";
+                  fn x(n: a) -> String where a: Greet {\n  Greet.hello(n)\n}\n";
     let mut client = LspClient::spawn();
     let uri = unique_uri("rename_trait_xref");
     client.did_open_and_wait(&uri, source);

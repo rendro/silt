@@ -1,7 +1,9 @@
 -- cmd: lsp
--- lsp: completion 13:14
--- `decode` takes no value of the type: completion after a dot on a value
--- does not offer it, also where json is imported (`display` it does).
+-- lsp: completion 15:14
+-- lsp: completion 16:23
+-- After a dot on a value completion offers its fields, no method of any
+-- trait; after `json.Decode.` nothing: `decode` takes no value of the
+-- type, so it is called through the type (`Money.decode`).
 import json
 
 type Money {
@@ -10,6 +12,6 @@ type Money {
 
 fn main() {
   let m = Money { cents: 5 }
-  println(m.d)
-  println(json.stringify(m))
+  println(m.c)
+  println(json.Decode.d)
 }

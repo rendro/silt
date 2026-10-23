@@ -18,9 +18,9 @@ trait Ord2 for Foo {
 }
 
 fn label(a: t, b: t) -> String where t: Ord2 {
-  match a.eq2(b) {
+  match Eq2.eq2(a, b) {
     true -> "equal"
-    false -> match a.lt2(b) {
+    false -> match Ord2.lt2(a, b) {
       true -> "less"
       false -> "greater"
     }

@@ -8,7 +8,7 @@ fn show(text: String) {
   match json.parse(text, json.Value) {
     Ok(_) -> println("ok")
     Err(json.Syntax(message, at)) -> println("byte {at}: {message}")
-    Err(e) -> println("other: {e.message()}")
+    Err(e) -> println("other: {Error.message(e)}")
   }
 }
 

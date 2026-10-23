@@ -7,9 +7,9 @@ trait Has { type Item
   fn item(self) -> Self::Item }
 trait Has for Tuple { type Item = Int
   fn item(self) -> Int { 2 } }
-fn c(x: a, type b) -> b where a: Conv(b) { x.conv() }
+fn c(x: a, type b) -> b where a: Conv(b) { Conv.conv(x) }
 fn main() {
-  println({ x -> x }.conv())
+  println(Conv.conv({ x -> x }))
   println(c({ x -> x + 1 }, Int))
-  println((1, 2).item())
+  println(Has.item((1, 2)))
 }

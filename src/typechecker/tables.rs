@@ -47,8 +47,8 @@ pub(super) struct TraitInfo {
     /// Implementing this trait on a type requires every supertrait to also
     /// be implemented for the same type (validated in
     /// `validate_trait_impls`). `expand_with_supertraits` walks this list
-    /// transitively to enable supertrait method calls inside `where`
-    /// clauses.
+    /// transitively, so a `where` bound gives its supertraits' bounds
+    /// too.
     pub(super) supertraits: Vec<TraitKey>,
     /// Parallel to `supertraits`: the TypeExpr args supplied to each
     /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
@@ -62,9 +62,8 @@ pub(super) struct TraitInfo {
     /// type for `Self` and its trait arguments for the parameters.
     pub(super) methods: Vec<(Symbol, Type)>,
     /// The methods that take a receiver: those whose first parameter is
-    /// written `self`. This is the one fact of whether `x.m(..)` may
-    /// call a method; a method without `self` is called on a type
-    /// (`Int.make(1)`), whatever its parameters are.
+    /// written `self`. An impl writes `self` where its trait does, and
+    /// only there.
     pub(super) receivers: std::collections::HashSet<Symbol>,
     /// The bounds each method's own `where` clauses put on its type
     /// variables, with the bound's trait arguments. They are part of the
@@ -128,9 +127,6 @@ pub(crate) struct MethodEntry {
     /// The trait whose impl provides the method. `None` for a
     /// structural trait's method (`structural`), which is no impl's.
     pub(super) trait_name: Option<TraitKey>,
-    /// Whether the method takes a receiver, as its trait declares it
-    /// (`TraitInfo::receivers`).
-    pub(super) receiver: bool,
     /// What every use of the method owes, on the variables of
     /// `method_type`: the `where` clauses of the impl's header
     /// (`trait Greet for Box(a) where a: Greet`) and the bounds the
@@ -280,7 +276,7 @@ pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey);
 /// The methods of the session's impls: one row for each method of each
 /// impl, by its type, its name and its trait, entered by the module that
 /// writes the impl. The impls of two traits that each have a method `m`
-/// for one type are two rows; what `x.m()` means in a module is decided
+/// for one type are two rows; what `T.m(..)` means in a module is decided
 /// from the rows each time (`TypeChecker::method_entry`), never written
 /// back. `providers` is an index of the rows, kept with them.
 #[derive(Clone, Default)]
@@ -357,12 +353,6 @@ pub struct Tables {
     pub(super) traits: Table<HashMap<TraitKey, TraitInfo>, TraitKey>,
     /// The methods of every impl, by type, name and trait.
     pub(super) impl_methods: ImplMethods,
-    /// Where each module reported that a type has no method of some
-    /// name: the place, the type, the name. Once every module of a
-    /// program is checked, a trait out of the module's reach that has
-    /// such a method is named there ([`out_of_reach_helps`]).
-    pub(super) unknown_methods:
-        HashMap<crate::session::ModuleId, Vec<(crate::source::Span, TypeRef, Symbol)>>,
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set:
         Table<std::collections::HashSet<(TraitKey, TypeRef)>, (TraitKey, TypeRef)>,
@@ -541,54 +531,6 @@ impl Tables {
         }
     }
 
-    /// Every method a value has, as (the type impls key the value's type
-    /// by, the method's name): those of the impls that take `self`, and those of the
-    /// structural traits (of a builtin type, the traits it is stamped
-    /// with; of a type a program declares, all their names). A
-    /// structural trait of a builtin module (`json.Encode`) gives its
-    /// method only where `imports` says the module is imported.
-    pub fn methods(&self, imports: &dyn Fn(&str) -> bool) -> Vec<(TypeRef, Symbol)> {
-        // (A method without `self` is called on the type, not on a
-        // value.)
-        let mut methods: std::collections::HashSet<(TypeRef, Symbol)> = self
-            .impl_methods
-            .rows
-            .iter()
-            .filter(|(_, entry)| entry.receiver)
-            .map(|((ty, method, _), _)| (*ty, *method))
-            .collect();
-        let declared = self
-            .records
-            .keys()
-            .chain(self.enums.keys())
-            .filter(|ty| builtin_type_name(**ty).is_none());
-        for (name, method) in STRUCTURAL_METHODS {
-            let tr = TraitKey::builtin(name);
-            if let Some((_, Some(module))) = crate::defs::builtin_trait_of_id(tr.id.0)
-                && !imports(module)
-            {
-                continue;
-            }
-            let method = intern(method);
-            // (`decode` is called on the type.)
-            if self
-                .traits
-                .get(&tr)
-                .is_some_and(|info| !info.receivers.contains(&method))
-            {
-                continue;
-            }
-            methods.extend(
-                self.trait_impl_set
-                    .iter()
-                    .filter(|(t, _)| *t == tr)
-                    .map(|(_, ty)| (*ty, method)),
-            );
-            methods.extend(declared.clone().map(|ty| (*ty, method)));
-        }
-        methods.into_iter().collect()
-    }
-
     /// Whether a value of the type `ty` has the method of the structural
     /// trait `tr` as a name: a builtin type when it is stamped with the
     /// trait, a type a program declares always (whether it has the
@@ -630,7 +572,6 @@ impl Tables {
         ));
         rows.extend(keys("scheme", self.schemes.keys()));
         rows.extend(keys("statement-units", self.statement_units.keys()));
-        rows.extend(keys("unknown-methods", self.unknown_methods.keys()));
         rows.extend(keys("waiting", self.waiting.keys()));
         rows.extend(keys("rows-of", self.rows.keys()));
         rows.extend(keys(
@@ -690,7 +631,6 @@ impl Tables {
     /// it was a REPL cell that is dropped.
     pub fn forget(&mut self, module: crate::session::ModuleId) {
         self.waiting.remove(&module);
-        self.unknown_methods.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
         };

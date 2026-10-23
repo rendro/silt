@@ -13,7 +13,7 @@ fn trait_impls_cover_every_builtin_trait_name() {
     // on at least one primitive. If a future edit removes all auto-derived
     // registrations for a trait, this catches it before downstream
     // diagnostics get mysterious.
-    let (impls, _) = __trait_init_fingerprint_check_program();
+    let impls = __trait_init_fingerprint_check_program();
     for trait_name in ["Equal", "Compare", "Hash", "Display"] {
         let has_some = impls
             .iter()
@@ -30,7 +30,7 @@ fn primitives_get_all_four_traits() {
     // Lock the derive policy: every primitive should have all four
     // built-in traits registered. If policy shifts, this test makes
     // the change visible.
-    let (impls, _) = __trait_init_fingerprint_check_program();
+    let impls = __trait_init_fingerprint_check_program();
     // Round 75 TYPE-3 flipped the Unit canonical direction from
     // `Unit → ()` to `() → Unit`, aligning with the VM dispatch
     // oracle. The trait_impl_set keys now use "Unit" not "()".
@@ -54,7 +54,7 @@ fn non_ordering_container_types_lack_compare() {
     // Map and Set have no order. Option and Result have no `compare`
     // method entry (they are ordered by their structure, like any enum).
     // A tuple is ordered part by part and has Compare.
-    let (impls, _) = __trait_init_fingerprint_check_program();
+    let impls = __trait_init_fingerprint_check_program();
     assert!(impls.contains("Compare:Tuple"));
     for type_name in ["Map", "Set", "Option", "Result"] {
         let key = format!("Compare:{type_name}");

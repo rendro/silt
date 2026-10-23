@@ -1,5 +1,5 @@
 -- verdict: same
-import shapes.{ unit }
+import shapes.{ unit, Area }
 fn f(s: Shape) -> Int {
   match s {
     Circle(r) -> r
@@ -8,5 +8,5 @@ fn f(s: Shape) -> Int {
 }
 fn main() {
   println(f(Square(4)))
-  println(unit().area())
+  println(Area.area(unit()))
 }

@@ -5,4 +5,4 @@
 -- stderr-contains: Map(String, Int)
 type M { m: Map(String, Int) }
 fn mk() -> M { M{m: #{"a": 1}} }
-fn main() { println(mk().compare(mk())) }
+fn main() { println(Compare.compare(mk(), mk())) }

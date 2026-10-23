@@ -6,7 +6,7 @@ trait Carry(t) { fn carry(self, x: t) -> t }
 trait Holds: Carry(Box(Int)) { fn hold(self) -> Int }
 
 fn use_holds(x: t) -> Int where t: Holds {
-  x.hold()
+  Holds.hold(x)
 }
 
 fn main() { }

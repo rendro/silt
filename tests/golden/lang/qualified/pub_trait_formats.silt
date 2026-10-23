@@ -12,5 +12,5 @@ trait Describe for Int {
 }
 
 fn main() {
-  println(1.describe())
+  println(Describe.describe(1))
 }

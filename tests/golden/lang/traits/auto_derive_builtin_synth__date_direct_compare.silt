@@ -3,9 +3,9 @@ fn main() {
     match time.date(2025, 1, 15) {
         Ok(a) -> match time.date(2025, 1, 20) {
             Ok(b) -> {
-                println(a.compare(b))
-                println(b.compare(a))
-                println(a.compare(a))
+                println(Compare.compare(a, b))
+                println(Compare.compare(b, a))
+                println(Compare.compare(a, a))
             }
             Err(_) -> ()
         }

@@ -1,5 +1,5 @@
 import int
-fn eq_gen(a: a, b: a) -> Bool where a: Equal { a.equal(b) }
+fn eq_gen(a: a, b: a) -> Bool where a: Equal { a == b }
 fn main() {
     println(eq_gen(int.Empty, int.Empty))
     println(eq_gen(int.Empty, int.Overflow))

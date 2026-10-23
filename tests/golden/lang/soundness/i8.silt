@@ -8,7 +8,7 @@ fn main() {
   let u = Node(Node(Leaf, 1, Leaf), 2, Leaf)
   println(t == u)
   println(t < u)
-  println(t.hash() == u.hash())
+  println(Hash.hash(t) == Hash.hash(u))
   println(t)
   let ft = Node(Leaf, { x -> x }, Leaf)
   println(ft == ft)

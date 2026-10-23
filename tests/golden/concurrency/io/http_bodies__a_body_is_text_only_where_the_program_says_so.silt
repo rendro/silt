@@ -44,7 +44,7 @@ fn main() {
     println("{what}")
     match http.request(http.POST, url, body, #{}) {
       Ok(resp) -> println("  the client:  {bytes.to_hex(resp.body)} {as_text(resp.body)}")
-      Err(e) -> println("  the client: {e.message()}")
+      Err(e) -> println("  the client: {Error.message(e)}")
     }
   }
   task.cancel(server)

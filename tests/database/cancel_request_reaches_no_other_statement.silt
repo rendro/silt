@@ -49,6 +49,6 @@ fn main() {
       println("rounds in which main's statement failed: {failed}")
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {e.message()}")
+    Err(e) -> println("connect: {Error.message(e)}")
   }
 }

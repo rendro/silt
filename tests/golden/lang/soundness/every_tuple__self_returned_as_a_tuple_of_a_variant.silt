@@ -9,6 +9,6 @@ trait Cast for Tuple {
   fn cast(self) -> (Wrap, Int) { self }
 }
 fn main() {
-  let (Wrap(n), k) = (Point { x: "px", y: "py" }, 2).cast()
+  let (Wrap(n), k) = Cast.cast((Point { x: "px", y: "py" }, 2))
   println(n + k)
 }

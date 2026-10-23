@@ -24,7 +24,7 @@ fn main() {
   -- The server serves when it has answered.
   match http.get("http://127.0.0.1:{tcp.local_port(listener)}/") {
     Ok(r) -> println("{r.status} {text(r.body)}")
-    Err(e) -> println("error: {e.message()}")
+    Err(e) -> println("error: {Error.message(e)}")
   }
   http.serve(listener) { _req -> http.Response { status: 200, body: bytes.from_string("second"), headers: #{} } }
 }

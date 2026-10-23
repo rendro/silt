@@ -4,7 +4,7 @@
 -- Port of repros/type_soundness/w5.silt, in brace closures.
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
-fn hello(x: a) -> String where a: Greet { x.greet() }
+fn hello(x: a) -> String where a: Greet { Greet.greet(x) }
 fn main() {
   let h = hello
   println(h("s"))

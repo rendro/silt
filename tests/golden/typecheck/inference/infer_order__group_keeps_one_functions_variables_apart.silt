@@ -16,7 +16,7 @@ fn pair(x: a, y: b, n: Int) {
 fn flip(u: c, v: c, n: Int) { pair(u, v, n) }
 fn say(x: a, n: Int) where a: Loud {
   match n {
-    0 -> x.loud()
+    0 -> Loud.loud(x)
     _ -> echo(x, n - 1)
   }
 }

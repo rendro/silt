@@ -7,7 +7,7 @@
 type MyErr { code: Int }
 trait Display for MyErr { fn display(self) -> String { "E{self.code}/{late}" } }
 trait Error for MyErr { }
-let m = MyErr { code: 1 }.message()
+let m = Error.message(MyErr { code: 1 })
 let late = {
   println("late")
   5

@@ -13,7 +13,7 @@ import toml
 
 type Point { x: Int }
 
-fn show(e: a) -> String where a: Error { e.message() }
+fn show(e: a) -> String where a: Error { Error.message(e) }
 
 fn main() {
   match io.read_file("no/such/file/anywhere") {

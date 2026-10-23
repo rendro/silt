@@ -10,8 +10,8 @@ trait Summarizable for Int {
 trait Summarizable for String {
   fn summarize(self) -> String { self }
 }
-fn show_a(x: a) -> String where a: Summarizable { x.summarize() }
-fn show_b(y: b) -> String where b: Summarizable { y.summarize() }
+fn show_a(x: a) -> String where a: Summarizable { Summarizable.summarize(x) }
+fn show_b(y: b) -> String where b: Summarizable { Summarizable.summarize(y) }
 fn main() {
   println(show_a(42))
   println(show_b("hello"))
