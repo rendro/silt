@@ -44,6 +44,10 @@ struct TrailingClosure {
     call: Span,
     /// The closure statement.
     closure: Span,
+    /// Whether the closure is the last statement of its block: then the
+    /// call's statement is unused only because the closure stands
+    /// behind it.
+    last: bool,
     help: std::string::String,
 }
 
@@ -361,7 +365,19 @@ impl TypeChecker {
                 continue;
             };
             arity.help = vec![t.help];
-            found.retain(|d| !(d.code == Code::UnusedValue && d.span == t.closure));
+            // What the closure's errors say follows from its not being
+            // an argument: it is unused, its parameters have no types to
+            // infer from, it is the value of its block.
+            let follows = |d: &Diagnostic| {
+                let inside = d.span.file == t.closure.file
+                    && d.span.start >= t.closure.start
+                    && d.span.end <= t.closure.end;
+                (inside && matches!(d.code, Code::UnusedValue | Code::AmbiguousType))
+                    || (d.span == t.closure && d.code == Code::TypeMismatch)
+                    || (t.last && d.span == t.call && d.code == Code::UnusedValue)
+            };
+            self.errors.retain(|d| !follows(d));
+            found.retain(|d| !follows(d));
         }
         self.errors.extend(found);
     }
@@ -371,7 +387,7 @@ impl TypeChecker {
     /// call is written with one argument less than its function, a
     /// name or a module's function, takes, and that parameter is a
     /// function.
-    fn trailing_closure(&self, prev: &Stmt, closure: &Expr) -> Option<TrailingClosure> {
+    fn trailing_closure(&self, prev: &Stmt, closure: &Expr, last: bool) -> Option<TrailingClosure> {
         let ExprKind::Lambda { params, .. } = &closure.kind else {
             return None;
         };
@@ -417,6 +433,7 @@ impl TypeChecker {
         Some(TrailingClosure {
             call,
             closure: closure.span,
+            last,
             help: format!(
                 "a closure on the next line is not passed to `{name}`; start it on the same \
                  line: `{} {shape}`",
@@ -481,6 +498,13 @@ impl TypeChecker {
             let Some((last, rest)) = stmts.split_last() else {
                 return;
             };
+            // A closure that is the block's value: its own errors are of
+            // other kinds than unused.
+            if let (Stmt::Expr(e), Some(prev)) = (last, rest.last())
+                && let Some(t) = self.trailing_closure(prev, e, true)
+            {
+                trailing.push(t);
+            }
             for (i, stmt) in rest.iter().enumerate() {
                 let Stmt::Expr(e) = stmt else { continue };
                 // (A statement the checker gave no type is in a body it
@@ -520,7 +544,7 @@ impl TypeChecker {
                     .find(|(inner, _)| *inner == e.span)
                     .map_or(e.span, |(_, extent)| *extent);
                 if i > 0
-                    && let Some(t) = self.trailing_closure(&rest[i - 1], e)
+                    && let Some(t) = self.trailing_closure(&rest[i - 1], e, false)
                 {
                     trailing.push(t);
                 }
