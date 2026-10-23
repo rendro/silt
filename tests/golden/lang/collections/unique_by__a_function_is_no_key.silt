@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- The key of `list.unique_by` needs `Hash`, which a function has not.
+import list
+
+fn main() {
+  let f = { x -> x + 1 }
+  println(list.length(list.unique_by([1, 2]) { _ -> f }))
+}
