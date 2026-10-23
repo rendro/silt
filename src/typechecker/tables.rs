@@ -21,9 +21,6 @@ pub(super) struct VariantInfo {
 #[derive(Debug, Clone, Default)]
 pub(super) struct RecordInfo {
     pub(super) fields: Vec<(Symbol, Type)>,
-    /// Where each field is named in the declaration, in the order of
-    /// `fields`: what a diagnostic about a field points at.
-    pub(super) field_spans: Vec<Span>,
 }
 
 /// Information about a declared trait.
@@ -482,14 +479,6 @@ impl Tables {
         self.records
             .iter()
             .map(|(ty, info)| (*ty, info.fields.clone()))
-            .collect()
-    }
-
-    /// The types an impl of the trait `tr` is written for.
-    pub fn impls_of(&self, tr: crate::defs::TraitId) -> Vec<TypeRef> {
-        (self.trait_impl_set.iter())
-            .filter(|(t, _)| t.id == tr)
-            .map(|(_, ty)| *ty)
             .collect()
     }
 

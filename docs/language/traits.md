@@ -81,10 +81,10 @@ illustrate trait *declaration* use a fresh local name; impls of the
 real built-in `Display` trait look identical and are shown in
 [Built-in Traits](#built-in-traits) below.)
 
-An impl gives a record type no method named like one of the record's
-fields, whether the impl writes the method or takes it as the trait's
-default: `job.run(5)` calls the function the field `run` holds, and a
-method of that name would read as the same thing.
+A record may have a field and an impl a method of one name: a dot after
+a value is always the field, and a trait's method is called through its
+trait. `job.run(5)` calls the function the field `run` holds,
+`Runner.run(job, 5)` the method of the impl.
 
 ```silt
 type Job {
@@ -92,18 +92,20 @@ type Job {
   run: Fn(Int) -> Int,
 }
 
-trait Run {
+trait Runner {
   fn run(self, x: Int) -> Int
 }
 
--- error: method 'run' of the impl of 'Run' for 'Job' is named like a
--- field of 'Job'
--- help: a field and a method of one type cannot share a name: rename
--- the method or the field
-trait Run for Job {
+trait Runner for Job {
   fn run(self, x: Int) -> Int {
-    x
+    x + 100
   }
+}
+
+fn main() {
+  let job = Job { name: "double", run: { x -> x * 2 } }
+  println(job.run(5)) -- 10
+  println(Runner.run(job, 5)) -- 105
 }
 ```
 

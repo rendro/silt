@@ -9,8 +9,8 @@
 -- the trait, the methods of its impls (in any module) and its calls,
 -- by the trait's name, qualified or imported; a rename of the trait
 -- renames its name at the calls, not the method's. A rename to a field
--- of a type with an impl of the trait, or to another method of it, is
--- refused.
+-- of a type with an impl of the trait renames the method; one to another
+-- method of the trait is refused.
 import shapes
 import shapes.{ Area, Square }
 

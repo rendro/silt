@@ -198,9 +198,6 @@ codes! {
     InitCycle = "E0339", Type;
     /// A statement whose value nothing uses.
     UnusedValue = "E0340", Type;
-    /// An impl that gives a record type a method named like one of the
-    /// type's fields.
-    MethodNamedLikeField = "E0341", Type;
     /// A type given to a decoder that has no decoder for it (a field of
     /// a type no decoder exists for, an enum, a generic type, ...).
     Undecodable = "E0342", Type;

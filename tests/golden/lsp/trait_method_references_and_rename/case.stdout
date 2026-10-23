@@ -29,6 +29,11 @@ shapes.silt:3:11-3:15 => Measured
 shapes.silt:6:5-6:9 => Measured
 shapes.silt:10:7-10:11 => Measured
 > rename 27:17 r
-error: `area` cannot be renamed to `r`: `Circle`, which has an impl of the trait, has a field `r`, and the rename would change what a name means
+main.silt:20:6-20:10 => r
+main.silt:26:23-26:27 => r
+main.silt:27:16-27:20 => r
+shapes.silt:4:6-4:10 => r
+shapes.silt:6:10-6:14 => r
+shapes.silt:11:6-11:10 => r
 > rename 27:17 twice
 error: `area` cannot be renamed to `twice`: the trait already has a method `twice`, and the rename would change what a name means
