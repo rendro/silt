@@ -3,6 +3,7 @@ error[type]: type mismatch: expected Option(_), got Result(Int, Bool)
    |
  7 |   let z = h()?
    |           ^^^^ type mismatch: expected Option(_), got Result(Int, Bool)
+  = help: turn the Option into a Result first: `|> option.to_result(error)?`
 
 error[type]: type mismatch: expected Result(_, _), got Option(Int)
  --> try__an_operand_known_later_of_the_other_wrapper_is_a_mismatch.silt:13:11
