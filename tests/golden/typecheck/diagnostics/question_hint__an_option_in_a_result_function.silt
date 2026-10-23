@@ -1,0 +1,20 @@
+-- exit: 1
+-- `?` on an Option in a function that returns a Result: the None has
+-- no error to return, and the help says how to give it one.
+import list
+import map
+
+fn first(xs: List(Int)) -> Result(Int, String) {
+  let x = list.head(xs)?
+  Ok(x)
+}
+
+fn lookup(m: Map(String, Int), k: String) -> Result(Int, String) {
+  let v = map.get(m, k)?
+  Ok(v + 1)
+}
+
+fn main() {
+  println(first([1]))
+  println(lookup(#{ "a": 1 }, "a"))
+}

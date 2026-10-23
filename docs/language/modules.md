@@ -225,8 +225,11 @@ The entry point is `src/main.silt`, and every `.silt` file directly in
 `src/` is a module of the package, imported by its file name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
---path <path>` or `silt add <name> --git <url>`. After adding, imports from
-the dependency package work exactly like local modules.
+--path <path>` or `silt add <name> --git <url> --tag <tag>` (or
+`--branch <branch>`, `--rev <commit>`: a git dependency names one of
+them). After adding, imports from the dependency package work exactly
+like local modules. `silt remove <name>` takes one out of `silt.toml`
+and `silt.lock` again.
 
 `import x` in a module of a package means, in this order: the builtin
 module `x`; the dependency whose key under `[dependencies]` in this
@@ -237,7 +240,7 @@ module (`src/list.silt`) is an error, because `import list` always means
 the builtin one.
 
 A package consumed as a dependency exposes `src/lib.silt` instead of
-`src/main.silt`. Such a library-only package has nothing to execute — `silt
+`src/main.silt` (`silt init --lib` creates one). Such a library-only package has nothing to execute — `silt
 run` refuses it — but a bare `silt check` works, falling back to
 `src/lib.silt` when no `src/main.silt` exists.
 
@@ -266,11 +269,11 @@ your editor. The built-in modules:
 | `float` | Floating-point parsing, classification, and numeric helpers |
 | `list` | List construction, traversal, and transformation |
 | `map` | Hash-map insertion, lookup, and iteration |
-| `result` | `Result` combinators (`map_ok`, `map_err`, `unwrap_or`, …) |
+| `result` | `Result` combinators (`map`, `map_err`, `unwrap_or`, …) |
 | `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
 | `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
 | `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
+| `task` | Tasks: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
 | `regex` | Compiled regular expressions and replacement helpers |
 | `json` | Type-directed JSON parsing and emission |
 | `toml` | TOML parsing and emission |

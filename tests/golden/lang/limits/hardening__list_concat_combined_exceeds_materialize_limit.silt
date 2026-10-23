@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: concatenated list exceeds maximum size
+-- stderr-contains: list.concat: list exceeds maximum size of 10000000 elements
 import list
 fn main() {
   println(list.concat((1..5_000_001), (1..5_000_001)))

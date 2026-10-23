@@ -1,0 +1,15 @@
+-- exit: 1
+-- stdout-contains: [2, 4]
+-- stderr-contains: error[runtime]
+-- stderr-contains: env.remove cannot change the environment once tasks or I/O have started: set it at the start of main
+-- stderr-not-contains: not reached
+-- The stages of a stream are tasks: after a stream, even one that has
+-- finished, env.remove is refused like env.set.
+import env
+import stream
+
+fn main() {
+  println(stream.from_list([1, 2]) |> stream.map { x -> x * 2 } |> stream.collect)
+  env.remove("SILT_ENV_CHANGE_C")
+  println("not reached")
+}

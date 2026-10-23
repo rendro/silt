@@ -1,0 +1,13 @@
+error[type]: type 'List(Int)' has no field 'length'
+ --> hidden_module__an_alias_names_the_module_too.silt:10:11
+    |
+ 10 |   println(list.length(list))
+    |           ^^^^^^^^^^^ type 'List(Int)' has no field 'length'
+  = help: `length` is a function of module `list`: call it as `list.length(list)`
+
+error[type]: type 'List(Int)' has no field 'length'
+ --> hidden_module__an_alias_names_the_module_too.silt:12:11
+    |
+ 12 |   println(l.length(l))
+    |           ^^^^^^^^ type 'List(Int)' has no field 'length'
+  = help: `l` here is the local from line 11, which hides the module `list` (imported as `l`); rename the local

@@ -135,7 +135,9 @@ codes! {
     UndefinedVariable = "E0302", Type;
     UndefinedConstructor = "E0303", Type;
     UndefinedType = "E0304", Type;
-    /// A field that no record in scope declares.
+    /// A field or method that the type at hand does not have: `p.b` on a
+    /// record without `b`, a field a record literal or update gives that
+    /// its type does not declare.
     UnknownField = "E0305", Type;
     /// A field that the record at hand does not declare.
     NoSuchField = "E0306", Type;

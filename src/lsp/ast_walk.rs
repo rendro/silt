@@ -83,7 +83,7 @@ pub(super) fn find_type_at_offset(program: &Program, cursor: usize) -> Option<Ty
 /// inlined copy of the `ExprKind::*` arms here. The pre-check on the
 /// outer expression runs first so a deeper match overwrites it.
 ///
-/// Round-85 dedup: prior to this refactor this function inlined a
+/// Prior to this refactor this function inlined a
 /// ~100-line second copy of `visit_expr_children`'s arm table. Drift
 /// in either copy would silently miss expression kinds; the two are
 /// now collapsed to a single source of truth. The `Option<&'a Type>`
@@ -220,7 +220,7 @@ pub(super) fn find_trait_method_at(
 ///
 /// Without the binding-site visits, `prepareRename`/`rename`/`hover` on the
 /// LHS of a let, on a `fn` parameter, or on a `fn` declaration name would
-/// silently no-op (round-60 B8 + G4).
+/// silently no-op.
 pub(super) fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<Symbol> {
     let mut best: Option<Symbol> = None;
     for decl in &program.decls {
@@ -236,14 +236,14 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
             for param in &f.params {
                 find_ident_in_pattern(&param.pattern, cursor, best);
             }
-            // Round-75 DX-4: where-clause trait references must be
+            // Where-clause trait references must be
             // walkable so cursor on a `where a: Greet` trait name
             // resolves to the trait — without this, rename of `Greet`
             // skipped every where-clause reference.
             for wc in &f.where_clauses {
                 check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
             }
-            // Round-101: type-position references in the signature
+            // Type-position references in the signature
             // (param annotations, return type, where-clause args).
             find_ident_in_fn_signature(f, cursor, best);
             find_ident_in_expr(&f.body, cursor, best);
@@ -258,13 +258,13 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
             find_ident_in_expr(value, cursor, best);
         }
         Decl::TraitImpl(ti) => {
-            // Round-75 DX-4: TraitImpl's trait_name and target_type are
+            // TraitImpl's trait_name and target_type are
             // user-written references that LSP rename / references /
             // goto-def must resolve. Without these, cursor on `Greet`
             // or `Int` in `trait Greet for Int { ... }` returned None.
             check_span_match(ti.trait_name, ti.trait_name_span, cursor, best);
             check_span_match(ti.target_type, ti.target_type_span, cursor, best);
-            // Round-101: type-position references in the impl header
+            // Type-position references in the impl header
             // (trait args, target type args) and assoc-type bindings.
             for a in &ti.trait_args {
                 find_ident_in_type_expr(a, cursor, best);
@@ -301,7 +301,7 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
             // binder. Phase-1 doc surfacing requires hover to identify
             // the decl binder so `DefInfo.doc` can be looked up.
             check_span_match(t.name, t.name_span, cursor, best);
-            // Round-101: type-decl BODIES reference other types (record
+            // Type-decl BODIES reference other types (record
             // field types, enum variant payload types, alias targets).
             // Enum variant NAME binders (`Circle` in `Circle(Int)`) also
             // resolve: the parser records each variant's `name_span`, so
@@ -327,9 +327,9 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
             }
         }
         Decl::Trait(t) => {
-            // Round-75 DX-2: the parser-recorded name_span.
+            // The parser-recorded name_span.
             check_span_match(t.name, t.name_span, cursor, best);
-            // Round-75 DX-4: supertrait references and trait-level
+            // Supertrait references and trait-level
             // where-clause trait refs.
             for r in &t.supertraits {
                 check_span_match(r.name, r.span, cursor, best);
@@ -343,7 +343,7 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
                     find_ident_in_type_expr(a, cursor, best);
                 }
             }
-            // Round-101: assoc-type bounds, and their ARGUMENTS, which
+            // Assoc-type bounds, and their ARGUMENTS, which
             // are type positions.
             for at in &t.assoc_types {
                 for bound in &at.bounds {
@@ -353,7 +353,7 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
                     }
                 }
             }
-            // Trait method binders + default method bodies — round-62 B11.
+            // Trait method binders + default method bodies.
             // `Decl::Fn` and `Decl::TraitImpl` walk param patterns AND the
             // method body so hover/rename works on default-method param
             // and body identifiers too. Without this, cursor on `x` in
@@ -398,7 +398,7 @@ fn check_span_match(
     }
 }
 
-/// Round-101 BROKEN fix: match the cursor against type-position
+/// Match the cursor against type-position
 /// references inside a type expression (`Named` / `Generic` heads),
 /// recursing into nested type args. Mirrors
 /// `workspace::collect_references_in_type_expr` so goto-definition /
@@ -467,7 +467,7 @@ fn find_ident_in_fn_signature(f: &FnDecl, cursor: usize, best: &mut Option<Symbo
 }
 
 /// Recurse into a pattern, matching the cursor against any leaf
-/// `PatternKind::Ident` binder — and, since round-101, Constructor /
+/// `PatternKind::Ident` binder — and Constructor /
 /// nominal-record HEAD names (`Circle(r)`, `Point { x }`) so that
 /// goto-def / references / rename resolve cursors on user type and
 /// variant references in pattern position. Stdlib heads (`Some`, `Ok`,
@@ -506,7 +506,7 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
             if let Some(head) = name {
                 check_span_match(*head, *name_span, cursor, best);
             }
-            // Round-62 B8: field-shorthand binders (`let Point { x, y } = p`)
+            // Field-shorthand binders (`let Point { x, y } = p`)
             // match the cursor at the field name's own span.
             for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
@@ -517,7 +517,7 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
             }
         }
         PatternKind::AnonRecord { fields, rest } => {
-            // Round-62 B9: anon-record destructure `let { x, y } = p`.
+            // Anon-record destructure `let { x, y } = p`.
             // Same handling as nominal `Record`.
             for (name, name_span, sub) in fields {
                 if let Some(p) = sub {
@@ -526,7 +526,7 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
                     check_span_match(*name, *name_span, cursor, best);
                 }
             }
-            // Round-101: the named rest binder (`{ x, ...rest }`) binds
+            // The named rest binder (`{ x, ...rest }`) binds
             // `rest`.
             if let Some((r, r_span)) = rest {
                 check_span_match(*r, *r_span, cursor, best);
@@ -541,7 +541,7 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
             }
         }
         PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
                 find_ident_in_pattern(p, cursor, best);
@@ -576,12 +576,12 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
             }
         }
     }
-    // Round-101: ascription types (`expr: Point`) are type-position
+    // Ascription types (`expr: Point`) are type-position
     // references; `visit_expr_children` only walks the value side.
     if let ExprKind::Ascription(_, te) = &expr.kind {
         find_ident_in_type_expr(te, cursor, best);
     }
-    // Round-101: record-construction HEAD (`Point { x: 3 }`,
+    // Record-construction HEAD (`Point { x: 3 }`,
     // `util.Pt { .. }`) is a type-name reference.
     if let ExprKind::RecordCreate {
         name, name_span, ..
@@ -594,7 +594,7 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
             match stmt {
                 Stmt::Let { pattern, ty, .. } => {
                     find_ident_in_pattern(pattern, cursor, best);
-                    // Round-101: `let p: Point = ...` annotation.
+                    // `let p: Point = ...` annotation.
                     if let Some(t) = ty {
                         find_ident_in_type_expr(t, cursor, best);
                     }
@@ -690,7 +690,7 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
             }
         }
         ExprKind::AnonRecord { spread, fields } => {
-            // Round-62 B10: anonymous-record literal field values must be
+            // Anonymous-record literal field values must be
             // walked so identifier searches (find references / hover etc.)
             // descend into them. Mirrors the `RecordCreate` arm above.
             if let Some(s) = spread {
@@ -724,8 +724,8 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         // whenever a new `ExprKind` variant is added — the omission
         // of a walker arm becomes a compile error rather than a
         // silent functional regression in LSP find-references /
-        // hover / inlay-hints / selection-range / folding. Round-85
-        // G3 fix: removed the prior wildcard catch-all arm; the
+        // hover / inlay-hints / selection-range / folding. There is
+        // no wildcard catch-all arm; the
         // source-grep parity-lock in
         // `tests/meta/round85_visit_expr_children_parity_lock_tests.rs`
         // is now belt-and-suspenders behind compiler exhaustiveness.
@@ -929,7 +929,7 @@ mod tests {
         assert_eq!(ty, Some(Type::Int));
     }
 
-    // ── find_type_at_offset: call callee identifiers (round 101) ──
+    // ── find_type_at_offset: call callee identifiers ──
 
     #[test]
     fn test_find_type_at_offset_callee_ident_is_fn_signature() {

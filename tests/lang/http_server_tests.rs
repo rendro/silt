@@ -83,6 +83,15 @@ impl Clock for TestClock {
 
 /// A program that serves HTTP with a handler, in a VM of the test's.
 /// It ends when this is dropped.
+/// A file of `Server::big_answer`'s, removed when this is dropped.
+struct BigFile(std::path::PathBuf);
+
+impl Drop for BigFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 struct Server {
     port: u16,
     control: u16,
@@ -97,11 +106,34 @@ impl Server {
         Server::on(handler, None)
     }
 
+    /// The handler's code that answers with a body of `length` bytes of
+    /// `x`: more than a program can make (a `Bytes` holds at most
+    /// 10,000,000), so it reads them from a file, which is removed when
+    /// the returned guard is dropped.
+    fn big_answer(length: usize) -> (String, BigFile) {
+        static FILES: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "silt_http_big_{}_{}",
+            std::process::id(),
+            FILES.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::write(&path, vec![b'x'; length]).expect("a big file is written");
+        let shown = path.to_string_lossy().replace('\\', "/");
+        let code = format!(
+            r#"match io.read_file("{shown}") {{
+            Ok(text) -> http.Response {{ status: 200, body: bytes.from_string(text), headers: #{{}} }}
+            Err(_) -> http.Response {{ status: 500, body: bytes.empty(), headers: #{{}} }}
+          }}"#
+        );
+        (code, BigFile(path))
+    }
+
     fn on(handler: &str, clock: Option<TestClock>) -> Server {
         let source = format!(
             r#"
 import bytes
 import http
+import io
 import result
 import string
 import task
@@ -984,13 +1016,8 @@ fn a_response_that_is_not_taken_is_given_up() {
     // More than the system takes in for a client that reads nothing.
     const LENGTH: usize = 64_000_000;
     let clock = TestClock::default();
-    let server = Server::on(
-        r#"{
-        let part = bytes.from_string(string.repeat("x", 8000000))
-        http.Response { status: 200, body: bytes.concat_all([part, part, part, part, part, part, part, part]), headers: #{} }
-      }"#,
-        Some(clock.clone()),
-    );
+    let (big, _file) = Server::big_answer(LENGTH);
+    let server = Server::on(&big, Some(clock.clone()));
     let mut client = server.connect();
     client.send(b"GET /big HTTP/1.1\r\nHost: x\r\n\r\n");
     let (status, headers) = client.head();
@@ -1486,15 +1513,13 @@ fn a_request_behind_a_response_that_is_not_read_is_served() {
     use std::sync::atomic::AtomicUsize;
     // More than the system takes in for a client that reads nothing.
     const LENGTH: usize = 64_000_000;
-    let server = Server::new(
-        r#"match req.path {
-        "/big" -> {
-          let part = bytes.from_string(string.repeat("x", 8000000))
-          http.Response { status: 200, body: bytes.concat_all([part, part, part, part, part, part, part, part]), headers: #{} }
-        }
-        _ -> http.Response { status: 200, body: bytes.from_string("{req.path} [{text(req.body)}]"), headers: #{} }
-      }"#,
-    );
+    let (big, _file) = Server::big_answer(LENGTH);
+    let server = Server::new(&format!(
+        r#"match req.path {{
+        "/big" -> {big}
+        _ -> http.Response {{ status: 200, body: bytes.from_string("{{req.path}} [{{text(req.body)}}]"), headers: #{{}} }}
+      }}"#
+    ));
     let mut client = server.connect();
     let this = client.0.get_ref().local_addr().expect("the client's end");
     // The writes of the connection's own: the first response's

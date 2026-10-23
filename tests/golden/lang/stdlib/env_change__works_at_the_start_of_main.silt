@@ -1,0 +1,13 @@
+-- At the start of main, before any task or I/O operation, the program's
+-- thread is the only one: the environment can be changed. Printing and
+-- asking whether a file exists start nothing.
+import env
+import fs
+
+fn main() {
+  println(fs.exists("no such file here"))
+  env.set("SILT_ENV_CHANGE_A", "set")
+  println(env.get("SILT_ENV_CHANGE_A"))
+  env.remove("SILT_ENV_CHANGE_A")
+  println(env.get("SILT_ENV_CHANGE_A"))
+}

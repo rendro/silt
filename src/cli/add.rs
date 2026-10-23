@@ -1,5 +1,5 @@
 //! `silt add <name> --path <path>` or
-//! `silt add <name> --git <url> [--rev|--branch|--tag <ref>]` —
+//! `silt add <name> --git <url> (--rev|--branch|--tag) <ref>` —
 //! append a new dependency entry to the current package's
 //! `silt.toml` and regenerate `silt.lock`.
 
@@ -15,7 +15,6 @@ use silt::package_graph::{LockPolicy, resolve_packages};
 use silt::source::SourceMap;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
-use crate::cli::paths::relative_from;
 
 /// Why `silt add` failed.
 ///
@@ -152,7 +151,7 @@ enum AddSource {
 }
 
 /// Implementation of `silt add <name> --path <path>` and
-/// `silt add <name> --git <url> [--rev|--branch|--tag <ref>]`.
+/// `silt add <name> --git <url> (--rev|--branch|--tag) <ref>`.
 ///
 /// Edits the current package's `silt.toml` in place to add a new
 /// dependency entry, then regenerates `silt.lock` so the next compile
@@ -266,7 +265,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         (false, false) => {
             return Err(
                 "silt add: missing source flag; use --path <path> or --git <url> \
-                 [--rev|--branch|--tag <ref>]"
+                 (--rev|--branch|--tag) <ref>"
                     .into(),
             );
         }
@@ -417,7 +416,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // manifest's tree (e.g. an absolute path under /opt) we
             // fall back to the absolute form because there's no clean
             // relative form to write.
-            let stored_path = manifest_relative(&root, &absolute_dep_path)
+            let stored_path = silt::lockfile::relative_path(&root, &absolute_dep_path)
                 .unwrap_or_else(|| absolute_dep_path.display().to_string());
             let mut inline = toml_edit::InlineTable::new();
             inline.insert(
@@ -577,21 +576,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
 /// every system and starting with `./` or `../`, so that it is read as
 /// a local path; or absolute when there is no relative form.
 fn manifest_relative_url(root: &Path, url: &Path) -> String {
-    match manifest_relative(root, url) {
+    match silt::lockfile::relative_path(root, url) {
         Some(relative) if relative == ".." || relative.starts_with("../") => relative,
         Some(relative) => format!("./{relative}"),
         None => url.display().to_string(),
     }
-}
-
-/// `target` relative to the manifest's directory `root`, with `/`
-/// between its parts on every system, so that silt.toml reads the same
-/// everywhere; `None` when there is no relative form.
-fn manifest_relative(root: &Path, target: &Path) -> Option<String> {
-    let relative = relative_from(root, target)?;
-    let parts: Vec<String> = relative
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    Some(parts.join("/"))
 }

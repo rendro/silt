@@ -16,8 +16,19 @@ use base64::Engine;
 use super::common::{nibble_to_hex, ok};
 use super::typed::{Bytes, List, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::Value;
+use crate::value::{MAX_COLLECTION_LEN, Value};
 use crate::vm::VmError;
+
+/// Refuses Bytes of `size` that `name` would make: more than a list
+/// may hold elements ([`MAX_COLLECTION_LEN`]).
+fn fits(name: &str, size: usize) -> Result<(), VmError> {
+    match size > MAX_COLLECTION_LEN {
+        true => Err(VmError::new(format!(
+            "{name}: result would exceed maximum size ({size} bytes > {MAX_COLLECTION_LEN} limit)"
+        ))),
+        false => Ok(()),
+    }
+}
 
 /// What `BytesError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
@@ -201,18 +212,28 @@ builtins! {
         })
     }
 
-    fn concat(a: Bytes, b: Bytes) -> Vec<u8> {
-        [a.as_slice(), b.as_slice()].concat()
+    fn concat(a: Bytes, b: Bytes) -> Result<Vec<u8>, VmError> {
+        fits("bytes.concat", a.len().saturating_add(b.len()))?;
+        Ok([a.as_slice(), b.as_slice()].concat())
     }
 
+    // The size is counted before anything is copied: the parts can be
+    // one value many times.
     fn concat_all(parts: List) -> Result<Vec<u8>, VmError> {
         parts.writable()?;
-        let mut out = Vec::new();
+        let mut size: usize = 0;
         for part in parts.iter() {
             let Value::Bytes(part) = part else {
                 return Err(unsound("bytes.concat_all", "parts"));
             };
-            out.extend_from_slice(&part);
+            size = size.saturating_add(part.len());
+        }
+        fits("bytes.concat_all", size)?;
+        let mut out = Vec::with_capacity(size);
+        for part in parts.iter() {
+            if let Value::Bytes(part) = part {
+                out.extend_from_slice(&part);
+            }
         }
         Ok(out)
     }

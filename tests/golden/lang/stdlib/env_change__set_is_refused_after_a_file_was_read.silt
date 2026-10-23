@@ -1,0 +1,16 @@
+-- exit: 1
+-- stdout-contains: read: false
+-- stderr-contains: error[runtime]
+-- stderr-contains: 
+-- stderr-not-contains: not reached
+-- An I/O operation runs on a thread of the I/O pool: after the first,
+-- the environment can no longer be changed.
+import env
+import io
+import result
+
+fn main() {
+  println("read: {io.read_file("no such file here") |> result.is_ok}")
+  env.set("SILT_ENV_CHANGE_E", "1")
+  println("not reached")
+}

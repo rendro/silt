@@ -18,12 +18,12 @@ mod glob_walk;
 /// bare-file shim) recognize `--` as a separator; everything after `--` is
 /// forwarded here verbatim and surfaced to silt programs via `io.args()`.
 ///
-/// Round-74 audit fix: prior to this round `io.args()` returned the raw
+/// `io.args()` once returned the raw
 /// `std::env::args()` of the silt binary itself (`["silt", "run",
 /// "file.silt", ...]`), forcing programs to know they had to drop the
 /// first 3 positions to recover their own user-supplied args. That coupling
 /// to the binary's argv layout was both fragile and undocumented; it also
-/// broke entirely when round-72 started rejecting bare extras after the
+/// broke entirely when the CLI started rejecting bare extras after the
 /// script file (the only previous way to pass user args). The `--` form
 /// makes the contract explicit and preserves the forwarding path.
 fn program_args_lock() -> &'static RwLock<Vec<String>> {
@@ -74,7 +74,7 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
 
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
-/// `MAX_RANGE_MATERIALIZE` in `src/value/mod.rs`: keep recursive traversal
+/// `MAX_COLLECTION_LEN` in `src/value/list.rs`: keep recursive traversal
 /// bounded so a sprawling filesystem cannot silently OOM the VM. Hitting the cap
 /// surfaces as `Err("fs.walk: exceeded N entries (cap)")` so users can
 /// paginate or narrow their root instead of getting a crash.
@@ -412,16 +412,20 @@ pub(crate) mod fs {
 pub(crate) mod env {
     use super::*;
 
-    /// Refuses a change of the environment from a task: it is the
-    /// process's, a task that reads it would race with the change, and
-    /// libc's setenv/unsetenv are not synchronized. Only the program's
-    /// own thread changes it.
-    fn own_thread_only(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
-        match vm.spawned {
-            true => Err(VmError::new(format!(
-                "{name} cannot be called from a spawned task"
-            ))),
+    /// Refuses a change of the environment once the program has
+    /// started a task or an I/O operation: from then on a thread other
+    /// than the program's own may read it, and one that reads it
+    /// through the C library (`getenv`: a name lookup, a TLS library)
+    /// is not synchronized with `setenv`, nor takes the lock that
+    /// `std::env` takes. (A spawned task is always refused: its start
+    /// was the first.)
+    fn not_begun(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
+        match vm.runtime.scheduler.begun() {
             false => Ok(()),
+            true => Err(VmError::new(format!(
+                "{name} cannot change the environment once tasks or I/O have started: \
+                 set it at the start of main"
+            ))),
         }
     }
 
@@ -445,24 +449,27 @@ pub(crate) mod env {
         }
 
         fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
-            own_thread_only(vm, "env.set")?;
             variable_name("env.set", key)?;
             if value.contains('\0') {
                 return Err(VmError::new(format!(
                     "env.set: the value of a variable holds no NUL character, got {value:?}"
                 )));
             }
-            // SAFETY: Only reachable from the main thread (guarded above).
+            not_begun(vm, "env.set")?;
+            // SAFETY: the program has started no task and no I/O
+            // operation (`not_begun`), so no thread of its runtime that
+            // may read the environment exists: the change races with
+            // nothing of silt's. The threads of an embedder are its own
+            // to keep off it (docs/ffi.md).
             unsafe { std::env::set_var(key, value) };
             Ok(())
         }
 
         fn remove(vm, name: &str) -> Result<(), VmError> {
-            own_thread_only(vm, "env.remove")?;
             variable_name("env.remove", name)?;
-            // Idempotent by contract: std::env::remove_var does not
-            // error when the variable was not set, so we don't need to
-            // pre-check with env::var. SAFETY: main thread (guarded).
+            not_begun(vm, "env.remove")?;
+            // Removing a variable that is not set does nothing.
+            // SAFETY: as for `env.set`.
             unsafe { std::env::remove_var(name) };
             Ok(())
         }

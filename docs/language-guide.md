@@ -26,6 +26,7 @@ This guide is split into focused pages:
 - [Traits](language/traits.md) -- declaration, implementation, Self type, built-in traits, where clauses
 - [Modules](language/modules.md) -- file-based modules, imports, built-in modules, standard library
 - [Testing](language/testing.md) -- test runner, assertions, file and function conventions
+- [Error Codes](language/error-codes.md) -- what each diagnostic code (`E0301`, ...) means
 
 ## Design
 

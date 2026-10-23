@@ -4,17 +4,16 @@
 //!
 //! The hash + HMAC primitives are backed by the `sha2` / `hmac`
 //! RustCrypto crates. `random_bytes` pulls from the OS CSPRNG via
-//! `getrandom`. `constant_time_eq` performs a bitwise-OR accumulation
-//! over the full contents of both buffers so its running time does not
-//! leak the position of the first differing byte.
+//! `getrandom`. `constant_time_eq` compares with `subtle`'s
+//! `ConstantTimeEq`, whose running time does not depend on where the
+//! buffers differ, and which the optimizer is kept from turning into an
+//! early exit.
 //!
-//! Length-leak note: `constant_time_eq` short-circuits on a length
-//! mismatch and returns `false`. This matches the common crypto-library
-//! convention (e.g. Rust's `subtle::ConstantTimeEq` for equal-length
-//! slices, and Python's `hmac.compare_digest` for bytes): the *lengths*
-//! can leak via timing, but the *contents* cannot. Callers that need
-//! length to be private should pad their inputs to a fixed size before
-//! comparing.
+//! Length-leak note: `constant_time_eq` answers `false` at once for
+//! buffers of different lengths, as `subtle` and Python's
+//! `hmac.compare_digest` do: the *lengths* can leak via timing, but the
+//! *contents* cannot. Callers that need length to be private should
+//! pad their inputs to a fixed size before comparing.
 
 use std::sync::Arc;
 
@@ -22,6 +21,7 @@ use blake2::Blake2b512;
 use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
+use subtle::ConstantTimeEq;
 
 use super::common::ok;
 use super::typed::{Bytes, builtins};
@@ -119,25 +119,9 @@ builtins! {
 
     // ── Timing-safe comparison ─────────────────────────────────────────
 
+    // Buffers of different lengths are unequal at once: the lengths may
+    // leak, the contents do not (see the module's comment).
     fn constant_time_eq(a: Bytes, b: Bytes) -> bool {
-        // Length mismatch short-circuits to false. Standard crypto-library
-        // practice (cf. Python's hmac.compare_digest, Rust's subtle crate
-        // for equal-length slices): the *lengths* leak via timing, but the
-        // *contents* of equal-length buffers do not. Callers that need
-        // length privacy should pad their inputs to a common fixed size
-        // before calling. See the module-level comment.
-        if a.len() != b.len() {
-            return false;
-        }
-        // OR-accumulate byte differences across the full buffer so the
-        // running time is independent of where (or whether) a mismatch
-        // occurs. The compiler has no strong reason to short-circuit a
-        // straight-line `|=` chain, but we also avoid `==` / boolean
-        // shortcut operators which might introduce a data-dependent branch.
-        let mut diff: u8 = 0;
-        for (x, y) in a.iter().zip(b.iter()) {
-            diff |= x ^ y;
-        }
-        diff == 0
+        bool::from(a.as_slice().ct_eq(b.as_slice()))
     }
 }

@@ -523,7 +523,7 @@ impl Session {
             true => self.cells.ids(),
             false => Default::default(),
         };
-        let check = typechecker::check_module(
+        let mut check = typechecker::check_module(
             &mut ast,
             ModuleContext {
                 module: id,
@@ -536,6 +536,11 @@ impl Session {
                 defs: self.defs.clone(),
                 tables: &mut self.tables,
             },
+        );
+        say_hidden_modules(
+            &self.sources,
+            &resolution.hidden_modules,
+            &mut check.diagnostics,
         );
         // Of a text that is cut short only the lexer's error is
         // reported: the declarations behind the cut are missing, and
@@ -862,6 +867,37 @@ impl Session {
                 .map(|m| m.path.clone())
                 .collect(),
             None => vec![self.graph.module(id).path.clone()],
+        }
+    }
+}
+
+/// The help of an access `m.x` that names nothing because the local `m`
+/// hides the imported module `m`, which has a member `x`
+/// ([`names::HiddenModule`]): it replaces the help of the error that
+/// the local has no field or method `x`.
+fn say_hidden_modules(
+    sources: &SourceMap,
+    hidden: &[names::HiddenModule],
+    diagnostics: &mut [Diagnostic],
+) {
+    for h in hidden {
+        let (line, _) = sources.line_col((h.local.file, h.local.start));
+        for d in diagnostics.iter_mut().filter(|d| {
+            d.span == h.access
+                && matches!(
+                    d.code,
+                    Code::UnknownMethod | Code::UnknownField | Code::NoSuchField
+                )
+        }) {
+            let (name, module) = (resolve(h.name), resolve(h.module));
+            let hidden = match name == module {
+                true => format!("`{module}`"),
+                false => format!("`{module}` (imported as `{name}`)"),
+            };
+            d.help = vec![format!(
+                "`{name}` here is the local from line {line}, which hides the module {hidden}; \
+                 rename the local"
+            )];
         }
     }
 }

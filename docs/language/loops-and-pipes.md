@@ -242,8 +242,11 @@ fn fact(n) {
 `i * loop(i - 1)` is a type error: carry the running value in a binding
 instead, as `acc` does above.
 
-**Loop inside closures.** `loop()` works inside closures, which is useful for
-search patterns:
+**Loops and closures.** A closure's body can hold a `loop` of its own. A
+`loop(...)` written inside a closure cannot go on with a loop outside the
+closure: the closure runs when it is called, not as the loop's body, so
+that is an error. Call the closure in the loop's body and decide there, as
+this search does with its predicate:
 
 ```silt
 fn find_index(xs, predicate) {

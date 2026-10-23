@@ -69,8 +69,8 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
             }
         }
         PatternKind::AnonRecord { fields, rest } => {
-            // Round-62 B9: anon-record destructure (`let { x, y } = p`)
-            // also binds shorthand fields. Round-101: the named rest
+            // Anon-record destructure (`let { x, y } = p`)
+            // also binds shorthand fields. The named rest
             // binder (`{ x, ...rest }`) binds too — mirror the
             // typechecker's `collect_pattern_vars`.
             for (name, _, sub) in fields {
@@ -99,14 +99,14 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
             }
         }
         PatternKind::Or(alts) => {
-            // Round-101: all alternatives are validated to bind the same
+            // All alternatives are validated to bind the same
             // names; mirror `collect_pattern_vars` and take the first.
             if let Some(p) = alts.first() {
                 collect_pattern_names(p, locals);
             }
         }
         PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
                 collect_pattern_names(p, locals);
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_locals_when_let_anon_record_rest_binder() {
-        // Round-101 GAP lock: `when let {x, ...rest} = p` binds BOTH the
+        // `when let {x, ...rest} = p` binds BOTH the
         // shorthand field `x` and the named rest binder `rest`. Pre-fix,
         // the AnonRecord arm destructured `{ fields, .. }` and dropped
         // the rest symbol, so completion never offered `rest`.
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_locals_match_map_and_or_binders() {
-        // Round-101 GAP lock: match-arm Map patterns (`#{\"k\": v}`) and
+        // Match-arm Map patterns (`#{\"k\": v}`) and
         // Or patterns (`A(v) | B(v)`) bind `v`; both previously fell to
         // the `_ => {}` catch-all so completion missed the binder.
         let source = "type T { A(Int), B(Int) }\nfn g(m, x) {\n  let a = match m {\n    #{\"k\": v} -> v\n    _ -> 0\n  }\n  let b = match x { A(v2) | B(v2) -> v2 }\n  a + b\n}";

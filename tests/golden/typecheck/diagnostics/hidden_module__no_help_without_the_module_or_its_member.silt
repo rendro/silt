@@ -1,0 +1,24 @@
+-- exit: 1
+-- stderr-contains: type 'List(Int)' has no field 'length'
+-- stderr-contains: type 'List(Int)' has no field 'frobnicate'
+-- stderr-not-contains: hides the module
+-- No help about a hidden module when the module is not imported, or
+-- when it has no member of the name; a local with the field is used.
+import list
+
+fn count(xs: List(Int)) -> Int {
+  let string = [1]
+  string.length(string) + list.length(xs)
+}
+
+fn odd() -> Int {
+  let list = [1]
+  list.frobnicate(list)
+}
+
+fn main() {
+  let list = {length: 3}
+  println(list.length)
+  println(count([1]))
+  println(odd())
+}

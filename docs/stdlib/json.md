@@ -31,7 +31,7 @@ JsonError` is wired in):
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes, or a number beyond `Float`'s range (`1e400`: `number out of range`) |
+| `Syntax(msg, offset)` | `String`, `Int` | Malformed JSON, `offset` being the 0-based byte of the text where reading stopped (the text's length when it ends too soon), or a number beyond `Float`'s range (`1e400`: `number out of range`) |
 | `TypeMismatch(expected, actual)` | `String`, `String` | A value's JSON type did not match the type it decodes into; `actual` ends with the value's path |
 | `MissingField(name)` | `String` | A required (non-`Option`) field was absent; `name` is its path |
 | `Other(msg)` | `String` | Anything else: a tuple's array of the wrong length, a value too deep for `json.decode` |

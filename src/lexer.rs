@@ -726,7 +726,7 @@ impl Lexer {
                         // vanish when echoed raw — CR returns the terminal
                         // cursor to column 0 mid-line, U+0001 is invisible
                         // — so escape them via `escape_default` (`\r`,
-                        // `\u{1}`, …), mirroring the round-100 fix to the
+                        // `\u{1}`, …), as is done for the
                         // `unexpected character` catch-all below. Printable
                         // unknown escapes (`\q`, …) keep their plain form.
                         // An unknown escape is an error of the string,

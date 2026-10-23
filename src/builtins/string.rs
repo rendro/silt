@@ -1,7 +1,7 @@
 //! String builtin functions (`string.*`).
 
 use super::typed::{List, builtins};
-use crate::value::{MAX_RANGE_MATERIALIZE, Value};
+use crate::value::{MAX_COLLECTION_LEN, Value};
 use crate::vm::{Step, VmError};
 
 /// The one character `pad` is, for `string.<name>`.
@@ -30,9 +30,9 @@ fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError
             "string.{name}: negative width {width}"
         )));
     }
-    if width as u128 > MAX_RANGE_MATERIALIZE as u128 {
+    if width as u128 > MAX_COLLECTION_LEN as u128 {
         return Err(VmError::new(format!(
-            "string.{name}: width {width} exceeds maximum of {MAX_RANGE_MATERIALIZE}"
+            "string.{name}: width {width} exceeds maximum of {MAX_COLLECTION_LEN}"
         )));
     }
     let missing = (width as usize).saturating_sub(s.chars().count());
@@ -63,7 +63,7 @@ builtins! {
     // (A value is shown as its `Display` impl says, which may be the
     // program's code: a step, not a value at once.)
     fn from(vm, x: &Value) -> Result<Step, VmError> {
-        vm.shown(x)
+        vm.shown_within(x, "string.from")
     }
 
     fn split(s: &str, separator: &str) -> Vec<Value> {
@@ -94,7 +94,7 @@ builtins! {
         // producing `(|s| + 1) * |to| + |s|` bytes and can trivially
         // blow out RAM. Sibling builtins (`string.repeat`,
         // `string.pad_left`, `string.pad_right`) cap at
-        // `MAX_RANGE_MATERIALIZE`; mirror that exactly.
+        // `MAX_COLLECTION_LEN`; mirror that exactly.
         let s_len = s.len() as u128;
         let from_len = from.len() as u128;
         let to_len = to.len() as u128;
@@ -116,17 +116,32 @@ builtins! {
                 s_len.saturating_sub(shrink)
             }
         };
-        if result_len > MAX_RANGE_MATERIALIZE as u128 {
+        if result_len > MAX_COLLECTION_LEN as u128 {
             return Err(VmError::new(format!(
                 "string.replace: result would exceed maximum string size ({} bytes > {} limit)",
-                result_len, MAX_RANGE_MATERIALIZE
+                result_len, MAX_COLLECTION_LEN
             )));
         }
         Ok(s.replace(from, to))
     }
 
+    // The size is counted before anything is copied: the items can be
+    // one string many times.
     fn join(xs: List, sep: &str) -> Result<String, VmError> {
         xs.writable()?;
+        let items = xs.len() as u128;
+        let mut result_len = (sep.len() as u128).saturating_mul(items.saturating_sub(1));
+        for item in xs.iter() {
+            if let Value::String(s) = item {
+                result_len = result_len.saturating_add(s.len() as u128);
+            }
+        }
+        if result_len > MAX_COLLECTION_LEN as u128 {
+            return Err(VmError::new(format!(
+                "string.join: result would exceed maximum string size ({} bytes > {} limit)",
+                result_len, MAX_COLLECTION_LEN
+            )));
+        }
         let shown: Vec<String> = xs.iter().map(|item| item.to_string()).collect();
         Ok(shown.join(sep))
     }
@@ -164,10 +179,10 @@ builtins! {
             return Err(VmError::new(format!("string.repeat: negative count {n}")));
         }
         let result_len = (n as u128) * (s.len() as u128);
-        if result_len > MAX_RANGE_MATERIALIZE as u128 {
+        if result_len > MAX_COLLECTION_LEN as u128 {
             return Err(VmError::new(format!(
                 "string.repeat: result would exceed maximum string size ({} bytes > {} limit)",
-                result_len, MAX_RANGE_MATERIALIZE
+                result_len, MAX_COLLECTION_LEN
             )));
         }
         Ok(s.repeat(n as usize))

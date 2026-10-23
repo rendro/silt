@@ -127,7 +127,7 @@ pub struct AssocBinding {
 
 /// Cycle diagnostic returned by [`Resolver::register_assoc_binding`]
 /// when the supplied binding RHS would close a cycle back on the
-/// triple being registered. Round 76 BROKEN T1 fix.
+/// triple being registered.
 #[derive(Debug, Clone)]
 pub struct AssocBindingCycle {
     /// Trait of the binding under registration.
@@ -181,7 +181,7 @@ impl Resolver {
     /// any earlier alias on the cycle path was registered with a
     /// target that referenced the now-known-cyclic target, so leaving
     /// those entries in the map produces incoherent diagnostics at
-    /// later use sites (round 79 LATENT TS-L1).
+    /// later use sites.
     pub fn unregister_alias(&mut self, alias: TypeRef) {
         self.aliases.remove(&alias.id);
     }
@@ -225,7 +225,7 @@ impl Resolver {
     /// duplicate-impl check, so in practice this only fires once per
     /// triple).
     ///
-    /// Round 76 BROKEN T1 cycle protection: refuses to register a
+    /// Refuses to register a
     /// binding whose RHS reduces to a chain of `AssocProj`s that
     /// closes back on the very triple being registered (or any
     /// already-registered triple). Without this guard, a binding like
@@ -233,7 +233,7 @@ impl Resolver {
     /// or a mutual pair `Foo::T = <Int as Bar>::S` /
     /// `Bar::S = <Int as Foo>::T` would store a self-referential
     /// `AssocProj` and the next `canonicalize` call would recurse
-    /// indefinitely (round 76 audit T1 stack overflow). On detection,
+    /// indefinitely. On detection,
     /// returns the offending cycle's head triple so the caller can
     /// emit a typed diagnostic; the binding is *not* inserted.
     #[allow(clippy::result_large_err)]

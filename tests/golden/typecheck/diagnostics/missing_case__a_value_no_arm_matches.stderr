@@ -16,17 +16,17 @@ error[type]: non-exhaustive match: `(true, false)` is not covered
  35 |   match t {
     |         ^ non-exhaustive match: `(true, false)` is not covered
 
-error[type]: non-exhaustive match: `[_, _, .._]` is not covered
+error[type]: non-exhaustive match: `[_, _, ..]` is not covered
  --> missing_case__a_value_no_arm_matches.silt:42:9
     |
  42 |   match xs {
-    |         ^^ non-exhaustive match: `[_, _, .._]` is not covered
+    |         ^^ non-exhaustive match: `[_, _, ..]` is not covered
 
-error[type]: non-exhaustive match: `[false, .._]` is not covered
+error[type]: non-exhaustive match: `[false, ..]` is not covered
  --> missing_case__a_value_no_arm_matches.silt:49:9
     |
  49 |   match xs {
-    |         ^^ non-exhaustive match: `[false, .._]` is not covered
+    |         ^^ non-exhaustive match: `[false, ..]` is not covered
 
 error[type]: non-exhaustive match: `2` is not covered
  --> missing_case__a_value_no_arm_matches.silt:56:9
@@ -82,8 +82,8 @@ error[type]: non-exhaustive match: `{ a: false }` is not covered
  110 |   match r {
      |         ^ non-exhaustive match: `{ a: false }` is not covered
 
-error[type]: non-exhaustive match: `(Dot, [Some(false), .._])` is not covered
+error[type]: non-exhaustive match: `(Dot, [Some(false), ..])` is not covered
  --> missing_case__a_value_no_arm_matches.silt:116:9
      |
  116 |   match t {
-     |         ^ non-exhaustive match: `(Dot, [Some(false), .._])` is not covered
+     |         ^ non-exhaustive match: `(Dot, [Some(false), ..])` is not covered

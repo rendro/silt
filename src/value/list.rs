@@ -38,10 +38,13 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::OnceLock;
 
-/// The most elements a list that holds none (`a..b`) may have when it
-/// is made a list that holds them: reversed, written out, encoded.
-/// Prevents exhausting memory with `(1..1_000_000_000) |> list.reverse`.
-pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
+/// The most elements a list or a set, and the most entries a map, that a
+/// builtin or an operator makes may have (`builtins::collections::fits`),
+/// and the most elements a list that holds none (`a..b`) may have when
+/// it is made a list that holds them: reversed, written out, encoded.
+/// Prevents exhausting memory with `(1..1_000_000_000) |> list.reverse`,
+/// or with a loop that appends for ever.
+pub(crate) const MAX_COLLECTION_LEN: usize = 10_000_000;
 
 /// The most elements a list a change makes keeps side by side in a
 /// buffer; a longer one keeps them in a tree. A list made from one kept
@@ -533,12 +536,12 @@ impl List {
     pub fn writable(&self) -> Result<(), TooLong> {
         match self.0 {
             Stored::Other(Other::Ints { lo, hi })
-                if hi.abs_diff(lo) >= MAX_RANGE_MATERIALIZE as u64 =>
+                if hi.abs_diff(lo) >= MAX_COLLECTION_LEN as u64 =>
             {
                 Err(TooLong {
                     lo,
                     hi,
-                    most: MAX_RANGE_MATERIALIZE as u64,
+                    most: MAX_COLLECTION_LEN as u64,
                 })
             }
             _ => Ok(()),

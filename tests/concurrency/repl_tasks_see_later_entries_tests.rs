@@ -592,20 +592,21 @@ channel.send(jobs, { -> later() + 1 })
 }
 
 /// A module whose import fails when it runs, after it has set a `let`
-/// and its functions, until `X2_READY` is set. What it defines reads
-/// `X2_STAMP` when the module runs.
-const LATE: &str = "import env
-pub let stamp = match env.get(\"X2_STAMP\") {
-  Some(s) -> s
-  None -> \"none\"
+/// and its functions, until the file `X2_READY` is written. What it
+/// defines reads the file `X2_STAMP` when the module runs. (Files, not
+/// the environment: `env.set` is refused while a task is live.)
+const LATE: &str = "import io
+pub let stamp = match io.read_file(\"X2_STAMP\") {
+  Ok(s) -> s
+  Err(_) -> \"none\"
 }
 pub type Tag { t: Int }
 trait Display for Tag { fn display(self) -> String { \"tag-{stamp}\" } }
 pub fn tag() -> Tag { Tag { t: 1 } }
 pub fn stamp_now() -> String { stamp }
-pub let ready = match env.get(\"X2_READY\") {
-  Some(s) -> s
-  None -> panic(\"not ready\")
+pub let ready = match io.read_file(\"X2_READY\") {
+  Ok(s) -> s
+  Err(_) -> panic(\"not ready\")
 }
 ";
 
@@ -617,18 +618,18 @@ fn import_twice(work: &str) -> String {
     format!(
         "import task
 import channel
-import env
+import io
 let jobs = channel.new(8)
 let outs = channel.new(8)
 {work}
 let worker = task.spawn {{ -> work(2) }}
-env.set(\"X2_STAMP\", \"one\")
+let _ = io.write_file(\"X2_STAMP\", \"one\")
 import late
 fn poke() -> String {{ \"poke\" }}
 channel.send(jobs, {{ -> poke() }})
 channel.receive(outs)
-env.set(\"X2_STAMP\", \"two\")
-env.set(\"X2_READY\", \"yes\")
+let _ = io.write_file(\"X2_STAMP\", \"two\")
+let _ = io.write_file(\"X2_READY\", \"yes\")
 import late
 \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\"
 channel.send(jobs, {{ -> \"{{late.stamp}} {{late.stamp_now()}} {{late.tag()}} {{[late.tag()]}}\" }})
@@ -728,7 +729,13 @@ fn a_session_sets_no_slot_twice() {
 
     let dir = std::env::temp_dir().join(format!("silt_repl_slots_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a directory for the session");
-    let late = LATE.replace("X2_", "X2_SLOTS_");
+    // The module reads its files by their full names: the session's
+    // own directory is the test's.
+    let at = format!("{}/", dir.display()).replace('\\', "/");
+    let late = LATE.replace("X2_", &format!("{at}X2_"));
+    for name in ["X2_STAMP", "X2_READY"] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
     std::fs::write(dir.join("late.silt"), late).expect("a module is written");
     let mut repl = Repl::new(ProjectSetup::Discover(dir.clone()));
     let before = silt::vm::slots_set_again();
@@ -746,7 +753,7 @@ fn a_session_sets_no_slot_twice() {
     let ok = |shown: &str| Ok(shown.to_string());
     let failed = |error: &str| Err(error.to_string());
     for entry in [
-        "import task\nimport channel\nimport env",
+        "import task\nimport channel\nimport io",
         "let jobs = channel.new(8)\nlet outs = channel.new(8)",
         "trait N { fn n(self) -> String }\nfn call(v: a) -> String where a: N { N.n(v) }",
         "fn work() {\n  match channel.receive(jobs) {\n    Some(job) -> {\n      \
@@ -779,12 +786,11 @@ fn a_session_sets_no_slot_twice() {
     );
     assert_eq!(run("channel.receive(outs)"), ok("Some(second second)"));
     // A module whose import fails once, and a redefinition of each kind.
-    assert_eq!(run("env.set(\"X2_SLOTS_STAMP\", \"one\")"), ok("()"));
+    let write = |name: &str, text: &str| format!("io.write_file(\"{at}{name}\", \"{text}\")");
+    assert_eq!(run(&write("X2_STAMP", "one")), ok("Ok(())"));
     assert_eq!(run("import late"), failed("panic: not ready"));
-    assert_eq!(
-        run("env.set(\"X2_SLOTS_STAMP\", \"two\")\nenv.set(\"X2_SLOTS_READY\", \"y\")"),
-        ok("()")
-    );
+    assert_eq!(run(&write("X2_STAMP", "two")), ok("Ok(())"));
+    assert_eq!(run(&write("X2_READY", "y")), ok("Ok(())"));
     assert_eq!(run("import late"), ok("()"));
     assert_eq!(
         run("channel.send(jobs, { -> \"{late.stamp} {late.tag()}\" })"),

@@ -21,6 +21,7 @@ literal syntax and contain unique values.
 | `from_list` | `(List(a)) -> Set(a) where a: Hash` | Create set from list |
 | `insert` | `(Set(a), a) -> Set(a) where a: Hash` | Add an element |
 | `intersection` | `(Set(a), Set(a)) -> Set(a)` | Elements in both sets |
+| `is_empty` | `(Set(a)) -> Bool` | True if the set has no elements |
 | `is_subset` | `(Set(a), Set(a)) -> Bool` | True if first is subset of second |
 | `length` | `(Set(a)) -> Int` | Number of elements |
 | `map` | `(Set(a), Fn(a) -> b) -> Set(b) where b: Hash` | Transform each element |
@@ -171,6 +172,24 @@ import set
 fn main() {
   let common = set.intersection(#[1, 2, 3], #[2, 3, 4])
   println(set.to_list(common)) -- [2, 3]
+}
+```
+
+
+## `set.is_empty`
+
+```
+set.is_empty(s: Set(a)) -> Bool
+```
+
+Returns `true` if the set has no elements.
+
+```silt
+import set
+
+fn main() {
+  println(set.is_empty(set.new())) -- true
+  println(set.is_empty(#[1, 2])) -- false
 }
 ```
 

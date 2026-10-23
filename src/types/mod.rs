@@ -1058,7 +1058,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
                     }) => {
                         let mut merged = new_fields.clone();
                         for (n, t) in extra_fields.iter() {
-                            // Round 76 LATENT T3: align with the
+                            // Align with the
                             // companion `apply` site (typechecker/
                             // mod.rs ~line 922) which uses
                             // `or_insert` (existing wins). The
