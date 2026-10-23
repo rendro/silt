@@ -32,7 +32,7 @@ silt init
 silt run
 ```
 
-`silt init` creates a `silt.toml` manifest and a starter `src/main.silt`. `silt run` (with no arguments, inside the package directory) executes the package's entry point. That's the whole loop.
+`silt init` creates a `silt.toml` manifest and a starter `src/main.silt`. `silt run` (with no arguments, inside the package directory) executes the package's entry point. That's the whole loop. (`silt init --lib` creates a library instead, `src/lib.silt`, for other packages to import.)
 
 See `examples/` in the repository for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
@@ -226,13 +226,14 @@ silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
-silt init                  -- create a new silt package in this directory
+silt init [--lib]          -- create a new silt package (a library with --lib) in this directory
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --disassemble`)
 silt self-update           -- update the silt binary to the latest release
 silt update [<dep-name>]   -- regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>  -- add a path-based dependency to silt.toml
 silt add <name> --git <url> (--rev|--branch|--tag) <ref>  -- add a git-based dependency to silt.toml
+silt remove <name>         -- remove a dependency from silt.toml and silt.lock
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-run the command when a file of the program (a module it imports, `silt.toml` or `silt.lock`) changes. A run that is still going, such as a server, is stopped first.
@@ -249,7 +250,7 @@ Run `silt self-update` to replace the installed binary with the latest GitHub re
 
 The bare `silt update` command regenerates `silt.lock` from the current package's `silt.toml`. Use `silt self-update` for binary self-updates.
 
-`silt.lock` pins each git dependency to a commit and to a checksum of its sources (`silt.toml` and `src/`). Every command that loads the dependency compares its checkout with that checksum and refuses one that differs, naming the dependency, both checksums and the checkout in silt's cache: a checkout that was changed after it was fetched never runs. Delete that checkout to fetch the commit again. `silt update` takes nothing from the cache: it fetches every git dependency afresh and pins what it fetched. Path dependencies are not compared: their sources change as you work on them.
+`silt.lock` pins each git dependency to a commit and to a checksum of its sources (`silt.toml` and `src/`). Every command that loads the dependency compares its checkout with that checksum and refuses one that differs, naming the dependency, both checksums and the checkout in silt's cache: a checkout that was changed after it was fetched never runs. Delete that checkout to fetch the commit again. `silt update` takes nothing from the cache: it fetches every git dependency afresh and pins what it fetched. Path dependencies are not compared: their sources change as you work on them. A path dependency is written as a path relative to the directory of `silt.toml`, so a package moved or checked out elsewhere together with its dependencies keeps its `silt.lock`.
 
 ## What's next
 

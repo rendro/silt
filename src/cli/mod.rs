@@ -23,6 +23,7 @@ pub(crate) mod init;
 pub(crate) mod lsp;
 pub(crate) mod package;
 pub(crate) mod paths;
+pub(crate) mod remove;
 pub(crate) mod repl;
 pub(crate) mod run;
 pub(crate) mod self_update;

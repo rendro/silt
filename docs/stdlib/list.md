@@ -37,6 +37,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `head` | `(List(a)) -> Option(a)` | First element, or None |
 | `index_of` | `(List(a), a) -> Option(Int) where a: Equal` | Index of first matching element, or None |
 | `intersperse` | `(List(a), a) -> List(a)` | Insert separator between elements |
+| `is_empty` | `(List(a)) -> Bool` | True if the list has no elements |
 | `last` | `(List(a)) -> Option(a)` | Last element, or None |
 | `length` | `(List(a)) -> Int` | Number of elements |
 | `map` | `(List(a), Fn(a) -> b) -> List(b)` | Transform each element |
@@ -51,12 +52,14 @@ channel-backed lazy pipelines over the same combinator names.
 | `set` | `(List(a), Int, a) -> Option(List(a))` | The list with the element at index replaced, or None if there is none |
 | `sort` | `(List(a)) -> List(a) where a: Compare` | Sort in natural order |
 | `sort_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Compare` | Sort by key function |
+| `sort_with` | `(List(a), Fn(a, a) -> Int) -> List(a)` | Sort with a comparison function (below 0: less, 0: equal, above 0: greater); stable |
 | `sum` | `(List(Int)) -> Int` | Sum a list of ints (0 on empty) |
 | `sum_float` | `(List(Float)) -> Float` | Sum a list of floats (0.0 on empty) |
 | `tail` | `(List(a)) -> List(a)` | All elements except the first |
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
 | `unique` | `(List(a)) -> List(a) where a: Equal` | Remove duplicates, preserving first occurrence |
+| `unique_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Hash` | Keep the first element of each key |
 | `zip` | `(List(a), List(b)) -> List((a, b))` | Pair elements from two lists |
 
 
@@ -449,6 +452,24 @@ fn main() {
 ```
 
 
+## `list.is_empty`
+
+```
+list.is_empty(xs: List(a)) -> Bool
+```
+
+Returns `true` if the list has no elements.
+
+```silt
+import list
+
+fn main() {
+  println(list.is_empty([])) -- true
+  println(list.is_empty([1, 2])) -- false
+}
+```
+
+
 ## `list.last`
 
 ```
@@ -726,6 +747,28 @@ fn main() {
 ```
 
 
+## `list.sort_with`
+
+```
+list.sort_with(xs: List(a), cmp: Fn(a, a) -> Int) -> List(a)
+```
+
+Returns a new list sorted by the comparison function: `cmp(a, b)` is below
+0 when `a` comes before `b`, 0 when the two are equal, and above 0 when `a`
+comes after `b`. The sort is stable: equal elements keep their order.
+
+```silt
+import list
+
+fn main() {
+  println(list.sort_with([3, 1, 2]) { a, b -> b.compare(a) }) -- [3, 2, 1]
+  -- By the first of each pair only: (1, b) stays before (1, a).
+  let pairs = [(2, "c"), (1, "b"), (1, "a")]
+  println(list.sort_with(pairs) { (x, _), (y, _) -> x.compare(y) }) -- [(1, b), (1, a), (2, c)]
+}
+```
+
+
 ## `list.sum`
 
 ```
@@ -838,6 +881,26 @@ import list
 
 fn main() {
   println(list.unique([1, 2, 1, 3, 2])) -- [1, 2, 3]
+}
+```
+
+
+## `list.unique_by`
+
+```
+list.unique_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Hash
+```
+
+Keeps the first element of each key, in the order of the list: an element
+whose key an earlier element has is removed.
+
+```silt
+import list
+import string
+
+fn main() {
+  let words = ["apple", "avocado", "banana", "blueberry", "cherry"]
+  println(list.unique_by(words) { w -> string.slice(w, 0, 1) }) -- [apple, banana, cherry]
 }
 ```
 

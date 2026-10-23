@@ -1,0 +1,28 @@
+-- `float.parse` of a spelled-out infinity or NaN, in any case and with
+-- a sign or blanks around it, is `Err(NotFinite)`; an out-of-range
+-- literal stays `Overflow` / `Underflow`, and a word that is no number
+-- `InvalidDigit`. Every variant of `FloatError` is matched by name.
+import float
+import list
+
+fn kind(e: float.FloatError) -> String {
+  match e {
+    float.Empty -> "Empty"
+    float.InvalidDigit(at) -> "InvalidDigit({at})"
+    float.Overflow -> "Overflow"
+    float.Underflow -> "Underflow"
+    float.NotFinite -> "NotFinite"
+    float.Other(m) -> "Other({m})"
+  }
+}
+
+fn main() {
+  ["inf", "+inf", "-inf", "Infinity", "-INFINITY", " nan ", "NaN", "-nan", "1e400", "-1e400", "infx", "nope", ""]
+  |> list.each { s ->
+    match float.parse(s) {
+      Ok(f) -> println("'{s}': Ok({f})")
+      Err(e) -> println("'{s}': {kind(e)}")
+    }
+  }
+  println(float.parse("inf") == Err(float.NotFinite))
+}

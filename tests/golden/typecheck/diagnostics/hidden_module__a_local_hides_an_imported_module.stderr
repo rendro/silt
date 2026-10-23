@@ -1,0 +1,27 @@
+error[type]: unknown method 'to_upper' on type String
+ --> hidden_module__a_local_hides_an_imported_module.silt:12:3
+    |
+ 12 |   string.to_upper(string)
+    |   ^^^^^^^^^^^^^^^ unknown method 'to_upper' on type String
+  = help: `string` here is the local from line 11, which hides the module `string`; rename the local
+
+error[type]: unknown method 'length' on List
+ --> hidden_module__a_local_hides_an_imported_module.silt:17:11
+    |
+ 17 |   println(list.length(list))
+    |           ^^^^^^^^^^^ unknown method 'length' on List
+  = help: `list` here is the local from line 16, which hides the module `list`; rename the local
+
+error[type]: anon record has no field 'keys'
+ --> hidden_module__a_local_hides_an_imported_module.silt:19:11
+    |
+ 19 |   println(map.keys(map))
+    |           ^^^^^^^^ anon record has no field 'keys'
+  = help: `map` here is the local from line 18, which hides the module `map`; rename the local
+
+error[type]: unknown method 'reverse' on List
+ --> hidden_module__a_local_hides_an_imported_module.silt:20:32
+    |
+ 20 |   let f = { list: List(Int) -> list.reverse(list) }
+    |                                ^^^^^^^^^^^^ unknown method 'reverse' on List
+  = help: `list` here is the local from line 20, which hides the module `list`; rename the local

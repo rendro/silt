@@ -360,7 +360,10 @@ pub enum PatternKind {
         /// The rest binder and the span of its name.
         rest: Option<(Symbol, Span)>,
     },
-    /// Match a list: [a, b, c] or [head, ...tail] or []
+    /// Match a list: `[a, b, c]`, `[]`, or with a rest after the
+    /// elements, `[head, ..tail]` or `[head, ..]`. The rest is the list
+    /// of the elements after those named: an `Ident` for `..tail`, a
+    /// `Wildcard` at the `..` for `..` (the parser makes no other).
     List(Vec<Pattern>, Option<Box<Pattern>>),
     /// Or-pattern: 0 | 1 -> "small"
     Or(Vec<Pattern>),

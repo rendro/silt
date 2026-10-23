@@ -1,0 +1,23 @@
+-- exit: 1
+-- A trailing closure starts on the line of its call: one on the next
+-- line is a statement of its own. When the call above is one argument
+-- short and that argument is a function, the call's error says so (in
+-- place of the pipe's help), with the closure's parameters as written,
+-- and the closure has no unused-value error.
+import list
+
+fn apply(x: Int, f: Fn(Int) -> Int) -> Int {
+  f(x)
+}
+
+fn main() {
+  let a = apply(1)
+  { x -> x + 1 }
+  let b = [1, 2] |> list.map
+  { n -> n * 2 }
+  list.each([1])
+  { _ -> println("each") }
+  let c = [(1, "a")] |> list.fold("")
+  { acc, (k, _) -> "{acc}{k}" }
+  println("{a} {b} {c}")
+}
