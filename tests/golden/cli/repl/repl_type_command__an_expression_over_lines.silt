@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: :type [1,\n2]\n:type 1 +\n2\n:type "a\nb"\n:quit\n

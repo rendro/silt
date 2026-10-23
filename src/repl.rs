@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -10,6 +11,7 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
+use crate::builtins::registry::docs::signature_block;
 use crate::defs::DefTable;
 use crate::diagnostic::{Diagnostic, Located, SourceView, render_human};
 use crate::intern;
@@ -17,6 +19,7 @@ use crate::lexer::Lexer;
 use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
 use crate::source::{FileId, SourceMap, SourceName, Span};
 use crate::typechecker::names::{Binding, Exports, ModuleScope};
+use crate::types::{Pred, RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
 use crate::value::Value;
 use crate::vm::Vm;
 
@@ -171,6 +174,9 @@ pub fn run_repl() {
     // string or a block comment of it is (not because a line ended in
     // an operator).
     let mut delimiter_open = false;
+    // Whether the entry being read is the expression of a `:type`
+    // command, which more lines can finish as they can any entry.
+    let mut typing = false;
 
     loop {
         let prompt = if buffer.is_empty() {
@@ -184,7 +190,7 @@ pub fn run_repl() {
         // back before the process ends.)
         match crate::scheduler::unwinding(|| rl.readline(prompt)) {
             Ok(line) => {
-                let line = line.trim_end();
+                let mut line = line.trim_end();
 
                 if buffer.is_empty() {
                     match line.trim() {
@@ -194,6 +200,19 @@ pub fn run_repl() {
                             continue;
                         }
                         "" => continue,
+                        other if command(other, ":type") == Some("") => {
+                            show_type(&mut rl, &mut repl.borrow_mut(), "");
+                            continue;
+                        }
+                        other if command(other, ":type").is_some() => {
+                            typing = true;
+                            line = command(other, ":type").unwrap_or_default();
+                        }
+                        other if command(other, ":doc").is_some() => {
+                            let _ = rl.add_history_entry(other);
+                            show_doc(command(other, ":doc").unwrap_or_default());
+                            continue;
+                        }
                         other if other.starts_with(':') && !other.starts_with("::") => {
                             crate::scheduler::report(|| {
                                 eprintln!("unknown REPL command '{other}'; type :help for the list")
@@ -231,18 +250,25 @@ pub fn run_repl() {
                 }
 
                 let input = std::mem::take(&mut buffer);
-                evaluate(&mut rl, &mut repl.borrow_mut(), input.trim());
+                match std::mem::take(&mut typing) {
+                    true => show_type(&mut rl, &mut repl.borrow_mut(), input.trim()),
+                    false => evaluate(&mut rl, &mut repl.borrow_mut(), input.trim()),
+                }
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
                 delimiter_open = false;
+                typing = false;
                 println!("^C");
             }
             // The input ends: an entry that was still being read is
-            // evaluated as it is, and says what it lacks.
+            // evaluated (or typed) as it is, and says what it lacks.
             Err(ReadlineError::Eof) => {
                 let input = std::mem::take(&mut buffer);
-                evaluate(&mut rl, &mut repl.borrow_mut(), input.trim());
+                match typing {
+                    true => show_type(&mut rl, &mut repl.borrow_mut(), input.trim()),
+                    false => evaluate(&mut rl, &mut repl.borrow_mut(), input.trim()),
+                }
                 break;
             }
             Err(err) => {
@@ -260,6 +286,49 @@ pub fn run_repl() {
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
     }
+}
+
+/// What follows the command `name` on the line `line` (`:type 1 + 2`
+/// for `:type`: `1 + 2`), if the line is that command.
+fn command<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(name)?;
+    match rest.chars().next() {
+        None => Some(""),
+        Some(c) if c.is_whitespace() => Some(rest.trim()),
+        Some(_) => None,
+    }
+}
+
+/// `:type input`: the diagnostics of the expression `input` and its
+/// type.
+fn show_type(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input: &str) {
+    let _ = rl.add_history_entry(format!(":type {input}").trim_end());
+    if input.is_empty() {
+        crate::scheduler::report(|| eprintln!(":type needs an expression, as in :type list.map"));
+        return;
+    }
+    let Ok(typed) = repl.type_of(input) else {
+        crate::scheduler::report(|| eprintln!(":type takes an expression, not a declaration"));
+        return;
+    };
+    let errors: Vec<String> = typed.diagnostics.iter().map(|d| repl.render(d)).collect();
+    crate::scheduler::report(|| {
+        for error in &errors {
+            eprintln!("{error}");
+        }
+        if let Some(ty) = &typed.ty {
+            println!("{ty}");
+        }
+    });
+}
+
+/// `:doc name`: the signature and summary of the builtin `name`.
+fn show_doc(name: &str) {
+    crate::scheduler::report(|| match (name, doc_text(name)) {
+        ("", _) => eprintln!(":doc needs a name, as in :doc list.map"),
+        (_, Some(text)) => println!("{text}"),
+        (_, None) => eprintln!("no builtin function or module named '{name}'"),
+    });
 }
 
 /// Evaluate the entry `input`, and show its diagnostics and its value.
@@ -286,6 +355,106 @@ fn evaluate(rl: &mut Editor<SiltHelper, DefaultHistory>, repl: &mut Repl, input:
             println!("{shown}");
         }
     });
+}
+
+/// What `:type` found: the diagnostics of the expression, warnings too,
+/// and its type, when it has no error.
+pub struct Typed {
+    pub diagnostics: Vec<Diagnostic>,
+    pub ty: Option<String>,
+}
+
+/// `:type` was given declarations, not an expression.
+#[derive(Debug)]
+pub struct NotAnExpression;
+
+/// The type `scheme` stands for as `:type` writes it: its type variables
+/// as letters, in the order they first appear, and what it asks of them
+/// (`Fn(List(a)) -> List(a) where a: Compare`). A variable the scheme
+/// does not quantify is `_`, as in a diagnostic.
+pub fn written_scheme(scheme: &Scheme) -> String {
+    let letters: HashMap<TyVar, Type> = free_vars_in(&scheme.ty)
+        .into_iter()
+        .filter(|var| scheme.vars.contains(var))
+        .zip(b'a'..=b'z')
+        .map(|(var, letter)| {
+            let name = intern::intern(&char::from(letter).to_string());
+            (var, Type::Rigid(RigidId { var, name }))
+        })
+        .collect();
+    let mut text = substitute_vars(&scheme.ty, &letters).to_string();
+    let mut bounds: Vec<String> = Vec::new();
+    for pred in &scheme.preds {
+        let Pred::Trait {
+            tr, args, subject, ..
+        } = pred
+        else {
+            continue;
+        };
+        let subject = substitute_vars(subject, &letters);
+        if !matches!(subject, Type::Rigid(_)) {
+            continue;
+        }
+        let mut bound = format!("{subject}: {tr}");
+        if !args.is_empty() {
+            let args: Vec<String> = (args.iter())
+                .map(|arg| substitute_vars(arg, &letters).to_string())
+                .collect();
+            bound.push_str(&format!("({})", args.join(", ")));
+        }
+        if !bounds.contains(&bound) {
+            bounds.push(bound);
+        }
+    }
+    if !bounds.is_empty() {
+        text.push_str(&format!(" where {}", bounds.join(", ")));
+    }
+    text
+}
+
+/// What `:doc name` shows of the builtin `name`: a function's or a
+/// constant's signature and the line that says what it does; for a
+/// module (`string`), the signature of each of its functions, in the
+/// order of their names. `None`
+/// when no builtin function, constant or module has the name.
+pub fn doc_text(name: &str) -> Option<String> {
+    let registry = crate::builtins::registry::registry();
+    if let Some(module) = registry.module(name) {
+        let mut lines: Vec<String> = (module.rows.iter())
+            .filter_map(|row| signature_block(module.name, row.name))
+            .collect();
+        lines.sort();
+        let mut text = lines.join("\n");
+        if let Some(feature) = module.feature.filter(|_| !module.enabled) {
+            let needs = crate::module::needs_feature(&format!("`{name}`"), feature);
+            text.push_str(&format!("\n{needs}"));
+        }
+        return Some(text);
+    }
+    let (signature, row) = match name.split_once('.') {
+        Some((module, function)) => {
+            let row = (registry.module(module)?.rows.iter()).find(|row| row.name == function)?;
+            (signature_block(module, function)?, row)
+        }
+        None => {
+            let row = registry.prelude.iter().find(|row| row.name == name)?;
+            let signature = row.signature.strip_prefix("fn ").unwrap_or(row.signature);
+            (signature.to_string(), row)
+        }
+    };
+    let mut text = format!("{signature}\n{}", row.summary);
+    if !row.enabled {
+        let module = registry.module(row.module);
+        let feature = match module.is_some_and(|m| !m.enabled) {
+            true => module.and_then(|m| m.feature),
+            false => row.feature,
+        };
+        if let Some(feature) = feature {
+            let needs = crate::module::needs_feature(&format!("`{name}`"), feature);
+            text.push_str(&format!("\n{needs}"));
+        }
+    }
+    Some(text)
 }
 
 /// A REPL session: one compilation session, to which each input is
@@ -375,6 +544,30 @@ impl Repl {
             Err(e) => evaluation.diagnostics.push(e.to_diagnostic()),
         }
         evaluation
+    }
+
+    /// What `:type input` shows: `input` checked as the next entry, and
+    /// the type of its value if it has no error. The entry is not run,
+    /// and no later entry sees it. `Err` when it is declarations, which
+    /// have no value.
+    pub fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
+        let file = self.session.add_cell(input.to_string());
+        let analysis = self.session.analyze(file);
+        let diagnostics = analysis.diagnostics.clone();
+        if analysis.has_errors() {
+            return Ok(Typed {
+                diagnostics,
+                ty: None,
+            });
+        }
+        let scheme = self
+            .session
+            .cell_value_scheme(file)
+            .ok_or(NotAnExpression)?;
+        Ok(Typed {
+            diagnostics,
+            ty: Some(written_scheme(&scheme)),
+        })
     }
 
     /// The names `<Tab>` offers now: those of [`builtin_names`], and
@@ -478,7 +671,7 @@ fn report_task_failures(repl: &Repl) {
 /// keywords and the prelude's names. A builtin module's members are
 /// offered once it is imported (see [`scope_completion_names`]).
 pub fn builtin_names() -> Vec<String> {
-    let mut names: Vec<String> = vec![":quit", ":q", ":help", ":h"]
+    let mut names: Vec<String> = vec![":quit", ":q", ":help", ":h", ":type", ":doc"]
         .into_iter()
         .map(String::from)
         .collect();
@@ -566,9 +759,11 @@ pub fn scope_completion_names<'a>(
 
 fn print_help() {
     println!("Commands:");
-    println!("  :help, :h    Show this help");
-    println!("  :quit, :q    Exit the REPL");
-    println!("  <Tab>        Autocomplete builtins and user-defined names");
+    println!("  :help, :h      Show this help");
+    println!("  :quit, :q      Exit the REPL");
+    println!("  :type <expr>   Show the type of an expression without running it");
+    println!("  :doc <name>    Show a builtin's signature and summary (list.map, println, string)");
+    println!("  <Tab>          Autocomplete builtins and user-defined names");
     println!();
     println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");
     println!(
@@ -794,6 +989,19 @@ mod tests {
             .filter(|d| d.is_error())
             .map(|d| d.message.clone())
             .collect()
+    }
+
+    /// `:type` checks its input as the next entry, but does not run it,
+    /// and no later entry sees what it declares.
+    #[test]
+    fn a_typed_entry_is_not_run_and_binds_nothing() {
+        let mut repl = repl();
+        value(&mut repl, "let n = 1");
+        let typed = repl.type_of("n + 1").expect("an expression");
+        assert_eq!(typed.ty.as_deref(), Some("Int"));
+        assert!(repl.type_of("fn f() { 1 }").is_err());
+        assert_eq!(errors(&mut repl, "f()"), ["undefined variable 'f'"]);
+        assert_eq!(value(&mut repl, "n"), "1");
     }
 
     #[test]

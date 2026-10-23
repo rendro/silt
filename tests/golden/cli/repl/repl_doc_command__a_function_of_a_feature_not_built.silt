@@ -1,0 +1,3 @@
+-- cmd: repl
+-- without-feature: postgres
+-- stdin: :doc postgres.connect\n:quit\n

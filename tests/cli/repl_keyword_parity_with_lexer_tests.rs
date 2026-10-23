@@ -34,7 +34,7 @@ fn repl_builtin_names_is_superset_of_lexer_keywords() {
 fn repl_includes_short_commands() {
     let names: std::collections::HashSet<String> =
         silt::repl::builtin_names().into_iter().collect();
-    for short in &[":quit", ":q", ":help", ":h"] {
+    for short in &[":quit", ":q", ":help", ":h", ":type", ":doc"] {
         assert!(names.contains(*short));
     }
 }

@@ -1,0 +1,4 @@
+Silt REPL (type :quit to exit, :help for commands)
+postgres.connect(url: String) -> Result(PgPool, PostgresError)
+Open a connection pool from a `postgresql://` URL (uses r2d2 defaults)
+`postgres.connect` is not part of this build of silt: it needs the cargo feature `postgres`

@@ -1,0 +1,4 @@
+:doc needs a name, as in :doc list.map
+no builtin function or module named 'nope'
+no builtin function or module named 'list.nope'
+no builtin function or module named 'Option'

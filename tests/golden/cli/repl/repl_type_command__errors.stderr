@@ -1,0 +1,19 @@
+:type needs an expression, as in :type list.map
+:type takes an expression, not a declaration
+error[type]: undefined variable 'nope'
+ --> <repl:2>:1:1
+   |
+ 1 | nope
+   | ^^^^ undefined variable 'nope'
+error[type]: module 'list' is not imported
+ --> <repl:3>:1:1
+   |
+ 1 | list.map
+   | ^^^^^^^^ module 'list' is not imported
+  = help: enter `import list` first
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> <repl:4>:1:1
+   |
+ 1 | "a" + 1
+   | ^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+unknown REPL command ':typo'; type :help for the list

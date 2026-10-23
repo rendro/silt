@@ -6,9 +6,11 @@ x
 true
 [1, 2, 3]
 Commands:
-  :help, :h    Show this help
-  :quit, :q    Exit the REPL
-  <Tab>        Autocomplete builtins and user-defined names
+  :help, :h      Show this help
+  :quit, :q      Exit the REPL
+  :type <expr>   Show the type of an expression without running it
+  :doc <name>    Show a builtin's signature and summary (list.map, println, string)
+  <Tab>          Autocomplete builtins and user-defined names
 
 Enter expressions to evaluate, or declarations (fn, type, trait, import).
 Multi-line input: an open brace, paren, bracket, string or block comment, or a line that ends in an operator (+, |>, =, -> ...), continues on the next line.

@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: :doc list.map\n:doc println\n:doc math.pi\n:doc uuid\n:quit\n

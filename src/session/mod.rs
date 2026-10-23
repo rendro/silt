@@ -410,6 +410,24 @@ impl Session {
         self.analyses.get(&id)
     }
 
+    /// The type of the value of the REPL cell `file`, once
+    /// [`Session::analyze`] has checked it: what the function that holds
+    /// its statements returns, general in what the statements leave
+    /// open, with what its scheme asks of those variables. `None` for a
+    /// cell of declarations.
+    pub fn cell_value_scheme(&self, file: FileId) -> Option<crate::types::Scheme> {
+        let id = self.module_of(file);
+        let wrapper = intern(&self.cells.info.get(&id)?.wrapper());
+        let names::Binding::Def(def) = self.analyses.get(&id)?.scope.values.get(&wrapper)? else {
+            return None;
+        };
+        let scheme = self.tables.scheme_of(*def)?;
+        let Type::Fun(_, ret) = scheme.ty else {
+            return None;
+        };
+        Some(crate::types::Scheme { ty: *ret, ..scheme })
+    }
+
     /// The analysis of the entry file `entry`: its module graph is
     /// completed, and each module that is not checked yet is checked,
     /// in the order of the graph. Asked again with nothing changed, it is
