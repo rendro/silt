@@ -62,8 +62,8 @@ pub(crate) fn usage_text() -> String {
     out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
     out.push_str(&line(
-        "silt init",
-        "Create a new silt package in this directory",
+        "silt init [--lib]",
+        "Create a new silt package (a library with --lib) in this directory",
     ));
     out.push_str(&line(
         "silt lsp",

@@ -32,7 +32,7 @@ silt init
 silt run
 ```
 
-`silt init` creates a `silt.toml` manifest and a starter `src/main.silt`. `silt run` (with no arguments, inside the package directory) executes the package's entry point. That's the whole loop.
+`silt init` creates a `silt.toml` manifest and a starter `src/main.silt`. `silt run` (with no arguments, inside the package directory) executes the package's entry point. That's the whole loop. (`silt init --lib` creates a library instead, `src/lib.silt`, for other packages to import.)
 
 See `examples/` in the repository for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
@@ -214,7 +214,7 @@ silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
-silt init                  -- create a new silt package in this directory
+silt init [--lib]          -- create a new silt package (a library with --lib) in this directory
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --disassemble`)
 silt self-update           -- update the silt binary to the latest release

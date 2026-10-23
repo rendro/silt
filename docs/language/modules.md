@@ -241,7 +241,7 @@ module (`src/list.silt`) is an error, because `import list` always means
 the builtin one.
 
 A package consumed as a dependency exposes `src/lib.silt` instead of
-`src/main.silt`. Such a library-only package has nothing to execute — `silt
+`src/main.silt` (`silt init --lib` creates one). Such a library-only package has nothing to execute — `silt
 run` refuses it — but a bare `silt check` works, falling back to
 `src/lib.silt` when no `src/main.silt` exists.
 
