@@ -1,5 +1,5 @@
 //! `silt add <name> --path <path>` or
-//! `silt add <name> --git <url> [--rev|--branch|--tag <ref>]` —
+//! `silt add <name> --git <url> (--rev|--branch|--tag) <ref>` —
 //! append a new dependency entry to the current package's
 //! `silt.toml` and regenerate `silt.lock`.
 
@@ -151,7 +151,7 @@ enum AddSource {
 }
 
 /// Implementation of `silt add <name> --path <path>` and
-/// `silt add <name> --git <url> [--rev|--branch|--tag <ref>]`.
+/// `silt add <name> --git <url> (--rev|--branch|--tag) <ref>`.
 ///
 /// Edits the current package's `silt.toml` in place to add a new
 /// dependency entry, then regenerates `silt.lock` so the next compile
@@ -265,7 +265,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         (false, false) => {
             return Err(
                 "silt add: missing source flag; use --path <path> or --git <url> \
-                 [--rev|--branch|--tag <ref>]"
+                 (--rev|--branch|--tag) <ref>"
                     .into(),
             );
         }

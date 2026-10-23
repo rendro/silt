@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: string interpolation: result would exceed maximum string size (16777216 bytes > 10000000 limit)
+-- A string is at most ten million bytes: one that an interpolation
+-- doubles again and again stops there.
+import list
+
+fn main() {
+  let r = list.fold(1..40, "x") { acc, _ -> "{acc}{acc}" }
+  println(r)
+}

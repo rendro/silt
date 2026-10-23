@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stderr-contains: env.set cannot change the environment once tasks or I/O have started: set it at the start of main
+-- stdin: import env\nimport task\nenv.set("SILT_ENV_CHANGE_R", "one")\nenv.get("SILT_ENV_CHANGE_R")\ntask.join(task.spawn { -> 7 })\nenv.set("SILT_ENV_CHANGE_R", "two")\nenv.get("SILT_ENV_CHANGE_R")\n:quit\n
+-- In the REPL the rule holds for the session: the environment can be
+-- changed until the session's first task or I/O operation, and not
+-- after it until a new session.

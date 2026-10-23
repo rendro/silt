@@ -1,7 +1,7 @@
 -- json.Syntax holds the 0-based byte offset in the whole text of where
 -- the parser stopped (the text's length for one that ends too soon), as
--- toml.Syntax does: on a later line too. (It held the column in the
--- line, counted from 1.)
+-- toml.Syntax does: on a later line too, and at a raw newline in a
+-- string. (It held the column in the line, counted from 1.)
 import json
 
 fn show(text: String) {
@@ -21,4 +21,7 @@ fn main() {
   "tags": [1 2]
 }""")
   show("[1,\n\n2,\n x]")
+  -- A raw newline in a string: the offset of the newline.
+  show("""["ab
+c"]""")
 }

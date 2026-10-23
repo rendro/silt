@@ -1,0 +1,18 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: toml.pretty: result would exceed maximum string size (15000003 bytes > 10000000 limit)
+-- stderr-not-contains: not reached
+-- The text is no longer than a string may be: the parts can be one long
+-- string many times, so it is stopped where it would pass the limit.
+import list
+import string
+import toml
+
+type T { v: List(String) }
+
+fn main() {
+  let big = string.repeat("x", 3000000)
+  let many = list.map(1..5) { _ -> big }
+  let _ = toml.pretty(T { v: many })
+  println("not reached")
+}

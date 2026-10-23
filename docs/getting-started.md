@@ -142,6 +142,13 @@ fn helper(x) {
 import geometry
 ```
 
+A package that other packages use is a library: what they get from
+`import <name>` is its `src/lib.silt`, the one module a dependency
+exposes, and it needs no `src/main.silt`. A package declares a
+dependency with `silt add <name> --path <path>`, or with
+`silt add <name> --git <url> --tag <tag>` (a git dependency names its
+tag, `--branch <branch>` or `--rev <commit>`).
+
 See [Modules](language/modules.md) for the full rules.
 
 ## 6. Errors as values
@@ -163,10 +170,15 @@ Use `match` to handle the result. Every stdlib error enum (here `IoError`) imple
 anything else:
 
 ```silt
-match io.read_file("app.json") {
-  Ok(content) -> println("loaded {string.length(content)} bytes")
-  Err(io.NotFound(path)) -> println("file does not exist: {path}")
-  Err(e) -> println("error: {e.message()}")
+import io
+import string
+
+fn main() {
+  match io.read_file("app.json") {
+    Ok(content) -> println("loaded {string.length(content)} characters")
+    Err(io.NotFound(path)) -> println("file does not exist: {path}")
+    Err(e) -> println("error: {e.message()}")
+  }
 }
 ```
 
@@ -220,7 +232,7 @@ silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --dis
 silt self-update           -- update the silt binary to the latest release
 silt update [<dep-name>]   -- regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>  -- add a path-based dependency to silt.toml
-silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dependency to silt.toml
+silt add <name> --git <url> (--rev|--branch|--tag) <ref>  -- add a git-based dependency to silt.toml
 silt remove <name>         -- remove a dependency from silt.toml and silt.lock
 ```
 

@@ -1,0 +1,16 @@
+-- exit: 1
+-- stdout-contains: joined: 2
+-- stderr-contains: error[runtime]
+-- stderr-contains: 
+-- stderr-not-contains: not reached
+-- Once a task was started the environment stays as it is, also when
+-- the task has ended: the rule does not depend on what runs when.
+import env
+import task
+
+fn main() {
+  let worker = task.spawn { -> 1 + 1 }
+  println("joined: {task.join(worker)}")
+  env.set("SILT_ENV_CHANGE_B", "1")
+  println("not reached")
+}

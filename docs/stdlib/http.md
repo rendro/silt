@@ -82,7 +82,7 @@ that a 4xx or 5xx HTTP response is an `Ok(Response)`: an `Err` is a
 response that did not arrive whole. That is a failure before its head
 is there (DNS, connection, TLS, a timeout, a head that is no HTTP), and
 one after it: a body that is cut short (`ClosedEarly`), and a body that
-does not unpack or is larger than 10 MiB (`InvalidResponse`).
+does not unpack or is larger than 10,000,000 bytes (`InvalidResponse`).
 A program for which a status is a failure looks at `resp.status`.
 `HttpError` implements the built-in `Error` trait, so `e.message()`
 always yields a rendered string.
@@ -93,7 +93,7 @@ always yields a rendered string.
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10 MiB |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
 
@@ -125,7 +125,8 @@ server sent, with one exception:
   empty and nothing is read, whatever the headers say. They may say what
   a `GET` would get; of those, `content-encoding` and `content-length`
   are not in `resp.headers` when the answer says `gzip`.
-- A body of more than 10 MiB, counted as the program would get it, is
+- A body of more than 10,000,000 bytes (the most a `Bytes` holds),
+  counted as the program would get it, is
   `Err(InvalidResponse(_))`: no part of it is returned.
 
 Every request says who sends it, `user-agent: silt/<version>` (the
@@ -298,12 +299,12 @@ say `text/plain; charset=UTF-8`.) There is no `Server` header.
 |---|---|---|
 | The head of a request: request line and headers | 64 KiB | `431`, connection closed |
 | Headers of a request | 100 | `431`, connection closed |
-| The body of a request | 10 MiB | `413`, connection closed |
-| The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10 MiB | `Err(InvalidResponse("the body is larger than 10 MiB"))`; no more than one byte beyond the limit is read |
-| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10 MiB more: about 1.5 GiB of bodies is the worst case. |
+| The body of a request | 10,000,000 bytes | `413`, connection closed |
+| The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10,000,000 bytes | `Err(InvalidResponse("the body is larger than 10000000 bytes"))`; no more than one byte beyond the limit is read |
+| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
-| What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A 10 MiB body in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
+| What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A body of 10,000,000 bytes in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
 | The trailers of a chunked body | 64 KiB | `431`, connection closed |
 | Handlers being called | 128 | `503` |
 | Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | `408` if part of the request has come, and the connection closed; a connection that sent nothing, or only an empty line, is closed without a word |

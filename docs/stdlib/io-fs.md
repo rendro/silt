@@ -202,17 +202,24 @@ Sets the environment variable `key` to `value` for the current process.
 
 The environment belongs to the whole process, and a change to it is not
 synchronized with a thread that reads it at the same moment: a task, or
-an I/O operation (a name lookup reads it, so may a TLS library). So
-`env.set` is a runtime error while the program is not alone: while a
-spawned task has not ended (a task that waits counts), and while an I/O
-operation is still running, also one that nobody waits for any more (a
-read that a `task.deadline` gave up on). A spawned task can never
-change it: the program's own code is still running. Set the
-environment at the start of `main`, before spawning tasks:
+an I/O operation (a name lookup reads it, so may a TLS library). Until
+the program starts its first task or I/O operation, its own thread is
+the only one that runs; from then on, `env.set` is a runtime error, also
+once those tasks have ended. A task (`task.spawn`, `task.deadline`, the
+stages of a stream, a server's handlers) counts, and so does every I/O
+operation that runs on silt's I/O threads, the ones a program can wait
+for (reading or writing a file, reading stdin, accepting, connecting, a
+request); printing does not, nor do `env.get`, `fs.exists` and
+`tcp.listen`. A spawned task can never change the environment. In
+`silt test` the rule holds for the whole run. Set the environment at the
+start of `main`:
 
 ```text
-env.set cannot change the environment while other tasks or I/O are running: set it before spawning tasks
+env.set cannot change the environment once tasks or I/O have started: set it at the start of main
 ```
+
+In the REPL the rule holds for the session: after its first task or
+I/O operation, a new session is needed to change the environment.
 
 ```silt
 import env
@@ -246,8 +253,8 @@ fn main() {
 }
 ```
 
-Like `env.set`, `env.remove` is a runtime error while another task has
-not ended or an I/O operation is running, for the same reason.
+Like `env.set`, `env.remove` is a runtime error once the program has
+started a task or an I/O operation, for the same reason.
 
 
 ## `env.vars`
@@ -313,7 +320,7 @@ fs.copy(from: String, to: String) -> Result((), IoError)
 ```
 
 Copies a file from `from` to `to`. Returns `Ok(())` on success or
-`Err(message)` on failure.
+`Err(IoError)` on failure.
 
 ```silt
 import fs
@@ -437,7 +444,7 @@ fs.remove(path: String) -> Result((), IoError)
 ```
 
 Removes a file or an empty directory. Returns `Ok(())` on success or
-`Err(message)` on failure.
+`Err(IoError)` on failure.
 
 ```silt
 import fs

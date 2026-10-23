@@ -57,8 +57,9 @@ pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8]) -> Value {
 
 /// Where in `text` the syntax error `err` is, as a 0-based byte offset
 /// (as `toml.Syntax` has it): the byte serde stopped at, which it gives
-/// as a line and a 1-based column of bytes in that line; the end of the
-/// text for one that ended too soon.
+/// as a line and a 1-based column of bytes in that line (column 0 is
+/// the newline that ends the line before: a raw newline in a string);
+/// the end of the text for one that ended too soon.
 fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
     if err.classify() == serde_json::error::Category::Eof {
         return text.len();
@@ -73,7 +74,11 @@ fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
             .map_or(text.len(), |(at, _)| at + 1),
         None => 0,
     };
-    (line_start + err.column().saturating_sub(1)).min(text.len())
+    let at = match err.column() {
+        0 => line_start.saturating_sub(1),
+        column => line_start + column - 1,
+    };
+    at.min(text.len())
 }
 
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
@@ -179,12 +184,16 @@ pub(crate) fn json_value_of(caller: &str, data: &Data) -> Result<Value, VmError>
 /// keeps its members in the order of the data (a record's fields as
 /// its type declares them). `Bytes` in it, which only a postgres
 /// parameter holds, has no form.
+/// The text is no longer than a string may be: it is written into a
+/// [`Bounded`](super::common::Bounded), which stops it there (the data
+/// can hold one long string many times).
 pub(crate) fn text(caller: &str, data: &Data, pretty: bool) -> Result<String, VmError> {
-    let text = match pretty {
-        true => serde_json::to_string_pretty(&Json(data)),
-        false => serde_json::to_string(&Json(data)),
+    let mut out = super::common::Bounded::default();
+    let written = match pretty {
+        true => serde_json::to_writer_pretty(&mut out, &Json(data)),
+        false => serde_json::to_writer(&mut out, &Json(data)),
     };
-    text.map_err(|e| VmError::new(format!("{caller}: {e}")))
+    out.text(caller, written.err().map(|e| format!("{caller}: {e}")))
 }
 
 // ── Reading a document ──────────────────────────────────────────────

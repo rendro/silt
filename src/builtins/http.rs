@@ -382,7 +382,7 @@ fn finish_http_response(
     match result.and_then(|response| ureq_response_to_value(response, head)) {
         Ok(Some(response)) => Value::variant(bv::OK, vec![response]),
         Ok(None) => {
-            let why = format!("the body is larger than {} MiB", wire::BODY_MAX >> 20);
+            let why = format!("the body is larger than {} bytes", wire::BODY_MAX);
             let error = Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(why.into())]);
             Value::variant(bv::ERR, vec![error])
         }
@@ -1971,7 +1971,8 @@ mod http_body_tests {
     fn the_limit_counts_what_a_packed_body_unpacks_to() {
         let mib = vec![0u8; 1024 * 1024];
         // At the limit: all of it.
-        let at = packed(wire::BODY_MAX >> 20, &mib);
+        let tenth = vec![0u8; wire::BODY_MAX / 10];
+        let at = packed(10, &tenth);
         let (body, _) = response(&do_http_get(&says_packed(at)));
         assert_eq!(body.len(), wire::BODY_MAX);
         // One byte more, and 128 MiB, in an answer that is small on
@@ -1984,7 +1985,7 @@ mod http_body_tests {
             assert!(over.len() < 1024 * 1024, "{} bytes on the wire", over.len());
             assert_eq!(
                 failure(&do_http_get(&says_packed(over))),
-                "InvalidResponse(the body is larger than 10 MiB)"
+                "InvalidResponse(the body is larger than 10000000 bytes)"
             );
         }
     }

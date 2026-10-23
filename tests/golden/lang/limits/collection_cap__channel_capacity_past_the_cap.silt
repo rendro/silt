@@ -1,0 +1,13 @@
+-- exit: 1
+-- stdout-contains: made
+-- stderr-contains: error[runtime]
+-- stderr-contains: channel.new: capacity exceeds maximum size of 10000000 elements
+-- A channel's buffer holds at most ten million values, as a list does.
+import channel
+
+fn main() {
+  let _ = channel.new(10000000)
+  println("made")
+  let _ = channel.new(10000001)
+  println("not reached")
+}

@@ -186,8 +186,8 @@ fn main() { result.map(Ok(6), { v -> v * 7 }) }
 #[test]
 fn test_env_set_from_spawned_task_rejected() {
     // Locks src/builtins/io.rs (`env::set`): env.set refuses to run from
-    // a spawned task, which is never alone (the program's own thread is
-    // live). The error from the task propagates through task.join.
+    // a spawned task, whose start was the program's first. The error
+    // from the task propagates through task.join.
     let err = run_err(
         r#"
 import env
@@ -202,8 +202,8 @@ fn main() {
     );
     assert!(
         err.contains(
-            "env.set cannot change the environment while other tasks or I/O are running: set \
-             it before spawning tasks"
+            "env.set cannot change the environment once tasks or I/O have started: set it at \
+             the start of main"
         ),
         "expected env.set spawn rejection, got: {err}"
     );

@@ -18,9 +18,28 @@ const DEPTH: usize = match cfg!(debug_assertions) {
     false => 1_500_000,
 };
 
+/// The text of a value of this test has eight characters for each level,
+/// and four more: `Node([` and `])` around `Leaf`.
+fn text_length(depth: usize) -> usize {
+    depth * 8 + 4
+}
+
+/// The deepest value of this test whose text a string holds (at most
+/// 10,000,000 bytes): `DEPTH` in a debug build, 1,249,999 levels in a
+/// release build.
+const SHOWN_DEPTH: usize = match DEPTH * 8 + 4 > 10_000_000 {
+    true => (10_000_000 - 4) / 8,
+    false => DEPTH,
+};
+
 /// Two values `DEPTH` levels deep, a list in a variant at each level,
 /// and what `uses` prints of them.
 fn program(uses: &[&str]) -> String {
+    program_of(DEPTH, DEPTH, uses)
+}
+
+/// [`program`] with `a` and `b` of the depths given.
+fn program_of(depth_a: usize, depth_b: usize, uses: &[&str]) -> String {
     let uses: String = uses
         .iter()
         .map(|used| format!("  println({used})\n"))
@@ -29,7 +48,7 @@ fn program(uses: &[&str]) -> String {
         "import io\nimport set\nimport string\n\
          type T {{\n  Leaf,\n  Node(List(T))\n}}\n\
          fn build(n) {{\n  loop i = 0, acc = Leaf {{\n    match i >= n {{\n      true -> acc\n      false -> loop(i + 1, Node([acc]))\n    }}\n  }}\n}}\n\
-         fn main() {{\n  let a = build({DEPTH})\n  let b = build({DEPTH})\n{uses}}}\n"
+         fn main() {{\n  let a = build({depth_a})\n  let b = build({depth_b})\n{uses}}}\n"
     )
 }
 
@@ -38,6 +57,19 @@ fn run(name: &str, uses: &[&str]) -> String {
 }
 
 fn run_program(name: &str, program: &str) -> String {
+    let out = ended(name, program);
+    assert!(
+        out.status.success(),
+        "{name}: exit {:?}\n{}\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// How `silt run` of `program` ended.
+fn ended(name: &str, program: &str) -> std::process::Output {
     let dir = std::env::temp_dir().join(format!("silt_deep_{}_{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.silt");
@@ -48,14 +80,7 @@ fn run_program(name: &str, program: &str) -> String {
         .output()
         .expect("spawn silt");
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(
-        out.status.success(),
-        "{name}: exit {:?}\n{}\n{}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    out
 }
 
 #[test]
@@ -74,22 +99,44 @@ fn deep_values_compare_order_and_hash() {
     );
 }
 
-/// The text of such a value has eight characters for each level, and
-/// four more: `Node([` and `])` around `Leaf`.
+/// A value is shown as deep as a string can hold its text (`a`), and
+/// inspected at the full depth (`b`, and a tuple that holds both). A
+/// text that a string cannot hold is refused as it is written: a
+/// release build's `DEPTH` is that deep, and showing it stops with the
+/// error, not by overflowing the stack.
 #[test]
 fn deep_values_are_shown_inspected_and_dropped() {
-    let length = (DEPTH * 8 + 4).to_string();
+    let (shown, deep) = (text_length(SHOWN_DEPTH), text_length(DEPTH));
     assert_eq!(
-        run(
+        run_program(
             "text",
-            &[
-                "string.length(\"{a}\")",
-                "string.length(io.inspect(b))",
-                "string.length(\"{(a, [b])}\")",
-            ]
+            &program_of(
+                SHOWN_DEPTH,
+                DEPTH,
+                &[
+                    "string.length(\"{a}\")",
+                    "string.length(io.inspect(b))",
+                    "string.length(io.inspect((a, [b])))",
+                ]
+            )
         ),
-        format!("{length}\n{length}\n{}", DEPTH * 16 + 8 + 6)
+        format!("{shown}\n{deep}\n{}", shown + deep + 6)
     );
+    let out = ended("too_long", &program(&["string.length(\"{b}\")"]));
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    match deep > 10_000_000 {
+        true => {
+            assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+            assert!(
+                stderr.contains("string interpolation: result would exceed maximum string size"),
+                "{stderr}"
+            );
+        }
+        false => assert_eq!(stdout.trim(), deep.to_string(), "{stderr}"),
+    }
 }
 
 /// A value is nested without a type that holds itself too: a function

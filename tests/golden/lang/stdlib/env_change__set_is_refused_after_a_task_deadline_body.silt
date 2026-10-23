@@ -1,0 +1,16 @@
+-- exit: 1
+-- stdout-contains: Ok(3)
+-- stderr-contains: error[runtime]
+-- stderr-contains: 
+-- stderr-not-contains: not reached
+-- task.deadline runs its function as a task: after it, the environment
+-- can no longer be changed.
+import env
+import task
+import time
+
+fn main() {
+  println(task.deadline(time.ms(1000)) { -> 1 + 2 })
+  env.set("SILT_ENV_CHANGE_F", "1")
+  println("not reached")
+}

@@ -1,10 +1,10 @@
 //! The `regex.*` builtin functions.
 
-use super::common::ok;
+use super::common::{ok, too_long_text};
 use super::typed::{builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::Value;
-use crate::vm::{Step, Vm, iterate, next};
+use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::vm::{Step, Vm, VmError, iterate, next};
 
 /// What `RegexError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
@@ -110,6 +110,35 @@ fn pattern_err(pattern: &str, error: &regex::Error) -> Value {
 
 /// What a function of the pattern gives: `Ok` of what `found` makes of
 /// the compiled pattern, or `Err(RegexError)` if it does not compile.
+/// `text` with its first `most` matches of `re` replaced by
+/// `replacement` (its `$1` and `$name` expanded), as `Regex::replacen`
+/// does, for `name`: the text grows match by match, and stops where it
+/// would be longer than a string may be.
+fn replaced(
+    name: &str,
+    re: &regex::Regex,
+    text: &str,
+    replacement: &str,
+    most: usize,
+) -> Result<Value, VmError> {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for caps in re.captures_iter(text).take(most) {
+        let whole = caps.get(0).map_or(0..0, |m| m.range());
+        out.push_str(&text[last..whole.start]);
+        caps.expand(replacement, &mut out);
+        last = whole.end;
+        if out.len() > MAX_COLLECTION_LEN {
+            return Err(too_long_text(name, out.len()));
+        }
+    }
+    out.push_str(&text[last..]);
+    if out.len() > MAX_COLLECTION_LEN {
+        return Err(too_long_text(name, out.len()));
+    }
+    Ok(string(&out))
+}
+
 fn with(vm: &mut Vm, pattern: &str, found: impl FnOnce(&regex::Regex) -> Value) -> Value {
     match Vm::get_regex(&mut vm.regex_cache, pattern) {
         Ok(re) => ok(found(re)),
@@ -139,12 +168,18 @@ builtins! {
         with(vm, pattern, |re| Value::list(re.split(text).map(string).collect()))
     }
 
-    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Value {
-        with(vm, pattern, |re| string(&re.replace(text, replacement)))
+    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
+        match Vm::get_regex(&mut vm.regex_cache, pattern) {
+            Ok(re) => Ok(ok(replaced("regex.replace", re, text, replacement, 1)?)),
+            Err(error) => Ok(pattern_err(pattern, &error)),
+        }
     }
 
-    fn replace_all(vm, text: &str, pattern: &str, replacement: &str) -> Value {
-        with(vm, pattern, |re| string(&re.replace_all(text, replacement)))
+    fn replace_all(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
+        match Vm::get_regex(&mut vm.regex_cache, pattern) {
+            Ok(re) => Ok(ok(replaced("regex.replace_all", re, text, replacement, usize::MAX)?)),
+            Err(error) => Ok(pattern_err(pattern, &error)),
+        }
     }
 
     // `f` is called with each match, in order, and the string it
@@ -201,11 +236,17 @@ builtins! {
                 state.out.push_str(&state.text[state.last_end..start]);
                 state.out.push_str(&replacement);
                 state.last_end = end;
+                if state.out.len() > MAX_COLLECTION_LEN {
+                    return Err(too_long_text("regex.replace_all_with", state.out.len()));
+                }
                 next()
             },
             |state| {
                 let mut out = std::mem::take(&mut state.out);
                 out.push_str(&state.text[state.last_end..]);
+                if out.len() > MAX_COLLECTION_LEN {
+                    return Err(too_long_text("regex.replace_all_with", out.len()));
+                }
                 Ok(ok(Value::String(out.into())))
             },
         )

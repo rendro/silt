@@ -228,9 +228,11 @@ The entry point is `src/main.silt`, and every `.silt` file directly in
 `src/` is a module of the package, imported by its file name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
---path <path>` or `silt add <name> --git <url>`. After adding, imports from
-the dependency package work exactly like local modules. `silt remove <name>`
-takes one out of `silt.toml` and `silt.lock` again.
+--path <path>` or `silt add <name> --git <url> --tag <tag>` (or
+`--branch <branch>`, `--rev <commit>`: a git dependency names one of
+them). After adding, imports from the dependency package work exactly
+like local modules. `silt remove <name>` takes one out of `silt.toml`
+and `silt.lock` again.
 
 `import x` in a module of a package means, in this order: the builtin
 module `x`; the dependency whose key under `[dependencies]` in this
@@ -274,7 +276,7 @@ your editor. The built-in modules:
 | `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
 | `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
 | `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Structured concurrency: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
+| `task` | Tasks: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
 | `regex` | Compiled regular expressions and replacement helpers |
 | `json` | Type-directed JSON parsing and emission |
 | `toml` | TOML parsing and emission |

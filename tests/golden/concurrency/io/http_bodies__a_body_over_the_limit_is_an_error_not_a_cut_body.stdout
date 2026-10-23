@@ -1,4 +1,4 @@
-10 MiB with its length: Ok, 10485760 bytes, the last is Some(122)
-one byte more with its length: Err(InvalidResponse("the body is larger than 10 MiB"))
-10 MiB in chunks: Ok, 10485760 bytes, the last is Some(122)
-one byte more in chunks: Err(InvalidResponse("the body is larger than 10 MiB"))
+10000000 bytes with its length: Ok, 10000000 bytes, the last is Some(122)
+one byte more with its length: Err(InvalidResponse("the body is larger than 10000000 bytes"))
+10000000 bytes in chunks: Ok, 10000000 bytes, the last is Some(122)
+one byte more in chunks: Err(InvalidResponse("the body is larger than 10000000 bytes"))

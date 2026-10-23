@@ -205,7 +205,7 @@ fn run_main(args: Vec<String>) {
         // confusing "must be run inside a package" error.
         "update" => cli::update::dispatch(&args),
         // `silt add <name> --path <path>` or
-        // `silt add <name> --git <url> [--rev|--branch|--tag <ref>]` —
+        // `silt add <name> --git <url> (--rev|--branch|--tag) <ref>` —
         // append a dep to `silt.toml` and regenerate `silt.lock`.
         // Implemented in `run_add_command`; dispatch keeps the parsing
         // local to that function so the main switch stays a one-liner.

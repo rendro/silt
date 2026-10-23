@@ -197,10 +197,10 @@ jobs:
     needs: [prepare, build, playground]
     runs-on: ubuntu-latest
     # The attestation is signed with the run's OIDC token and stored
-    # with the repository.
+    # with the repository. (The artifacts are this run's own: their
+    # download needs no `actions: read`.)
     permissions:
       contents: write
-      actions: read
       id-token: write
       attestations: write
     env:

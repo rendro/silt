@@ -412,19 +412,19 @@ pub(crate) mod fs {
 pub(crate) mod env {
     use super::*;
 
-    /// Refuses a change of the environment while anything else of the
-    /// program may read it: another task, or an I/O operation, one
-    /// that nobody waits for any more included: a thread that reads it
+    /// Refuses a change of the environment once the program has
+    /// started a task or an I/O operation: from then on a thread other
+    /// than the program's own may read it, and one that reads it
     /// through the C library (`getenv`: a name lookup, a TLS library)
-    /// is not synchronized with `setenv`, and does not take the lock
-    /// that `std::env` takes. (A spawned task is never alone: the
-    /// program's own thread is live.)
-    fn alone(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
-        match vm.runtime.scheduler.alone() && vm.runtime.io_pool.quiet() {
-            true => Ok(()),
-            false => Err(VmError::new(format!(
-                "{name} cannot change the environment while other tasks or I/O are running: \
-                 set it before spawning tasks"
+    /// is not synchronized with `setenv`, nor takes the lock that
+    /// `std::env` takes. (A spawned task is always refused: its start
+    /// was the first.)
+    fn not_begun(vm: &crate::vm::Vm, name: &str) -> Result<(), VmError> {
+        match vm.runtime.scheduler.begun() {
+            false => Ok(()),
+            true => Err(VmError::new(format!(
+                "{name} cannot change the environment once tasks or I/O have started: \
+                 set it at the start of main"
             ))),
         }
     }
@@ -455,18 +455,19 @@ pub(crate) mod env {
                     "env.set: the value of a variable holds no NUL character, got {value:?}"
                 )));
             }
-            alone(vm, "env.set")?;
-            // SAFETY: no other thread of the program runs silt code or an
-            // I/O operation (`alone`), so none of them reads the
-            // environment while it changes. The threads of an embedder
-            // are its own to keep off it (docs/ffi.md).
+            not_begun(vm, "env.set")?;
+            // SAFETY: the program has started no task and no I/O
+            // operation (`not_begun`), so no thread of its runtime that
+            // may read the environment exists: the change races with
+            // nothing of silt's. The threads of an embedder are its own
+            // to keep off it (docs/ffi.md).
             unsafe { std::env::set_var(key, value) };
             Ok(())
         }
 
         fn remove(vm, name: &str) -> Result<(), VmError> {
             variable_name("env.remove", name)?;
-            alone(vm, "env.remove")?;
+            not_begun(vm, "env.remove")?;
             // Removing a variable that is not set does nothing.
             // SAFETY: as for `env.set`.
             unsafe { std::env::remove_var(name) };
