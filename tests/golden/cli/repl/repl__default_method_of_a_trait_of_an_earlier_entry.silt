@@ -1,5 +1,5 @@
 -- cmd: repl
--- stdin: type P { n: Int }\ntrait Sz { fn sz(self) -> Int  fn dbl(self) -> Int { self.sz() * 2 } }\ntrait Sz for Int { fn sz(self) -> Int { self } }\n4.dbl()\nfn dy(x: a) -> Int where a: Sz { x.dbl() }\ndy(4)\nlet k = 5\ntrait Sz for P { fn sz(self) -> Int { self.n + k } }\nP { n: 1 }.sz()\nP { n: 1 }.dbl()\ndy(P { n: 2 })\nP.sz(P { n: 9 })\nP.dbl(P { n: 9 })\nimport list\nlist.map([P { n: 1 }], P.dbl)\n:quit\n
+-- stdin: type P { n: Int }\ntrait Sz { fn sz(self) -> Int  fn dbl(self) -> Int { Sz.sz(self) * 2 } }\ntrait Sz for Int { fn sz(self) -> Int { self } }\nSz.dbl(4)\nfn dy(x: a) -> Int where a: Sz { Sz.dbl(x) }\ndy(4)\nlet k = 5\ntrait Sz for P { fn sz(self) -> Int { self.n + k } }\nSz.sz(P { n: 1 })\nSz.dbl(P { n: 1 })\ndy(P { n: 2 })\nSz.sz(P { n: 9 })\nSz.dbl(P { n: 9 })\nimport list\nlist.map([P { n: 1 }], Sz.dbl)\n:quit\n
 -- A default method is the trait's one function, for every impl that
 -- leaves it out, whichever entry declared the trait: an impl written
 -- in a later entry (`trait Sz for P`), and one of the same entry as the

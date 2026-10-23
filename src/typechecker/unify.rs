@@ -174,7 +174,7 @@ impl TypeChecker {
         self.close_level();
         self.decide_tries();
         self.default_rebuilds();
-        self.default_selects(false);
+        self.default_selects();
     }
 
     /// Make variables as the scope `exit_level` just left did, until
@@ -637,22 +637,22 @@ impl TypeChecker {
             let shown = self.written_type(*name);
             let mut fault = Fault::new(
                 Code::NoSuchField,
-                format!(
-                    "record {shown} has no field{} {}",
-                    if missing.len() == 1 { "" } else { "s" },
-                    missing
-                        .iter()
-                        .map(|f| format!("'{f}'"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
+                match missing.as_slice() {
+                    [field] => format!("type '{shown}' has no field '{field}'"),
+                    _ => format!(
+                        "record {shown} has no fields {}",
+                        missing
+                            .iter()
+                            .map(|f| format!("'{f}'"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                },
             );
-            // A method of the record is not a field of it: what reads
-            // a record's fields calls a field.
-            if let Some(method) = missing.iter().find(|f| self.has_method(*name, intern(f))) {
-                fault.help = Some(format!(
-                    "'{method}' is a method of `{shown}`, and what is asked for here is a record with a field '{method}': a value whose fields are read is a record, and `x.{method}(..)` on it calls a field; annotate it, `p: {shown}`"
-                ));
+            // A method of a trait is not a field: it is called through
+            // its trait.
+            if let [field] = missing.as_slice() {
+                fault.help = self.method_help(nominal, intern(field), "x");
             }
             out.push(fault);
             return;
@@ -1019,6 +1019,27 @@ impl TypeChecker {
                         out.push(fault);
                     }
                 }
+            }
+
+            // ── Open row × a type with no fields ─────────────────────
+            // What a dot after a value of unknown type asked for (`x.f`,
+            // `x.f(..)`): the value's type has no field.
+            (Type::AnonRecord { fields, tail: RowTail::Var(_) }, other)
+            | (other, Type::AnonRecord { fields, tail: RowTail::Var(_) })
+                if !matches!(
+                    other,
+                    Type::AnonRecord { .. } | Type::Var(_) | Type::Error | Type::Never
+                ) && !matches!(other, Type::Generic(name, _) if self.tables.records.contains_key(name))
+                    && !fields.is_empty() =>
+            {
+                let field = *fields.keys().next().expect("a field");
+                let shown = self.show_type(other);
+                let mut fault = Fault::new(
+                    Code::UnknownField,
+                    format!("type '{shown}' has no field '{field}'"),
+                );
+                fault.help = self.method_help(other, field, "x");
+                out.push(fault);
             }
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {

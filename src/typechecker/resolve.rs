@@ -530,12 +530,6 @@ impl TypeChecker {
             if let Some(ty) = &expr.ty {
                 expr.ty = Some(self.apply(ty));
             }
-            // A method call resolved in the deferred pass: its trait.
-            if matches!(expr.kind, ExprKind::FieldAccess(..))
-                && let Some(t) = self.deferred_method_traits.get(&expr.span)
-            {
-                expr.res = Some(crate::defs::Res::Def(t.id.0));
-            }
             self.select(expr);
         });
     }

@@ -52,22 +52,15 @@ enum CallForm {
 /// How a program does what the method `method` of the builtin trait
 /// `tr` would, where that method is not called (`display`, `equal`):
 /// the help of an error at a call of it. `None` for any other method.
-pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol) -> Option<&'static str> {
+pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol, x: &str) -> Option<String> {
     let builtin = crate::defs::builtin_trait_id(&resolve(tr.name)) == Some(tr.id);
     match (builtin, resolve(tr.name).as_str(), resolve(method).as_str()) {
-        (true, "Display", "display") => {
-            Some("show a value with interpolation, `\"{x}\"`, or with `string.from(x)`")
-        }
-        (true, "Equal", "equal") => Some("compare with `==`: `x == y`"),
+        (true, "Display", "display") => Some(format!(
+            "show a value with interpolation, `\"{{{x}}}\"`, or with `string.from({x})`"
+        )),
+        (true, "Equal", "equal") => Some(format!("compare with `==`: `{x} == y`")),
         _ => None,
     }
-}
-
-pub(super) fn on_type_parameter(var: Symbol, method: Symbol, method_ty: &Type) -> String {
-    format!(
-        "{}, where `{var}` is a `type {var}` parameter",
-        on_type_call(&resolve(var), method, method_ty)
-    )
 }
 
 /// The call of the method `method`, of the type `method_ty`, on the type
@@ -170,37 +163,7 @@ pub(super) fn format_record_field_suggestion(
     (base, help)
 }
 
-/// The "unknown method '<field>' on <Type>" message, with a "did you
-/// mean `<cand>`?" help when one of `methods`, the names of the type's
-/// methods, is close to `field` (`suggest::suggest_similar`).
-pub(super) fn format_unknown_method_message(
-    field: Symbol,
-    display_type_name: &str,
-    methods: &[Symbol],
-) -> (String, Option<String>) {
-    let field_str = resolve(field);
-    let base = format!("unknown method '{field_str}' on {display_type_name}");
-    let candidates: Vec<String> = methods.iter().map(|m| resolve(*m).to_string()).collect();
-    let help = suggest_similar(&field_str, candidates.iter())
-        .map(|hint| format!("did you mean `{hint}`?"));
-    (base, help)
-}
-
 impl TypeChecker {
-    /// The "unknown method" message for `field` of the type `ty`, with
-    /// a method of a similar name as its help. That it was reported is
-    /// kept (`note_unknown_method`).
-    fn unknown_method_message(
-        &mut self,
-        field: Symbol,
-        display: &str,
-        ty: TypeRef,
-        span: Span,
-    ) -> (String, Option<String>) {
-        self.note_unknown_method(span, ty, field);
-        format_unknown_method_message(field, display, &self.method_names(ty))
-    }
-
     /// Put `var: trait_name` (at the trait arguments `args`) in scope,
     /// and with it each supertrait, at the arguments the trait's
     /// declaration gives it: `where a: Ordered` with
@@ -616,225 +579,6 @@ impl TypeChecker {
         (owner != self.module).then_some(module)
     }
 
-    /// The private trait of another module that alone provides `method`:
-    /// every impl that has a method of that name is of such a trait, and
-    /// no trait this module may name declares it.
-    fn only_private_provider(&self, method: Symbol) -> Option<TraitKey> {
-        // (A structural trait's method is every type's.)
-        let name = resolve(method);
-        if STRUCTURAL_METHODS.iter().any(|(_, m)| *m == name) {
-            return None;
-        }
-        let mut providers = self
-            .tables
-            .impl_methods
-            .keys()
-            .filter(|(_, m, _)| *m == method)
-            .map(|(_, _, tr)| *tr);
-        let first = providers.next()?;
-        if self.private_owner(first).is_none() || providers.any(|t| self.private_owner(t).is_none())
-        {
-            return None;
-        }
-        let visible_declares = self.tables.traits.iter().any(|(key, info)| {
-            self.private_owner(*key).is_none() && info.methods.iter().any(|(n, _)| *n == method)
-        });
-        (!visible_declares).then_some(first)
-    }
-
-    /// The method `field` of a value whose type is the annotation
-    /// variable `r`, with the trait that declares it; `None` when there
-    /// is none, which is reported. An annotation variable has the
-    /// methods of its bounds, and nothing else: no field, no method of a
-    /// trait the declaration does not promise. This is the one answer,
-    /// whether the receiver was known where the call is written or
-    /// became known later.
-    pub(super) fn bound_method(
-        &mut self,
-        r: RigidId,
-        field: Symbol,
-        span: Span,
-    ) -> Option<(TraitKey, Type)> {
-        let matches = self.bound_methods(r, field);
-        let matches = self.on_a_value(matches, |(t, _)| *t, field);
-        if matches.len() > 1 {
-            let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-            self.ambiguous_bound_method(
-                field,
-                &format!("a value of type `{}`", r.name),
-                r,
-                &traits,
-                span,
-            );
-            return None;
-        }
-        if let Some((trait_name, scheme)) = matches.first() {
-            let receiver = self
-                .tables
-                .traits
-                .get(trait_name)
-                .is_none_or(|info| info.receivers.contains(&field));
-            let method_ty = self.instantiate_method(scheme, field, span);
-            let on_type = on_type_parameter(r.name, field, &method_ty);
-            return match self.takes_no_self(receiver, field, &on_type, span) {
-                true => None,
-                false => Some((*trait_name, method_ty)),
-            };
-        }
-        // One of its bounds names an unknown trait (reported): the
-        // method may be that trait's.
-        if self.unknown_bounds.contains(&r.var) {
-            return None;
-        }
-        let mut bounds: Vec<TraitKey> = self
-            .bounds
-            .get(&r.var)
-            .map(|bounds| bounds.iter().map(|(t, _)| *t).collect())
-            .unwrap_or_default();
-        distinct(&mut bounds);
-        if bounds.is_empty() {
-            self.errors.push(
-                Diagnostic::error(
-                    Code::UnknownMethod,
-                    span,
-                    format!(
-                        "no field or method '{field}' on a value of type `{}`: \
-                         the type variable has no trait bound",
-                        r.name
-                    ),
-                )
-                .with_help(format!(
-                    "a value of type `{0}` has only the methods its bounds \
-                     promise: add `where {0}: SomeTrait`",
-                    r.name
-                )),
-            );
-        } else {
-            let bounds = bounds
-                .iter()
-                .map(|s| format!("{s}"))
-                .collect::<Vec<_>>()
-                .join(" + ");
-            self.error(
-                Code::UnknownMethod,
-                format!("no method '{field}' found in trait constraints ({bounds})"),
-                span,
-            );
-        }
-        None
-    }
-
-    /// `value.method` where the method has no `self` (`receiver`, the
-    /// fact its trait declares: `TraitInfo::receivers`): reported, with
-    /// `on_type` as the call to write instead (`` `Int.empty()` ``). A
-    /// method without `self` is called on a type, never on a value: none
-    /// of its parameters is for the receiver.
-    pub(super) fn takes_no_self(
-        &mut self,
-        receiver: bool,
-        method_name: Symbol,
-        on_type: &str,
-        span: Span,
-    ) -> bool {
-        let no_self = !receiver;
-        if no_self {
-            self.error(
-                Code::InvalidMethodCall,
-                format!(
-                    "method `{method_name}` takes no `self` — \
-                     call it on the type instead: {on_type}"
-                ),
-                span,
-            );
-        }
-        no_self
-    }
-
-    /// The type of `receiver.method` for the impl method `entry`: the
-    /// method's scheme instantiated (`instantiate`), with the receiver
-    /// unified with its `self` parameter, so that what the impl's header
-    /// and the method ask of the receiver's parts is checked against the
-    /// receiver's type; on a part still unknown it waits like any
-    /// predicate owed.
-    pub(super) fn dispatch_method_entry(
-        &mut self,
-        entry: &MethodEntry,
-        method_name: Symbol,
-        receiver_ty: &Type,
-        span: Span,
-    ) -> Type {
-        self.last_field_access_was_method = true;
-        let head = self.type_name_for_impl(&self.apply(receiver_ty));
-        // A method of a trait another module declares without `pub` can
-        // be called only in that module.
-        if let Some(trait_name) = entry.trait_name
-            && self.private_owner(trait_name).is_some()
-        {
-            self.private_method(trait_name, method_name, span);
-            return Type::Error;
-        }
-        if let Some(head) = head
-            && self.ambiguous_method_call(head, method_name, false, span)
-        {
-            return Type::Error;
-        }
-        // A method of a structural trait: the type has it when it has
-        // the trait by its structure, which the call owes. The entry
-        // only says that the name is the trait's.
-        if entry.structural
-            && let Some(method_ty) = self.structural_method(receiver_ty, method_name, false, span)
-        {
-            return method_ty;
-        }
-        self.method_trait = self.entry_trait(entry, method_name);
-        // What the impl and the method ask of the receiver's parts and
-        // of the method's own type variables is owed, and checked once
-        // the receiver is unified with the method's `self` below.
-        let owed_before = self.wanted.len();
-        let scheme = self.method_scheme(entry);
-        let instantiated_ty = self.instantiate_method(&scheme, method_name, span);
-        // A method without `self` has no place for the receiver.
-        let on = self
-            .type_name_for_impl(&self.apply(receiver_ty))
-            .map_or_else(|| "SomeType".to_string(), |ty| ty.to_string());
-        let on_type = on_type_call(&on, method_name, &instantiated_ty);
-        if self.takes_no_self(entry.receiver, method_name, &on_type, span) {
-            return Type::Error;
-        }
-        // Unify the receiver with the method's self param so concrete
-        // receiver element types flow into the impl's tyvars before the
-        // constraint check below.
-        if let Type::Fun(params, _) = &instantiated_ty
-            && let Some(self_param) = params.first()
-        {
-            self.unify(receiver_ty, self_param, span);
-        }
-        // A method of a structural trait (`.compare()`, `.equal()`,
-        // `.hash()`, a derived `.display()`) is the receiver's when its
-        // parts have the trait too.
-        if let Some(tr) = self.entry_trait(entry, method_name)
-            && let Some(head) = head
-            && crate::defs::builtin_trait_id(&resolve(tr.name)) == Some(tr.id)
-            && self.by_structure(tr, head)
-        {
-            self.want(
-                Pred::Trait {
-                    tr,
-                    args: Vec::new(),
-                    subject: receiver_ty.clone(),
-                    asker: None,
-                },
-                Origin {
-                    span,
-                    callee: Some(method_name),
-                    op: None,
-                },
-            );
-        }
-        self.solve_wanted(owed_before);
-        self.apply(&instantiated_ty)
-    }
-
     /// Resolve a method on a type descriptor (`TypeOf(inner)`). The
     /// descriptor is a type carrier — lookup uses `inner`'s effective type
     /// name (for concrete inners) or the active trait constraints (for a
@@ -916,6 +660,10 @@ impl TypeChecker {
                     );
                     return None;
                 }
+                if self.self_param(matches[0].0, field).is_some() {
+                    self.through_its_trait(&inner.to_string(), matches[0].0, field, span);
+                    return Some(Type::Error);
+                }
                 self.method_trait = Some(matches[0].0);
                 let instantiated = self.instantiate_method(&matches[0].1, field, span);
                 Some(self.apply(&instantiated))
@@ -926,6 +674,13 @@ impl TypeChecker {
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
                 let entry = self.method_entry(name, field, true)?;
+                if let Some(tr) = self.entry_trait(&entry, field)
+                    && self.self_param(tr, field).is_some()
+                {
+                    let shown = self.show_type(&inner);
+                    self.through_its_trait(&shown, tr, field, span);
+                    return Some(Type::Error);
+                }
                 if let Some(trait_name) = entry.trait_name
                     && self.private_owner(trait_name).is_some()
                 {
@@ -986,12 +741,12 @@ impl TypeChecker {
             self.error_help(Code::UnknownMethod, (message, help), span);
             return Type::Error;
         };
-        if let Some(how) = uncallable_builtin(tr, field) {
+        if let Some(how) = uncallable_builtin(tr, field, "x") {
             self.error_help(
                 Code::InvalidMethodCall,
                 (
                     format!("trait '{}' has no callable methods", self.show_trait(tr)),
-                    Some(how.to_string()),
+                    Some(how),
                 ),
                 span,
             );
@@ -1111,6 +866,123 @@ impl TypeChecker {
         self.apply(&method_ty)
     }
 
+    /// Report `recv.field` where a value of the type `ty` has no field
+    /// `field` (`fields`: the fields it has): when a trait in sight has a
+    /// method of that name, or a builtin module of the type a function,
+    /// the help says how to call it; else a field of a similar name.
+    pub(super) fn no_field(
+        &mut self,
+        ty: &Type,
+        field: Symbol,
+        recv: Option<&Expr>,
+        fields: &[(Symbol, Type)],
+        span: Span,
+    ) {
+        let shown = self.show_type(ty);
+        let base = format!("type '{shown}' has no field '{field}'");
+        let placeholder = match ty {
+            Type::List(_) => "xs",
+            _ => "x",
+        };
+        let written = match recv.map(|recv| &recv.kind) {
+            Some(ExprKind::Ident(name)) => resolve(*name),
+            _ => placeholder.to_string(),
+        };
+        let help = match self.method_help(ty, field, &written) {
+            Some(help) => Some(help),
+            None => format_record_field_suggestion(base.clone(), field, fields).1,
+        };
+        self.error_help(Code::UnknownField, (base, help), span);
+    }
+
+    /// How to call the method or function `field` that a dot after a
+    /// value of the type `ty`, written `written`, names, if a trait in
+    /// sight or a builtin module of the type has one of that name: the
+    /// help of `no_field`.
+    pub(super) fn method_help(&self, ty: &Type, field: Symbol, written: &str) -> Option<String> {
+        let mut traits: Vec<TraitKey> = (self.tables.traits.iter())
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
+            .collect();
+        traits.sort_by_key(|t| self.show_trait(*t));
+        if let Some(tr) = traits.first().copied() {
+            if let Some(how) = uncallable_builtin(tr, field, written) {
+                return Some(how);
+            }
+            let shown = self.show_trait(tr);
+            let Some(info) = self.tables.traits.get(&tr) else {
+                return None;
+            };
+            let params = info
+                .methods
+                .iter()
+                .find(|(n, _)| *n == field)
+                .and_then(|(_, ty)| match ty {
+                    Type::Fun(params, _) => Some(params.len()),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            return Some(match self.self_param(tr, field) {
+                Some(_) => {
+                    let rest = if params > 1 { ", .." } else { "" };
+                    format!(
+                        "`{field}` is a method of trait `{shown}`: call it as \
+                         `{shown}.{field}({written}{rest})`"
+                    )
+                }
+                None => {
+                    let on = self
+                        .type_name_for_impl(ty)
+                        .map_or_else(|| "T".to_string(), |t| t.name.to_string());
+                    let args = if params > 0 { ".." } else { "" };
+                    format!(
+                        "`{field}` is a method of trait `{shown}` that makes a value: call it \
+                         on the type, `{on}.{field}({args})`"
+                    )
+                }
+            });
+        }
+        let module = match ty {
+            Type::List(_) => "list",
+            Type::String => "string",
+            Type::Map(..) => "map",
+            Type::Set(_) => "set",
+            Type::Int => "int",
+            Type::Float => "float",
+            Type::Channel(_) => "channel",
+            Type::Generic(name, _) if name.is_builtin("Option") => "option",
+            Type::Generic(name, _) if name.is_builtin("Result") => "result",
+            Type::Generic(name, _) if name.is_builtin("Bytes") => "bytes",
+            _ => return None,
+        };
+        crate::builtins::registry::registry()
+            .row(module, &resolve(field))
+            .filter(|row| row.enabled)
+            .map(|_| {
+                format!(
+                    "`{field}` is a function of module `{module}`: call it as \
+                     `{module}.{field}({written})`"
+                )
+            })
+    }
+
+    /// Report `T.field`, through the type `on`, of the method `field` of
+    /// the trait `tr`, which takes a value of the type: it is called
+    /// through its trait.
+    fn through_its_trait(&mut self, on: &str, tr: TraitKey, field: Symbol, span: Span) {
+        let shown = self.show_trait(tr);
+        let help = match uncallable_builtin(tr, field, "x") {
+            Some(how) => how,
+            None => format!("`{field}` is a method of trait `{shown}`: call it as `{shown}.{field}(x)`"),
+        };
+        self.error_help(
+            Code::UnknownMethod,
+            (format!("type '{on}' has no method '{field}'"), Some(help)),
+            span,
+        );
+    }
+
     /// The index of the first parameter of type `Self` of the method
     /// `field` of the trait `tr`: the argument a call through the trait
     /// picks the impl by. `None` when the method has none, or the trait
@@ -1228,9 +1100,6 @@ impl TypeChecker {
             format!("type '{shown}' has no method '{field}'"),
         );
         let qualified = intern(&format!("{module}.{field}"));
-        if let Some(ty) = ty {
-            self.note_unknown_method(span, ty, field);
-        }
         if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
             d = d.with_help(format!(
                 "did you mean `{module}.{field}`, a function of module `{module}`?"
@@ -2152,31 +2021,7 @@ impl TypeChecker {
         {
             expr.res = None;
         }
-        let called = self.callee_position;
         let ty = self.infer_expr_kind(expr, env);
-        // A method is called, not taken: `x.m` that is not a callee is a
-        // field.
-        let ty = if self.last_field_access_was_method && !called {
-            self.last_field_access_was_method = false;
-            self.method_trait = None;
-            let ExprKind::FieldAccess(_, method, _) = &expr.kind else {
-                unreachable!()
-            };
-            self.errors.push(
-                Diagnostic::error(
-                    Code::InvalidMethodCall,
-                    expr.span,
-                    format!("method '{method}' is not a value: a method is called"),
-                )
-                .with_help(format!(
-                    "call it, `x.{method}(..)`, or pass a closure that does, `{{ x -> x.{method}(..) }}`"
-                )),
-            );
-            expr.ty = Some(Type::Error);
-            Type::Error
-        } else {
-            ty
-        };
         if let Some(t) = self.method_trait.take() {
             expr.res = Some(crate::defs::Res::Def(t.id.0));
         }
@@ -2509,6 +2354,15 @@ impl TypeChecker {
                 if let Some(ty) = type_ref {
                     let key = (canonical_head(&self.tables.resolver, ty), field);
                     if let Some(entry) = self.method_entry(key.0, key.1, true) {
+                        // A method that takes a value of the type is
+                        // called through its trait.
+                        if let Some(tr) = self.entry_trait(&entry, field)
+                            && self.self_param(tr, field).is_some()
+                        {
+                            self.through_its_trait(&resolve(ty.name), tr, field, span);
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
                         if let Some(trait_name) = entry.trait_name
                             && self.private_owner(trait_name).is_some()
                         {
@@ -2576,23 +2430,19 @@ impl TypeChecker {
                 // type it stands for.
                 let obj_ty = crate::types::canonical::canonicalize(&self.tables.resolver, &obj_ty);
 
-                // Field / method access
+                // A dot after a value is a field: a record's (its type's
+                // or an anonymous one's), or, on a value whose type is
+                // still unknown, the field of a record that has one.
                 //
                 // `TypeOf(inner)` values (descriptors produced by `type a`
-                // parameters or bare type names like `Int`) dispatch to
-                // trait methods on `inner`'s type. The descriptor is a
-                // type carrier, not a value argument — the downstream
-                // Call arm therefore sees `is_method_call = false`, so
-                // arg unification runs with no offset and the fn body's
-                // parameter slots line up one-for-one with the user's
-                // explicit arguments.
+                // parameters or bare type names like `Int`) call the
+                // methods of `inner` that make a value of it.
                 if let Type::Generic(gname, gargs) = &obj_ty
                     && gname.is_builtin(crate::defs::TYPE_OF)
                     && gargs.len() == 1
                 {
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
                     if let Some(ty) = resolved {
-                        self.last_field_access_was_method = false;
                         expr.ty = Some(ty.clone());
                         return ty;
                     }
@@ -2624,25 +2474,10 @@ impl TypeChecker {
                             };
                             self.unify(&obj_ty, &extended, span);
                             result_ty
-                        } else if let Some(method_ty) =
-                            self.structural_method(&obj_ty, field, false, span)
-                        {
-                            // A method every value has that its parts
-                            // allow (`{a: 1}.display()`), as on a tuple.
-                            expr.ty = Some(method_ty.clone());
-                            return method_ty;
                         } else {
-                            // ERR-GAP (round 81 F2): mirror the sibling
-                            // Record / Generic field-access sites and
-                            // append a did-you-mean hint.
                             let candidates: Vec<(Symbol, Type)> =
                                 fields.iter().map(|(k, v)| (*k, v.clone())).collect();
-                            let base = format!("anon record has no field '{field}'");
-                            self.error_help(
-                                Code::NoSuchField,
-                                format_record_field_suggestion(base, field, &candidates),
-                                span,
-                            );
+                            self.no_field(&obj_ty, field, Some(obj), &candidates, span);
                             Type::Error
                         }
                     }
@@ -2685,177 +2520,38 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        // Check method table (trait methods)
-                        if let Some(entry) = self.method_entry(*type_name, field, false) {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        // Legacy fallback: check TypeEnv for "TypeName.method"
-                        let key = intern(&format!("{type_name}.{field}"));
-                        if let Some(scheme) = env.lookup(key) {
-                            let scheme = scheme.clone();
-                            let result = self.instantiate(&scheme);
-                            let resolved = self.apply(&result);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        // A method of a structural trait the type has
-                        // no entry for (`Some(1).compare(Some(2))`).
-                        if let Some(method_ty) = self.structural_method(&obj_ty, field, false, span)
-                        {
-                            expr.ty = Some(method_ty.clone());
-                            return method_ty;
-                        }
-                        // GAP (round 35 F7): thread did-you-mean suggestion
-                        // through the Generic/named-record field-access
-                        // path so `u.nam` on `type User { name, age }`
-                        // prints `did you mean 'name'?`.
-                        self.note_unknown_method(span, *type_name, field);
-                        let shown = self.show_type(&Type::Generic(*type_name, vec![]));
-                        let base = format!("unknown field or method '{field}' on type {shown}");
-                        let msg = if let Some(rec_info) = self.tables.records.get(type_name) {
-                            format_record_field_suggestion(base, field, &rec_info.fields)
-                        } else {
-                            (base, None)
-                        };
-                        self.error_help(Code::UnknownField, msg, span);
+                        let fields = (self.tables.records.get(type_name))
+                            .map(|rec| rec.fields.clone())
+                            .unwrap_or_default();
+                        self.no_field(&obj_ty, field, Some(obj), &fields, span);
                         Type::Error
                     }
-                    // Primitive types — check method table for trait methods.
-                    // Channel and Fn have no structural traits to
-                    // speak of, but user-defined trait impls register entries
-                    // under the canonical names "Channel" / "Fn" via
-                    // `type_name_for_impl` (see `src/typechecker/mod.rs:2081`,
-                    // `src/typechecker/mod.rs:2092`), so dispatch must route those
-                    // receivers through the same `method_table` lookup. The
-                    // `"Fn"` key matches `canonical_name(Type::Fun)`,
-                    // `head_of_canon`, and `dispatch_type_for_value`
-                    // — round 71 follow-up unified all four sites on `"Fn"`.
-                    Type::Int
-                    | Type::Float
-                    | Type::Bool
-                    | Type::String
-                    | Type::Unit
-                    | Type::Channel(_)
-                    | Type::Fun(_, _) => {
-                        // `Unit` is the key of `()` (it matches
-                        // canonical_name(Type::Unit) and
-                        // dispatch_type_for_value(Value::Unit)), `Fn` of a
-                        // function.
-                        let type_name = head_of(&obj_ty).expect("a primitive head has a type");
-                        if let Some(entry) = self.method_entry(type_name, field, false) {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        // GAP (round 23 #3): append "did you mean ...?"
-                        // when a near edit-distance method is registered
-                        // on this type. Keep the existing "on type <Name>"
-                        // header so prior-lock tests that match only the
-                        // header prefix still pass; the hint is appended
-                        // on its own `help:` line.
-                        // A method of an impl the resolver rejected: reported there.
-                        if self.unresolved_impl_methods.contains(&field) {
-                            return Type::Error;
-                        }
-                        let display = format!("type {type_name}");
-                        let message = self.unknown_method_message(field, &display, type_name, span);
-                        self.error_help(Code::UnknownMethod, message, span);
+                    // GAP (round 92): `t.0` parses as a FieldAccess with an
+                    // all-numeric field name, but tuple indexing is
+                    // intentionally unsupported (round 69 decision): the
+                    // targeted diagnostic points at destructuring instead.
+                    Type::Tuple(_)
+                        if !resolve(field).is_empty()
+                            && resolve(field).bytes().all(|b| b.is_ascii_digit()) =>
+                    {
+                        self.error(
+                            Code::UnsupportedOperation,
+                            format!(
+                                "tuple indexing ('t.{field}') is not supported; \
+                                 destructure instead: 'let (a, b) = t'"
+                            ),
+                            span,
+                        );
                         Type::Error
                     }
-                    // Collection types.
-                    //
-                    // Round 77 BLOAT D3: the four container arms (List,
-                    // Tuple, Map, Set) are line-for-line identical
-                    // except for the literal type-name string. They
-                    // collapse onto a single arm that asks
-                    // `type_name_for_impl` for the canonical name.
-                    // Adding a fifth container head only requires
-                    // extending the match pattern below — not cloning
-                    // a fourth body. The unknown-method error wording
-                    // matches the pre-fix form (`unknown method 'X' on
-                    // List` — without the `type` prefix used by the
-                    // primitive arm above), preserving observable
-                    // behavior across all four heads.
-                    t @ (Type::List(_) | Type::Tuple(_) | Type::Map(_, _) | Type::Set(_)) => {
-                        let type_name = self
-                            .type_name_for_impl(t)
-                            .expect("container head has canonical name");
-                        if let Some(entry) = self.method_entry(type_name, field, false) {
-                            let instantiated =
-                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        // GAP (round 92): `t.0` parses as a FieldAccess
-                        // with an all-numeric "method" name (the parser
-                        // keeps a dedicated tuple-index arm), but tuple
-                        // indexing is intentionally unsupported (round 69
-                        // decision — docs-only). The generic "unknown
-                        // method '0' on Tuple" wording misled users into
-                        // thinking they typo'd a method name. Emit a
-                        // targeted diagnostic pointing at destructuring
-                        // instead. Numeric "methods" can only arise from
-                        // tuple-index syntax, so this never shadows a real
-                        // method lookup.
-                        if matches!(t, Type::Tuple(_)) {
-                            let field_str = resolve(field);
-                            if !field_str.is_empty()
-                                && field_str.bytes().all(|b| b.is_ascii_digit())
-                            {
-                                self.error(
-                                    Code::UnsupportedOperation,
-                                    format!(
-                                        "tuple indexing ('t.{field_str}') is not supported; \
-                                         destructure instead: 'let (a, b) = t'"
-                                    ),
-                                    span,
-                                );
-                                return Type::Error;
-                            }
-                        }
-                        // A method of an impl the resolver rejected: reported there.
-                        if self.unresolved_impl_methods.contains(&field) {
-                            return Type::Error;
-                        }
-                        let display = resolve(type_name.name).to_string();
-                        let message = self.unknown_method_message(field, &display, type_name, span);
-                        self.error_help(Code::UnknownMethod, message, span);
-                        Type::Error
-                    }
-                    Type::Rigid(r) => match self.bound_method(*r, field, span) {
-                        Some((trait_name, method_ty)) => {
-                            self.last_field_access_was_method = true;
-                            self.method_trait = Some(trait_name);
-                            let resolved = self.apply(&method_ty);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        None => Type::Error,
-                    },
                     Type::Var(_) => {
-                        // A method only another module's private trait
-                        // provides cannot be called here, whatever the
-                        // receiver turns out to be.
-                        if called && let Some(trait_name) = self.only_private_provider(field) {
-                            self.private_method(trait_name, field, span);
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
                         if called {
-                            // `x.m(..)`: what it calls is decided with
+                            // `x.f(..)`: what it calls is decided with
                             // the type of `x` (`check_call`).
                             self.unknown_receiver = Some((obj_ty.clone(), field));
                             self.fresh_var()
                         } else {
-                            // `x.f`: a record with the field `f`,
-                            // whatever methods traits declare.
+                            // `x.f`: a record with the field `f`.
                             let result_ty = self.fresh_var();
                             let row_ty = Type::AnonRecord {
                                 fields: std::collections::BTreeMap::from([(
@@ -2868,19 +2564,13 @@ impl TypeChecker {
                             result_ty
                         }
                     }
-                    Type::Error => {
+                    Type::Error | Type::Never => {
                         // Prior error — propagate to prevent cascading false positives
                         Type::Error
                     }
+                    // Any other type has no fields.
                     _ => {
-                        self.error(
-                            Code::UnknownField,
-                            format!(
-                                "unknown field or method '{field}' on type {}",
-                                self.show_type(&obj_ty)
-                            ),
-                            span,
-                        );
+                        self.no_field(&obj_ty, field, Some(obj), &[], span);
                         Type::Error
                     }
                 }

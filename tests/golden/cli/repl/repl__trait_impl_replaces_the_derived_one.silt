@@ -1,5 +1,5 @@
 -- cmd: repl
--- stdin: type Box { v: Int }\ntrait Display for Box { fn display(self) -> String { "Box({self.v})" } }\n1 + 1\nlet b = Box { v: 3 }\nb.display()\n"{b.display()} {b == Box { v: 3 }}"\ntrait Display for Box { fn display(self) -> String { "again" } }\nb.display()\nfn show(x: Box) -> String { x.display() }\nshow(Box { v: 4 })\n:quit\n
+-- stdin: type Box { v: Int }\ntrait Display for Box { fn display(self) -> String { "Box({self.v})" } }\n1 + 1\nlet b = Box { v: 3 }\n"{b}"\n"{b} {b == Box { v: 3 }}"\ntrait Display for Box { fn display(self) -> String { "again" } }\n"{b}"\nfn show(x: Box) -> String { "{x}" }\nshow(Box { v: 4 })\n:quit\n
 -- stderr-contains: error[type]: duplicate implementation of trait 'Display' for type 'Box'
 -- stderr-contains:  --> <repl:7>:1:1
 -- A written `Display` impl for a type of an earlier input replaces the

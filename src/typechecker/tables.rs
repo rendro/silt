@@ -357,12 +357,6 @@ pub struct Tables {
     pub(super) traits: Table<HashMap<TraitKey, TraitInfo>, TraitKey>,
     /// The methods of every impl, by type, name and trait.
     pub(super) impl_methods: ImplMethods,
-    /// Where each module reported that a type has no method of some
-    /// name: the place, the type, the name. Once every module of a
-    /// program is checked, a trait out of the module's reach that has
-    /// such a method is named there ([`out_of_reach_helps`]).
-    pub(super) unknown_methods:
-        HashMap<crate::session::ModuleId, Vec<(crate::source::Span, TypeRef, Symbol)>>,
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set:
         Table<std::collections::HashSet<(TraitKey, TypeRef)>, (TraitKey, TypeRef)>,
@@ -630,7 +624,6 @@ impl Tables {
         ));
         rows.extend(keys("scheme", self.schemes.keys()));
         rows.extend(keys("statement-units", self.statement_units.keys()));
-        rows.extend(keys("unknown-methods", self.unknown_methods.keys()));
         rows.extend(keys("waiting", self.waiting.keys()));
         rows.extend(keys("rows-of", self.rows.keys()));
         rows.extend(keys(
@@ -690,7 +683,6 @@ impl Tables {
     /// it was a REPL cell that is dropped.
     pub fn forget(&mut self, module: crate::session::ModuleId) {
         self.waiting.remove(&module);
-        self.unknown_methods.remove(&module);
         let Some(rows) = self.rows.remove(&module) else {
             return;
         };

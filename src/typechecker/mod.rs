@@ -293,10 +293,6 @@ pub struct TypeChecker {
     /// which `infer_expr` records on the access (`Expr::res`): the
     /// compiler keys the call by it.
     pub(super) method_trait: Option<TraitKey>,
-    /// The traits of the method calls resolved in the deferred pass, by
-    /// the span of the access; `resolve_all_types` records each on its
-    /// access.
-    pub(super) deferred_method_traits: HashMap<Span, TraitKey>,
     /// The type each call through a trait (`Greet.greet(x)`) gives the
     /// trait's `Self`, by the span of the access: the impl the call
     /// reaches is the one for that type (`resolve_all_types`).
@@ -445,7 +441,6 @@ impl TypeChecker {
             impl_sigs: HashMap::new(),
             last_field_access_was_method: false,
             method_trait: None,
-            deferred_method_traits: HashMap::new(),
             trait_call_self: HashMap::new(),
             trait_receiver: None,
             seen_traits: std::collections::HashSet::new(),
@@ -1460,64 +1455,6 @@ pub struct ModuleCheck {
     /// they are initialised in: each after the `let`s its initialiser
     /// can reach, and in source order where nothing orders two.
     pub let_order: Vec<Span>,
-}
-
-/// For the module `module`, checked, with every other module of its
-/// program: at each place it reported that a type has no method of
-/// some name, the help that names a trait with such a method for the
-/// type whose module `module` does not reach (`reach`: the modules it
-/// imports, and theirs, and so on). It is made from the whole program's
-/// impls, so it does not depend on the order the modules were checked
-/// in. A module that itself imports `module` (`imports_back`) cannot be
-/// imported by it: the help then says where the trait would have to be.
-pub fn out_of_reach_helps(
-    tables: &Tables,
-    defs: &crate::defs::DefTable,
-    module: crate::session::ModuleId,
-    reach: &std::collections::HashSet<crate::session::ModuleId>,
-    imports_back: impl Fn(crate::session::ModuleId) -> bool,
-) -> Vec<(Span, String)> {
-    let mut helps = Vec::new();
-    for (span, ty, method) in tables.unknown_methods.get(&module).into_iter().flatten() {
-        let mut found: Vec<(String, String, bool)> = tables
-            .impl_methods
-            .providers(*ty, *method)
-            .iter()
-            .filter_map(|t| {
-                let owner = defs.get(t.id.0).module;
-                let private = tables
-                    .traits
-                    .get(t)
-                    .is_some_and(|info| info.private_to.is_some());
-                if owner == module || owner.is_builtin() || reach.contains(&owner) || private {
-                    return None;
-                }
-                let name = tables.module_names.get(&owner)?;
-                Some((resolve(t.name), resolve(*name), imports_back(owner)))
-            })
-            .collect();
-        // (A module that can be imported first.)
-        found.sort_by(|a, b| (a.2, &a.0, &a.1).cmp(&(b.2, &b.0, &b.1)));
-        match found.first() {
-            Some((tr, owner, false)) => helps.push((
-                *span,
-                format!(
-                    "trait '{tr}' of module '{owner}' has a method '{method}' for this type; \
-                     import '{owner}' to call it"
-                ),
-            )),
-            Some((tr, owner, true)) => helps.push((
-                *span,
-                format!(
-                    "trait '{tr}' of module '{owner}' has a method '{method}' for this type, \
-                     but '{owner}' imports this module and cannot be imported by it; the \
-                     trait would have to be declared in a module this one can import"
-                ),
-            )),
-            None => {}
-        }
-    }
-    helps
 }
 
 /// The context a module is checked in, from the session.
