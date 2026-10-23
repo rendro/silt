@@ -204,7 +204,7 @@ silt disasm <file.silt>    Show bytecode disassembly (same as `silt run --disass
 silt self-update           Update the silt binary to the latest release
 silt update [<dep-name>]   Regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>                             Add a path-based dependency to silt.toml
-silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based dependency to silt.toml
+silt add <name> --git <url> (--rev|--branch|--tag) <ref>  Add a git-based dependency to silt.toml
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test`. It watches the files of the program (every module it imports, plus `silt.toml` and `silt.lock`) and re-runs the command when one changes, stopping the previous run first if it is still going.

@@ -24,7 +24,7 @@ pub(crate) fn usage_text() -> String {
     // tests/cli/cli_round26_tests.rs will fail otherwise.
     //
     // SIG_WIDTH is wide enough for the full
-    // `silt add <name> --git <url> [--rev|--branch|--tag <ref>]`
+    // `silt add <name> --git <url> (--rev|--branch|--tag) <ref>`
     // signature (58 chars) so its description column aligns with the
     // other rows instead of being pushed right by 12 characters.
     const SIG_WIDTH: usize = 58;
@@ -83,7 +83,7 @@ pub(crate) fn usage_text() -> String {
         "Add a path-based dependency to silt.toml",
     ));
     out.push_str(&line(
-        "silt add <name> --git <url> [--rev|--branch|--tag <ref>]",
+        "silt add <name> --git <url> (--rev|--branch|--tag) <ref>",
         "Add a git-based dependency to silt.toml",
     ));
     out.push('\n');
