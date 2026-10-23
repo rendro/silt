@@ -683,8 +683,9 @@ impl TypeChecker {
         }
     }
 
-    /// Where `expr` names a variant that has the name of its type
-    /// (`Box` of `type Box(a) { Box(a), Empty }`), let it name the type.
+    /// Where `expr` names a variant that has the name of a type (its own,
+    /// `Box` of `type Box(a) { Box(a), Empty }`, or one in sight), let it
+    /// name the type.
     fn type_named_like_its_variant(&self, expr: &mut Expr) {
         if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
             return;
@@ -692,8 +693,16 @@ impl TypeChecker {
         let (Some(crate::defs::Res::Def(id)), Some(defs)) = (expr.res, self.defs.as_ref()) else {
             return;
         };
-        if let Some(ty) = defs.variant_type(id)
-            && ty.name == defs.get(id).name
+        let Some(ty) = defs.variant_type(id) else {
+            return;
+        };
+        let name = defs.get(id).name;
+        if let ExprKind::Ident(written) = expr.kind
+            && let Some((t, _)) = (self.spelled.iter())
+                .find(|(t, n)| **n == written && defs.get(**t).is_type())
+        {
+            expr.res = Some(crate::defs::Res::Def(*t));
+        } else if ty.name == name
             && let crate::defs::DefKind::Type(t) = ty.kind
         {
             expr.res = Some(crate::defs::Res::Def(t.0));

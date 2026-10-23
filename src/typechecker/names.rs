@@ -2695,9 +2695,16 @@ impl Resolver<'_> {
                 None
             }
             Some(Binding::Def(d)) => {
-                obj.res = Some(Res::Def(match self.type_named_like_its_variant(d) {
-                    // `Box.default()` with `type Box(a) { Box(a), .. }`:
-                    // a variant has no methods, its type does.
+                // `Box.default()` with `type Box(a) { Box(a), .. }`, or with
+                // a type `Box` and a variant `Box` of another type: a
+                // variant has no methods, the type of that name does.
+                let ty = (self.defs.variant_type(d).is_some())
+                    .then(|| match self.lookup_type(head_name) {
+                        Some(Binding::Def(t)) if self.defs.get(t).is_type() => Some(t),
+                        _ => self.type_named_like_its_variant(d),
+                    })
+                    .flatten();
+                obj.res = Some(Res::Def(match ty {
                     Some(ty) if !resolve(field).starts_with(char::is_uppercase) => ty,
                     _ => d,
                 }));

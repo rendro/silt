@@ -1,0 +1,14 @@
+-- A name that is a type and a variant of another type: a method through
+-- it and a `type a` argument mean the type, a value means the variant.
+trait Default { fn default() -> Self }
+type Box(a) { Bx(a), Empty }
+type Other { Box, Nah }
+trait Default for Box(a) { fn default() -> Self { Empty } }
+fn mk(type t) -> t where t: Default { t.default() }
+fn main() {
+  let b: Box(Int) = Box.default()
+  println(b)
+  let c: Box(Int) = mk(Box)
+  println(c)
+  println(Box)
+}
