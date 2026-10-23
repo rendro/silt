@@ -918,10 +918,14 @@ fn say_hidden_modules(
                     Code::UnknownMethod | Code::UnknownField | Code::NoSuchField
                 )
         }) {
+            let (name, module) = (resolve(h.name), resolve(h.module));
+            let hidden = match name == module {
+                true => format!("`{module}`"),
+                false => format!("`{module}` (imported as `{name}`)"),
+            };
             d.help = vec![format!(
-                "`{module}` here is the local from line {line}, which hides the module \
-                 `{module}`; rename the local",
-                module = resolve(h.module)
+                "`{name}` here is the local from line {line}, which hides the module {hidden}; \
+                 rename the local"
             )];
         }
     }

@@ -132,6 +132,9 @@ pub struct Resolution {
 pub struct HiddenModule {
     /// The access, `m.x`.
     pub access: Span,
+    /// The name `m`, of the local and of the import.
+    pub name: Symbol,
+    /// The module's own name: `m`, or `list` of `import list as m`.
     pub module: Symbol,
     /// Where the local is bound.
     pub local: Span,
@@ -2690,9 +2693,20 @@ impl Resolver<'_> {
                     .module_exports(*id)
                     .is_some_and(|exports| exports.member(field).is_some())
             {
+                // The name the module is imported by, after `import`.
+                let module = self
+                    .imports
+                    .iter()
+                    .find(|(_, imported)| {
+                        matches!(imported,
+                            Imported::Builtin(m) | Imported::Module(m, _) | Imported::Cell(m, _)
+                                if m == id)
+                    })
+                    .map_or(head_name, |(name, _)| *name);
                 self.hidden_modules.push(HiddenModule {
                     access: span,
-                    module: head_name,
+                    name: head_name,
+                    module,
                     local,
                 });
             }

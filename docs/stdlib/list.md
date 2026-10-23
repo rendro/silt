@@ -761,10 +761,10 @@ comes after `b`. The sort is stable: equal elements keep their order.
 import list
 
 fn main() {
-  println(list.sort_with([3, 1, 2]) { a, b -> b - a }) -- [3, 2, 1]
+  println(list.sort_with([3, 1, 2]) { a, b -> b.compare(a) }) -- [3, 2, 1]
   -- By the first of each pair only: (1, b) stays before (1, a).
   let pairs = [(2, "c"), (1, "b"), (1, "a")]
-  println(list.sort_with(pairs) { (x, _), (y, _) -> x - y }) -- [(1, b), (1, a), (2, c)]
+  println(list.sort_with(pairs) { (x, _), (y, _) -> x.compare(y) }) -- [(1, b), (1, a), (2, c)]
 }
 ```
 

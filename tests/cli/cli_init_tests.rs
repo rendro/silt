@@ -201,3 +201,106 @@ fn test_init_then_run_works() {
         "expected greeting in stdout, got: {stdout}"
     );
 }
+
+// ── `silt init --lib` ─────────────────────────────────────────────────
+
+#[test]
+fn test_init_lib_creates_a_library_that_checks_and_is_imported() {
+    let dir = temp_dir_named("shapes");
+    let out = silt_cmd()
+        .args(["init", "--lib"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "silt init --lib failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with("created silt package `shapes`:\n"),
+        "{stdout}"
+    );
+    let lib_line = format!("src{}lib.silt\n", std::path::MAIN_SEPARATOR);
+    assert!(stdout.contains(&lib_line), "{stdout}");
+    assert!(
+        stdout.ends_with("\n  check: silt check\n  test:  silt test\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        read(&dir.join("src").join("lib.silt")),
+        "pub fn hello() -> String {\n  \"hello, silt!\"\n}\n"
+    );
+    assert!(
+        !dir.join("src").join("main.silt").exists(),
+        "a library has no main"
+    );
+
+    let check = silt_cmd().arg("check").current_dir(&dir).output().unwrap();
+    assert!(
+        check.status.success(),
+        "silt check of the library failed: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    // A program that depends on it calls its function.
+    let app = dir.parent().unwrap().join("app");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(
+        app.join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nshapes = { path = \"../shapes\" }\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("src").join("main.silt"),
+        "import shapes\nfn main() { println(shapes.hello()) }\n",
+    )
+    .unwrap();
+    let run = silt_cmd().arg("run").current_dir(&app).output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "hello, silt!\n");
+}
+
+#[test]
+fn test_init_lib_refuses_to_overwrite_lib() {
+    let dir = temp_dir_named("has_lib");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src").join("lib.silt"), "pub fn mine() { 1 }\n").unwrap();
+    let out = silt_cmd()
+        .args(["init", "--lib"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).starts_with("src/lib.silt already exists at "),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        read(&dir.join("src").join("lib.silt")),
+        "pub fn mine() { 1 }\n"
+    );
+    assert!(!dir.join("silt.toml").exists(), "nothing is written");
+}
+
+#[test]
+fn test_init_help_tells_of_lib() {
+    let out = silt_cmd().args(["init", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.starts_with("Usage: silt init [--lib]\n"), "{help}");
+    assert!(
+        help.contains("with --lib\nsrc/lib.silt, a library"),
+        "{help}"
+    );
+    assert!(
+        help.contains("  --lib    A library: src/lib.silt instead of src/main.silt\n"),
+        "{help}"
+    );
+}

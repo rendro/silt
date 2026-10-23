@@ -20,7 +20,7 @@
 //!       subcommand.
 //! - L9.1: `enabled_features()` lists `tcp`/`tcp-tls`/`postgres`/`postgres-tls`
 //!         when those features are compiled in (at minimum `tcp` in default builds).
-//! - L9.2: all 12 top-level help rows have their description columns aligned
+//! - L9.2: all 13 top-level help rows have their description columns aligned
 //!         at the same byte offset — structural invariant for the FULL help
 //!         surface, not just the 6 rows asserted by the round-15 test.
 
@@ -343,7 +343,7 @@ fn test_silt_help_enabled_features_lists_compiled_features() {
     }
 }
 
-// ── L9.2: all 12 top-level help rows align at the same desc column ──
+// ── L9.2: all 13 top-level help rows align at the same desc column ──
 
 /// Parse every row from `silt --help` whose trimmed form starts with
 /// `silt ` and assert they all have their description column at the
@@ -366,12 +366,12 @@ fn test_silt_help_all_rows_desc_column_aligned() {
         .lines()
         .filter(|l| l.starts_with("  silt ") && desc_column(l).is_some())
         .collect();
-    // 12 rows: run, check, test, fmt, repl, init, lsp, disasm, self-update,
-    // update, add --path, add --git.
+    // 13 rows: run, check, test, fmt, repl, init, lsp, disasm, self-update,
+    // update, add --path, add --git, remove.
     assert_eq!(
         rows.len(),
-        12,
-        "expected 12 subcommand rows in top-level help, got {}:\n{stdout}",
+        13,
+        "expected 13 subcommand rows in top-level help, got {}:\n{stdout}",
         rows.len()
     );
 

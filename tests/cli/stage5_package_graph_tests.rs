@@ -196,7 +196,7 @@ fn a_lock_entry_for_another_source_is_stale_and_rewritten() {
     );
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
     assert!(
-        lock.contains(&format!("path = {}", toml_path(&app.join("good")))),
+        lock.contains("path = \"good\""),
         "the rewritten lock pins the manifest's source:\n{lock}"
     );
     let _ = fs::remove_dir_all(&ws);
