@@ -968,7 +968,13 @@ impl TypeChecker {
     /// method of that impl asks (`Pred::Via`), as a call on a value of
     /// that type would. A method that takes no value of type `Self`
     /// cannot say which impl it is of: it is called on a type.
-    fn trait_method(&mut self, tr: TraitKey, field: Symbol, span: Span) -> Type {
+    fn trait_method(
+        &mut self,
+        tr: TraitKey,
+        field: Symbol,
+        receiver: Option<(Type, Span)>,
+        span: Span,
+    ) -> Type {
         let Some(info) = self.tables.traits.get(&tr).cloned() else {
             return Type::Error;
         };
@@ -1016,6 +1022,35 @@ impl TypeChecker {
             );
             return Type::Error;
         }
+        // Called with its first argument a value of a type that has an
+        // impl written: the method of that impl, as a function of the
+        // impl's module calls it, owing what the impl's header and the
+        // method's body ask (`dispatch_method_entry`).
+        if let Some((recv, _)) = &receiver {
+            let recv = self.apply(recv);
+            let entry = match crate::types::canonical::canonicalize(&self.tables.resolver, &recv) {
+                Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,
+                canon => (self.type_name_for_impl(&canon))
+                    .and_then(|head| self.tables.impl_methods.get(head, field, tr))
+                    .filter(|entry| !entry.structural)
+                    .cloned(),
+            };
+            if let Some(entry) = entry {
+                self.method_trait = Some(tr);
+                self.trait_call_self.insert(span, recv.clone());
+                self.last_field_access_was_method = true;
+                let owed_before = self.wanted.len();
+                let scheme = self.method_scheme(&entry);
+                let ty = self.instantiate_method(&scheme, field, span);
+                if let Type::Fun(params, _) = &ty
+                    && let Some(first) = params.first()
+                {
+                    self.unify(&recv, first, span);
+                }
+                self.solve_wanted(owed_before);
+                return self.apply(&ty);
+            }
+        }
         let self_ty = self.fresh_var();
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         mapping.insert(info.self_var, self_ty.clone());
@@ -1053,6 +1088,9 @@ impl TypeChecker {
             preds,
             ty,
         };
+        if let Some((recv, _)) = &receiver {
+            self.unify(recv, &self_ty, span);
+        }
         self.want(
             Pred::Trait {
                 tr,
@@ -1061,15 +1099,31 @@ impl TypeChecker {
                 asker: None,
             },
             Origin {
-                span,
+                span: receiver.as_ref().map_or(span, |(_, at)| *at),
                 callee: Some(field),
                 op: None,
             },
         );
         self.method_trait = Some(tr);
         self.trait_call_self.insert(span, self_ty);
+        self.last_field_access_was_method = receiver.is_some();
         let method_ty = self.instantiate_method(&scheme, field, span);
         self.apply(&method_ty)
+    }
+
+    /// The index of the first parameter of type `Self` of the method
+    /// `field` of the trait `tr`: the argument a call through the trait
+    /// picks the impl by. `None` when the method has none, or the trait
+    /// no such method.
+    pub(super) fn self_param(&self, tr: TraitKey, field: Symbol) -> Option<usize> {
+        let info = self.tables.traits.get(&tr)?;
+        let (_, ty) = info.methods.iter().find(|(n, _)| *n == field)?;
+        match ty {
+            Type::Fun(params, _) => params
+                .iter()
+                .position(|p| matches!(p, Type::Var(v) if *v == info.self_var)),
+            _ => None,
+        }
     }
 
     /// `T.method` where the method is one of a builtin structural trait
@@ -1742,7 +1796,23 @@ impl TypeChecker {
         });
         self.callee_position = true;
         self.unknown_receiver = None;
+        // `Tr.m(x, ..)`: the argument of type `Self` is checked with the
+        // callee, as a receiver: the impl is the one for its type.
+        let through_trait = match &callee.kind {
+            ExprKind::FieldAccess(obj, field, _) if !args.is_empty() => self
+                .trait_named(obj)
+                .is_some_and(|tr| self.self_param(tr, *field) == Some(0)),
+            _ => false,
+        };
+        if through_trait {
+            let receiver = args.remove(0);
+            self.callee_position = false;
+            let recv_ty = self.infer_expr(receiver, env);
+            self.callee_position = true;
+            self.trait_receiver = Some((recv_ty, receiver.span));
+        }
         let callee_ty = self.infer_expr(callee, env);
+        self.trait_receiver = None;
         self.callee_position = false;
         self.named_use = None;
         let callee_ty = self.apply(&callee_ty);
@@ -1777,7 +1847,10 @@ impl TypeChecker {
                 let implicit_self = usize::from(is_method_call);
                 // (A method has its `self`: `takes_no_self` refused the
                 // access otherwise.)
-                let written_params = params.len().saturating_sub(implicit_self);
+                let written_params = match through_trait {
+                    true => params.len(),
+                    false => params.len().saturating_sub(implicit_self),
+                };
                 // What the callee's use owes for a type variable of a
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
@@ -1952,18 +2025,27 @@ impl TypeChecker {
                         CallForm::Call => {
                             // A method's receiver is not one of the
                             // arguments the call writes.
-                            let what = match (&callee.kind, callee_name) {
-                                (ExprKind::FieldAccess(_, method, _), _) if is_method_call => {
-                                    format!("method `{method}`")
+                            // (A call through a trait writes its
+                            // receiver: it counts.)
+                            let (what, written, got) = match (&callee.kind, callee_name) {
+                                (ExprKind::FieldAccess(obj, method, _), _) if through_trait => {
+                                    let shown = match self.trait_named(obj) {
+                                        Some(tr) => format!("`{}.{method}`", self.show_trait(tr)),
+                                        None => format!("method `{method}`"),
+                                    };
+                                    (shown, written_params, args.len() + 1)
                                 }
-                                (_, Some(name)) => format!("`{name}`"),
-                                _ => "function".to_string(),
+                                (ExprKind::FieldAccess(_, method, _), _) if is_method_call => {
+                                    (format!("method `{method}`"), written_params, args.len())
+                                }
+                                (_, Some(name)) => (format!("`{name}`"), written_params, args.len()),
+                                _ => ("function".to_string(), written_params, args.len()),
                             };
                             let message = format!(
                                 "{what} expects {} {}, got {}",
-                                written_params,
-                                plural(written_params, "argument", "arguments"),
-                                args.len()
+                                written,
+                                plural(written, "argument", "arguments"),
+                                got
                             );
                             (message, None)
                         }
@@ -2412,7 +2494,8 @@ impl TypeChecker {
                 // `Trait.method`: a method of a trait, called through it
                 // (`Greet.greet(x)`, `m.Greet.greet`, `Compare.compare`).
                 if let Some(tr) = self.trait_named(obj) {
-                    let ty = self.trait_method(tr, field, span);
+                    let receiver = self.trait_receiver.take();
+                    let ty = self.trait_method(tr, field, receiver, span);
                     expr.ty = Some(ty.clone());
                     return ty;
                 }

@@ -4,7 +4,8 @@
 -- have, Display's and Equal's methods (interpolation and == do that),
 -- a method that takes no value of the type (it is called on a type),
 -- and an argument whose type has no impl, also through an
--- unannotated function that calls it.
+-- unannotated function that calls it, and a call with too many
+-- arguments, which counts the one of type Self.
 trait Greet {
   fn greet(self) -> String
 }
@@ -22,4 +23,6 @@ fn main() {
   let e = Monoid.empty()
   println(Greet.greet("s"))
   println(hello("t"))
+  println(Greet.greet(1, 2))
+  println(2 |> Greet.greet(1))
 }

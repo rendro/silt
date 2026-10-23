@@ -301,6 +301,9 @@ pub struct TypeChecker {
     /// trait's `Self`, by the span of the access: the impl the call
     /// reaches is the one for that type (`resolve_all_types`).
     pub(super) trait_call_self: HashMap<Span, Type>,
+    /// The argument of type `Self` of the call through a trait whose
+    /// callee is being inferred, with its place (`check_call`).
+    pub(super) trait_receiver: Option<(Type, Span)>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -444,6 +447,7 @@ impl TypeChecker {
             method_trait: None,
             deferred_method_traits: HashMap::new(),
             trait_call_self: HashMap::new(),
+            trait_receiver: None,
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             builtin_imports: std::collections::HashSet::new(),
