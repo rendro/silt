@@ -142,6 +142,25 @@ fn discover_external_ipv4() -> Option<std::net::Ipv4Addr> {
     None
 }
 
+/// Whether a listener of the standard library bound to 0.0.0.0 is
+/// reached at `lan_ip`: the control for the tests that probe that
+/// address. When it is not, the test says so and skips that probe.
+fn lan_reaches_a_plain_listener(lan_ip: std::net::Ipv4Addr) -> bool {
+    let Ok(listener) = std::net::TcpListener::bind("0.0.0.0:0") else {
+        eprintln!("skipped the probe of {lan_ip}: no plain listener on 0.0.0.0");
+        return false;
+    };
+    let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
+    let reached = port != 0 && tcp_probe(&lan_ip.to_string(), port, Duration::from_secs(2));
+    if !reached {
+        eprintln!(
+            "skipped the probe of {lan_ip}: a plain listener on 0.0.0.0:{port} is not \
+             reached there either"
+        );
+    }
+    reached
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // A listener on 127.0.0.1 is reached on loopback only.
 // ────────────────────────────────────────────────────────────────────────
@@ -232,8 +251,13 @@ fn a_listener_on_the_unspecified_address_serves_all_interfaces() {
     );
 
     // If there is a LAN IP, the listener MUST be reachable there too —
-    // that is what the address asks for.
-    if let Some(lan_ip) = discover_external_ipv4() {
+    // that is what the address asks for. Unless a plain listener of
+    // the standard library on 0.0.0.0 is not reachable there either: a
+    // firewall or a sandbox that drops the address, which says nothing
+    // of silt.
+    if let Some(lan_ip) = discover_external_ipv4()
+        && lan_reaches_a_plain_listener(lan_ip)
+    {
         let lan = lan_ip.to_string();
         let reachable = tcp_probe(&lan, port, Duration::from_secs(2));
         if !reachable {
