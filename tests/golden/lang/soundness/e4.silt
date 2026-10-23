@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected {nonexistent_method: Fn() -> _, ...}, got Int
+-- stderr-contains: type 'Int' has no field 'nonexistent_method'
 -- Port of repros/type_soundness/e4.silt, in brace closures.
 import list
 fn main() {

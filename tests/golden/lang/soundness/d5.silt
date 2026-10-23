@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown method 'display' on type Fn
+-- stderr-contains: has no field 'display'
 -- Port of repros/type_soundness/d5.silt, in brace closures.
 fn f(x) { "{x}" }
 fn main() {

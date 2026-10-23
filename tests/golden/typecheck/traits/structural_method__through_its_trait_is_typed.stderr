@@ -1,0 +1,29 @@
+error[type]: type mismatch: expected Int, got Float
+ --> structural_method__through_its_trait_is_typed.silt:14:30
+    |
+ 14 |   println(Compare.compare(1, 2.0))
+    |                              ^^^ type mismatch: expected Int, got Float
+
+error[type]: type mismatch: expected String, got Int
+ --> structural_method__through_its_trait_is_typed.silt:15:19
+    |
+ 15 |   let n: String = Hash.hash("s")
+    |                   ^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> structural_method__through_its_trait_is_typed.silt:16:30
+    |
+ 16 |   let hashes: List(String) = list.map(["a", "b"], Hash.hash)
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected P, got Int
+ --> structural_method__through_its_trait_is_typed.silt:17:39
+    |
+ 17 |   println(Compare.compare(P { x: 1 }, 3))
+    |                                       ^ type mismatch: expected P, got Int
+
+error[type]: `Compare.compare` expects 2 arguments, got 0
+ --> structural_method__through_its_trait_is_typed.silt:18:11
+    |
+ 18 |   println(Compare.compare())
+    |           ^^^^^^^^^^^^^^^^^ `Compare.compare` expects 2 arguments, got 0

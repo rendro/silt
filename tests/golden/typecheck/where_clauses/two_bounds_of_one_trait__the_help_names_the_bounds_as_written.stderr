@@ -1,13 +1,11 @@
-error[type]: ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
- --> two_bounds_of_one_trait__the_help_names_the_bounds_as_written.silt:15:3
+error[type]: type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', and which of them this use needs is not known
+ --> two_bounds_of_one_trait__the_help_names_the_bounds_as_written.silt:16:13
     |
- 15 |   x.show()
-    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
-  = help: the bounds `Conv(String)` and `Sub(Int)` both give `show`: call it from a function bounded by only one of them
+ 16 |   Conv.show(x)
+    |             ^ type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', and which of them this use needs is not known
 
-error[type]: ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
- --> two_bounds_of_one_trait__the_help_names_the_bounds_as_written.silt:19:3
+error[type]: type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', and which of them this use needs is not known
+ --> two_bounds_of_one_trait__the_help_names_the_bounds_as_written.silt:20:13
     |
- 19 |   x.show()
-    |   ^^^^^^ ambiguous method 'show' on a value of type `a`: provided by bounds Conv(Int), Conv(String)
-  = help: the bounds `Sub(Int)` and `Sub(String)` both give `show`: call it from a function bounded by only one of them
+ 20 |   Conv.show(x)
+    |             ^ type variable `a` is declared to implement 'Conv(Int)' and 'Conv(String)', and which of them this use needs is not known

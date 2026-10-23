@@ -911,18 +911,7 @@ impl TypeChecker {
                 return Some(how);
             }
             let shown = self.show_trait(tr);
-            let Some(info) = self.tables.traits.get(&tr) else {
-                return None;
-            };
-            let params = info
-                .methods
-                .iter()
-                .find(|(n, _)| *n == field)
-                .and_then(|(_, ty)| match ty {
-                    Type::Fun(params, _) => Some(params.len()),
-                    _ => None,
-                })
-                .unwrap_or(0);
+            let params = self.method_arity(tr, field);
             return Some(match self.self_param(tr, field) {
                 Some(_) => {
                     let rest = if params > 1 { ", .." } else { "" };
@@ -932,13 +921,23 @@ impl TypeChecker {
                     )
                 }
                 None => {
-                    let on = self
-                        .type_name_for_impl(ty)
-                        .map_or_else(|| "T".to_string(), |t| t.name.to_string());
+                    // (A type variable is called on as the `type a`
+                    // parameter that would name it.)
+                    let (on, parameter) = match ty {
+                        Type::Rigid(r) => (
+                            r.name.to_string(),
+                            format!(", where `{0}` is a `type {0}` parameter", r.name),
+                        ),
+                        _ => (
+                            self.type_name_for_impl(ty)
+                                .map_or_else(|| "T".to_string(), |t| t.name.to_string()),
+                            String::new(),
+                        ),
+                    };
                     let args = if params > 0 { ".." } else { "" };
                     format!(
                         "`{field}` is a method of trait `{shown}` that makes a value: call it \
-                         on the type, `{on}.{field}({args})`"
+                         on the type, `{on}.{field}({args})`{parameter}"
                     )
                 }
             });
@@ -972,15 +971,30 @@ impl TypeChecker {
     /// through its trait.
     fn through_its_trait(&mut self, on: &str, tr: TraitKey, field: Symbol, span: Span) {
         let shown = self.show_trait(tr);
+        let more = self.self_param(tr, field).is_some() && self.method_arity(tr, field) > 1;
+        let rest = if more { ", .." } else { "" };
         let help = match uncallable_builtin(tr, field, "x") {
             Some(how) => how,
-            None => format!("`{field}` is a method of trait `{shown}`: call it as `{shown}.{field}(x)`"),
+            None => format!(
+                "`{field}` is a method of trait `{shown}`: call it as `{shown}.{field}(x{rest})`"
+            ),
         };
         self.error_help(
             Code::UnknownMethod,
             (format!("type '{on}' has no method '{field}'"), Some(help)),
             span,
         );
+    }
+
+    /// The number of parameters of the method `field` of the trait `tr`.
+    fn method_arity(&self, tr: TraitKey, field: Symbol) -> usize {
+        (self.tables.traits.get(&tr))
+            .and_then(|info| info.methods.iter().find(|(n, _)| *n == field))
+            .and_then(|(_, ty)| match ty {
+                Type::Fun(params, _) => Some(params.len()),
+                _ => None,
+            })
+            .unwrap_or(0)
     }
 
     /// The index of the first parameter of type `Self` of the method
@@ -1904,8 +1918,11 @@ impl TypeChecker {
                                     };
                                     (shown, written_params, args.len() + 1)
                                 }
-                                (ExprKind::FieldAccess(_, method, _), _) if is_method_call => {
-                                    (format!("method `{method}`"), written_params, args.len())
+                                (ExprKind::FieldAccess(obj, method, _), _)
+                                    if let Some(tr) = self.trait_named(obj) =>
+                                {
+                                    let shown = format!("`{}.{method}`", self.show_trait(tr));
+                                    (shown, written_params, args.len())
                                 }
                                 (_, Some(name)) => (format!("`{name}`"), written_params, args.len()),
                                 _ => ("function".to_string(), written_params, args.len()),
@@ -2354,19 +2371,24 @@ impl TypeChecker {
                 if let Some(ty) = type_ref {
                     let key = (canonical_head(&self.tables.resolver, ty), field);
                     if let Some(entry) = self.method_entry(key.0, key.1, true) {
+                        if let Some(trait_name) = entry.trait_name
+                            && self.private_owner(trait_name).is_some()
+                        {
+                            self.private_method(trait_name, field, span);
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
                         // A method that takes a value of the type is
                         // called through its trait.
                         if let Some(tr) = self.entry_trait(&entry, field)
                             && self.self_param(tr, field).is_some()
                         {
+                            // (The help names a trait whose method is
+                            // called: a program's before `Display`.)
+                            let tr = (self.method_providers(key.0, field, true).into_iter())
+                                .find(|t| uncallable_builtin(*t, field, "x").is_none())
+                                .unwrap_or(tr);
                             self.through_its_trait(&resolve(ty.name), tr, field, span);
-                            expr.ty = Some(Type::Error);
-                            return Type::Error;
-                        }
-                        if let Some(trait_name) = entry.trait_name
-                            && self.private_owner(trait_name).is_some()
-                        {
-                            self.private_method(trait_name, field, span);
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }

@@ -31,8 +31,8 @@ repros/type_soundness/b4.silt	holds	reject E0314	TS-2.4: `+` on records through 
 repros/type_soundness/b5.silt	holds	reject E0314	TS-2.4: unary `-` on a String through a polymorphic function
 repros/type_soundness/c1.silt	-	obsolete	fn lambda; ported: lang/soundness/c1.silt
 repros/type_soundness/c2.silt	-	obsolete	fn lambda; ported: lang/soundness/c2.silt
-repros/type_soundness/c3.silt	holds	reject E0314	TS-2.1: `fn g(x) { x.greet() }` called with a String (decision D1)
-repros/type_soundness/c4.silt	holds	reject E0308	TS-2.1: `x.greet()` on an annotated variable that has no bound
+repros/type_soundness/c3.silt	holds	reject E0314	TS-2.1: `fn g(x) { Greet.greet(x) }` called with a String (decision D1)
+repros/type_soundness/c4.silt	holds	reject E0305	TS-2.1: `x.greet()` on an annotated variable: a value of a type variable has no fields
 repros/type_soundness/c5.silt	-	obsolete	fn lambda; ported: lang/soundness/c5.silt
 repros/type_soundness/cv2.silt	holds	reject E0301	TS-6: an anonymous record literal passed as a nominal `P`
 repros/type_soundness/cv3.silt	holds	reject E0301	TS-6: nominal records through a closed anonymous type; `==` is not transitive
@@ -71,14 +71,14 @@ repros/type_soundness/deep9_12.silt	holds	accept	TS-11: tuple type doubling, 12 
 repros/type_soundness/deep9_14.silt	holds	accept	TS-11: tuple type doubling, 14 levels
 repros/type_soundness/deep9_16.silt	holds	accept	TS-11: tuple type doubling, 16 levels
 repros/type_soundness/e1.silt	holds	reject E0301	TS-2.2: `r.message` is a row access whatever methods traits declare
-repros/type_soundness/e10.silt	holds	accept	TS-2.6: `.display()` on a closure parameter typed by the call
+repros/type_soundness/e10.silt	holds	accept	TS-2.6: interpolation of a closure parameter typed by the call
 repros/type_soundness/e11.silt	holds	accept	TS-2.6: a user method on a closure parameter, pipe form
 repros/type_soundness/e12.silt	-	obsolete	fn lambda; ported: lang/soundness/e12.silt
 repros/type_soundness/e2.silt	holds	reject E0301	TS-2.2: an unrelated `trait HasX { fn x(self) }` turns `r.x` into an unchecked call
 repros/type_soundness/e3.silt	holds	reject E0301	control for e2, without the trait
 repros/type_soundness/e4.silt	-	obsolete	fn lambda; ported: lang/soundness/e4.silt
 repros/type_soundness/e5.silt	-	obsolete	fn lambda; ported: lang/soundness/e5.silt
-repros/type_soundness/e6.silt	holds	accept	TS-2.6: `.display()` on a closure parameter typed by the call
+repros/type_soundness/e6.silt	holds	accept	TS-2.6: interpolation of a closure parameter typed by the call
 repros/type_soundness/e7.silt	-	obsolete	fn lambda; ported: lang/soundness/e7.silt
 repros/type_soundness/e8.silt	holds	accept	TS-2.6: user and built-in methods on closure parameters
 repros/type_soundness/e9.silt	holds	accept	control for e8: enum receivers
@@ -227,7 +227,7 @@ repros/type_soundness/u3.silt	-	obsolete	a string literal with an unescaped `{`:
 repros/type_soundness/u4.silt	holds	accept	TS-12: `let e = Err("x")` generalises: a constructor applied to values is a value
 repros/type_soundness/u5.silt	-	obsolete	fn lambda; ported: lang/soundness/u5.silt
 repros/type_soundness/v1.silt	holds	reject E0308	a method on a `type a` descriptor that has no bound
-repros/type_soundness/v2.silt	holds	reject E0308	a method the `where` clause does not give
+repros/type_soundness/v2.silt	holds	reject E0305	a dot after a value of a bounded type variable is a field, whatever its bounds give
 repros/type_soundness/w1.silt	holds	reject E0314	TS-4: a `where` bound lost through a user higher-order function
 repros/type_soundness/w10.silt	-	obsolete	fn lambda; ported: lang/soundness/w10.silt
 repros/type_soundness/w11.silt	holds	reject E0314	TS-4: a `where` bound lost through an annotated `let`
@@ -278,7 +278,7 @@ repros/typechecker_arch/cv1_main_swapped	holds	accept	TCA-1: as cv1_main_empty, 
 repros/typechecker_arch/cv2_hello.silt	holds	accept	control (TCA-13 counts its derived functions)
 repros/typechecker_arch/cv2_light.silt	holds	accept	TCA-13: a user variant named like a builtin one
 repros/typechecker_arch/cv2_ver.silt	holds	output	TCA-13: `<` and `.compare` order record fields alike, by declaration
-repros/typechecker_arch/derive_d1.silt	holds	output	TCA-7: derived `.display()` prints as `println` does
+repros/typechecker_arch/derive_d1.silt	holds	output	TCA-7: the derived display interpolates as `println` prints
 repros/typechecker_arch/derive_d2.silt	holds	output	TCA-7: a user Display impl is what interpolation and `println` print, at any depth
 repros/typechecker_arch/derive_d3.silt	holds	output	TCA-7: as derive_d2, for a record
 repros/typechecker_arch/derive_d4.silt	holds	reject E0331	TCA-7: Equal and Compare are sealed; a written impl is an error
@@ -345,8 +345,8 @@ repros/typechecker_arch/t_chain3.silt	holds	reject E0301	TCA-2: as t_chain2, dep
 repros/typechecker_arch/t_handle.silt	-	obsolete	fn lambda; a bare `Handle` names nothing (t_anno_handle)
 repros/typechecker_arch/t_key1.silt	holds	reject E0301	TCA-2: `fn bump(x: a) -> a { x + 1 }` violates its signature (t_rigid1)
 repros/typechecker_arch/t_key2.silt	holds	reject E0301	TCA-1: as t_key1, beside an impl method of the same name
-repros/typechecker_arch/t_nonlocal1.silt	holds	reject E0301	control for t_nonlocal2
-repros/typechecker_arch/t_nonlocal2.silt	holds	reject E0301	TCA-4: an unrelated trait method `label` turns `p.label` into an unchecked call
+repros/typechecker_arch/t_nonlocal1.silt	holds	reject E0305	control for t_nonlocal2
+repros/typechecker_arch/t_nonlocal2.silt	holds	reject E0305	TCA-4: a trait method `label` in sight does not change `p.label`: a field
 repros/typechecker_arch/t_poly_field.silt	holds	reject E0326	control: a row access has the field's type
 repros/typechecker_arch/t_poly_method.silt	-	obsolete	fn lambda; ported: lang/soundness/t_poly_method.silt
 repros/typechecker_arch/t_poly_num.silt	holds	reject E0314	TCA-4: `add(true, false)` (decision D2)
@@ -363,18 +363,18 @@ repros/typechecker_arch/t_where_hof.silt	holds	reject E0314	TCA-4: a `where` bou
 repros/typechecker_arch/t_where_paren.silt	-	obsolete	`[f, ..]` is not a pattern; with `..rest` it is type_soundness/w3c
 repros/typechecker_arch/t_where_pipe_call.silt	holds	reject E0314	control: a `where` bound at `x |> f()`
 repros/typechecker_arch/t_where_pipe_plain.silt	holds	reject E0314	TCA-4: a `where` bound lost at `x |> f`
-repros/typechecker_arch/t_tm_as_value.silt	holds	reject E0309	a trait method taken as a value (`let m = true.sh`) and called with its receiver: a method is called, not taken as a value
-repros/typechecker_arch/t_method_value_generic_impl.silt	holds	reject E0309	a method of a generic impl taken as a value: a method is called, not taken as a value
-repros/typechecker_arch/t_method_value_hof3.silt	holds	reject E0309	a method taken as a value and passed to list.map: a method is called, not taken as a value
+repros/typechecker_arch/t_tm_as_value.silt	holds	reject E0305	a dot after a value is a field (`let m = true.sh`): a trait's method is taken through its trait
+repros/typechecker_arch/t_method_value_generic_impl.silt	holds	reject E0305	a dot after a value of a generic impl's type is a field, not the impl's method
+repros/typechecker_arch/t_method_value_hof3.silt	holds	reject E0305	a dot after a value is a field, also as a function passed to list.map
 lang/soundness/a5.silt	holds	reject E0301	a closure parameter's annotation is enforced
 lang/soundness/b1.silt	holds	reject E0314	TS-2.4: `==` and `<` on closures through polymorphic functions
 lang/soundness/c1.silt	holds	reject E0314	control for b1: the same with a declared Compare bound
-lang/soundness/c2.silt	holds	reject E0314	TS-2.1: `.display()` on a closure through `fn show(x) { x.display() }` (decision D1)
+lang/soundness/c2.silt	holds	reject E0314	TS-2.1: a closure shown through `fn show(x) { "{x}" }` (decision D1)
 lang/soundness/c5.silt	holds	reject E0314	TS-2.4: `<` on closures in a branch that is rarely taken
-lang/soundness/d5.silt	holds	reject E0308	`.display()` on a closure
+lang/soundness/d5.silt	holds	reject E0305	a dot after a closure: a closure has no fields
 lang/soundness/e12.silt	holds	accept	TS-2.6: a closure calling a user method, then passed to list.map
-lang/soundness/e4.silt	holds	reject E0301	a closure calling a method no trait declares
-lang/soundness/e5.silt	holds	reject E0301	TS-2.1: `let n: Int = f(1)` where the closure returns `x.display()`
+lang/soundness/e4.silt	holds	reject E0305	a closure reading a field no value it is given has
+lang/soundness/e5.silt	holds	reject E0301	TS-2.1: `let n: Int = f(1)` where the closure returns `"{x}"`
 lang/soundness/e7.silt	holds	accept	control: an annotated closure parameter
 lang/soundness/ex10.silt	holds	accept	TS-10: literal fields in anonymous-record patterns add no coverage (false rejection)
 lang/soundness/ex5.silt	holds	reject E0320	`X(false, false)` is missed (the record match is exhaustive)
@@ -404,7 +404,7 @@ lang/soundness/p4.silt	holds	reject E0301	a channel from a local closure is mono
 lang/soundness/q3.silt	holds	reject E0301	`loop(...)` arguments have the bindings' types
 lang/soundness/r3.silt	holds	accept	a nominal record through an open row keeps its type
 lang/soundness/se2.silt	holds	reject E0201	TS-7.3: `self` in a closure outside a method
-lang/soundness/t_poly_method.silt	holds	reject E0314	TCA-4: `show(f) + 1` over `fn show(x) { x.display() }`
+lang/soundness/t_poly_method.silt	holds	reject E0314	TCA-4: `show(f) + 1` over `fn show(x) { "{x}" }`
 lang/soundness/u5.silt	holds	accept	destructuring a tuple of values generalises each binding: `f(1)` and `f("s")` (false rejection)
 lang/soundness/w10.silt	holds	reject E0314	control for w2: the eta-expanded form
 lang/soundness/w12.silt	holds	reject E0314	TS-4: a Hash bound lost through list.map
@@ -423,6 +423,6 @@ lang/soundness/every_tuple__self_is_not_a_tuple_of_chosen_elements.silt	holds	re
 lang/soundness/every_tuple__self_returned_as_a_tuple_of_a_variant.silt	holds	reject E0301	the same with a variant element
 lang/soundness/every_tuple__self_returned_as_a_tuple_of_a_record.silt	holds	reject E0301	the same with a record element
 lang/soundness/every_tuple__self_type_is_the_receivers.silt	holds	reject E0301	`Self` in an impl for every tuple was every tuple: a tuple of another type came back as the receiver's
-lang/soundness/every_fn__not_called_through_the_type.silt	holds	reject E0309	`Fn.describe(5)`: the method of an impl for every function written through the type takes anything
+lang/soundness/every_fn__not_called_through_the_type.silt	holds	reject E0308	`Fn.describe(5)`: a method that takes Self is called through its trait, never through the type
 lang/soundness/every_fn__self_is_not_called_taken_apart_or_shown.silt	holds	reject E0301	control: `self` of an impl for every function or tuple is not called, taken apart or shown
 lang/soundness/alias_impl__another_length_or_arity_has_no_impl.silt	holds	reject E0314	a bound answered by an impl for `(Int, Int)` or `Fn(Int) -> Int` (through an alias) held for a tuple of another length and a function of another arity

@@ -1,0 +1,13 @@
+error[type]: type 'T' has no method 'display'
+ --> through_the_type__the_help_names_the_program_s_trait.silt:22:11
+    |
+ 22 |   println(T.display(T { n: 1 }))
+    |           ^^^^^^^^^ type 'T' has no method 'display'
+  = help: `display` is a method of trait `Pretty`: call it as `Pretty.display(x)`
+
+error[type]: type 'Int' has no method 'display'
+ --> through_the_type__the_help_names_the_program_s_trait.silt:23:11
+    |
+ 23 |   println(Int.display(5))
+    |           ^^^^^^^^^^^ type 'Int' has no method 'display'
+  = help: `display` is a method of trait `Pretty`: call it as `Pretty.display(x)`

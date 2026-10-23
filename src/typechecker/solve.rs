@@ -2239,7 +2239,7 @@ impl TypeChecker {
     /// structural trait whose method it is when no impl of that trait
     /// is written for the type, for a call through the type (`on_type`,
     /// `T.method(..)`) or on a value (`on_a_value`).
-    fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
+    pub(super) fn method_providers(&self, ty: TypeRef, method: Symbol, on_type: bool) -> Vec<TraitKey> {
         let mut traits = self.tables.impl_methods.providers(ty, method).to_vec();
         if let Some(tr) = self.structural_provider(ty, method, on_type)
             && !traits.contains(&tr)
@@ -2247,6 +2247,13 @@ impl TypeChecker {
             traits.push(tr);
         }
         traits.sort_by_key(|t| self.show_trait(*t));
+        // Through the type, a method that makes a value: one that takes
+        // a value of the type is called through its trait, so it is no
+        // candidate where another trait gives the type a method of the
+        // name that makes one.
+        if on_type && traits.iter().any(|t| self.self_param(*t, method).is_none()) {
+            traits.retain(|t| self.self_param(*t, method).is_none());
+        }
         traits
     }
 

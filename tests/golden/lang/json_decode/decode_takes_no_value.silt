@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: unknown field or method 'decode' on type P
--- `decode` takes no value of the type: it is no method of a call on a
--- value (`p.decode(..)`), only of one through the type, so a program's
--- own `decode` method on a value is not ambiguous with it.
+-- stderr-contains: type 'P' has no field 'decode'
+-- `decode` of json.Decode takes no value of the type: it is called
+-- through the type. A program's own `decode` that takes one is called
+-- through its trait, and a dot after a value is a field.
 import json
 
 type P { x: Int }

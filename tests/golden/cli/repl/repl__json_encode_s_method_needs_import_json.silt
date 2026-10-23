@@ -1,7 +1,6 @@
 -- cmd: repl
--- stderr-contains: unknown field or method 'encode' on type P
--- stderr-contains: unknown method 'encode' on type Int
+-- stderr-contains: module 'json' is not imported
 -- stdout-contains: Object(#{"x": Int(1)})
--- stdin: type P { x: Int }\nP { x: 1 }.encode()\n1.encode()\nimport json\nP { x: 1 }.encode()\n:quit\n
--- In the REPL too, `encode` is a value's method once an entry imports
+-- stdin: type P { x: Int }\njson.Encode.encode(P { x: 1 })\nimport json\njson.Encode.encode(P { x: 1 })\n:quit\n
+-- In the REPL too, `json.Encode.encode` is called once an entry imports
 -- json, and not before.

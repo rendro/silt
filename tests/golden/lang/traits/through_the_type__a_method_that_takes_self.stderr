@@ -1,0 +1,27 @@
+error[type]: type 'a' has no method 'combine'
+ --> through_the_type__a_method_that_takes_self.silt:15:51
+    |
+ 15 | fn sum(x: a, y: a, type a) -> a where a: Monoid { a.combine(x, y) }
+    |                                                   ^^^^^^^^^ type 'a' has no method 'combine'
+  = help: `combine` is a method of trait `Monoid`: call it as `Monoid.combine(x, ..)`
+
+error[type]: type 'Int' has no method 'combine'
+ --> through_the_type__a_method_that_takes_self.silt:17:11
+    |
+ 17 |   println(Int.combine(1, 2))
+    |           ^^^^^^^^^^^ type 'Int' has no method 'combine'
+  = help: `combine` is a method of trait `Monoid`: call it as `Monoid.combine(x, ..)`
+
+error[type]: type 'Int' has no method 'compare'
+ --> through_the_type__a_method_that_takes_self.silt:20:11
+    |
+ 20 |   println(Int.compare(1, 2))
+    |           ^^^^^^^^^^^ type 'Int' has no method 'compare'
+  = help: `compare` is a method of trait `Compare`: call it as `Compare.compare(x, ..)`
+
+error[type]: type 'Int' has no method 'display'
+ --> through_the_type__a_method_that_takes_self.silt:21:11
+    |
+ 21 |   println(Int.display(1))
+    |           ^^^^^^^^^^^ type 'Int' has no method 'display'
+  = help: show a value with interpolation, `"{x}"`, or with `string.from(x)`

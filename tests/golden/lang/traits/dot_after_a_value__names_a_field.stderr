@@ -1,0 +1,60 @@
+error[type]: type 'Int' has no field 'frobnicate'
+ --> dot_after_a_value__names_a_field.silt:18:11
+    |
+ 18 |   println(n.frobnicate())
+    |           ^^^^^^^^^^^^ type 'Int' has no field 'frobnicate'
+
+error[type]: type 'Int' has no field 'greet'
+ --> dot_after_a_value__names_a_field.silt:19:11
+    |
+ 19 |   println(n.greet())
+    |           ^^^^^^^ type 'Int' has no field 'greet'
+  = help: `greet` is a method of trait `Greet`: call it as `Greet.greet(n)`
+
+error[type]: type 'Int' has no field 'greet'
+ --> dot_after_a_value__names_a_field.silt:20:12
+    |
+ 20 |   println((n + 1).greet())
+    |            ^^^^^^^^^^^^ type 'Int' has no field 'greet'
+  = help: `greet` is a method of trait `Greet`: call it as `Greet.greet(x)`
+
+error[type]: type 'Int' has no field 'pair'
+ --> dot_after_a_value__names_a_field.silt:21:11
+    |
+ 21 |   println(n.pair(6))
+    |           ^^^^^^ type 'Int' has no field 'pair'
+  = help: `pair` is a method of trait `Pair`: call it as `Pair.pair(n, ..)`
+
+error[type]: type 'List(Int)' has no field 'length'
+ --> dot_after_a_value__names_a_field.silt:23:11
+    |
+ 23 |   println(xs.length())
+    |           ^^^^^^^^^ type 'List(Int)' has no field 'length'
+  = help: `length` is a function of module `list`: call it as `list.length(xs)`
+
+error[type]: type 'List(Int)' has no field 'length'
+ --> dot_after_a_value__names_a_field.silt:24:11
+    |
+ 24 |   println([1].length())
+    |           ^^^^^^^^^^ type 'List(Int)' has no field 'length'
+  = help: `length` is a function of module `list`: call it as `list.length(xs)`
+
+error[type]: type 'String' has no field 'length'
+ --> dot_after_a_value__names_a_field.silt:25:11
+    |
+ 25 |   println("s".length())
+    |           ^^^^^^^^^^ type 'String' has no field 'length'
+  = help: `length` is a function of module `string`: call it as `string.length(x)`
+
+error[type]: type 'Int' has no field 'frobnicate'
+ --> dot_after_a_value__names_a_field.silt:26:13
+    |
+ 26 |   println(h(1))
+    |             ^ type 'Int' has no field 'frobnicate'
+
+error[type]: type 'Int' has no field 'greet'
+ --> dot_after_a_value__names_a_field.silt:27:11
+    |
+ 27 |   let g = n.greet
+    |           ^^^^^^^ type 'Int' has no field 'greet'
+  = help: `greet` is a method of trait `Greet`: call it as `Greet.greet(n)`

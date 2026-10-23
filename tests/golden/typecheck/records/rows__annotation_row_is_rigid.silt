@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: anon record has no field 'age'
+-- stderr-contains: error[type]: type '{name: String, ...r}' has no field 'age'
 -- stderr-contains: error[type]: type mismatch: expected {name: String, ...r}, got {name: String}
 -- The row variable of an annotation is whatever the caller's record
 -- has: the function may not read a field behind it, nor return a

@@ -1,52 +1,20 @@
 -- cmd: check
 -- exit: 1
--- A method that the bounds of a type variable each give is ambiguous
--- called on a value of the variable, on the variable as a `type`
--- parameter, and on a value whose type becomes the variable later; the
--- variable is bounded already, so the help names the bounds and says to
--- call the method from a function bounded by only one of them. The
--- bounds as the `where` clause writes them, with their arguments.
+-- A method that makes a value, which the bounds of a type variable
+-- each give, is ambiguous called on the variable as a `type`
+-- parameter; the variable is bounded already, so the help names the
+-- bounds and says to call the method from a function bounded by only
+-- one of them.
 trait A {
   fn make() -> Self
-  fn show(self) -> String
 }
 
 trait B {
   fn make() -> Self
-  fn show(self) -> String
-}
-
-trait C {
-  fn show(self) -> String
-}
-
-trait Conv(t) {
-  fn show(self) -> String
 }
 
 fn on_type(type a) -> a where a: A, a: B {
   a.make()
-}
-
-fn on_value(x: a) -> String where a: A + B {
-  x.show()
-}
-
-fn first(x: a) -> a {
-  x
-}
-
-fn later(x: a) -> String where a: A + B {
-  let f = { y -> first(y).show() }
-  f(x)
-}
-
-fn three(x: a) -> String where a: C + B + A {
-  x.show()
-}
-
-fn with_arguments(x: a) -> String where a: Conv(Int), a: A {
-  x.show()
 }
 
 fn main() {}

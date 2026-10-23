@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: anon record has no field 'age'
+-- stderr-contains: error[type]: type '{name: String, ...r}' has no field 'age'
 -- stderr-contains: error[type]: type mismatch: expected {name: String, ...r}, got {name: String}
 -- The row variable of a trait method's or an impl method's annotation
 -- is fixed inside the body, as in a function's signature.

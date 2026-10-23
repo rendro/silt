@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: record Person has no field 'email'
+-- stderr-contains: error[type]: type 'Person' has no field 'email'
 -- stderr-contains: error[type]: type mismatch: expected String, got Int
 type Person { name: String, age: Int }
 fn email_of(p: {email: String, ...r}) -> String { p.email }

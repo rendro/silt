@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- `display` and `equal` are no methods a program calls: the help shows
+-- interpolation, `string.from` and `==`. A method that makes a value is
+-- called on the type, or on a `type a` parameter.
+trait Monoid { fn empty() -> Self }
+trait Monoid for Int { fn empty() -> Self { 0 } }
+fn of(x: a) -> a where a: Monoid { x.empty() }
+fn main() {
+  let n = 5
+  println(n.display())
+  println(n.equal(n))
+  println(n.empty())
+  println(of(1))
+}

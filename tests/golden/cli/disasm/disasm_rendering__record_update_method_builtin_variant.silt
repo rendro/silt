@@ -1,12 +1,11 @@
 -- cmd: disasm
--- The operand rendering of the opcodes main compiles to. `q.display()`
--- on a record with no Display impl of its own is the VM's own method
--- of the trait (CallMethod).
+-- The operand rendering of the opcodes main compiles to. `Hash.hash(q)`
+-- on a record is the VM's own method of the trait (CallMethod).
 -- (Variant construction compiles to the constructor as a constant + Call.)
 -- stdout-contains: == main (arity=0, upvalues=0) ==
 -- stdout-contains: RecordUpdate         1
 -- stdout-contains: |  field 3     ; "x"
--- stdout-contains: CallMethod           0     1   ; "display" of Display
+-- stdout-contains: CallMethod           0     1   ; "hash" of Hash
 -- stdout-contains: CallBuiltin          1     ; string.length
 -- stdout-contains: Constant             8     ; <constructor:Circle>
 import string
@@ -21,7 +20,7 @@ type Shape {
 fn main() {
   let p = Point { x: 1, y: 2 }
   let q = p.{ x: 5 }
-  println(q.display())
+  println(Hash.hash(q))
   println(string.length("abc"))
   let s = Circle(3)
   println(s)

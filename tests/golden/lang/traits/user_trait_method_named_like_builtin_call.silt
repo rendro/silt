@@ -1,18 +1,16 @@
--- cmd: check
--- exit: 1
--- A trait of the program with a method named like a builtin trait's,
--- implemented for Int: a call on an Int here sees both traits and is
--- ambiguous (prelude traits are always seen); a call through a `where`
--- bound names its trait and is not.
--- stderr-contains: error[type]: ambiguous method 'display' on type 'Int': provided by traits Describe, Display
--- stderr-contains: --> user_trait_method_named_like_builtin_call.silt:16:11
+-- A trait of the program with methods named like a builtin trait's,
+-- implemented for Int: a call names its trait, so the program's
+-- `Ranked.compare` and the builtin `Compare.compare` are told apart, and
+-- the program's `Describe.display` does not change how Int is shown.
 trait Describe { fn display(self) -> String }
 trait Describe for Int { fn display(self) -> String { "described {self}" } }
 trait Ranked { fn compare(self, other: Self) -> Int }
 trait Ranked for Int { fn compare(self, other: Self) -> Int { 99 } }
 fn described(x: t) -> String where t: Describe { Describe.display(x) }
 fn main() {
-  println(5.display())
-  println(5.compare(6))
+  println(Describe.display(5))
+  println(Ranked.compare(5, 6))
+  println(Compare.compare(5, 6))
   println(described(5))
+  println(5)
 }

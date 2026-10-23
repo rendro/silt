@@ -1,7 +1,9 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: method 'add' is not a value: a method is called
--- stderr-contains: help: call it, `x.add(..)`, or pass a closure that does, `{ x -> x.add(..) }`
+-- stderr-contains: error[type]: type 'Int' has no field 'add'
+-- stderr-contains: help: `add` is a method of trait `Adder`: call it as `Adder.add(x, ..)`
+-- A dot after a value is a field, called or not: a trait's method is
+-- taken through its trait (`Adder.add`).
 trait Adder { fn add(self, x: Int) -> Int }
 trait Adder for Int { fn add(self, x: Int) -> Int { self + x } }
 fn main() {

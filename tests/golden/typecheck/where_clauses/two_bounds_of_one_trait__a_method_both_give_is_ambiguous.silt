@@ -1,10 +1,12 @@
 -- cmd: check
 -- exit: 1
--- Two bounds of one trait at different arguments are two bounds: a
--- method both give is ambiguous (on a value and on a `type a`), whether
--- its type names the trait's argument or not, with the bounds help; a
--- function that needs one of the two is given it, and one that needs a
--- third is told the two that are declared.
+-- Two bounds of one trait at different arguments are two bounds: a call
+-- through the trait whose type does not decide the argument is
+-- ambiguous (`Conv.show`), one whose result type does is not
+-- (`Conv.conv` returning String); a constructor on a `type a` both give
+-- is ambiguous, with the bounds help; a function that needs one of the
+-- two is given it, and one that needs a third is told the two that are
+-- declared.
 trait Conv(b) {
   fn show(self) -> String
   fn conv(self) -> b
@@ -15,11 +17,11 @@ trait Make(b) {
 }
 
 fn shown(x: a) -> String where a: Conv(Int), a: Conv(String) {
-  x.show()
+  Conv.show(x)
 }
 
 fn converted(x: a) -> String where a: Conv(Int) + Conv(String) {
-  x.conv()
+  Conv.conv(x)
 }
 
 fn made(type a) -> a where a: Make(Int), a: Make(String) {

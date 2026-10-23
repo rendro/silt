@@ -1,5 +1,5 @@
 Silt REPL (type :quit to exit, :help for commands)
-<fn:Int.display>
-<fn:Int.compare>
-<fn:Pt.display>
-[<fn:Pt.equal>]
+<fn:Compare.compare>
+<fn:Hash.hash>
+<fn:Error.message>
+[<fn:Compare.compare>]

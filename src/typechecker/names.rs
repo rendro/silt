@@ -327,6 +327,19 @@ pub fn resolve_module(
             scope.types.entry(*name).or_insert(Binding::Poisoned);
         }
     }
+    // The trait of an impl that names no trait is reported at the impl;
+    // a call through the trait is not reported again.
+    for decl in &program.decls {
+        if let Decl::TraitImpl(ti) = decl
+            && ti.trait_module.is_none()
+            && !scope.values.contains_key(&ti.trait_name)
+            && !scope.types.contains_key(&ti.trait_name)
+            && !builtins.prelude.values.contains_key(&ti.trait_name)
+            && !builtins.prelude.types.contains_key(&ti.trait_name)
+        {
+            scope.values.insert(ti.trait_name, Binding::Poisoned);
+        }
+    }
     let mut resolver = Resolver {
         defs,
         kind,
