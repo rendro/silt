@@ -418,34 +418,13 @@ impl TypeChecker {
                 // are represented as Type::Generic(name, args). Look up
                 // the record definition and validate the field.
                 let type_name = *type_name;
-                let type_args = type_args.clone();
-                if let Some(rec_info) = self.tables.records.get(&type_name).cloned()
-                    && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
+                if self.tables.records.contains_key(&type_name)
+                    && let Some((_, ft)) = self
+                        .instantiate_record_fields_with_args(type_name, type_args)
+                        .into_iter()
+                        .find(|(n, _)| *n == field)
                 {
-                    // Same fresh-var fallback as in infer_expr (T1 audit fix):
-                    // never return the template TyVar; if the caller's
-                    // type_args are missing/mismatched, use fresh vars.
-                    let field_ty = if let Some(param_var_ids) =
-                        self.tables.record_param_var_ids.get(&type_name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> =
-                            if type_args.len() == param_var_ids.len() {
-                                param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect()
-                            } else {
-                                param_var_ids
-                                    .iter()
-                                    .map(|&v| (v, self.fresh_var()))
-                                    .collect()
-                            };
-                        let substituted = substitute_vars(ft, &mapping);
-                        self.apply(&substituted)
-                    } else {
-                        self.apply(ft)
-                    };
+                    let field_ty = self.apply(&ft);
                     self.unify(&result_ty, &field_ty, span);
                     return;
                 }
@@ -985,18 +964,7 @@ impl TypeChecker {
                 fields.iter().map(|(k, v)| (*k, v.clone())).collect()
             }
             Type::Generic(name, args) if self.tables.records.contains_key(name) => {
-                let fields = self.tables.records[name].fields.clone();
-                match self.tables.record_param_var_ids.get(name).cloned() {
-                    Some(params) if params.len() == args.len() => {
-                        let mapping: HashMap<TyVar, Type> =
-                            params.iter().copied().zip(args.iter().cloned()).collect();
-                        fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    }
-                    _ => fields,
-                }
+                self.instantiate_record_fields_with_args(*name, args)
             }
             other => {
                 self.error(

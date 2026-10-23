@@ -340,9 +340,12 @@ impl TypeChecker {
 
     // ── Unification ─────────────────────────────────────────────────
 
-    /// Helper: substitute record param vars with the call-site type
-    /// args and return the field list. Used by anon×nominal-via-Generic
-    /// unification.
+    /// The fields of the declared record `name` at the type arguments
+    /// `args`, each with its type. With a wrong number of arguments
+    /// (reported where the type is written) each parameter is a fresh
+    /// variable: the record's own parameter variables are shared by
+    /// every use of it, and a use that decided one would decide it for
+    /// all. No fields for a name that is no record.
     pub(super) fn instantiate_record_fields_with_args(
         &mut self,
         name: TypeRef,

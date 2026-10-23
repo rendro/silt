@@ -2265,3 +2265,38 @@ fn main() {
         "with the type error: {errors:?}"
     );
 }
+
+/// The fields of a record at a wrong number of type arguments are at
+/// fresh variables, never at the record's own parameter variables,
+/// which every use of the record shares; at the right number, at the
+/// arguments.
+#[test]
+fn record_fields_at_a_wrong_number_of_arguments_take_fresh_variables() {
+    use crate::intern::intern;
+    let mut tc = TypeChecker::new();
+    let rec = TypeRef {
+        id: crate::defs::TypeId(crate::defs::DefId(u32::MAX - 2)),
+        name: intern("FieldsAtArgsBox"),
+    };
+    let Type::Var(param) = tc.fresh_var() else {
+        unreachable!("a fresh variable")
+    };
+    tc.tables.record_param_var_ids.insert(rec, vec![param]);
+    tc.tables.records.insert(
+        rec,
+        RecordInfo {
+            fields: vec![(intern("v"), Type::Var(param))],
+        },
+    );
+    let at_int = tc.instantiate_record_fields_with_args(rec, &[Type::Int]);
+    assert_eq!(at_int, vec![(intern("v"), Type::Int)]);
+    for args in [&[][..], &[Type::Int, Type::Bool][..]] {
+        let fields = tc.instantiate_record_fields_with_args(rec, args);
+        match fields.as_slice() {
+            [(v, Type::Var(var))] if *v == intern("v") => {
+                assert_ne!(*var, param, "the template variable leaked at {args:?}")
+            }
+            other => panic!("expected one field at a fresh variable, got {other:?}"),
+        }
+    }
+}

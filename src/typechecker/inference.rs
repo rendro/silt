@@ -2620,41 +2620,15 @@ impl TypeChecker {
                         }
                     }
                     Type::Generic(type_name, type_args) => {
-                        // Check record field definitions, substituting type parameters
-                        if let Some(rec_info) = self.tables.records.get(type_name).cloned()
-                            && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
+                        // A field of a declared record, at the record's type
+                        // arguments.
+                        if self.tables.records.contains_key(type_name)
+                            && let Some((_, ft)) = self
+                                .instantiate_record_fields_with_args(*type_name, type_args)
+                                .into_iter()
+                                .find(|(n, _)| *n == field)
                         {
-                            // Substitute the record's type parameters with concrete type args.
-                            // When `type_args` is empty but the record is actually
-                            // parameterized (which can now only happen if unification
-                            // reached here with mismatched arity), instantiate fresh
-                            // type vars for each param — never return the shared
-                            // template TyVar, which would get mutated across uses
-                            // (T1 audit fix; mirrors the check_pattern path).
-                            let resolved = if let Some(param_var_ids) =
-                                self.tables.record_param_var_ids.get(type_name).cloned()
-                            {
-                                let mapping: HashMap<TyVar, Type> =
-                                    if type_args.len() == param_var_ids.len() {
-                                        param_var_ids
-                                            .iter()
-                                            .zip(type_args.iter())
-                                            .map(|(&v, t)| (v, t.clone()))
-                                            .collect()
-                                    } else {
-                                        // Arity mismatch (already reported elsewhere).
-                                        // Fall back to fresh vars to avoid leaking
-                                        // the shared template TyVars.
-                                        param_var_ids
-                                            .iter()
-                                            .map(|&v| (v, self.fresh_var()))
-                                            .collect()
-                                    };
-                                let substituted = substitute_vars(ft, &mapping);
-                                self.apply(&substituted)
-                            } else {
-                                self.apply(ft)
-                            };
+                            let resolved = self.apply(&ft);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -3147,32 +3121,10 @@ impl TypeChecker {
                     handled = true;
                 }
                 if let Type::Generic(type_name, type_args) = &resolved
-                    && let Some(rec_info) = self.tables.records.get(type_name).cloned()
+                    && self.tables.records.contains_key(type_name)
                 {
-                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.tables.record_param_var_ids.get(type_name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> =
-                            if type_args.len() == param_var_ids.len() {
-                                param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect()
-                            } else {
-                                param_var_ids
-                                    .iter()
-                                    .map(|&v| (v, self.fresh_var()))
-                                    .collect()
-                            };
-                        rec_info
-                            .fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    } else {
-                        rec_info.fields.clone()
-                    };
+                    let instantiated_fields =
+                        self.instantiate_record_fields_with_args(*type_name, type_args);
                     let declared: std::collections::HashMap<Symbol, Type> = instantiated_fields
                         .iter()
                         .map(|(n, t)| (*n, t.clone()))
