@@ -365,7 +365,8 @@ fn check(
             if at >= argc =>
         {
             return fail(format!(
-                "`{op}` finds its method by argument {at} of {argc}"
+                "`{op}` finds its method by argument {} of {argc}",
+                at + 1
             ));
         }
         Instr::CallBuiltin { builtin: id, argc } => {
@@ -735,7 +736,7 @@ mod tests {
         ];
         assert_eq!(
             rejected(code, vec![Value::String("foo".into())]),
-            "at offset 1: `CallMethod` finds its method by argument 1 of 1"
+            "at offset 1: `CallMethod` finds its method by argument 2 of 1"
         );
     }
 
