@@ -15,7 +15,6 @@ use silt::package_graph::{LockPolicy, resolve_packages};
 use silt::source::SourceMap;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_root};
-use crate::cli::paths::relative_from;
 
 /// Why `silt add` failed.
 ///
@@ -417,7 +416,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // manifest's tree (e.g. an absolute path under /opt) we
             // fall back to the absolute form because there's no clean
             // relative form to write.
-            let stored_path = manifest_relative(&root, &absolute_dep_path)
+            let stored_path = silt::lockfile::relative_path(&root, &absolute_dep_path)
                 .unwrap_or_else(|| absolute_dep_path.display().to_string());
             let mut inline = toml_edit::InlineTable::new();
             inline.insert(
@@ -577,21 +576,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
 /// every system and starting with `./` or `../`, so that it is read as
 /// a local path; or absolute when there is no relative form.
 fn manifest_relative_url(root: &Path, url: &Path) -> String {
-    match manifest_relative(root, url) {
+    match silt::lockfile::relative_path(root, url) {
         Some(relative) if relative == ".." || relative.starts_with("../") => relative,
         Some(relative) => format!("./{relative}"),
         None => url.display().to_string(),
     }
-}
-
-/// `target` relative to the manifest's directory `root`, with `/`
-/// between its parts on every system, so that silt.toml reads the same
-/// everywhere; `None` when there is no relative form.
-fn manifest_relative(root: &Path, target: &Path) -> Option<String> {
-    let relative = relative_from(root, target)?;
-    let parts: Vec<String> = relative
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    Some(parts.join("/"))
 }

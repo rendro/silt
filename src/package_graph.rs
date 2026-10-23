@@ -335,7 +335,12 @@ impl Resolver<'_> {
                     return None;
                 }
                 let root = crate::source::canonical_path(&dir);
-                let locked = LockedSource::Path { path: root.clone() };
+                // Written relative to the project's directory, which the
+                // lockfile is in.
+                let project = &self.nodes[0].root;
+                let written = crate::lockfile::relative_path(project, &root)
+                    .map_or_else(|| root.clone(), PathBuf::from);
+                let locked = LockedSource::Path { path: written };
                 self.enter(
                     SourceKey::Path(root.clone()),
                     root,
@@ -614,9 +619,11 @@ impl Resolver<'_> {
             ),
             // A path package by its manifest, whose path is shown as every
             // `silt.toml` is.
-            LockedSource::Path { path } => {
-                escape_for_display(&display_path(&path.join("silt.toml")).display().to_string())
-            }
+            LockedSource::Path { .. } => escape_for_display(
+                &display_path(&self.nodes[id.0 as usize].root.join("silt.toml"))
+                    .display()
+                    .to_string(),
+            ),
             LockedSource::Git {
                 url, resolved_sha, ..
             } => format!("{} at {resolved_sha}", escape_for_display(url)),

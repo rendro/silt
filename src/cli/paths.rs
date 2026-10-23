@@ -243,43 +243,6 @@ fn without_verbatim_prefix(path: &Path) -> String {
         .to_string()
 }
 
-/// Express `target` as a path relative to `base`, using `..` segments
-/// where necessary. Returns `None` only when the inputs differ in
-/// rootedness (one absolute, one relative) — there's no sensible
-/// relative form in that case and the caller falls back to absolute.
-///
-/// Rolling our own keeps us off the `pathdiff` crate; the logic is
-/// 20 lines and the v0.7 manifest only needs ASCII-cleanly-named
-/// paths anyway.
-pub(crate) fn relative_from(base: &Path, target: &Path) -> Option<PathBuf> {
-    if base.is_absolute() != target.is_absolute() {
-        return None;
-    }
-    let base_components: Vec<_> = base.components().collect();
-    let target_components: Vec<_> = target.components().collect();
-    // Find the longest common prefix.
-    let mut shared = 0;
-    while shared < base_components.len()
-        && shared < target_components.len()
-        && base_components[shared] == target_components[shared]
-    {
-        shared += 1;
-    }
-    let mut result = PathBuf::new();
-    for _ in shared..base_components.len() {
-        result.push("..");
-    }
-    for comp in &target_components[shared..] {
-        result.push(comp.as_os_str());
-    }
-    if result.as_os_str().is_empty() {
-        // base == target — express that as `.` rather than the empty
-        // string so toml_edit emits a syntactically valid path.
-        result.push(".");
-    }
-    Some(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
