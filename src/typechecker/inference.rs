@@ -49,6 +49,20 @@ enum CallForm {
 
 /// The call to write for a method without `self` where only a type
 /// variable is at hand: on a `type` parameter of that variable.
+/// How a program does what the method `method` of the builtin trait
+/// `tr` would, where that method is not called (`display`, `equal`):
+/// the help of an error at a call of it. `None` for any other method.
+pub(super) fn uncallable_builtin(tr: TraitKey, method: Symbol) -> Option<&'static str> {
+    let builtin = crate::defs::builtin_trait_id(&resolve(tr.name)) == Some(tr.id);
+    match (builtin, resolve(tr.name).as_str(), resolve(method).as_str()) {
+        (true, "Display", "display") => {
+            Some("show a value with interpolation, `\"{x}\"`, or with `string.from(x)`")
+        }
+        (true, "Equal", "equal") => Some("compare with `==`: `x == y`"),
+        _ => None,
+    }
+}
+
 pub(super) fn on_type_parameter(var: Symbol, method: Symbol, method_ty: &Type) -> String {
     format!(
         "{}, where `{var}` is a `type {var}` parameter",
@@ -933,6 +947,129 @@ impl TypeChecker {
                 Some(self.apply(&instantiated))
             }
         }
+    }
+
+    /// The trait an expression names (`Greet`, `m.Greet`, `Compare`), as
+    /// the resolver resolved it; `None` for anything else.
+    pub(super) fn trait_named(&self, expr: &Expr) -> Option<TraitKey> {
+        if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            return None;
+        }
+        match expr.res {
+            Some(crate::defs::Res::Def(id)) => self.trait_key(id),
+            _ => None,
+        }
+    }
+
+    /// The type of `Tr.field`, a method of the trait `tr` called through
+    /// it: the method's type with a type of its own for `Self`, whose
+    /// impl the call reaches (the type of the arguments it is given).
+    /// The use owes `Self: Tr`, the method's own bounds, and what the
+    /// method of that impl asks (`Pred::Via`), as a call on a value of
+    /// that type would. A method that takes no value of type `Self`
+    /// cannot say which impl it is of: it is called on a type.
+    fn trait_method(&mut self, tr: TraitKey, field: Symbol, span: Span) -> Type {
+        let Some(info) = self.tables.traits.get(&tr).cloned() else {
+            return Type::Error;
+        };
+        let Some((_, method_ty)) = info.methods.iter().find(|(n, _)| *n == field) else {
+            let message = format!("trait '{}' has no method '{field}'", self.show_trait(tr));
+            let names: Vec<String> = info.methods.iter().map(|(n, _)| resolve(*n)).collect();
+            let help = super::suggest::suggest_similar(&resolve(field), &names)
+                .map(|name| format!("did you mean '{name}'?"));
+            self.error_help(Code::UnknownMethod, (message, help), span);
+            return Type::Error;
+        };
+        if let Some(how) = uncallable_builtin(tr, field) {
+            self.error_help(
+                Code::InvalidMethodCall,
+                (
+                    format!("trait '{}' has no callable methods", self.show_trait(tr)),
+                    Some(how.to_string()),
+                ),
+                span,
+            );
+            return Type::Error;
+        }
+        if self.private_owner(tr).is_some() {
+            self.private_method(tr, field, span);
+            return Type::Error;
+        }
+        let takes_self = matches!(method_ty, Type::Fun(params, _)
+            if params.iter().any(|p| matches!(p, Type::Var(v) if *v == info.self_var)));
+        if !takes_self {
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidMethodCall,
+                    span,
+                    format!(
+                        "method '{field}' of trait '{}' takes no value of the type, so it is \
+                         called on a type",
+                        self.show_trait(tr)
+                    ),
+                )
+                .with_help(format!(
+                    "call it on a type, {}, or on a `type a` parameter, {}",
+                    on_type_call("T", field, method_ty),
+                    on_type_call("a", field, method_ty)
+                )),
+            );
+            return Type::Error;
+        }
+        let self_ty = self.fresh_var();
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        mapping.insert(info.self_var, self_ty.clone());
+        let params: Vec<Type> = info
+            .param_var_ids
+            .iter()
+            .map(|v| {
+                let fresh = self.fresh_var();
+                mapping.insert(*v, fresh.clone());
+                fresh
+            })
+            .collect();
+        let ty = substitute_vars(method_ty, &mapping);
+        let preds: Vec<Pred> = info
+            .method_bounds
+            .get(&field)
+            .into_iter()
+            .flatten()
+            .map(|pred| pred.substitute(&mapping))
+            .chain([Pred::Via {
+                tr,
+                method: field,
+                receiver: self_ty.clone(),
+                method_ty: ty.clone(),
+                passer: None,
+                at: None,
+            }])
+            .collect();
+        let own: Vec<TyVar> = free_vars_in(method_ty)
+            .into_iter()
+            .filter(|v| !mapping.contains_key(v))
+            .collect();
+        let scheme = Scheme {
+            vars: own,
+            preds,
+            ty,
+        };
+        self.want(
+            Pred::Trait {
+                tr,
+                args: params,
+                subject: self_ty.clone(),
+                asker: None,
+            },
+            Origin {
+                span,
+                callee: Some(field),
+                op: None,
+            },
+        );
+        self.method_trait = Some(tr);
+        self.trait_call_self.insert(span, self_ty);
+        let method_ty = self.instantiate_method(&scheme, field, span);
+        self.apply(&method_ty)
     }
 
     /// `T.method` where the method is one of a builtin structural trait
@@ -2269,6 +2406,13 @@ impl TypeChecker {
                             Type::Error
                         }
                     };
+                    expr.ty = Some(ty.clone());
+                    return ty;
+                }
+                // `Trait.method`: a method of a trait, called through it
+                // (`Greet.greet(x)`, `m.Greet.greet`, `Compare.compare`).
+                if let Some(tr) = self.trait_named(obj) {
+                    let ty = self.trait_method(tr, field, span);
                     expr.ty = Some(ty.clone());
                     return ty;
                 }

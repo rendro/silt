@@ -1,0 +1,6 @@
+error[type]: 'Secret' is private to module 'shapes'
+ --> main.silt:7:11
+   |
+ 7 |   println(shapes.Secret.secret(shapes.square(1)))
+   |           ^^^^^^^^^^^^^ 'Secret' is private to module 'shapes'
+  = help: mark it `pub` in module 'shapes' to import it from another module

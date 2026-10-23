@@ -1,0 +1,52 @@
+-- A method that takes Self is called through its trait, like a module
+-- function: directly, piped, as a function value, from a generic function
+-- (annotated or not), inside a conditional impl, and for the builtin
+-- Compare, Hash and Error. The impl is the one for the type of the
+-- argument of type Self.
+import list
+import io
+trait Greet {
+  fn greet(self) -> String
+}
+trait Greet for Int {
+  fn greet(self) -> String { "int {self}" }
+}
+type Box(a) { Bx(a) }
+trait Greet for Box(a) where a: Greet {
+  fn greet(self) -> String {
+    match self { Bx(x) -> "box of {Greet.greet(x)}" }
+  }
+}
+trait Monoid {
+  fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self
+}
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+  fn combine(a: Self, b: Self) -> Self { a + b }
+}
+fn hello(x) { Greet.greet(x) }
+fn bounded(x: a) -> String where a: Greet { Greet.greet(x) }
+fn sum(xs: List(a), type a) -> a where a: Monoid {
+  list.fold(xs, a.empty()) { acc, x -> Monoid.combine(acc, x) }
+}
+fn main() {
+  println(Greet.greet(5))
+  println(5 |> Greet.greet)
+  println(hello(Bx(3)))
+  println(bounded(Bx(Bx(1))))
+  println(list.map([1, 2], Greet.greet))
+  let f = Greet.greet
+  println(f(Bx(9)))
+  println(Monoid.combine(2, 3))
+  println(sum([1, 2, 3], Int))
+  println(Compare.compare(1, 2))
+  println(Hash.hash(1) == Hash.hash(1))
+  println(list.map([[1], [2, 3]], Hash.hash) |> list.length)
+  let g = Compare.compare
+  println(g("b", "a"))
+  match io.read_file("/nonexistent") {
+    Ok(_) -> println("?")
+    Err(e) -> println(Error.message(e))
+  }
+}

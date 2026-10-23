@@ -560,6 +560,15 @@ impl TypeChecker {
             }
             ExprKind::FieldAccess(recv, _, _) => {
                 let called = expr.sel.take().is_some();
+                // `Tr.m`: the method of the impl for the type the call
+                // gives `Self`.
+                if let Some(self_ty) = self.trait_call_self.get(&expr.span)
+                    && let Some(crate::defs::Res::Def(id)) = expr.res
+                    && let Some(tr) = self.trait_key(id)
+                {
+                    expr.sel = Some(self.method_selection(tr, self_ty));
+                    return;
+                }
                 // A receiver the checker gave no type is a name: a
                 // module, a type (`m.f`, `Shape.Circle`, `Pt.make`).
                 let Some(recv_ty) = &recv.ty else {

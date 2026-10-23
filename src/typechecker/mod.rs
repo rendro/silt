@@ -297,6 +297,10 @@ pub struct TypeChecker {
     /// the span of the access; `resolve_all_types` records each on its
     /// access.
     pub(super) deferred_method_traits: HashMap<Span, TraitKey>,
+    /// The type each call through a trait (`Greet.greet(x)`) gives the
+    /// trait's `Self`, by the span of the access: the impl the call
+    /// reaches is the one for that type (`resolve_all_types`).
+    pub(super) trait_call_self: HashMap<Span, Type>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -439,6 +443,7 @@ impl TypeChecker {
             last_field_access_was_method: false,
             method_trait: None,
             deferred_method_traits: HashMap::new(),
+            trait_call_self: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             builtin_imports: std::collections::HashSet::new(),

@@ -1,0 +1,13 @@
+int 5
+int 5
+box of int 3
+box of box of int 1
+[int 1, int 2]
+box of int 9
+5
+6
+-1
+true
+2
+1
+file not found: /nonexistent

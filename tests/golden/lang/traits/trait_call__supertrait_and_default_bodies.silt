@@ -1,0 +1,19 @@
+-- A default body and a function bounded by a subtrait call the
+-- supertrait's method through the supertrait.
+trait Eq2 {
+  fn eq2(self, other: Self) -> Bool
+}
+trait Cmp2: Eq2 {
+  fn lt2(self, other: Self) -> Bool
+  fn le2(self, other: Self) -> Bool { Eq2.eq2(self, other) || Cmp2.lt2(self, other) }
+}
+trait Eq2 for Int { fn eq2(self, other: Self) -> Bool { self == other } }
+trait Cmp2 for Int { fn lt2(self, other: Self) -> Bool { self < other } }
+fn check(a: t, b: t) -> Bool where t: Cmp2 {
+  Eq2.eq2(a, b) || Cmp2.lt2(a, b)
+}
+fn main() {
+  println(check(1, 2))
+  println(Cmp2.le2(3, 3))
+  println(Cmp2.le2(4, 3))
+}
