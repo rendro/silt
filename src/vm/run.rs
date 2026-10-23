@@ -715,7 +715,7 @@ impl Vm {
                         }
                         _ => {
                             save!();
-                            let step = ok!(self.shown(&val));
+                            let step = ok!(self.shown_within(&val, "string interpolation"));
                             go_on!(ok!(self.enter_step(step)));
                         }
                     }

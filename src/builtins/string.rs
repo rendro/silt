@@ -63,7 +63,7 @@ builtins! {
     // (A value is shown as its `Display` impl says, which may be the
     // program's code: a step, not a value at once.)
     fn from(vm, x: &Value) -> Result<Step, VmError> {
-        vm.shown(x)
+        vm.shown_within(x, "string.from")
     }
 
     fn split(s: &str, separator: &str) -> Vec<Value> {

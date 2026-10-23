@@ -184,12 +184,16 @@ pub(crate) fn json_value_of(caller: &str, data: &Data) -> Result<Value, VmError>
 /// keeps its members in the order of the data (a record's fields as
 /// its type declares them). `Bytes` in it, which only a postgres
 /// parameter holds, has no form.
+/// The text is no longer than a string may be: it is written into a
+/// [`Bounded`](super::common::Bounded), which stops it there (the data
+/// can hold one long string many times).
 pub(crate) fn text(caller: &str, data: &Data, pretty: bool) -> Result<String, VmError> {
-    let text = match pretty {
-        true => serde_json::to_string_pretty(&Json(data)),
-        false => serde_json::to_string(&Json(data)),
+    let mut out = super::common::Bounded::default();
+    let written = match pretty {
+        true => serde_json::to_writer_pretty(&mut out, &Json(data)),
+        false => serde_json::to_writer(&mut out, &Json(data)),
     };
-    text.map_err(|e| VmError::new(format!("{caller}: {e}")))
+    out.text(caller, written.err().map(|e| format!("{caller}: {e}")))
 }
 
 // ── Reading a document ──────────────────────────────────────────────

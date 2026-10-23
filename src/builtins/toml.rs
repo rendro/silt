@@ -331,25 +331,52 @@ static PARSE_MAP: Decoder = Decoder::new("toml.parse_map");
 fn written(vm: &mut Vm, name: &str, value: &Value, pretty: bool) -> Result<Step, VmError> {
     let caller = format!("toml.{name}");
     vm.encode(&caller.clone(), Format::Toml, value, move |_, data| {
-        Ok(Step::Done(text(&caller, data, pretty)))
+        Ok(Step::Done(text(&caller, data, pretty)?))
     })
+}
+
+/// The fewest bytes the text of `data` takes: its strings and keys, and
+/// a byte for each other part. The TOML writer writes into a `String`
+/// that cannot be stopped, so a text that would be longer than a string
+/// may be is refused on this count before it is written (the data can
+/// hold one long string many times), and on its length after.
+fn least_len(data: &Data) -> usize {
+    match data {
+        Data::String(s) => s.len(),
+        Data::Array(items) | Data::Tuple(items) => items
+            .iter()
+            .fold(1, |len, item| len.saturating_add(least_len(item))),
+        Data::Table(entries) => entries.iter().fold(1, |len, (key, value)| {
+            len.saturating_add(key.len())
+                .saturating_add(least_len(value))
+        }),
+        _ => 1,
+    }
 }
 
 /// The TOML text `caller` writes of `data`, `pretty` or not:
 /// `Ok(text)`, or the `TomlError` of a value that TOML has no form for
 /// (the error the writer gave in place of the data, if it gave one).
-fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Value {
+/// A text longer than a string may be is a runtime error.
+fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value, VmError> {
     let data = match data.and_then(|d| top_level(caller, d)) {
         Ok(data) => data,
-        Err(e) => return toml_unknown_err(e.message),
+        Err(e) => return Ok(toml_unknown_err(e.message)),
     };
+    let least = least_len(&data);
+    if least > crate::value::MAX_COLLECTION_LEN {
+        return Err(super::common::too_long_text(caller, least));
+    }
     let text = match pretty {
         true => ::toml::to_string_pretty(&Toml(&data)),
         false => ::toml::to_string(&Toml(&data)),
     };
     match text {
-        Ok(s) => Value::variant(bv::OK, vec![Value::String(s.into())]),
-        Err(e) => toml_unknown_err(format!("{caller}: {e}")),
+        Ok(s) if s.len() > crate::value::MAX_COLLECTION_LEN => {
+            Err(super::common::too_long_text(caller, s.len()))
+        }
+        Ok(s) => Ok(Value::variant(bv::OK, vec![Value::String(s.into())])),
+        Err(e) => Ok(toml_unknown_err(format!("{caller}: {e}"))),
     }
 }
 
@@ -493,6 +520,7 @@ mod tests {
                 };
                 let written = |caller: &str, value: &Value, pretty| {
                     text(caller, data::data(caller, Format::Toml, value), pretty)
+                        .expect("no longer than a string may be")
                 };
                 let text = written("toml.stringify", &nested(MAX_ENCODE_DEPTH), false);
                 let pretty = written("toml.pretty", &nested(MAX_ENCODE_DEPTH), true);

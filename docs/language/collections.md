@@ -136,8 +136,11 @@ That holds for everything that grows a collection or joins two
 `set.insert`, `set.union`, `set.symmetric_difference`,
 `stream.collect`, and a `stream.chunks` chunk). A string and a `Bytes`
 value hold at most 10,000,000 bytes where they are joined or built
-(string interpolation, `string.join`, `string.repeat`, `string.replace`,
-`bytes.concat`, `bytes.concat_all`), and a channel buffers at most
+(string interpolation, `string.from`, `string.join`, `string.repeat`,
+`string.replace`, `regex.replace`, `regex.replace_all`,
+`regex.replace_all_with`, `encoding.form_encode`, `json.stringify`,
+`json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
+`bytes.concat_all`), and a channel buffers at most
 10,000,000 values (`channel.new`). A program that keeps
 adding to a collection in a loop ends with this error instead of
 taking the machine's memory. A function that turns text it was given

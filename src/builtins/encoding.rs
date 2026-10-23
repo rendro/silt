@@ -22,7 +22,7 @@
 
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
-use super::common::{nibble_to_hex, ok};
+use super::common::{nibble_to_hex, ok, too_long_text};
 use super::typed::{List, builtins, unsound};
 use crate::typeinfo::bv;
 use crate::value::Value;
@@ -252,6 +252,10 @@ builtins! {
             out.push_str(&form_escape_component(key));
             out.push('=');
             out.push_str(&form_escape_component(value));
+            // The pairs can hold one long string many times.
+            if out.len() > crate::value::MAX_COLLECTION_LEN {
+                return Err(too_long_text("encoding.form_encode", out.len()));
+            }
         }
         Ok(out)
     }

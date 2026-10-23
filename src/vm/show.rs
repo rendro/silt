@@ -17,8 +17,29 @@ use std::sync::Arc;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
+use crate::builtins::common::Bounded;
 use crate::bytecode::Globals;
 use crate::value::{Shown, Value};
+
+/// The text `write` writes: all of it, or, with `limit` (the name of
+/// the builtin that asks for it), no more than a string may hold.
+fn written(
+    limit: Option<&str>,
+    write: impl FnOnce(&mut dyn std::fmt::Write) -> std::fmt::Result,
+) -> Result<String, VmError> {
+    match limit {
+        None => {
+            let mut text = String::new();
+            let _ = write(&mut text);
+            Ok(text)
+        }
+        Some(name) => {
+            let mut text = Bounded::default();
+            let _ = write(&mut text);
+            text.text(name, None)
+        }
+    }
+}
 
 /// Write the text of `value` to `out` if it is a String, an Int, a
 /// Float or a Bool: values no written `Display` impl shows, and whose
@@ -62,6 +83,9 @@ struct Showing {
     texts: Vec<String>,
     /// Whether a call is under way.
     calling: bool,
+    /// The builtin whose text this is, if its text is bounded
+    /// ([`Vm::shown_within`]).
+    limit: Option<&'static str>,
     then: Option<Then>,
 }
 
@@ -91,13 +115,13 @@ impl Native for Showing {
         }
         let next = Cell::new(0);
         let texts = &self.texts;
-        let text = Shown(&self.value, &|part, f| {
+        let shown = Shown(&self.value, &|part, f| {
             written_slot(&self.table, part)?;
             let text = &texts[next.get()];
             next.set(next.get() + 1);
             Some(f.write_str(text))
-        })
-        .to_string();
+        });
+        let text = written(self.limit, |out| write!(out, "{shown}"))?;
         let then = self.then.take().ok_or_else(|| {
             VmError::new("internal VM error: a shown value was finished twice".into())
         })?;
@@ -151,11 +175,12 @@ impl Vm {
         &self,
         table: &Globals,
         value: &Value,
+        limit: Option<&str>,
     ) -> Result<(String, Parts, bool), VmError> {
         let parts: RefCell<Parts> = RefCell::new(Vec::new());
         let unset: RefCell<Option<VmError>> = RefCell::new(None);
         let unwritten = Cell::new(false);
-        let text = Shown(value, &|part, _| {
+        let shown = Shown(value, &|part, _| {
             let (slot, display) = match self.written_display(table, part) {
                 Ok(Some(written)) => written,
                 Ok(None) => {
@@ -169,8 +194,8 @@ impl Vm {
             };
             parts.borrow_mut().push((part.clone(), slot, display));
             Some(Ok(()))
-        })
-        .to_string();
+        });
+        let text = written(limit, |out| write!(out, "{shown}"))?;
         match unset.into_inner() {
             Some(error) => Err(error),
             None => Ok((text, parts.into_inner(), unwritten.get())),
@@ -212,6 +237,18 @@ impl Vm {
         value: &Value,
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
+        self.show_within(value, None, then)
+    }
+
+    /// [`Vm::show`], with a text no longer than a string may hold when
+    /// `limit` names the builtin that makes it (`string.from`, string
+    /// interpolation): an error of that builtin's if it would be.
+    fn show_within(
+        &mut self,
+        value: &Value,
+        limit: Option<&'static str>,
+        then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
+    ) -> Result<Step, VmError> {
         value.writable()?;
         // The table the value is shown by, where it is not this VM's.
         let mut wider = None;
@@ -231,19 +268,27 @@ impl Vm {
                 .then(|| self.wider_table(Globals::any_shown))
                 .flatten();
             if wider.is_none() {
-                let text = self.display_value(value);
+                let text = match (limit, value) {
+                    (None, _) | (Some(_), Value::String(_)) => self.display_value(value),
+                    (Some(_), _) => written(limit, |out| match value {
+                        Value::Int(n) => write!(out, "{n}"),
+                        Value::Float(f) => write!(out, "{f}"),
+                        Value::Bool(b) => out.write_str(if *b { "true" } else { "false" }),
+                        _ => write!(out, "{value}"),
+                    })?,
+                };
                 return then(self, text);
             }
         }
         // What the formatter writes, with nothing for the parts a
         // written impl shows: complete if there is no such part.
         let table = wider.as_deref().unwrap_or(&self.view.table);
-        let (mut text, mut parts, unwritten) = self.parts_shown(table, value)?;
+        let (mut text, mut parts, unwritten) = self.parts_shown(table, value, limit)?;
         if unwritten
             && wider.is_none()
             && let Some(table) = self.wider_table(Globals::any_shown)
         {
-            (text, parts, _) = self.parts_shown(&table, value)?;
+            (text, parts, _) = self.parts_shown(&table, value, limit)?;
             wider = Some(table);
         }
         if parts.is_empty() {
@@ -255,6 +300,7 @@ impl Vm {
             parts,
             texts: Vec::new(),
             calling: false,
+            limit,
             then: Some(Box::new(then)),
         })))
     }
@@ -286,5 +332,17 @@ impl Vm {
     /// [`Vm::show`] for what gives the text as its value.
     pub(crate) fn shown(&mut self, value: &Value) -> Result<Step, VmError> {
         self.show(value, |_, text| Ok(Step::Done(Value::String(text.into()))))
+    }
+
+    /// [`Vm::shown`] for the builtin `name`, whose text is a string a
+    /// program holds: no longer than a string may be.
+    pub(crate) fn shown_within(
+        &mut self,
+        value: &Value,
+        name: &'static str,
+    ) -> Result<Step, VmError> {
+        self.show_within(value, Some(name), |_, text| {
+            Ok(Step::Done(Value::String(text.into())))
+        })
     }
 }
