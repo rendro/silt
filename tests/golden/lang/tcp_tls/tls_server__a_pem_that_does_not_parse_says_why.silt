@@ -1,0 +1,23 @@
+-- requires-feature: tcp-tls
+-- A cert PEM that does not parse names what is wrong with it: a section
+-- that does not end, or a character that is no base64.
+import bytes
+import tcp
+
+fn attempt(listener, addr, cert_text) {
+  when let Ok(client) = tcp.connect(addr) else { panic("cannot connect") }
+  when let Ok(conn) = tcp.accept(listener) else { panic("cannot accept") }
+  let cert = bytes.from_string(cert_text)
+  match tcp.tls_server(conn, cert, bytes.from_string("not a key")) {
+    Ok(_) -> println("a TLS connection")
+    Err(e) -> println(e.message())
+  }
+  tcp.close(client)
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let addr = "127.0.0.1:{tcp.local_port(listener)}"
+  attempt(listener, addr, "-----BEGIN CERTIFICATE-----\nMIIB\n")
+  attempt(listener, addr, "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n")
+}

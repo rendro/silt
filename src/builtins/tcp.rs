@@ -288,7 +288,7 @@ mod tls {
 
     fn parse_cert_chain(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
         let certs: Result<Vec<_>, _> = CertificateDer::pem_slice_iter(pem).collect();
-        let certs = certs.map_err(|e| format!("parse cert chain: {e}"))?;
+        let certs = certs.map_err(|e| format!("parse cert chain: {}", pem_error(&e)))?;
         if certs.is_empty() {
             return Err("cert PEM contains no certificates".into());
         }
@@ -298,8 +298,27 @@ mod tls {
     fn parse_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>, String> {
         PrivateKeyDer::from_pem_slice(pem).map_err(|e| match e {
             pem::Error::NoItemsFound => "key PEM contains no private key".into(),
-            e => format!("parse private key: {e}"),
+            e => format!("parse private key: {}", pem_error(&e)),
         })
+    }
+
+    /// What a PEM that does not parse is: `section end "PRIVATE KEY"
+    /// missing`, `illegal section start: "..."`, or the base64 decoder's
+    /// own words (`InvalidCharacter(33)`).
+    fn pem_error(e: &pem::Error) -> String {
+        match e {
+            pem::Error::MissingSectionEnd { end_marker } => {
+                format!(
+                    "section end {:?} missing",
+                    String::from_utf8_lossy(end_marker)
+                )
+            }
+            pem::Error::IllegalSectionStart { line } => {
+                format!("illegal section start: {:?}", String::from_utf8_lossy(line))
+            }
+            pem::Error::Base64Decode(text) => text.clone(),
+            other => format!("{other:?}"),
+        }
     }
 
     /// Newtype wrappers so we can implement `Read`/`Write` for both client
