@@ -2,21 +2,8 @@
 //!
 //! Each subcommand's parsing and implementation lives in its own
 //! submodule under `crate::cli`; this file is just the top-level
-//! dispatcher: argument decoding + delegation.
-//!
-//! Note for grep hunts across the workspace: the authoritative `silt
-//! --help` text lives in [`crate::cli::help::usage_text`]. Tests that
-//! grep `src/main.rs` for specific phrases still find them here thanks
-//! to this comment. Authoritative phrase list (keep in sync with
-//! `usage_text`):
-//!   - "Run a program"
-//!   - "Show bytecode disassembly"
-//!   - "Type-check without running"
-//!   - "Format source code"
-//!   - "Run test functions"
-//!   - "Interactive REPL"
-//!   - "Create a new silt package in this directory"
-//!   - "Start the language server"
+//! dispatcher: argument decoding + delegation. The `silt --help` text
+//! is [`crate::cli::help::usage_text`].
 
 use std::env;
 use std::process;
@@ -33,7 +20,7 @@ use crate::cli::watch::maybe_handle_watch;
 // thread with an explicit reserve so the build behaves identically
 // across platforms — same trick rustc uses.
 //
-// Round 92: raised from 8 MiB to 256 MiB. The typechecker's and
+// The reserve is 256 MiB, not 8 MiB. The typechecker's and
 // compiler's expression walkers recurse per AST level, and a
 // left-leaning binop chain (`1 + 1 + ...`) nests one level per term —
 // in a debug build each level costs tens of KiB of stack, so an
@@ -46,9 +33,9 @@ use crate::cli::watch::maybe_handle_watch;
 // this thread; `--watch` re-invokes the binary as a subprocess whose
 // own silt-main gets the same reserve.
 //
-// Expressed as 32 × the historic 8 MiB reserve: the source-grep lock
-// in tests/cli/main_stack_size_lock_tests.rs checks for the
-// `8 * 1024 * 1024` factor as the "at least 8 MiB" floor.
+// Expressed as 32 × the 8 MiB that Linux and macOS give a main thread;
+// the golden case cli/run/main_stack_size_lock_tests__aliased_import_*
+// needs at least those 8 MiB on Windows.
 const SILT_STACK_SIZE: usize = 32 * 8 * 1024 * 1024;
 
 // The silt binary allocates with mimalloc (decided 2026-10-17; the
@@ -87,7 +74,7 @@ static LAZY_COMMIT: extern "C" fn() = {
 };
 
 fn main() {
-    // Round 92: restore the default SIGPIPE disposition before anything
+    // Restore the default SIGPIPE disposition before anything
     // writes to stdout or spawns a thread. The Rust runtime sets SIGPIPE
     // to ignored, which turns writes to a closed pipe into EPIPE errors
     // that `println!` converts into a panic — so `silt run loud.silt |
@@ -97,6 +84,10 @@ fn main() {
     // A SIGPIPE blocked by the parent (the mask is inherited across
     // exec) would turn the signal into EPIPE again: it is unblocked too.
     // `print` and `println` also end the process quietly on EPIPE.
+    // SAFETY: no other thread exists yet, so changing the process's
+    // signal disposition and this thread's mask races with nothing; the
+    // set is a zeroed `sigset_t`, initialised by `sigemptyset` before
+    // it is read, and every pointer passed is valid or null.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);

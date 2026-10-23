@@ -355,73 +355,26 @@ fn all_doc_fn_main_blocks_type_check() {
     );
 }
 
-/// Round 93 LATENT lock: the doc-wording tests above validate README /
-/// getting-started phrasing against the hand-maintained "Authoritative
-/// phrase list" comment block in `src/main.rs` — but nothing pinned
-/// that comment to the REAL help text rendered by
-/// `crate::cli::help::usage_text()`. A rewording in `src/cli/help.rs`
-/// escaped every lock (proof: help.rs said "in this directory" while
-/// README/getting-started said "in the current directory" and all
-/// tests were green).
-///
-/// This test closes the gap end-to-end:
-///
-///   1. Extract every quoted phrase from the `src/main.rs` comment
-///      block (`//!   - "<phrase>"` lines after the "Authoritative
-///      phrase list" marker).
-///   2. Assert each phrase appears verbatim in the live `silt --help`
-///      output (which renders `usage_text()`), so a help.rs rewording
-///      that bypasses the comment fails here immediately.
-///   3. Assert each phrase appears verbatim in README.md (sentence
-///      case) and in docs/getting-started.md with the first letter
-///      lowercased (its `-- <verb phrase>` format), so the docs can't
-///      drift from the help text either.
+/// The description of each subcommand in `silt --help` (rendered from
+/// `crate::cli::help::usage_text()`) is written the same in README.md
+/// (sentence case) and in docs/getting-started.md (first letter in
+/// lower case, its `-- <verb phrase>` format), so the docs cannot drift
+/// from the help text. The descriptions are read from the help itself.
 ///
 /// To reword a help description, update `usage_text()` in
-/// src/cli/help.rs, the comment block in src/main.rs, README.md, and
-/// docs/getting-started.md together — this test enforces all four.
+/// src/cli/help.rs, README.md and docs/getting-started.md together.
 #[test]
-fn help_phrase_list_matches_usage_text_and_docs() {
+fn help_descriptions_are_the_docs() {
+    // The subcommands both documents describe.
+    const COMMANDS: [&str; 8] = [
+        "run", "check", "test", "fmt", "repl", "init", "lsp", "disasm",
+    ];
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let main_rs = std::fs::read_to_string(manifest_dir.join("src").join("main.rs"))
-        .expect("read src/main.rs");
     let readme = std::fs::read_to_string(manifest_dir.join("README.md")).expect("read README.md");
     let getting_started =
         std::fs::read_to_string(manifest_dir.join("docs").join("getting-started.md"))
             .expect("read docs/getting-started.md");
 
-    // 1. Extract the authoritative phrase list from src/main.rs.
-    let marker = "Authoritative phrase list";
-    let marker_pos = main_rs
-        .find(marker)
-        .expect("src/main.rs lost the 'Authoritative phrase list' comment block");
-    let mut phrases: Vec<String> = Vec::new();
-    for line in main_rs[marker_pos..].lines().skip(1) {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("//!") {
-            break; // end of the doc-comment block
-        }
-        // Phrase lines look like: `//!   - "Run a program"`.
-        let Some(dash_pos) = trimmed.find("- \"") else {
-            continue; // the `usage_text` continuation line
-        };
-        let after_quote = &trimmed[dash_pos + 3..];
-        let Some(end_quote) = after_quote.find('"') else {
-            continue;
-        };
-        phrases.push(after_quote[..end_quote].to_string());
-    }
-    assert!(
-        phrases.len() >= 8,
-        "expected at least 8 phrases in the src/main.rs authoritative \
-         phrase list, found {}: {:?} — has the comment block been \
-         reformatted? Update the extraction here to match.",
-        phrases.len(),
-        phrases
-    );
-
-    // 2. Every phrase must appear verbatim in the live `silt --help`
-    //    output (rendered from `crate::cli::help::usage_text()`).
     let help_output = silt_cmd()
         .arg("--help")
         .output()
@@ -431,26 +384,38 @@ fn help_phrase_list_matches_usage_text_and_docs() {
         "silt --help exited non-zero: {:?}",
         help_output.status.code()
     );
-    let help_text = String::from_utf8_lossy(&help_output.stdout).to_string()
-        + &String::from_utf8_lossy(&help_output.stderr);
+    let help_text = String::from_utf8_lossy(&help_output.stdout).to_string();
+
+    // A command's line: `  silt <command> <arguments>   <description>`,
+    // the description after a run of at least two spaces, without a
+    // trailing `  [feature: ...]`.
+    let mut phrases: Vec<String> = Vec::new();
+    for command in COMMANDS {
+        let line = help_text
+            .lines()
+            .find(|line| line.trim_start().split_whitespace().nth(1) == Some(command))
+            .unwrap_or_else(|| panic!("`silt --help` has no line for `{command}`:\n{help_text}"));
+        let usage = line.trim_start();
+        let description = usage
+            .find("  ")
+            .map(|at| usage[at..].trim())
+            .unwrap_or_else(|| panic!("no description on the line `{line}`"));
+        let description = match description.find("  [feature:") {
+            Some(at) => description[..at].trim_end(),
+            None => description,
+        };
+        phrases.push(description.to_string());
+    }
 
     let mut failures: Vec<String> = Vec::new();
     for phrase in &phrases {
-        if !help_text.contains(phrase.as_str()) {
-            failures.push(format!(
-                "`silt --help` output (cli/help.rs usage_text) is missing \
-                 \"{phrase}\" — the src/main.rs comment block drifted from \
-                 the real help text"
-            ));
-        }
         if !readme.contains(phrase.as_str()) {
             failures.push(format!(
                 "README.md is missing the help description \"{phrase}\""
             ));
         }
-        // 3. getting-started.md uses `-- <verb phrase>` entries: same
-        //    phrase with only the first letter lowercased (acronyms
-        //    like REPL keep their case, so no full to_lowercase()).
+        // Only the first letter in lower case: acronyms like REPL keep
+        // their case.
         let mut chars = phrase.chars();
         let gs_phrase: String = match chars.next() {
             Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
