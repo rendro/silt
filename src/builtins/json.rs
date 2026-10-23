@@ -57,8 +57,9 @@ pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8]) -> Value {
 
 /// Where in `text` the syntax error `err` is, as a 0-based byte offset
 /// (as `toml.Syntax` has it): the byte serde stopped at, which it gives
-/// as a line and a 1-based column of bytes in that line; the end of the
-/// text for one that ended too soon.
+/// as a line and a 1-based column of bytes in that line (column 0 is
+/// the newline that ends the line before: a raw newline in a string);
+/// the end of the text for one that ended too soon.
 fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
     if err.classify() == serde_json::error::Category::Eof {
         return text.len();
@@ -73,7 +74,11 @@ fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
             .map_or(text.len(), |(at, _)| at + 1),
         None => 0,
     };
-    (line_start + err.column().saturating_sub(1)).min(text.len())
+    let at = match err.column() {
+        0 => line_start.saturating_sub(1),
+        column => line_start + column - 1,
+    };
+    at.min(text.len())
 }
 
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
