@@ -1208,7 +1208,7 @@ mod tests {
     /// The pool is quiet only when no operation is queued or running,
     /// whether anybody waits for it or not: one that was told to stop
     /// and one that cannot be stopped are running until they return
-    /// (`env.set` waits for them).
+    /// (`env.set` is refused until then).
     #[test]
     fn an_operation_is_running_until_it_returns_whoever_waits() {
         let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
