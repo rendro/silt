@@ -1,30 +1,34 @@
-> references 22:24
-main.silt:16:6-16:10
-main.silt:22:23-22:27
-main.silt:23:16-23:20
+> references 26:24
+main.silt:20:6-20:10
+main.silt:26:23-26:27
+main.silt:27:16-27:20
 shapes.silt:4:6-4:10
 shapes.silt:6:10-6:14
 shapes.silt:11:6-11:10
-> references 16:6
-main.silt:16:6-16:10
-main.silt:22:23-22:27
-main.silt:23:16-23:20
+> references 20:6
+main.silt:20:6-20:10
+main.silt:26:23-26:27
+main.silt:27:16-27:20
 shapes.silt:4:6-4:10
 shapes.silt:6:10-6:14
 shapes.silt:11:6-11:10
-> rename 23:17 surface
-main.silt:16:6-16:10 => surface
-main.silt:22:23-22:27 => surface
-main.silt:23:16-23:20 => surface
+> rename 27:17 surface
+main.silt:20:6-20:10 => surface
+main.silt:26:23-26:27 => surface
+main.silt:27:16-27:20 => surface
 shapes.silt:4:6-4:10 => surface
 shapes.silt:6:10-6:14 => surface
 shapes.silt:11:6-11:10 => surface
-> rename 22:19 Measured
-main.silt:11:17-11:21 => Measured
-main.silt:15:7-15:11 => Measured
-main.silt:22:18-22:22 => Measured
-main.silt:23:11-23:15 => Measured
-main.silt:23:40-23:44 => Measured
+> rename 26:19 Measured
+main.silt:15:17-15:21 => Measured
+main.silt:19:7-19:11 => Measured
+main.silt:26:18-26:22 => Measured
+main.silt:27:11-27:15 => Measured
+main.silt:27:40-27:44 => Measured
 shapes.silt:3:11-3:15 => Measured
 shapes.silt:6:5-6:9 => Measured
 shapes.silt:10:7-10:11 => Measured
+> rename 27:17 r
+error: `area` cannot be renamed to `r`: `Circle`, which has an impl of the trait, has a field `r`, and the rename would change what a name means
+> rename 27:17 twice
+error: `area` cannot be renamed to `twice`: the trait already has a method `twice`, and the rename would change what a name means

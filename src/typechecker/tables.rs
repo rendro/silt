@@ -485,6 +485,14 @@ impl Tables {
             .collect()
     }
 
+    /// The types an impl of the trait `tr` is written for.
+    pub fn impls_of(&self, tr: crate::defs::TraitId) -> Vec<TypeRef> {
+        (self.trait_impl_set.iter())
+            .filter(|(t, _)| t.id == tr)
+            .map(|(_, ty)| *ty)
+            .collect()
+    }
+
     /// The methods called on the type `ty` (`Int.empty()`): each method
     /// that takes no value of its trait's type, of each impl `ty` has
     /// rows of, by trait and name.

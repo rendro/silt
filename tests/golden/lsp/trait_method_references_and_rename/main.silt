@@ -1,12 +1,16 @@
 -- cmd: lsp
--- lsp: references 22:24
--- lsp: references 16:6
--- lsp: rename 23:17 surface
--- lsp: rename 22:19 Measured
+-- lsp: references 26:24
+-- lsp: references 20:6
+-- lsp: rename 27:17 surface
+-- lsp: rename 26:19 Measured
+-- lsp: rename 27:17 r
+-- lsp: rename 27:17 twice
 -- References and rename of a trait's method go to its declaration in
 -- the trait, the methods of its impls (in any module) and its calls,
 -- by the trait's name, qualified or imported; a rename of the trait
--- renames its name at the calls, not the method's.
+-- renames its name at the calls, not the method's. A rename to a field
+-- of a type with an impl of the trait, or to another method of it, is
+-- refused.
 import shapes
 import shapes.{ Area, Square }
 

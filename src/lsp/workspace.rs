@@ -957,8 +957,25 @@ impl Server {
     pub(super) fn rename_clash(&mut self, uri: &Uri, target: &Target, new: &str) -> Option<String> {
         let new_sym = crate::intern::intern(new);
         // A method is named only after its trait or type: what can clash
-        // is another method of the trait.
+        // is another method of the trait, or a field of a type the trait
+        // has an impl for (an impl's method is not named like a field).
         if let Target::Method { tr, .. } = target {
+            let field_of = self.projects.values().find_map(|project| {
+                let session = &project.session;
+                let id = def_of_key(session, tr)?;
+                let crate::defs::DefKind::Trait(tr) = session.defs().get(id).kind else {
+                    return None;
+                };
+                let tables = session.tables();
+                (tables.impls_of(tr).into_iter())
+                    .find(|ty| tables.record_fields_of(*ty).iter().any(|(f, _)| *f == new_sym))
+            });
+            if let Some(ty) = field_of {
+                return Some(format!(
+                    "`{}`, which has an impl of the trait, has a field `{new}`",
+                    ty.name
+                ));
+            }
             let taken = self.projects.values().any(|project| {
                 let session = &project.session;
                 def_of_key(session, tr).is_some_and(|id| {
