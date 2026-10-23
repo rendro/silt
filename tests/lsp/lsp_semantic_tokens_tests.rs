@@ -132,3 +132,47 @@ fn semantic_tokens_of_a_call_through_a_trait() {
     );
     client.shutdown();
 }
+
+/// A call through a trait of a module (`json.Encode.encode(5)`): the
+/// trait's name is an INTERFACE token there too.
+#[test]
+fn semantic_tokens_of_a_call_through_a_trait_of_a_module() {
+    let mut client = LspClient::spawn();
+    let uri = "file:///tmp/silt_sem_tokens_qualified_trait_call.silt";
+    let src = "import json\nfn main() { println(json.Encode.encode(5)) }\n";
+    client.did_open_and_wait(uri, src);
+    let resp = client.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let data = resp
+        .pointer("/result/data")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("expected /result/data array; got: {resp}"));
+    let (mut line, mut start) = (0u64, 0u64);
+    let mut tokens: Vec<(u64, u64, u64, u64)> = Vec::new();
+    for chunk in data.as_chunks::<5>().0 {
+        let dl = chunk[0].as_u64().expect("deltaLine");
+        let ds = chunk[1].as_u64().expect("deltaStart");
+        match dl {
+            0 => start += ds,
+            _ => {
+                line += dl;
+                start = ds;
+            }
+        }
+        let len = chunk[2].as_u64().expect("length");
+        tokens.push((line, start, len, chunk[3].as_u64().expect("tokenType")));
+    }
+    // `fn main() { println(json.Encode.encode(5)) }`: `Encode` at 25,
+    // `encode` at 32.
+    assert!(
+        tokens.contains(&(1, 25, 6, TT_INTERFACE)),
+        "the trait's name: {tokens:?}"
+    );
+    assert!(
+        tokens.contains(&(1, 32, 6, TT_FUNCTION)),
+        "the method's name: {tokens:?}"
+    );
+    client.shutdown();
+}

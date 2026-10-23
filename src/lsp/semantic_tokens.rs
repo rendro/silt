@@ -312,6 +312,13 @@ fn emit_expr_tokens(
                     let start = receiver.span.start as usize;
                     push_token_at_offset(source, start, &resolve(*name), TT_INTERFACE, out);
                 }
+                // `m.Tr.f`: the module as any module, the trait an
+                // INTERFACE.
+                ExprKind::FieldAccess(module, name, name_span) => {
+                    emit_expr_tokens(module, source, doc, server, out);
+                    let start = name_span.start as usize;
+                    push_token_at_offset(source, start, &resolve(*name), TT_INTERFACE, out);
+                }
                 _ => emit_expr_tokens(receiver, source, doc, server, out),
             }
             let start = field_span.start as usize;
