@@ -84,7 +84,7 @@ pub(crate) fn dispatch(args: &[String]) {
 /// the recursive scan to `cli::paths::find_silt_files` so the
 /// skip-list policy (`target/`, `.git/`, `node_modules/`,
 /// `fuzz/corpus/…`) and the sort order live in exactly one place.
-/// Pre-round-87, this function was a byte-identical clone of
+/// This function was once a byte-identical clone of
 /// `find_silt_files` *without* the skip filter, which meant `silt test`
 /// would happily try to execute `.silt` files that had been deposited
 /// under `target/` or vendored under `node_modules/`. Test-file suffix

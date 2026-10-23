@@ -32,7 +32,7 @@ impl Server {
                         name: f.name.to_string(),
                         detail,
                         kind: SymbolKind::FUNCTION,
-                        // Round-80 G1: per LSP spec, `range` should
+                        // Per LSP spec, `range` should
                         // encompass the entire declaration (so the
                         // editor's "go to symbol" navigates to the
                         // whole fn) while `selectionRange` is just the
@@ -59,7 +59,7 @@ impl Server {
                         name: t.name.to_string(),
                         detail: None,
                         kind,
-                        // Round-80 G1: `range` covers the whole decl,
+                        // `range` covers the whole decl,
                         // `selectionRange` covers only the type name.
                         range: span_to_range(&t.span, &doc.source),
                         selection_range: span_to_range(&t.name_span, &doc.source),
@@ -73,7 +73,7 @@ impl Server {
                         name: t.name.to_string(),
                         detail: None,
                         kind: SymbolKind::INTERFACE,
-                        // Round-80 G1: `range` covers the whole decl,
+                        // `range` covers the whole decl,
                         // `selectionRange` covers only the trait name.
                         range: span_to_range(&t.span, &doc.source),
                         selection_range: span_to_range(&t.name_span, &doc.source),
@@ -94,10 +94,10 @@ impl Server {
                         _ => unreachable!(),
                     };
                     let detail = value.ty.as_ref().map(|t| format!("{t}"));
-                    // Round-80 G1: `range` covers the whole let-binding
+                    // `range` covers the whole let-binding
                     // declaration, its value included; `selectionRange`
-                    // uses the parser-recorded `name_span` (round-71
-                    // DX-1) when present, otherwise the pattern span.
+                    // uses the parser-recorded `name_span` when
+                    // present, otherwise the pattern span.
                     let range = span_to_range(span, &doc.source);
                     let sel_span = name_span.unwrap_or(pattern.span);
                     symbols.push(DocumentSymbol {
@@ -122,7 +122,7 @@ impl Server {
                 // the keyword it starts with. The range spans the whole
                 // impl block so clicking the symbol jumps to it.
                 Decl::TraitImpl(ti) => {
-                    // Round-80 G1: an impl block has no single
+                    // An impl block has no single
                     // identifier (the synthesized "impl Trait for
                     // Target" caption spans two identifiers in the
                     // source), so `selectionRange` is the same as

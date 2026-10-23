@@ -119,7 +119,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
         msg
     );
     assert!(
-        msg.contains("synthetic IO worker panic for round-76 lock"),
+        msg.contains("synthetic IO worker panic for a test"),
         "carried message must include the original panic payload. Got: {:?}",
         msg
     );

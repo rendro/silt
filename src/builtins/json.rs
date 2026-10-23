@@ -29,21 +29,17 @@ fn json_err_wrap(inner: Value) -> Value {
     Value::variant(bv::ERR, vec![inner])
 }
 
-/// Classify a `serde_json::Error` into one of the `JsonError` variants.
-/// Syntax/Eof errors get `Syntax(msg, column)`. Data and Io errors
-/// collapse to `Other` because serde_json does not expose the
-/// expected/actual type pair for a category=Data error in a way we can
-/// meaningfully surface; the typed decoder ([`decode`]) reports a
-/// value of the wrong type.
-pub(crate) fn json_error_to_variant(err: &serde_json::Error) -> Value {
+/// Classify a `serde_json::Error` of reading `text` into one of the
+/// `JsonError` variants. Syntax/Eof errors get `Syntax(msg, offset)`.
+/// Data and Io errors collapse to `Other` because serde_json does not
+/// expose the expected/actual type pair for a category=Data error in a
+/// way we can meaningfully surface; the typed decoder ([`decode`])
+/// reports a value of the wrong type.
+pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Value {
     use serde_json::error::Category;
     match err.classify() {
         Category::Syntax | Category::Eof => {
-            // `column()` is 1-based and usable as a byte offset into the
-            // line (serde's internal tokenizer uses UTF-8 byte positions,
-            // not codepoints). Prefer it over `line()` because fully
-            // inlined TOML/JSON blobs are common in practice.
-            let offset = err.column() as i64;
+            let offset = syntax_offset(err, text) as i64;
             Value::variant(
                 bv::JSON_SYNTAX,
                 vec![Value::String(err.to_string().into()), Value::Int(offset)],
@@ -53,9 +49,31 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error) -> Value {
     }
 }
 
-/// Build a full `Err(JsonError)` from a `serde_json::Error`.
-pub(crate) fn json_result_err(err: &serde_json::Error) -> Value {
-    json_err_wrap(json_error_to_variant(err))
+/// Build a full `Err(JsonError)` from a `serde_json::Error` of reading
+/// `text`.
+pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8]) -> Value {
+    json_err_wrap(json_error_to_variant(err, text))
+}
+
+/// Where in `text` the syntax error `err` is, as a 0-based byte offset
+/// (as `toml.Syntax` has it): the byte serde stopped at, which it gives
+/// as a line and a 1-based column of bytes in that line; the end of the
+/// text for one that ended too soon.
+fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
+    if err.classify() == serde_json::error::Category::Eof {
+        return text.len();
+    }
+    let line_start = match err.line().checked_sub(2) {
+        // The line after the (line - 1)th newline.
+        Some(newlines) => text
+            .iter()
+            .enumerate()
+            .filter(|(_, byte)| **byte == b'\n')
+            .nth(newlines)
+            .map_or(text.len(), |(at, _)| at + 1),
+        None => 0,
+    };
+    (line_start + err.column().saturating_sub(1)).min(text.len())
 }
 
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
@@ -516,19 +534,19 @@ builtins! {
 
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         decoded(vm, &PARSE, ty, one, || {
-            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e))
+            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
         })
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         decoded(vm, &PARSE_LIST, ty, list_of, || {
-            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e))
+            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
         })
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         decoded(vm, &PARSE_MAP, ty, map_of, || {
-            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e))
+            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
         })
     }
 

@@ -823,7 +823,7 @@ fn main() {
   println("main went on")
 }
 "#;
-    let (status, stdout, stderr) = run("worker", source, Some("builtin-of-a-task"));
+    let (status, stdout, stderr) = run("builtin_of_a_task", source, Some("builtin-of-a-task"));
     assert_eq!(status, Some(1), "stdout: {stdout}\nstderr: {stderr}");
     assert_eq!(stdout, "main waits\n", "stderr: {stderr}");
     let lines: Vec<&str> = stderr.lines().collect();

@@ -308,7 +308,7 @@ mod tls {
     /// monomorphised type names differ (`ClientConnection` vs
     /// `ServerConnection`), so we wrap rather than carrying a bound through.
     ///
-    /// Round 80 dedup (DUP-1): the byte-identical impl bodies for
+    /// The byte-identical impl bodies for
     /// `ClientStreamWrapper` and `ServerStreamWrapper` (same
     /// `complete_io_handshake`, same Read/Write/ReadWrite forwards) are
     /// emitted from a single `stream_wrapper!` macro arm. Adding a third

@@ -6,7 +6,7 @@ use std::process;
 ///
 /// Both the feature-on path (which actually starts the LSP server)
 /// and the feature-off stub render from this so they can't drift
-/// apart. Round 88 GAP fix: `silt lsp --help` MUST print this banner
+/// apart. `silt lsp --help` MUST print this banner
 /// and exit 0 even when the `lsp` feature was compiled out, instead
 /// of the pre-fix "feature not enabled" rebuild hint that blocked
 /// users discovering the usage shape via the top-level `silt --help`

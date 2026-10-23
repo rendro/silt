@@ -114,7 +114,7 @@ fn walk(server: &mut Server, dir: &Path, depth: usize) {
 /// module so the LSP preloader and the CLI's recursive `.silt`
 /// discovery (`src/cli/paths.rs::find_silt_files`) share a single
 /// definition of "directories to skip when hunting for source files".
-/// Audit round 87 LATENT: pre-fix, this rule lived only in preload.rs
+/// Pre-fix, this rule lived only in preload.rs
 /// and the CLI walkers happily descended into `target/`, `.git/`,
 /// `node_modules/`, and `fuzz/corpus/` — so `silt fmt`/`silt test`
 /// could rewrite or execute vendored / generated `.silt` files the

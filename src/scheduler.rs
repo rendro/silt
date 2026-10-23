@@ -1121,6 +1121,9 @@ fn at_a_panic(rusts: &(dyn Fn(&PanicHookInfo<'_>) + Sync + Send), panic: &PanicH
 /// gone dies quietly; this process is to end with the internal-error
 /// line and status 101, and its last words flush stdout.)
 fn no_death_by_a_closed_stdout() {
+    // SAFETY: setting a signal's disposition to SIG_IGN installs no
+    // handler, so no code of ours runs in a signal context; the process
+    // is ending, and no other thread of silt changes SIGPIPE.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);

@@ -27,8 +27,8 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
-        // Source-aware so cursor on `fn`/`type` decl names resolves
-        // (round-63 B2 — match rename/hover behaviour).
+        // Source-aware so cursor on `fn`/`type` decl names resolves, as
+        // rename and hover do.
         let name = find_ident_at_offset(program, cursor)?;
 
         // Walk every open document and collect every TraitImpl whose

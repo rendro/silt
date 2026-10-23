@@ -26,7 +26,6 @@ use crate::cli::package::{PackageFailure, die_on_manifest_error};
 /// `vendor/silt-src/target/`, or has a `.silt` artefact deposited under
 /// `target/`, would otherwise see its contents rewritten by an
 /// unsuspecting `silt fmt .`), and `silt test` would try to run them.
-/// Audit round 87 LATENT.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     let mut results = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
@@ -194,7 +193,7 @@ impl silt::diagnostic::SourceView for ProgramFiles<'_> {
 ///   cwd);
 /// - no `cwd` available (rare: deleted working dir) → candidate as-is.
 ///
-/// Round-101 LATENT: this body used to be a byte-identical 21-line
+/// This body used to be a byte-identical 21-line
 /// closure duplicated between `silt run` (src/cli/run.rs) and
 /// `silt test` (src/cli/test.rs) error rendering — an
 /// acknowledged-mirror drift hazard. Hoisted here so both subcommands
@@ -251,7 +250,7 @@ fn without_verbatim_prefix(path: &Path) -> String {
 mod tests {
     use super::*;
 
-    // Round-101: direct behavioral locks for the shared path-display
+    // Direct behavioral locks for the shared path-display
     // policy that `silt run` / `silt test` error rendering delegate to.
     // These pin the exact semantics the previously-duplicated closures
     // implemented, so a future edit to the helper that changes any of

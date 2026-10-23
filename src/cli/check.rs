@@ -25,7 +25,7 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--" {
-            // Round-74: positionals after `--` are forwarded to the
+            // Positionals after `--` are forwarded to the
             // program as `io.args()`. `silt check` doesn't execute, so
             // these are effectively ignored — but we accept and silently
             // skip them so that `silt check` is a transparent drop-in
@@ -78,7 +78,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // Mirror the rejection pattern used by `silt update`,
             // `silt repl`, `silt lsp`, and `silt add`.
             //
-            // Round-74: to bake program args into a `silt check`
+            // To bake program args into a `silt check`
             // invocation (e.g. for CI parity with `silt run`), use
             // `--` as a separator.
             eprintln!("silt check: unexpected extra argument '{}'", args[i]);
@@ -95,7 +95,7 @@ pub(crate) fn dispatch(args: &[String]) {
     }
     let path = match file {
         Some(p) => p,
-        // Round 93: `silt check` accepts a lib-only package
+        // `silt check` accepts a lib-only package
         // (`src/lib.silt` with no `src/main.silt`) — the required shape
         // for dependencies. `silt run`/`silt disasm` keep requiring main.
         None => match resolve_package_entry_point_for(EntryPointKind::AllowLib) {
@@ -124,7 +124,7 @@ pub(crate) fn check_file(path: &str, format: OutputFormat) {
     if format == OutputFormat::Json {
         print_json_errors(&files, &errors);
     } else {
-        // F14 (audit round 17): separate diagnostics with blank lines.
+        // F14: separate diagnostics with blank lines.
         silt::diagnostic::eprint_all(&files, &errors);
     }
 

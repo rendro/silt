@@ -38,7 +38,7 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut iter = args[2..].iter();
     while let Some(arg) = iter.next() {
         if arg == "--" {
-            // Round-74: positionals after `--` are program args. Disasm
+            // Positionals after `--` are program args. Disasm
             // doesn't execute, so these are silently skipped — but we
             // accept the separator so `silt disasm` parses identically
             // to `silt run`/`silt check` and CI scripts can swap one

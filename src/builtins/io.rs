@@ -18,12 +18,12 @@ mod glob_walk;
 /// bare-file shim) recognize `--` as a separator; everything after `--` is
 /// forwarded here verbatim and surfaced to silt programs via `io.args()`.
 ///
-/// Round-74 audit fix: prior to this round `io.args()` returned the raw
+/// `io.args()` once returned the raw
 /// `std::env::args()` of the silt binary itself (`["silt", "run",
 /// "file.silt", ...]`), forcing programs to know they had to drop the
 /// first 3 positions to recover their own user-supplied args. That coupling
 /// to the binary's argv layout was both fragile and undocumented; it also
-/// broke entirely when round-72 started rejecting bare extras after the
+/// broke entirely when the CLI started rejecting bare extras after the
 /// script file (the only previous way to pass user args). The `--` form
 /// makes the contract explicit and preserves the forwarding path.
 fn program_args_lock() -> &'static RwLock<Vec<String>> {

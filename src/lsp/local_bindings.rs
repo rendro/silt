@@ -438,7 +438,7 @@ fn collect_pattern_bindings(
             }
         }
         PatternKind::AnonRecord { fields, rest } => {
-            // Round-62 B9: row-polymorphism destructure
+            // Row-polymorphism destructure
             // (`let { x, y } = anon_record`). Mirror the `Record` arm.
             // The fields come from the type of the expression: an
             // anonymous record type's own, or a declared record's
@@ -501,7 +501,7 @@ fn collect_pattern_bindings(
             }
         }
         PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders. A value
             // has the map's value type.
             let value_ty = match expr_ty {

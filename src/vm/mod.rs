@@ -98,7 +98,7 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value
         .runtime
         .io_pool
         .submit(failure, Vec::new(), io_op::Leave::RunsOut, |_| {
-            panic!("synthetic IO worker panic for round-76 lock");
+            panic!("synthetic IO worker panic for a test");
         });
     let wait = op.wait(vm, Limit::None);
     let _ = vm
@@ -727,7 +727,7 @@ impl Vm {
     /// `Op::TailCall` overwrote the physical frame slot in place. Without
     /// this merge, a chain like `main -> middle -> helper/*boom*/` (where
     /// `middle` and `main` both tail-called) would render a single-frame
-    /// stack that drops both intermediate names. See F10 in audit round 17.
+    /// stack that drops both intermediate names.
     pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
         if err.span.is_some() {
             return err;

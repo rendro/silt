@@ -1,7 +1,7 @@
 //! Pure helper for `--help` handling in feature-gated subcommands when
 //! the gating feature is disabled.
 //!
-//! Background — Round 88 GAP: `silt repl --help` and `silt lsp --help`
+//! Background: `silt repl --help` and `silt lsp --help`
 //! used to short-circuit to "feature not enabled, rebuild with: cargo
 //! build --features X" and exit 1, even though the user had asked for
 //! the usage banner. The top-level `silt --help` advertises both

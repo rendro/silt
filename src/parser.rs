@@ -663,7 +663,7 @@ impl<'src> Parser<'src> {
         tok
     }
 
-    /// Round-93 hint guard: true when the current token is a `/` that
+    /// True when the current token is a `/` that
     /// is part of an adjacent `//` pair (no gap, same line) — the shape
     /// of a C-style `//` line comment. silt comments are `--`, so `//`
     /// always lexes as two division tokens and dies with a bare
@@ -1874,7 +1874,7 @@ impl<'src> Parser<'src> {
             });
             let mut params: Vec<Symbol> = Vec::new();
             for arg in &trait_args {
-                // Round-52 deferred item 2: point the caret at the
+                // Point the caret at the
                 // offending argument's own span, not the enclosing
                 // `trait` keyword. Each arg carries its own span now.
                 let arg_span = arg.span;
@@ -2224,7 +2224,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_type_expr_inner(&mut self) -> Result<TypeExpr> {
-        // Round-52 deferred item 2: capture the start-of-type-expr span
+        // Capture the start-of-type-expr span
         // so every TypeExpr node anchors its own span. Used by trait-
         // header diagnostics (parse_trait_or_impl) to point at the
         // offending argument rather than the outer `trait` keyword.
@@ -2261,7 +2261,6 @@ impl<'src> Parser<'src> {
         // `TypeExprKind::Named("Fn")` and the trait-impl machinery
         // registers under the canonical `("T", "Fn")` key. Without the
         // peek-ahead, `for Fn { ... }` wedged the parser at `expected (`.
-        // Round 71 follow-up canonical-name unification.
         if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn"))
             && matches!(self.next_on_line(), Some(Token::LParen))
         {
@@ -2702,8 +2701,8 @@ impl<'src> Parser<'src> {
         let pattern = self.parse_pattern()?;
         // Capture the binding's name-identifier span when the pattern is a
         // bare `Ident` — needed by LSP rename / references / definition
-        // (round-71 fix: without this, the `let` keyword span gets used as
-        // the edit range and the rename clobbers `let` / `pub`).
+        // (without it, the `let` keyword span would be the edit range and
+        // the rename would clobber `let` / `pub`).
         // Destructuring patterns get `None`; rename through them bails.
         let name_span = match &pattern.kind {
             PatternKind::Ident(_) => Some(pattern.span),
@@ -2946,15 +2945,13 @@ impl<'src> Parser<'src> {
                         ));
                     } else {
                         let (field, field_span) = self.expect_ident()?;
-                        // Round 94: qualified record construction —
+                        // Qualified record construction —
                         // `util.Pt { x: 1, y: 2 }` builds the same value as
                         // bare `Pt { x: 1, y: 2 }`, with the qualifier
                         // selecting which module's record type the literal
-                        // is checked against. (History: pre-round-93 this
-                        // shape silently misparsed as a field access plus a
-                        // discarded anonymous-record statement; round 93
-                        // made it a parse error as a stopgap; round 94 adds
-                        // the real form.)
+                        // is checked against. (This shape once misparsed
+                        // as a field access plus a discarded
+                        // anonymous-record statement.)
                         //
                         // Gating mirrors the bare `Pt { ... }` atom exactly
                         // (same-line `{`, match-body suppression via the
@@ -2996,7 +2993,7 @@ impl<'src> Parser<'src> {
                             // one-segment qualifier can ever resolve. A
                             // deeper dotted path (`a.b.Pt { ... }`) or an
                             // arbitrary expression qualifier keeps the
-                            // round-93 conservative error instead of the old
+                            // conservative error instead of the old
                             // silent misparse — but only when the brace
                             // contents actually look like record fields
                             // (`ident :`), so blocks and match bodies after
@@ -3621,8 +3618,8 @@ impl<'src> Parser<'src> {
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
     /// `a.b.util`) back to source text for diagnostics. Returns `None`
     /// for anything that isn't a simple dotted path. Used by the
-    /// deep-path qualified-record-construction error (round 93; kept
-    /// in round 94 — only a SINGLE module qualifier is real syntax) to
+    /// deep-path qualified-record-construction error (only a SINGLE
+    /// module qualifier is real syntax) to
     /// echo the path the user wrote.
     fn dotted_path_text(expr: &Expr) -> Option<String> {
         match &expr.kind {
@@ -4066,7 +4063,7 @@ impl<'src> Parser<'src> {
     /// `Name(args)` → constructor, `Name { fields }` → record pattern,
     /// bare `Name` → unit-variant constructor. Used by both the
     /// capitalized head (`Circle(..)`, `Shape.Circle(..)`) and the
-    /// round-94 module-qualified head (`shapes.Circle(..)`).
+    /// module-qualified head (`shapes.Circle(..)`).
     fn parse_constructor_pattern_tail(
         &mut self,
         qualifier: Vec<Qualifier>,
@@ -4517,7 +4514,7 @@ mod tests {
     // The parser test bodies repeatedly decode `prog.decls[0]` as a
     // `Decl::Fn`, drill into its `body: ExprKind::Block(stmts)`, and pull
     // the last `Stmt::Expr` to inspect the resulting `ExprKind`. That
-    // five-line decode appeared ~28 times verbatim before round 76, all
+    // five-line decode appeared ~28 times verbatim before, all
     // with the same panic messages. The helpers below collapse the
     // decode to a single call so test bodies focus on the assertion they
     // actually care about (e.g. "is the top-level expr a `?`").

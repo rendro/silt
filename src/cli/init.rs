@@ -124,7 +124,7 @@ fn init_project(lib: bool) {
     // `validate_package_name` so init / add / Manifest::load share one
     // acceptance rule. Mirrors `silt add`'s wording for builtin
     // collisions on dep names — see `src/cli/add.rs:273-279`.
-    // Round-75 DX-5 GAP fix: previously `mkdir io && cd io && silt init`
+    // Previously `mkdir io && cd io && silt init`
     // silently wrote `name = "io"`, producing a package whose top-level
     // name shadowed the stdlib `io` module.
     if let Err(msg) = silt::manifest::validate_package_name(&package_name) {

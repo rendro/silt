@@ -193,7 +193,7 @@ impl Server {
             return None;
         }
 
-        // Round-76 D3: suppress the top-of-hover signature block when
+        // Suppress the top-of-hover signature block when
         // it would carry unresolved TyVars AND the markdown signature
         // below the `---` separator is authoritative (i.e. `doc_text`
         // is present). The audit example: hovering `string.length` in
