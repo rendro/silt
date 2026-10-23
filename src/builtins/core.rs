@@ -55,9 +55,9 @@ pub(crate) mod result {
     use super::*;
 
     builtins! {
-        fn map_ok(r: Res, f: &Value) -> Step {
+        fn map(r: Res, f: &Value) -> Step {
             match r.inner {
-                Ok(value) => call_then("result.map_ok", f.clone(), value.clone(), |new| {
+                Ok(value) => call_then("result.map", f.clone(), value.clone(), |new| {
                     Ok(Value::variant(bv::OK, vec![new]))
                 }),
                 Err(_) => Step::Done(r.whole.clone()),

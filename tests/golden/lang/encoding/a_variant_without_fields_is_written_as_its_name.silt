@@ -28,7 +28,7 @@ fn main() {
   println(json.stringify(#{ "a": Active }))
   println(json.stringify((Active, Paused(1))))
   println(json.stringify(Some(Active)))
-  println(json.stringify(time.date(2026, 10, 21) |> result.map_ok(time.weekday)))
+  println(json.stringify(time.date(2026, 10, 21) |> result.map(time.weekday)))
   println(json.pretty([Active, Moved("y", Active)]))
   match toml.stringify(job) {
     Ok(text) -> print(text)

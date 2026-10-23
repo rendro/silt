@@ -269,7 +269,7 @@ your editor. The built-in modules:
 | `float` | Floating-point parsing, classification, and numeric helpers |
 | `list` | List construction, traversal, and transformation |
 | `map` | Hash-map insertion, lookup, and iteration |
-| `result` | `Result` combinators (`map_ok`, `map_err`, `unwrap_or`, …) |
+| `result` | `Result` combinators (`map`, `map_err`, `unwrap_or`, …) |
 | `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
 | `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
 | `channel` | Bounded MPMC channels for CSP-style messaging |

@@ -12,8 +12,8 @@ fn produce() -> Result(Int, Int) {
 
 fn outcome() {
   let r = produce()
-          |> result.map_ok { n -> n + 1 }
-          |> result.map_ok { n -> n * 10 }
+          |> result.map { n -> n + 1 }
+          |> result.map { n -> n * 10 }
           |> result.map_err(wrap)
   match r {
     Ok(v) -> v

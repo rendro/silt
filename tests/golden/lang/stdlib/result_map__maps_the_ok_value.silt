@@ -1,0 +1,15 @@
+-- `result.map` applies a function to the value of an `Ok` and passes
+-- an `Err` through as it is; as a call, in a pipe, and as a value.
+import int
+import list
+import result
+
+fn main() {
+  println(result.map(Ok(20)) { n -> n + 1 })
+  let failed: Result(Int, String) = Err("no")
+  println(result.map(failed) { n -> n + 1 })
+  println(Ok("7") |> result.map(int.parse))
+  println([Ok(1), Err("e"), Ok(3)] |> list.map { r -> result.map(r) { n -> n * 10 } })
+  let f = result.map
+  println(f(Ok(2), { n -> "{n}!" }))
+}
