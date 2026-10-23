@@ -45,7 +45,7 @@ fn in_some_full(v: Option(R)) -> Int {
 fn in_list(v: List(R)) -> Int {
   match v {
     [] -> 0
-    [R { p: true, .. }, .._] -> 1
+    [R { p: true, .. }, ..] -> 1
   }
 }
 fn one_field(v: R) -> Int {

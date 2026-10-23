@@ -1,0 +1,25 @@
+-- `list.unique_by` keeps the first element of each key, in the order
+-- of the list; the key may be any value that has `Hash`.
+import list
+import string
+
+type User { name: String, team: String }
+
+fn main() {
+  println(list.unique_by([]) { x -> x })
+  println(list.unique_by([3, 1, 3, 2, 1]) { x -> x })
+  println(list.unique_by([1, 2, 3, 4, 5, 6]) { x -> x % 3 })
+  println(list.unique_by(["a", "b", "c"]) { _ -> 0 })
+  println(list.unique_by(["Ab", "ab", "AB", "cd"], string.to_lower))
+  let users = [
+    User { name: "ann", team: "red" },
+    User { name: "bob", team: "blue" },
+    User { name: "cid", team: "red" },
+  ]
+  let firsts = list.unique_by(users) { u -> u.team } |> list.map { u -> u.name }
+  println(firsts)
+  -- A tuple key.
+  println(list.unique_by([(1, "x"), (1, "y"), (2, "x"), (1, "x")]) { p -> p })
+  -- A range.
+  println(list.unique_by(1..10) { x -> x / 4 })
+}

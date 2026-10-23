@@ -353,10 +353,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     }
 
     // `--filter` ruled every file out: say so instead of printing a
-    // summary of nothing.
+    // summary of nothing. A filter that selects nothing is a mistake
+    // (a typo in it would otherwise pass as a green run).
     if files_considered == 0 {
-        println!("no matching test files found");
-        return;
+        let filter = silt::git::escape_for_display(filter.as_deref().unwrap_or_default());
+        say(&format!("no test matches --filter '{filter}'\n"));
+        silt::scheduler::exit_with_status(1);
     }
 
     let Counts {

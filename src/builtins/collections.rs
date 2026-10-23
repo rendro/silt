@@ -1,6 +1,6 @@
 //! Collection builtin functions (`list.*`, `map.*`, `set.*`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
@@ -329,6 +329,103 @@ impl Native for Unfold {
     }
 }
 
+/// `list.sort_with`: a merge sort, bottom up, that calls the
+/// comparison for each pair it compares. Runs of `width` elements of
+/// `from` are merged pairwise into `into`, then the width doubles. An
+/// element of the right run goes first only when the comparison says
+/// it is less, so equal elements keep their order.
+struct SortWith {
+    compare: Value,
+    from: Vec<Value>,
+    into: Vec<Value>,
+    width: usize,
+    /// The merge under way: the next element of the left run, its end,
+    /// the next element of the right run, its end.
+    left: usize,
+    mid: usize,
+    right: usize,
+    end: usize,
+    /// A comparison of `from[left]` with `from[right]` is running.
+    comparing: bool,
+}
+
+impl SortWith {
+    fn new(compare: Value, items: Vec<Value>) -> SortWith {
+        let mut sort = SortWith {
+            compare,
+            from: items,
+            into: Vec::new(),
+            width: 1,
+            left: 0,
+            mid: 0,
+            right: 0,
+            end: 0,
+            comparing: false,
+        };
+        sort.start_merge(0);
+        sort
+    }
+
+    /// Set up the merge of the two runs that start at `start`.
+    fn start_merge(&mut self, start: usize) {
+        let n = self.from.len();
+        self.left = start;
+        self.mid = (start + self.width).min(n);
+        self.right = self.mid;
+        self.end = (start + 2 * self.width).min(n);
+    }
+}
+
+impl Native for SortWith {
+    fn name(&self) -> &str {
+        "list.sort_with"
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        if self.comparing {
+            self.comparing = false;
+            let right_first = match input {
+                Value::Int(order) => order > 0,
+                other => {
+                    return Err(VmError::new(format!(
+                        "list.sort_with: the comparison returned {}, not an Int",
+                        other.format_silt()
+                    )));
+                }
+            };
+            let taken = match right_first {
+                true => &mut self.right,
+                false => &mut self.left,
+            };
+            self.into.push(self.from[*taken].clone());
+            *taken += 1;
+        }
+        loop {
+            let n = self.from.len();
+            if self.width >= n {
+                return Ok(Step::Done(Value::list(std::mem::take(&mut self.from))));
+            }
+            if self.left < self.mid && self.right < self.end {
+                self.comparing = true;
+                let (a, b) = (self.from[self.left].clone(), self.from[self.right].clone());
+                return Ok(vm.call(self.compare.clone(), [a, b]));
+            }
+            // One run is used up: the rest of the other follows as it is.
+            self.into.extend_from_slice(&self.from[self.left..self.mid]);
+            self.into
+                .extend_from_slice(&self.from[self.right..self.end]);
+            if self.end < n {
+                self.start_merge(self.end);
+            } else {
+                // A pass is done: its result is the next pass's input.
+                self.from = std::mem::take(&mut self.into);
+                self.width *= 2;
+                self.start_merge(0);
+            }
+        }
+    }
+}
+
 /// A non-negative `Int` argument as a position or a count, for
 /// `name`'s `what` ("index", "count").
 fn natural(name: &str, what: &str, n: i64) -> Result<usize, VmError> {
@@ -467,6 +564,30 @@ pub(crate) mod list {
                     let sorted = std::mem::take(keyed).into_iter().map(|(_, item)| item);
                     Ok(Value::list(sorted.collect()))
                 },
+            ))
+        }
+
+        fn sort_with(xs: List, compare: &Value) -> Result<Step, VmError> {
+            let items = made(xs)?.into_iter().collect();
+            Ok(Step::Run(Box::new(SortWith::new(compare.clone(), items))))
+        }
+
+        // The first element of each key, in the list's order.
+        fn unique_by(xs: List, key: &Value) -> Result<Step, VmError> {
+            Ok(iterate(
+                "list.unique_by",
+                made(xs)?,
+                key.clone(),
+                (BTreeSet::<Value>::new(), Vec::new()),
+                item_arg,
+                |(seen, kept), item, key| {
+                    key_without_fn("list.unique_by", "Hash", &key)?;
+                    if seen.insert(key) {
+                        kept.push(item);
+                    }
+                    next()
+                },
+                |(_, kept)| as_list(kept),
             ))
         }
 
@@ -632,6 +753,10 @@ pub(crate) mod list {
                     "list.length overflow: the list has more elements than an Int counts".into(),
                 )
             })
+        }
+
+        fn is_empty(xs: List) -> bool {
+            xs.is_empty()
         }
 
         fn append(xs: List, elem: &Value) -> Result<Value, VmError> {
@@ -858,6 +983,10 @@ pub(crate) mod map {
             m.len() as i64
         }
 
+        fn is_empty(m: Map) -> bool {
+            m.is_empty()
+        }
+
         fn merge(m1: Map, m2: Map) -> Result<Value, VmError> {
             // The keys of `m2` that `m1` lacks are counted only when
             // the two together could be too many.
@@ -986,6 +1115,10 @@ pub(crate) mod set {
 
         fn length(s: Set) -> i64 {
             s.len() as i64
+        }
+
+        fn is_empty(s: Set) -> bool {
+            s.is_empty()
         }
 
         fn union(a: Set, b: Set) -> Result<Value, VmError> {

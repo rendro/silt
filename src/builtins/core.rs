@@ -2,7 +2,7 @@
 
 use super::typed::{Arg, builtins, unsound};
 use crate::typeinfo::{BuiltinVariant, bv};
-use crate::value::Value;
+use crate::value::{Float, Value};
 use crate::vm::{Step, VmError, call_then};
 
 /// The one field of `value`, if it is the variant `tag` with one.
@@ -55,9 +55,9 @@ pub(crate) mod result {
     use super::*;
 
     builtins! {
-        fn map_ok(r: Res, f: &Value) -> Step {
+        fn map(r: Res, f: &Value) -> Step {
             match r.inner {
-                Ok(value) => call_then("result.map_ok", f.clone(), value.clone(), |new| {
+                Ok(value) => call_then("result.map", f.clone(), value.clone(), |new| {
                     Ok(Value::variant(bv::OK, vec![new]))
                 }),
                 Err(_) => Step::Done(r.whole.clone()),
@@ -147,7 +147,7 @@ pub(crate) mod option {
 }
 
 /// `test.*`: each takes a last argument or not, the message, which
-/// the typed form has no way to say; so the three are written as the
+/// the typed form has no way to say; so they are written as the
 /// calls the macro would write. (The conventions step gives each one
 /// form.)
 pub(crate) mod test {
@@ -174,6 +174,26 @@ pub(crate) mod test {
                     "{} != {}",
                     left.format_silt(),
                     right.format_silt()
+                ))),
+            }
+        }
+
+        // Absolute: `a` and `b` may differ by `tolerance` at most.
+        fn assert_approx(a: Float, b: Float, tolerance: Float) -> Result<(), VmError> {
+            if tolerance.get() < 0.0 {
+                return Err(VmError::new(format!(
+                    "test.assert_approx: negative tolerance {tolerance}"
+                )));
+            }
+            // Two far ends of the range differ by more than a Float holds.
+            let difference = Float::new((a.get() - b.get()).abs());
+            match difference {
+                Some(d) if d <= tolerance => Ok(()),
+                Some(d) => Err(failed(format!(
+                    "{a} and {b} differ by {d}, more than {tolerance}"
+                ))),
+                None => Err(failed(format!(
+                    "{a} and {b} differ by more than {tolerance}"
                 ))),
             }
         }

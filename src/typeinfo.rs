@@ -481,7 +481,8 @@ pub mod bv {
     pub const FLOAT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 1);
     pub const FLOAT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 2);
     pub const FLOAT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 3);
-    pub const FLOAT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
+    pub const FLOAT_NOT_FINITE: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
+    pub const FLOAT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 5);
     pub const CRYPTO_INVALID_LENGTH: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 0);
     pub const CRYPTO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 1);
     pub const ENCODING_INVALID_PERCENT: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 0);
@@ -872,6 +873,7 @@ mod tests {
             (bv::FLOAT_INVALID_DIGIT, "InvalidDigit"),
             (bv::FLOAT_OVERFLOW, "Overflow"),
             (bv::FLOAT_UNDERFLOW, "Underflow"),
+            (bv::FLOAT_NOT_FINITE, "NotFinite"),
             (bv::FLOAT_OTHER, "Other"),
             (bv::CRYPTO_INVALID_LENGTH, "InvalidLength"),
             (bv::CRYPTO_OTHER, "Other"),

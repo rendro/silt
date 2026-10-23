@@ -1,0 +1,12 @@
+-- exit: 1
+-- A local named like a module's alias hides the module imported as
+-- that name: the help names the module and the alias. A local named
+-- like the module itself hides nothing here: no help for it.
+import list as l
+
+fn main() {
+  let list = [1]
+  println(list.length(list))
+  let l = [2]
+  println(l.length(l))
+}

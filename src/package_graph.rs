@@ -142,8 +142,11 @@ pub enum LockChange {
     Unchanged,
     /// Written where there was none.
     Created,
-    /// Rewritten.
+    /// Rewritten: it pins other packages or sources.
     Updated,
+    /// Rewritten with the same pins, written anew (a path that an old
+    /// lockfile wrote absolute).
+    Rewritten,
 }
 
 /// Resolve the package graph of the project whose `silt.toml` is in
@@ -223,10 +226,12 @@ pub fn resolve_packages(
                     ),
                 )]);
             }
-            if created {
-                LockChange::Created
-            } else {
-                LockChange::Updated
+            match existing {
+                _ if created => LockChange::Created,
+                Some(old) if old.same_places(&fresh, &resolver.nodes[root.0 as usize].root) => {
+                    LockChange::Rewritten
+                }
+                _ => LockChange::Updated,
             }
         }
     };
@@ -335,7 +340,12 @@ impl Resolver<'_> {
                     return None;
                 }
                 let root = crate::source::canonical_path(&dir);
-                let locked = LockedSource::Path { path: root.clone() };
+                // Written relative to the project's directory, which the
+                // lockfile is in.
+                let project = &self.nodes[0].root;
+                let written = crate::lockfile::relative_path(project, &root)
+                    .map_or_else(|| root.clone(), PathBuf::from);
+                let locked = LockedSource::Path { path: written };
                 self.enter(
                     SourceKey::Path(root.clone()),
                     root,
@@ -489,7 +499,13 @@ impl Resolver<'_> {
             let name = intern::resolve(manifest.package.name);
             let entries: Vec<&LockedPackage> =
                 lock.packages.iter().filter(|p| p.name == name).collect();
-            if !entries.iter().any(|p| p.source == locked) {
+            // (A path is compared by the directory it names: an old lock
+            // wrote it absolute.)
+            let project = &self.nodes[0].root;
+            if !entries
+                .iter()
+                .any(|p| p.source.same_place(&locked, project))
+            {
                 let reason = if entries.is_empty() {
                     "it has no pin for this source"
                 } else {
@@ -614,9 +630,11 @@ impl Resolver<'_> {
             ),
             // A path package by its manifest, whose path is shown as every
             // `silt.toml` is.
-            LockedSource::Path { path } => {
-                escape_for_display(&display_path(&path.join("silt.toml")).display().to_string())
-            }
+            LockedSource::Path { .. } => escape_for_display(
+                &display_path(&self.nodes[id.0 as usize].root.join("silt.toml"))
+                    .display()
+                    .to_string(),
+            ),
             LockedSource::Git {
                 url, resolved_sha, ..
             } => format!("{} at {resolved_sha}", escape_for_display(url)),

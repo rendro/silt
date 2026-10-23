@@ -15,8 +15,9 @@
 //!   - "Format source code"
 //!   - "Run test functions"
 //!   - "Interactive REPL"
-//!   - "Create a new silt package in this directory"
+//!   - "Create a new silt package (a library with --lib) in this directory"
 //!   - "Start the language server"
+//!   - "Remove a dependency from silt.toml and silt.lock"
 
 use std::env;
 use std::process;
@@ -219,6 +220,9 @@ fn run_main(args: Vec<String>) {
         // Implemented in `run_add_command`; dispatch keeps the parsing
         // local to that function so the main switch stays a one-liner.
         "add" => cli::add::dispatch(&args),
+        // `silt remove <name>`: drop a dep from `silt.toml` and
+        // regenerate `silt.lock`.
+        "remove" => cli::remove::dispatch(&args),
         // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => cli::run::dispatch_bare_file(&args, arg),
         other => {
@@ -279,6 +283,7 @@ const SUBCOMMANDS: &[&str] = &[
     "self-update",
     "update",
     "add",
+    "remove",
 ];
 
 /// Find the closest valid token to `typo` within edit distance 2.
