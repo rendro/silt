@@ -86,7 +86,7 @@ fn main() {
 }
 ```
 
-Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `NotFound(path)` and still fall back to `.message()` for the long tail.
+Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `NotFound(path)` and still fall back to `Error.message` for the long tail.
 
 ## HTTP
 

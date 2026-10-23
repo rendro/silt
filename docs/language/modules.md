@@ -169,14 +169,11 @@ module `util`. A type whose name no other type of the program has
 prints bare: `Pt {x: 1}`.
 
 Two modules may also each declare a trait of one name, say `Show` with
-a method `show`, and implement it for one type. A method call means the
-method of the trait its module sees: a trait it declares, imports by
-name, or reaches through a module it imports. A call that sees both
-traits is an error at the call. The builtin traits (`Display`,
-`Compare`, `Equal`, `Hash`, `Error`) are always seen: a trait of the
-program with a method named `display` implemented for `Int` makes
-`5.display()` ambiguous; call it through a `where` bound for the
-trait. The structural traits of a type (`Equal`, `Hash`, `Compare`,
+a method `show`, and implement it for one type. A call names the trait
+it means, as it names any item: `a.Show.show(5)` and `b.Show.show(5)`
+are two calls of two methods. A trait of the program with a method named
+`display` implemented for `Int` is no `Display`: `Pretty.display(5)` calls
+it, and interpolation still shows `5` structurally. The structural traits of a type (`Equal`, `Hash`, `Compare`,
 `Display` without a written impl) go by the builtin traits of its
 fields, whatever trait of the program has a method of the same name.
 
@@ -208,8 +205,8 @@ fn caller() -> Int {
 ```
 
 A builtin module follows the same rule: after `import list`, a binding named
-`list` hides the module inside its scope: `list.map` there is a method call
-on the binding, which a `List` value does not have. No warning is given;
+`list` hides the module inside its scope: `list.map` there is a field of
+the binding, which a `List` value does not have. No warning is given;
 rename the binding, or import the module under another name
 (`import list as l`), to reach both.
 

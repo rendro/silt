@@ -44,7 +44,7 @@ out the OS-specific noise. A variant says what failed:
 | `Timeout` | — | op exceeded its deadline |
 | `Other(msg)` | `String` | unclassified socket failure |
 
-`TcpError` implements the built-in `Error` trait, so `e.message()`
+`TcpError` implements the built-in `Error` trait, so `Error.message(e)`
 renders any variant as a string when you don't want to branch on it.
 
 ## Echo server example

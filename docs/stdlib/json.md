@@ -26,7 +26,7 @@ A document whose shape is not known in advance is read into a
 
 Every fallible `json.*` call returns `Result(T, JsonError)`. The `JsonError`
 enum has four variants you can pattern-match on, or fall back to
-`e.message()` when you just want a rendered string (`trait Error for
+`Error.message(e)` when you just want a rendered string (`trait Error for
 JsonError` is wired in):
 
 | Variant | Fields | Meaning |
@@ -497,10 +497,11 @@ their names, `json.stringify(r)` in the order its type declares them), a
 are used wherever their types are in the value, at the top too: the
 counterpart of [`json.decode`](#jsondecode-1). An impl's `encode` uses it for
 the parts it writes; for its own value (`json.encode(self)`) it would call
-itself without end. In a module that imports json, `x.encode()` is the
-method of the trait: on a value whose type has a written impl it is what
-the impl gives, as it gives it (`json.Float(1.0)` stays a `Float`); on any
-other value it is `json.encode(x)`.
+itself without end. `json.Encode.encode(x)` is the method of the trait,
+called through it in a module that imports json: on a value whose type
+has a written impl it is what the impl gives, as it gives it
+(`json.Float(1.0)` stays a `Float`); on any other value it is
+`json.encode(x)`.
 
 ```silt
 import json

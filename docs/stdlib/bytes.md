@@ -96,7 +96,7 @@ fn main() {
 
 Every fallible `bytes.*` call returns `Result(T, BytesError)`. The enum
 exposes these variants keyed by the structural failure; pattern-match
-for granular handling or fall back to `e.message()`:
+for granular handling or fall back to `Error.message(e)`:
 
 | Variant | Fields | Raised by |
 |---------|--------|-----------|

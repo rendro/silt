@@ -22,7 +22,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 Every fallible `toml.*` call returns `Result(T, TomlError)`. The `TomlError`
 enum has four variants you can pattern-match on, or fall back to
-`e.message()` when you just want a rendered string (`trait Error for
+`Error.message(e)` when you just want a rendered string (`trait Error for
 TomlError` is wired in):
 
 | Variant | Fields | Meaning |

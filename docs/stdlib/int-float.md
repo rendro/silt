@@ -103,7 +103,7 @@ int.parse(s: String) -> Result(Int, IntError)
 Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
 `Ok(n)` on success, `Err(IntError)` on failure — a typed enum with variants
 `Empty`, `InvalidDigit(offset)`, `Overflow`, `Underflow` and `Other(message)`.
-Match on the variant to handle specific cases, or fall back to `e.message()` for
+Match on the variant to handle specific cases, or fall back to `Error.message(e)` for
 a human-readable default.
 
 ```silt

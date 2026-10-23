@@ -10,8 +10,8 @@ Every fallible stdlib module declares its own typed error enum. Silt's
 `Result(T, ModuleError)` return shape lets user code pattern-match the
 failure modes directly instead of substring-matching on a `String`
 payload. Each enum implements the built-in `Error` trait, which
-supertypes `Display` and provides a `message()` method so code that
-just wants a rendered error can fall back to `"{e.message()}"`.
+has `Display` as its supertrait and a method `message`, so code that
+just wants a rendered error can fall back to `"{Error.message(e)}"`.
 
 ## Variant naming
 

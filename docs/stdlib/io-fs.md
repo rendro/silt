@@ -34,9 +34,9 @@ Every fallible `io` / `fs` function returns `Result(T, IoError)`.
 | `Other(msg)`             | everything else                            |
 
 `IoError` implements the built-in `Error` trait, so every value exposes
-`.message() -> String` for a human-readable summary. Most call sites
+`Error.message(e) -> String` for a human-readable summary. Most call sites
 destructure specific variants when they need to branch (e.g. "create a
-default when the file does not exist") and fall through to `.message()`
+default when the file does not exist") and fall through to `Error.message`
 otherwise. See [stdlib errors](errors.md) for the shared `Error` trait.
 
 See also [bytes](bytes.md) for reading/writing binary data.

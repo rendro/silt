@@ -84,7 +84,7 @@ is there (DNS, connection, TLS, a timeout, a head that is no HTTP), and
 one after it: a body that is cut short (`ClosedEarly`), and a body that
 does not unpack or is larger than 10 MiB (`InvalidResponse`).
 A program for which a status is a failure looks at `resp.status`.
-`HttpError` implements the built-in `Error` trait, so `e.message()`
+`HttpError` implements the built-in `Error` trait, so `Error.message(e)`
 always yields a rendered string.
 
 | Variant | Fields | Meaning |

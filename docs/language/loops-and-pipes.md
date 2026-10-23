@@ -16,9 +16,9 @@ let a = list.filter(xs, { x -> x > 0 })
 let b = xs |> list.filter { x -> x > 0 }
 ```
 
-The right side is a call like any other, so the rule is the same when it
-is a method call: the piped value is the first argument the call writes,
-after the receiver. `5 |> acc.add()` is `acc.add(5)`.
+The right side is a call like any other, so the rule is the same for a
+call through a trait: `5 |> Greet.greet` is `Greet.greet(5)`, and
+`5 |> Adder.add(3)` is `Adder.add(5, 3)`.
 
 Without pipes, function composition nests inside-out. With pipes, it reads
 top-to-bottom:
@@ -92,8 +92,7 @@ println("{user.name} is {user.age}") -- field access in interpolation
 String interpolation automatically invokes the `Display` trait. User-defined
 types and the displayable builtins implement `Display` automatically;
 channels and function values are the exception — they do not implement
-`Display`, so interpolating them is a compile error. No need to call
-`.display()` explicitly.
+`Display`, so interpolating them is a compile error.
 
 Escape literal braces with backslash: `"\{not interpolation}"`.
 
