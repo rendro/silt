@@ -81,10 +81,10 @@ illustrate trait *declaration* use a fresh local name; impls of the
 real built-in `Display` trait look identical and are shown in
 [Built-in Traits](#built-in-traits) below.)
 
-An impl gives a record type no method named like one of the record's
-fields, whether the impl writes the method or takes it as the trait's
-default: `job.run(5)` calls the function the field `run` holds, and a
-method of that name would read as the same thing.
+A record may have a field and an impl a method of one name: a dot after
+a value is always the field, and a trait's method is called through its
+trait. `job.run(5)` calls the function the field `run` holds,
+`Runner.run(job, 5)` the method of the impl.
 
 ```silt
 type Job {
@@ -92,18 +92,20 @@ type Job {
   run: Fn(Int) -> Int,
 }
 
-trait Run {
+trait Runner {
   fn run(self, x: Int) -> Int
 }
 
--- error: method 'run' of the impl of 'Run' for 'Job' is named like a
--- field of 'Job'
--- help: a field and a method of one type cannot share a name: rename
--- the method or the field
-trait Run for Job {
+trait Runner for Job {
   fn run(self, x: Int) -> Int {
-    x
+    x + 100
   }
+}
+
+fn main() {
+  let job = Job { name: "double", run: { x -> x * 2 } }
+  println(job.run(5)) -- 10
+  println(Runner.run(job, 5)) -- 105
 }
 ```
 
@@ -189,6 +191,28 @@ trait Ordered for MyInt { ... }
 -- error: type 'MyInt' implements 'Ordered' but does not implement supertrait 'Equal'
 -- (only when MyInt has no Equal, e.g. it has a function field)
 ```
+
+An impl for a parameterized type has the supertrait at its own type,
+with what its header gives the type's variables: a `Box(a)` has `Equal`
+when its `a` does, so the header says so:
+
+```silt
+trait Same: Equal {
+  fn same(self, other: Self) -> Bool {
+    self == other
+  }
+}
+
+type Box(a) {
+  Bx(a),
+}
+
+trait Same for Box(a) {}
+-- error: type 'Box(a)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+-- help: add `where a: Equal` to the impl
+```
+
+`trait Same for Box(a) where a: Equal {}` is the impl.
 
 ## Default Methods
 
@@ -334,6 +358,9 @@ use — a single `trait Wrap for Box(a)` impl handles both `Box(42)` and
 
 Rules:
 
+- **An impl is for a declared type.** `trait X for a` is an error
+  (`trait impl target 'a' is not a declared type`): a function bounded by
+  the trait says "every type that has it", `fn x(v: a) where a: Show`.
 - **Only lowercase binders.** `trait X for Box(Int)` is a parse error —
   silt has no specialization.
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
@@ -477,9 +504,11 @@ trait From(Celsius) for Fahrenheit {
 ```
 
 Parameterized traits may have supertraits (`trait Child(a): Parent(a)`) and
-`where` clauses on both the trait declaration and its methods. The full
-specification — including how trait parameters flow through `where` clauses
-and how multiple impls with different arguments coexist — lives in
+`where` clauses on both the trait declaration and its methods. A type has
+at most one impl of a trait, whatever its arguments: `trait From(Celsius)
+for Fahrenheit` and `trait From(Kelvin) for Fahrenheit` are a duplicate.
+The full specification — including how trait parameters flow through
+`where` clauses — lives in
 [Generics — Parameterized trait declarations](generics.md#parameterized-trait-declarations).
 
 ## Methods That Make a Value
@@ -529,6 +558,11 @@ for `Int`. Inside a generic function with `type a` and
 concrete type passed in. See
 [Generics — Trait methods on types](generics.md#trait-methods-on-types) for
 the full rules.
+
+A type with a variant of its own name (`type Box(a) { Box(a), Empty }`)
+is the type where a type is meant: `Box.default()` calls the method of
+its impl, and `make(Box)` gives the type to a `type t` parameter;
+`Box(1)` is the variant.
 
 ## Method References
 

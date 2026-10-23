@@ -1,0 +1,29 @@
+-- `"{e}"` and `Error.message(e)` agree on the message form for an IoError.
+import io
+fn main() {
+    match io.read_file("nope_round74_runtime_lock.txt") {
+        Ok(_) -> ()
+        Err(e) -> {
+            let display_form = "{e}"
+            let message_form = Error.message(e)
+            match display_form == message_form {
+                true -> println("EQUIV")
+                false -> {
+                    println("DRIFT_FORMAT_VS_MESSAGE")
+                    println(display_form)
+                    println(message_form)
+                }
+            }
+            -- And finally: assert the canonical message-form text
+            -- (not the constructor form). If the message form ever
+            -- drifts to the constructor form, this catches it.
+            match message_form == "file not found: nope_round74_runtime_lock.txt" {
+                true -> println("CANONICAL_TEXT")
+                false -> {
+                    println("DRIFT_CANONICAL_TEXT")
+                    println(message_form)
+                }
+            }
+        }
+    }
+}

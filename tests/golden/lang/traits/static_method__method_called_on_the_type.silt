@@ -1,6 +1,6 @@
--- A method with `self` called on its type takes the receiver as its
--- first argument; a method without `self` is called on the type or on
--- a `type` parameter.
+-- A method with `self` is called through its trait, called or as a
+-- value, with the receiver as its first argument; a method without
+-- `self` is called on the type or on a `type` parameter.
 trait Vals {
   fn total(self) -> Int
   fn zero() -> Self
@@ -21,7 +21,8 @@ fn zero_of(type b) -> b where b: Vals {
 
 fn main() {
   println(Vals.total(7))
-  println(Vals.total(7))
+  let total = Vals.total
+  println(total(7))
   println(Int.zero())
   println(zero_of(Int))
 }

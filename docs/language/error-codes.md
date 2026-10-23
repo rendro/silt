@@ -94,7 +94,6 @@ numbers that are missing belong to codes that are gone.
 | `E0338` | A field named twice in a record type, literal, pattern or update. |
 | `E0339` | A top-level `let` whose initialiser can reach the `let` itself. |
 | `E0340` | A statement whose value nothing uses. |
-| `E0341` | An impl that gives a record type a method named like one of the type's fields. |
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type, ...). |
 
 ## Compiling and the entry point (4xx, 5xx)

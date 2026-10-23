@@ -1,6 +1,7 @@
 -- A Display impl that interpolates its fields shows each field as the
--- field's own impl says; an impl may call `.display()` of a field, and
+-- field's own impl says; an impl may show a field with `string.from`, and
 -- may be called through a bounded type variable and in a task.
+import string
 import task
 
 type Temp {
@@ -20,7 +21,7 @@ type Span {
 
 trait Display for Span {
   fn display(self) -> String {
-    "{self.low}..{self.high}"
+    "{self.low}..{string.from(self.high)}"
   }
 }
 

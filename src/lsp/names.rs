@@ -368,7 +368,26 @@ impl<'a> Names<'a> {
                     Some(Res::Def(id)) => self.table().get(id).is_type(),
                     Some(Res::Local | Res::Error) | None => false,
                 };
-                if qualified {
+                // `Int.empty`: the method of the trait the checker
+                // selected, of the impl for the type.
+                let through_type = match (receiver.res, expr.res) {
+                    (Some(Res::Def(ty)), Some(Res::Def(tr))) if qualified => {
+                        match (self.table().get(ty).kind, self.table().get(tr).kind) {
+                            (crate::defs::DefKind::Type(ty), crate::defs::DefKind::Trait(tr)) => {
+                                Some(Selection::Impl { tr, ty })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(selection) = through_type {
+                    self.methods.push(MethodUse {
+                        span: *field_span,
+                        name: *field,
+                        selection,
+                    });
+                } else if qualified {
                     self.name(*field_span, expr.res);
                 } else if let Some(
                     selection @ (Selection::Impl { .. }

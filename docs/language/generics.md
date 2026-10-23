@@ -619,7 +619,7 @@ trait Stream for Wrap {
 ```
 
 Inside the trait body, `Self::Item` refers to whatever the impl will
-bind. At the call site (`w.first()` on a `Wrap`), the compiler reduces
+bind. At the call site (`Stream.first(w)` on a `Wrap`), the compiler reduces
 the projection to `Int` via the impl's `type Item = Int` binding.
 
 A trait may declare more than one associated type:

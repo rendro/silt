@@ -1,4 +1,4 @@
--- `.message()` dispatches for a variant of every stdlib error enum
+-- `Error.message(e)` dispatches for a variant of every stdlib error enum
 -- (the registry-driven `<Enum>.message` globals and trait-dispatch table).
 -- The enums of modules a build may leave out are in cases of their own:
 -- HttpError and TcpError in

@@ -1,7 +1,6 @@
--- There is one Display. A type's written impl is what `.display()`,
--- interpolation, `println`, `print`, `string.from`, a `where a:
--- Display` function and the default `Error.message` print, alone and
--- inside a list.
+-- There is one Display. A type's written impl is what interpolation,
+-- `println`, `print`, `string.from`, a `where a: Display` function and
+-- the default `Error.message` print, alone and inside a list.
 import string
 
 type Temp {
@@ -23,7 +22,6 @@ fn show(x: a) -> String where a: Display {
 fn main() {
   let t = Temp { degrees: 21 }
   println("{t}")
-  println("{t}")
   println(t)
   println(string.from(t))
   println(show(t))
@@ -31,7 +29,6 @@ fn main() {
   print(t)
   println("")
   println([t])
-  println("{[t]}")
   println("{[t]}")
   println(show([t]))
 }

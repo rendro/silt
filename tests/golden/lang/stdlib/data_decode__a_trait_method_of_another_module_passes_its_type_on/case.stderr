@@ -1,17 +1,9 @@
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
- --> main.silt:14:26
+ --> main.silt:15:26
     |
- 14 |   println(Loader.load(s, Blob))
+ 15 |   println(Loader.load(s, Blob))
     |                          ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `Src.load` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
-
-error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
- --> main.silt:15:25
-    |
- 15 |   println(Loader.own(s, Blob))
-    |                         ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = note: `Src.own` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
@@ -19,5 +11,13 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
     |
  16 |   println(Loader.own(s, Blob))
     |                         ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `Src.own` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> main.silt:17:32
+    |
+ 17 |   println(loader.Loader.own(s, Blob))
+    |                                ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
   = note: `Src.own` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

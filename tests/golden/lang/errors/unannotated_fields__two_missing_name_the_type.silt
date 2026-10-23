@@ -1,0 +1,9 @@
+-- exit: 1
+-- Two fields a record lacks, read in an unannotated function: the
+-- message names the type, as for one field.
+-- stderr-contains: error[type]: type 'Person' has no fields 'email', 'phone'
+type Person { name: String }
+fn f(p) { "{p.email} {p.phone}" }
+fn main() {
+  println(f(Person { name: "a" }))
+}

@@ -1,10 +1,9 @@
--- A method without `self` is never a candidate for a call on a value,
--- of any trait: where another trait gives the type a method of the
--- name that takes `self`, `x.decode(3)` calls that one, no ambiguity.
--- So on a known type, on a value of a bounded type variable, on a
--- value whose type is not known where the call is checked, in a
--- closure whose receiver becomes known later, and beside a written
--- `json.Decode` impl.
+-- A method without `self` of one trait does not stand in the way of a
+-- method of the name that takes `self` of another: `Rd.decode(x, 3)`
+-- calls `Rd`'s, no ambiguity. So on a known type, on a value of a
+-- bounded type variable, on a value whose type is not known where the
+-- call is checked, in a closure whose argument becomes known later,
+-- and beside a written `json.Decode` impl.
 import json
 
 trait Mk {

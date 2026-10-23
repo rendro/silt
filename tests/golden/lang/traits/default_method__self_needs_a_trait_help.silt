@@ -1,0 +1,10 @@
+-- exit: 1
+-- A default body that calls a method of another trait on `self`: the
+-- help offers the bound and the supertrait.
+-- stderr-contains: error[type]: type variable `Self` is not known to implement trait 'Greet2', which 'g2' needs
+-- stderr-contains: help: add `where Self: Greet2`, or make `Greet2` a supertrait: `trait Def: Greet2`
+trait Greet2 { fn g2(self) -> String }
+trait Def { fn def(self) -> String { "def {Greet2.g2(self)}" } }
+fn main() {
+  println(1)
+}

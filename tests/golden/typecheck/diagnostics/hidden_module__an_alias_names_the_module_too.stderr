@@ -3,7 +3,7 @@ error[type]: type 'List(Int)' has no field 'length'
     |
  10 |   println(list.length(list))
     |           ^^^^^^^^^^^ type 'List(Int)' has no field 'length'
-  = help: `length` is a function of module `list`: call it as `list.length(list)`
+  = help: `length` is a function of module `list`: call it as `l.length(list)`
 
 error[type]: type 'List(Int)' has no field 'length'
  --> hidden_module__an_alias_names_the_module_too.silt:12:11

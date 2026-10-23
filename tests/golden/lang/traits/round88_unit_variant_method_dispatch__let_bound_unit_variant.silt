@@ -1,10 +1,16 @@
+-- A let-bound unit variant is a value a call through a trait dispatches
+-- on.
 type Color { Red, Green, Blue }
 
-trait Display for Color {
-  fn display(self) -> String { "a color" }
+trait Name {
+  fn name(self) -> String
+}
+
+trait Name for Color {
+  fn name(self) -> String { "a color" }
 }
 
 fn main() {
   let r = Red
-  println("{r}")
+  println(Name.name(r))
 }

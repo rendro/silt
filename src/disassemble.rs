@@ -190,9 +190,10 @@ fn disassemble_instruction(
                 Some(t) => format!("{line} of {t}"),
                 None => line,
             };
+            // (Arguments counted from 1, as a reader counts them.)
             match at {
                 0 => line,
-                at => format!("{line}, by argument {at}"),
+                at => format!("{line}, by argument {}", at + 1),
             }
         }
 

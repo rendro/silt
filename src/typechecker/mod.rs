@@ -151,6 +151,8 @@ pub struct TypeChecker {
     /// needs it finds on a variable its trait's or impl's methods share
     /// are its own.
     pub(super) body_owner: Option<Symbol>,
+    /// The trait whose default method body is being checked.
+    pub(super) default_body_of: Option<TraitKey>,
     /// The calls of trait methods on values of known types, waiting for
     /// the module's bodies (`settle_builtin_needs`).
     pub(super) via_waiting: Vec<builtin_needs::ViaUse>,
@@ -300,6 +302,16 @@ pub struct TypeChecker {
     /// The argument of type `Self` of the call through a trait whose
     /// callee is being inferred, with its place (`check_call`).
     pub(super) trait_receiver: Option<(Type, Span)>,
+    /// The type variables of each impl this module writes, by the names
+    /// its header gives them (`trait Same for Box(a)`).
+    pub(super) impl_var_names: HashMap<(TraitKey, TypeRef), Vec<(TyVar, Symbol)>>,
+    /// The names the module binds definitions of other modules to (an
+    /// item it imports, `import shapes.{ Area }`), for a help that
+    /// writes one as the module does.
+    pub(super) spelled: HashMap<crate::defs::DefId, Symbol>,
+    /// The names the module binds the modules it imports to (`sh` for
+    /// `import shapes as sh`).
+    pub(super) module_spelled: HashMap<crate::session::ModuleId, Symbol>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -355,6 +367,9 @@ pub struct TypeChecker {
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// The traits of the module's rejected impls for every type
+    /// (`trait T for a`): a type that lacks one is not reported again.
+    pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
@@ -401,6 +416,7 @@ impl TypeChecker {
             given_waiting: Vec::new(),
             via_needs: HashMap::new(),
             body_owner: None,
+            default_body_of: None,
             via_waiting: Vec::new(),
             leaf_memo: HashMap::new(),
             leaf_busy: Vec::new(),
@@ -443,6 +459,9 @@ impl TypeChecker {
             method_trait: None,
             trait_call_self: HashMap::new(),
             trait_receiver: None,
+            impl_var_names: HashMap::new(),
+            spelled: HashMap::new(),
+            module_spelled: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             builtin_imports: std::collections::HashSet::new(),
@@ -460,6 +479,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
+            blanket_traits: std::collections::HashSet::new(),
             is_cell: false,
             named_types: std::collections::HashSet::new(),
             signatures_only: false,
@@ -1353,7 +1373,9 @@ impl TypeChecker {
                         };
                         let key = self.own_trait(t.name);
                         self.body_owner = Some(builtin_needs::body_key(key, "", method.name));
+                        self.default_body_of = Some(key);
                         self.check_method_body(method, &sig, env);
+                        self.default_body_of = None;
                         self.body_owner = None;
                     }
                 }
@@ -1534,6 +1556,17 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     for binding in scope.values.values() {
         if let names::Binding::Module(id) = binding {
             checker.seen_modules.insert(*id);
+        }
+    }
+    for (name, binding) in scope.types.iter().chain(scope.values.iter()) {
+        match binding {
+            names::Binding::Def(id) => {
+                checker.spelled.entry(*id).or_insert(*name);
+            }
+            names::Binding::Module(id) => {
+                checker.module_spelled.entry(*id).or_insert(*name);
+            }
+            _ => {}
         }
     }
     // A builtin module is imported when the module binds a name of it,

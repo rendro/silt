@@ -1,4 +1,5 @@
--- stderr-not-contains: undefined global: Red.display
+-- A unit variant shown by interpolation runs its Display impl's body and
+-- shows what it returns.
 type Color { Red, Green, Blue }
 
 trait Display for Color {

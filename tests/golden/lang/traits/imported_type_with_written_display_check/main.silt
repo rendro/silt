@@ -9,5 +9,5 @@ import types.{ Tag }
 fn main() {
   let t = Tag { name: "silt" }
   println("{t}")
-  println("{t}")
+  println(t)
 }

@@ -1,0 +1,14 @@
+-- exit: 1
+-- When two traits in sight have the method, the help names both, after a
+-- value and through a type.
+-- stderr-contains: help: `go` is a method of trait `Aa` and of trait `Bb`: call it as `Aa.go(n)` or `Bb.go(n)`
+-- stderr-contains: help: `go` is a method of trait `Aa` and of trait `Bb`: call it as `Aa.go(x)` or `Bb.go(x)`
+trait Aa { fn go(self) -> Int }
+trait Bb { fn go(self) -> Int }
+trait Aa for Int { fn go(self) -> Int { 1 } }
+trait Bb for Int { fn go(self) -> Int { 2 } }
+fn main() {
+  let n = 5
+  println(n.go())
+  println(Int.go(n))
+}

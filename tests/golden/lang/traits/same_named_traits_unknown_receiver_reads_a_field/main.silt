@@ -2,7 +2,7 @@
 -- A dot after a value of unknown type is a field: `g` takes a record
 -- with a field `show`, whatever traits in sight have a method `show`.
 -- stderr-contains: error[type]: type 'Int' has no field 'show'
--- stderr-contains: help: `show` is a method of trait `a.Show`: call it as `a.Show.show(x)`
+-- stderr-contains: help: `show` is a method of trait `a.Show` and of trait `b.Show`: call it as `a.Show.show(x)` or `b.Show.show(x)`
 import a
 import b
 fn main() {

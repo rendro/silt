@@ -140,6 +140,28 @@ impl Server {
             .map(|f| trait_method(q.as_ref(), f))
             .collect()
     }
+
+    /// The methods called on the type `ty` (`Int.empty()`), those that
+    /// make a value of it, of each trait an impl gives it, each with its
+    /// signature.
+    pub(super) fn type_maker_methods(&self, doc: &Document, ty: TypeId) -> Vec<TraitMethod> {
+        let Some(session) = (doc.module.as_ref())
+            .and_then(|module| self.projects.get(&module.project))
+            .map(|project| &project.session)
+        else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for (tr, name) in session.tables().makers_of(ty) {
+            let Some((decl, q)) = self.trait_decl(doc, tr) else {
+                continue;
+            };
+            if let Some(f) = decl.methods.iter().find(|f| f.name == name) {
+                found.push(trait_method(q.as_ref(), f));
+            }
+        }
+        found
+    }
 }
 
 /// A method of a trait as a call through the trait shows it.

@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A builtin trait's method is not reached through a builtin type, by its
+-- module path or an imported name: it is called through its trait (or,
+-- for Display, by interpolation).
+-- stderr-contains: error[type]: type 'io.IoError' has no method 'message'
+-- stderr-contains: help: `message` is a method of trait `Error`: call it as `Error.message(x)`
+-- stderr-contains: error[type]: type 'Int' has no method 'compare'
+-- stderr-contains: help: `compare` is a method of trait `Compare`: call it as `Compare.compare(x, ..)`
+-- stderr-contains: error[type]: type 'Int' has no method 'display'
+-- stderr-contains: help: show a value with interpolation, `"{x}"`, or with `string.from(x)`
+import io
+import io.{ IoError }
+fn main() {
+  match io.read_file("/nonexistent/silt/r5") {
+    Ok(_) -> println("ok")
+    Err(e) -> {
+      println(io.IoError.message(e))
+      println(IoError.message(e))
+    }
+  }
+  println(Int.compare(1, 2))
+  println(Int.display(1))
+}

@@ -20,8 +20,8 @@
 -- lsp: references 80:10
 -- lsp: rename 94:24 Holder
 -- A rename edits what the name means and nothing else. A method name at
--- a call is no name of its trait (and has no rename); its definition is
--- the method. `self` is not renamed. A field written without its value
+-- a call is no name of its trait: its rename is the method's, as is its
+-- definition. `self` is not renamed. A field written without its value
 -- is written out. The binders of an or-pattern's alternatives are one
 -- binding. A new name that is taken where the old one is written is
 -- refused. A block ends its `let`s. `<T as Trait>::Item` names the trait.

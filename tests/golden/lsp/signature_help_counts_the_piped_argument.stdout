@@ -1,0 +1,9 @@
+> signature 18:24
+fn put(self, n: Int) -> Int
+argument 2: n: Int
+> signature 19:27
+fn list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
+argument 2: f: Fn(a) -> b
+> signature 20:20
+fn add(a: Int, b: Int) -> Int
+argument 2: b: Int

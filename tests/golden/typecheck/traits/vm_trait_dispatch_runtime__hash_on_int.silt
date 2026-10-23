@@ -1,4 +1,4 @@
--- `.hash()` on Int through a Hash bound runs (the value itself is not pinned).
+-- `Hash.hash` on Int through a Hash bound runs (the value itself is not pinned).
 fn h(a: a) -> Int where a: Hash { Hash.hash(a) }
 fn main() {
   let v = h(42)

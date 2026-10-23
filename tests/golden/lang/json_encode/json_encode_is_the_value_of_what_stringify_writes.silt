@@ -1,7 +1,7 @@
 -- `json.encode(x)` is the `json.Value` of what `json.stringify(x)` writes:
 -- what `json.parse` reads of that text (`1.0` is `json.Int(1)`, a record
 -- an object, whose keys come out sorted), written impls included, at the
--- top too. `.encode()` is the same on a value of any type that has
+-- top too. `json.Encode.encode(x)` is the same on a value of any type that has
 -- `json.Encode`, through a bound and by a concrete type, and an impl
 -- uses `json.encode` for the parts it writes.
 import json

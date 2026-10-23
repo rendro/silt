@@ -1,0 +1,21 @@
+-- cmd: lsp
+-- lsp: signature 18:24
+-- lsp: signature 19:27
+-- lsp: signature 20:20
+-- A piped value is the first argument of the call it goes into: the
+-- argument written first in `3 |> Put.put(4)` is the second, also for a
+-- module function and a function of this module.
+import list
+trait Put { fn put(self, n: Int) -> Int }
+trait Put for Int { fn put(self, n: Int) -> Int { self + n } }
+fn double(a: Int) -> Int {
+  a * 2
+}
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+fn main() {
+  println(3 |> Put.put(4))
+  println([1] |> list.map(double))
+  println(1 |> add(2))
+}

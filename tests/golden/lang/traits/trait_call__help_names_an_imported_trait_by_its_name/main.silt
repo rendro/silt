@@ -1,0 +1,13 @@
+-- exit: 1
+-- The help writes the trait as this module reaches it: by the name an
+-- import gave it. Both messages spell the type the same way.
+-- stderr-contains: error[type]: type 'shapes.Sq' has no method 'area'
+-- stderr-contains: help: `area` is a method of trait `Area`: call it as `Area.area(x)`
+-- stderr-contains: error[type]: type 'shapes.Sq' has no field 'area'
+-- stderr-contains: help: `area` is a method of trait `Area`: call it as `Area.area(s)`
+import shapes.{ Area, Sq }
+fn main() {
+  let s = Sq { side: 3 }
+  println(Sq.area(s))
+  println(s.area())
+}

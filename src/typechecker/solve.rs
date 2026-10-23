@@ -130,6 +130,10 @@ impl Gap {
     }
 }
 
+/// The `op` of the `Origin` of what a pin pattern (`^x`) owes: it
+/// compares as `==` does.
+pub(super) const PIN: &str = "^";
+
 /// Where a predicate is owed, and what asked for it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Origin {
@@ -1263,7 +1267,7 @@ impl TypeChecker {
     }
 
     /// The supertraits of the trait `t`, theirs too.
-    fn supertraits_of(&self, t: TraitKey) -> Vec<TraitKey> {
+    pub(super) fn supertraits_of(&self, t: TraitKey) -> Vec<TraitKey> {
         let mut found: Vec<TraitKey> = Vec::new();
         let mut next = vec![t];
         while let Some(t) = next.pop() {
@@ -1430,16 +1434,15 @@ impl TypeChecker {
                     if let Some(op) = origin.op
                         && gap.is_whole()
                     {
-                        self.error(
-                            Code::UnsupportedOperation,
-                            operator_message(
-                                &resolve(trait_name.name),
-                                op,
-                                &resolved,
-                                &self.show_type(&resolved),
+                        let shown = self.show_type(&resolved);
+                        let message = match (op, origin.callee) {
+                            // (A pin compares as `==` does.)
+                            (PIN, Some(pinned)) => format!(
+                                "the pin '^{pinned}' requires a comparable type, got '{shown}'"
                             ),
-                            span,
-                        );
+                            _ => operator_message(&resolve(trait_name.name), op, &resolved, &shown),
+                        };
+                        self.error(Code::UnsupportedOperation, message, span);
                         return;
                     }
                     let message = match gap.is_whole() {
@@ -1777,6 +1780,10 @@ impl TypeChecker {
             .trait_impl_set
             .contains(&(trait_name, type_name))
         {
+            // The impl for every type was reported.
+            if self.blanket_traits.contains(&trait_name) {
+                return;
+            }
             // An operator's own operand: the operator's message.
             if let Some(op) = origin.op {
                 self.error(

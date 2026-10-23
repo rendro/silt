@@ -1,6 +1,182 @@
 use super::*;
 
 impl TypeChecker {
+    /// Whether the impl of `tr` for `head` was reported for a type
+    /// variable of its type that its header does not give a trait the
+    /// supertrait `sup` asks of it at that type (`'a' needs 'Equal'`).
+    fn supertrait_needs_reported(
+        &mut self,
+        tr: TraitKey,
+        head: TypeRef,
+        sup: TraitKey,
+        span: Span,
+    ) -> bool {
+        let Some(self_ty) = self.tables.impl_self_types.get(&(tr, head)).cloned() else {
+            return false;
+        };
+        let mut needs: Vec<(TyVar, TraitKey)> = Vec::new();
+        if !self.trait_needs(sup, &self_ty, 0, &mut needs) {
+            return false;
+        }
+        // What the header gives, with the supertraits of each bound.
+        let mut given: Vec<(TyVar, TraitKey)> = Vec::new();
+        for pred in self
+            .tables
+            .impl_preds
+            .get(&(tr, head))
+            .into_iter()
+            .flatten()
+        {
+            if let Pred::Trait {
+                tr: bound,
+                subject: Type::Var(v),
+                ..
+            } = pred
+            {
+                given.push((*v, *bound));
+                given.extend(self.supertraits_of(*bound).into_iter().map(|s| (*v, s)));
+            }
+        }
+        let mut missing: Vec<(TyVar, TraitKey)> = Vec::new();
+        for need in needs.iter().filter(|need| !given.contains(need)) {
+            if !missing.contains(need) {
+                missing.push(*need);
+            }
+        }
+        let Some(&(var, trait_needed)) = missing.first() else {
+            return false;
+        };
+        // The impl's type variables by the names its header writes
+        // (letters for those of a bare target, which names none).
+        let mut names: Vec<(TyVar, Symbol)> = self
+            .impl_var_names
+            .get(&(tr, head))
+            .cloned()
+            .unwrap_or_default();
+        let named = !names.is_empty();
+        for v in free_vars_in(&self_ty) {
+            if !names.iter().any(|(known, _)| *known == v) {
+                let letter = char::from(b'a' + (names.len() % 26) as u8);
+                names.push((v, intern(&letter.to_string())));
+            }
+        }
+        let mapping: HashMap<TyVar, Type> = names
+            .iter()
+            .map(|(v, name)| {
+                (
+                    *v,
+                    Type::Rigid(RigidId {
+                        var: *v,
+                        name: *name,
+                    }),
+                )
+            })
+            .collect();
+        let shown_ty = self.show_type(&substitute_vars(&self_ty, &mapping));
+        let name_of = |var: TyVar| {
+            (names.iter())
+                .find(|(v, _)| *v == var)
+                .map_or_else(|| "a".to_string(), |(_, name)| resolve(*name))
+        };
+        let var_name = name_of(var);
+        let (tr_shown, sup_shown, needed) = (
+            self.show_trait(tr),
+            self.show_trait(sup),
+            self.show_trait(trait_needed),
+        );
+        // The help names every variable that needs a bound.
+        let bounds: Vec<String> = (missing.iter())
+            .map(|(v, t)| format!("{}: {}", name_of(*v), self.show_trait(*t)))
+            .collect();
+        let bounds = bounds.join(", ");
+        let help = match named {
+            true => format!("add `where {bounds}` to the impl"),
+            false => format!("write the impl for `{shown_ty}`, with `where {bounds}`"),
+        };
+        self.error_help(
+            Code::MissingTraitImpl,
+            (
+                format!(
+                    "type '{shown_ty}' implements '{tr_shown}' but does not implement supertrait \
+                     '{sup_shown}': '{var_name}' needs '{needed}'"
+                ),
+                Some(help),
+            ),
+            span,
+        );
+        true
+    }
+
+    /// What the trait `tr` asks of the type variables of `ty` for `ty`
+    /// to have it, gathered into `needs`: the variable itself; a part of
+    /// a type that has the trait by its structure; what the header of
+    /// the impl written for the type's head asks, at the type's
+    /// arguments. `false` where a part that is no variable lacks it.
+    fn trait_needs(
+        &self,
+        tr: TraitKey,
+        ty: &Type,
+        depth: usize,
+        needs: &mut Vec<(TyVar, TraitKey)>,
+    ) -> bool {
+        if depth > 16 {
+            return true;
+        }
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        if let Type::Var(v) = ty {
+            if !needs.contains(&(v, tr)) {
+                needs.push((v, tr));
+            }
+            return true;
+        }
+        let Some(head) = self.type_name_for_impl(&ty) else {
+            return true;
+        };
+        if self.by_structure(tr, head) {
+            // (What json decodes is the decoder's to say.)
+            if Self::is_decode(tr) {
+                return true;
+            }
+            let mut walk = super::solve::Walk::default();
+            if self.structure_gap(tr, &ty, &mut walk, 0).is_some() {
+                return false;
+            }
+            for part in walk.open {
+                if let Type::Var(v) = part
+                    && !needs.contains(&(v, tr))
+                {
+                    needs.push((v, tr));
+                }
+            }
+            return (walk.written.iter()).all(|part| self.trait_needs(tr, part, depth + 1, needs));
+        }
+        if !self.tables.trait_impl_set.contains(&(tr, head)) {
+            return false;
+        }
+        let Some(impl_ty) = self.tables.impl_self_types.get(&(tr, head)) else {
+            return true;
+        };
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        super::builtin_needs::match_type(impl_ty, &ty, &free_vars_in(impl_ty), &mut mapping);
+        (self
+            .tables
+            .impl_preds
+            .get(&(tr, head))
+            .into_iter()
+            .flatten())
+        .all(|pred| match pred {
+            Pred::Trait {
+                tr: bound, subject, ..
+            } => self.trait_needs(
+                *bound,
+                &substitute_vars(subject, &mapping),
+                depth + 1,
+                needs,
+            ),
+            _ => true,
+        })
+    }
+
     // ── Validate trait implementations ────────────────────────────────
 
     pub(super) fn validate_trait_impls(&mut self) {
@@ -64,6 +240,13 @@ impl TypeChecker {
                         ),
                         diag_span,
                     );
+                    continue;
+                }
+                // The supertrait holds at the impl's own type, its type
+                // variables having what the impl's header gives them
+                // (`trait Same for Box(a) where a: Equal`), not at the
+                // head alone: a `Box(a)` has `Equal` when its `a` does.
+                if self.supertrait_needs_reported(*trait_name, *type_name, *supertrait, diag_span) {
                     continue;
                 }
                 // Resolve the supertrait's expected args against the
@@ -787,18 +970,24 @@ impl TypeChecker {
         // declared: `trait Greet for Widget { ... }` with no `type
         // Widget` would attach methods to a phantom type. A lowercase
         // target (`trait Display for a { ... }`) names a type variable,
-        // not a type: there is nothing to register it for.
+        // not a type: an impl is for a declared type, never for every
+        // type.
         if self.names_rejected(ti.target_res, ti.target_type) {
             return;
         }
         let Some(written) = self.named_type(ti.target_res, ti.target_type) else {
             let name_str = resolve(ti.target_type);
-            if !name_str.starts_with(|c: char| c.is_lowercase()) {
-                self.error(
-                    Code::UnknownType,
-                    format!("trait impl target '{name_str}' is not a declared type"),
-                    ti.span,
-                );
+            self.error(
+                Code::UnknownType,
+                format!("trait impl target '{name_str}' is not a declared type"),
+                ti.span,
+            );
+            self.unresolved_impl_methods
+                .extend(ti.methods.iter().map(|m| m.name));
+            if name_str.starts_with(char::is_lowercase)
+                && let Some(tr) = self.impl_trait(ti)
+            {
+                self.blanket_traits.insert(tr);
             }
             return;
         };
@@ -1120,6 +1309,17 @@ impl TypeChecker {
         self.tables
             .impl_self_types
             .insert((trait_key, target_type), self_type.clone());
+        // The names the header gives the impl's type variables, for a
+        // message about one (`validate_trait_impls`).
+        self.impl_var_names.insert(
+            (trait_key, target_type),
+            (impl_param_map.iter())
+                .filter_map(|(name, ty)| match self.apply(ty) {
+                    Type::Var(v) => Some((v, *name)),
+                    _ => None,
+                })
+                .collect(),
+        );
 
         // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
         // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.
@@ -1465,8 +1665,6 @@ impl TypeChecker {
                 );
             }
         }
-
-        self.methods_named_like_fields(ti, target_type, trait_info_clone.as_ref());
 
         // ── The methods ─────────────────────────────────────────────
         //
@@ -1899,85 +2097,6 @@ impl TypeChecker {
                     },
                 );
             }
-        }
-    }
-
-    /// Report each method the impl `ti` gives its type, the record
-    /// `target_type`, that is named like a field of the record: by the
-    /// name alone, whatever the field holds. `r.name(..)` is then a call
-    /// of what the field holds, on every record, and a method's call on
-    /// everything else, whether or not the receiver's type is known
-    /// where the call is written.
-    ///
-    /// A method the impl writes is reported where it is written; a
-    /// default method of the trait the impl leaves out, at the impl.
-    /// (A supertrait's methods are those of the supertrait's own impl.)
-    fn methods_named_like_fields(
-        &mut self,
-        ti: &TraitImpl,
-        target_type: TypeRef,
-        info: Option<&TraitInfo>,
-    ) {
-        let Some(record) = self.tables.records.get(&target_type).cloned() else {
-            return;
-        };
-        // Where the record declares the field `name`, if it has one.
-        let field_span = |name: Symbol| {
-            let at = record.fields.iter().position(|(field, _)| *field == name)?;
-            record.field_spans.get(at).copied()
-        };
-        // The impl as it is written (its target may be an alias of the
-        // record; a type of another module with its module), the record
-        // by its name.
-        let tr = self.impl_trait_name(ti);
-        let ty = self.show_type(&Type::Generic(target_type, vec![]));
-        let of = self.impl_target_name(ti, target_type);
-        let mut found: Vec<(Span, String, Symbol, Span)> = Vec::new();
-        let mut written: Vec<Symbol> = Vec::new();
-        for method in &ti.methods {
-            if written.contains(&method.name) {
-                continue;
-            }
-            written.push(method.name);
-            // (A method the trait does not declare is reported as that.)
-            let declared =
-                info.is_none_or(|info| info.methods.iter().any(|(name, _)| *name == method.name));
-            if declared && let Some(field) = field_span(method.name) {
-                let message = format!(
-                    "method '{}' of the impl of '{tr}' for '{of}' is named like a field of '{ty}'",
-                    method.name
-                );
-                found.push((method.name_span, message, method.name, field));
-            }
-        }
-        let defaults = info.into_iter().flat_map(|info| {
-            info.methods
-                .iter()
-                .map(|(name, _)| *name)
-                .filter(|name| info.default_method_bodies.contains_key(name))
-        });
-        for name in defaults {
-            if written.contains(&name) {
-                continue;
-            }
-            if let Some(field) = field_span(name) {
-                let message = format!(
-                    "the impl of '{tr}' for '{of}' takes the default method '{name}' of the \
-                     trait, which is named like a field of '{ty}'"
-                );
-                found.push((ti.span, message, name, field));
-            }
-        }
-        for (span, message, name, field) in found {
-            let mut d = Diagnostic::error(Code::MethodNamedLikeField, span, message);
-            // (A builtin record's fields are declared in no file.)
-            if field.is_in_source() {
-                d = d.with_label(field, format!("the field '{name}' of '{ty}'"));
-            }
-            self.errors.push(d.with_help(
-                "a field and a method of one type cannot share a name: rename the method or \
-                 the field",
-            ));
         }
     }
 

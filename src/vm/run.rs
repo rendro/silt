@@ -728,7 +728,7 @@ impl Vm {
                         Err(Unwritten::NoText(at)) => {
                             fail!(VmError::type_confusion(format!(
                                 "string interpolation requires string values, got {} \
-                                 — call `.to_string()` or `.display()` on the value first",
+                                 — convert the value with `string.from` first",
                                 self.user_facing_type_name(&self.stack[at])
                             )));
                         }

@@ -588,6 +588,26 @@ impl TypeChecker {
         if self.names_rejected(res, def.name) {
             return Some(Scheme::mono(Type::Error));
         }
+        // An enum written as a value whose name a variant of it has too
+        // (`type Box(a) { Box(a), Empty }`): the name is bound to the
+        // variant, and the type's value is made here.
+        if let crate::defs::DefKind::Type(t) = def.kind {
+            let ty = TypeRef {
+                id: t,
+                name: def.name,
+            };
+            if let Some(info) = self.tables.enums.get(&ty)
+                && info.variants.iter().any(|v| v.name == def.name)
+            {
+                let vars = info.param_var_ids.clone();
+                let args = vars.iter().map(|v| Type::Var(*v)).collect();
+                return Some(Scheme {
+                    vars,
+                    preds: Vec::new(),
+                    ty: Type::type_of(Type::Generic(ty, args)),
+                });
+            }
+        }
         if def.module == self.module && !matches!(def.kind, crate::defs::DefKind::Variant { .. }) {
             return env.lookup(def.name).cloned();
         }

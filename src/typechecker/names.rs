@@ -2523,7 +2523,7 @@ impl Resolver<'_> {
             self.error(Diagnostic::error(Code::UnresolvedName, span, NO_IF).with_help(NO_IF_HELP));
             return;
         }
-        let message = format!("undefined variable '{name_str}'");
+        let mut message = format!("undefined variable '{name_str}'");
         let foreign = match name_str.as_str() {
             "break" | "continue" => {
                 Some("silt has no 'break'/'continue' — return early or restructure the recursion")
@@ -2554,11 +2554,21 @@ impl Resolver<'_> {
                     .first()
                     .filter(|_| elsewhere.iter().all(no_value))
                     .map(|(module, _)| *module);
+                // A trait of a module: it is imported by its name.
+                let trait_module = (elsewhere.first())
+                    .filter(|(module, _)| {
+                        crate::module::missing_feature(&resolve(*module)).is_none()
+                    })
+                    .filter(|(module, _)| self.is_trait_of(*module, name))
+                    .map(|(module, _)| *module);
                 if let Some(module) = no_value_module {
                     Some(super::builtin_env::bare_module_type_is_no_value_help(
                         &name_str,
                         &format!("{module}.{name}"),
                     ))
+                } else if let Some(module) = trait_module {
+                    message = format!("trait '{name_str}' is not in scope");
+                    Some(format!("import it: `import {module}.{{ {name} }}`"))
                 } else if !elsewhere.is_empty() {
                     Some(self.elsewhere_help(name, &elsewhere))
                 } else if let Some(help) = self.alias_help(name) {
@@ -2587,6 +2597,30 @@ impl Resolver<'_> {
             d = d.with_help(help);
         }
         self.error(d);
+    }
+
+    /// Whether the module of the name `module` (bound here, imported, or
+    /// a builtin one) offers a trait `name`.
+    fn is_trait_of(&self, module: Symbol, name: Symbol) -> bool {
+        let bound = (self.scope.values.values()).filter_map(|b| match b {
+            Binding::Module(id) => Some(*id),
+            _ => None,
+        });
+        let imported = (self.imports.values()).filter_map(|i| match i {
+            Imported::Module(id, _) | Imported::Builtin(id) => Some(*id),
+            _ => None,
+        });
+        let mut ids = bound
+            .chain(imported)
+            .chain(ModuleId::builtin(&resolve(module)));
+        let Some(exports) = ids
+            .find(|id| self.module_name(*id) == Some(module))
+            .and_then(|id| self.module_exports(id))
+        else {
+            return false;
+        };
+        matches!(exports.member(name), Some(Binding::Def(d))
+            if matches!(self.defs.get(*d).kind, DefKind::Trait(_)))
     }
 
     /// The name the module imported as `name` is bound as, when an
@@ -2696,6 +2730,13 @@ impl Resolver<'_> {
         }
         let ExprKind::Ident(head_name) = obj.kind else {
             self.expr(obj);
+            // `m.Box.default()`: the type, not its variant of that name.
+            if let Some(Res::Def(d)) = obj.res
+                && let Some(ty) = self.type_named_like_its_variant(d)
+                && !resolve(field).starts_with(char::is_uppercase)
+            {
+                obj.res = Some(Res::Def(ty));
+            }
             return None;
         };
         let head_span = obj.span;
@@ -2750,7 +2791,19 @@ impl Resolver<'_> {
                 None
             }
             Some(Binding::Def(d)) => {
-                obj.res = Some(Res::Def(d));
+                // `Box.default()` with `type Box(a) { Box(a), .. }`, or with
+                // a type `Box` and a variant `Box` of another type: a
+                // variant has no methods, the type of that name does.
+                let ty = (self.defs.variant_type(d).is_some())
+                    .then(|| match self.lookup_type(head_name) {
+                        Some(Binding::Def(t)) if self.defs.get(t).is_type() => Some(t),
+                        _ => self.type_named_like_its_variant(d),
+                    })
+                    .flatten();
+                obj.res = Some(Res::Def(match ty {
+                    Some(ty) if !resolve(field).starts_with(char::is_uppercase) => ty,
+                    _ => d,
+                }));
                 None
             }
             None if crate::module::is_builtin_module(&resolve(head_name))
@@ -2785,6 +2838,18 @@ impl Resolver<'_> {
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
             }
+        }
+    }
+
+    /// The type of the variant `d` when it has the variant's name
+    /// (`type Box(a) { Box(a), Empty }`): where a type is meant (a method
+    /// through it, a `type a` argument) the name means it.
+    pub(super) fn type_named_like_its_variant(&self, d: DefId) -> Option<DefId> {
+        let def = self.defs.get(d);
+        let ty = self.defs.variant_type(d)?;
+        match ty.kind {
+            DefKind::Type(t) if ty.name == def.name => Some(t.0),
+            _ => None,
         }
     }
 

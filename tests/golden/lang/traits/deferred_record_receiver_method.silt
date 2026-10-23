@@ -1,6 +1,7 @@
--- A method call on a lambda parameter that becomes a record type only
--- once the call is inferred (`list.map(ps) { p -> p.greet() }`) is the
--- record type's method, as for an Int or a List receiver.
+-- A call through a trait on a lambda parameter that becomes a record
+-- type only once the call is inferred
+-- (`list.map(ps) { p -> Greet.greet(p) }`) is the record type's method,
+-- as for an Int or a List receiver.
 import list
 type P { v: Int }
 trait Greet { fn greet(self) -> String }

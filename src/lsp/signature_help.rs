@@ -197,10 +197,11 @@ pub(super) fn build_signature_from_def(
 
 /// The call that the end of `tokens` is in, as the name written in
 /// front of its `(` (`f`, or `m.f`) and the number of its arguments
-/// that are complete (the index of the one being written): the
-/// innermost `(` that is not closed. A list, a record, a block or a
-/// string interpolation that is open inside it is part of the argument
-/// being written, and its commas are its own.
+/// that are complete (the index of the one being written), the piped
+/// value of `x |> f(` counted as the first: the innermost `(` that is
+/// not closed. A list, a record, a block or a string interpolation that
+/// is open inside it is part of the argument being written, and its
+/// commas are its own.
 fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
     #[derive(PartialEq)]
     enum Open {
@@ -251,6 +252,11 @@ fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
             .is_some_and(|tok| tok.kind == Token::Dot)
     };
     let name = name_at(paren.checked_sub(1))?;
+    // The argument a pipe gives the call comes before those written.
+    let piped = |path: usize| {
+        let at = (paren.checked_sub(path + 1)).and_then(|i| tokens.get(i));
+        commas + u32::from(at.is_some_and(|tok| tok.kind == Token::Pipe))
+    };
     // `m.f(`: a member of a module, or `Tr.f(`, a method through its
     // trait; `m.Tr.f(`, through a trait of a module. A longer path is a
     // field of a value, which has no signature here.
@@ -261,11 +267,11 @@ fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
             if is_dot(paren.checked_sub(6)) {
                 return None;
             }
-            return Some((format!("{outer}.{module}.{name}"), *commas));
+            return Some((format!("{outer}.{module}.{name}"), piped(5)));
         }
-        return Some((format!("{module}.{name}"), *commas));
+        return Some((format!("{module}.{name}"), piped(3)));
     }
-    Some((name, *commas))
+    Some((name, piped(1)))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

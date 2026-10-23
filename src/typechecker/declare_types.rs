@@ -297,7 +297,6 @@ impl TypeChecker {
                     ty,
                     RecordInfo {
                         fields: field_types.clone(),
-                        field_spans: fields.iter().map(|f| f.name_span).collect(),
                     },
                 );
 

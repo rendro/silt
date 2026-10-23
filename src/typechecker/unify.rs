@@ -640,7 +640,7 @@ impl TypeChecker {
                 match missing.as_slice() {
                     [field] => format!("type '{shown}' has no field '{field}'"),
                     _ => format!(
-                        "record {shown} has no fields {}",
+                        "type '{shown}' has no fields {}",
                         missing
                             .iter()
                             .map(|f| format!("'{f}'"))

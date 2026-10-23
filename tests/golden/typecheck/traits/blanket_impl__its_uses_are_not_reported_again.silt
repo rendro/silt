@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A use of a trait whose impl for every type is rejected is not reported
+-- again as a type that lacks the trait.
+-- stderr-contains: error[type]: trait impl target 'a' is not a declared type
+-- stderr-not-contains: does not implement trait 'Shout'
+trait Shout { fn shout(self) -> String { "default" } }
+trait Shout for a {}
+fn main() {
+  println(Shout.shout(5))
+}

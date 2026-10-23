@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- An impl is for a declared type: `trait Shout for a` names a type
+-- variable, and is an error, whether or not anything calls the method.
+-- (It used to be skipped without a word.)
+trait Shout {
+  fn shout(self) -> String
+}
+trait Shout for a {
+  fn shout(self) -> String { "!" }
+}
+fn main() {
+  println("declared only")
+}

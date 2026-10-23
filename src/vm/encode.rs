@@ -1,5 +1,5 @@
 //! Writing a value as data: `json.stringify`, `json.pretty`,
-//! `json.encode`, `.encode()`, `toml.stringify`, `toml.pretty` and the
+//! `json.encode`, `json.Encode.encode`, `toml.stringify`, `toml.pretty` and the
 //! parameters of a postgres statement.
 //!
 //! A value is written by the one writer (`builtins::data`), but a record

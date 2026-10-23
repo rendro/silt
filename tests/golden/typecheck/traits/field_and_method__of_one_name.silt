@@ -1,0 +1,56 @@
+-- verdict: same
+-- A record may have a field and an impl a method of one name: a dot
+-- after a value is the field, and the method is called through its
+-- trait. `h.run(1)` calls the function the field `run` holds,
+-- `Run.run(h, 1)` the impl's method, written or the trait's default, on
+-- a known type, through a bound, on a generic record and where the
+-- record's type is decided after the call is read (a closure's
+-- parameter). An impl for an enum, a function named like a field and an
+-- anonymous record are as before.
+import list
+type Shape { Circle(Int), Square(Int) }
+trait Area { fn area(self) -> Int }
+trait Area for Shape {
+  fn area(self) -> Int {
+    match self {
+      Circle(r) -> r * r * 3
+      Square(s) -> s * s
+    }
+  }
+}
+trait Run { fn run(self, x: Int) -> Int }
+trait Run for Int { fn run(self, x: Int) -> Int { self + x } }
+type H { run: Fn(Int) -> Int, area: Int }
+trait Run for H { fn run(self, x: Int) -> Int { self.area + x } }
+trait Named { fn name(self) -> String { "by default" } }
+type P { name: String }
+trait Named for P {}
+type Box(a) { value: a, run: Fn(a) -> a }
+trait Run for Box(a) { fn run(self, x: Int) -> Int { x * 100 } }
+fn run(x: Int) -> Int { x * 2 }
+fn bounded(r: a, x: Int) -> Int where a: Run { Run.run(r, x) }
+fn inferred(r, x) { Run.run(r, x) }
+fn main() {
+  let h = H { run: { x -> x + 1 }, area: 9 }
+  println(h.run(1))
+  println(Run.run(h, 1))
+  println(1 |> h.run)
+  println(h |> Run.run(1))
+  println(h.area)
+  println(bounded(h, 3))
+  let p = P { name: "field" }
+  println(p.name)
+  println(Named.name(p))
+  let b = Box { value: 2, run: { v -> v + 1 } }
+  println(b.run(2))
+  println(Run.run(b, 2))
+  println(Run.run(3, 4))
+  println(run(5))
+  println(Area.area(Circle(2)))
+  let anon = {run: { x -> x - 1 }}
+  println(anon.run(0))
+  let hs = [h, H { run: { x -> x * 10 }, area: 0 }]
+  println(list.map(hs, { r -> r.run(7) }))
+  println(list.map(hs, { r -> Run.run(r, 7) }))
+  println(inferred(h, 4))
+}

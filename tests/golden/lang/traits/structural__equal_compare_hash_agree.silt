@@ -1,5 +1,5 @@
 -- Equal, Compare and Hash are the value's structure, the same for the
--- operator, the method, a `where` bound, a sort, a map key and a set
+-- operator, the trait's method, a `where` bound, a sort, a map key and a set
 -- member. A record is ordered by its fields in the order the type
 -- declares them (not by their names), an enum by its variants in the
 -- order it declares them and then by payload.
@@ -58,7 +58,6 @@ fn main() {
   let x = Tagged { tag: "t", item: [Some(a), None] }
   let y = Tagged { tag: "t", item: [Some(Version { minor: 1, major: 9 }), None] }
   println(x == y)
-  println(x == y)
   println(same(x, y))
   println(hashes(x, y))
   println(Hash.hash(x) == Hash.hash(y))
@@ -68,7 +67,6 @@ fn main() {
   println(hashes((a, [Dot]), (a, [Dot])))
   println(same(x, Tagged { tag: "u", item: [] }))
   -- Floats: 0.0 and -0.0 are equal, hash alike and order as equal.
-  println(0.0 == -0.0)
   println(0.0 == -0.0)
   println(hashes(0.0, -0.0))
   println(Compare.compare(0.0, -0.0))

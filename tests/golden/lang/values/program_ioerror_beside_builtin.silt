@@ -1,7 +1,7 @@
 -- A program's type named like the builtin io.IoError, with impls of its
 -- own: its impls do not replace the builtin type's, and each prints as
--- itself (`println` of a value shows its fields; `.display()` runs the
--- impl).
+-- itself (`println` of a value shows its fields; `Error.message` runs
+-- the impl).
 import io
 
 type IoError { Oops(String) }

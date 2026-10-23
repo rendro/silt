@@ -1,0 +1,14 @@
+pub trait Default {
+  fn default() -> Self
+}
+
+pub type Box(a) {
+  Box(a),
+  Empty,
+}
+
+trait Default for Box(a) {
+  fn default() -> Self {
+    Empty
+  }
+}

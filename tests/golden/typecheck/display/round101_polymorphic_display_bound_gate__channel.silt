@@ -1,0 +1,11 @@
+-- A channel given to a function with a Display bound (`where a: Display`) is rejected at the call, with no interpolation suffix.
+-- exit: 1
+-- stderr-contains: does not implement trait 'Display'
+-- stderr-contains: 'Channel'
+-- stderr-not-contains: required for string interpolation
+import channel
+fn show(x: a) -> String where a: Display { "{x}" }
+fn main() {
+  let c = channel.new(1)
+  println(show(c))
+}

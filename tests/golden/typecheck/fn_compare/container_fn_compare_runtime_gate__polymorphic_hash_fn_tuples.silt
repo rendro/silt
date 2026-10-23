@@ -1,4 +1,4 @@
--- `.hash()` through a polymorphic wrapper on tuples holding functions fails.
+-- `Hash.hash` through a polymorphic wrapper on tuples holding functions fails.
 -- exit: 1
 -- stderr-contains: error[type]: type '(Fn(_) -> _, Int)' does not implement trait 'Hash': part #1 is of type 'Fn(_) -> _', which does not
 fn h(a: x) -> Int where x: Hash { Hash.hash(a) }

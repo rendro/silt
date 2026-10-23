@@ -1,0 +1,5 @@
+error[type]: trait impl target 'a' is not a declared type
+ --> blanket_impl__is_an_error.silt:9:1
+   |
+ 9 | trait Shout for a {
+   | ^^^^^^^^^^^^^^^^^^^ trait impl target 'a' is not a declared type
