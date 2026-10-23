@@ -174,10 +174,10 @@ runs to its end, and its connection is then shut down.) (The whole rule, for eve
   `io.read_file`, `fs.list_dir`, etc. (see
   [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).
 
-## TLS (opt-in feature)
+## TLS
 
-The `tcp-tls` Cargo feature adds TLS support via `rustls`. Build silt with
-`--features tcp-tls` to enable.
+TLS support comes from `rustls`, in the `tcp-tls` Cargo feature, which
+every build of silt has unless it is built without its default features.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -197,7 +197,6 @@ import tcp
 
 fn main() {
   -- Open a TLS-protected connection and echo a small payload.
-  -- (Build silt with `--features tcp-tls` for these functions.)
   match tcp.connect_tls("example.com:443", "example.com") {
     Ok(conn) -> {
       let _ = tcp.write(conn, bytes.from_string("hello"))
@@ -255,7 +254,6 @@ fn serve(conn, cert, key) {
 }
 
 fn main() {
-  -- (Build silt with `--features tcp-tls` for this function.)
   when let Ok(cert_text) = io.read_file("server.crt") else {
     panic("no cert")
   }
@@ -300,7 +298,7 @@ import tcp
 
 fn main() {
   -- Load the server identity and the CA bundle that signs your
-  -- clients. (Build silt with `--features tcp-tls` for this function.)
+  -- clients.
   when let Ok(cert) = io.read_file("server.crt") else {
     panic("no cert")
   }

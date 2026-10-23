@@ -117,3 +117,32 @@ Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,
 For the full reference, hover over any `set.*` call in your editor
 (the LSP renders the inlined builtin docs), or browse the LSP's
 completion popup on `set.` to scan the full menu of entry points.
+
+## How large a collection can be
+
+A list or a set holds at most 10,000,000 elements, and a map at most
+10,000,000 entries. What would make a larger one is a runtime error
+that names the function and the collection:
+
+```text
+list.append: list exceeds maximum size of 10000000 elements
+map.set: map exceeds maximum size of 10000000 entries
+```
+
+That holds for everything that grows a collection or joins two
+(`list.append`, `list.prepend`, `list.concat` and `[..xs, ..ys]`,
+`list.flat_map`, `list.flatten`, `list.unfold`, `list.scan`,
+`list.zip`, `list.intersperse`, `map.set`, `map.update`, `map.merge`,
+`set.insert`, `set.union`, `set.symmetric_difference`,
+`stream.collect`, and a `stream.chunks` chunk). A string and a `Bytes`
+value hold at most 10,000,000 bytes where they are joined or built
+(string interpolation, `string.from`, `string.join`, `string.repeat`,
+`string.replace`, `regex.replace`, `regex.replace_all`,
+`regex.replace_all_with`, `encoding.form_encode`, `json.stringify`,
+`json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
+`bytes.concat_all`), and a channel buffers at most
+10,000,000 values (`channel.new`). A program that keeps
+adding to a collection in a loop ends with this error instead of
+taking the machine's memory. A function that turns text it was given
+into a list (`string.split`, `json.parse_list`) makes as many
+elements as the text holds.

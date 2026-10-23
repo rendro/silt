@@ -183,7 +183,7 @@ silt init
 silt run
 ```
 
-`silt init` writes a `silt.toml` manifest and a starter `src/main.silt`; `silt run` (no arguments, inside a package) executes the entry point.
+`silt init` writes a `silt.toml` manifest and a starter `src/main.silt`; `silt run` (no arguments, inside a package) executes the entry point. `silt init --lib` starts a library instead: `src/lib.silt`, for other packages to import.
 
 See `examples/` for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
@@ -198,13 +198,14 @@ silt test [path]           Run test functions
 silt fmt [files...]        Format source code
 silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
-silt init                  Create a new silt package in this directory
+silt init [--lib]          Create a new silt package (a library with --lib) in this directory
 silt lsp                   Start the language server
 silt disasm <file.silt>    Show bytecode disassembly (same as `silt run --disassemble`)
 silt self-update           Update the silt binary to the latest release
 silt update [<dep-name>]   Regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>                             Add a path-based dependency to silt.toml
-silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based dependency to silt.toml
+silt add <name> --git <url> (--rev|--branch|--tag) <ref>  Add a git-based dependency to silt.toml
+silt remove <name>         Remove a dependency from silt.toml and silt.lock
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test`. It watches the files of the program (every module it imports, plus `silt.toml` and `silt.lock`) and re-runs the command when one changes, stopping the previous run first if it is still going.

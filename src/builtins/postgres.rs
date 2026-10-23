@@ -3978,7 +3978,7 @@ mod tests {
         );
     }
 
-    /// Round-60 L6 behavioural companion to the source-grep lock in
+    /// Behavioural companion to the source-grep lock in
     /// tests/meta/postgres_poisoned_lock_tests.rs. Force-poisons each of the
     /// three module-private registry mutexes (pool / tx / cursor) by
     /// panicking a background thread while it holds the guard, then

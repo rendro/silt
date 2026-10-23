@@ -334,9 +334,10 @@ float.parse(s: String) -> Result(Float, FloatError)
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
 `Ok(f)` on success, `Err(FloatError)` on failure — an enum of its own with
 the variants `int.parse` has (`Empty`, `InvalidDigit(offset)`, `Overflow`,
-`Underflow`, `Other(message)`). A `Float` is always finite, so `"NaN"` and `"inf"` are
-rejected as `InvalidDigit(0)`, and a literal outside the `Float` range
-as `Overflow` (`"1e400"`) or `Underflow` (`"-1e400"`).
+`Underflow`, `Other(message)`) and `NotFinite`. A `Float` is always finite, so
+`"NaN"` and `"inf"` are rejected as `NotFinite` ("not a finite number"), and a
+literal outside the `Float` range as `Overflow` (`"1e400"`) or `Underflow`
+(`"-1e400"`).
 
 ```silt
 import float

@@ -23,8 +23,8 @@ pub(crate) fn usage_text() -> String {
     // alignment tests in tests/cli/cli_test_rendering_tests.rs and
     // tests/cli/cli_round26_tests.rs will fail otherwise.
     //
-    // Round-26 L9.2: SIG_WIDTH widened to fit the full
-    // `silt add <name> --git <url> [--rev|--branch|--tag <ref>]`
+    // SIG_WIDTH is wide enough for the full
+    // `silt add <name> --git <url> (--rev|--branch|--tag) <ref>`
     // signature (58 chars) so its description column aligns with the
     // other rows instead of being pushed right by 12 characters.
     const SIG_WIDTH: usize = 58;
@@ -62,8 +62,8 @@ pub(crate) fn usage_text() -> String {
     out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
     out.push_str(&line(
-        "silt init",
-        "Create a new silt package in this directory",
+        "silt init [--lib]",
+        "Create a new silt package (a library with --lib) in this directory",
     ));
     out.push_str(&line(
         "silt lsp",
@@ -83,8 +83,12 @@ pub(crate) fn usage_text() -> String {
         "Add a path-based dependency to silt.toml",
     ));
     out.push_str(&line(
-        "silt add <name> --git <url> [--rev|--branch|--tag <ref>]",
+        "silt add <name> --git <url> (--rev|--branch|--tag) <ref>",
         "Add a git-based dependency to silt.toml",
+    ));
+    out.push_str(&line(
+        "silt remove <name>",
+        "Remove a dependency from silt.toml and silt.lock",
     ));
     out.push('\n');
     out.push_str("Global flags:\n");
@@ -139,7 +143,7 @@ pub(crate) fn run_usage_banner() -> &'static str {
 /// `silt test` accepts a directory too — the positional argument is
 /// semantically a path, not a single file.
 ///
-/// The round-36 `cli_round36_tests.rs` suite locks the two banners so
+/// `tests/cli/cli_round36_tests.rs` locks the two banners so
 /// they can't drift apart again.
 pub(crate) fn test_usage_banner() -> &'static str {
     "silt test [--filter <pattern>] [--watch] [path]"
@@ -151,8 +155,8 @@ pub(crate) fn test_usage_banner() -> &'static str {
 /// gate when outside a package, and the bare-invocation fallback
 /// outside a package. The bracketed form reflects that `<file.silt>`
 /// is optional when invoked inside a silt package (the entry point is
-/// resolved from the manifest). The round-26 `cli_round26_tests.rs`
-/// suite locks this helper so the three banners can't drift apart.
+/// resolved from the manifest). `tests/cli/cli_round26_tests.rs`
+/// locks this helper so the three banners can't drift apart.
 pub(crate) fn disasm_usage_banner() -> &'static str {
     "silt disasm [<file.silt>]"
 }
@@ -160,7 +164,7 @@ pub(crate) fn disasm_usage_banner() -> &'static str {
 /// Full body of `silt run --help`, rendered to stdout. Shared by the
 /// explicit `silt run --help` path and the legacy
 /// `silt <file>.silt --help` convenience shim so the two can't drift
-/// apart (round-26 G4).
+/// apart.
 pub(crate) fn run_help_text() -> String {
     let mut s = String::new();
     s.push_str(&format!("Usage: {}\n", run_usage_banner()));

@@ -96,6 +96,14 @@ pub(crate) mod channel {
     builtins! {
         fn new(vm, capacity: i64) -> Result<Value, VmError> {
             match usize::try_from(capacity) {
+                // The buffer is a collection: it holds no more than a
+                // list may.
+                Ok(capacity) if capacity > crate::value::MAX_COLLECTION_LEN => {
+                    Err(VmError::new(format!(
+                        "channel.new: capacity exceeds maximum size of {} elements",
+                        crate::value::MAX_COLLECTION_LEN
+                    )))
+                }
                 Ok(capacity) => Ok(Value::Channel(Channel::new(vm.next_channel_id(), capacity))),
                 Err(_) => Err(VmError::new(
                     "channel.new capacity must be a non-negative integer".into(),

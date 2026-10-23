@@ -891,3 +891,143 @@ fn test_silt_run_with_git_dep_works() {
         cache_path.display()
     );
 }
+
+// ── Path dependencies are locked relative to silt.toml ──────────────
+
+/// The `source = { path = ... }` lines of a lockfile, in order.
+fn locked_paths(lock: &str) -> Vec<String> {
+    lock.lines()
+        .filter_map(|line| line.strip_prefix("source = { path = \""))
+        .map(|rest| rest.trim_end_matches("\" }").to_string())
+        .collect()
+}
+
+#[test]
+fn test_lockfile_writes_path_deps_relative_to_the_manifest() {
+    // app -> ../b -> ../c (relative to b): both are written relative to
+    // app's directory, with `/` on every system; a dependency inside
+    // the package too.
+    let ws = fresh_workspace("relative_paths");
+    let app = ws.join("app");
+    write_lib_package(&ws.join("c"), "c", &[], "pub fn one() { 1 }\n");
+    write_lib_package(
+        &ws.join("b"),
+        "b",
+        &[r#"c = { path = "../c" }"#.to_string()],
+        "import c\npub fn two() { c.one() + 1 }\n",
+    );
+    write_lib_package(
+        &app.join("deps").join("inner"),
+        "inner",
+        &[],
+        "pub fn three() { 3 }\n",
+    );
+    write_package(
+        &app,
+        "rel_app",
+        &[
+            r#"b = { path = "../b" }"#.to_string(),
+            r#"inner = { path = "deps/inner" }"#.to_string(),
+        ],
+        "import b\nimport inner\nfn main() { println(b.two() + inner.three()) }\n",
+    );
+    let out = silt_cmd().arg("run").current_dir(&app).output().unwrap();
+    assert!(
+        out.status.success(),
+        "silt run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lock = read_lockfile(&app.join("silt.lock"));
+    assert_eq!(
+        locked_paths(&lock),
+        vec!["../b", "../c", "deps/inner"],
+        "lock: {lock}"
+    );
+}
+
+#[test]
+fn test_lockfile_of_a_moved_workspace_is_unchanged() {
+    // A package moved with its dependencies keeps its lockfile: nothing
+    // in it names where the workspace was.
+    let ws = fresh_workspace("moved_workspace");
+    let first = ws.join("first");
+    write_lib_package(&first.join("dep"), "dep", &[], "pub fn id(x) { x }\n");
+    write_package(
+        &first.join("app"),
+        "moved_app",
+        &[r#"dep = { path = "../dep" }"#.to_string()],
+        "import dep\nfn main() { println(dep.id(1)) }\n",
+    );
+    let out = silt_cmd()
+        .arg("run")
+        .current_dir(first.join("app"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "first run failed");
+    let before = read_lockfile(&first.join("app").join("silt.lock"));
+
+    let second = ws.join("second");
+    fs::rename(&first, &second).unwrap();
+    let out = silt_cmd()
+        .arg("run")
+        .current_dir(second.join("app"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "run after the move failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let after = read_lockfile(&second.join("app").join("silt.lock"));
+    assert_eq!(before, after, "the lockfile changed with the move");
+}
+
+#[test]
+fn test_lockfile_with_an_absolute_path_is_rewritten_relative() {
+    let ws = fresh_workspace("absolute_lock");
+    let app = ws.join("app");
+    write_lib_package(&ws.join("dep"), "dep", &[], "pub fn id(x) { x }\n");
+    write_package(
+        &app,
+        "abs_app",
+        &[r#"dep = { path = "../dep" }"#.to_string()],
+        "import dep\nfn main() { println(dep.id(2)) }\n",
+    );
+    let out = silt_cmd().arg("run").current_dir(&app).output().unwrap();
+    assert!(out.status.success(), "first run failed");
+    let lock_path = app.join("silt.lock");
+    let relative = read_lockfile(&lock_path);
+    // The form a lockfile had before: the dependency's absolute path.
+    let absolute = silt::source::canonical_path(&ws.join("dep"));
+    let shown = absolute.display().to_string().replace('\\', "\\\\");
+    let old = relative.replace(
+        "source = { path = \"../dep\" }",
+        &format!("source = {{ path = \"{shown}\" }}"),
+    );
+    assert_ne!(old, relative, "the test did not make an absolute lock");
+    fs::write(&lock_path, &old).unwrap();
+
+    // A command that never writes the lock takes the old form: it pins
+    // the same directory.
+    let out = silt_cmd()
+        .args(["disasm", "src/main.silt"])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "disasm with the absolute lock failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(read_lockfile(&lock_path), old, "disasm wrote the lock");
+
+    // A command that writes it writes it relative, and says only that.
+    let out = silt_cmd().arg("run").current_dir(&app).output().unwrap();
+    assert!(
+        out.status.success(),
+        "run with the absolute lock failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "Updating silt.lock\n");
+    assert_eq!(read_lockfile(&lock_path), relative);
+}

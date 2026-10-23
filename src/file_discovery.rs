@@ -8,8 +8,8 @@
 //!   (`src/cli/paths.rs::find_silt_files`) — drives `silt fmt <dir>`
 //!   and `silt test <dir>`.
 //!
-//! Both callers MUST skip the same set of directories. Audit round 87
-//! LATENT caught the CLI walker happily descending into `target/`,
+//! Both callers MUST skip the same set of directories. The CLI walker
+//! once descended into `target/`,
 //! `.git/`, `node_modules/`, and `fuzz/corpus/` while the LSP correctly
 //! ignored them — so `silt fmt` would rewrite vendored or generated
 //! `.silt` files an unsuspecting user never meant to touch, and

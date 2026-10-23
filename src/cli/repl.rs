@@ -8,8 +8,7 @@ use std::process;
 /// feature-off stub render from this so they can't drift apart. The
 /// stub still needs the banner because `silt --help` advertises
 /// `silt repl  [feature: repl]` to all users regardless of compiled
-/// features (round 87 G — discoverability), and Round 88 GAP fixed
-/// the follow-up: `silt repl --help` MUST print this banner and exit 0
+/// features: `silt repl --help` MUST print this banner and exit 0
 /// even when the `repl` feature was compiled out, instead of the
 /// pre-fix "feature not enabled" rebuild hint that blocked discovery.
 pub(crate) fn usage_text() -> String {

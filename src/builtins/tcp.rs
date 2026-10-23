@@ -71,6 +71,7 @@ mod tls {
     use std::net::TcpStream;
     use std::sync::Arc;
 
+    use rustls::pki_types::pem::{self, PemObject};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
     use rustls::server::WebPkiClientVerifier;
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
@@ -286,9 +287,8 @@ mod tls {
     }
 
     fn parse_cert_chain(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
-        let mut reader = std::io::BufReader::new(pem);
-        let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut reader).collect();
-        let certs = certs.map_err(|e| format!("parse cert chain: {e}"))?;
+        let certs: Result<Vec<_>, _> = CertificateDer::pem_slice_iter(pem).collect();
+        let certs = certs.map_err(|e| format!("parse cert chain: {}", pem_error(&e)))?;
         if certs.is_empty() {
             return Err("cert PEM contains no certificates".into());
         }
@@ -296,10 +296,29 @@ mod tls {
     }
 
     fn parse_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>, String> {
-        let mut reader = std::io::BufReader::new(pem);
-        rustls_pemfile::private_key(&mut reader)
-            .map_err(|e| format!("parse private key: {e}"))?
-            .ok_or_else(|| "key PEM contains no private key".into())
+        PrivateKeyDer::from_pem_slice(pem).map_err(|e| match e {
+            pem::Error::NoItemsFound => "key PEM contains no private key".into(),
+            e => format!("parse private key: {}", pem_error(&e)),
+        })
+    }
+
+    /// What a PEM that does not parse is: `section end "PRIVATE KEY"
+    /// missing`, `illegal section start: "..."`, or the base64 decoder's
+    /// own words (`InvalidCharacter(33)`).
+    fn pem_error(e: &pem::Error) -> String {
+        match e {
+            pem::Error::MissingSectionEnd { end_marker } => {
+                format!(
+                    "section end {:?} missing",
+                    String::from_utf8_lossy(end_marker)
+                )
+            }
+            pem::Error::IllegalSectionStart { line } => {
+                format!("illegal section start: {:?}", String::from_utf8_lossy(line))
+            }
+            pem::Error::Base64Decode(text) => text.clone(),
+            other => format!("{other:?}"),
+        }
     }
 
     /// Newtype wrappers so we can implement `Read`/`Write` for both client
@@ -308,7 +327,7 @@ mod tls {
     /// monomorphised type names differ (`ClientConnection` vs
     /// `ServerConnection`), so we wrap rather than carrying a bound through.
     ///
-    /// Round 80 dedup (DUP-1): the byte-identical impl bodies for
+    /// The byte-identical impl bodies for
     /// `ClientStreamWrapper` and `ServerStreamWrapper` (same
     /// `complete_io_handshake`, same Read/Write/ReadWrite forwards) are
     /// emitted from a single `stream_wrapper!` macro arm. Adding a third

@@ -17,8 +17,8 @@ matching.
 | `flatten` | `(Result(Result(a, b), b)) -> Result(a, b)` | Remove one nesting level |
 | `is_err` | `(Result(a, b)) -> Bool` | True if Err |
 | `is_ok` | `(Result(a, b)) -> Bool` | True if Ok |
+| `map` | `(Result(a, b), Fn(a) -> c) -> Result(c, b)` | Transform the success value |
 | `map_err` | `(Result(a, b), Fn(b) -> c) -> Result(a, c)` | Transform the error |
-| `map_ok` | `(Result(a, b), Fn(a) -> c) -> Result(c, b)` | Transform the success value |
 | `unwrap_or` | `(Result(a, b), a) -> a` | Extract value or use default |
 
 
@@ -97,6 +97,24 @@ fn main() {
 ```
 
 
+## `result.map`
+
+```
+result.map(r: Result(a, b), f: Fn(a) -> c) -> Result(c, b)
+```
+
+If `r` is `Ok(v)`, returns `Ok(f(v))`. If `r` is `Err`, returns it unchanged.
+
+```silt
+import result
+
+fn main() {
+  let r = Ok(21) |> result.map { n -> n * 2 }
+  println(r) -- Ok(42)
+}
+```
+
+
 ## `result.map_err`
 
 ```
@@ -139,24 +157,6 @@ fn main() {
     Ok(s) -> println(s)
     Err(IoWrap(e)) -> println(Error.message(e))
   }
-}
-```
-
-
-## `result.map_ok`
-
-```
-result.map_ok(r: Result(a, b), f: Fn(a) -> c) -> Result(c, b)
-```
-
-If `r` is `Ok(v)`, returns `Ok(f(v))`. If `r` is `Err`, returns it unchanged.
-
-```silt
-import result
-
-fn main() {
-  let r = Ok(21) |> result.map_ok { n -> n * 2 }
-  println(r) -- Ok(42)
 }
 ```
 

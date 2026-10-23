@@ -127,7 +127,9 @@ fn greet(user) {
 
 ## List Patterns
 
-Three forms: empty `[]`, exact length `[a, b, c]`, head/tail `[h, ..t]`:
+Three forms: empty `[]`, exact length `[a, b, c]`, and the first elements
+with a rest after them, `[h, ..t]`. The rest is `..name`, which binds the
+list of the remaining elements, or a bare `..` when they are not needed:
 
 ```silt
 fn sum(xs) {
@@ -136,10 +138,18 @@ fn sum(xs) {
     [head, ..tail] -> head + sum(tail)
   }
 }
+
+fn first_of_two_or_more(xs) {
+  match xs {
+    [a, _, ..] -> Some(a)
+    _ -> None
+  }
+}
 ```
 
 Nested patterns work in list elements: `[Some(a), Some(b), ..rest]`. The
-`..` syntax matches the record rest pattern (`User { name, .. }`).
+rest comes last and is a name or nothing. The bare `..` matches the record
+rest pattern (`User { name, .. }`).
 
 ## Map Patterns
 
@@ -297,9 +307,9 @@ nothing out:
 fn describe(xs: List(Option(Int))) -> String {
   match xs {
     [] -> "empty"
-    [None, ..rest] -> "starts with nothing"
+    [None, ..] -> "starts with nothing"
     [Some(n)] -> "just {n}"
-    [Some(n), _, ..rest] -> "{n} and more"
+    [Some(n), _, ..] -> "{n} and more"
   }
 }
 

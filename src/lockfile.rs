@@ -29,7 +29,7 @@
 //! [[package]]
 //! name = "calc"
 //! version = "0.1.0"
-//! source = { path = "/canonical/path/to/calc" }
+//! source = { path = "../calc" }
 //! checksum = "sha256:..."
 //!
 //! [[package]]
@@ -104,10 +104,12 @@ pub enum LockedSource {
     /// Marker for the local (root) package — no `source` or `checksum`
     /// in the on-disk file.
     Local,
-    /// Path-style dependency. `path` is the canonical path of the
-    /// package root, so the lockfile is portable across cwd changes
-    /// (you still pay the price of moving the workspace, of course;
-    /// that's a known limitation of path deps).
+    /// Path-style dependency. `path` is the package's root as the
+    /// lockfile writes it: relative to the directory of the `silt.toml`
+    /// the lockfile belongs to, with `/` between its parts
+    /// ([`relative_path`]), so that a package that is moved or checked
+    /// out elsewhere with its dependencies keeps its lockfile; absolute
+    /// only where there is no relative form (another drive).
     Path { path: PathBuf },
     /// Git-style dependency. `url` is the manifest's URL with a local
     /// path made absolute against the manifest's directory; it and the
@@ -192,6 +194,36 @@ impl Lockfile {
         };
         key(self) == key(other)
     }
+
+    /// Whether `self` pins what `other` pins, a path entry by the
+    /// directory it names from `base` (the directory of the lock):
+    /// `same_pins` but for how a path is written (an old lockfile that
+    /// wrote it absolute).
+    pub fn same_places(&self, other: &Lockfile, base: &Path) -> bool {
+        let sorted = |lock: &Lockfile| {
+            let mut entries: Vec<LockedPackage> = lock.packages.clone();
+            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            entries
+        };
+        let (mine, theirs) = (sorted(self), sorted(other));
+        mine.len() == theirs.len()
+            && mine.iter().zip(&theirs).all(|(a, b)| {
+                a.name == b.name && a.version == b.version && a.source.same_place(&b.source, base)
+            })
+    }
+}
+
+impl LockedSource {
+    /// Whether `self` and `other` are one source: a path entry by the
+    /// directory it names from `base`, however it is written.
+    pub fn same_place(&self, other: &LockedSource, base: &Path) -> bool {
+        match (self, other) {
+            (LockedSource::Path { path: a }, LockedSource::Path { path: b }) => {
+                normalize_path(&base.join(a)) == normalize_path(&base.join(b))
+            }
+            (a, b) => a == b,
+        }
+    }
 }
 
 /// Why the sources of a dependency cannot be checksummed.
@@ -269,7 +301,7 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, ChecksumError> {
 /// crate: `silt add` (src/cli/add.rs) delegates here so the path form
 /// it records in `silt.toml` (and prints on success) is normalized by
 /// exactly the same rules lockfile resolution applies when it later
-/// resolves that dep path. Audit round 101 LATENT: this body used to
+/// resolves that dep path. This body used to
 /// be mirrored in src/cli/paths.rs; keep it unmirrored — a lock test
 /// (tests/meta/round101_normalize_path_dedup_tests.rs) asserts the
 /// `Component::ParentDir` pop-or-push loop appears exactly once under
@@ -292,6 +324,39 @@ pub fn normalize_path(p: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// `target` relative to the directory `base`, with `..` where needed
+/// and `/` between its parts on every system, so that the file that
+/// stores it (`silt.toml`, `silt.lock`) reads the same everywhere;
+/// `None` when there is no relative form: one of the two is absolute
+/// and the other is not, or they are on two drives.
+pub fn relative_path(base: &Path, target: &Path) -> Option<String> {
+    use std::path::Component;
+    if base.is_absolute() != target.is_absolute() {
+        return None;
+    }
+    let base: Vec<Component> = base.components().collect();
+    let target: Vec<Component> = target.components().collect();
+    let prefix = |parts: &[Component]| match parts.first() {
+        Some(Component::Prefix(p)) => Some(p.as_os_str().to_ascii_lowercase()),
+        _ => None,
+    };
+    if prefix(&base) != prefix(&target) {
+        return None;
+    }
+    let shared = base.iter().zip(&target).take_while(|(b, t)| b == t).count();
+    let mut parts: Vec<String> = vec!["..".to_string(); base.len() - shared];
+    parts.extend(
+        target[shared..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    match parts.is_empty() {
+        // The directory itself.
+        true => Some(".".to_string()),
+        false => Some(parts.join("/")),
+    }
 }
 
 impl From<std::io::Error> for ChecksumError {
@@ -876,5 +941,17 @@ mod tests {
         let after = checksum_path_source(&dir).unwrap();
         assert_ne!(before, after);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn relative_path_goes_up_and_down_with_slashes() {
+        let rel = |base: &str, target: &str| relative_path(Path::new(base), Path::new(target));
+        assert_eq!(rel("/w/app", "/w/app").as_deref(), Some("."));
+        assert_eq!(rel("/w/app", "/w/app/deps/x").as_deref(), Some("deps/x"));
+        assert_eq!(rel("/w/app", "/w/dep").as_deref(), Some("../dep"));
+        assert_eq!(rel("/w/a/b", "/w/c").as_deref(), Some("../../c"));
+        // (On Windows `/w/app` is not absolute either.)
+        #[cfg(unix)]
+        assert_eq!(rel("/w/app", "dep"), None);
     }
 }

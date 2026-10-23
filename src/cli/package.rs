@@ -75,7 +75,7 @@ pub(crate) fn print_manifest_errors_as_json() {
 
 /// What the caller intends to do with the resolved entry point.
 ///
-/// Round 93 (fix G2): lib-only packages — the REQUIRED shape for
+/// Lib-only packages — the REQUIRED shape for
 /// dependencies (`src/lib.silt`, no `src/main.silt`) — must be
 /// checkable with a bare `silt check`, while `silt run` (and
 /// `silt disasm`, which disassembles the runnable artifact) still
@@ -94,7 +94,7 @@ pub(crate) enum EntryPointKind {
 /// Resolve the package entry point (`<root>/src/main.silt`) for the current
 /// directory, requiring a runnable `main.silt`. Thin wrapper over
 /// [`resolve_package_entry_point_for`] kept so run/disasm call sites read
-/// the same as before round 93.
+/// as they did before lib-only packages.
 pub(crate) fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
     resolve_package_entry_point_for(EntryPointKind::RequireMain)
 }

@@ -192,7 +192,7 @@ fn collect_let_pattern_defs(
             }
         }
         PatternKind::AnonRecord { fields, rest } => {
-            // Round-62 B9: anonymous-record destructure at top-level
+            // Anonymous-record destructure at top-level
             // (`let { x, y } = some_anon_record`). Mirrors the nominal
             // `Record` case above.
             let field_tys = value_ty.and_then(|ty| record_field_types(ty, records));
@@ -216,7 +216,7 @@ fn collect_let_pattern_defs(
                     );
                 }
             }
-            // Round-101: the named rest binder (`{ x, ...rest }`) binds
+            // The named rest binder (`{ x, ...rest }`) binds
             // `rest` — mirror the typechecker's `collect_pattern_vars`.
             if let Some((r, _)) = rest
                 && resolve(*r) != "_"
@@ -232,7 +232,7 @@ fn collect_let_pattern_defs(
             }
         }
         PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
                 collect_let_pattern_defs(p, None, None, false, defs, records);

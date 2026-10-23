@@ -1,0 +1,32 @@
+-- cmd: test
+-- exit: 1
+-- `test.assert_approx(a, b, tolerance)` passes when |a - b| <= tolerance
+-- (absolute, the bound included) and fails with both values, their
+-- difference and the tolerance otherwise; a negative tolerance is an
+-- error; two floats too far apart for their difference to be a Float
+-- fail too.
+import float
+import test
+
+fn test_within() {
+  test.assert_approx(0.1 + 0.2, 0.3, 0.000001)
+  test.assert_approx(1.0, 1.0, 0.0)
+  test.assert_approx(-3.0, -2.5, 0.5)
+  test.assert_approx(2.5, 2.0, 0.5)
+}
+
+fn test_outside() {
+  test.assert_approx(1.0, 1.5, 0.1)
+}
+
+fn test_exact_differs() {
+  test.assert_approx(0.1 + 0.2, 0.3, 0.0)
+}
+
+fn test_negative_tolerance() {
+  test.assert_approx(1.0, 1.0, -0.1)
+}
+
+fn test_far_ends() {
+  test.assert_approx(float.max_value, float.min_value, 1.0)
+}

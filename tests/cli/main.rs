@@ -12,6 +12,7 @@ mod cli_help_and_unknown_subcommand_tests;
 mod cli_init_tests;
 mod cli_positional_gate_tests;
 mod cli_project_root_tests;
+mod cli_remove_tests;
 mod cli_round26_tests;
 mod cli_round36_tests;
 mod cli_self_update_flag_tests;

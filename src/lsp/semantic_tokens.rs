@@ -400,7 +400,7 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &SourceFile, out: &mut
             for p in pats {
                 emit_pattern_binding_tokens(p, source, out);
             }
-            // Round-101: the rest sub-pattern (`[h, ..t]`) binds `t`;
+            // The rest sub-pattern (`[h, ..t]`) binds `t`;
             // it carries its own span, so recursion emits a precise token.
             if let Some(r) = rest {
                 emit_pattern_binding_tokens(r, source, out);
@@ -422,7 +422,7 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &SourceFile, out: &mut
             }
         }
         PatternKind::Map(entries) => {
-            // Round-101: map-pattern values bind (`#{ "k": v }` binds
+            // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.
             for (_, p) in entries {
                 emit_pattern_binding_tokens(p, source, out);
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn pattern_binding_tokens_cover_list_rest_binder() {
-        // Round-101 GAP lock: `let [h, ..t] = ...` must emit a VARIABLE
+        // `let [h, ..t] = ...` must emit a VARIABLE
         // token for the rest binder `t`. Pre-fix, the List arm matched
         // `List(pats, _)` and discarded the rest sub-pattern.
         let source = "fn main() {\n  let [h, ..t] = [1, 2, 3]\n  t\n}";
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn pattern_binding_tokens_cover_anon_record_rest_binder() {
-        // Round-101 GAP lock: `let {x, ...rest} = ...` must emit a
+        // `let {x, ...rest} = ...` must emit a
         // VARIABLE token for the named rest binder `rest`. Pre-fix, the
         // AnonRecord arm destructured `{ fields, .. }`, dropping it.
         let source = "fn main() {\n  let {x, ...rest} = p\n  x\n}";
@@ -662,7 +662,7 @@ mod tests {
 
     // ── pattern binding tokens: shorthand / rest binder anchoring ──
 
-    /// Round-102 BROKEN lock: anon-record shorthand and rest binders must
+    /// Anon-record shorthand and rest binders must
     /// get VARIABLE tokens at the binder idents THEMSELVES, not at the
     /// pattern head (the `{`). The pre-fix code anchored the `x` token at
     /// `(pattern.span.start as usize)` (the `{`) and emitted nothing for `rest` at

@@ -1,6 +1,6 @@
 -- cmd: test --filter commented
--- exit: 0
--- stdout-contains: no matching test files found
+-- exit: 1
+-- stderr-contains: no test matches --filter 'commented'
 -- stderr-not-contains: 0 tests
 import test
 {-

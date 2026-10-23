@@ -1,0 +1,16 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: json.stringify: result would exceed maximum string size (12000011 bytes > 10000000 limit)
+-- stderr-not-contains: not reached
+-- The text is no longer than a string may be: the parts can be one long
+-- string many times, so it is stopped where it would pass the limit.
+import json
+import list
+import string
+
+fn main() {
+  let big = string.repeat("x", 3000000)
+  let many = list.map(1..5) { _ -> big }
+  let _ = json.stringify(many)
+  println("not reached")
+}

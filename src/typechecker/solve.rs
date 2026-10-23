@@ -520,7 +520,18 @@ impl TypeChecker {
             // A Result or an Option, of either wrapper: a `?` of the
             // other one is the mismatch the inline path reports.
             Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option") => {
+                let before = self.errors.len();
                 self.unify(&ret_resolved, &expected_wrapper, span);
+                // An Option's `?` in a function that returns a Result:
+                // the None has no error to return.
+                if head == "Option" && n.is_builtin("Result") {
+                    for d in &mut self.errors[before..] {
+                        d.help.push(
+                            "turn the Option into a Result first: `|> option.to_result(error)?`"
+                                .to_string(),
+                        );
+                    }
+                }
             }
             // Concrete non-matching return type: this is the unsound
             // lambda repro (`{ x -> x? + 1 }` whose return type

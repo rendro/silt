@@ -42,7 +42,7 @@ fn collect_decl_folds(decl: &Decl, source: &SourceFile, out: &mut Vec<FoldingRan
         Decl::Fn(f) => {
             // The fn body is itself an `ExprKind::Block`, and the walker's
             // Block arm pushes the block fold for us. Pushing one here in
-            // addition would duplicate the fold (round-76 D1).
+            // addition would duplicate the fold.
             walk_expr_folds(&f.body, source, out);
         }
         Decl::Type(td) => {
@@ -54,7 +54,7 @@ fn collect_decl_folds(decl: &Decl, source: &SourceFile, out: &mut Vec<FoldingRan
             push_span_fold(&t.span, source, out);
             for method in &t.methods {
                 // Same reason as `Decl::Fn`: the walker handles the body
-                // block. Avoid double-pushing (round-76 D1).
+                // block. Avoid double-pushing.
                 walk_expr_folds(&method.body, source, out);
             }
         }
@@ -62,7 +62,7 @@ fn collect_decl_folds(decl: &Decl, source: &SourceFile, out: &mut Vec<FoldingRan
             push_span_fold(&ti.span, source, out);
             for method in &ti.methods {
                 // Same reason as `Decl::Fn`: the walker handles the body
-                // block. Avoid double-pushing (round-76 D1).
+                // block. Avoid double-pushing.
                 walk_expr_folds(&method.body, source, out);
             }
         }

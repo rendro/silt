@@ -1,0 +1,29 @@
+-- exit: 1
+-- stderr-contains: error[type]: this `Fn(Int) -> Int` value is unused
+-- stderr-contains: error[type]: function expects 2 arguments, got 1
+-- stderr-contains: help: `|>` passes only the first argument; write the others in a call: `|> list.map(...)`
+-- stderr-not-contains: a closure on the next line
+-- A closure on the line after a call is not said to be meant for it
+-- when the call is complete, when the argument it lacks is no
+-- function, when it lacks two, or when another statement stands
+-- between the two: the closure is an unused value, and each error
+-- keeps its own help.
+import int
+import list
+
+fn three(a: Int, b: Int, f: Fn(Int) -> Int) -> Int {
+  f(a + b)
+}
+
+fn main() {
+  let xs = list.map([1], { x -> x })
+  { x: Int -> x + 1 }
+  let m = int.max(1)
+  { x: Int -> x + 1 }
+  let t = three(1)
+  { x: Int -> x + 1 }
+  let ys = [1] |> list.map
+  println("between")
+  { x: Int -> x + 1 }
+  println("{xs} {m} {t} {ys}")
+}

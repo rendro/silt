@@ -274,13 +274,13 @@ of pipelines:
 let text = io.read_file(path)?
 let done = text
   |> json.parse(Todo) -- works: parse(text, Todo)
-  |> result.map_ok(process)
+  |> result.map(process)
 ```
 
 `io.read_file` returns `Result(String, IoError)`, and `?` unwraps it to
 the `String` that `json.parse` wants. The "type params last" convention
 is what keeps the second and third arms (`json.parse(Todo)`,
-`result.map_ok(process)`) flowing in pipe form.
+`result.map(process)`) flowing in pipe form.
 
 The rule is a single convention that keeps silt's pipe-first idiom
 working cleanly across the entire type-directed surface
@@ -766,7 +766,7 @@ fn map(opt: Option(a), f: Fn(a) -> b) -> Option(b) { ... }
 
 fn and_then(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b) { ... }
 
-fn map_ok(r: Result(a, e), f: Fn(a) -> b) -> Result(b, e) { ... }
+fn map(r: Result(a, e), f: Fn(a) -> b) -> Result(b, e) { ... }
 
 fn map_err(r: Result(a, e), f: Fn(e) -> f) -> Result(a, f) { ... }
 ```

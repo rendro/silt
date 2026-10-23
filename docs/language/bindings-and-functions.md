@@ -454,3 +454,27 @@ fn get_or_die(opt) {
   }
 }
 ```
+
+`return` leaves the function it is written in, and a closure is a
+function of its own: a `return` inside a closure ends that call of the
+closure, not the function around it. So a callback cannot end a
+`list.each` or a `list.fold` early. To stop at the first match, use
+`list.find`, `list.fold_until` (it stops at `list.Stop(value)`) or a
+`loop`:
+
+```silt
+import list
+
+fn first_negative(xs: List(Int)) -> Option(Int) {
+  list.fold_until(xs, None) { _, x ->
+    match {
+      x < 0 -> list.Stop(Some(x))
+      _ -> list.Continue(None)
+    }
+  }
+}
+
+fn main() {
+  println(first_negative([1, -2, 3])) -- Some(-2)
+}
+```

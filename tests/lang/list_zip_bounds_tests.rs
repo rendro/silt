@@ -6,7 +6,7 @@
 //! `Vec::with_capacity(usize::MAX)` then panicked opaquely, surfacing
 //! as "builtin module 'list' panicked". The fix validates both input
 //! lengths (via `checked_range_len` semantics for ranges) against
-//! `MAX_RANGE_MATERIALIZE` and returns a clean `VmError` on overflow.
+//! `MAX_COLLECTION_LEN` and returns a clean `VmError` on overflow.
 //!
 //! The rejection and small-range cases are golden cases in
 //! tests/golden/lang/stdlib/list_zip_bounds__*.silt. The at-cap case stays
@@ -21,7 +21,7 @@ fn run(input: &str) -> Value {
 
 // ── Exactly at the cap: must pass ───────────────────────────────────
 //
-// `MAX_RANGE_MATERIALIZE` is 10_000_000. The inclusive range `0..9999999`
+// `MAX_COLLECTION_LEN` is 10_000_000. The inclusive range `0..9999999`
 // yields exactly 10_000_000 elements. Zipping two such ranges must
 // produce a 10_000_000-element list without hitting the cap.
 

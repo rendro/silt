@@ -1,0 +1,15 @@
+-- exit: 1
+-- stdout-contains: 10000000
+-- stderr-contains: error[runtime]
+-- stderr-contains: bytes.concat_all: result would exceed maximum size (12000000 bytes > 10000000 limit)
+-- bytes.concat_all counts the size before it copies a byte: the parts
+-- may be one value many times. Ten million bytes are allowed.
+import bytes
+import string
+
+fn main() {
+  let part = bytes.from_string(string.repeat("x", 4000000))
+  let two = bytes.from_string("ab")
+  println(bytes.length(bytes.concat_all([part, part, two, string.repeat("y", 1999998) |> bytes.from_string])))
+  println(bytes.length(bytes.concat_all([part, part, part])))
+}

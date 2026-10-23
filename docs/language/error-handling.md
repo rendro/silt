@@ -225,7 +225,7 @@ fn get_or_die(opt) {
 ## Result and Option Utilities
 
 ```silt
-println(result.map_ok(Ok(1)) { x -> x + 1 }) -- Ok(2)
+println(result.map(Ok(1)) { x -> x + 1 }) -- Ok(2)
 println(result.flat_map(Ok(1)) { x -> Ok(x + 1) }) -- Ok(2)
 println(result.unwrap_or(Err("x"), 0)) -- 0
 

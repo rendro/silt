@@ -25,7 +25,7 @@ pub use convert::{FromValue, HostFn, HostImpl, HostShape, IntoValue};
 pub(crate) use deep::drop_held;
 pub use float::Float;
 pub use fmt::{Shown, Written};
-pub(crate) use list::MAX_RANGE_MATERIALIZE;
+pub(crate) use list::MAX_COLLECTION_LEN;
 #[cfg(feature = "test-hooks")]
 pub use list::copies as list_copies;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
@@ -170,8 +170,8 @@ impl Value {
             Value::Variant(..) => "Variant",
             // Surface name matches `Type::Fun`'s Display (`Fn(...) -> R`)
             // and the canonical dispatch name returned by
-            // `dispatch_type_name`. Round 71 follow-up unified
-            // `Function` / `Fun` / `Fn` on `"Fn"`.
+            // `dispatch_type_name`: `"Fn"`, the one name of a
+            // function's type.
             Value::VmClosure(_) => "Fn",
             Value::BuiltinFn(_) => "BuiltinFn",
             Value::HostFn(_) => "HostFn",

@@ -23,11 +23,11 @@ pub(crate) fn dispatch(args: &[String]) {
     }
     let mut disasm = false;
     let mut file: Option<String> = None;
-    // Round-74: positionals after `--` are forwarded to the running
+    // Positionals after `--` are forwarded to the running
     // program (surfaced via `io.args()`), not interpreted as silt CLI
     // flags / files. This restores the ability to pass user args to
     // scripts (e.g. `silt run text_stats.silt -- input.txt`) which
-    // round-72's bare-extra-positional rejection had broken — there
+    // the rejection of bare extra positionals had broken — there
     // was no other channel to reach `io.args()`.
     let mut program_args: Vec<String> = Vec::new();
     let mut iter = args[2..].iter();
@@ -59,7 +59,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // Mirror the rejection pattern used by `silt update`,
             // `silt repl`, `silt lsp`, and `silt add`.
             //
-            // Round-74: to forward args to the running program, use
+            // To forward args to the running program, use
             // `--` as a separator (`silt run a.silt -- foo bar`).
             eprintln!("silt run: unexpected extra argument '{arg}'");
             eprintln!(
@@ -100,7 +100,7 @@ pub(crate) fn dispatch(args: &[String]) {
 /// in as the first argument.
 pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
     let mut disasm = false;
-    // Round-74: same `--` forwarding as the explicit `silt run` form.
+    // Same `--` forwarding as the explicit `silt run` form.
     let mut program_args: Vec<String> = Vec::new();
     let mut iter = args[2..].iter();
     while let Some(extra) = iter.next() {
@@ -132,7 +132,7 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
             // rejection pattern used by `silt update`, `silt repl`,
             // `silt lsp`, and `silt add`.
             //
-            // Round-74: to forward args to the running program, use
+            // To forward args to the running program, use
             // `--` as a separator (`silt foo.silt -- arg1 arg2`).
             eprintln!("silt run: unexpected extra argument '{extra}'");
             eprintln!(
@@ -183,7 +183,7 @@ pub(crate) fn vm_run_file(path: &str) {
     let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
     let compiled = session.compile(file, Entry::Main);
     let diagnostics = door_diagnostics(&mut session, file, &compiled);
-    // F14 (audit round 17): print diagnostics with a blank line between
+    // F14: print diagnostics with a blank line between
     // consecutive errors so multi-error output doesn't form a solid wall
     // of text. Matches rustc/gcc convention.
     // Lock: tests/cli/cli_test_rendering_tests.rs
@@ -223,7 +223,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // process: nothing of the program's is reported then, here and
     // in each report below. See `silt::scheduler::report`.)
     let tasks_failed = report_task_failures(path, &sources, file);
-    // Round-93: a `fn main() -> Result(..)` that evaluates to `Err(..)`
+    // A `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
     // `vm.run` (main's return value) was discarded wholesale, so
     // `fn main() -> Result(Int, String) { Err("boom") }` (or a `?`

@@ -487,6 +487,7 @@ impl IoPool {
         leave: Leave,
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
+        self.scheduler.begin();
         let state = OpState::new(Phase::Queued);
         let wanted = Wanted::new(state.clone(), task);
         let f = move || f(&wanted);

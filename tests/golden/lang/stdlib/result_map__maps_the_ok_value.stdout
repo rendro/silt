@@ -1,0 +1,5 @@
+Ok(21)
+Err(no)
+Ok(Ok(7))
+[Ok(10), Err(e), Ok(30)]
+Ok(2!)

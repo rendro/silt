@@ -1478,6 +1478,13 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 
 - **No buffered channel resizing.** A channel's capacity is fixed at creation
   time.
+- **A channel whose buffer holds the channel is kept until the program
+  ends.** A value in a channel's buffer that holds that same channel (a
+  record with the channel in a field, a closure that uses it) keeps the
+  channel alive. When the program lets go of the channel while such a
+  value is still buffered, the channel and everything in its buffer stay
+  in memory until the program ends. Receive what is buffered before the
+  last use of such a channel, or send a value that does not hold it.
 
 
 ## Quick Reference

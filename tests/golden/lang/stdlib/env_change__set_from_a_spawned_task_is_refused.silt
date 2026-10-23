@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: 
+-- stderr-not-contains: not reached
+-- A spawned task can never change the environment: its start was the
+-- program's first.
+import env
+import task
+
+fn main() {
+  let changer = task.spawn { -> env.set("SILT_ENV_CHANGE_D", "1") }
+  task.join(changer)
+  println("not reached")
+}

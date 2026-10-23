@@ -1,0 +1,29 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: panic: no order for 3
+-- An error in the comparison function is the error of the call of
+-- `list.sort_with`; and a comparison that waits on a channel is
+-- resumed where it waited.
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(10)
+  let h = task.spawn({ ->
+    0..9 |> list.each { i -> channel.send(ch, i) }
+  })
+  let sorted = list.sort_with([4, 2, 3, 1]) { a, b ->
+    match channel.receive(ch) {
+      Some(_) -> Compare.compare(a, b)
+      None -> 0
+    }
+  }
+  task.join(h)
+  println(sorted)
+  let _ = list.sort_with([1, 3, 2]) { a, b ->
+    match a == 3 || b == 3 {
+      true -> panic("no order for 3")
+      false -> Compare.compare(a, b)
+    }
+  }
+}

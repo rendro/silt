@@ -1,0 +1,11 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: list.prepend: list exceeds maximum size of 10000000 elements
+-- stderr-not-contains: not reached
+-- list.prepend is capped like list.append.
+import list
+
+fn main() {
+  let longer = list.prepend(0..9_999_999, -1)
+  println("not reached {list.length(longer)}")
+}

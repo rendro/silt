@@ -264,6 +264,10 @@ struct Inner {
     /// Whether the thread that runs the program knows this scheduler
     /// (`StartedSchedulers`).
     registered: AtomicBool,
+    /// Whether a task or an I/O operation was ever started
+    /// ([`Scheduler::begin`]): until then no thread of the runtime that
+    /// may read the environment exists.
+    begun: AtomicBool,
     /// The thread that fires the timer waits here for the next
     /// deadline, or for an earlier one to be armed.
     timer_lock: Mutex<TimerThread>,
@@ -487,6 +491,7 @@ impl Scheduler {
                 owner: AtomicU64::new(0),
                 outer: AtomicU64::new(0),
                 registered: AtomicBool::new(false),
+                begun: AtomicBool::new(false),
                 timer_lock: Mutex::new(TimerThread::Idle),
                 timer_wake: Condvar::new(),
                 global_io_timeout,
@@ -581,6 +586,7 @@ impl Scheduler {
         mut vm: Vm,
         handle: Arc<TaskHandle>,
     ) -> Result<(), String> {
+        self.begin();
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
         vm.late = handle.deadline().map(|_| handle.late());
@@ -696,6 +702,21 @@ impl Scheduler {
     /// The owner tag of a task spawned here and now.
     pub(crate) fn current_owner(&self) -> u64 {
         self.inner.current_owner()
+    }
+
+    /// A task or an I/O operation starts: from now on a thread other
+    /// than the program's own may run code that reads the environment
+    /// (a task's builtins, a name lookup of the I/O pool). It stays so
+    /// for as long as the scheduler lives: a REPL session's, a
+    /// program's.
+    pub(crate) fn begin(&self) {
+        self.inner.begun.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether a task or an I/O operation was ever started
+    /// ([`Scheduler::begin`]).
+    pub(crate) fn begun(&self) -> bool {
+        self.inner.begun.load(Ordering::SeqCst)
     }
 
     /// See [`External`]. It counts for the owner of the code that asks.

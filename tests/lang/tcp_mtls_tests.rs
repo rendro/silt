@@ -20,6 +20,7 @@ use std::thread;
 use std::time::Duration;
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair, KeyUsagePurpose};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
 
@@ -80,19 +81,15 @@ fn generate_pki() -> MtlsPki {
 }
 
 fn pem_certs_to_der(pem: &str) -> Vec<CertificateDer<'static>> {
-    let mut reader = std::io::BufReader::new(pem.as_bytes());
-    rustls_pemfile::certs(&mut reader)
+    CertificateDer::pem_slice_iter(pem.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .expect("parse cert pem")
 }
 
 fn pem_key_to_der(pem: &str) -> PrivateKeyDer<'static> {
-    // rcgen emits a PKCS#8 key in PEM form. `private_key` transparently
-    // handles PKCS#8 / PKCS#1 / SEC1 and returns a `PrivateKeyDer`.
-    let mut reader = std::io::BufReader::new(pem.as_bytes());
-    rustls_pemfile::private_key(&mut reader)
-        .expect("parse private key")
-        .expect("at least one private key")
+    // rcgen emits a PKCS#8 key in PEM form. `PrivateKeyDer` reads
+    // PKCS#8, PKCS#1 and SEC1 alike.
+    PrivateKeyDer::from_pem_slice(pem.as_bytes()).expect("parse private key")
 }
 
 /// Build a rustls `ClientConfig` trusting `trust_ca_pem`. If

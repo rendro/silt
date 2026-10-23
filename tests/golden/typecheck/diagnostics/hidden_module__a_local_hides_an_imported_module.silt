@@ -1,0 +1,22 @@
+-- exit: 1
+-- A local named like an imported module hides it: `list.length(..)`
+-- then reads a field of the local. When the local has no such field
+-- and the module has a member of that name, the help says which local
+-- hides the module (a `let`, a parameter, a closure's parameter).
+import list
+import map
+import string
+
+fn shout(string: String) -> String {
+  string.to_upper(string)
+}
+
+fn main() {
+  let list = [3, 1, 2]
+  println(list.length(list))
+  let map = {size: 1}
+  println(map.keys(map))
+  let f = { list: List(Int) -> list.reverse(list) }
+  println(f([1]))
+  println(shout("a"))
+}

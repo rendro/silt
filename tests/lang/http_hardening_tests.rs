@@ -2,7 +2,7 @@
 //!
 //! Locks four fixes in `src/builtins/http.rs`:
 //!
-//! - HIGH-1: `http.serve` caps request bodies at 10 MiB and returns 413
+//! - HIGH-1: `http.serve` caps request bodies at 10,000,000 bytes and returns 413
 //!   Payload Too Large for anything larger (or for a Content-Length that
 //!   advertises more than the cap).
 //! - HIGH-2: a client that sends part of a request's head and then
@@ -164,7 +164,7 @@ fn high1_http_serve_rejects_oversized_body_with_413() {
 
     let port = port_file.wait();
 
-    // 50 MiB body, well above the 10 MiB cap. We send a real (honest)
+    // 50 MiB body, well above the 10,000,000-byte cap. We send a real (honest)
     // Content-Length so the server knows to reject up front, but we also
     // start writing the body — the server should close the socket or
     // respond 413 quickly, long before we finish streaming 50 MiB.

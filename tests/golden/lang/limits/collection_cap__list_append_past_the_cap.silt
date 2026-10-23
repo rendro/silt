@@ -1,0 +1,15 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: list.append: list exceeds maximum size of 10000000 elements
+-- stderr-not-contains: not reached
+-- A list holds at most ten million elements: list.append refuses the
+-- one past them before it writes the list out. (The range 0..9_999_999
+-- is a list of exactly ten million that holds none of them.)
+import list
+
+fn main() {
+  let full = 0..9_999_999
+  println(list.length(full))
+  let longer = list.append(full, 1)
+  println("not reached {list.length(longer)}")
+}

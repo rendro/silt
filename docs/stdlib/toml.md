@@ -326,7 +326,7 @@ A value TOML has no form for, wherever in the value it is, is an
 handle, a TCP listener or stream.
 
 ```text
-toml.stringify: unsupported value kind Fn
+toml.pretty: unsupported value kind Fn
 ```
 
 ```silt
