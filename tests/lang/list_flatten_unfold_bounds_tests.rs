@@ -1,7 +1,7 @@
 //! Regression tests for `list.flatten` and `list.unfold` accumulation caps.
 //!
 //! Round 19 audit -- LATENT: both `list.flatten` and `list.unfold` could
-//! accumulate unbounded results without ever checking `MAX_RANGE_MATERIALIZE`.
+//! accumulate unbounded results without ever checking `MAX_COLLECTION_LEN`.
 //! Every other collection-building builtin caps output at 10,000,000 elements.
 //! The `list.unfold` cap test stays in Rust because driving ten million
 //! closure calls through the CLI exceeds the golden harness's 20 s case
@@ -17,7 +17,7 @@ fn run_err(input: &str) -> String {
 
 // ── list.unfold ────────────────────────────────────────────────────────
 
-/// Unfold that would generate more than MAX_RANGE_MATERIALIZE elements.
+/// Unfold that would generate more than MAX_COLLECTION_LEN elements.
 /// The callback never returns None, so without a cap it would loop forever.
 /// With the cap it should error after 10,000,001 elements.
 #[test]
@@ -31,11 +31,7 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("list.unfold"),
-        "error should mention list.unfold by name, got: {err}"
-    );
-    assert!(
-        err.contains("exceeds maximum list length"),
-        "error should mention exceeds maximum list length, got: {err}"
+        err.contains("list.unfold: list exceeds maximum size of 10000000 elements"),
+        "error should say that list.unfold made a list too long, got: {err}"
     );
 }

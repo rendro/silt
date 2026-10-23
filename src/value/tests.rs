@@ -1154,7 +1154,7 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         ),
         (Value::List(ints(1, 3)), "[1, 2, 3]", "[1, 2, 3]"),
         (
-            Value::List(ints(0, MAX_RANGE_MATERIALIZE as i64)),
+            Value::List(ints(0, MAX_COLLECTION_LEN as i64)),
             "[0, 1, 2, ..., 10000000]",
             "[0, 1, 2, ..., 10000000]",
         ),
@@ -1453,7 +1453,7 @@ fn two_lists_as_one_list() {
         );
         assert!(none.concat(&none).expect("no element").is_empty());
     }
-    let cap = MAX_RANGE_MATERIALIZE as i64;
+    let cap = MAX_COLLECTION_LEN as i64;
     let long = ints(1, cap + 1);
     let short = made(0..1);
     assert!(long.concat(&short).is_err());
@@ -1499,7 +1499,7 @@ fn a_list_updated_is_a_new_list() {
         assert_eq!(elements(&xs), want);
         assert_eq!(xs.first(), Some(first));
     }
-    let long = ints(1, MAX_RANGE_MATERIALIZE as i64 + 1);
+    let long = ints(1, MAX_COLLECTION_LEN as i64 + 1);
     assert!(long.push_front(n(0)).is_err());
     assert!(long.push_back(n(0)).is_err());
     assert!(long.set(0, n(0)).is_err());
@@ -1761,7 +1761,7 @@ fn a_list_has_at_most_as_many_elements_as_its_length_counts() {
 
 #[test]
 fn the_elements_of_a_long_list_that_holds_none_are_not_made() {
-    let cap = MAX_RANGE_MATERIALIZE as i64;
+    let cap = MAX_COLLECTION_LEN as i64;
     assert_eq!(ints(1, cap).writable(), Ok(()));
     let long = ints(0, cap);
     assert_eq!(

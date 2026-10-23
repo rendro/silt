@@ -1,6 +1,5 @@
 -- exit: 1
--- stderr-contains: list.flatten
--- stderr-contains: exceeds maximum list length
+-- stderr-contains: list.flatten: list exceeds maximum size of 10000000 elements
 import list
 fn main() {
   println(list.flatten([0..5999999, 0..5999999]))
