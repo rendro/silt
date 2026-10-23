@@ -705,8 +705,8 @@ impl TypeChecker {
         };
         let name = defs.get(id).name;
         if let ExprKind::Ident(written) = expr.kind
-            && let Some((t, _)) = (self.spelled.iter())
-                .find(|(t, n)| **n == written && defs.get(**t).is_type())
+            && let Some((t, _)) =
+                (self.spelled.iter()).find(|(t, n)| **n == written && defs.get(**t).is_type())
         {
             expr.res = Some(crate::defs::Res::Def(*t));
         } else if ty.name == name
@@ -749,7 +749,8 @@ impl TypeChecker {
             let message = format!("trait '{}' has no method '{field}'", self.show_trait(tr));
             // A method of a supertrait is called through that trait.
             let sup = (self.supertraits_of(tr).into_iter()).find(|s| {
-                (self.tables.traits.get(s)).is_some_and(|i| i.methods.iter().any(|(n, _)| *n == field))
+                (self.tables.traits.get(s))
+                    .is_some_and(|i| i.methods.iter().any(|(n, _)| *n == field))
             });
             let help = match sup {
                 Some(s) => uncallable_builtin(s, field, "x").or_else(|| {
@@ -951,7 +952,10 @@ impl TypeChecker {
                 let calls: Vec<String> = (taking.iter())
                     .map(|shown| format!("`{shown}.{field}({written}{rest})`"))
                     .collect();
-                let of: Vec<String> = taking.iter().map(|shown| format!("trait `{shown}`")).collect();
+                let of: Vec<String> = taking
+                    .iter()
+                    .map(|shown| format!("trait `{shown}`"))
+                    .collect();
                 return Some(format!(
                     "`{field}` is a method of {}: call it as {}",
                     of.join(" and of "),
@@ -1014,7 +1018,8 @@ impl TypeChecker {
         if let Some((name, None)) = crate::defs::builtin_trait_of_id(tr.id.0) {
             return name.to_string();
         }
-        self.spell_def(tr.id.0).unwrap_or_else(|| self.show_trait(tr))
+        self.spell_def(tr.id.0)
+            .unwrap_or_else(|| self.show_trait(tr))
     }
 
     /// The type `ty` as this module writes it (see `spell_trait`).

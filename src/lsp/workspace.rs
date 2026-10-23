@@ -233,9 +233,17 @@ impl Server {
                 Selection::Field | Selection::FieldCall => return None,
             };
             let tr = def_key(session, tr.0);
-            return Some((used.span, Target::Method { tr, name: used.name }));
+            return Some((
+                used.span,
+                Target::Method {
+                    tr,
+                    name: used.name,
+                },
+            ));
         }
-        if let Some((span, tr, name)) = method_declared_at(doc.program.as_ref()?, session, module, cursor) {
+        if let Some((span, tr, name)) =
+            method_declared_at(doc.program.as_ref()?, session, module, cursor)
+        {
             let tr = def_key(session, tr);
             return Some((span, Target::Method { tr, name }));
         }
@@ -400,9 +408,11 @@ impl Server {
             Target::Local(binding) => self.local_places(uri, *binding, include_definition),
             Target::Method { tr, name } => {
                 self.check_importers();
-                (self.method_places(tr, *name, include_definition).into_iter())
-                    .map(|(place, _)| place)
-                    .collect()
+                (self
+                    .method_places(tr, *name, include_definition)
+                    .into_iter())
+                .map(|(place, _)| place)
+                .collect()
             }
             Target::Defs(keys) => {
                 if self.def_uses.is_none() {
@@ -967,8 +977,12 @@ impl Server {
                     return None;
                 };
                 let tables = session.tables();
-                (tables.impls_of(tr).into_iter())
-                    .find(|ty| tables.record_fields_of(*ty).iter().any(|(f, _)| *f == new_sym))
+                (tables.impls_of(tr).into_iter()).find(|ty| {
+                    tables
+                        .record_fields_of(*ty)
+                        .iter()
+                        .any(|(f, _)| *f == new_sym)
+                })
             });
             if let Some(ty) = field_of {
                 return Some(format!(

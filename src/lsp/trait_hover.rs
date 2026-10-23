@@ -144,11 +144,7 @@ impl Server {
     /// The methods called on the type `ty` (`Int.empty()`), those that
     /// make a value of it, of each trait an impl gives it, each with its
     /// signature.
-    pub(super) fn type_maker_methods(
-        &self,
-        doc: &Document,
-        ty: TypeId,
-    ) -> Vec<TraitMethod> {
+    pub(super) fn type_maker_methods(&self, doc: &Document, ty: TypeId) -> Vec<TraitMethod> {
         let Some(session) = (doc.module.as_ref())
             .and_then(|module| self.projects.get(&module.project))
             .map(|project| &project.session)

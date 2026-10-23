@@ -2517,7 +2517,9 @@ impl Resolver<'_> {
                     .map(|(module, _)| *module);
                 // A trait of a module: it is imported by its name.
                 let trait_module = (elsewhere.first())
-                    .filter(|(module, _)| crate::module::missing_feature(&resolve(*module)).is_none())
+                    .filter(|(module, _)| {
+                        crate::module::missing_feature(&resolve(*module)).is_none()
+                    })
                     .filter(|(module, _)| self.is_trait_of(*module, name))
                     .map(|(module, _)| *module);
                 if let Some(module) = no_value_module {
@@ -2569,7 +2571,9 @@ impl Resolver<'_> {
             Imported::Module(id, _) | Imported::Builtin(id) => Some(*id),
             _ => None,
         });
-        let mut ids = bound.chain(imported).chain(ModuleId::builtin(&resolve(module)));
+        let mut ids = bound
+            .chain(imported)
+            .chain(ModuleId::builtin(&resolve(module)));
         let Some(exports) = ids
             .find(|id| self.module_name(*id) == Some(module))
             .and_then(|id| self.module_exports(id))
