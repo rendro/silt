@@ -111,6 +111,11 @@ rcgen = "0.13"
 # the lock file holds for the transport library, so no crate is added.
 flate2 = "=1.1.9"
 
+# A release binary carries no symbol table: a smaller download. (A
+# panic's backtrace then names no functions.)
+[profile.release]
+strip = true
+
 [lints.clippy]
 # Newer clippy (1.95+) flags long compound types like `OnceLock<RwLock<HashMap<...>>>`
 # in our trait registries and a 9-tuple in test diagnostics. Refactoring to type
