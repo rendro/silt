@@ -1011,11 +1011,10 @@ builtins! {
         let Ok(n @ 1..) = usize::try_from(n) else {
             return Err(VmError::new("stream.chunks: n must be positive".into()));
         };
-        // A chunk is a list: one longer than a list may be is refused
-        // here, not after ten million values have come.
-        fits("stream.chunks", Kind::Chunk, n)?;
         let in_ch = ch.clone();
-        // (It grows as values arrive: `n` may be large.)
+        // (It grows as values arrive: `n` may be any number. A chunk is
+        // a list, so it ends the stage where it would grow past the
+        // cap of one.)
         let mut buffer: Vec<Value> = Vec::new();
         let mut ended = false;
         stage(
@@ -1029,6 +1028,7 @@ builtins! {
                     Got::Emitted if ended => Next::Done(Value::Unit),
                     Got::Emitted => Next::Take(0),
                     Got::Value(_, v) => {
+                        fits("stream.chunks", Kind::Chunk, buffer.len() + 1)?;
                         buffer.push(v);
                         if buffer.len() < n {
                             Next::Take(0)

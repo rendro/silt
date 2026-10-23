@@ -1178,9 +1178,12 @@ mod cap_tests {
             "stream.collect: list exceeds maximum size of 3 elements",
         );
         allowed("stream.from_list([1, 2, 3]) |> stream.collect", "[1, 2, 3]");
-        refused(
-            "stream.chunks(stream.from_list([1]), 4)",
-            "stream.chunks: chunk exceeds maximum size of 3 elements",
+        // A stage runs on a worker, which has the real cap: what
+        // stream.chunks refuses is `fits`'s, tested above, and a size
+        // past the cap is no error by itself.
+        allowed(
+            "stream.chunks(stream.from_list([1, 2, 3]), 10) |> stream.collect",
+            "[[1, 2, 3]]",
         );
     }
 }
