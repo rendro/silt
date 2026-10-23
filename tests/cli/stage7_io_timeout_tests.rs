@@ -63,7 +63,7 @@ fn main() {
     match tcp.accept(listener) {
       Err(tcp.Timeout) -> println("timed out")
       Ok(_) -> println("a connection")
-      Err(e) -> println("another error: {e.message()}")
+      Err(e) -> println("another error: {Error.message(e)}")
     }
   }
 }
@@ -125,7 +125,7 @@ fn main() {
   }
   match tcp.read(peer, 10) {
     Ok(got) -> println("the peer read {bytes.length(got)} bytes: the end")
-    Err(e) -> println("the peer: {e.message()}")
+    Err(e) -> println("the peer: {Error.message(e)}")
   }
 }
 "#;
@@ -157,7 +157,7 @@ fn main() {
   match stream.write_to_tcp(chunks, client) {
     Err(tcp.Timeout) -> println("the write timed out")
     Ok(_) -> println("all was written")
-    Err(e) -> println("the write: {e.message()}")
+    Err(e) -> println("the write: {Error.message(e)}")
   }
 }
 "#;

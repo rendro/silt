@@ -35,7 +35,7 @@ fn session(rounds: usize, waiting: bool) -> (Vec<String>, Vec<usize>) {
             "trait Named for T{i} {{ fn name(self) -> String {{ \"t{i}\" }} }}"
         ));
         entries.push(format!(
-            "println(\"M {{f{i}(1)}} {{T{i} {{ a: 1 }}.name()}}\")"
+            "println(\"M {{f{i}(1)}} {{Named.name(T{i} {{ a: 1 }})}}\")"
         ));
         markers.push(entries.len());
         entries.push(format!("let bad{i}: Int = \"s\""));

@@ -285,7 +285,7 @@ import string
 fn main() {{
     match {call} {{
         Ok(paths) -> string.join(list.sort(paths), "\n")
-        Err(e) -> "Err: {{e.message()}}"
+        Err(e) -> "Err: {{Error.message(e)}}"
     }}
 }}
 "#

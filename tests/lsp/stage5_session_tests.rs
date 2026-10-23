@@ -129,11 +129,11 @@ fn editing_an_imported_file_republishes_its_importer() {
 fn closing_a_module_leaves_the_method_rows_of_the_others() {
     const A: &str = "pub type T { T(Int) }\npub trait Ta { fn m(self) -> String }\n\
         trait Ta for T { fn m(self) -> String { \"a\" } }\n\
-        pub fn via_a(t: T) -> String { t.m() }\n";
+        pub fn via_a(t: T) -> String { Ta.m(t) }\n";
     const B: &str = "import a\nimport a.{ T }\npub trait Tb { fn m(self) -> String }\n\
         trait Tb for T { fn m(self) -> String { \"b\" } }\n\
-        pub fn via_b(t: T) -> String { t.m() }\n";
-    const C: &str = "import a\nimport a.{ T, Ta }\nfn main() {\n  println(T(1).m())\n  \
+        pub fn via_b(t: T) -> String { Tb.m(t) }\n";
+    const C: &str = "import a\nimport a.{ T, Ta }\nfn main() {\n  println(Ta.m(T(1)))\n  \
         println(a.via_a(T(2)))\n}\n";
     let dir = project("rows", &[("a.silt", A), ("b.silt", B), ("c.silt", C)]);
     let [a_uri, b_uri, c_uri] = ["a.silt", "b.silt", "c.silt"].map(|name| uri(&dir.join(name)));

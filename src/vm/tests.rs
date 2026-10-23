@@ -2315,7 +2315,7 @@ fn test_custom_display_trait() {
             }
             fn main() {
                 let s = Circle(5.0)
-                s.display()
+                "{s}"
             }
         "#,
     );
@@ -3403,13 +3403,13 @@ trait Step for C {
   fn go(self, k: Int) -> Int {
     match k {
       0 -> 1 / k
-      _ -> self.go(k - 1)
+      _ -> Step.go(self, k - 1)
     }
   }
 }
 fn main() {
   let c = C { n: 1 }
-  println(c.go(5))
+  println(Step.go(c, 5))
 }
 ";
         assert_eq!(

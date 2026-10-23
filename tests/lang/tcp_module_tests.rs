@@ -44,7 +44,7 @@ import tcp
 fn main() {
   match tcp.listen("127.0.0.1:0") {
     Ok(_) -> "ok"
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#);
@@ -85,18 +85,18 @@ fn main() {
           let result = match tcp.read(conn, 1024) {
             Ok(buf) -> match bytes.to_string(buf) {
               Ok(s) -> s
-              Err(e) -> e.message()
+              Err(e) -> Error.message(e)
             }
-            Err(e) -> e.message()
+            Err(e) -> Error.message(e)
           }
           tcp.close(conn)
           task.join(server)
           result
         }
-        Err(e) -> e.message()
+        Err(e) -> Error.message(e)
       }
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#
@@ -134,18 +134,18 @@ fn main() {
           let result = match tcp.read_exact(conn, 8) {
             Ok(buf) -> match bytes.to_string(buf) {
               Ok(s) -> s
-              Err(e) -> e.message()
+              Err(e) -> Error.message(e)
             }
-            Err(e) -> e.message()
+            Err(e) -> Error.message(e)
           }
           tcp.close(conn)
           task.join(server)
           result
         }
-        Err(e) -> e.message()
+        Err(e) -> Error.message(e)
       }
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#
@@ -182,10 +182,10 @@ fn main() {
           task.join(server)
           result
         }
-        Err(e) -> e.message()
+        Err(e) -> Error.message(e)
       }
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#
@@ -227,10 +227,10 @@ fn main() {
           task.join(server)
           result
         }
-        Err(e) -> e.message()
+        Err(e) -> Error.message(e)
       }
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#

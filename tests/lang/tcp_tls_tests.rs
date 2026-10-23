@@ -47,7 +47,7 @@ fn main() {
             Ok(_) -> "wrong: should error"
             Err(_) -> "errored"
           }
-          Err(e) -> "accept-err:{e.message()}"
+          Err(e) -> "accept-err:{Error.message(e)}"
         }
       })
       time.sleep(time.ms(50))
@@ -55,7 +55,7 @@ fn main() {
       let _ = tcp.connect("127.0.0.1:{tcp.local_port(listener)}")
       task.join(server)
     }
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }
 }
 "#
@@ -98,13 +98,13 @@ fn main() {{
             Ok(key) -> match tcp.accept(listener) {{
               Ok(conn) -> match tcp.tls_server(conn, cert, key) {{
                 Ok(_) -> "ok"
-                Err(e) -> "handshake-failed:{{e.message()}}"
+                Err(e) -> "handshake-failed:{{Error.message(e)}}"
               }}
-              Err(e) -> "accept:{{e.message()}}"
+              Err(e) -> "accept:{{Error.message(e)}}"
             }}
-            Err(e) -> "key-parse:{{e.message()}}"
+            Err(e) -> "key-parse:{{Error.message(e)}}"
           }}
-          Err(e) -> "cert-parse:{{e.message()}}"
+          Err(e) -> "cert-parse:{{Error.message(e)}}"
         }}
       }})
       time.sleep(time.ms(50))
@@ -118,7 +118,7 @@ fn main() {{
       }}
       task.join(server)
     }}
-    Err(e) -> e.message()
+    Err(e) -> Error.message(e)
   }}
 }}
 "#,
@@ -225,13 +225,13 @@ fn main() {{
   match task.deadline(time.ms(100), {{ -> tcp.tls_server(conn, cert, key) }}) {{
     Ok(Ok(_)) -> println("a handshake with a silent client")
     Err(task.Timeout) -> println("given up")
-    Ok(Err(e)) -> println("another error: {{e.message()}}")
-    Err(e) -> println("another error: {{e.message()}}")
+    Ok(Err(e)) -> println("another error: {{Error.message(e)}}")
+    Err(e) -> println("another error: {{Error.message(e)}}")
   }}
   -- The connection of the handshake was closed from the server's side.
   match tcp.read(silent, 1) {{
     Ok(data) -> println("the client reads {{bytes.length(data)}} bytes")
-    Err(e) -> println("the client's read fails: {{e.message()}}")
+    Err(e) -> println("the client's read fails: {{Error.message(e)}}")
   }}
 }}
 "#,

@@ -7,11 +7,11 @@ use silt::session::testing::{session_with, test_path};
 
 const A: &str = "pub type T { T(Int) }\npub trait Ta { fn m(self) -> String }\n\
                  trait Ta for T { fn m(self) -> String { \"a\" } }\n\
-                 pub fn via_a(t: T) -> String { t.m() }\n";
+                 pub fn via_a(t: T) -> String { Ta.m(t) }\n";
 const B: &str = "import a\nimport a.{ T }\npub trait Tb { fn m(self) -> String }\n\
                  trait Tb for T { fn m(self) -> String { \"b\" } }\n\
-                 pub fn via_b(t: T) -> String { t.m() }\n";
-const C: &str = "import a\nimport a.{ T, Ta }\nfn main() {\n  println(T(1).m())\n  \
+                 pub fn via_b(t: T) -> String { Tb.m(t) }\n";
+const C: &str = "import a\nimport a.{ T, Ta }\nfn main() {\n  println(Ta.m(T(1)))\n  \
                  println(a.via_a(T(2)))\n}\n";
 
 /// `b` gives `T` a second method `m`, by its own trait; then `b` drops
@@ -44,7 +44,7 @@ fn a_dropped_trait_checked_first_leaves_no_row() {
 }
 
 /// `c` is checked before `b` is: the row still names `Tb`, which `c`
-/// does not reach, and `a`'s `m` is lost. (On main b22fba2d: "unknown
+/// does not name, and `a`'s `m` is lost. (On main b22fba2d: "unknown
 /// field or method 'm' on type T".)
 #[test]
 fn a_dropped_trait_not_yet_checked_leaves_no_row() {

@@ -319,11 +319,14 @@ fn test_trait_constraint_method_resolved() {
     // A constrained type variable should allow calling trait methods
     assert_no_errors(
         r#"
-trait Display for a {
-  fn display(self) -> String { "?" }
+trait Shown {
+  fn shown(self) -> String
 }
-fn show(x: a) -> String where a: Display {
-  x.display()
+trait Shown for Int {
+  fn shown(self) -> String { "?" }
+}
+fn show(x: a) -> String where a: Shown {
+  Shown.shown(x)
 }
 fn main() { show(42) }
         "#,
@@ -332,18 +335,15 @@ fn main() { show(42) }
 
 #[test]
 fn test_trait_constraint_unknown_method_errors() {
-    // A constrained type variable should NOT allow calling methods not in the trait
+    // A value of a constrained type variable has no fields
     assert_has_error(
         r#"
-trait Display for a {
-  fn display(self) -> String { "?" }
-}
 fn show(x: a) -> String where a: Display {
   x.nonexistent()
 }
 fn main() { show(42) }
         "#,
-        "no method 'nonexistent' found in trait constraints",
+        "type 'a' has no field 'nonexistent'",
     );
 }
 

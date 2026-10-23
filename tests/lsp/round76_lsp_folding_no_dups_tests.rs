@@ -91,7 +91,7 @@ trait T for W {
 }
 fn main() {
   let w = W { v: 1 }
-  w.a()
+  T.a(w)
 }
 ";
     client.did_open_and_wait(file, src);

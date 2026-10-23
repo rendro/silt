@@ -3815,14 +3815,15 @@ fn main() { list.length([1, 2, 3]) }
         let fns = compile(
             r#"
 type Foo { x: Int }
-trait Display for Foo {
-    fn display(self) -> String { "foo" }
+trait Show { fn show(self) -> String }
+trait Show for Foo {
+    fn show(self) -> String { "foo" }
 }
-fn shown(x: a) -> String where a: Display { x.display() }
+fn shown(x: a) -> String where a: Show { Show.show(x) }
 fn field(r: {f: Fn(Int) -> Int}) -> Int { r.f(1) }
 fn main() {
     let f = Foo { x: 1 }
-    f.display()
+    Show.show(f)
 }
 "#,
         );

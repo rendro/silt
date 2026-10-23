@@ -271,12 +271,12 @@ trait Loud {
   fn loud(self) -> String
   fn twice(self) -> String {
     let me = self
-    \"{me.loud()}{me.loud()}\"
+    \"{Loud.loud(me)}{Loud.loud(me)}\"
   }
 }
 ";
     let with_impl = format!(
-        "{body}trait Loud for Int {{ fn loud(self) -> String {{ \"i\" }} }}\nfn main() {{ println(1.twice()) }}\n"
+        "{body}trait Loud for Int {{ fn loud(self) -> String {{ \"i\" }} }}\nfn main() {{ println(Loud.twice(1)) }}\n"
     );
     let without_impl = format!("{body}fn main() {{ println(1) }}\n");
     for (name, src) in [("with_impl", with_impl), ("without_impl", without_impl)] {

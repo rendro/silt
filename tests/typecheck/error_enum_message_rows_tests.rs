@@ -83,7 +83,7 @@ fn every_builtin_error_enum_has_a_message_row() {
             "import {module}\n\
              fn main() {{\n\
                  let e = {module}.{call}\n\
-                 println(e.message())\n\
+                 println(Error.message(e))\n\
              }}\n"
         );
         let path = temp_silt_file(&format!("trait_{enum_name}"), &src);

@@ -543,7 +543,7 @@ trait Display for Shape {
 
 fn main() {
   let s = Circle(5.0)
-  s.display()
+  "{s}"
 }
         "#,
     );
@@ -1663,7 +1663,7 @@ fn main() {
   p.z
 }
             "#,
-        "unknown field or method 'z' on type Point",
+        "type 'Point' has no field 'z'",
     );
 }
 
