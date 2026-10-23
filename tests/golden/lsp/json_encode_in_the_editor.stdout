@@ -1,4 +1,4 @@
-23:11 error unknown field or method 'enc' on type Money
+23:11 error trait 'json.Encode' has no method 'enc'
 > hover 16:39
 ```silt
 trait json.Encode {
@@ -131,11 +131,11 @@ fn main() {
   -- "2026-10-19"
 }
 ```
-> hover 22:13
+> hover 22:25
 ```silt
-Fn(Money) -> Value
+fn encode(self) -> json.Value
 ```
-> completion 23:16
+> completion 23:26
 encode
 > definition 16:39
 (nothing)

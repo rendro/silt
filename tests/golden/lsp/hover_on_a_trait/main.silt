@@ -11,10 +11,10 @@
 -- lsp: hover 51:8
 -- lsp: hover 58:8
 -- lsp: hover 35:35
--- lsp: hover 86:25
--- lsp: hover 87:14
--- lsp: hover 88:17
--- lsp: hover 89:25
+-- lsp: hover 86:18
+-- lsp: hover 87:18
+-- lsp: hover 88:18
+-- lsp: hover 86:12
 -- lsp: definition 41:76
 -- lsp: definition 41:85
 -- lsp: definition 68:8
@@ -26,9 +26,9 @@
 -- it), in an impl's header, as a supertrait, at its declaration. A
 -- method's signature written on several lines keeps its lines.
 -- Definition goes to a program trait's declaration; one of silt's own
--- has no file. A method's name at a call is the method, not its trait
--- (on a record literal, a binding, a call's value), and a builtin
--- module's trait is written as a program names it (`json.Value`).
+-- has no file. A method's name at a call through its trait is the method
+-- (of a record literal, a binding, a call's value), the trait's name the
+-- trait; a builtin module's trait is written as a program names it.
 import json
 import shapes
 
@@ -45,7 +45,7 @@ fn show(x: a, y: b, z: c, w: d) where a: json.Encode + Display, b: shapes.Area, 
 -- Says how big.
 trait Sized {
   fn size(self) -> Int
-  fn twice(self) -> Int { self.size() * 2 }
+  fn twice(self) -> Int { Sized.size(self) * 2 }
 }
 
 trait Big: Sized {
@@ -83,8 +83,8 @@ fn mk() -> Box {
 
 fn main() {
   let b = Box { w: 1 }
-  println(Box { w: 1 }.size())
-  println(b.size())
-  println(mk().size())
-  println(Box { w: 1 }.display())
+  println(Sized.size(Box { w: 1 }))
+  println(Sized.size(b))
+  println(Sized.size(mk()))
+  println("{Box { w: 1 }}")
 }

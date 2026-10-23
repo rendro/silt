@@ -462,7 +462,7 @@ mod tests {
     /// a handle has none.
     #[test]
     fn a_builtin_type_has_json_encode_when_the_writer_has_a_json_form_for_it() {
-        let (impls, _) = crate::typechecker::__trait_init_fingerprint_check_program();
+        let impls = crate::typechecker::__trait_init_fingerprint_check_program();
         let encode: BTreeSet<&str> = impls
             .iter()
             .filter_map(|stamp| stamp.strip_prefix("Encode:"))

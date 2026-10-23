@@ -22,29 +22,17 @@ impl Server {
         let session = &self.projects.get(&module.project)?.session;
         let def = session.defs().get(id.0);
         let (signature, doc_text) = if def.module.is_builtin() || !def.span.is_in_source() {
-            let (name, module) = crate::defs::builtin_trait_of_id(id.0)?;
-            match module {
+            let (decl, q) = self.trait_decl(doc, id)?;
+            match q {
                 // A trait of the prelude: the checker's declaration.
-                None => {
-                    let decl = crate::typechecker::builtin_trait_decls()
-                        .into_iter()
-                        .find(|t| resolve(t.name) == name)?;
-                    (signature(&decl, None), decl.doc.clone())
-                }
+                None => (signature(&decl, None), decl.doc.clone()),
                 // A builtin module's (`json.Encode`): the declaration of
                 // the registry, and its section of the module's page.
                 // It is written as a program names it: the trait and the
                 // module's types with the module (`json.Value`).
-                Some(module) => {
-                    let registry = crate::builtins::registry::registry();
-                    let of = registry.modules.iter().find(|m| m.name == module)?;
-                    let program = crate::builtins::registry::parse(of.traits);
-                    let decl = declared(&program.decls, |t| resolve(t.name) == name)?;
-                    let section = self.builtin_docs.get(&format!("{module}.{name}"));
-                    (
-                        written(decl, Some(&Qualify::of(of))),
-                        section.map(|s| below_signature(s)),
-                    )
+                Some(q) => {
+                    let section = self.builtin_docs.get(&format!("{}.{}", q.module, decl.name));
+                    (written(&decl, Some(&q)), section.map(|s| below_signature(s)))
                 }
             }
         } else {
@@ -59,6 +47,142 @@ impl Server {
             value.push_str(&format!("\n\n---\n\n{text}"));
         }
         Some(value)
+    }
+}
+
+impl Server {
+    /// The declaration of the trait `id` in the session of the open
+    /// document `doc`, with how a builtin module's names are written
+    /// (`None` for a trait of a file or of the prelude).
+    fn trait_decl(&self, doc: &Document, id: TraitId) -> Option<(TraitDecl, Option<Qualify>)> {
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let def = session.defs().get(id.0);
+        if !def.module.is_builtin() && def.span.is_in_source() {
+            let analysis = session.module_analysis(def.module)?;
+            let decl = declared(&analysis.ast.decls, |t| t.name_span == def.span)?;
+            return Some((decl.clone(), None));
+        }
+        let (name, module) = crate::defs::builtin_trait_of_id(id.0)?;
+        match module {
+            None => crate::typechecker::builtin_trait_decls()
+                .into_iter()
+                .find(|t| resolve(t.name) == name)
+                .map(|decl| (decl, None)),
+            Some(module) => {
+                let registry = crate::builtins::registry::registry();
+                let of = registry.modules.iter().find(|m| m.name == module)?;
+                let program = crate::builtins::registry::parse(of.traits);
+                let decl = declared(&program.decls, |t| resolve(t.name) == name)?;
+                Some((decl.clone(), Some(Qualify::of(of))))
+            }
+        }
+    }
+
+    /// The trait `prefix` names in the open document `doc` (`Greet`, a
+    /// trait of the prelude, `m.Greet` through an imported module), as
+    /// the module's analysis binds it.
+    pub(super) fn trait_written(&self, doc: &Document, prefix: &str) -> Option<TraitId> {
+        use crate::typechecker::names::Binding;
+        let scope = &self.checked_module(doc)?.scope;
+        let module = doc.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let (_, builtin) = crate::typechecker::names::builtins();
+        let binding = match prefix.split_once('.') {
+            None => {
+                let name = crate::intern::intern(prefix);
+                (scope.values.get(&name))
+                    .or_else(|| scope.types.get(&name))
+                    .or_else(|| builtin.prelude.values.get(&name))
+                    .or_else(|| builtin.prelude.types.get(&name))
+            }
+            Some((m, t)) => {
+                let Some(Binding::Module(id)) = scope.values.get(&crate::intern::intern(m)) else {
+                    return None;
+                };
+                let exports = match id.is_builtin() {
+                    true => builtin.modules.get(id),
+                    false => session.module_analysis(*id).map(|a| &a.scope.exports),
+                }?;
+                let name = crate::intern::intern(t);
+                exports.values.get(&name).or_else(|| exports.types.get(&name))
+            }
+        };
+        let Some(Binding::Def(id)) = binding else {
+            return None;
+        };
+        match session.defs().get(*id).kind {
+            crate::defs::DefKind::Trait(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The methods of the trait `id` a program calls through it
+    /// (`Greet.greet(x)`): those that take a value of the type, but
+    /// `Display`'s and `Equal`'s, each with its signature.
+    pub(super) fn trait_call_methods(&self, doc: &Document, id: TraitId) -> Vec<TraitMethod> {
+        let Some((decl, q)) = self.trait_decl(doc, id) else {
+            return Vec::new();
+        };
+        let uncalled = crate::defs::builtin_trait_of_id(id.0)
+            .is_some_and(|(name, _)| matches!(name, "Display" | "Equal"));
+        decl.methods
+            .iter()
+            .filter(|f| !uncalled && takes_self(f))
+            .map(|f| trait_method(q.as_ref(), f))
+            .collect()
+    }
+}
+
+/// A method of a trait as a call through the trait shows it.
+pub(super) struct TraitMethod {
+    pub(super) name: crate::intern::Symbol,
+    /// `fn greet(self) -> String`.
+    pub(super) label: String,
+    /// Where each parameter is in `label`.
+    pub(super) params: Vec<[u32; 2]>,
+    pub(super) doc: Option<String>,
+}
+
+/// Whether the method `f` takes a value of the trait's type: a
+/// parameter `self`, or one of type `Self`.
+fn takes_self(f: &FnDecl) -> bool {
+    f.params.iter().any(|p| {
+        matches!(&p.pattern.kind, PatternKind::Ident(name) if resolve(*name) == "self")
+            || matches!(&p.ty, Some(TypeExpr { kind: TypeExprKind::SelfType, .. }))
+    })
+}
+
+/// The method `f` as `method` writes it, with where each parameter is.
+fn trait_method(q: Option<&Qualify>, f: &FnDecl) -> TraitMethod {
+    let mut label = format!("fn {}(", f.name);
+    let mut params = Vec::new();
+    for (k, p) in f.params.iter().enumerate() {
+        if k > 0 {
+            label.push_str(", ");
+        }
+        let name = match &p.pattern.kind {
+            PatternKind::Ident(name) => resolve(*name),
+            _ => "_".to_string(),
+        };
+        let text = match &p.ty {
+            Some(ty) => format!("{name}: {}", type_expr(q, ty)),
+            None => name,
+        };
+        let start = label.len() as u32;
+        label.push_str(&text);
+        params.push([start, label.len() as u32]);
+    }
+    label.push(')');
+    if let Some(ret) = &f.return_type {
+        label.push_str(&format!(" -> {}", type_expr(q, ret)));
+    }
+    label.push_str(&where_clauses(q, &f.where_clauses));
+    TraitMethod {
+        name: f.name,
+        label,
+        params,
+        doc: f.doc.clone(),
     }
 }
 

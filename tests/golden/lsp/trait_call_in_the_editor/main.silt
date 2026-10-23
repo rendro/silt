@@ -1,0 +1,29 @@
+-- cmd: lsp
+-- lsp: completion 23:23
+-- lsp: completion 24:20
+-- lsp: completion 25:18
+-- lsp: hover 26:24
+-- lsp: hover 26:19
+-- lsp: signature 27:33
+-- lsp: definition 26:24
+-- lsp: definition 28:18
+-- lsp: references 28:12
+-- The editor knows a call through a trait: after `Trait.` it offers the
+-- methods the trait is called with (not `Display`'s); hover on the
+-- method shows it as the trait declares it, on the trait the trait;
+-- signature help counts the argument of type Self; definition goes to
+-- the method of the impl, or the trait's; references find the trait's
+-- name at its calls.
+import shapes
+import shapes.{ Square }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "hi" } }
+fn main() {
+  let s = Square { side: 2 }
+  println(shapes.Area.ar)
+  println(Display.dis)
+  println(Greet.gr)
+  println(shapes.Area.area(s))
+  println(shapes.Area.scaled(s, 3))
+  println(Greet.greet(5))
+}

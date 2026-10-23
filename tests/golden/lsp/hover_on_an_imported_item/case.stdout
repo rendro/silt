@@ -88,7 +88,7 @@ fn main() {
   let input = """{"name": "Alice", "age": 30}"""
   match json.parse(input, User) {
     Ok(user) -> println(user.name)
-    Err(e) -> println("Error: {e.message()}")
+    Err(e) -> println("Error: {Error.message(e)}")
   }
 }
 ```

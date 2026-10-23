@@ -1,3 +1,6 @@
-13:11 error unknown field or method 'd' on type Money
-> completion 13:14
-display
+15:11 error type 'Money' has no field 'c'
+16:11 error trait 'json.Decode' has no method 'd'
+> completion 15:14
+cents
+> completion 16:23
+(nothing)

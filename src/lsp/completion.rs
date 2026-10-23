@@ -45,6 +45,11 @@ impl Server {
             if let Some(items) = self.module_member_completions(doc, &prefix, cursor) {
                 return Some(CompletionResponse::Array(items));
             }
+            // A trait's name before the dot: the methods called through
+            // it.
+            if let Some(items) = self.trait_method_completions(doc, &prefix, cursor) {
+                return Some(CompletionResponse::Array(items));
+            }
             // An enum's name before the dot: its variants.
             if let Some(items) = self.enum_variant_completions(doc, &prefix, cursor) {
                 return Some(CompletionResponse::Array(items));
@@ -217,17 +222,11 @@ impl Server {
         Some(CompletionResponse::Array(items))
     }
 
-    /// Produce completions after a `.` — either module functions, record
-    /// fields, or methods available on the receiver's inferred type.
-    ///
-    /// DX-G4 (round 81): when the LSP can confidently infer the type of
-    /// the receiver expression (a let-bound local with an annotation, or
-    /// an identifier whose type was recovered from the typed AST), the
-    /// emitted method set is narrowed to only those methods registered
-    /// for that type's canonical head name. When the type cannot be
-    /// inferred we fall back to the union of all method names declared
-    /// in the program — preserving discoverability rather than silently
-    /// hiding completions.
+    /// Produce completions after a `.`: a builtin module's members, or
+    /// the fields of the receiver's type when the LSP can infer it (a
+    /// let-bound local, or an identifier whose type was recovered from
+    /// the typed AST). A dot after a value is a field: no trait's method
+    /// is offered there (they are offered after the trait's name).
     fn dot_completions(
         &self,
         checked: Option<&Checked>,
@@ -313,9 +312,8 @@ impl Server {
         };
         let program = &*checked.program;
 
-        // Resolve the receiver's inferred type once. Used both for the
-        // record-field path and the method-narrowing path below. Two
-        // narrow sources are tried:
+        // The receiver's inferred type, for its fields. Two sources are
+        // tried:
         //
         //   (a) a let-bound local in scope at the cursor whose type was
         //       recovered from the value expression (annotation included);
@@ -324,16 +322,9 @@ impl Server {
         //       variables.
         //
         // Anything else (complex expressions, generics with unresolved
-        // tyvars, non-identifier prefixes) leaves `receiver_ty = None`
-        // and the method path falls back to every method the module
-        // knows — "narrow when safe, never silently lose completions".
+        // tyvars, non-identifier prefixes) leaves `receiver_ty = None`:
+        // no fields are offered.
         let locals = locals_at_offset(program, cursor);
-        // A builtin module this build lacks (`postgres.` without the
-        // postgres feature): its import is the error, and it has nothing
-        // to offer; the methods of every type are not its members.
-        if module::missing_feature(prefix).is_some() && !locals.iter().any(|l| l.name == prefix) {
-            return items;
-        }
         let receiver_ty: Option<Type> = locals
             .iter()
             .rev()
@@ -342,7 +333,6 @@ impl Server {
             .or_else(|| find_ident_type_by_name(program, prefix));
 
         // 2. Record fields, if the receiver is a record-shaped type.
-        let mut emitted_field_labels: HashSet<String> = HashSet::new();
         if let Some(ref ty) = receiver_ty
             && let Some(fields) = record_fields_from_type(ty, &checked.record_fields)
         {
@@ -353,30 +343,47 @@ impl Server {
                     detail: Some(format!("{field_ty}")),
                     ..CompletionItem::default()
                 });
-                emitted_field_labels.insert(name.clone());
             }
-        }
-
-        // 3. Method completions: the methods the checker knows for the
-        //    receiver type's canonical name, or every method it knows
-        //    when the type is unknown.
-        let methods = methods_for_receiver(&checked.methods, receiver_ty.as_ref());
-        for label in methods {
-            // Don't duplicate a name that already came through as a
-            // field — fields and methods occupy the same `name.` slot.
-            if emitted_field_labels.contains(&label) {
-                continue;
-            }
-            items.push(CompletionItem {
-                label,
-                kind: Some(CompletionItemKind::METHOD),
-                ..CompletionItem::default()
-            });
         }
 
         items.sort_by(|a, b| a.label.cmp(&b.label));
         items.dedup_by(|a, b| a.label == b.label);
         items
+    }
+
+    /// The methods of the trait `prefix` names in the open document
+    /// `doc` that a call through it calls, each with its signature,
+    /// unless a local binding of that name shadows it.
+    fn trait_method_completions(
+        &self,
+        doc: &Document,
+        prefix: &str,
+        cursor: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        if doc.program.as_ref().is_some_and(|program| {
+            locals_at_offset(program, cursor)
+                .iter()
+                .any(|local| local.name == prefix)
+        }) {
+            return None;
+        }
+        let id = self.trait_written(doc, prefix)?;
+        let mut items: Vec<CompletionItem> = (self.trait_call_methods(doc, id).into_iter())
+            .map(|m| CompletionItem {
+                label: resolve(m.name),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(m.label),
+                documentation: m.doc.map(|d| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: d,
+                    })
+                }),
+                ..CompletionItem::default()
+            })
+            .collect();
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        Some(items)
     }
 
     /// The variants of the enum `prefix` names in the open document `doc`
@@ -495,7 +502,6 @@ impl Server {
         let tables = self.checked_tables(doc)?;
         Some(Checked {
             program: checked.ast.clone(),
-            methods: tables.methods(&|module| imports(&checked.ast, module)),
             record_fields: tables.record_fields(),
         })
     }
@@ -538,8 +544,8 @@ impl Server {
     /// `parse_fn_decl`, which leaves a *recovery stub* for
     /// the enclosing function — an `FnDecl` with an empty body. Every
     /// prior `let` in that function disappears from the AST, which means
-    /// `locals_at_offset` returns nothing for the receiver `xs` and the
-    /// type-narrowing path can't pin down its type.
+    /// `locals_at_offset` returns nothing for the receiver `xs` and its
+    /// fields cannot be offered.
     ///
     /// The fix-up gives the project's session, for a moment, a copy of
     /// the text where the partial dot is followed by a placeholder
@@ -599,7 +605,6 @@ impl Server {
         let tables = project.session.tables();
         let checked = project.session.module_analysis(id).map(|checked| Checked {
             program: checked.ast.clone(),
-            methods: tables.methods(&|module| imports(&checked.ast, module)),
             record_fields: tables.record_fields(),
         });
         project.set_text(&path, &original);
@@ -638,37 +643,7 @@ fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> Completio
 /// it.
 struct Checked {
     program: Arc<Program>,
-    methods: Vec<(crate::types::TypeRef, Symbol)>,
     record_fields: RecordFields,
-}
-
-// ── Method enumeration for dot-completion ──────────────────────────
-
-/// Whether `program` imports the module `module`.
-fn imports(program: &Program, module: &str) -> bool {
-    program.decls.iter().any(|decl| {
-        matches!(decl, crate::ast::Decl::Import(target, _) if resolve(target.module()) == module)
-    })
-}
-
-/// The names of the methods a value of type `receiver_ty` has, from the
-/// checker's `methods` (the type impls key it by, method name): those of
-/// the type's head, or every method when the type is unknown.
-fn methods_for_receiver(
-    methods: &[(crate::types::TypeRef, Symbol)],
-    receiver_ty: Option<&Type>,
-) -> Vec<String> {
-    // Unresolved variables, anonymous records and bottom-typed
-    // expressions have no dispatch head: they do not narrow.
-    let head = receiver_ty.and_then(crate::types::canonical::head_of_canon);
-    let mut names: Vec<String> = methods
-        .iter()
-        .filter(|(ty, _)| head.is_none_or(|head| *ty == head))
-        .map(|(_, method)| resolve(*method))
-        .collect();
-    names.sort();
-    names.dedup();
-    names
 }
 
 // ── Dot-completion helpers ─────────────────────────────────────────
@@ -834,65 +809,3 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 // `KEYWORDS` is sourced from `crate::lexer::KEYWORDS` — the authoritative
 // list maintained alongside the lexer's keyword match arms. Re-introducing
 // a hand-rolled list here is guarded by `tests/meta/lexer_keyword_parity_tests.rs`.
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The methods of a user impl and of the builtin derives, as the
-    /// session's analysis of `source` has them.
-    fn methods(source: &str) -> Vec<(crate::types::TypeRef, Symbol)> {
-        let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
-        session.analyze(file);
-        session.tables().methods(&|_| true)
-    }
-
-    const IMPLS: &str = "trait UpperCaser { fn to_upper(self) -> String }\n\
-                         trait UpperCaser for String { fn to_upper(self) -> String { \"X\" } }\n\
-                         trait IntListHead { fn head_int(self) -> Int }\n\
-                         trait IntListHead for List(a) { fn head_int(self) -> Int { 0 } }\n\
-                         fn main() { 0 }\n";
-
-    /// A known receiver type narrows the methods to those of its
-    /// canonical name, the builtin derived ones included.
-    #[test]
-    fn methods_narrow_to_the_receiver_type() {
-        let methods = methods(IMPLS);
-        let list = methods_for_receiver(&methods, Some(&Type::List(Box::new(Type::Int))));
-        assert!(list.contains(&"head_int".to_string()), "{list:?}");
-        assert!(list.contains(&"display".to_string()), "{list:?}");
-        assert!(!list.contains(&"to_upper".to_string()), "{list:?}");
-        let string = methods_for_receiver(&methods, Some(&Type::String));
-        assert!(string.contains(&"to_upper".to_string()), "{string:?}");
-        assert!(!string.contains(&"head_int".to_string()), "{string:?}");
-    }
-
-    /// A method without `self` is called on the type: it is not offered
-    /// after a value, of its type or of an unknown one.
-    #[test]
-    fn a_method_without_self_is_not_offered_after_a_value() {
-        let methods = methods(
-            "trait Mk {\n  fn make(n: Int) -> Self\n  fn twice(self) -> Self\n}\n\
-             trait Mk for Int {\n  fn make(n: Int) -> Int { n }\n  \
-             fn twice(self) -> Int { self * 2 }\n}\nfn main() { 0 }\n",
-        );
-        for receiver in [Some(&Type::Int), None] {
-            let offered = methods_for_receiver(&methods, receiver);
-            assert!(offered.contains(&"twice".to_string()), "{offered:?}");
-            assert!(!offered.contains(&"make".to_string()), "{offered:?}");
-        }
-    }
-
-    /// An unknown receiver type offers every method the module knows.
-    #[test]
-    fn an_unknown_receiver_gets_every_method() {
-        let methods = methods(IMPLS);
-        let all = methods_for_receiver(&methods, None);
-        for name in [
-            "to_upper", "head_int", "display", "equal", "compare", "hash",
-        ] {
-            assert!(all.contains(&name.to_string()), "{name} missing: {all:?}");
-        }
-        assert_eq!(all, methods_for_receiver(&methods, Some(&Type::Var(0))));
-    }
-}

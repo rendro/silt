@@ -284,7 +284,7 @@ trait Loud {
         let uri = format!("file:///tmp/silt_hover_trait_default_{name}.silt");
         client.did_open_and_wait(&uri, &src);
         // `me` in the interpolation, and `self` in the `let`.
-        for (line, character) in [(4, 6), (3, 13)] {
+        for (line, character) in [(4, 16), (3, 13)] {
             let hover = client.hover(&uri, line, character);
             let shown = hover.to_string();
             assert!(

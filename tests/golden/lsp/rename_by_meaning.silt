@@ -1,9 +1,9 @@
 -- cmd: lsp
 -- lsp: rename 33:7 Sizable
--- lsp: rename 52:5 resize
--- lsp: definition 52:5
--- lsp: definition 52:18
--- lsp: definition 100:88
+-- lsp: rename 52:10 resize
+-- lsp: definition 52:10
+-- lsp: definition 52:30
+-- lsp: definition 100:93
 -- lsp: rename 34:12 me
 -- lsp: rename 56:13 width
 -- lsp: rename 57:3 width
@@ -32,7 +32,7 @@ type Box {
 
 trait Sized {
   fn scale(self, by: Int) -> Int {
-    self.size() * by
+    Sized.size(self) * by
   }
   fn size(self) -> Int
 }
@@ -49,7 +49,7 @@ type Side {
 }
 
 fn twice(x: a) -> Int where a: Sized {
-  x.scale(2) + x.size()
+  Sized.scale(x, 2) + Sized.size(x)
 }
 
 fn unbox(b: Box) -> Int {
@@ -92,10 +92,10 @@ trait Container {
 }
 
 fn head(c: t) -> <t as Container>::Item where t: Container {
-  c.first()
+  Container.first(c)
 }
 
 fn main() {
   let b = Box { w: 3 }
-  println(twice(b) + unbox(b) + either(Left(1)) + scopes(1) + blocks(1) + loops(1) + b.size())
+  println(twice(b) + unbox(b) + either(Left(1)) + scopes(1) + blocks(1) + loops(1) + Sized.size(b))
 }

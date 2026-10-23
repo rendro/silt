@@ -128,9 +128,6 @@ pub(crate) struct MethodEntry {
     /// The trait whose impl provides the method. `None` for a
     /// structural trait's method (`structural`), which is no impl's.
     pub(super) trait_name: Option<TraitKey>,
-    /// Whether the method takes a receiver, as its trait declares it
-    /// (`TraitInfo::receivers`).
-    pub(super) receiver: bool,
     /// What every use of the method owes, on the variables of
     /// `method_type`: the `where` clauses of the impl's header
     /// (`trait Greet for Box(a) where a: Greet`) and the bounds the
@@ -533,54 +530,6 @@ impl Tables {
             Some(def) => builtin_scheme(&def),
             None => self.schemes.get(&id).cloned(),
         }
-    }
-
-    /// Every method a value has, as (the type impls key the value's type
-    /// by, the method's name): those of the impls that take `self`, and those of the
-    /// structural traits (of a builtin type, the traits it is stamped
-    /// with; of a type a program declares, all their names). A
-    /// structural trait of a builtin module (`json.Encode`) gives its
-    /// method only where `imports` says the module is imported.
-    pub fn methods(&self, imports: &dyn Fn(&str) -> bool) -> Vec<(TypeRef, Symbol)> {
-        // (A method without `self` is called on the type, not on a
-        // value.)
-        let mut methods: std::collections::HashSet<(TypeRef, Symbol)> = self
-            .impl_methods
-            .rows
-            .iter()
-            .filter(|(_, entry)| entry.receiver)
-            .map(|((ty, method, _), _)| (*ty, *method))
-            .collect();
-        let declared = self
-            .records
-            .keys()
-            .chain(self.enums.keys())
-            .filter(|ty| builtin_type_name(**ty).is_none());
-        for (name, method) in STRUCTURAL_METHODS {
-            let tr = TraitKey::builtin(name);
-            if let Some((_, Some(module))) = crate::defs::builtin_trait_of_id(tr.id.0)
-                && !imports(module)
-            {
-                continue;
-            }
-            let method = intern(method);
-            // (`decode` is called on the type.)
-            if self
-                .traits
-                .get(&tr)
-                .is_some_and(|info| !info.receivers.contains(&method))
-            {
-                continue;
-            }
-            methods.extend(
-                self.trait_impl_set
-                    .iter()
-                    .filter(|(t, _)| *t == tr)
-                    .map(|(_, ty)| (*ty, method)),
-            );
-            methods.extend(declared.clone().map(|ty| (*ty, method)));
-        }
-        methods.into_iter().collect()
     }
 
     /// Whether a value of the type `ty` has the method of the structural

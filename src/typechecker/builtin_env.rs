@@ -342,7 +342,6 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                         method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                         structural: false,
                         trait_name: Some(key),
-                        receiver: true,
                         preds: Vec::new(),
                     },
                 );
@@ -412,38 +411,25 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
 /// registrations of the builtin init, for the policy locks
 /// in `tests/cli/trait_init_parity_tests.rs`.
 ///
-/// Returns `(trait_impls, method_keys)` where:
-/// - `trait_impls` is the set of `"Trait:Type"` pairs registered in
-///   `trait_impl_set`.
-/// - `method_keys` is the set of `"Type.method"` pairs the builtins
-///   have (`Tables::methods`).
+/// Returns the set of `"Trait:Type"` pairs registered in
+/// `trait_impl_set`.
 ///
 /// Stringifies the `Symbol` keys so test code doesn't need access to
 /// the crate-private `Symbol`/`intern` types.
 #[doc(hidden)]
-pub fn __trait_init_fingerprint_check_program() -> (
-    std::collections::BTreeSet<String>,
-    std::collections::BTreeSet<String>,
-) {
+pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
     let mut checker = TypeChecker::new();
     let mut env = TypeEnv::new();
     register_prelude(&mut checker, &mut env);
     enter_registry(&mut checker, &mut env);
     register_builtin_trait_impls(&mut checker);
-    let trait_impls: BTreeSet<String> = checker
+    checker
         .tables
         .trait_impl_set
         .iter()
         .map(|(tr, ty)| format!("{}:{}", resolve(tr.name), resolve(ty.name)))
-        .collect();
-    let method_keys: BTreeSet<String> = checker
-        .tables
-        .methods(&|_| true)
-        .iter()
-        .map(|(ty, m)| format!("{}.{}", resolve(ty.name), resolve(*m)))
-        .collect();
-    (trait_impls, method_keys)
+        .collect::<BTreeSet<String>>()
 }
 
 /// Test-only introspection for the built-in trait declarations

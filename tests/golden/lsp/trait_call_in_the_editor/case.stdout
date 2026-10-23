@@ -1,0 +1,41 @@
+23:11 error trait 'shapes.Area' has no method 'ar'
+24:11 error trait 'Display' has no method 'dis'
+25:11 error trait 'Greet' has no method 'gr'
+> completion 23:23
+area
+scaled
+> completion 24:20
+(nothing)
+> completion 25:18
+greet
+> hover 26:24
+```silt
+fn area(self) -> Int
+```
+
+---
+
+The area, in square units.
+> hover 26:19
+```silt
+pub trait Area {
+  fn area(self) -> Int
+  fn scaled(self, by: Int) -> Int
+}
+```
+
+---
+
+A shape's area.
+> signature 27:33
+fn scaled(self, by: Int) -> Int
+argument 2: by: Int
+> definition 26:24
+shapes.silt:11:6-11:10
+> definition 28:18
+main.silt:20:26-20:31
+> references 28:12
+main.silt:19:7-19:12
+main.silt:20:7-20:12
+main.silt:25:11-25:16
+main.silt:28:11-28:16

@@ -294,6 +294,29 @@ fn emit_expr_tokens(
                 emit_expr_tokens(v, source, doc, server, out);
             }
         }
+        // A method named through its trait (`Greet.greet`): the trait
+        // an INTERFACE, the method a FUNCTION.
+        ExprKind::FieldAccess(receiver, field, field_span)
+            if receiver.ty.is_none()
+                && matches!(
+                    expr.sel,
+                    Some(
+                        crate::ast::Selection::Impl { .. }
+                            | crate::ast::Selection::Native { .. }
+                            | crate::ast::Selection::Dynamic { .. }
+                    )
+                ) =>
+        {
+            match &receiver.kind {
+                ExprKind::Ident(name) => {
+                    let start = receiver.span.start as usize;
+                    push_token_at_offset(source, start, &resolve(*name), TT_INTERFACE, out);
+                }
+                _ => emit_expr_tokens(receiver, source, doc, server, out),
+            }
+            let start = field_span.start as usize;
+            push_token_at_offset(source, start, &resolve(*field), TT_FUNCTION, out);
+        }
         ExprKind::Block(stmts) => {
             for stmt in stmts {
                 emit_stmt_tokens(stmt, source, doc, server, out);

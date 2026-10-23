@@ -39,6 +39,21 @@ impl Server {
         let before = tokens.partition_point(|tok| (tok.span.start as usize) < cursor);
         let (fn_name, active_param) = call_site(&tokens[..before])?;
 
+        // `Tr.m(`: the method of the trait, as the trait declares it.
+        if let Some((tr, method)) = fn_name.rsplit_once('.')
+            && let Some(id) = self.trait_written(doc, tr)
+        {
+            let m = (self.trait_call_methods(doc, id).into_iter())
+                .find(|m| resolve(m.name) == method)?;
+            let params_info = (m.params.iter())
+                .map(|range| ParameterInformation {
+                    label: ParameterLabel::LabelOffsets(*range),
+                    documentation: None,
+                })
+                .collect();
+            return Some(self.signature(m.label, params_info, m.doc, active_param));
+        }
+
         // Look up in definitions first, then builtins.
         let fn_sym = intern(&fn_name);
         // A member of an imported module: `m.f(`, or `f(` with `f` from
@@ -74,6 +89,19 @@ impl Server {
                 (label, params_info, doc_text)
             };
 
+        Some(self.signature(label, params_info, doc_text, active_param))
+    }
+
+    /// The help of a call of the signature `label`, whose parameters are
+    /// `params_info`, documented by `doc_text`, at its parameter
+    /// `active_param`.
+    fn signature(
+        &self,
+        label: String,
+        params_info: Vec<ParameterInformation>,
+        doc_text: Option<String>,
+        active_param: u32,
+    ) -> SignatureHelp {
         // A client that does not read label offsets gets each
         // parameter as its text, a substring of the label.
         let params_info = if self.label_offsets {
@@ -100,7 +128,7 @@ impl Server {
             })
         });
 
-        Some(SignatureHelp {
+        SignatureHelp {
             signatures: vec![SignatureInformation {
                 label,
                 documentation,
@@ -109,7 +137,7 @@ impl Server {
             }],
             active_signature: Some(0),
             active_parameter: Some(active_param),
-        })
+        }
     }
 }
 
@@ -223,12 +251,17 @@ fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
             .is_some_and(|tok| tok.kind == Token::Dot)
     };
     let name = name_at(paren.checked_sub(1))?;
-    // `m.f(`: a member of a module. A longer path (`a.b.f(`) is a method
-    // or a field of a value, which has no signature here.
+    // `m.f(`: a member of a module, or `Tr.f(`, a method through its
+    // trait; `m.Tr.f(`, through a trait of a module. A longer path is a
+    // field of a value, which has no signature here.
     if is_dot(paren.checked_sub(2)) {
         let module = name_at(paren.checked_sub(3))?;
         if is_dot(paren.checked_sub(4)) {
-            return None;
+            let outer = name_at(paren.checked_sub(5))?;
+            if is_dot(paren.checked_sub(6)) {
+                return None;
+            }
+            return Some((format!("{outer}.{module}.{name}"), *commas));
         }
         return Some((format!("{module}.{name}"), *commas));
     }

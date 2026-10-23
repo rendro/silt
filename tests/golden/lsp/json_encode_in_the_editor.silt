@@ -1,12 +1,12 @@
 -- cmd: lsp
 -- lsp: hover 16:39
 -- lsp: hover 17:8
--- lsp: hover 22:13
--- lsp: completion 23:16
+-- lsp: hover 22:25
+-- lsp: completion 23:26
 -- lsp: definition 16:39
 -- The editor knows `json.Encode`: a hover on it in a `where` clause, on
--- `json.stringify` and on a value's `.encode()`, the method among those
--- offered after a dot, and no definition in a file (it is json's).
+-- `json.stringify` and on `json.Encode.encode`, the method offered after
+-- `json.Encode.`, and no definition in a file (it is json's).
 import json
 
 type Money {
@@ -19,7 +19,7 @@ fn send(x: a) -> String where a: json.Encode {
 
 fn main() {
   let m = Money { cents: 5 }
-  println(m.encode())
-  println(m.enc)
+  println(json.Encode.encode(m))
+  println(json.Encode.enc)
   println(send(m))
 }

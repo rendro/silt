@@ -2330,7 +2330,6 @@ impl TypeChecker {
                 method_type: Type::Error,
                 structural: true,
                 trait_name: None,
-                receiver: true,
                 preds: Vec::new(),
             }),
         }

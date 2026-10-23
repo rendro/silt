@@ -175,7 +175,6 @@ impl TypeChecker {
                             method_type: substitute_vars(method_ty, &mapping),
                             structural: false,
                             trait_name: Some(*trait_name),
-                            receiver: trait_info.receivers.contains(method_name),
                             preds,
                         },
                     );
@@ -1808,7 +1807,6 @@ impl TypeChecker {
                     method_type: fn_type,
                     structural: false,
                     trait_name: Some(trait_key),
-                    receiver: declared_receiver.unwrap_or_else(|| writes_self(method)),
                     preds: (method_constraints.iter().cloned())
                         .chain(self.given_to(&method_rigid, trait_key, target_type, method.name))
                         .collect(),
@@ -1897,7 +1895,6 @@ impl TypeChecker {
                         method_type: substitute_vars(ty, &mapping),
                         structural: false,
                         trait_name: Some(trait_key),
-                        receiver: info.receivers.contains(name),
                         preds: method_constraints,
                     },
                 );
