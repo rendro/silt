@@ -2058,6 +2058,13 @@ impl TypeChecker {
                         }
                     };
                     self.error_help(Code::ArityMismatch, (message, help), span);
+                    // A parameter no argument is given is of no type a
+                    // later message could ask about (`Greet.greet()`).
+                    for param in params.iter().skip(args.len() + implicit_self) {
+                        if let Type::Var(_) = self.apply(param) {
+                            self.unify(param, &Type::Error, span);
+                        }
+                    }
                 }
                 (**ret).clone()
             }
@@ -2072,11 +2079,20 @@ impl TypeChecker {
                 ret
             }
             other => {
-                for arg in args.iter_mut() {
-                    let _ = self.infer_expr(arg, env);
-                }
+                let arg_types: Vec<Type> =
+                    args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
                 match (other, form) {
-                    (Type::Error, _) => Type::Error,
+                    // What an argument of a callee already reported
+                    // leaves unknown is asked about no more
+                    // (`list.map(xs, Greet.greet)` before `import list`).
+                    (Type::Error, _) => {
+                        for ty in &arg_types {
+                            for v in free_vars_in(&self.apply(ty)) {
+                                self.unify(&Type::Var(v), &Type::Error, span);
+                            }
+                        }
+                        Type::Error
+                    }
                     (Type::Never, _) => Type::Never,
                     (_, CallForm::Call) => {
                         let mut d = Diagnostic::error(

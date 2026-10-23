@@ -1,0 +1,10 @@
+-- exit: 1
+-- A call through a trait given no argument is an arity error, and no
+-- question about the type it was not given.
+-- stderr-contains: error[type]: `Greet.greet` expects 1 argument, got 0
+-- stderr-not-contains: cannot infer
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "i" } }
+fn main() {
+  println(Greet.greet())
+}
