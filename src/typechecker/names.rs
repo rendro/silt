@@ -120,6 +120,21 @@ pub enum ModuleKind {
 pub struct Resolution {
     pub scope: ModuleScope,
     pub diagnostics: Vec<Diagnostic>,
+    /// The accesses `m.x` whose `m` is a local that hides an imported
+    /// module `m` with a member `x`.
+    pub hidden_modules: Vec<HiddenModule>,
+}
+
+/// An access `m.x` whose head `m` is a local, where the module `m` that
+/// it hides is imported and has a member `x`: if the local has no field
+/// or method `x`, the module was meant.
+#[derive(Clone, Debug)]
+pub struct HiddenModule {
+    /// The access, `m.x`.
+    pub access: Span,
+    pub module: Symbol,
+    /// Where the local is bound.
+    pub local: Span,
 }
 
 // ── The builtins ─────────────────────────────────────────────────────
@@ -339,6 +354,7 @@ pub fn resolve_module(
         bound_now: Vec::new(),
         own_aliases: HashMap::new(),
         diagnostics,
+        hidden_modules: Vec::new(),
     };
     resolver.alias_heads(program);
     for decl in &mut program.decls {
@@ -346,13 +362,18 @@ pub fn resolve_module(
     }
     let own_aliases = std::mem::take(&mut resolver.own_aliases);
     let mut diagnostics = resolver.diagnostics;
+    let hidden_modules = resolver.hidden_modules;
     for (alias, ty) in own_aliases {
         defs.set_alias_type(alias, ty);
     }
     if kind == ModuleKind::File {
         report_private_in_public(program, module, defs, &mut diagnostics);
     }
-    Resolution { scope, diagnostics }
+    Resolution {
+        scope,
+        diagnostics,
+        hidden_modules,
+    }
 }
 
 /// Enter the definitions of `program` and bind them in `scope`.
@@ -1012,8 +1033,9 @@ struct Resolver<'a> {
     scope: &'a ModuleScope,
     imports: &'a HashMap<Symbol, Imported<'a>>,
     builtins: &'a BuiltinScopes,
-    /// The local bindings in scope, innermost last.
-    locals: Vec<Vec<Symbol>>,
+    /// The local bindings in scope, innermost last, each with where it
+    /// is bound.
+    locals: Vec<Vec<(Symbol, Span)>>,
     /// Top-level names that mean an earlier REPL cell's definition while
     /// the initializer of a cell's `let` that binds them again is
     /// resolved (`let x = x + 1`).
@@ -1028,6 +1050,7 @@ struct Resolver<'a> {
     /// `DefTable::through_alias`, which has those of other modules).
     own_aliases: HashMap<DefId, DefId>,
     diagnostics: Vec<Diagnostic>,
+    hidden_modules: Vec<HiddenModule>,
 }
 
 /// The closure of a local `let f = { … }`, whose own name is a local of
@@ -1068,23 +1091,32 @@ impl Resolver<'_> {
         self.locals.pop();
     }
 
-    fn bind_local(&mut self, name: Symbol) {
+    fn bind_local(&mut self, name: Symbol, at: Span) {
         if self.locals.is_empty() {
             self.push();
         }
-        self.locals.last_mut().expect("a scope").push(name);
+        self.locals.last_mut().expect("a scope").push((name, at));
     }
 
     fn bind_pattern_locals(&mut self, pattern: &Pattern) {
         let mut binders = Vec::new();
         pattern_binders(pattern, &mut binders);
-        for (name, _) in binders {
-            self.bind_local(name);
+        for (name, at) in binders {
+            self.bind_local(name, at);
         }
     }
 
     fn is_local(&self, name: Symbol) -> bool {
-        self.locals.iter().any(|scope| scope.contains(&name))
+        self.local_at(name).is_some()
+    }
+
+    /// Where the local `name` in scope is bound.
+    fn local_at(&self, name: Symbol) -> Option<Span> {
+        self.locals
+            .iter()
+            .rev()
+            .find_map(|scope| scope.iter().rev().find(|(n, _)| *n == name))
+            .map(|(_, at)| *at)
     }
 
     /// The exports of the module a binding names.
@@ -2348,8 +2380,8 @@ impl Resolver<'_> {
                     self.expr(init);
                 }
                 self.push();
-                for (name, _, _) in bindings.iter() {
-                    self.bind_local(*name);
+                for (name, at, _) in bindings.iter() {
+                    self.bind_local(*name, *at);
                 }
                 self.expr(body);
                 self.pop();
@@ -2365,7 +2397,7 @@ impl Resolver<'_> {
             None | Some(Found::Binding(Binding::Poisoned))
         );
         self.push();
-        self.bind_local(name);
+        self.bind_local(name, span);
         self.named_closures.push(NamedClosure {
             name,
             span,
@@ -2433,7 +2465,11 @@ impl Resolver<'_> {
     /// before its `let` is an error: a reader could not tell which of
     /// the two is meant.
     fn check_named_closure(&mut self, name: Symbol, span: Span) {
-        let Some(scope) = self.locals.iter().rposition(|s| s.contains(&name)) else {
+        let Some(scope) = self
+            .locals
+            .iter()
+            .rposition(|s| s.iter().any(|(n, _)| *n == name))
+        else {
             return;
         };
         let Some(closure) = self
@@ -2585,6 +2621,7 @@ impl Resolver<'_> {
             .locals
             .iter()
             .flatten()
+            .map(|(name, _)| name)
             .chain(self.scope.values.keys())
             .chain(self.scope.implied.keys())
             .chain(self.builtins.prelude.values.keys())
@@ -2646,8 +2683,19 @@ impl Resolver<'_> {
             return None;
         };
         let head_span = obj.span;
-        if self.is_local(head_name) {
+        if let Some(local) = self.local_at(head_name) {
             obj.res = Some(Res::Local);
+            if let Some(Binding::Module(id)) = self.scope.values.get(&head_name)
+                && self
+                    .module_exports(*id)
+                    .is_some_and(|exports| exports.member(field).is_some())
+            {
+                self.hidden_modules.push(HiddenModule {
+                    access: span,
+                    module: head_name,
+                    local,
+                });
+            }
             return None;
         }
         match self.lookup_global_value(head_name) {
