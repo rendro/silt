@@ -395,7 +395,14 @@ impl TypeChecker {
                 r.name
             ),
         )
-        .with_help(format!("add `where {}: {bound}`", r.name));
+        .with_help(match self.default_body_of {
+            // A default body may also have the trait from a supertrait.
+            Some(own) if resolve(r.name) == "Self" => format!(
+                "add `where Self: {bound}`, or make `{bound}` a supertrait: `trait {}: {bound}`",
+                self.show_trait(own)
+            ),
+            _ => format!("add `where {}: {bound}`", r.name),
+        });
         self.errors.push(diagnostic);
     }
 
@@ -740,9 +747,25 @@ impl TypeChecker {
         };
         let Some((_, method_ty)) = info.methods.iter().find(|(n, _)| *n == field) else {
             let message = format!("trait '{}' has no method '{field}'", self.show_trait(tr));
-            let names: Vec<String> = info.methods.iter().map(|(n, _)| resolve(*n)).collect();
-            let help = super::suggest::suggest_similar(&resolve(field), &names)
-                .map(|name| format!("did you mean '{name}'?"));
+            // A method of a supertrait is called through that trait.
+            let sup = (self.supertraits_of(tr).into_iter()).find(|s| {
+                (self.tables.traits.get(s)).is_some_and(|i| i.methods.iter().any(|(n, _)| *n == field))
+            });
+            let help = match sup {
+                Some(s) => uncallable_builtin(s, field, "x").or_else(|| {
+                    let shown = self.spell_trait(s);
+                    let rest = if self.method_arity(s, field) > 1 { ", .." } else { "" };
+                    Some(format!(
+                        "`{field}` is a method of supertrait `{shown}`: call it as `{shown}.{field}(x{rest})`"
+                    ))
+                }),
+                None => {
+                    let names: Vec<String> =
+                        info.methods.iter().map(|(n, _)| resolve(*n)).collect();
+                    super::suggest::suggest_similar(&resolve(field), &names)
+                        .map(|name| format!("did you mean '{name}'?"))
+                }
+            };
             self.error_help(Code::UnknownMethod, (message, help), span);
             return Type::Error;
         };

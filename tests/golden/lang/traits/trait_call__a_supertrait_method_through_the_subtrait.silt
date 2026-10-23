@@ -1,0 +1,12 @@
+-- exit: 1
+-- A method of a supertrait is called through the trait that declares
+-- it: the help names that call.
+-- stderr-contains: error[type]: trait 'Sub' has no method 'sup'
+-- stderr-contains: help: `sup` is a method of supertrait `Super`: call it as `Super.sup(x)`
+trait Super { fn sup(self) -> String }
+trait Sub: Super { fn sub(self) -> String }
+trait Super for Int { fn sup(self) -> String { "int" } }
+trait Sub for Int { fn sub(self) -> String { "s" } }
+fn main() {
+  println(Sub.sup(5))
+}

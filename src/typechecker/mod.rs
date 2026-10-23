@@ -151,6 +151,8 @@ pub struct TypeChecker {
     /// needs it finds on a variable its trait's or impl's methods share
     /// are its own.
     pub(super) body_owner: Option<Symbol>,
+    /// The trait whose default method body is being checked.
+    pub(super) default_body_of: Option<TraitKey>,
     /// The calls of trait methods on values of known types, waiting for
     /// the module's bodies (`settle_builtin_needs`).
     pub(super) via_waiting: Vec<builtin_needs::ViaUse>,
@@ -414,6 +416,7 @@ impl TypeChecker {
             given_waiting: Vec::new(),
             via_needs: HashMap::new(),
             body_owner: None,
+            default_body_of: None,
             via_waiting: Vec::new(),
             leaf_memo: HashMap::new(),
             leaf_busy: Vec::new(),
@@ -1370,7 +1373,9 @@ impl TypeChecker {
                         };
                         let key = self.own_trait(t.name);
                         self.body_owner = Some(builtin_needs::body_key(key, "", method.name));
+                        self.default_body_of = Some(key);
                         self.check_method_body(method, &sig, env);
+                        self.default_body_of = None;
                         self.body_owner = None;
                     }
                 }
