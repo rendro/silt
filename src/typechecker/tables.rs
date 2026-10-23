@@ -485,6 +485,27 @@ impl Tables {
             .collect()
     }
 
+    /// The methods called on the type `ty` (`Int.empty()`): each method
+    /// that takes no value of its trait's type, of each impl `ty` has
+    /// rows of, by trait and name.
+    pub fn makers_of(&self, ty: crate::defs::TypeId) -> Vec<(crate::defs::TraitId, Symbol)> {
+        let mut found: Vec<(crate::defs::TraitId, Symbol)> = Vec::new();
+        for (of, name, tr) in self.impl_methods.keys() {
+            let Some(info) = (of.id == ty).then(|| self.traits.get(tr)).flatten() else {
+                continue;
+            };
+            let takes_self = (info.methods.iter()).any(|(n, method)| {
+                n == name
+                    && matches!(method, Type::Fun(params, _)
+                        if params.iter().any(|p| matches!(p, Type::Var(v) if *v == info.self_var)))
+            });
+            if !takes_self && !found.contains(&(tr.id, *name)) {
+                found.push((tr.id, *name));
+            }
+        }
+        found
+    }
+
     /// The fields of the record type `ty`, with their types, in
     /// declaration order; none for a type that is no record.
     pub fn record_fields_of(&self, ty: TypeRef) -> &[(Symbol, Type)] {

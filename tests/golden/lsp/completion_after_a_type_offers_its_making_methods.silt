@@ -1,0 +1,19 @@
+-- cmd: lsp
+-- lsp: completion 16:15
+-- lsp: completion 17:15
+-- After a type and a dot completion offers its variants and the methods
+-- of its traits that make a value of it (called on the type).
+trait Monoid {
+  fn empty() -> Self
+  fn combine(self, o: Self) -> Self
+}
+trait Monoid for Int { fn empty() -> Self { 0 }
+  fn combine(self, o: Self) -> Self { self + o } }
+type Box { Full, Gone }
+trait Monoid for Box { fn empty() -> Self { Gone }
+  fn combine(self, o: Self) -> Self { o } }
+fn main() {
+  let a = Int.empty()
+  let b = Box.empty()
+  println("{a} {Monoid.combine(b, b)}")
+}

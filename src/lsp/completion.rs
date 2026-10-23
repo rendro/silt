@@ -50,8 +50,9 @@ impl Server {
             if let Some(items) = self.trait_method_completions(doc, &prefix, cursor) {
                 return Some(CompletionResponse::Array(items));
             }
-            // An enum's name before the dot: its variants.
-            if let Some(items) = self.enum_variant_completions(doc, &prefix, cursor) {
+            // A type's name before the dot: its variants, and the
+            // methods called on it.
+            if let Some(items) = self.type_member_completions(doc, &prefix, cursor) {
                 return Some(CompletionResponse::Array(items));
             }
             let builtin = self.bound_builtin_module(doc, &prefix, cursor);
@@ -387,9 +388,10 @@ impl Server {
     }
 
     /// The variants of the enum `prefix` names in the open document `doc`
-    /// (declared there or imported by name), unless a local binding of
-    /// that name shadows it.
-    fn enum_variant_completions(
+    /// (declared there or imported by name, or a type of the prelude),
+    /// and the methods of its traits that make a value of it
+    /// (`Int.empty`), unless a local binding of that name shadows it.
+    fn type_member_completions(
         &self,
         doc: &Document,
         prefix: &str,
@@ -409,7 +411,8 @@ impl Server {
         // `T.` or `m.T.` (a type of an imported module).
         let (_, builtin) = crate::typechecker::names::builtins();
         let binding = match prefix.split_once('.') {
-            None => scope.types.get(&intern(prefix)),
+            None => (scope.types.get(&intern(prefix)))
+                .or_else(|| builtin.prelude.types.get(&intern(prefix))),
             Some((m, t)) => {
                 let Some(Binding::Module(id)) = scope.values.get(&intern(m)) else {
                     return None;
@@ -425,20 +428,33 @@ impl Server {
         let Some(Binding::Def(ty)) = binding else {
             return None;
         };
-        let variants = defs.variants(*ty);
-        if variants.is_empty() {
+        let crate::defs::DefKind::Type(type_id) = defs.get(*ty).kind else {
             return None;
-        }
-        Some(
-            variants
-                .iter()
-                .map(|v| CompletionItem {
-                    label: resolve(defs.get(*v).name),
-                    kind: Some(CompletionItemKind::CONSTRUCTOR),
-                    ..CompletionItem::default()
-                })
-                .collect(),
-        )
+        };
+        let mut items: Vec<CompletionItem> = (defs.variants(*ty).iter())
+            .map(|v| CompletionItem {
+                label: resolve(defs.get(*v).name),
+                kind: Some(CompletionItemKind::CONSTRUCTOR),
+                ..CompletionItem::default()
+            })
+            .collect();
+        let mut makers: Vec<CompletionItem> = (self.type_maker_methods(doc, type_id).into_iter())
+            .map(|m| CompletionItem {
+                label: resolve(m.name),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(m.label),
+                documentation: m.doc.map(|d| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: d,
+                    })
+                }),
+                ..CompletionItem::default()
+            })
+            .collect();
+        makers.sort_by(|a, b| a.label.cmp(&b.label));
+        items.extend(makers);
+        (!items.is_empty()).then_some(items)
     }
 
     /// The builtin module `prefix` is bound to in the open document `doc`
