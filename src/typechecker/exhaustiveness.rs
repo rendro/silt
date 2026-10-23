@@ -606,7 +606,7 @@ impl TypeChecker {
     /// What the rows of a non-exhaustive match on a value of type `ty`
     /// leave out, for the diagnostic: the variants of an enum no row
     /// names, the values of a `Bool`, and otherwise a value no row
-    /// matches (`Some(None)`, `(true, false)`, `[_, _, .._]`, `2`,
+    /// matches (`Some(None)`, `(true, false)`, `[_, _, ..]`, `2`,
     /// `R { p: false, .. }`).
     fn missing_description(&self, rows: &[&Pat], ty: &Type) -> std::string::String {
         const UNSPECIFIC: &str = "not all patterns are covered";
@@ -706,7 +706,7 @@ impl TypeChecker {
 
     /// The value `value` of type `ty` as a pattern would write it. A
     /// part nothing is said of is `_`; a list of which only the first
-    /// elements are said ends in `.._`; a declared record that leaves
+    /// elements are said ends in `..`; a declared record that leaves
     /// fields out ends in `..`, an anonymous one names the fields it
     /// tests.
     fn show_witness(&self, value: &Witness, ty: &Type) -> std::string::String {
@@ -746,7 +746,7 @@ impl TypeChecker {
                         }
                         Witness::Ctor(CtorId::Nil, _) => break,
                         _ => {
-                            shown.push(".._".into());
+                            shown.push("..".into());
                             break;
                         }
                     }

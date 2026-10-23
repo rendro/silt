@@ -1,0 +1,13 @@
+error[type]: type mismatch: expected Option(_), got Result(Int, String)
+ --> question_hint__an_option_in_a_result_function.silt:8:11
+   |
+ 8 |   let x = list.head(xs)?
+   |           ^^^^^^^^^^^^^^ type mismatch: expected Option(_), got Result(Int, String)
+  = help: turn the Option into a Result first: `|> option.to_result(error)?`
+
+error[type]: type mismatch: expected Option(_), got Result(Int, String)
+ --> question_hint__an_option_in_a_result_function.silt:13:11
+    |
+ 13 |   let v = map.get(m, k)?
+    |           ^^^^^^^^^^^^^^ type mismatch: expected Option(_), got Result(Int, String)
+  = help: turn the Option into a Result first: `|> option.to_result(error)?`

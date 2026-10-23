@@ -366,8 +366,8 @@ fn all_doc_fn_main_blocks_type_check() {
 #[test]
 fn help_descriptions_are_the_docs() {
     // The subcommands both documents describe.
-    const COMMANDS: [&str; 8] = [
-        "run", "check", "test", "fmt", "repl", "init", "lsp", "disasm",
+    const COMMANDS: [&str; 9] = [
+        "run", "check", "test", "fmt", "repl", "init", "lsp", "disasm", "remove",
     ];
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let readme = std::fs::read_to_string(manifest_dir.join("README.md")).expect("read README.md");

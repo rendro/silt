@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[parse]: a list pattern's rest is `..` or `..name`
+-- The rest of a list pattern is `..` or `..name`, nothing else.
+fn main() {
+  match [1, 2] {
+    [a, ..[b]] -> println(a)
+    _ -> println(0)
+  }
+}

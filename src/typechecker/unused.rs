@@ -22,6 +22,7 @@
 //!   panics). A later error about that `()` names the statement.
 
 use super::*;
+use crate::intern;
 
 /// A call that stands as a statement and whose type is still unknown.
 #[derive(Clone)]
@@ -31,6 +32,23 @@ pub(crate) struct StatementCall {
     span: Span,
     /// The functions and closures the statement is in.
     frames: Vec<FnFrame>,
+}
+
+/// A closure that stands as a statement behind a call that is one
+/// argument short of its function, whose last parameter is a function:
+/// the closure was meant as that argument, but a trailing closure does
+/// not cross a line break. The call's arity error says so, and the
+/// closure has no unused-value error of its own.
+struct TrailingClosure {
+    /// The call (or the pipe) that is short of the closure.
+    call: Span,
+    /// The closure statement.
+    closure: Span,
+    /// Whether the closure is the last statement of its block: then the
+    /// call's statement is unused only because the closure stands
+    /// behind it.
+    last: bool,
+    help: std::string::String,
 }
 
 /// A function or a closure whose body is being checked.
@@ -312,26 +330,116 @@ impl TypeChecker {
     /// being final.
     pub(super) fn check_unused_values(&mut self, program: &mut Program) {
         let mut found: Vec<Diagnostic> = Vec::new();
+        let mut trailing: Vec<TrailingClosure> = Vec::new();
         let marks = std::mem::take(&mut program.statements);
         for decl in &mut program.decls {
+            let mut unused_in = |this: &Self, body: &mut Expr| {
+                this.unused_in(body, &marks, &mut found, &mut trailing)
+            };
             match decl {
-                Decl::Fn(f) => self.unused_in(&mut f.body, &marks, &mut found),
+                Decl::Fn(f) => unused_in(self, &mut f.body),
                 Decl::TraitImpl(ti) => {
                     for m in &mut ti.methods {
-                        self.unused_in(&mut m.body, &marks, &mut found);
+                        unused_in(self, &mut m.body);
                     }
                 }
                 Decl::Trait(t) => {
                     for m in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
-                        self.unused_in(&mut m.body, &marks, &mut found);
+                        unused_in(self, &mut m.body);
                     }
                 }
-                Decl::Let { value, .. } => self.unused_in(value, &marks, &mut found),
+                Decl::Let { value, .. } => unused_in(self, value),
                 _ => {}
             }
         }
         program.statements = marks;
+        // A closure meant for the call above it: the call's arity error
+        // says so, in place of the help it had, and the closure is not
+        // reported as unused.
+        for t in trailing {
+            let Some(arity) = self
+                .errors
+                .iter_mut()
+                .find(|d| d.code == Code::ArityMismatch && d.span == t.call)
+            else {
+                continue;
+            };
+            arity.help = vec![t.help];
+            // What the closure's errors say follows from its not being
+            // an argument: it is unused, its parameters have no types to
+            // infer from, it is the value of its block.
+            let follows = |d: &Diagnostic| {
+                let inside = d.span.file == t.closure.file
+                    && d.span.start >= t.closure.start
+                    && d.span.end <= t.closure.end;
+                (inside && matches!(d.code, Code::UnusedValue | Code::AmbiguousType))
+                    || (d.span == t.closure && d.code == Code::TypeMismatch)
+                    || (t.last && d.span == t.call && d.code == Code::UnusedValue)
+            };
+            self.errors.retain(|d| !follows(d));
+            found.retain(|d| !follows(d));
+        }
         self.errors.extend(found);
+    }
+
+    /// The closure `closure`, a statement behind `prev`, as the last
+    /// argument of the call `prev` ends with ([`TrailingClosure`]): the
+    /// call is written with one argument less than its function, a
+    /// name or a module's function, takes, and that parameter is a
+    /// function.
+    fn trailing_closure(&self, prev: &Stmt, closure: &Expr, last: bool) -> Option<TrailingClosure> {
+        let ExprKind::Lambda { params, .. } = &closure.kind else {
+            return None;
+        };
+        let value = match prev {
+            Stmt::Let { value, .. } | Stmt::Expr(value) => value,
+            Stmt::When { .. } | Stmt::WhenBool { .. } => return None,
+        };
+        // The callee, the arguments it is given, and how it is written
+        // in the help: `f(...)`, `|> f`, `|> f(...)`.
+        let (call, callee, given, written): (Span, &Expr, usize, fn(&str) -> std::string::String) =
+            match &value.kind {
+                ExprKind::Call(callee, args) => (value.span, callee, args.len(), |name| {
+                    format!("{name}(...)")
+                }),
+                ExprKind::Pipe(_, target) => match &target.kind {
+                    ExprKind::Call(callee, args) => (value.span, callee, args.len() + 1, |name| {
+                        format!("|> {name}(...)")
+                    }),
+                    _ => (value.span, target, 1, |name| format!("|> {name}")),
+                },
+                _ => return None,
+            };
+        let name = match &callee.kind {
+            ExprKind::Ident(name) => intern::resolve(*name),
+            ExprKind::FieldAccess(module, name, _) => match &module.kind {
+                ExprKind::Ident(module) => format!("{module}.{name}"),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let Some(Type::Fun(takes, _)) = callee.ty.as_ref().map(|ty| self.apply(ty)) else {
+            return None;
+        };
+        if takes.len() != given + 1 || !matches!(self.apply(&takes[given]), Type::Fun(..)) {
+            return None;
+        }
+        let params: Vec<std::string::String> =
+            params.iter().map(|p| param_text(&p.pattern)).collect();
+        let shape = match params.is_empty() {
+            true => "{ -> ... }".to_string(),
+            false => format!("{{ {} -> ... }}", params.join(", ")),
+        };
+        Some(TrailingClosure {
+            call,
+            closure: closure.span,
+            last,
+            help: format!(
+                "a closure on the next line is not passed to `{name}`; start it on the same \
+                 line: `{} {shape}`",
+                written(&name)
+            ),
+        })
     }
 
     /// Whether `stmt` gives a value a next line could subtract from: a
@@ -376,7 +484,13 @@ impl TypeChecker {
 
     /// Report the unused values of `expr`'s blocks. `marks` are the
     /// program's.
-    fn unused_in(&self, expr: &mut Expr, marks: &StatementMarks, found: &mut Vec<Diagnostic>) {
+    fn unused_in(
+        &self,
+        expr: &mut Expr,
+        marks: &StatementMarks,
+        found: &mut Vec<Diagnostic>,
+        trailing: &mut Vec<TrailingClosure>,
+    ) {
         resolve::each_expr_mut(expr, &mut |expr| {
             let ExprKind::Block(stmts) = &expr.kind else {
                 return;
@@ -384,6 +498,13 @@ impl TypeChecker {
             let Some((last, rest)) = stmts.split_last() else {
                 return;
             };
+            // A closure that is the block's value: its own errors are of
+            // other kinds than unused.
+            if let (Stmt::Expr(e), Some(prev)) = (last, rest.last())
+                && let Some(t) = self.trailing_closure(prev, e, true)
+            {
+                trailing.push(t);
+            }
             for (i, stmt) in rest.iter().enumerate() {
                 let Stmt::Expr(e) = stmt else { continue };
                 // (A statement the checker gave no type is in a body it
@@ -422,6 +543,11 @@ impl TypeChecker {
                     .iter()
                     .find(|(inner, _)| *inner == e.span)
                     .map_or(e.span, |(_, extent)| *extent);
+                if i > 0
+                    && let Some(t) = self.trailing_closure(&rest[i - 1], e, false)
+                {
+                    trailing.push(t);
+                }
                 let mut d = Diagnostic::error(Code::UnusedValue, extent, message);
                 // `point { x: 1 }`: `let _ = ` before the `{` would not
                 // parse, and is not what is missing.
@@ -468,6 +594,20 @@ impl TypeChecker {
                 found.push(d);
             }
         });
+    }
+}
+
+/// A closure's parameter as the help of a [`TrailingClosure`] writes
+/// it: a name, `_`, a tuple of those; `..` for any other pattern.
+fn param_text(pattern: &Pattern) -> std::string::String {
+    match &pattern.kind {
+        PatternKind::Ident(name) => intern::resolve(*name),
+        PatternKind::Wildcard => "_".to_string(),
+        PatternKind::Tuple(parts) => {
+            let parts: Vec<std::string::String> = parts.iter().map(param_text).collect();
+            format!("({})", parts.join(", "))
+        }
+        _ => "..".to_string(),
     }
 }
 

@@ -15,7 +15,7 @@ fn read_todo(path: String) -> Result(Todo, io.IoError) {
   let text = io.read_file(path)?
   let _parsed = text
     |> json.parse(Todo)
-    |> result.map_ok(process)
+    |> result.map(process)
   Ok(Todo { id: 1, title: "" })
 }
 

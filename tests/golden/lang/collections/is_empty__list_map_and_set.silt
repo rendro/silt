@@ -1,0 +1,22 @@
+-- `list.is_empty`, `map.is_empty` and `set.is_empty`: true for no
+-- element (or entry), false otherwise, also for a range and for the
+-- results of other builtins.
+import list
+import map
+import set
+
+fn main() {
+  println(list.is_empty([]))
+  println(list.is_empty([0]))
+  println(list.is_empty(1..0))
+  println(list.is_empty(1..3))
+  println(list.is_empty(list.filter([1, 2]) { x -> x > 5 }))
+  println(map.is_empty(#{}))
+  println(map.is_empty(#{ "a": 1 }))
+  println(map.is_empty(map.delete(#{ "a": 1 }, "a")))
+  println(set.is_empty(set.new()))
+  println(set.is_empty(#[1]))
+  println(set.is_empty(set.remove(#[1], 1)))
+  -- As a function value.
+  println(list.map([[], [1]], list.is_empty))
+}

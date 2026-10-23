@@ -34,11 +34,11 @@ error[type]: non-exhaustive match: `Some(R { p: false, q: U(true) })` is not cov
  39 |   match v {
     |         ^ non-exhaustive match: `Some(R { p: false, q: U(true) })` is not covered
 
-error[type]: non-exhaustive match: `[R { p: false, .. }, .._]` is not covered
+error[type]: non-exhaustive match: `[R { p: false, .. }, ..]` is not covered
  --> missing_case__records_keep_their_names.silt:46:9
     |
  46 |   match v {
-    |         ^ non-exhaustive match: `[R { p: false, .. }, .._]` is not covered
+    |         ^ non-exhaustive match: `[R { p: false, .. }, ..]` is not covered
 
 error[type]: non-exhaustive match: `R { p: true, q: U(true) }` is not covered
  --> missing_case__records_keep_their_names.silt:52:9
