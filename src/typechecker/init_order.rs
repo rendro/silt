@@ -65,7 +65,7 @@
 //!    of an argument (`json.stringify`), `toml.stringify`, `toml.pretty`
 //!    and the parameters of a postgres statement (whose signatures ask
 //!    nothing of them, but which write them with the same writer), and
-//!    `.encode()` on a type with no impl of its own. Decoding a document
+//!    `json.Encode.encode(x)` on a type with no impl of its own. Decoding a document
 //!    into a type is the same with the module's `json.Decode` impls of
 //!    the type and of the types of its fields: a builtin whose signature
 //!    asks `json.Decode` of its type argument (`json.parse`), and

@@ -1,6 +1,6 @@
 -- A top-level `let` that writes a value whose type has a written
 -- `json.Encode` impl needs what the impl reads: it is initialised after
--- `later`, whether it writes the value with `json.stringify`, `.encode()`,
+-- `later`, whether it writes the value with `json.stringify`, `json.Encode.encode`,
 -- a function with a `where a: json.Encode`, `toml.stringify` or
 -- `json.encode`, as one that shows a value needs what a `Display` impl
 -- reads.

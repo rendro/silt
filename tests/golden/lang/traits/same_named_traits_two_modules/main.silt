@@ -1,6 +1,6 @@
 -- Two modules each declare a trait `Show` with `fn show` and implement
 -- it for Int. Both impls exist; a call means the method of the trait
--- its module sees: a's `x.show()` calls a.Show's, b's calls b.Show's,
+-- its module sees: a's `Show.show(x)` calls a.Show's, b's calls b.Show's,
 -- concretely and through a `where t: Show` bound. An impl of a.Show for
 -- a type of this module is called through a's function.
 import a

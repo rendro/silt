@@ -96,7 +96,7 @@ fn main() {
   let filename = get_filename()
   match io.read_file(filename) {
     Err(e) -> {
-      println("Error reading file '{filename}': {e.message()}")
+      println("Error reading file '{filename}': {Error.message(e)}")
     }
     Ok(content) -> {
       let lines = content

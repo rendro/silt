@@ -1,4 +1,4 @@
--- What has `Compare` is ordered by `<` and `.compare()`, directly and
+-- What has `Compare` is ordered by `<` and `Compare.compare`, directly and
 -- through a bound: a tuple part by part, `false` before `true`, `()`
 -- equal to itself.
 import list

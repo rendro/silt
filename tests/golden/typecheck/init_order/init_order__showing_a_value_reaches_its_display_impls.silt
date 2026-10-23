@@ -1,6 +1,6 @@
 -- Showing a value calls the Display impls of its parts: a top-level
--- `let` that interpolates, prints, converts with `string.from` or calls
--- `.display()` is initialised after what those impls read, for a part
+-- `let` that interpolates, prints or converts with `string.from` is
+-- initialised after what those impls read, for a part
 -- at any depth of the value's type, fields of the module's types
 -- included, and through a builtin handed on as a value. Showing a value
 -- with no such part orders nothing.

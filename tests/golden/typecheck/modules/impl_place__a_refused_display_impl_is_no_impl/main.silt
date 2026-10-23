@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- A Display impl written where it may not be is refused, and is no impl:
--- the type is shown, printed, bounded and asked `.display()` by its
--- structure, as without it. One error (there were seven: every use of
--- the type's Display was refused too, except `.display()` and a
+-- the type is shown, printed, bounded and converted with `string.from`
+-- by its structure, as without it. One error (there were seven: every
+-- use of the type's Display was refused too, except the method and a
 -- supertrait, which said yes).
 import types.{ Tag }
 

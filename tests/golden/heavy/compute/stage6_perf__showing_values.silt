@@ -1,7 +1,7 @@
 -- timeout: 60
 -- A compute program of the performance guard: showing values. Records,
 -- variants, lists, tuples, options and maps are interpolated, converted
--- with `string.from` and `.display()`, and printed, in a tail-recursive
+-- with `string.from`, and printed, in a tail-recursive
 -- loop; no type has a Display impl of its own.
 import list
 import string

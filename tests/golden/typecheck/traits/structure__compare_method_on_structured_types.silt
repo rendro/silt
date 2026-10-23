@@ -1,4 +1,4 @@
--- `.compare()`, `.equal()` and `.hash()` are there for every type that
+-- `Compare.compare`, `==` and `Hash.hash` are there for every type that
 -- has the trait by its structure.
 type Pt { x: Int, y: Int }
 fn main() {

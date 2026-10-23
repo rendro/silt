@@ -1,4 +1,4 @@
--- `.hash()` through a Hash bound runs on a range.
+-- `Hash.hash` through a Hash bound runs on a range.
 fn h(v: a) -> Int where a: Hash { Hash.hash(v) }
 fn main() {
   let r = 1..5
