@@ -143,7 +143,7 @@ fn test_remove_takes_exactly_one_name() {
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert_eq!(
             stderr(&out),
-            "error: silt remove takes the name of one dependency: silt remove <name>\n\
+            "error: silt remove: expected the name of one dependency: silt remove <name>\n\
              Run 'silt remove --help' for usage.\n",
             "{args:?}"
         );
@@ -158,7 +158,7 @@ fn test_remove_outside_a_package_is_refused() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         stderr(&out),
-        "error: silt remove must be run inside a silt package\n"
+        "error: silt remove: must be run inside a silt package\n"
     );
     let _ = fs::remove_dir_all(&ws);
 }
@@ -170,4 +170,35 @@ fn test_remove_help_and_the_top_level_help_list_it() {
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("Usage: silt remove <name>\n"));
     let out = silt_cmd().arg("--help").output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("silt remove <name>"));
+}
+
+#[test]
+fn test_remove_that_does_not_resolve_restores_silt_toml_and_reports_its_lines() {
+    // `ghost` does not exist: without `calc` the graph fails all the
+    // same, and the error is at `ghost`'s line in silt.toml as it is
+    // again (line 8), not in the text without `calc` (line 7).
+    let ws = fresh_workspace("restore");
+    let app = ws.join("app");
+    write_package(
+        &ws.join("calc"),
+        "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n",
+        "lib.silt",
+        "pub fn one() { 1 }\n",
+    );
+    let manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+                    # calc does the math\ncalc = { path = \"../calc\" }\n\
+                    ghost = { path = \"../ghost\" }\n";
+    write_package(&app, manifest, "main.silt", "fn main() { println(1) }\n");
+
+    let out = silt(&app, &["remove", "calc"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(err.contains("dependency `ghost`"), "{err}");
+    assert!(err.contains("silt.toml:8:"), "{err}");
+    assert!(
+        err.contains("silt remove left silt.toml as it was"),
+        "{err}"
+    );
+    assert_eq!(fs::read_to_string(app.join("silt.toml")).unwrap(), manifest);
+    let _ = fs::remove_dir_all(&ws);
 }

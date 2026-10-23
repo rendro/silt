@@ -74,7 +74,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
         [name] if !name.starts_with('-') => name.clone(),
         _ => {
             return Err(RemoveError::Usage(
-                "silt remove takes the name of one dependency: silt remove <name>".into(),
+                "silt remove: expected the name of one dependency: silt remove <name>".into(),
             ));
         }
     };
@@ -83,7 +83,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
     let (root, manifest) = match find_project_root(&cwd)? {
         Some(pair) => pair,
         None => {
-            return Err("silt remove must be run inside a silt package"
+            return Err("silt remove: must be run inside a silt package"
                 .to_string()
                 .into());
         }
@@ -120,9 +120,19 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
         .map_err(|e| format!("failed to write {}: {e}", manifest_path.display()))?;
 
     let mut sources = SourceMap::new();
-    if let Err(mut diagnostics) = resolve_packages(&root, LockPolicy::Update, &mut sources) {
+    if let Err(failed) = resolve_packages(&root, LockPolicy::Update, &mut sources) {
         fs::write(&manifest_path, &manifest_text)
             .map_err(|e| format!("failed to restore {}: {e}", manifest_path.display()))?;
+        // What fails is reported in silt.toml as it is again: its lines
+        // are those of the restored text. (The graph failed without the
+        // dependency; with it, it fails too, or the first report is all
+        // there is.)
+        let mut restored = SourceMap::new();
+        let (mut diagnostics, sources) =
+            match resolve_packages(&root, LockPolicy::Update, &mut restored) {
+                Err(diagnostics) => (diagnostics, restored),
+                Ok(_) => (failed, sources),
+            };
         for d in &mut diagnostics {
             d.notes
                 .push("silt remove left silt.toml as it was".to_string());
