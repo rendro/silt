@@ -119,7 +119,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "float",
             page: "int-float.md",
             types: "\
-                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
+                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite, Other(String) }\n\
             ",
             error: "FloatError" => numeric::float_error_text,
             rows: [

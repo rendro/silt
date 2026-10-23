@@ -1,0 +1,14 @@
+'inf': NotFinite
+'+inf': NotFinite
+'-inf': NotFinite
+'Infinity': NotFinite
+'-INFINITY': NotFinite
+' nan ': NotFinite
+'NaN': NotFinite
+'-nan': NotFinite
+'1e400': Overflow
+'-1e400': Underflow
+'infx': InvalidDigit(0)
+'nope': InvalidDigit(0)
+'': Empty
+true
