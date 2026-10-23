@@ -58,10 +58,10 @@ numbers that are missing belong to codes that are gone.
 | Code | Meaning |
 |------|---------|
 | `E0301` | A value of one type where another type is needed. |
-| `E0302` | A name that no `let`, parameter or function binds. |
-| `E0303` | A constructor that no enum in scope declares. |
-| `E0304` | A type name that names no type. |
-| `E0305` | A field that no record in scope declares. |
+| `E0302` | A name in a pin pattern (`^x`) that nothing binds. |
+| `E0303` | A constructor that no enum declares, or a record literal written through the name of an anonymous record type. |
+| `E0304` | A record literal or pattern whose type name names no record type. |
+| `E0305` | A field or method that the type at hand does not have: `p.b` on a record without `b`, a field a record literal or update gives that its type does not declare. |
 | `E0306` | A field that the record at hand does not declare. |
 | `E0307` | A record literal without a field its type needs. |
 | `E0308` | A method that the value's type does not have. |
@@ -71,13 +71,13 @@ numbers that are missing belong to codes that are gone.
 | `E0312` | A type name in an annotation that names no type. |
 | `E0313` | A trait name that names no trait. |
 | `E0314` | A type has no impl of a trait it is required to have. |
-| `E0315` | A type cannot have the derived `Equal`, `Compare` or `Hash` it is used with: one of its fields has none. |
+| `E0315` | A type cannot have the derived `Equal`, `Compare` or `Hash` it is used with: one of its fields has none. (No diagnostic has this code today.) |
 | `E0316` | A call needs a trait bound the enclosing function does not declare. |
 | `E0317` | The wrong number of arguments, fields, bindings or type arguments. |
 | `E0318` | A type that would have to contain itself. |
 | `E0319` | A type that cannot be determined. |
 | `E0320` | A `match` that does not cover every value. |
-| `E0321` | A pattern that no value can reach, the ones before it having taken them all. |
+| `E0321` | In a `match` without a scrutinee, a `_` arm before other arms, or a second `_` arm: the arms after it never run. |
 | `E0322` | A pattern that cannot stand where it is (a refutable `let`, an or-pattern whose alternatives bind different names, ...). |
 | `E0323` | A name bound twice in one pattern. |
 | `E0324` | `?` where it cannot propagate. |

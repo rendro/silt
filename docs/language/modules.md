@@ -228,7 +228,9 @@ The entry point is `src/main.silt`, and every `.silt` file directly in
 `src/` is a module of the package, imported by its file name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
---path <path>` or `silt add <name> --git <url>`. After adding, imports from
+--path <path>` or `silt add <name> --git <url> --tag <tag>` (or
+`--branch <branch>`, `--rev <commit>`: a git dependency names one of
+them). After adding, imports from
 the dependency package work exactly like local modules.
 
 `import x` in a module of a package means, in this order: the builtin

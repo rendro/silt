@@ -145,8 +145,9 @@ import geometry
 A package that other packages use is a library: what they get from
 `import <name>` is its `src/lib.silt`, the one module a dependency
 exposes, and it needs no `src/main.silt`. A package declares a
-dependency with `silt add <name> --path <path>` or
-`silt add <name> --git <url>`.
+dependency with `silt add <name> --path <path>`, or with
+`silt add <name> --git <url> --tag <tag>` (a git dependency names its
+tag, `--branch <branch>` or `--rev <commit>`).
 
 See [Modules](language/modules.md) for the full rules.
 
