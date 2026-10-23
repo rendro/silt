@@ -3,7 +3,7 @@
 -- inferred names a field, which Int has not, where both modules' trait
 -- `Show` have a method `show`: the help names the first.
 -- stderr-contains: error[type]: type 'Int' has no field 'show'
--- stderr-contains: help: `show` is a method of trait `a.Show`: call it as `a.Show.show(y)`
+-- stderr-contains: help: `show` is a method of trait `a.Show` and of trait `b.Show`: call it as `a.Show.show(y)` or `b.Show.show(y)`
 -- stderr-contains: --> main.silt:12:34
 import a
 import b

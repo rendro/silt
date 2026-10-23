@@ -1,0 +1,13 @@
+-- exit: 1
+-- The help for a module function after a value writes the module as this
+-- module imports it and keeps the other arguments as `..`.
+-- stderr-contains: help: `length` is a function of module `list`: call it as `l.length(xs)`
+-- stderr-contains: help: `get` is a function of module `map`: call it as `map.get(m, ..)`
+import list as l
+import map
+fn main() {
+  let xs = [1, 2]
+  println(xs.length())
+  let m = #{1: 2}
+  println(m.get(1))
+}

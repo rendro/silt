@@ -303,6 +303,13 @@ pub struct TypeChecker {
     /// The type variables of each impl this module writes, by the names
     /// its header gives them (`trait Same for Box(a)`).
     pub(super) impl_var_names: HashMap<(TraitKey, TypeRef), Vec<(TyVar, Symbol)>>,
+    /// The names the module binds definitions of other modules to (an
+    /// item it imports, `import shapes.{ Area }`), for a help that
+    /// writes one as the module does.
+    pub(super) spelled: HashMap<crate::defs::DefId, Symbol>,
+    /// The names the module binds the modules it imports to (`sh` for
+    /// `import shapes as sh`).
+    pub(super) module_spelled: HashMap<crate::session::ModuleId, Symbol>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -447,6 +454,8 @@ impl TypeChecker {
             trait_call_self: HashMap::new(),
             trait_receiver: None,
             impl_var_names: HashMap::new(),
+            spelled: HashMap::new(),
+            module_spelled: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             builtin_imports: std::collections::HashSet::new(),
@@ -1538,6 +1547,17 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     for binding in scope.values.values() {
         if let names::Binding::Module(id) = binding {
             checker.seen_modules.insert(*id);
+        }
+    }
+    for (name, binding) in scope.types.iter().chain(scope.values.iter()) {
+        match binding {
+            names::Binding::Def(id) => {
+                checker.spelled.entry(*id).or_insert(*name);
+            }
+            names::Binding::Module(id) => {
+                checker.module_spelled.entry(*id).or_insert(*name);
+            }
+            _ => {}
         }
     }
     // A builtin module is imported when the module binds a name of it,

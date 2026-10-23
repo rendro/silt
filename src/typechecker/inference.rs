@@ -640,7 +640,7 @@ impl TypeChecker {
                     return None;
                 }
                 if self.self_param(matches[0].0, field).is_some() {
-                    self.through_its_trait(&inner.to_string(), matches[0].0, field, span);
+                    self.through_its_trait(&inner.to_string(), &[matches[0].0], field, span);
                     return Some(Type::Error);
                 }
                 self.method_trait = Some(matches[0].0);
@@ -657,7 +657,7 @@ impl TypeChecker {
                     && self.self_param(tr, field).is_some()
                 {
                     let shown = self.show_type(&inner);
-                    self.through_its_trait(&shown, tr, field, span);
+                    self.through_its_trait(&shown, &[tr], field, span);
                     return Some(Type::Error);
                 }
                 if let Some(trait_name) = entry.trait_name
@@ -906,37 +906,45 @@ impl TypeChecker {
             if let Some(how) = uncallable_builtin(tr, field, written) {
                 return Some(how);
             }
-            let shown = self.show_trait(tr);
             let params = self.method_arity(tr, field);
-            return Some(match self.self_param(tr, field) {
-                Some(_) => {
-                    let rest = if params > 1 { ", .." } else { "" };
-                    format!(
-                        "`{field}` is a method of trait `{shown}`: call it as \
-                         `{shown}.{field}({written}{rest})`"
-                    )
-                }
-                None => {
-                    // (A type variable is called on as the `type a`
-                    // parameter that would name it.)
-                    let (on, parameter) = match ty {
-                        Type::Rigid(r) => (
-                            r.name.to_string(),
-                            format!(", where `{0}` is a `type {0}` parameter", r.name),
-                        ),
-                        _ => (
-                            self.type_name_for_impl(ty)
-                                .map_or_else(|| "T".to_string(), |t| t.name.to_string()),
-                            String::new(),
-                        ),
-                    };
-                    let args = if params > 0 { ".." } else { "" };
-                    format!(
-                        "`{field}` is a method of trait `{shown}` that makes a value: call it \
-                         on the type, `{on}.{field}({args})`{parameter}"
-                    )
-                }
-            });
+            if self.self_param(tr, field).is_some() {
+                // (Every trait in sight that gives it, by how this module
+                // writes it.)
+                let taking: Vec<String> = (traits.iter())
+                    .filter(|t| uncallable_builtin(**t, field, written).is_none())
+                    .filter(|t| self.self_param(**t, field).is_some())
+                    .map(|t| self.spell_trait(*t))
+                    .collect();
+                let rest = if params > 1 { ", .." } else { "" };
+                let calls: Vec<String> = (taking.iter())
+                    .map(|shown| format!("`{shown}.{field}({written}{rest})`"))
+                    .collect();
+                let of: Vec<String> = taking.iter().map(|shown| format!("trait `{shown}`")).collect();
+                return Some(format!(
+                    "`{field}` is a method of {}: call it as {}",
+                    of.join(" and of "),
+                    calls.join(" or ")
+                ));
+            }
+            let shown = self.spell_trait(tr);
+            // (A type variable is called on as the `type a` parameter
+            // that would name it.)
+            let (on, parameter) = match ty {
+                Type::Rigid(r) => (
+                    r.name.to_string(),
+                    format!(", where `{0}` is a `type {0}` parameter", r.name),
+                ),
+                _ => (
+                    self.type_name_for_impl(ty)
+                        .map_or_else(|| "T".to_string(), |t| self.spell_type(t)),
+                    String::new(),
+                ),
+            };
+            let args = if params > 0 { ".." } else { "" };
+            return Some(format!(
+                "`{field}` is a method of trait `{shown}` that makes a value: call it on the type, \
+                 `{on}.{field}({args})`{parameter}"
+            ));
         }
         let module = match ty {
             Type::List(_) => "list",
@@ -951,29 +959,78 @@ impl TypeChecker {
             Type::Generic(name, _) if name.is_builtin("Bytes") => "bytes",
             _ => return None,
         };
-        crate::builtins::registry::registry()
+        let row = crate::builtins::registry::registry()
             .row(module, &resolve(field))
-            .filter(|row| row.enabled)
-            .map(|_| {
-                format!(
-                    "`{field}` is a function of module `{module}`: call it as \
-                     `{module}.{field}({written})`"
-                )
-            })
+            .filter(|row| row.enabled)?;
+        let rest = if row.params.len() > 1 { ", .." } else { "" };
+        // (As this module writes the module: `l.length` after `import
+        // list as l`.)
+        let written_module = (crate::session::ModuleId::builtin(module))
+            .and_then(|id| self.module_spelled.get(&id))
+            .map_or_else(|| module.to_string(), |alias| resolve(*alias));
+        Some(format!(
+            "`{field}` is a function of module `{module}`: call it as \
+             `{written_module}.{field}({written}{rest})`"
+        ))
+    }
+
+    /// The trait `tr` as this module writes it: by the name it binds it
+    /// to (its own, an imported item), else through the module it
+    /// imports it by (`sh.Area` after `import shapes as sh`), else with
+    /// the module that declares it.
+    pub(super) fn spell_trait(&self, tr: TraitKey) -> String {
+        if let Some((name, None)) = crate::defs::builtin_trait_of_id(tr.id.0) {
+            return name.to_string();
+        }
+        self.spell_def(tr.id.0).unwrap_or_else(|| self.show_trait(tr))
+    }
+
+    /// The type `ty` as this module writes it (see `spell_trait`).
+    pub(super) fn spell_type(&self, ty: TypeRef) -> String {
+        self.spell_def(ty.id.0)
+            .unwrap_or_else(|| self.show_type(&Type::Generic(ty, Vec::new())))
+    }
+
+    /// The definition `id` as this module writes it: by the name it
+    /// binds it to, or through the module it imports it by.
+    fn spell_def(&self, id: crate::defs::DefId) -> Option<String> {
+        if let Some(name) = self.spelled.get(&id) {
+            return Some(resolve(*name));
+        }
+        let def = self.def(id)?;
+        if def.module == self.module {
+            return Some(resolve(def.name));
+        }
+        let alias = self.module_spelled.get(&def.module)?;
+        Some(format!("{alias}.{}", def.name))
     }
 
     /// Report `T.field`, through the type `on`, of the method `field` of
     /// the trait `tr`, which takes a value of the type: it is called
     /// through its trait.
-    fn through_its_trait(&mut self, on: &str, tr: TraitKey, field: Symbol, span: Span) {
-        let shown = self.show_trait(tr);
-        let more = self.self_param(tr, field).is_some() && self.method_arity(tr, field) > 1;
-        let rest = if more { ", .." } else { "" };
-        let help = match uncallable_builtin(tr, field, "x") {
-            Some(how) => how,
-            None => format!(
-                "`{field}` is a method of trait `{shown}`: call it as `{shown}.{field}(x{rest})`"
-            ),
+    fn through_its_trait(&mut self, on: &str, traits: &[TraitKey], field: Symbol, span: Span) {
+        let callable: Vec<TraitKey> = (traits.iter().copied())
+            .filter(|t| uncallable_builtin(*t, field, "x").is_none())
+            .collect();
+        let help = match (callable.as_slice(), traits.first()) {
+            ([], Some(first)) => uncallable_builtin(*first, field, "x").unwrap_or_default(),
+            _ => {
+                let of: Vec<String> = (callable.iter())
+                    .map(|t| format!("trait `{}`", self.spell_trait(*t)))
+                    .collect();
+                let calls: Vec<String> = (callable.iter())
+                    .map(|t| {
+                        let more = self.method_arity(*t, field) > 1;
+                        let rest = if more { ", .." } else { "" };
+                        format!("`{}.{field}(x{rest})`", self.spell_trait(*t))
+                    })
+                    .collect();
+                format!(
+                    "`{field}` is a method of {}: call it as {}",
+                    of.join(" and of "),
+                    calls.join(" or ")
+                )
+            }
         };
         self.error_help(
             Code::UnknownMethod,
@@ -2387,12 +2444,14 @@ impl TypeChecker {
                         if let Some(tr) = self.entry_trait(&entry, field)
                             && self.self_param(tr, field).is_some()
                         {
-                            // (The help names a trait whose method is
-                            // called: a program's before `Display`.)
-                            let tr = (self.method_providers(key.0, field).into_iter())
-                                .find(|t| uncallable_builtin(*t, field, "x").is_none())
-                                .unwrap_or(tr);
-                            self.through_its_trait(&resolve(ty.name), tr, field, span);
+                            // (The help names the traits whose method is
+                            // called: a program's, not `Display`'s.)
+                            let mut traits = self.method_providers(key.0, field);
+                            if traits.is_empty() {
+                                traits.push(tr);
+                            }
+                            let on = self.show_type(&Type::Generic(key.0, Vec::new()));
+                            self.through_its_trait(&on, &traits, field, span);
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
