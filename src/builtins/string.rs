@@ -125,8 +125,23 @@ builtins! {
         Ok(s.replace(from, to))
     }
 
+    // The size is counted before anything is copied: the items can be
+    // one string many times.
     fn join(xs: List, sep: &str) -> Result<String, VmError> {
         xs.writable()?;
+        let items = xs.len() as u128;
+        let mut result_len = (sep.len() as u128).saturating_mul(items.saturating_sub(1));
+        for item in xs.iter() {
+            if let Value::String(s) = item {
+                result_len = result_len.saturating_add(s.len() as u128);
+            }
+        }
+        if result_len > MAX_COLLECTION_LEN as u128 {
+            return Err(VmError::new(format!(
+                "string.join: result would exceed maximum string size ({} bytes > {} limit)",
+                result_len, MAX_COLLECTION_LEN
+            )));
+        }
         let shown: Vec<String> = xs.iter().map(|item| item.to_string()).collect();
         Ok(shown.join(sep))
     }

@@ -134,7 +134,11 @@ That holds for everything that grows a collection or joins two
 `list.flat_map`, `list.flatten`, `list.unfold`, `list.scan`,
 `list.zip`, `list.intersperse`, `map.set`, `map.update`, `map.merge`,
 `set.insert`, `set.union`, `set.symmetric_difference`,
-`stream.collect`, and a `stream.chunks` chunk). A program that keeps
+`stream.collect`, and a `stream.chunks` chunk). A string and a `Bytes`
+value hold at most 10,000,000 bytes where they are joined or built
+(string interpolation, `string.join`, `string.repeat`, `string.replace`,
+`bytes.concat`, `bytes.concat_all`), and a channel buffers at most
+10,000,000 values (`channel.new`). A program that keeps
 adding to a collection in a loop ends with this error instead of
 taking the machine's memory. A function that turns text it was given
 into a list (`string.split`, `json.parse_list`) makes as many

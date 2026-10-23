@@ -7,7 +7,7 @@ use crate::builtins::registry::registry;
 use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
-use crate::value::{Float, List, Record, Value};
+use crate::value::{Float, List, MAX_COLLECTION_LEN, Record, Value};
 
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
 use super::calls::Entered;
@@ -302,8 +302,7 @@ fn pop_done(stack: &mut Vec<Value>) {
 /// is the String itself: nothing is copied. Otherwise the string is
 /// written in `text`, the VM's buffer, and copied once into the String
 /// it is. A literal is read in place: its count is not touched, which
-/// tasks running the same code share. `Err` names the slot of a value
-/// that is none of those `DisplayValue` leaves (`write_plain`).
+/// tasks running the same code share.
 ///
 /// A call, not a part of the loop: the loop's code is kept to what it
 /// was, which the speed of every program hangs on.
@@ -314,7 +313,7 @@ fn interpolate(
     segments: Segments,
     code: &[u8],
     chunk: &Chunk,
-) -> Result<(), usize> {
+) -> Result<(), Unwritten> {
     let start = stack.len() - segments.values();
     if segments.len() == 1 && segments.values() == 1 && matches!(stack[start], Value::String(_)) {
         return Ok(());
@@ -327,11 +326,16 @@ fn interpolate(
             Segment::Literal(k) => buffer.push_str(chunk.string(k)),
             Segment::Value => {
                 if !write_plain(&mut buffer, &stack[next]) {
-                    return Err(next);
+                    return Err(Unwritten::NoText(next));
                 }
                 next += 1;
             }
         }
+    }
+    // A string is as long as a list may be: the parts are there already,
+    // so what is written is at most what they hold.
+    if buffer.len() > MAX_COLLECTION_LEN {
+        return Err(Unwritten::TooLong(buffer.len()));
     }
     stack.truncate(start);
     stack.push(Value::String(buffer.as_str().into()));
@@ -340,6 +344,15 @@ fn interpolate(
         *text = buffer;
     }
     Ok(())
+}
+
+/// Why `interpolate` wrote no string.
+enum Unwritten {
+    /// The value in this slot is none of those `DisplayValue` leaves
+    /// (`write_plain`).
+    NoText(usize),
+    /// The string would be this many bytes, more than a string may be.
+    TooLong(usize),
 }
 
 /// `MakeMap`: put the map of the `pairs` keys and values on top of
@@ -710,12 +723,21 @@ impl Vm {
                 Instr::Interpolate { segments } => {
                     let written =
                         interpolate(&mut self.stack, &mut self.text, segments, code, chunk);
-                    if let Err(at) = written {
-                        fail!(VmError::type_confusion(format!(
-                            "string interpolation requires string values, got {} \
-                             — call `.to_string()` or `.display()` on the value first",
-                            self.user_facing_type_name(&self.stack[at])
-                        )));
+                    match written {
+                        Ok(()) => {}
+                        Err(Unwritten::NoText(at)) => {
+                            fail!(VmError::type_confusion(format!(
+                                "string interpolation requires string values, got {} \
+                                 — call `.to_string()` or `.display()` on the value first",
+                                self.user_facing_type_name(&self.stack[at])
+                            )));
+                        }
+                        Err(Unwritten::TooLong(len)) => {
+                            fail!(VmError::new(format!(
+                                "string interpolation: result would exceed maximum string \
+                                 size ({len} bytes > {MAX_COLLECTION_LEN} limit)"
+                            )));
+                        }
                     }
                 }
                 Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),

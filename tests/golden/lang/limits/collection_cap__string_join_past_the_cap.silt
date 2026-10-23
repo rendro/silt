@@ -1,0 +1,14 @@
+-- exit: 1
+-- stdout-contains: 10000000
+-- stderr-contains: error[runtime]
+-- stderr-contains: string.join: result would exceed maximum string size (12000002 bytes > 10000000 limit)
+-- string.join counts the size before it writes anything: the items may
+-- be one string many times. Ten million bytes are allowed.
+import list
+import string
+
+fn main() {
+  let part = string.repeat("x", 4000000)
+  println(string.byte_length(string.join([part, part, string.repeat("y", 1999998)], ",")))
+  println(string.byte_length(string.join([part, part, part], ",")))
+}
