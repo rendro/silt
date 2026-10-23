@@ -583,8 +583,15 @@ function of the type's builtin module:
 ```silt
 import list
 
-trait Greet { fn greet(self) -> String }
-trait Greet for Int { fn greet(self) -> String { "hi" } }
+trait Greet {
+  fn greet(self) -> String
+}
+
+trait Greet for Int {
+  fn greet(self) -> String {
+    "hi"
+  }
+}
 
 fn shown(n: Int, xs: List(Int)) {
   println(n.frobnicate()) -- error: type 'Int' has no field 'frobnicate'

@@ -418,7 +418,7 @@ trait Size for Other{i} {{
             )
         })
         .collect();
-    let call = format!("x.{method}()");
+    let call = format!("Size.{method}(x)");
     let calls = [call.as_str(); 8].join(" + ");
     format!(
         "trait Size {{

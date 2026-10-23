@@ -1,6 +1,6 @@
 error[type]: ambiguous method 'make' on type 'Int': provided by traits Build, Make
- --> no_self__a_call_on_a_type_has_every_method.silt:51:11
+ --> through_the_type__a_method_that_makes_a_value.silt:52:11
     |
- 51 |   println(Int.make(1))
+ 52 |   println(Int.make(1))
     |           ^^^^^^^^ ambiguous method 'make' on type 'Int': provided by traits Build, Make
   = help: say which is meant: call it through a function bounded by the trait you mean, `where a: Build`
