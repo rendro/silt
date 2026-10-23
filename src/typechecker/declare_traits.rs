@@ -37,7 +37,13 @@ impl TypeChecker {
                 given.extend(self.supertraits_of(*bound).into_iter().map(|s| (*v, s)));
             }
         }
-        let Some(&(var, trait_needed)) = needs.iter().find(|need| !given.contains(need)) else {
+        let mut missing: Vec<(TyVar, TraitKey)> = Vec::new();
+        for need in needs.iter().filter(|need| !given.contains(need)) {
+            if !missing.contains(need) {
+                missing.push(*need);
+            }
+        }
+        let Some(&(var, trait_needed)) = missing.first() else {
             return false;
         };
         // The impl's type variables by the names its header writes
@@ -67,18 +73,25 @@ impl TypeChecker {
             })
             .collect();
         let shown_ty = self.show_type(&substitute_vars(&self_ty, &mapping));
-        let var_name = names
-            .iter()
-            .find(|(v, _)| *v == var)
-            .map_or_else(|| "a".to_string(), |(_, name)| resolve(*name));
+        let name_of = |var: TyVar| {
+            (names.iter())
+                .find(|(v, _)| *v == var)
+                .map_or_else(|| "a".to_string(), |(_, name)| resolve(*name))
+        };
+        let var_name = name_of(var);
         let (tr_shown, sup_shown, needed) = (
             self.show_trait(tr),
             self.show_trait(sup),
             self.show_trait(trait_needed),
         );
+        // The help names every variable that needs a bound.
+        let bounds: Vec<String> = (missing.iter())
+            .map(|(v, t)| format!("{}: {}", name_of(*v), self.show_trait(*t)))
+            .collect();
+        let bounds = bounds.join(", ");
         let help = match named {
-            true => format!("add `where {var_name}: {needed}` to the impl"),
-            false => format!("write the impl for `{shown_ty}`, with `where {var_name}: {needed}`"),
+            true => format!("add `where {bounds}` to the impl"),
+            false => format!("write the impl for `{shown_ty}`, with `where {bounds}`"),
         };
         self.error_help(
             Code::MissingTraitImpl,

@@ -38,4 +38,4 @@ error[type]: type 'Pair(a, b)' implements 'Same' but does not implement supertra
     |
  39 | trait Same for Pair {}
     | ^^^^^^^^^^^^^^^^^^^^^^ type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
-  = help: write the impl for `Pair(a, b)`, with `where a: Equal`
+  = help: write the impl for `Pair(a, b)`, with `where a: Equal, b: Equal`

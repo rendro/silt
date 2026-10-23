@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- The help for a supertrait an impl's type lacks names every variable
+-- of the type that needs the bound.
+-- stderr-contains: error[type]: type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+-- stderr-contains: help: write the impl for `Pair(a, b)`, with `where a: Equal, b: Equal`
+trait Same: Equal { fn same(self, o: Self) -> Bool { self == o } }
+type Pair(a, b) { Pr(a, b) }
+trait Same for Pair {}
+fn main() {
+  println(1)
+}
