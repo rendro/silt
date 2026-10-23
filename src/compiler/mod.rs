@@ -1967,7 +1967,7 @@ impl<'a> Compiler<'a> {
                 let idx = self.add_constant(descriptor, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(*method, args.len() + 1, t, tail, span)?;
+                self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
             } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
@@ -2016,11 +2016,15 @@ impl<'a> Compiler<'a> {
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
-            Some(
-                Selection::Impl { tr, .. } | Selection::Native { tr } | Selection::Dynamic { tr },
-            ) if !args.is_empty() => {
+            // Found where the code runs, by the type of the argument of
+            // type `Self` (a builtin trait's is the first).
+            Some(Selection::Dynamic { tr, at }) if usize::from(at) < args.len() => {
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(method, args.len(), tr, tail, span)
+                self.emit_call_method(method, args.len(), tr, usize::from(at), tail, span)
+            }
+            Some(Selection::Impl { tr, .. } | Selection::Native { tr }) if !args.is_empty() => {
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(method, args.len(), tr, 0, tail, span)
             }
             _ => Err(checker_missed(
                 span,
@@ -2054,9 +2058,9 @@ impl<'a> Compiler<'a> {
             }
             // The method is found where the code runs, by the type the
             // descriptor carries.
-            Some(Selection::Dynamic { tr }) => {
+            Some(Selection::Dynamic { tr, .. }) => {
                 self.compile_operands(with_receiver)?;
-                self.emit_call_method(method, args.len() + 1, tr, tail, span)
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
             }
             Some(Selection::Impl { .. } | Selection::Native { .. } | Selection::Field) | None => {
                 Err(checker_missed(
@@ -2485,13 +2489,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// Emit `CallMethod` of `method` of the trait `t` with `argc`
-    /// values (the receiver first) on the stack; in tail position
-    /// (`tail`), `TailCallMethod; Return`.
+    /// values on the stack, found by the type of the one at `at` (the
+    /// receiver); in tail position (`tail`), `TailCallMethod; Return`.
     fn emit_call_method(
         &mut self,
         method: Symbol,
         argc: usize,
         t: crate::defs::TraitId,
+        at: usize,
         tail: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
@@ -2509,10 +2514,26 @@ impl<'a> Compiler<'a> {
             limit_diagnostic(limit, span)
         })?;
         if tail {
-            self.emit(Asm::TailCallMethod { method, argc, of }, span)?;
+            self.emit(
+                Asm::TailCallMethod {
+                    method,
+                    argc,
+                    of,
+                    at,
+                },
+                span,
+            )?;
             self.emit(Asm::Return, span)
         } else {
-            self.emit(Asm::CallMethod { method, argc, of }, span)
+            self.emit(
+                Asm::CallMethod {
+                    method,
+                    argc,
+                    of,
+                    at,
+                },
+                span,
+            )
         }
     }
 

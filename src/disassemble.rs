@@ -170,13 +170,29 @@ fn disassemble_instruction(
         }
         // CallMethod: the id of the method's name, argc, and the name
         // with the trait whose method it calls (shown after the name
-        // when the call names one).
-        Instr::CallMethod { method, argc, of } | Instr::TailCallMethod { method, argc, of } => {
+        // when the call names one), and the argument it is found by
+        // where that is not the first.
+        Instr::CallMethod {
+            method,
+            argc,
+            of,
+            at,
+        }
+        | Instr::TailCallMethod {
+            method,
+            argc,
+            of,
+            at,
+        } => {
             let named = globals.method_name(method).unwrap_or("?");
             let line = format!("{offset:04}  {name:<20} {method:<5} {argc:<3} ; \"{named}\"");
-            match globals.trait_name(of) {
+            let line = match globals.trait_name(of) {
                 Some(t) => format!("{line} of {t}"),
                 None => line,
+            };
+            match at {
+                0 => line,
+                at => format!("{line}, by argument {at}"),
             }
         }
 
@@ -543,6 +559,7 @@ mod tests {
             method,
             argc: 1,
             of: 0,
+            at: 0,
         };
         emitter.emit(call, span()).unwrap();
         emitter.emit(Asm::Return, span()).unwrap();
@@ -553,7 +570,7 @@ mod tests {
             "{output}"
         );
         // The next instruction is decoded after the trait operand.
-        assert!(output.contains("0006  Return"), "{output}");
+        assert!(output.contains("0007  Return"), "{output}");
     }
 
     #[test]

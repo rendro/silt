@@ -47,8 +47,9 @@ pub enum Selection {
     Native { tr: crate::defs::TraitId },
     /// The method `name` of the trait `tr`, for a receiver whose type is
     /// known only where the code runs (a type variable bounded by the
-    /// trait; a type passed as a value).
-    Dynamic { tr: crate::defs::TraitId },
+    /// trait; a type passed as a value). The receiver is the argument
+    /// `at` of a call through the trait: its first of type `Self`.
+    Dynamic { tr: crate::defs::TraitId, at: u8 },
 }
 
 impl Expr {

@@ -552,7 +552,7 @@ impl TypeChecker {
                     right.sel = Some(Selection::FieldCall);
                 }
             }
-            ExprKind::FieldAccess(recv, _, _) => {
+            ExprKind::FieldAccess(recv, field, _) => {
                 let called = expr.sel.take().is_some();
                 // `Tr.m`: the method of the impl for the type the call
                 // gives `Self`.
@@ -560,7 +560,10 @@ impl TypeChecker {
                     && let Some(crate::defs::Res::Def(id)) = expr.res
                     && let Some(tr) = self.trait_key(id)
                 {
-                    expr.sel = Some(self.method_selection(tr, self_ty));
+                    // (The receiver is the argument of type `Self`.)
+                    let at = self.self_param(tr, *field).unwrap_or(0);
+                    let at = u8::try_from(at).unwrap_or(u8::MAX);
+                    expr.sel = Some(self.method_selection(tr, self_ty, at));
                     return;
                 }
                 // A receiver the checker gave no type is a name: a
@@ -573,7 +576,7 @@ impl TypeChecker {
                     _ => None,
                 };
                 expr.sel = Some(match tr {
-                    Some(tr) => self.method_selection(tr, recv_ty),
+                    Some(tr) => self.method_selection(tr, recv_ty, 0),
                     None if called => Selection::FieldCall,
                     None => Selection::Field,
                 });
@@ -583,17 +586,17 @@ impl TypeChecker {
     }
 
     /// What a call of a method of the trait `tr` on a receiver of the
-    /// type `recv` runs.
-    fn method_selection(&self, tr: TraitKey, recv: &Type) -> crate::ast::Selection {
+    /// type `recv`, the argument `at` of the call, runs.
+    fn method_selection(&self, tr: TraitKey, recv: &Type, at: u8) -> crate::ast::Selection {
         use crate::ast::Selection;
         let recv = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(recv));
         match &recv {
             Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => {
-                Selection::Dynamic { tr: tr.id }
+                Selection::Dynamic { tr: tr.id, at }
             }
             // A type passed as a value: the method of the type it is.
             Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
-                Selection::Dynamic { tr: tr.id }
+                Selection::Dynamic { tr: tr.id, at }
             }
             // A trait the type has by its structure (the sealed three,
             // `Display` with no written impl) is the VM's own method;

@@ -184,7 +184,9 @@ pub(super) fn find_trait_method_at(
             && (field_span.start as usize..=field_span.end as usize).contains(&cursor)
             && receiver.ty.is_none()
             && let Some(
-                Selection::Impl { tr, .. } | Selection::Native { tr } | Selection::Dynamic { tr },
+                Selection::Impl { tr, .. }
+                | Selection::Native { tr }
+                | Selection::Dynamic { tr, .. },
             ) = expr.sel
         {
             *found = Some((tr, *field));

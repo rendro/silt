@@ -1031,12 +1031,14 @@ ops! {
     /// impl of the trait `of` names (see
     /// [`Globals::call_method`](super::Globals::call_method)) for the
     /// receiver's type, else the builtin trait's native method; call it
-    /// with the top `argc` values, the receiver first.
-    CallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
+    /// with the top `argc` values. The receiver is the argument `at` of
+    /// them (the first of type `Self`: the first, but for a method whose
+    /// `Self` parameter comes later).
+    CallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait, at: U8("the argument a method call finds its method by") } => pops argc, pushes 1;
     /// `CallMethod` in tail position: a method that is a closure runs
     /// in the current frame. Followed by `Return`, which returns the
     /// result of any other.
-    TailCallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait } => pops argc, pushes 1;
+    TailCallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait, at: U8("the argument a method call finds its method by") } => pops argc, pushes 1;
 
     /// Move TOS down to the frame's slot `slot` and drop every value
     /// that was above that slot: pop TOS, cut the frame back to `slot`

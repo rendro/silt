@@ -645,7 +645,7 @@ impl TypeChecker {
                     // builtin one, impls and defaults outside it.
                     // (`encode` of such a receiver writes it, `decode` of
                     // a type decodes into it.)
-                    Some(Selection::Dynamic { tr })
+                    Some(Selection::Dynamic { tr, .. })
                         if [encode, decode]
                             .iter()
                             .any(|t| t.id == *tr && *method == method_of(*t))
@@ -657,7 +657,7 @@ impl TypeChecker {
                             show(tr, ty);
                         }
                     }
-                    Some(Selection::Dynamic { tr }) => {
+                    Some(Selection::Dynamic { tr, .. }) => {
                         for &target in of_trait.get(&(*tr, *method)).into_iter().flatten() {
                             add(target);
                         }
