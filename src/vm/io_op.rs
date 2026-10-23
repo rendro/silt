@@ -323,9 +323,6 @@ struct PoolState {
     threads: usize,
     /// Those of them that run an operation.
     busy: usize,
-    /// The operations that are running, whether or not anybody waits
-    /// for them: until the call that does one has returned.
-    running: usize,
     /// The threads that run an operation whose waiter is gone and
     /// that cannot be told to stop: no longer the pool's, and not yet
     /// ended.
@@ -366,7 +363,6 @@ impl PoolShared {
             };
             *op.phase.lock() = Phase::Running;
             state.busy += 1;
-            state.running += 1;
             drop(state);
             let finish = job();
             #[cfg(any(test, feature = "test-hooks"))]
@@ -374,7 +370,6 @@ impl PoolShared {
                 panic!("a panic made for a test: Io");
             }
             state = self.state.lock();
-            state.running -= 1;
             let left = std::mem::replace(&mut *op.phase.lock(), Phase::Finishing) == Phase::Left;
             if !left {
                 state.busy -= 1;
@@ -413,7 +408,6 @@ impl IoPool {
                     queue: VecDeque::new(),
                     threads: 0,
                     busy: 0,
-                    running: 0,
                     unheard: 0,
                     started: false,
                     unavailable: max == 0,
@@ -439,13 +433,6 @@ impl IoPool {
         };
         self.shared.work.notify_all();
         drop(queued);
-    }
-
-    /// Whether no operation is queued or running, whether or not
-    /// anybody waits for it.
-    pub(crate) fn quiet(&self) -> bool {
-        let state = self.shared.state.lock();
-        state.queue.is_empty() && state.running == 0
     }
 
     /// How many threads the pool has: those that run an operation
@@ -500,6 +487,7 @@ impl IoPool {
         leave: Leave,
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
+        self.scheduler.begin();
         let state = OpState::new(Phase::Queued);
         let wanted = Wanted::new(state.clone(), task);
         let f = move || f(&wanted);
@@ -1203,38 +1191,6 @@ mod tests {
         free.send(()).unwrap();
         until("the threads ended", || pool.live_threads() == 0);
         assert_eq!(pool.shared.state.lock().unheard, 0);
-    }
-
-    /// The pool is quiet only when no operation is queued or running,
-    /// whether anybody waits for it or not: one that was told to stop
-    /// and one that cannot be stopped are running until they return
-    /// (`env.set` is refused until then).
-    #[test]
-    fn an_operation_is_running_until_it_returns_whoever_waits() {
-        let pool = pool(IO_POOL_THREADS_MAX, NEVER_IDLE);
-        assert!(pool.quiet());
-        let (release, held) = mpsc::channel::<()>();
-        let held = Arc::new(parking_lot::Mutex::new(held));
-        let leaves: [fn() -> Leave; 2] = [|| Leave::interrupts(|_| {}), || Leave::RunsOut];
-        for leave in leaves {
-            let held = held.clone();
-            let op = pool.submit(failure, Vec::new(), leave(), move |_| {
-                let _ = held.lock().recv();
-                Value::Unit
-            });
-            until("it runs", || *op.state.phase.lock() == Phase::Running);
-            assert!(!pool.quiet());
-            drop(op);
-            assert!(
-                !pool.quiet(),
-                "an operation whose waiter is gone still runs"
-            );
-            release.send(()).unwrap();
-            until("it returned", || pool.quiet());
-        }
-        let done = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
-        until("it ran", || done.cell.get().is_some());
-        until("its thread is back", || pool.quiet());
     }
 
     /// An operation whose waiter is gone is told to stop, and its

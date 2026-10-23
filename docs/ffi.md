@@ -470,10 +470,10 @@ Silt code has no access to the host filesystem, network or environment
 beyond what the stdlib and your host modules provide.
 
 **The environment.** `env.set` and `env.remove` change the environment
-of your whole process. The `Vm` refuses them while anything of its own
-may read the environment (another task of the program, an I/O operation
-of its own), but it cannot see your threads, nor another `Vm`'s. While a
-`Vm` runs a program, read the environment on your other threads only
-through `std::env` (which takes the lock that the change takes), never
-through the C library (`getenv`, or a C library that calls it), and do
-not run two programs that change it at once.
+of your whole process. A `Vm` refuses them once its program has started
+a task or an I/O operation (from then on a thread of its own may read
+the environment), but it cannot see your threads, nor another `Vm`'s.
+While a `Vm` runs a program, read the environment on your other threads
+only through `std::env` (which takes the lock that the change takes),
+never through the C library (`getenv`, or a C library that calls it),
+and do not run two programs that change it at once.

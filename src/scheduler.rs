@@ -264,6 +264,10 @@ struct Inner {
     /// Whether the thread that runs the program knows this scheduler
     /// (`StartedSchedulers`).
     registered: AtomicBool,
+    /// Whether a task or an I/O operation was ever started
+    /// ([`Scheduler::begin`]): until then no thread of the runtime that
+    /// may read the environment exists.
+    begun: AtomicBool,
     /// The thread that fires the timer waits here for the next
     /// deadline, or for an earlier one to be armed.
     timer_lock: Mutex<TimerThread>,
@@ -487,6 +491,7 @@ impl Scheduler {
                 owner: AtomicU64::new(0),
                 outer: AtomicU64::new(0),
                 registered: AtomicBool::new(false),
+                begun: AtomicBool::new(false),
                 timer_lock: Mutex::new(TimerThread::Idle),
                 timer_wake: Condvar::new(),
                 global_io_timeout,
@@ -581,6 +586,7 @@ impl Scheduler {
         mut vm: Vm,
         handle: Arc<TaskHandle>,
     ) -> Result<(), String> {
+        self.begin();
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
         vm.late = handle.deadline().map(|_| handle.late());
@@ -698,28 +704,26 @@ impl Scheduler {
         self.inner.current_owner()
     }
 
+    /// A task or an I/O operation starts: from now on a thread other
+    /// than the program's own may run code that reads the environment
+    /// (a task's builtins, a name lookup of the I/O pool). It stays so
+    /// for as long as the scheduler lives: a REPL session's, a
+    /// program's.
+    pub(crate) fn begin(&self) {
+        self.inner.begun.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether a task or an I/O operation was ever started
+    /// ([`Scheduler::begin`]).
+    pub(crate) fn begun(&self) -> bool {
+        self.inner.begun.load(Ordering::SeqCst)
+    }
+
     /// See [`External`]. It counts for the owner of the code that asks.
     pub(crate) fn external(&self) -> External {
         let group = self.inner.group(self.inner.current_owner());
         group.external.fetch_add(1, Ordering::SeqCst);
         External(self.inner.clone(), group)
-    }
-
-    /// Whether the calling thread is the only one at work for the
-    /// scheduler, of every owner: no spawned task has not ended, no
-    /// other thread runs silt code, and no [`External`] lives (no I/O
-    /// operation that somebody waits for). An operation whose waiter
-    /// is gone is not seen here: see `IoPool::quiet`.
-    pub(crate) fn alone(&self) -> bool {
-        let inner = &self.inner;
-        let own = usize::from(COUNTED.with(Cell::get));
-        let groups = inner.groups.lock();
-        let count = |of: fn(&Group) -> &AtomicUsize| -> usize {
-            groups.values().map(|g| of(g).load(Ordering::SeqCst)).sum()
-        };
-        inner.spawned.load(Ordering::SeqCst) == 0
-            && count(|g| &g.live) <= own
-            && count(|g| &g.external) == 0
     }
 
     /// The program's own code has returned: wait until the program has
@@ -1121,9 +1125,6 @@ fn at_a_panic(rusts: &(dyn Fn(&PanicHookInfo<'_>) + Sync + Send), panic: &PanicH
 /// gone dies quietly; this process is to end with the internal-error
 /// line and status 101, and its last words flush stdout.)
 fn no_death_by_a_closed_stdout() {
-    // SAFETY: setting a signal's disposition to SIG_IGN installs no
-    // handler, so no code of ours runs in a signal context; the process
-    // is ending, and no other thread of silt changes SIGPIPE.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
