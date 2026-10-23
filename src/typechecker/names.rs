@@ -2656,6 +2656,13 @@ impl Resolver<'_> {
         }
         let ExprKind::Ident(head_name) = obj.kind else {
             self.expr(obj);
+            // `m.Box.default()`: the type, not its variant of that name.
+            if let Some(Res::Def(d)) = obj.res
+                && let Some(ty) = self.type_named_like_its_variant(d)
+                && !resolve(field).starts_with(char::is_uppercase)
+            {
+                obj.res = Some(Res::Def(ty));
+            }
             return None;
         };
         let head_span = obj.span;
@@ -2688,7 +2695,12 @@ impl Resolver<'_> {
                 None
             }
             Some(Binding::Def(d)) => {
-                obj.res = Some(Res::Def(d));
+                obj.res = Some(Res::Def(match self.type_named_like_its_variant(d) {
+                    // `Box.default()` with `type Box(a) { Box(a), .. }`:
+                    // a variant has no methods, its type does.
+                    Some(ty) if !resolve(field).starts_with(char::is_uppercase) => ty,
+                    _ => d,
+                }));
                 None
             }
             None if crate::module::is_builtin_module(&resolve(head_name))
@@ -2723,6 +2735,18 @@ impl Resolver<'_> {
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
             }
+        }
+    }
+
+    /// The type of the variant `d` when it has the variant's name
+    /// (`type Box(a) { Box(a), Empty }`): where a type is meant (a method
+    /// through it, a `type a` argument) the name means it.
+    pub(super) fn type_named_like_its_variant(&self, d: DefId) -> Option<DefId> {
+        let def = self.defs.get(d);
+        let ty = self.defs.variant_type(d)?;
+        match ty.kind {
+            DefKind::Type(t) if ty.name == def.name => Some(t.0),
+            _ => None,
         }
     }
 

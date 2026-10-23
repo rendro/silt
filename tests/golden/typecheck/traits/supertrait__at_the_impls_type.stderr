@@ -1,0 +1,41 @@
+error[type]: type 'Box(a)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+ --> supertrait__at_the_impls_type.silt:30:1
+    |
+ 30 | trait Same for Box(a) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(a)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+  = help: add `where a: Equal` to the impl
+
+error[type]: type 'Box(a)' implements 'Show2' but does not implement supertrait 'Display': 'a' needs 'Display'
+ --> supertrait__at_the_impls_type.silt:31:1
+    |
+ 31 | trait Show2 for Box(a) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(a)' implements 'Show2' but does not implement supertrait 'Display': 'a' needs 'Display'
+  = help: add `where a: Display` to the impl
+
+error[type]: type 'Box(a)' implements 'Ord2' but does not implement supertrait 'Compare': 'a' needs 'Compare'
+ --> supertrait__at_the_impls_type.silt:32:1
+    |
+ 32 | trait Ord2 for Box(a) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(a)' implements 'Ord2' but does not implement supertrait 'Compare': 'a' needs 'Compare'
+  = help: add `where a: Compare` to the impl
+
+error[type]: type 'Pair(a, b)' implements 'Keyed' but does not implement supertrait 'Hash': 'b' needs 'Hash'
+ --> supertrait__at_the_impls_type.silt:33:1
+    |
+ 33 | trait Keyed for Pair(a, b) where a: Hash {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Pair(a, b)' implements 'Keyed' but does not implement supertrait 'Hash': 'b' needs 'Hash'
+  = help: add `where b: Hash` to the impl
+
+error[type]: type 'Box(a)' implements 'Sub' but does not implement supertrait 'Super': 'a' needs 'Super'
+ --> supertrait__at_the_impls_type.silt:38:1
+    |
+ 38 | trait Sub for Box(a) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(a)' implements 'Sub' but does not implement supertrait 'Super': 'a' needs 'Super'
+  = help: add `where a: Super` to the impl
+
+error[type]: type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+ --> supertrait__at_the_impls_type.silt:39:1
+    |
+ 39 | trait Same for Pair {}
+    | ^^^^^^^^^^^^^^^^^^^^^^ type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+  = help: write the impl for `Pair(a, b)`, with `where a: Equal`

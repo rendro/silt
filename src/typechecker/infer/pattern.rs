@@ -853,6 +853,20 @@ impl TypeChecker {
                 // itself (`(x, ^x)`) is not that name.
                 if let Some(pinned_ty) = cx.pins.get(name).cloned().flatten() {
                     self.unify(expected, &pinned_ty, span);
+                    // A pin compares as `==` does: the type has `Equal`.
+                    self.want(
+                        Pred::Trait {
+                            tr: TraitKey::builtin("Equal"),
+                            args: Vec::new(),
+                            subject: pinned_ty,
+                            asker: None,
+                        },
+                        Origin {
+                            span: pattern_span,
+                            callee: Some(*name),
+                            op: Some(super::super::solve::PIN),
+                        },
+                    );
                 } else {
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
                     self.error_help(Code::UndefinedVariable, msg, pattern_span);

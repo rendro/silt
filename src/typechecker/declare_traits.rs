@@ -1,6 +1,169 @@
 use super::*;
 
 impl TypeChecker {
+    /// Whether the impl of `tr` for `head` was reported for a type
+    /// variable of its type that its header does not give a trait the
+    /// supertrait `sup` asks of it at that type (`'a' needs 'Equal'`).
+    fn supertrait_needs_reported(
+        &mut self,
+        tr: TraitKey,
+        head: TypeRef,
+        sup: TraitKey,
+        span: Span,
+    ) -> bool {
+        let Some(self_ty) = self.tables.impl_self_types.get(&(tr, head)).cloned() else {
+            return false;
+        };
+        let mut needs: Vec<(TyVar, TraitKey)> = Vec::new();
+        if !self.trait_needs(sup, &self_ty, 0, &mut needs) {
+            return false;
+        }
+        // What the header gives, with the supertraits of each bound.
+        let mut given: Vec<(TyVar, TraitKey)> = Vec::new();
+        for pred in self
+            .tables
+            .impl_preds
+            .get(&(tr, head))
+            .into_iter()
+            .flatten()
+        {
+            if let Pred::Trait {
+                tr: bound,
+                subject: Type::Var(v),
+                ..
+            } = pred
+            {
+                given.push((*v, *bound));
+                given.extend(self.supertraits_of(*bound).into_iter().map(|s| (*v, s)));
+            }
+        }
+        let Some(&(var, trait_needed)) = needs.iter().find(|need| !given.contains(need)) else {
+            return false;
+        };
+        // The impl's type variables by the names its header writes
+        // (letters for those of a bare target, which names none).
+        let mut names: Vec<(TyVar, Symbol)> = self
+            .impl_var_names
+            .get(&(tr, head))
+            .cloned()
+            .unwrap_or_default();
+        let named = !names.is_empty();
+        for v in free_vars_in(&self_ty) {
+            if !names.iter().any(|(known, _)| *known == v) {
+                let letter = char::from(b'a' + (names.len() % 26) as u8);
+                names.push((v, intern(&letter.to_string())));
+            }
+        }
+        let mapping: HashMap<TyVar, Type> = names
+            .iter()
+            .map(|(v, name)| {
+                (
+                    *v,
+                    Type::Rigid(RigidId {
+                        var: *v,
+                        name: *name,
+                    }),
+                )
+            })
+            .collect();
+        let shown_ty = self.show_type(&substitute_vars(&self_ty, &mapping));
+        let var_name = names
+            .iter()
+            .find(|(v, _)| *v == var)
+            .map_or_else(|| "a".to_string(), |(_, name)| resolve(*name));
+        let (tr_shown, sup_shown, needed) = (
+            self.show_trait(tr),
+            self.show_trait(sup),
+            self.show_trait(trait_needed),
+        );
+        let help = match named {
+            true => format!("add `where {var_name}: {needed}` to the impl"),
+            false => format!("write the impl for `{shown_ty}`, with `where {var_name}: {needed}`"),
+        };
+        self.error_help(
+            Code::MissingTraitImpl,
+            (
+                format!(
+                    "type '{shown_ty}' implements '{tr_shown}' but does not implement supertrait \
+                     '{sup_shown}': '{var_name}' needs '{needed}'"
+                ),
+                Some(help),
+            ),
+            span,
+        );
+        true
+    }
+
+    /// What the trait `tr` asks of the type variables of `ty` for `ty`
+    /// to have it, gathered into `needs`: the variable itself; a part of
+    /// a type that has the trait by its structure; what the header of
+    /// the impl written for the type's head asks, at the type's
+    /// arguments. `false` where a part that is no variable lacks it.
+    fn trait_needs(
+        &self,
+        tr: TraitKey,
+        ty: &Type,
+        depth: usize,
+        needs: &mut Vec<(TyVar, TraitKey)>,
+    ) -> bool {
+        if depth > 16 {
+            return true;
+        }
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        if let Type::Var(v) = ty {
+            if !needs.contains(&(v, tr)) {
+                needs.push((v, tr));
+            }
+            return true;
+        }
+        let Some(head) = self.type_name_for_impl(&ty) else {
+            return true;
+        };
+        if self.by_structure(tr, head) {
+            // (What json decodes is the decoder's to say.)
+            if Self::is_decode(tr) {
+                return true;
+            }
+            let mut walk = super::solve::Walk::default();
+            if self.structure_gap(tr, &ty, &mut walk, 0).is_some() {
+                return false;
+            }
+            for part in walk.open {
+                if let Type::Var(v) = part
+                    && !needs.contains(&(v, tr))
+                {
+                    needs.push((v, tr));
+                }
+            }
+            return (walk.written.iter()).all(|part| self.trait_needs(tr, part, depth + 1, needs));
+        }
+        if !self.tables.trait_impl_set.contains(&(tr, head)) {
+            return false;
+        }
+        let Some(impl_ty) = self.tables.impl_self_types.get(&(tr, head)) else {
+            return true;
+        };
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        super::builtin_needs::match_type(impl_ty, &ty, &free_vars_in(impl_ty), &mut mapping);
+        (self
+            .tables
+            .impl_preds
+            .get(&(tr, head))
+            .into_iter()
+            .flatten())
+        .all(|pred| match pred {
+            Pred::Trait {
+                tr: bound, subject, ..
+            } => self.trait_needs(
+                *bound,
+                &substitute_vars(subject, &mapping),
+                depth + 1,
+                needs,
+            ),
+            _ => true,
+        })
+    }
+
     // ── Validate trait implementations ────────────────────────────────
 
     pub(super) fn validate_trait_impls(&mut self) {
@@ -64,6 +227,13 @@ impl TypeChecker {
                         ),
                         diag_span,
                     );
+                    continue;
+                }
+                // The supertrait holds at the impl's own type, its type
+                // variables having what the impl's header gives them
+                // (`trait Same for Box(a) where a: Equal`), not at the
+                // head alone: a `Box(a)` has `Equal` when its `a` does.
+                if self.supertrait_needs_reported(*trait_name, *type_name, *supertrait, diag_span) {
                     continue;
                 }
                 // Resolve the supertrait's expected args against the
@@ -787,19 +957,20 @@ impl TypeChecker {
         // declared: `trait Greet for Widget { ... }` with no `type
         // Widget` would attach methods to a phantom type. A lowercase
         // target (`trait Display for a { ... }`) names a type variable,
-        // not a type: there is nothing to register it for.
+        // not a type: an impl is for a declared type, never for every
+        // type.
         if self.names_rejected(ti.target_res, ti.target_type) {
             return;
         }
         let Some(written) = self.named_type(ti.target_res, ti.target_type) else {
             let name_str = resolve(ti.target_type);
-            if !name_str.starts_with(|c: char| c.is_lowercase()) {
-                self.error(
-                    Code::UnknownType,
-                    format!("trait impl target '{name_str}' is not a declared type"),
-                    ti.span,
-                );
-            }
+            self.error(
+                Code::UnknownType,
+                format!("trait impl target '{name_str}' is not a declared type"),
+                ti.span,
+            );
+            self.unresolved_impl_methods
+                .extend(ti.methods.iter().map(|m| m.name));
             return;
         };
         let target_type = canonical_head(&self.tables.resolver, written);
@@ -1120,6 +1291,17 @@ impl TypeChecker {
         self.tables
             .impl_self_types
             .insert((trait_key, target_type), self_type.clone());
+        // The names the header gives the impl's type variables, for a
+        // message about one (`validate_trait_impls`).
+        self.impl_var_names.insert(
+            (trait_key, target_type),
+            (impl_param_map.iter())
+                .filter_map(|(name, ty)| match self.apply(ty) {
+                    Type::Var(v) => Some((v, *name)),
+                    _ => None,
+                })
+                .collect(),
+        );
 
         // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
         // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.

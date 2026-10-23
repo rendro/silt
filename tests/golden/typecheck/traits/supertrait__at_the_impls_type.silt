@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- An impl for a parameterized type has each supertrait at its own type,
+-- its type variables having what the header gives them: a structural
+-- supertrait (Equal, Display, Compare, Hash) needs it of the variables
+-- the type's parts are of, a supertrait with a written impl what that
+-- impl's header asks. A bare target names its variables by letters.
+-- (Each used to check and fail, or show and order wrongly, when run.)
+trait Same: Equal {
+  fn same(self, o: Self) -> Bool { self == o }
+}
+trait Show2: Display {
+  fn s(self) -> String { "[{self}]" }
+}
+trait Ord2: Compare {
+  fn lt(self, o: Self) -> Bool { self < o }
+}
+trait Keyed: Hash {
+  fn key(self) -> Int { Hash.hash(self) }
+}
+trait Super {
+  fn sup(self) -> String
+}
+trait Sub: Super {
+  fn sub(self) -> String { "sub of {Super.sup(self)}" }
+}
+type Box(a) { Bx(a) }
+type Pair(a, b) { Pr(a, b) }
+type Plain(a) { Plain }
+trait Same for Box(a) {}
+trait Show2 for Box(a) {}
+trait Ord2 for Box(a) {}
+trait Keyed for Pair(a, b) where a: Hash {}
+trait Keyed for Plain(a) {}
+trait Super for Box(a) where a: Super {
+  fn sup(self) -> String { match self { Bx(x) -> "box({Super.sup(x)})" } }
+}
+trait Sub for Box(a) {}
+trait Same for Pair {}
+fn main() {
+  println("x")
+}

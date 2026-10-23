@@ -242,6 +242,11 @@ The variable is one from outside the pattern. A name the pattern binds
 itself is not it: `(x, ^x)` compares the second element with an `x` bound
 before the `match`, and is an error when there is none.
 
+A pin compares as `==` does: the value's type has `Equal`. A function has
+none, so pinning one is an error at the pin (`the pin '^f' requires a
+comparable type, got 'Fn(Int) -> Int'`); a channel is equal to itself
+only, and is pinned as below.
+
 Works in any pattern position. Common with `channel.select`:
 
 ```silt

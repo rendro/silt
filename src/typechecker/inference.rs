@@ -368,6 +368,7 @@ impl TypeChecker {
             return;
         }
         let needs = match (origin.callee, origin.op) {
+            (Some(pinned), Some(super::solve::PIN)) => format!(", which the pin '^{pinned}' needs"),
             (Some(callee), _) => format!(", which '{callee}' needs"),
             (None, Some(op)) => format!(", which {op} needs"),
             (None, None) => String::new(),
@@ -679,6 +680,23 @@ impl TypeChecker {
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 Some(self.apply(&instantiated))
             }
+        }
+    }
+
+    /// Where `expr` names a variant that has the name of its type
+    /// (`Box` of `type Box(a) { Box(a), Empty }`), let it name the type.
+    fn type_named_like_its_variant(&self, expr: &mut Expr) {
+        if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            return;
+        }
+        let (Some(crate::defs::Res::Def(id)), Some(defs)) = (expr.res, self.defs.as_ref()) else {
+            return;
+        };
+        if let Some(ty) = defs.variant_type(id)
+            && ty.name == defs.get(id).name
+            && let crate::defs::DefKind::Type(t) = ty.kind
+        {
+            expr.res = Some(crate::defs::Res::Def(t.0));
         }
     }
 
@@ -1819,6 +1837,15 @@ impl TypeChecker {
                         && let Type::Fun(expected, _) = self.apply(param)
                     {
                         self.expected_closure = Some(expected);
+                    }
+                    // A `type a` argument that names both a type and its
+                    // variant (`type Box(a) { Box(a), Empty }`) is the
+                    // type.
+                    if let Some(param) = param
+                        && matches!(self.apply(param),
+                            Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF))
+                    {
+                        self.type_named_like_its_variant(arg);
                     }
                     // A decoder's type argument written as a type of
                     // types (`List(Int)`, `(Int, String)`) is that type,

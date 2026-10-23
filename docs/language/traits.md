@@ -190,6 +190,28 @@ trait Ordered for MyInt { ... }
 -- (only when MyInt has no Equal, e.g. it has a function field)
 ```
 
+An impl for a parameterized type has the supertrait at its own type,
+with what its header gives the type's variables: a `Box(a)` has `Equal`
+when its `a` does, so the header says so:
+
+```silt
+trait Same: Equal {
+  fn same(self, other: Self) -> Bool {
+    self == other
+  }
+}
+
+type Box(a) {
+  Bx(a),
+}
+
+trait Same for Box(a) {}
+-- error: type 'Box(a)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+-- help: add `where a: Equal` to the impl
+```
+
+`trait Same for Box(a) where a: Equal {}` is the impl.
+
 ## Default Methods
 
 A trait method can carry a body inside the trait declaration itself. The
@@ -334,6 +356,9 @@ use — a single `trait Wrap for Box(a)` impl handles both `Box(42)` and
 
 Rules:
 
+- **An impl is for a declared type.** `trait X for a` is an error
+  (`trait impl target 'a' is not a declared type`): a function bounded by
+  the trait says "every type that has it", `fn x(v: a) where a: Show`.
 - **Only lowercase binders.** `trait X for Box(Int)` is a parse error —
   silt has no specialization.
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
@@ -477,9 +502,11 @@ trait From(Celsius) for Fahrenheit {
 ```
 
 Parameterized traits may have supertraits (`trait Child(a): Parent(a)`) and
-`where` clauses on both the trait declaration and its methods. The full
-specification — including how trait parameters flow through `where` clauses
-and how multiple impls with different arguments coexist — lives in
+`where` clauses on both the trait declaration and its methods. A type has
+at most one impl of a trait, whatever its arguments: `trait From(Celsius)
+for Fahrenheit` and `trait From(Kelvin) for Fahrenheit` are a duplicate.
+The full specification — including how trait parameters flow through
+`where` clauses — lives in
 [Generics — Parameterized trait declarations](generics.md#parameterized-trait-declarations).
 
 ## Methods That Make a Value
@@ -529,6 +556,11 @@ for `Int`. Inside a generic function with `type a` and
 concrete type passed in. See
 [Generics — Trait methods on types](generics.md#trait-methods-on-types) for
 the full rules.
+
+A type with a variant of its own name (`type Box(a) { Box(a), Empty }`)
+is the type where a type is meant: `Box.default()` calls the method of
+its impl, and `make(Box)` gives the type to a `type t` parameter;
+`Box(1)` is the variant.
 
 ## Method References
 

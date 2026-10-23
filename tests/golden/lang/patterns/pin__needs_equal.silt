@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- A pin compares as `==` does: the pinned value's type has `Equal`. A
+-- function has none: an error at the pin, also through a function that
+-- pins its parameter (at the call), and for a type variable without the
+-- bound. (It used to check, and fail when run.)
+fn is_it(f, g) {
+  match g {
+    ^f -> true
+    _ -> false
+  }
+}
+fn generic(x: a, y: a) -> Bool {
+  match y {
+    ^x -> true
+    _ -> false
+  }
+}
+fn main() {
+  let f = { x -> x + 1 }
+  let g = f
+  let r = match g {
+    ^f -> true
+    _ -> false
+  }
+  println(r)
+  println(is_it(f, f))
+}

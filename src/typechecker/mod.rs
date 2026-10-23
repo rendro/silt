@@ -300,6 +300,9 @@ pub struct TypeChecker {
     /// The argument of type `Self` of the call through a trait whose
     /// callee is being inferred, with its place (`check_call`).
     pub(super) trait_receiver: Option<(Type, Span)>,
+    /// The type variables of each impl this module writes, by the names
+    /// its header gives them (`trait Same for Box(a)`).
+    pub(super) impl_var_names: HashMap<(TraitKey, TypeRef), Vec<(TyVar, Symbol)>>,
     /// The traits the module names by its imports (`import m.{ T }`),
     /// and the modules it imports: their traits it sees too.
     pub(super) seen_traits: std::collections::HashSet<crate::defs::DefId>,
@@ -443,6 +446,7 @@ impl TypeChecker {
             method_trait: None,
             trait_call_self: HashMap::new(),
             trait_receiver: None,
+            impl_var_names: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
             seen_modules: std::collections::HashSet::new(),
             builtin_imports: std::collections::HashSet::new(),

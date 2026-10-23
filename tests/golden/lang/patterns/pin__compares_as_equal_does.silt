@@ -1,0 +1,26 @@
+-- A pin compares values of a type with `Equal` as `==` does: an Int, a
+-- record, and a channel, which is equal to itself only.
+import channel
+type P { n: Int }
+fn same_ch(c: Channel(Int), d: Channel(Int)) -> Bool {
+  match d {
+    ^c -> true
+    _ -> false
+  }
+}
+fn main() {
+  let n = 3
+  let p = P { n: 1 }
+  println(match 3 {
+    ^n -> "three"
+    _ -> "no"
+  })
+  println(match P { n: 1 } {
+    ^p -> "p"
+    _ -> "other"
+  })
+  let c = channel.new(1)
+  let d = channel.new(1)
+  println(same_ch(c, c))
+  println(same_ch(c, d))
+}

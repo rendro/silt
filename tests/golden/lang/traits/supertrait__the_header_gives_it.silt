@@ -1,0 +1,35 @@
+-- An impl whose header gives its type variables what a supertrait needs
+-- of them has the supertrait: directly, through a bound's supertrait,
+-- and where a part of the type is of no variable.
+trait Same: Equal {
+  fn same(self, o: Self) -> Bool { self == o }
+}
+trait Ord2: Compare {
+  fn lt(self, o: Self) -> Bool { self < o }
+}
+trait Super {
+  fn sup(self) -> String
+}
+trait Sub: Super {
+  fn sub(self) -> String { "sub of {Super.sup(self)}" }
+}
+type Box(a) { Bx(a) }
+type Tagged(a) { Tagged(String, a) }
+trait Super for Int {
+  fn sup(self) -> String { "int" }
+}
+trait Sub for Int {}
+trait Same for Box(a) where a: Equal {}
+trait Ord2 for Box(a) where a: Compare {}
+trait Super for Box(a) where a: Super {
+  fn sup(self) -> String { match self { Bx(x) -> "box({Super.sup(x)})" } }
+}
+trait Sub for Box(a) where a: Sub {}
+trait Same for Tagged(a) where a: Ord2 {}
+trait Ord2 for Int {}
+fn main() {
+  println(Same.same(Bx(1), Bx(1)))
+  println(Ord2.lt(Bx(1), Bx(2)))
+  println(Sub.sub(Bx(Bx(1))))
+  println(Same.same(Tagged("t", 1), Tagged("t", 2)))
+}

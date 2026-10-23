@@ -1000,7 +1000,12 @@ fn same_shape(a: &[&Type], b: &[&Type]) -> bool {
 
 /// Bind each of the variables `vars` of `pattern` to the part of `ty` at
 /// its place, into `mapping` (the first place a variable is at decides).
-fn match_type(pattern: &Type, ty: &Type, vars: &[TyVar], mapping: &mut HashMap<TyVar, Type>) {
+pub(super) fn match_type(
+    pattern: &Type,
+    ty: &Type,
+    vars: &[TyVar],
+    mapping: &mut HashMap<TyVar, Type>,
+) {
     let mut zip = |xs: &[Type], ys: &[Type]| {
         for (x, y) in xs.iter().zip(ys) {
             match_type(x, y, vars, mapping);
