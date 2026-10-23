@@ -20,6 +20,7 @@ Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
 | `filter` | `(Map(a, b), Fn(a, b) -> Bool) -> Map(a, b)` | Keep entries matching predicate |
 | `from_entries` | `(List((a, b))) -> Map(a, b) where a: Hash` | Build map from tuple list |
 | `get` | `(Map(a, b), a) -> Option(b) where a: Hash` | Look up value by key |
+| `is_empty` | `(Map(a, b)) -> Bool` | True if the map has no entries |
 | `keys` | `(Map(a, b)) -> List(a)` | All keys as a list |
 | `length` | `(Map(a, b)) -> Int` | Number of entries |
 | `map` | `(Map(a, b), Fn(a, b) -> (c, d)) -> Map(c, d) where c: Hash` | Transform all entries |
@@ -159,6 +160,24 @@ fn main() {
     Some(v) -> println(v)
     None -> println("not found")
   }
+}
+```
+
+
+## `map.is_empty`
+
+```
+map.is_empty(m: Map(a, b)) -> Bool
+```
+
+Returns `true` if the map has no entries.
+
+```silt
+import map
+
+fn main() {
+  println(map.is_empty(#{})) -- true
+  println(map.is_empty(#{ "a": 1 })) -- false
 }
 ```
 

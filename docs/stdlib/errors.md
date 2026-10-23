@@ -83,15 +83,16 @@ Returned by `int.parse`.
 
 ### `FloatError` (requires `import float`)
 
-Returned by `float.parse`: the same variants as `IntError`, in a type of
-its own (`float.Empty` is not `int.Empty`).
+Returned by `float.parse`: the variants of `IntError` and `NotFinite`,
+in a type of its own (`float.Empty` is not `int.Empty`).
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Empty` | — | input was empty |
-| `InvalidDigit(Int)` | byte offset | character that is no part of a number at offset; `"NaN"` and `"inf"` at 0 |
+| `InvalidDigit(Int)` | byte offset | character that is no part of a number at offset |
 | `Overflow` | — | literal above the `Float` range |
 | `Underflow` | — | literal below the `Float` range |
+| `NotFinite` | — | a spelled-out infinity or NaN (`"inf"`, `"NaN"`): a `Float` is always finite |
 | `Other(String)` | message | unclassified parse failure |
 
 ### `HttpError` (requires `import http`)

@@ -164,17 +164,17 @@ fn main() { result.map_err(Err(3), { e -> e + 100 }) }
 }
 
 // ════════════════════════════════════════════════════════════════════
-// result.map_ok — src/builtins/core.rs:37-49 (Ok branch)
+// result.map — src/builtins/core.rs:37-49 (Ok branch)
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_result_map_ok_on_ok_applies_callback() {
+fn test_result_map_on_ok_applies_callback() {
     // Locks src/builtins/core.rs:42-46 — Ok(v) invokes callback with
     // v and rewraps as Ok(new_v). The Err passthrough is already
-    // covered by test_result_map_ok_on_err in integration.rs.
+    // covered by tests/golden/heavy/maps_sets/integration_result_map_on_err.silt.
     let result = run(r#"
 import result
-fn main() { result.map_ok(Ok(6), { v -> v * 7 }) }
+fn main() { result.map(Ok(6), { v -> v * 7 }) }
     "#);
     assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(42)]));
 }
