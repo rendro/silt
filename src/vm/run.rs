@@ -922,7 +922,7 @@ impl Vm {
                             "ListConcat: an operand is not a list",
                         ));
                     };
-                    let list = ok!(crate::builtins::collections::concat(&a, &b));
+                    let list = ok!(crate::builtins::collections::concat("list literal", &a, &b));
                     self.stack.push(list);
                 }
                 // A read of a field writes the field over the record,

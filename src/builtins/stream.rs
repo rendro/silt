@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use super::collections::{Kind, fits};
 use super::common::{READ_AT_ONCE, ok};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
@@ -1010,8 +1011,11 @@ builtins! {
         let Ok(n @ 1..) = usize::try_from(n) else {
             return Err(VmError::new("stream.chunks: n must be positive".into()));
         };
+        // A chunk is a list: one longer than a list may be is refused
+        // here, not after ten million values have come.
+        fits("stream.chunks", Kind::Chunk, n)?;
         let in_ch = ch.clone();
-        // (It grows as values arrive: `n` may be any number.)
+        // (It grows as values arrive: `n` may be large.)
         let mut buffer: Vec<Value> = Vec::new();
         let mut ended = false;
         stage(
@@ -1177,6 +1181,7 @@ builtins! {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(_, v) => {
+                    fits("stream.collect", Kind::List, out.len() + 1)?;
                     out.push(v);
                     Next::Take(0)
                 }

@@ -74,7 +74,7 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
 
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
-/// `MAX_RANGE_MATERIALIZE` in `src/value/mod.rs`: keep recursive traversal
+/// `MAX_COLLECTION_LEN` in `src/value/list.rs`: keep recursive traversal
 /// bounded so a sprawling filesystem cannot silently OOM the VM. Hitting the cap
 /// surfaces as `Err("fs.walk: exceeded N entries (cap)")` so users can
 /// paginate or narrow their root instead of getting a crash.

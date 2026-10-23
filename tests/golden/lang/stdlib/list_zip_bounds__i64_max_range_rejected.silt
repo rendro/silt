@@ -1,6 +1,5 @@
 -- exit: 1
--- stderr-contains: list.zip: result length
--- stderr-contains: exceeds maximum materialized length 10000000
+-- stderr-contains: list.zip: list exceeds maximum size of 10000000 elements
 -- stderr-not-contains: panic
 import list
 fn main() {

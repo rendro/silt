@@ -1,0 +1,14 @@
+-- exit: 1
+-- stderr-contains: error[runtime]
+-- stderr-contains: set.insert: set exceeds maximum size of 10000000 elements
+-- stderr-not-contains: not reached
+-- A set holds at most ten million elements: inserting one that is
+-- already there still works, a new one is refused.
+import set
+
+fn main() {
+  let full = set.from_list(0..9_999_999)
+  println(set.length(set.insert(full, 5)))
+  let longer = set.insert(full, -1)
+  println("not reached {set.length(longer)}")
+}

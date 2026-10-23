@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{IntTotal, MAX_RANGE_MATERIALIZE, Value};
+use crate::value::{IntTotal, MAX_COLLECTION_LEN, Value};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
 
 fn some(value: Value) -> Value {
@@ -111,20 +111,63 @@ fn set_acc(acc: &mut Value, _item: Value, result: Value) -> Flow {
     next()
 }
 
+/// What a collection is, for the error of one that would be too big.
+#[derive(Clone, Copy)]
+pub(crate) enum Kind {
+    List,
+    Set,
+    Map,
+    /// A list that `stream.chunks` makes.
+    Chunk,
+}
+
+/// Refuses a collection of `len` elements (entries, of a map) that
+/// `name` would make: one of more than [`MAX_COLLECTION_LEN`]. Every
+/// builtin that makes a collection larger than the ones it was given
+/// asks this before it makes it.
+pub(crate) fn fits(name: &str, kind: Kind, len: usize) -> Result<(), VmError> {
+    let most = cap();
+    if len <= most {
+        return Ok(());
+    }
+    let (what, of) = match kind {
+        Kind::List => ("list", "elements"),
+        Kind::Set => ("set", "elements"),
+        Kind::Map => ("map", "entries"),
+        Kind::Chunk => ("chunk", "elements"),
+    };
+    Err(VmError::new(format!(
+        "{name}: {what} exceeds maximum size of {most} {of}"
+    )))
+}
+
+#[cfg(not(test))]
+fn cap() -> usize {
+    MAX_COLLECTION_LEN
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The cap for the tests of this thread: a map of ten million
+    /// entries takes seconds to make, so a test of a builtin lowers it.
+    pub(crate) static CAP: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_COLLECTION_LEN) };
+}
+
+#[cfg(test)]
+fn cap() -> usize {
+    CAP.with(std::cell::Cell::get)
+}
+
 /// The list of the elements of `xs` and then those of `ys`:
-/// `list.concat(xs, ys)`, and `[..xs, ..ys]`.
+/// `list.concat(xs, ys)`, and `[..xs, ..ys]` (`name` is
+/// `list literal`).
 ///
 /// Both sizes are checked before an element of either is made: two
 /// operands near the limit would make a list of 800 MB.
-pub(crate) fn concat(xs: List, ys: List) -> Result<Value, VmError> {
+pub(crate) fn concat(name: &str, xs: List, ys: List) -> Result<Value, VmError> {
     xs.writable()?;
     ys.writable()?;
-    if xs.len() + ys.len() > MAX_RANGE_MATERIALIZE {
-        return Err(VmError::new(format!(
-            "concatenated list exceeds maximum size of {} elements",
-            MAX_RANGE_MATERIALIZE
-        )));
-    }
+    fits(name, Kind::List, xs.len().saturating_add(ys.len()))?;
     Ok(Value::List(xs.concat(ys)?))
 }
 
@@ -148,12 +191,6 @@ fn take_acc(acc: &mut Value) -> Result<Value, VmError> {
     Ok(std::mem::replace(acc, Value::Unit))
 }
 
-fn too_long(name: &str) -> VmError {
-    VmError::new(format!(
-        "{name}: accumulated result exceeds maximum list length of {MAX_RANGE_MATERIALIZE} elements"
-    ))
-}
-
 fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
     match result {
         Value::List(inner) => {
@@ -163,15 +200,15 @@ fn flat_map_step(out: &mut Vec<Value>, _item: Value, result: Value) -> Flow {
             inner
                 .writable()
                 .map_err(|m| VmError::new(format!("list.flat_map: {m}")))?;
-            if out.len().saturating_add(inner.len()) > MAX_RANGE_MATERIALIZE {
-                return Err(too_long("list.flat_map"));
-            }
+            fits(
+                "list.flat_map",
+                Kind::List,
+                out.len().saturating_add(inner.len()),
+            )?;
             out.extend(inner);
         }
         other => {
-            if out.len() >= MAX_RANGE_MATERIALIZE {
-                return Err(too_long("list.flat_map"));
-            }
+            fits("list.flat_map", Kind::List, out.len() + 1)?;
             out.push(other);
         }
     }
@@ -268,10 +305,8 @@ impl Native for Unfold {
                 Value::Variant(variant) if variant.is(bv::SOME) && variant.fields().len() == 1 => {
                     match &variant.fields()[0] {
                         Value::Tuple(pair) if pair.len() == 2 => {
+                            fits("list.unfold", Kind::List, self.out.len() + 1)?;
                             self.out.push(pair[0].clone());
-                            if self.out.len() > MAX_RANGE_MATERIALIZE {
-                                return Err(too_long("list.unfold"));
-                            }
                             self.state = pair[1].clone();
                         }
                         other => {
@@ -513,11 +548,9 @@ pub(crate) mod list {
                 (init.clone(), vec![init.clone()]),
                 |(running, _), item, stack| acc_and_item(running, item, stack),
                 |(running, prefix), _, result| {
+                    fits("list.scan", Kind::List, prefix.len() + 1)?;
                     *running = result.clone();
                     prefix.push(result);
-                    if prefix.len() > MAX_RANGE_MATERIALIZE {
-                        return Err(too_long("list.scan"));
-                    }
                     next()
                 },
                 |(_, prefix)| as_list(prefix),
@@ -528,12 +561,7 @@ pub(crate) mod list {
             // The result is as long as the shorter of the two, which
             // for two ranges can be more than a list may hold: checked
             // before anything is made.
-            let expected = xs.len().min(ys.len());
-            if expected > MAX_RANGE_MATERIALIZE {
-                return Err(VmError::new(format!(
-                    "list.zip: result length {expected} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
-                )));
-            }
+            fits("list.zip", Kind::List, xs.len().min(ys.len()))?;
             Ok(xs
                 .iter()
                 .zip(ys.iter())
@@ -551,12 +579,7 @@ pub(crate) mod list {
                     }
                     other => result.push(other),
                 }
-                if result.len() > MAX_RANGE_MATERIALIZE {
-                    return Err(VmError::new(format!(
-                        "list.flatten: accumulated result exceeds maximum list length of {} elements",
-                        MAX_RANGE_MATERIALIZE
-                    )));
-                }
+                fits("list.flatten", Kind::List, result.len())?;
             }
             Ok(result)
         }
@@ -612,15 +635,19 @@ pub(crate) mod list {
         }
 
         fn append(xs: List, elem: &Value) -> Result<Value, VmError> {
+            xs.writable()?;
+            fits("list.append", Kind::List, xs.len().saturating_add(1))?;
             Ok(Value::List(xs.push_back(elem.clone())?))
         }
 
         fn prepend(xs: List, elem: &Value) -> Result<Value, VmError> {
+            xs.writable()?;
+            fits("list.prepend", Kind::List, xs.len().saturating_add(1))?;
             Ok(Value::List(xs.push_front(elem.clone())?))
         }
 
         fn concat(xs: List, ys: List) -> Result<Value, VmError> {
-            super::concat(xs, ys)
+            super::concat("list.concat", xs, ys)
         }
 
         // An index is a place in the list or it is none: a negative
@@ -721,11 +748,7 @@ pub(crate) mod list {
             xs.writable()?;
             // Result length = 2*N - 1
             let out_len = xs.len().saturating_mul(2).saturating_sub(1);
-            if out_len > MAX_RANGE_MATERIALIZE {
-                return Err(VmError::new(format!(
-                    "list.intersperse: result length {out_len} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
-                )));
-            }
+            fits("list.intersperse", Kind::List, out_len)?;
             let mut items = xs.iter();
             let first = items.next();
             let rest = items.flat_map(|item| [sep.clone(), item]);
@@ -791,7 +814,13 @@ pub(crate) mod map {
             // The default and the callback result are map VALUES and
             // stay ungated.
             ensure_no_fn("map.update", "Hash", [key])?;
-            let current = m.get(key).unwrap_or(default).clone();
+            let current = match m.get(key) {
+                Some(current) => current.clone(),
+                None => {
+                    fits("map.update", Kind::Map, m.len() + 1)?;
+                    default.clone()
+                }
+            };
             let (m, key) = (m.clone(), key.clone());
             Ok(call_then("map.update", f.clone(), current, move |new_val| {
                 Ok(Value::Map(m.insert(key, new_val)))
@@ -802,8 +831,11 @@ pub(crate) mod map {
             m.get(k).cloned()
         }
 
-        fn set(m: Map, k: &Value, v: &Value) -> Value {
-            Value::Map(m.insert(k.clone(), v.clone()))
+        fn set(m: Map, k: &Value, v: &Value) -> Result<Value, VmError> {
+            if !m.contains_key(k) {
+                fits("map.set", Kind::Map, m.len() + 1)?;
+            }
+            Ok(Value::Map(m.insert(k.clone(), v.clone())))
         }
 
         fn delete(m: Map, key: &Value) -> Value {
@@ -826,8 +858,14 @@ pub(crate) mod map {
             m.len() as i64
         }
 
-        fn merge(m1: Map, m2: Map) -> Value {
-            Value::Map(m1.merge(m2))
+        fn merge(m1: Map, m2: Map) -> Result<Value, VmError> {
+            // The keys of `m2` that `m1` lacks are counted only when
+            // the two together could be too many.
+            if m1.len().saturating_add(m2.len()) > cap() {
+                let new = m2.keys().filter(|k| !m1.contains_key(k)).count();
+                fits("map.merge", Kind::Map, m1.len() + new)?;
+            }
+            Ok(Value::Map(m1.merge(m2)))
         }
 
         fn entries(m: Map) -> Value {
@@ -935,6 +973,9 @@ pub(crate) mod set {
 
         fn insert(s: Set, elem: &Value) -> Result<Value, VmError> {
             ensure_no_fn("set.insert", "Compare", [elem])?;
+            if !s.contains(elem) {
+                fits("set.insert", Kind::Set, s.len() + 1)?;
+            }
             Ok(Value::Set(s.insert(elem.clone())))
         }
 
@@ -949,6 +990,10 @@ pub(crate) mod set {
 
         fn union(a: Set, b: Set) -> Result<Value, VmError> {
             both_without_fn("set.union", a, b)?;
+            if a.len().saturating_add(b.len()) > cap() {
+                let new = b.iter().filter(|x| !a.contains(x)).count();
+                fits("set.union", Kind::Set, a.len() + new)?;
+            }
             Ok(Value::Set(a.union(b)))
         }
 
@@ -969,7 +1014,173 @@ pub(crate) mod set {
 
         fn symmetric_difference(a: Set, b: Set) -> Result<Value, VmError> {
             both_without_fn("set.symmetric_difference", a, b)?;
+            if a.len().saturating_add(b.len()) > cap() {
+                let both = b.iter().filter(|x| a.contains(x)).count();
+                fits("set.symmetric_difference", Kind::Set, a.len() + b.len() - 2 * both)?;
+            }
             Ok(Value::Set(a.symmetric_difference(b)))
         }
+    }
+}
+
+/// The cap of every builtin that grows a collection, at a cap of 3 for
+/// the builtins (a map of ten million entries takes seconds to make)
+/// and at the real cap for `fits` itself.
+#[cfg(test)]
+mod cap_tests {
+    use super::{CAP, Kind, MAX_COLLECTION_LEN, fits};
+    use crate::session::testing::run_str;
+
+    /// What `main` gives back, run with a cap of 3: its value shown, or
+    /// its error.
+    fn run_capped(body: &str) -> String {
+        let source = format!(
+            "import list\nimport map\nimport set\nimport stream\nimport channel\n\
+             fn main() {{\n  {body}\n}}\n"
+        );
+        CAP.with(|cap| cap.set(3));
+        let result = run_str(&source);
+        CAP.with(|cap| cap.set(MAX_COLLECTION_LEN));
+        match result {
+            Ok(value) => value.to_string(),
+            Err(error) => error,
+        }
+    }
+
+    fn refused(body: &str, text: &str) {
+        let got = run_capped(body);
+        assert!(got.contains(text), "{body}: expected {text:?}, got {got}");
+    }
+
+    fn allowed(body: &str, shown: &str) {
+        assert_eq!(run_capped(body), shown, "{body}");
+    }
+
+    #[test]
+    fn fits_takes_the_cap_and_refuses_one_more() {
+        assert!(fits("list.append", Kind::List, MAX_COLLECTION_LEN).is_ok());
+        let error = fits("map.set", Kind::Map, MAX_COLLECTION_LEN + 1).unwrap_err();
+        assert_eq!(
+            error.message,
+            "map.set: map exceeds maximum size of 10000000 entries"
+        );
+        let error = fits("set.insert", Kind::Set, usize::MAX).unwrap_err();
+        assert_eq!(
+            error.message,
+            "set.insert: set exceeds maximum size of 10000000 elements"
+        );
+        let error = fits("stream.chunks", Kind::Chunk, MAX_COLLECTION_LEN + 1).unwrap_err();
+        assert_eq!(
+            error.message,
+            "stream.chunks: chunk exceeds maximum size of 10000000 elements"
+        );
+    }
+
+    #[test]
+    fn a_map_grows_up_to_the_cap() {
+        let three = "#{1: 1, 2: 2, 3: 3}";
+        refused(
+            &format!("map.set({three}, 4, 4)"),
+            "map.set: map exceeds maximum size of 3 entries",
+        );
+        allowed(&format!("map.length(map.set({three}, 2, 9))"), "3");
+        refused(
+            &format!("map.update({three}, 4, 0) {{ v -> v + 1 }}"),
+            "map.update: map exceeds maximum size of 3 entries",
+        );
+        allowed(
+            &format!("map.get(map.update({three}, 3, 0) {{ v -> v + 1 }}, 3)"),
+            "Some(4)",
+        );
+        refused(
+            &format!("map.merge({three}, #{{3: 0, 4: 0}})"),
+            "map.merge: map exceeds maximum size of 3 entries",
+        );
+        allowed("map.length(map.merge(#{1: 1, 2: 2}, #{2: 0, 3: 0}))", "3");
+    }
+
+    #[test]
+    fn a_set_grows_up_to_the_cap() {
+        let three = "set.from_list([1, 2, 3])";
+        refused(
+            &format!("set.insert({three}, 4)"),
+            "set.insert: set exceeds maximum size of 3 elements",
+        );
+        allowed(&format!("set.length(set.insert({three}, 2))"), "3");
+        refused(
+            &format!("set.union({three}, set.from_list([3, 4]))"),
+            "set.union: set exceeds maximum size of 3 elements",
+        );
+        allowed(
+            "set.length(set.union(set.from_list([1, 2]), set.from_list([2, 3])))",
+            "3",
+        );
+        refused(
+            &format!("set.symmetric_difference({three}, set.from_list([4]))"),
+            "set.symmetric_difference: set exceeds maximum size of 3 elements",
+        );
+        allowed(
+            &format!("set.length(set.symmetric_difference({three}, set.from_list([3, 4])))"),
+            "3",
+        );
+    }
+
+    #[test]
+    fn a_list_grows_up_to_the_cap() {
+        for name in ["append", "prepend"] {
+            refused(
+                &format!("list.{name}([1, 2, 3], 4)"),
+                &format!("list.{name}: list exceeds maximum size of 3 elements"),
+            );
+            allowed(&format!("list.length(list.{name}([1, 2], 3))"), "3");
+        }
+        refused(
+            "list.concat([1, 2], [3, 4])",
+            "list.concat: list exceeds maximum size of 3 elements",
+        );
+        refused(
+            "[..[1, 2], ..[3, 4]]",
+            "list literal: list exceeds maximum size of 3 elements",
+        );
+        allowed("[..[1, 2], ..[3]]", "[1, 2, 3]");
+        refused(
+            "list.unfold(0) { n -> Some((n, n + 1)) }",
+            "list.unfold: list exceeds maximum size of 3 elements",
+        );
+        refused(
+            "list.scan([1, 2, 3], 0) { a, x -> a + x }",
+            "list.scan: list exceeds maximum size of 3 elements",
+        );
+        allowed("list.scan([1, 2], 0) { a, x -> a + x }", "[0, 1, 3]");
+        refused(
+            "list.flat_map([1, 2]) { x -> [x, x] }",
+            "list.flat_map: list exceeds maximum size of 3 elements",
+        );
+        refused(
+            "list.flatten([[1, 2], [3, 4]])",
+            "list.flatten: list exceeds maximum size of 3 elements",
+        );
+        refused(
+            "list.zip([1, 2, 3, 4], [1, 2, 3, 4])",
+            "list.zip: list exceeds maximum size of 3 elements",
+        );
+        refused(
+            "list.intersperse([1, 2, 3], 0)",
+            "list.intersperse: list exceeds maximum size of 3 elements",
+        );
+        allowed("list.intersperse([1, 2], 0)", "[1, 0, 2]");
+    }
+
+    #[test]
+    fn a_stream_collects_up_to_the_cap() {
+        refused(
+            "stream.from_list([1, 2, 3, 4]) |> stream.collect",
+            "stream.collect: list exceeds maximum size of 3 elements",
+        );
+        allowed("stream.from_list([1, 2, 3]) |> stream.collect", "[1, 2, 3]");
+        refused(
+            "stream.chunks(stream.from_list([1]), 4)",
+            "stream.chunks: chunk exceeds maximum size of 3 elements",
+        );
     }
 }
