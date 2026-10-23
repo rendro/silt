@@ -1,5 +1,6 @@
 -- A value piped into a call is the call's first argument, whatever the
--- callee is: `5 |> a.add()` is `a.add(5)`, as `5 |> f(1)` is `f(5, 1)`.
+-- callee is: `a |> Adder.add(5)` is `Adder.add(a, 5)`, as `5 |> f(1)` is
+-- `f(5, 1)`.
 import list
 type Acc { base: Int }
 trait Adder { fn add(self, x: Int) -> Int }
@@ -8,9 +9,9 @@ trait Adder for Int { fn add(self, x: Int) -> Int { self + x } }
 type Opt { Wrap(Int) }
 fn main() {
   let a = Acc { base: 100 }
+  println(a |> Adder.add(5))
   println(Adder.add(a, 5))
-  println(Adder.add(a, 5))
-  println(Adder.add(3, 5))
+  println(3 |> Adder.add(5))
   println(5 |> Wrap)
   println(5 |> Wrap())
   println([1, 2] |> list.map({ x -> x + 1 }))

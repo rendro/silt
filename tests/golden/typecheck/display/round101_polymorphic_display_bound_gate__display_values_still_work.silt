@@ -1,4 +1,4 @@
--- Positive control: Int, String, a stdlib error variant and a user record render via polymorphic `.display()`.
+-- Positive control: Int, String, a stdlib error variant and a user record are shown through a Display bound (`where a: Display`).
 -- stdout-contains: 42
 -- stdout-contains: hi
 -- stdout-contains: cannot parse empty string

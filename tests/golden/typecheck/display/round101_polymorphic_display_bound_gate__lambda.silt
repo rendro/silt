@@ -1,4 +1,4 @@
--- Polymorphic `.display()` on a function is rejected where the function with the declared `Display` bound is called, with no interpolation suffix.
+-- A function given to a function with a Display bound (`where a: Display`) is rejected at the call, with no interpolation suffix.
 -- exit: 1
 -- stderr-contains: does not implement trait 'Display'
 -- stderr-contains: 'Fn'

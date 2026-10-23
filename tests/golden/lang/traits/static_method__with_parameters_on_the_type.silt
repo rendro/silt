@@ -1,6 +1,7 @@
 -- What works: a method without `self` on the type and on a `type`
--- parameter, and as a function value; a method with `self` on a value
--- and, with the receiver as its first argument, on the type.
+-- parameter, and as a function value; a method with `self` through its
+-- trait, with the receiver as its first argument, called and piped
+-- into.
 trait Mk {
   fn make(n: Int) -> Self
   fn join(a: Self, b: Self) -> Self
@@ -30,5 +31,5 @@ fn main() {
   let f = Int.make
   println(f(3))
   println(Mk.twice(4))
-  println(Mk.twice(4))
+  println(4 |> Mk.twice)
 }

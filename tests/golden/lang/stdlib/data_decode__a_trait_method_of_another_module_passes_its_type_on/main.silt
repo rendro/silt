@@ -2,9 +2,10 @@
 -- exit: 1
 -- A trait of one module whose default method gives its `type a` to a
 -- decoder, an impl of it in another module with a method of its own
--- that does the same, and calls in a third: each call is checked, the
--- default's too.
+-- that does the same, and calls in a third, by the trait's name and
+-- through its module: each call is checked, the default's too.
 import src
+import loader
 import loader.{ Loader }
 
 type Blob { data: Bytes }
@@ -13,5 +14,5 @@ fn main() {
   let s = src.Src { s: "\{}" }
   println(Loader.load(s, Blob))
   println(Loader.own(s, Blob))
-  println(Loader.own(s, Blob))
+  println(loader.Loader.own(s, Blob))
 }

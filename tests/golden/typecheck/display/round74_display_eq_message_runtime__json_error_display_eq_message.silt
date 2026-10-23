@@ -1,16 +1,16 @@
--- `e.display()` equals `e.message()` for a JsonError.
+-- `"{e}"` equals `Error.message(e)` for a JsonError.
 import json
 fn main() {
     match json.parse("not valid json at all", String) {
         Ok(_) -> ()
         Err(e) -> {
-            let display_method_form = "{e}"
+            let display_form = "{e}"
             let message_form = Error.message(e)
-            match display_method_form == message_form {
+            match display_form == message_form {
                 true -> println("EQUIV")
                 false -> {
                     println("DRIFT")
-                    println(display_method_form)
+                    println(display_form)
                     println(message_form)
                 }
             }

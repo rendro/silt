@@ -1,3 +1,5 @@
+-- The derived Equal, Compare and Hash of a generic record, called
+-- directly: by `==` and through each trait.
 type Wrapped(a) { value: a }
 fn main() {
     let w = Wrapped { value: 7 }
@@ -5,4 +7,6 @@ fn main() {
     let u = Wrapped { value: 8 }
     println(w == v)
     println(w == u)
+    println(Compare.compare(w, u))
+    println(Hash.hash(w) == Hash.hash(v))
 }

@@ -23,7 +23,6 @@ fn main() {
   println(Compare.compare(Wrap { p: Pt { x: 1 } }, Wrap { p: Pt { x: 2 } }))
   println([Pt { x: 2 }, Pt { x: 1 }] |> list.sort)
   println(Pt { x: 1 } == Pt { x: 1 })
-  println(Pt { x: 1 } == Pt { x: 1 })
   println(Hash.hash(Pt { x: 1 }) == Hash.hash(Pt { x: 2 }))
   println(map.get(#{ Pt { x: 1 }: "a" }, Pt { x: 1 }))
 }

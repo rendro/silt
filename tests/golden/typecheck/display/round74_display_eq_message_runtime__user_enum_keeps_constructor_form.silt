@@ -1,4 +1,4 @@
--- A user enum's `display()` keeps the constructor form.
+-- A user enum's interpolation keeps the constructor form.
 type Color { Red, Green(Int), Blue }
 fn main() {
   let c = Green(42)
