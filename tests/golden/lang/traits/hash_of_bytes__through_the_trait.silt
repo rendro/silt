@@ -1,0 +1,11 @@
+-- `Hash.hash` of a Bytes value, known where the call is written or only
+-- where it runs, is the hash a map key of it has (it was "no method
+-- 'hash' for type 'Bytes'" when run).
+import bytes
+fn hg(a: t) -> Int where t: Hash { Hash.hash(a) }
+fn main() {
+  let a = bytes.from_string("a")
+  println(Hash.hash(a) == Hash.hash(bytes.from_string("a")))
+  println(hg(a) == Hash.hash(a))
+  println(Hash.hash([a]) == hg([a]))
+}

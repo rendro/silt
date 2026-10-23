@@ -4092,8 +4092,14 @@ impl TypeChecker {
             | ExprKind::Unit
             | ExprKind::Ident(_)
             | ExprKind::Lambda { .. } => true,
-            // A name through its module or its enum: `m.f`, `Color.Red`.
-            ExprKind::FieldAccess(..) => matches!(expr.res, Some(crate::defs::Res::Def(_))),
+            // A name through its module or its enum: `m.f`, `Color.Red`;
+            // a method through its trait or its type: `Greet.greet`,
+            // `Box.default`.
+            ExprKind::FieldAccess(obj, ..) => {
+                matches!(expr.res, Some(crate::defs::Res::Def(_)))
+                    || self.trait_named(obj).is_some()
+                    || self.res_type(obj.res).is_some()
+            }
             ExprKind::Tuple(elems) => elems.iter().all(|e| self.is_syntactic_value(e)),
             ExprKind::List(elems) => elems.iter().all(|e| match e {
                 ListElem::Single(expr) => self.is_syntactic_value(expr),

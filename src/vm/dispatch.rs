@@ -204,6 +204,7 @@ impl Vm {
                     | Value::Set(_)
                     | Value::Variant(..)
                     | Value::Record(..)
+                    | Value::Bytes(_)
                     | Value::Unit => {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};
