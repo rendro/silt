@@ -15,7 +15,7 @@ fn pick(n) {
 
 fn first(xs) {
   match xs {
-    [x, .._] -> x
+    [x, ..] -> x
     _ -> 0
   }
 }

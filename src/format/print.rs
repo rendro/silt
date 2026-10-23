@@ -2379,9 +2379,11 @@ impl Printer<'_> {
                     &items,
                     |p, item| match (item, rest) {
                         (Some(elem), _) => p.pattern(elem),
-                        (None, Some(rest)) => {
-                            Doc::concat(vec![p.tok(Token::DotDot), p.pattern(rest)])
-                        }
+                        // `..` alone binds nothing: its rest is a wildcard.
+                        (None, Some(rest)) => match rest.kind {
+                            PatternKind::Wildcard => p.tok(Token::DotDot),
+                            _ => Doc::concat(vec![p.tok(Token::DotDot), p.pattern(rest)]),
+                        },
                         (None, None) => Doc::Nil,
                     },
                 )

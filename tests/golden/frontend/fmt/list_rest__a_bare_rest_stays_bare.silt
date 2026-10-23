@@ -1,0 +1,23 @@
+-- cmd: fmt
+-- The formatter writes a list pattern's bare rest as `..` and a named
+-- one as `..name`, without blanks after the dots.
+fn f(xs: List(Int)) -> Int {
+  match xs {
+    [ a , .. ] -> a
+    [..   ] -> 0
+  }
+}
+
+fn g(xs: List(Int)) -> List(Int) {
+  match xs {
+    [_,..rest] -> rest
+    [ ] -> []
+  }
+}
+
+fn h(xs: List(Int)) -> Int {
+  match xs {
+    [a, .., ] -> a
+    [] -> 0
+  }
+}

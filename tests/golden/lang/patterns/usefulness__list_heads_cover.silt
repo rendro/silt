@@ -19,7 +19,7 @@ fn both(xs: List(Bool)) -> String {
   match xs {
     [true, true] -> "both"
     [true, false] | [false, _] -> "not both"
-    [] | [_] | [_, _, _, .._] -> "not two"
+    [] | [_] | [_, _, _, ..] -> "not two"
   }
 }
 fn main() {
