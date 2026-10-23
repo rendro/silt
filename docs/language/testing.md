@@ -107,6 +107,7 @@ entry point.
 | `test.assert(condition)` | Fails if `condition` is `false` |
 | `test.assert_eq(left, right)` | Fails if `left != right` |
 | `test.assert_ne(left, right)` | Fails if `left == right` |
+| `test.assert_approx(a, b, tolerance)` | Fails if `a` and `b` differ by more than `tolerance` |
 
 ## Spawned Tasks
 

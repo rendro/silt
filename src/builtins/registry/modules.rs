@@ -243,6 +243,7 @@ pub(super) fn modules() -> Vec<Module> {
             page: "test.md",
             rows: [
                 f("fn assert(condition: Bool) -> ()", "Assert a condition is true", core::test::assert),
+                f("fn assert_approx(a: Float, b: Float, tolerance: Float) -> ()", "Assert two floats differ by at most the tolerance", core::test::assert_approx),
                 f("fn assert_eq(left: a, right: a) -> () where a: Equal + Display", "Assert two values are equal", core::test::assert_eq),
                 f("fn assert_ne(left: a, right: a) -> () where a: Equal + Display", "Assert two values are not equal", core::test::assert_ne),
             ],
