@@ -236,7 +236,7 @@ impl TypeChecker {
         };
         // (A refusal of `T.decode` names it so.)
         let callee = intern(&format!("{head}.{method}"));
-        self.want(
+        let ev = self.want(
             Pred::Trait {
                 tr,
                 args: Vec::new(),
@@ -249,6 +249,9 @@ impl TypeChecker {
                 op: None,
             },
         );
+        if let Some(ev) = ev {
+            self.ev.calls.insert(span, (ev, Vec::new()));
+        }
         self.method_trait = Some(tr);
         Some(ty)
     }
@@ -648,7 +651,15 @@ impl TypeChecker {
                     return Some(Type::Error);
                 }
                 self.method_trait = Some(matches[0].0);
+                // The receiver has the trait by the bound.
+                let recv = self.ev_new(evidence::EvNode::Bound {
+                    var: r.var,
+                    tr: matches[0].0,
+                    args: Vec::new(),
+                });
                 let instantiated = self.instantiate_method(&matches[0].1, field, span);
+                let own = self.ev.use_ev.take().unwrap_or_default();
+                self.ev.calls.insert(span, (recv, own));
                 Some(self.apply(&instantiated))
             }
             _ => {
@@ -811,18 +822,31 @@ impl TypeChecker {
             let recv = self.apply(recv);
             let entry = match crate::types::canonical::canonicalize(&self.tables.resolver, &recv) {
                 Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,
-                canon => (self.type_name_for_impl(&canon))
-                    .and_then(|head| self.tables.impl_methods.get(head, field, tr))
-                    .filter(|entry| !entry.structural)
-                    .cloned(),
+                canon => (self.type_name_for_impl(&canon)).and_then(|head| {
+                    let entry = self.tables.impl_methods.get(head, field, tr)?;
+                    (!entry.structural).then(|| (head, entry.clone()))
+                }),
             };
-            if let Some(entry) = entry {
+            if let Some((head, entry)) = entry {
                 self.method_trait = Some(tr);
                 self.trait_call_self.insert(span, recv.clone());
                 self.receiver_taken = true;
                 let owed_before = self.wanted.len();
                 let scheme = self.method_scheme(&entry);
                 let ty = self.instantiate_method(&scheme, field, span);
+                // The impl's header's predicates come first among the
+                // method's.
+                let mut owed = self.ev.use_ev.take().unwrap_or_default();
+                let header = (self.tables.impl_preds.get(&(tr, head)))
+                    .map_or(0, |preds| self.trait_bounds(preds).len())
+                    .min(owed.len());
+                let own = owed.split_off(header);
+                let recv_ev = self.ev_new(evidence::EvNode::Impl {
+                    tr,
+                    ty: head,
+                    subs: owed,
+                });
+                self.ev.calls.insert(span, (recv_ev, own));
                 if let Type::Fun(params, _) = &ty
                     && let Some(first) = params.first()
                 {
@@ -872,7 +896,7 @@ impl TypeChecker {
         if let Some((recv, _)) = &receiver {
             self.unify(recv, &self_ty, span);
         }
-        self.want(
+        let recv_ev = self.want(
             Pred::Trait {
                 tr,
                 args: params,
@@ -889,6 +913,10 @@ impl TypeChecker {
         self.trait_call_self.insert(span, self_ty);
         self.receiver_taken = receiver.is_some();
         let method_ty = self.instantiate_method(&scheme, field, span);
+        let own = self.ev.use_ev.take().unwrap_or_default();
+        if let Some(recv_ev) = recv_ev {
+            self.ev.calls.insert(span, (recv_ev, own));
+        }
         self.apply(&method_ty)
     }
 
@@ -2136,6 +2164,20 @@ impl TypeChecker {
     // ── Expression type inference ───────────────────────────────────
 
     pub(super) fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
+        if !matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            return self.infer_expr_kind(expr, env);
+        }
+        // A use of a definition with bounds: the evidence of each.
+        self.ev.use_ev = None;
+        let ty = self.infer_name(expr, env);
+        if let Some(owed) = self.ev.use_ev.take() {
+            self.ev.refs.insert(expr.span, owed);
+        }
+        ty
+    }
+
+    /// `infer_expr` for a name or a field access.
+    fn infer_name(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
         if !matches!(expr.kind, ExprKind::FieldAccess(..)) {
             return self.infer_expr_kind(expr, env);
         }
@@ -3723,6 +3765,10 @@ impl TypeChecker {
                                 matches!(value.kind, ExprKind::Lambda { .. }).then_some(*name);
                             let scheme = self.generalize_let(&val_ty, &own);
                             self.passing_on = None;
+                            let bounds = self.trait_bounds(&scheme.preds);
+                            if !bounds.is_empty() {
+                                self.ev.lets.insert(value_span, bounds);
+                            }
                             scheme
                         } else {
                             Scheme::mono(self.apply(&val_ty))

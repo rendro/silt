@@ -620,129 +620,134 @@ impl TypeChecker {
 /// Call `f` with `expr` and then with each expression inside it.
 pub(super) fn each_expr_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
     f(expr);
+    each_child_mut(expr, &mut |child| each_expr_mut(child, f));
+}
+
+/// Call `f` with each expression directly inside `expr`.
+pub(super) fn each_child_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
     match &mut expr.kind {
         ExprKind::Binary(l, _, r) => {
-            each_expr_mut(l, f);
-            each_expr_mut(r, f);
+            f(l);
+            f(r);
         }
         ExprKind::Unary(_, e)
         | ExprKind::QuestionMark(e)
         | ExprKind::Ascription(e, _)
         | ExprKind::Return(Some(e)) => {
-            each_expr_mut(e, f);
+            f(e);
         }
         ExprKind::Call(callee, args) => {
-            each_expr_mut(callee, f);
+            f(callee);
             for a in args {
-                each_expr_mut(a, f);
+                f(a);
             }
         }
         ExprKind::List(elems) => {
             for elem in elems {
                 match elem {
-                    ListElem::Single(e) => each_expr_mut(e, f),
-                    ListElem::Spread(e) => each_expr_mut(e, f),
+                    ListElem::Single(e) => f(e),
+                    ListElem::Spread(e) => f(e),
                 }
             }
         }
         ExprKind::Tuple(elems) => {
             for e in elems {
-                each_expr_mut(e, f);
+                f(e);
             }
         }
         ExprKind::Map(pairs) => {
             for (k, v) in pairs {
-                each_expr_mut(k, f);
-                each_expr_mut(v, f);
+                f(k);
+                f(v);
             }
         }
         ExprKind::SetLit(elems) => {
             for e in elems {
-                each_expr_mut(e, f);
+                f(e);
             }
         }
         ExprKind::Lambda { body, .. } => {
-            each_expr_mut(body, f);
+            f(body);
         }
         ExprKind::Match {
             expr: scrutinee,
             arms,
         } => {
             if let Some(s) = scrutinee {
-                each_expr_mut(s, f);
+                f(s);
             }
             for arm in arms {
                 if let Some(ref mut guard) = arm.guard {
-                    each_expr_mut(guard, f);
+                    f(guard);
                 }
-                each_expr_mut(&mut arm.body, f);
+                f(&mut arm.body);
             }
         }
         ExprKind::Block(stmts) => {
             for stmt in stmts {
                 match stmt {
-                    Stmt::Let { value, .. } => each_expr_mut(value, f),
+                    Stmt::Let { value, .. } => f(value),
                     Stmt::When {
                         expr, else_body, ..
                     } => {
-                        each_expr_mut(expr, f);
-                        each_expr_mut(else_body, f);
+                        f(expr);
+                        f(else_body);
                     }
                     Stmt::WhenBool {
                         condition,
                         else_body,
                     } => {
-                        each_expr_mut(condition, f);
-                        each_expr_mut(else_body, f);
+                        f(condition);
+                        f(else_body);
                     }
-                    Stmt::Expr(e) => each_expr_mut(e, f),
+                    Stmt::Expr(e) => f(e),
                 }
             }
         }
         ExprKind::Pipe(l, r) => {
-            each_expr_mut(l, f);
-            each_expr_mut(r, f);
+            f(l);
+            f(r);
         }
         ExprKind::Range(l, r) => {
-            each_expr_mut(l, f);
-            each_expr_mut(r, f);
+            f(l);
+            f(r);
         }
-        ExprKind::FieldAccess(e, _, _) => each_expr_mut(e, f),
+        ExprKind::FieldAccess(e, _, _) => f(e),
         ExprKind::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                each_expr_mut(e, f);
+                f(e);
             }
         }
         ExprKind::RecordUpdate { expr, fields } => {
-            each_expr_mut(expr, f);
+            f(expr);
             for (_, e) in fields {
-                each_expr_mut(e, f);
+                f(e);
             }
         }
         ExprKind::AnonRecord { spread, fields } => {
             if let Some(s) = spread {
-                each_expr_mut(s, f);
+                f(s);
             }
             for (_, e) in fields {
-                each_expr_mut(e, f);
+                f(e);
             }
         }
         ExprKind::StringInterp(parts) => {
             for part in parts {
                 if let StringPart::Expr(e) = part {
-                    each_expr_mut(e, f);
+                    f(e);
                 }
             }
         }
         ExprKind::Loop { bindings, body } => {
             for (_, _, e) in bindings {
-                each_expr_mut(e, f);
+                f(e);
             }
-            each_expr_mut(body, f);
+            f(body);
         }
         ExprKind::Recur(args) => {
             for a in args {
-                each_expr_mut(a, f);
+                f(a);
             }
         }
         _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)

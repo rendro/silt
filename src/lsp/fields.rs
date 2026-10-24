@@ -360,6 +360,7 @@ mod tests {
             ty: Some(anon(vec![(inner_sym, anon(vec![(value_sym, Type::Int)]))])),
             res: None,
             sel: None,
+            ev: None,
         };
 
         // Middle node: `d.inner` with type Record("Inner", [("value", Int)])
@@ -369,6 +370,7 @@ mod tests {
             ty: Some(anon(vec![(value_sym, Type::Int)])),
             res: None,
             sel: None,
+            ev: None,
         };
 
         // Outermost node: `d.inner.value` with type Int
@@ -379,6 +381,7 @@ mod tests {
             ty: Some(Type::Int),
             res: None,
             sel: None,
+            ev: None,
         };
 
         // Cursor on 'v' of "value" — offset 8 in "d.inner.value"
@@ -419,6 +422,7 @@ mod tests {
             ty: Some(anon(vec![(inner_sym, anon(vec![(value_sym, Type::Int)]))])),
             res: None,
             sel: None,
+            ev: None,
         };
 
         let inner_access = Expr {
@@ -427,6 +431,7 @@ mod tests {
             ty: Some(anon(vec![(value_sym, Type::Int)])),
             res: None,
             sel: None,
+            ev: None,
         };
 
         let outer_access = Expr {
@@ -435,6 +440,7 @@ mod tests {
             ty: Some(Type::Int),
             res: None,
             sel: None,
+            ev: None,
         };
 
         // Cursor on 'i' of "inner" — offset 2 in "d.inner.value"

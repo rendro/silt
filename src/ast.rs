@@ -22,6 +22,10 @@ pub struct Expr {
     /// elsewhere (and on `m.f`, `Type.method`, a variant: those are
     /// names, and `res` says what they name).
     pub sel: Option<Selection>,
+    /// The trait evidence the expression passes on, written by the
+    /// typechecker: on a use of a definition with bounds, and on the
+    /// method of a call through a trait (`crate::evidence`).
+    pub ev: Option<Box<crate::evidence::Site>>,
 }
 
 /// What `recv.name` means: on a value, a field; `Tr.name`, a method
@@ -60,6 +64,7 @@ impl Expr {
             ty: None,
             res: None,
             sel: None,
+            ev: None,
         }
     }
 }
@@ -804,6 +809,10 @@ pub struct TraitImpl {
     ///   - the bound type satisfies each declared trait bound.
     pub assoc_type_bindings: Vec<AssocTypeBinding>,
     pub span: Span,
+    /// The evidence that the impl's type has each supertrait of the
+    /// trait, from the predicates of its header
+    /// (`crate::evidence::IMPL_HEADER`); written by the typechecker.
+    pub supers: Vec<(crate::defs::TraitId, crate::evidence::Evidence)>,
 }
 
 #[derive(Debug, Clone)]

@@ -17,6 +17,8 @@ pub(crate) struct Wanted {
     /// For a call of a trait method (`Pred::Via`): the types the call
     /// gives the method, each at the argument that gives it.
     pub(super) places: super::builtin_needs::Places,
+    /// Its node in the module's evidence (`evidence::Ledger`).
+    pub(super) ev: super::evidence::EvId,
 }
 
 /// What waits for a type to be known.
@@ -153,7 +155,7 @@ impl TypeChecker {
     /// checked are done it is known, or it is generalised and the
     /// predicate is the scheme's (`generalize`), or it belongs to an
     /// outer binding and waits on.
-    pub(super) fn want(&mut self, pred: Pred, origin: Origin) {
+    pub(super) fn want(&mut self, pred: Pred, origin: Origin) -> Option<super::evidence::EvId> {
         let pred = match pred {
             Pred::Given {
                 subject,
@@ -177,7 +179,7 @@ impl TypeChecker {
                     use_id: self.use_id,
                     taken: false,
                 });
-                return;
+                return None;
             }
             Pred::Builtin {
                 check,
@@ -213,26 +215,31 @@ impl TypeChecker {
             Pred::Trait { tr, .. } => Self::is_decode(*tr),
             _ => false,
         };
-        self.want_goal(Goal::Pred(pred), origin);
-        let k = self.wanted.len() - 1;
+        let k = self.wanted.len();
+        let ev = self.want_goal(Goal::Pred(pred), origin);
         if decoder && !self.wanted[k].solved {
             self.waiting_decoders.push(k);
         }
         if let Goal::Pred(Pred::Via { .. }) = self.wanted[k].goal {
             self.waiting_vias.push(k);
         }
+        Some(ev)
     }
 
     /// `goal` waits for its type, or is decided now if the type is known.
-    pub(super) fn want_goal(&mut self, goal: Goal, origin: Origin) {
+    /// Its node in the module's evidence.
+    pub(super) fn want_goal(&mut self, goal: Goal, origin: Origin) -> super::evidence::EvId {
+        let ev = self.ev_new(super::evidence::EvNode::Pending);
         self.wanted.push(Wanted {
             goal,
             origin,
             solved: false,
             in_scheme: false,
             places: Vec::new(),
+            ev,
         });
         self.solve_wanted(self.wanted.len() - 1);
+        ev
     }
 
     /// Check each predicate owed since `from` whose subject is known by
@@ -259,7 +266,8 @@ impl TypeChecker {
                             // that owes two traits its type has neither
                             // of (`test.assert_eq(f, f)`) says the first.
                             let reported = self.errors.len();
-                            self.verify_trait_obligation(tr, &args, &subject, origin, asker);
+                            let ev = Some(self.wanted[i].ev);
+                            self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
                             if self.errors.len() > reported {
                                 let key = (origin.span, self.show_type(&subject));
                                 if !self.lacking.insert(key) {
@@ -928,13 +936,15 @@ impl TypeChecker {
                     return;
                 }
                 match tail {
-                    RowTail::Var(rest) => self.want(
-                        Pred::Lacks {
-                            row: Type::Var(*rest),
-                            field,
-                        },
-                        origin,
-                    ),
+                    RowTail::Var(rest) => {
+                        self.want(
+                            Pred::Lacks {
+                                row: Type::Var(*rest),
+                                field,
+                            },
+                            origin,
+                        );
+                    }
                     RowTail::Rigid(r) => self.lacks_rigid(*r, field),
                     RowTail::Closed => {}
                 }
@@ -1366,6 +1376,7 @@ impl TypeChecker {
         ty: &Type,
         origin: Origin,
         asker: Option<Asker>,
+        ev: Option<super::evidence::EvId>,
     ) {
         let span = origin.span;
         let resolved = self.apply(ty);
@@ -1377,6 +1388,14 @@ impl TypeChecker {
             if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
             }
+            self.ev_set(
+                ev,
+                super::evidence::EvNode::Bound {
+                    var: r.var,
+                    tr: trait_name,
+                    args: bound_trait_args.to_vec(),
+                },
+            );
             self.require_declared_bound(r, trait_name, bound_trait_args, origin);
             return;
         }
@@ -1389,6 +1408,7 @@ impl TypeChecker {
         if self.by_structure(trait_name, type_name) {
             // `json.Decode` is what the json decoder decodes: its own
             // judgement, which names the decoder.
+            self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
             if Self::is_decode(trait_name) {
                 self.want_decode(&resolved, origin, asker);
                 return;
@@ -1436,13 +1456,13 @@ impl TypeChecker {
                         );
                     }
                     for part in walk.written {
-                        self.verify_impl(trait_name, &[], &part, origin);
+                        self.verify_impl(trait_name, &[], &part, origin, None);
                     }
                 }
             }
             return;
         }
-        self.verify_impl(trait_name, bound_trait_args, &resolved, origin);
+        self.verify_impl(trait_name, bound_trait_args, &resolved, origin, ev);
     }
 
     /// Whether `trait_name` holds of a type with the head `head` by the
@@ -1736,6 +1756,7 @@ impl TypeChecker {
         bound_trait_args: &[Type],
         resolved: &Type,
         origin: Origin,
+        ev: Option<super::evidence::EvId>,
     ) {
         let span = origin.span;
         let resolved = resolved.clone();
@@ -1921,11 +1942,24 @@ impl TypeChecker {
         // What the impl's header asks of its variables, which are the
         // subject's parts now, is owed by the same use. (The impl for
         // every tuple or function says nothing of the parts.)
-        if linked {
-            for pred in header {
-                self.want(pred.substitute(&fresh), origin);
-            }
+        let mut subs = Vec::with_capacity(header.len());
+        for pred in header {
+            subs.push(match linked {
+                true => self.want(pred.substitute(&fresh), origin),
+                false => None,
+            });
         }
+        let subs = (subs.into_iter())
+            .map(|sub| sub.unwrap_or_else(|| self.ev_new(super::evidence::EvNode::Pending)))
+            .collect();
+        self.ev_set(
+            ev,
+            super::evidence::EvNode::Impl {
+                tr: trait_name,
+                ty: type_name,
+                subs,
+            },
+        );
     }
 
     /// Check, where an impl is declared, that `ty` implements
@@ -1949,6 +1983,7 @@ impl TypeChecker {
                 callee: None,
                 op: None,
             },
+            None,
             None,
         );
         self.wanted.truncate(owed);
