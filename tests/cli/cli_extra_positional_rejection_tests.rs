@@ -1,16 +1,13 @@
 //! Round-72 audit regression: runtime subcommands that take at most
-//! one file (`silt run`, `silt check`, `silt disasm`) and the
-//! bare-file shim (`silt foo.silt ...`) must reject extra positional
-//! arguments with a clear error rather than silently dropping them
-//! (run/disasm) or last-wins overwriting them (check).
+//! one file (`silt run`, `silt check`, `silt disasm`) must reject extra
+//! positional arguments with a clear error rather than silently
+//! dropping them (run/disasm) or last-wins overwriting them (check).
 //!
 //! Pre-fix:
 //!   - `silt run a.silt b.silt` — silently ran only `a.silt`.
 //!   - `silt check a.silt b.silt` — silently checked only `b.silt`
 //!     (last-wins).
 //!   - `silt disasm a.silt b.silt` — silently disassembled only
-//!     `a.silt`.
-//!   - `silt a.silt b.silt` — bare-file shim silently ran only
 //!     `a.silt`.
 //!
 //! The rejection cases themselves are golden cases under
@@ -105,28 +102,6 @@ fn silt_disasm_accepts_extras_after_double_dash() {
     assert!(
         out.status.success(),
         "silt disasm a.silt -- extra1 extra2 must succeed; \
-         exit={:?}\nstderr={}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr),
-    );
-}
-
-/// Round-74 follow-up: bare-file shim also accepts `--` as the
-/// program-args separator.
-#[test]
-fn silt_bare_file_shim_accepts_extras_after_double_dash() {
-    let dir = fresh_dir("bare_dd");
-    let a = dir.join("a.silt");
-    write_trivial(&a);
-
-    let out = silt_cmd()
-        .args([a.to_str().unwrap(), "--", "extra1", "extra2"])
-        .output()
-        .expect("failed to run silt");
-
-    assert!(
-        out.status.success(),
-        "silt a.silt -- extra1 extra2 must succeed; \
          exit={:?}\nstderr={}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr),

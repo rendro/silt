@@ -1,4 +1,4 @@
-//! Round-74 audit regression: `silt run` (and the bare-file shim) must
+//! Round-74 audit regression: `silt run` must
 //! forward positional arguments after `--` to the running program, where
 //! they're surfaced via `io.args()`.
 //!
@@ -117,7 +117,7 @@ fn silt_run_forwards_args_that_look_like_flags() {
             "run",
             script.to_str().unwrap(),
             "--",
-            "--disassemble",
+            "--watch",
             "-v",
             "--unknown-thing",
         ])
@@ -132,37 +132,7 @@ fn silt_run_forwards_args_that_look_like_flags() {
          exit={:?}\nstdout={stdout}\nstderr={stderr}",
         out.status.code()
     );
-    for needle in ["--disassemble", "-v", "--unknown-thing"] {
-        assert!(
-            stdout.lines().any(|l| l.trim() == needle),
-            "stdout must contain a line equal to '{needle}'; got: {stdout}"
-        );
-    }
-}
-
-#[test]
-fn silt_bare_file_shim_forwards_program_args_after_double_dash() {
-    // `silt foo.silt -- arg1 arg2` should also forward, mirroring
-    // `silt run foo.silt -- arg1 arg2`. The bare-file shim shares the
-    // same parser as `silt run`, just with the file pre-pinned.
-    let dir = fresh_dir("bare_fwd");
-    let script = dir.join("dump_args.silt");
-    write_args_dumper(&script);
-
-    let out = silt_cmd()
-        .args([script.to_str().unwrap(), "--", "alpha", "beta"])
-        .output()
-        .expect("failed to run silt");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "bare-file shim must forward args after `--`; \
-         exit={:?}\nstdout={stdout}\nstderr={stderr}",
-        out.status.code()
-    );
-    for needle in ["alpha", "beta"] {
+    for needle in ["--watch", "-v", "--unknown-thing"] {
         assert!(
             stdout.lines().any(|l| l.trim() == needle),
             "stdout must contain a line equal to '{needle}'; got: {stdout}"

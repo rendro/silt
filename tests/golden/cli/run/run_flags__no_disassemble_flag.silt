@@ -1,0 +1,6 @@
+-- cmd: run --disassemble
+-- exit: 1
+-- Bytecode is shown by `silt disasm`; `silt run` has no flag for it.
+fn main() {
+  println("not run")
+}

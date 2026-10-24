@@ -766,37 +766,3 @@ fn test_lsp_unknown_flag() {
 }
 
 // ── Shorthand `silt file.silt` forwards flags to run handler ────────
-
-#[test]
-fn test_shorthand_rejects_unknown_flag() {
-    let path = temp_silt_file("shorthand_flag", "fn main() { 1 }");
-    let output = silt_cmd()
-        .arg(path.to_str().unwrap())
-        .arg("--bogus")
-        .output()
-        .expect("failed to run silt");
-
-    assert!(!output.status.success(), "expected non-zero exit code");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown flag") && stderr.contains("--bogus"),
-        "expected unknown flag error, got: {stderr}"
-    );
-}
-
-#[test]
-fn test_shorthand_supports_disassemble() {
-    let path = temp_silt_file("shorthand_disasm", "fn main() { 1 }");
-    let output = silt_cmd()
-        .arg(path.to_str().unwrap())
-        .arg("--disassemble")
-        .output()
-        .expect("failed to run silt");
-
-    assert!(output.status.success(), "expected exit 0");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("==") && stdout.contains("main"),
-        "expected disassembly output, got: {stdout}"
-    );
-}

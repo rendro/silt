@@ -1,0 +1,3 @@
+Unknown command: 'cli__a_file_is_no_command.silt'
+  Did you mean 'silt run cli__a_file_is_no_command.silt'?
+Run 'silt' with no arguments to see available commands.

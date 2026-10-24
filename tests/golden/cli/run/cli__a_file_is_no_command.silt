@@ -1,0 +1,7 @@
+-- cmd:
+-- exit: 1
+-- A file is run with `silt run`: as the first argument it is an unknown
+-- command, with the command to write.
+fn main() {
+  println("not run")
+}

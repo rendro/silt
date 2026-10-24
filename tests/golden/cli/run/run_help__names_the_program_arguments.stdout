@@ -1,8 +1,7 @@
-Usage: silt run [--watch] [--disassemble] <file.silt> [-- <args>...]
+Usage: silt run [--watch] <file.silt> [-- <args>...]
 
 Options:
   --watch, -w         Re-run on file changes
-  --disassemble       Show bytecode disassembly instead of running
   -- <args>...        Pass the arguments after it to the program (io.args())
 
 Examples:
@@ -10,4 +9,3 @@ Examples:
   silt run main.silt
   silt run main.silt -- input.txt
   silt run --watch main.silt
-  silt run --disassemble main.silt

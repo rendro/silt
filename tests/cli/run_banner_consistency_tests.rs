@@ -11,7 +11,7 @@
 // Three of those literals had actually drifted apart:
 //   `silt run`                      -> "Usage: silt run <file.silt>"
 //   `silt run --watch`              -> "Usage: silt run [--watch] <file.silt>"
-//   `silt run --help`               -> "Usage: silt run [--watch] [--disassemble] <file.silt>"
+//   `silt run --help`               -> "Usage: silt run [--watch] <file.silt> [-- <args>...]"
 //
 // Fix: factor a `run_usage_banner()` helper (mirroring the round-16
 // `check_usage_banner()` fix) and have every call site render from it.
@@ -109,36 +109,21 @@ fn test_silt_run_banner_consistency_all_paths() {
         "`silt run` no-args banner must match `silt run --help` banner"
     );
 
-    // Paths 3 and 4 need the `watch` feature: without it, `--watch`
-    // says that the feature is not built.
+    // Path 3 needs the `watch` feature: without it, `--watch` says
+    // that the feature is not built.
     if cfg!(feature = "watch") {
         // Path 3: `silt run --watch`          — watch dry-validation path (stderr)
         let (watch_line, _, _) = silt_usage_line(&["run", "--watch"]);
-
-        // Path 4: `silt run --watch --disassemble` (no file)
-        //         — missing-file-after-flags path (stderr)
-        //         This goes through the watch dry-validation path too
-        //         because of the --watch flag; ensure it still matches.
-        let (watch_disasm_line, _, _) = silt_usage_line(&["run", "--watch", "--disassemble"]);
-
         assert_eq!(
             no_args_line, watch_line,
             "`silt run` no-args banner must match `silt run --watch` banner"
         );
-        assert_eq!(
-            no_args_line, watch_disasm_line,
-            "`silt run` no-args banner must match `silt run --watch --disassemble` banner"
-        );
     }
 
-    // And all must mention the full flag set — [--watch] AND [--disassemble].
+    // And all must mention the flag.
     assert!(
         no_args_line.contains("[--watch]"),
         "expected '[--watch]' in run banner, got: {no_args_line}"
-    );
-    assert!(
-        no_args_line.contains("[--disassemble]"),
-        "expected '[--disassemble]' in run banner, got: {no_args_line}"
     );
 }
 
@@ -188,20 +173,10 @@ fn test_silt_run_banner_exit_codes() {
     );
 }
 
-// ── Round-25 GAP: top-level `silt --help` advertises --disassemble ─
-//
-// The four subcommand-level banners (silt run / silt run --help /
-// silt run --watch / silt run --watch --disassemble) are already
-// locked to include `[--watch] [--disassemble]` by the tests above.
-//
-// Before round 25, the TOP-LEVEL `silt --help` summary line for
-// `silt run` showed only `[--watch]`, so users reading the main
-// help screen never discovered the `--disassemble` flag. Fix: add
-// `[--disassemble]` to the summary line in src/main.rs usage_text().
-// This test locks the summary line so it can't drift back.
+// ── The top-level `silt --help` run line names the flag ────────────
 
 #[test]
-fn test_silt_top_level_help_run_line_advertises_disassemble() {
+fn test_silt_top_level_help_run_line_advertises_watch() {
     let wait = Duration::from_secs(3);
     let (code, stdout, stderr) =
         run_silt_with_timeout(&["--help"], wait).expect("silt --help hung");
@@ -222,10 +197,5 @@ fn test_silt_top_level_help_run_line_advertises_disassemble() {
     assert!(
         run_line.contains("[--watch]"),
         "top-level `silt --help` run line must advertise [--watch], got: {run_line}"
-    );
-    assert!(
-        run_line.contains("[--disassemble]"),
-        "top-level `silt --help` run line must advertise [--disassemble] so users \
-         can discover the flag from the main help screen (round-25 GAP lock), got: {run_line}"
     );
 }

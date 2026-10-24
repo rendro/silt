@@ -1,6 +1,5 @@
-//! `silt run [--disassemble] [<file>]` — compile and execute a silt
-//! program with the bytecode VM. Also backs the bare `silt
-//! <file>.silt` convenience shim.
+//! `silt run [<file>]` — compile and execute a silt program with the
+//! bytecode VM.
 
 use std::process;
 
@@ -15,13 +14,12 @@ use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
 use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
-/// Dispatch `silt run [--disassemble] [<file>] [-- <program-args>...]`.
+/// Dispatch `silt run [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
     if asks_for_help(&args[2..]) {
         print!("{}", run_help_text());
         process::exit(0);
     }
-    let mut disasm = false;
     let mut file: Option<String> = None;
     // Positionals after `--` are forwarded to the running
     // program (surfaced via `io.args()`), not interpreted as silt CLI
@@ -38,11 +36,8 @@ pub(crate) fn dispatch(args: &[String]) {
                 program_args.push(rest.clone());
             }
             break;
-        } else if arg == "--disassemble" {
-            disasm = true;
         } else if arg.starts_with('-') {
             let suggestion = match arg.as_str() {
-                "--disasm" | "--disassembly" | "-d" => " (did you mean --disassemble?)",
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
@@ -74,9 +69,8 @@ pub(crate) fn dispatch(args: &[String]) {
     // from a prior in-process invocation doesn't leak through.
     silt::builtins::io::set_program_args(program_args);
     // No explicit file → look for an enclosing silt package and use
-    // its `src/main.silt`. If we're not inside a package, preserve
-    // the legacy "missing argument" error so non-package users
-    // see a familiar message.
+    // its `src/main.silt`. Outside a package, the usage line says that
+    // a file is needed.
     let file = match file {
         Some(f) => f,
         None => match resolve_package_entry_point() {
@@ -88,66 +82,7 @@ pub(crate) fn dispatch(args: &[String]) {
             Err(()) => process::exit(1),
         },
     };
-    if disasm {
-        crate::cli::disasm::disasm_file(&file);
-    } else {
-        vm_run_file(&file);
-    }
-}
-
-/// Legacy `silt <file>.silt [--help|--disassemble]`
-/// convenience shim — same behavior as `silt run` with the file baked
-/// in as the first argument.
-pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
-    let mut disasm = false;
-    // Same `--` forwarding as the explicit `silt run` form.
-    let mut program_args: Vec<String> = Vec::new();
-    let mut iter = args[2..].iter();
-    while let Some(extra) = iter.next() {
-        if extra == "--" {
-            for rest in iter.by_ref() {
-                program_args.push(rest.clone());
-            }
-            break;
-        } else if extra == "--help" || extra == "-h" {
-            print!("{}", run_help_text());
-            process::exit(0);
-        } else if extra == "--disassemble" {
-            disasm = true;
-        } else if extra.starts_with('-') {
-            let suggestion = match extra.as_str() {
-                "--disasm" | "--disassembly" | "-d" => " (did you mean --disassemble?)",
-                "--h" | "-help" => " (did you mean --help?)",
-                _ => "",
-            };
-            eprintln!("silt run: unknown flag '{extra}'{suggestion}");
-            eprintln!("Run 'silt run --help' for usage.");
-            process::exit(1);
-        } else {
-            // Reject extra positionals on the bare-file shim — the
-            // file is already pinned by the dispatcher to args[1], so
-            // any non-flag positional here is a user mistake. Pre-fix
-            // the loop ignored these silently, so `silt foo.silt
-            // bar.silt` looked like it had run both files. Mirror the
-            // rejection pattern used by `silt update`, `silt repl`,
-            // `silt lsp`, and `silt add`.
-            //
-            // To forward args to the running program, use
-            // `--` as a separator (`silt foo.silt -- arg1 arg2`).
-            eprintln!("silt run: unexpected extra argument '{extra}'");
-            eprintln!(
-                "If '{extra}' is meant for the program, separate it with '--' (e.g. 'silt {file} -- {extra}')."
-            );
-            eprintln!("Run 'silt run --help' for usage.");
-            process::exit(1);
-        }
-    }
-    silt::builtins::io::set_program_args(program_args);
-    if disasm {
-        crate::cli::disasm::disasm_file(file);
-    } else {
-        vm_run_file(file);
-    }
+    vm_run_file(&file);
 }
 
 /// The payload of `value` when it is the `Err(..)` of a `Result`; `None`

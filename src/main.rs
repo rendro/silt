@@ -213,11 +213,12 @@ fn run_main(args: Vec<String>) {
         // `silt remove <name>`: drop a dep from `silt.toml` and
         // regenerate `silt.lock`.
         "remove" => cli::remove::dispatch(&args),
-        // If the argument looks like a file, treat as `silt run <file> [flags...]`
-        arg if arg.ends_with(".silt") => cli::run::dispatch_bare_file(&args, arg),
         other => {
             eprintln!("Unknown command: '{other}'");
-            if let Some(suggestion) = suggest_subcommand(other) {
+            if other.ends_with(".silt") {
+                // A file is run by `silt run`, with what follows it.
+                eprintln!("  Did you mean 'silt run {}'?", args[1..].join(" "));
+            } else if let Some(suggestion) = suggest_subcommand(other) {
                 eprintln!("  Did you mean '{suggestion}'?");
             }
             eprintln!("Run 'silt' with no arguments to see available commands.");

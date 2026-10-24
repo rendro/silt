@@ -200,7 +200,7 @@ silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
 silt init [--lib]          Create a new silt package (a library with --lib) in this directory
 silt lsp                   Start the language server
-silt disasm <file.silt>    Show bytecode disassembly (same as `silt run --disassemble`)
+silt disasm <file.silt>    Show bytecode disassembly
 silt self-update           Update the silt binary to the latest release
 silt update [<dep-name>]   Regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>                             Add a path-based dependency to silt.toml

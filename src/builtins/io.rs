@@ -14,9 +14,9 @@ mod glob_walk;
 
 /// Program arguments forwarded by the CLI for `io.args()`.
 ///
-/// The CLI subcommands (`silt run`, `silt check`, `silt disasm`, plus the
-/// bare-file shim) recognize `--` as a separator; everything after `--` is
-/// forwarded here verbatim and surfaced to silt programs via `io.args()`.
+/// The CLI subcommands (`silt run`, `silt check`, `silt disasm`) recognize
+/// `--` as a separator; everything after `--` is forwarded here verbatim
+/// and surfaced to silt programs via `io.args()`.
 ///
 /// `io.args()` once returned the raw
 /// `std::env::args()` of the silt binary itself (`["silt", "run",
