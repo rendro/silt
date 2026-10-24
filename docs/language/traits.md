@@ -736,6 +736,9 @@ trait Compare for Version { ... }
 -- error: trait 'Compare' cannot be implemented by hand: it is derived
 -- structurally for every type whose fields support it — remove this
 -- impl; Equal, Compare and Hash are derived
+-- help: to compare, order or hash by something else (a key, a
+-- normalised value), see "Equality and order idioms" in
+-- docs/language/traits.md
 ```
 
 What "every field supports them" means, for `Equal`, `Hash`, `Compare`

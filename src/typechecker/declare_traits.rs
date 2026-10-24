@@ -809,18 +809,22 @@ impl TypeChecker {
             _ => true,
         });
         for (trait_name, span) in errors {
-            let message = if resolve(trait_name) == "Number" {
-                "trait 'Number' cannot be implemented by hand: it is the types arithmetic \
-                 is on, Int and Float"
-                    .to_string()
+            let text = if resolve(trait_name) == "Number" {
+                let message = "trait 'Number' cannot be implemented by hand: it is the \
+                               types arithmetic is on, Int and Float";
+                (message.to_string(), None)
             } else {
-                format!(
+                let message = format!(
                     "trait '{trait_name}' cannot be implemented by hand: it is derived \
                      structurally for every type whose fields support it — remove this \
                      impl; Equal, Compare and Hash are derived"
-                )
+                );
+                let help = "to compare, order or hash by something else (a key, a \
+                            normalised value), see \"Equality and order idioms\" in \
+                            docs/language/traits.md";
+                (message, Some(help.to_string()))
             };
-            self.error(Code::InvalidTraitImpl, message, span);
+            self.error_help(Code::InvalidTraitImpl, text, span);
         }
     }
 
