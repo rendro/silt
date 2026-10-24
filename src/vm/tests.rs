@@ -7004,32 +7004,101 @@ mod fused_steps {
         }
     }
 
-    /// `loop i = 0 { match i <cmp> 5 { true -> loop(i + 1) false -> i } }`
-    /// for `<` or `!=`, with its pairs fused or kept apart.
-    fn count_to_five(compare: Asm<'static>, fuse: bool) -> Arc<Function> {
+    /// A counting loop: `loop i = start { match i <compare> bound { .. } }`
+    /// that leaves when the comparison is `exit_if` and otherwise goes
+    /// on with `i + 1` (`up`) or `i - 1`.
+    #[derive(Clone, Copy, Debug)]
+    struct Counting {
+        compare: Asm<'static>,
+        exit_if: bool,
+        start: i64,
+        bound: i64,
+        up: bool,
+        /// What it ends with, its rounds, and the fused jump its
+        /// comparison and jump are.
+        ends_with: i64,
+        rounds: u64,
+        jump: Op,
+    }
+
+    impl Counting {
+        /// Its steps: the start, the rounds of nine (two fused pairs of
+        /// two, Recur's two), the last test of four and the two after.
+        fn steps(&self) -> u64 {
+            1 + 9 * self.rounds + 4 + 2
+        }
+    }
+
+    /// Every fused jump, from its comparison before a `JumpIfFalse` and
+    /// from the opposite one before a `JumpIfTrue`, with `AddConst` and
+    /// `SubConst`.
+    const COUNTINGS: [Counting; 12] = {
+        const fn c(
+            compare: Asm<'static>,
+            exit_if: bool,
+            (start, bound, up): (i64, i64, bool),
+            (ends_with, rounds, jump): (i64, u64, Op),
+        ) -> Counting {
+            Counting {
+                compare,
+                exit_if,
+                start,
+                bound,
+                up,
+                ends_with,
+                rounds,
+                jump,
+            }
+        }
+        [
+            c(Asm::Lt, false, (0, 5, true), (5, 5, Op::JumpIfNotLt)),
+            c(Asm::Geq, true, (0, 5, true), (5, 5, Op::JumpIfNotLt)),
+            c(Asm::Gt, false, (10, 5, false), (5, 5, Op::JumpIfNotGt)),
+            c(Asm::Leq, true, (10, 5, false), (5, 5, Op::JumpIfNotGt)),
+            c(Asm::Leq, false, (0, 4, true), (5, 5, Op::JumpIfNotLeq)),
+            c(Asm::Gt, true, (0, 4, true), (5, 5, Op::JumpIfNotLeq)),
+            c(Asm::Geq, false, (10, 6, false), (5, 5, Op::JumpIfNotGeq)),
+            c(Asm::Lt, true, (10, 6, false), (5, 5, Op::JumpIfNotGeq)),
+            c(Asm::Neq, false, (0, 5, true), (5, 5, Op::JumpIfNotNeq)),
+            c(Asm::Eq, true, (0, 5, true), (5, 5, Op::JumpIfNotNeq)),
+            c(Asm::Eq, false, (5, 5, true), (6, 1, Op::JumpIfNotEq)),
+            c(Asm::Neq, true, (5, 5, true), (6, 1, Op::JumpIfNotEq)),
+        ]
+    };
+
+    /// The loop `counting`, with its pairs fused or kept apart.
+    fn counting(counting: Counting, fuse: bool) -> Arc<Function> {
         make_function(|e| {
-            let zero = e.constant(Value::Int(0), span()).unwrap();
-            let five = e.constant(Value::Int(5), span()).unwrap();
+            let start = e.constant(Value::Int(counting.start), span()).unwrap();
+            let bound = e.constant(Value::Int(counting.bound), span()).unwrap();
             let one = e.constant(Value::Int(1), span()).unwrap();
-            let (start, end) = (e.label(), e.label());
-            e.emit(Asm::Constant { k: zero }, span()).unwrap();
-            e.bind(start, span()).unwrap();
+            let (top, end) = (e.label(), e.label());
+            e.emit(Asm::Constant { k: start }, span()).unwrap();
+            e.bind(top, span()).unwrap();
             e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
-            e.emit(Asm::Constant { k: five }, span()).unwrap();
-            e.emit(compare, span()).unwrap();
+            e.emit(Asm::Constant { k: bound }, span()).unwrap();
+            e.emit(counting.compare, span()).unwrap();
             apart(e, fuse);
-            e.emit(Asm::JumpIfFalse { to: end }, span()).unwrap();
+            let leave = match counting.exit_if {
+                true => Asm::JumpIfTrue { to: end },
+                false => Asm::JumpIfFalse { to: end },
+            };
+            e.emit(leave, span()).unwrap();
             e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
             e.emit(Asm::Constant { k: one }, span()).unwrap();
             apart(e, fuse);
-            e.emit(Asm::Add, span()).unwrap();
+            let step = match counting.up {
+                true => Asm::Add,
+                false => Asm::Sub,
+            };
+            e.emit(step, span()).unwrap();
             // (`Recur` is always the two, `Recur` and the jump back:
-            // the count at slice 1 below holds it to two steps.)
+            // the counts at slice 1 below hold it to two steps.)
             e.emit(
                 Asm::Recur {
                     argc: 1,
                     first: 0,
-                    to: start,
+                    to: top,
                 },
                 span(),
             )
@@ -7074,22 +7143,30 @@ mod fused_steps {
 
     #[test]
     fn a_fused_instruction_costs_the_steps_of_the_two_it_fuses() {
-        for compare in [Asm::Lt, Asm::Neq] {
-            let fused = count_to_five(compare, true);
-            let apart = count_to_five(compare, false);
-            assert!(ops(&fused).contains(&Op::AddConst), "{:?}", ops(&fused));
-            assert!(!ops(&apart).contains(&Op::AddConst), "{:?}", ops(&apart));
+        for case in COUNTINGS {
+            let fused = counting(case, true);
+            let apart = counting(case, false);
+            let arith = match case.up {
+                true => Op::AddConst,
+                false => Op::SubConst,
+            };
+            for op in [case.jump, arith] {
+                assert!(ops(&fused).contains(&op), "{case:?}: {:?}", ops(&fused));
+                assert!(!ops(&apart).contains(&op), "{case:?}: {:?}", ops(&apart));
+            }
             for slice in [1, 2, 3, 7, 1000] {
                 let (fused_end, fused_slices) = sliced(fused.clone(), slice);
                 let (apart_end, apart_slices) = sliced(apart.clone(), slice);
-                assert_eq!(fused_end, Ok(Value::Int(5)), "{compare:?} at slice {slice}");
-                assert_eq!(apart_end, fused_end);
-                assert_eq!(fused_slices, apart_slices, "{compare:?} at slice {slice}");
+                assert_eq!(
+                    fused_end,
+                    Ok(Value::Int(case.ends_with)),
+                    "{case:?} at {slice}"
+                );
+                assert_eq!(apart_end, fused_end, "{case:?} at {slice}");
+                assert_eq!(fused_slices, apart_slices, "{case:?} at slice {slice}");
             }
-            // At slice 1 a slice is a step: the 52 steps of the two
-            // instructions before the loop, five rounds of 9, the last
-            // test of 4 and the 2 after it, all but the last running out.
-            assert_eq!(sliced(fused, 1).1, 1 + 5 * 9 + 4 + 2 - 1);
+            // At slice 1 a slice is a step, and all but the last run out.
+            assert_eq!(sliced(fused, 1).1 as u64, case.steps() - 1, "{case:?}");
         }
     }
 
@@ -7133,19 +7210,23 @@ mod fused_steps {
 
     #[test]
     fn every_step_budget_ends_a_fused_instruction_where_it_ended_the_two() {
-        for compare in [Asm::Lt, Asm::Neq] {
-            let fused = count_to_five(compare, true);
-            let apart = count_to_five(compare, false);
-            // Around the script's 52 steps: a budget of 52 runs it to
-            // its end, one of 51 does not.
-            for steps in 0..=56 {
+        for case in COUNTINGS {
+            let fused = counting(case, true);
+            let apart = counting(case, false);
+            // Every budget up to past the script's steps: a budget of
+            // its steps runs it to its end, one step less does not.
+            for steps in 0..=case.steps() + 4 {
                 let ended = at_budget(fused.clone(), steps);
                 assert_eq!(
                     ended,
                     at_budget(apart.clone(), steps),
-                    "{compare:?}, {steps} steps"
+                    "{case:?}, {steps} steps"
                 );
-                assert_eq!(ended.is_ok(), steps >= 52, "{compare:?}, {steps} steps");
+                assert_eq!(
+                    ended.is_ok(),
+                    steps >= case.steps(),
+                    "{case:?}, {steps} steps"
+                );
             }
         }
     }
