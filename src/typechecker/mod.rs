@@ -97,6 +97,9 @@ pub struct TypeChecker {
     /// `where a: TryInto(Int)`), as the declaration's scheme writes them.
     /// A rigid variable has the methods of these.
     pub(super) bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
+    /// Of `bounds`, the ones a `where` clause writes, without the
+    /// supertraits they bring: what a help that adds a bound lists.
+    pub(super) written_bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// The types of the module being checked that have a written
@@ -404,6 +407,7 @@ impl TypeChecker {
             errors: Vec::new(),
             loop_binding_types: None,
             bounds: HashMap::new(),
+            written_bounds: HashMap::new(),
             current_return_type: None,
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),

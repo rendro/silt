@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- `+` joins the bounds of one variable and `,` separates variables: a
+-- variable that two clauses name is an error, whose help joins its
+-- bounds, in a function's, an impl's and a trait method's where clause,
+-- each bound once and spaced as `silt fmt` writes it.
+trait Conv(b) {
+  fn show(self) -> String
+}
+
+fn f(x: a, y: b) -> String where a: Equal, b: Display, a: Conv(Int) + Hash {
+  "x"
+}
+
+type Box(t) { Box(t) }
+
+trait Conv(Int) for Box(t) where t: Display, t: Hash {
+  fn show(self) -> String {
+    "b"
+  }
+}
+
+trait Shout {
+  fn shout(self, x: a) -> String where a: Display, a: Equal
+}
+
+fn twice(x: a) -> Bool where a: Equal, a: Equal {
+  true
+}
+
+fn spaced(x: a) -> String where a: Conv( Int ), a: Conv(List(  Int)) {
+  "s"
+}
+
+fn main() {
+  println(1)
+}

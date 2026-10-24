@@ -40,7 +40,7 @@ trait Rd for P {
   }
 }
 
-fn bounded(x: a) -> Int where a: Mk, a: Rd {
+fn bounded(x: a) -> Int where a: Mk + Rd {
   Rd.decode(x, 10)
 }
 

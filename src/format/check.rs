@@ -1288,7 +1288,7 @@ mod tests {
         assert!(message.contains("function `f`"), "{message}");
         // So is the order of `where` bounds.
         let message = refusal(
-            "fn f(x: a) where a: A, a: B {\n}\n",
+            "fn f(x: a) where a: A + B {\n}\n",
             "fn f(x: a) where a: B + A {\n}\n",
         );
         assert!(message.contains("function `f`"), "{message}");

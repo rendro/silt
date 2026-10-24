@@ -13,12 +13,12 @@ trait Conv(b) for T {
   fn show(self) -> String { "T {self.n}" }
 }
 fn gen2(x: a, y: List(c)) -> String where a: Conv(c) { Conv.show(x) }
-fn both(x: a, ys) -> String where a: Conv(Int), a: Conv(String) {
+fn both(x: a, ys) -> String where a: Conv(Int) + Conv(String) {
   let r = gen2(x, ys)
   let _ = [1] == ys
   r
 }
-fn open(x: a) -> String where a: Conv(Int), a: Conv(String) {
+fn open(x: a) -> String where a: Conv(Int) + Conv(String) {
   let ys = []
   gen2(x, ys)
 }

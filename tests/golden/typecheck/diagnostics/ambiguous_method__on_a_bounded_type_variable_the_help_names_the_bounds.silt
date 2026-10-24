@@ -13,7 +13,7 @@ trait B {
   fn make() -> Self
 }
 
-fn on_type(type a) -> a where a: A, a: B {
+fn on_type(type a) -> a where a: A + B {
   a.make()
 }
 

@@ -190,8 +190,9 @@ fn merge(a: Map(k, v), b: Map(k, v)) -> Map(k, v)
 { ... }
 ```
 
-The two forms compose freely — `where a: Equal + Hash` and
-`where a: Equal, a: Hash` mean the same thing.
+`+` joins the bounds of one variable and `,` separates variables. A
+variable is named once: `where a: Equal, a: Hash` is an error, whose
+help writes `where a: Equal + Hash`.
 
 `where` clauses are enforced at every call site. Passing a value whose
 element type doesn't satisfy the constraint is a compile-time error

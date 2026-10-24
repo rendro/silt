@@ -1137,7 +1137,7 @@ impl TypeChecker {
         let above = |t: TraitKey| self.supertraits_of(t);
         // The bounds no other one has as a supertrait at its arguments:
         // what the `where` clause says, the supertraits aside
-        // (`where a: Sub(Int), a: Conv(String)` with `trait Sub(b):
+        // (`where a: Sub(Int) + Conv(String)` with `trait Sub(b):
         // Conv(b)` says `Conv(String)`, and `Conv(Int)` comes of `Sub`).
         let said: Vec<&(TraitKey, Vec<Type>)> = (in_scope.iter())
             .filter(|bound| {
@@ -1160,7 +1160,7 @@ impl TypeChecker {
                 .collect()
         };
         // Two bounds of one trait at different arguments
-        // (`where a: Conv(Int), a: Conv(String)`): the bounds give the
+        // (`where a: Conv(Int) + Conv(String)`): the bounds give the
         // method, by their arguments.
         let mut of_one_trait = traits.to_vec();
         super::inference::distinct(&mut of_one_trait);
