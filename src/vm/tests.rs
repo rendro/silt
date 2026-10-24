@@ -7103,4 +7103,147 @@ mod fused_steps {
     fn slice_count(slice: usize) -> usize {
         2 / slice
     }
+
+    /// What `script` ends with at the step budget `steps`, every slice
+    /// one step: its value, or whether the budget ended it.
+    fn at_budget(script: Arc<Function>, steps: u64) -> Result<Value, bool> {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.set_time_slice(1);
+        vm.set_step_budget(steps);
+        vm.run(script).map_err(|error| error.out_of_steps)
+    }
+
+    #[test]
+    fn every_step_budget_ends_a_fused_instruction_where_it_ended_the_two() {
+        for compare in [Asm::Lt, Asm::Neq] {
+            let fused = count_to_five(compare, true);
+            let apart = count_to_five(compare, false);
+            // Around the script's 52 steps: a budget of 52 runs it to
+            // its end, one of 51 does not.
+            for steps in 0..=56 {
+                let ended = at_budget(fused.clone(), steps);
+                assert_eq!(
+                    ended,
+                    at_budget(apart.clone(), steps),
+                    "{compare:?}, {steps} steps"
+                );
+                assert_eq!(ended.is_ok(), steps >= 52, "{compare:?}, {steps} steps");
+            }
+        }
+    }
+
+    /// Nine functions that count in a loop of fused instructions (a
+    /// round of nine steps, three of them first parts), each with two
+    /// steps more before the loop than the one before: whatever step a
+    /// count of steps ends a function at, three of them are ended
+    /// between the two parts of a fused instruction. A function whose
+    /// time is over runs a slice of one step at a time and is ended
+    /// when its late steps are used up; a cancelled task the same, at
+    /// a place the cancel happens to come.
+    const COUNTING: &str = "
+import task
+import time
+
+fn spin(n: Int) -> Int {
+  loop i = n {
+    match i < 1000000000 {
+      true -> loop(i + 1)
+      false -> i
+    }
+  }
+}
+
+fn spins(k: Int) -> Int {
+  match k {
+    0 -> spin(0)
+    1 -> spin(1 + 0)
+    2 -> spin(1 + 0 + 0)
+    3 -> spin(1 + 0 + 0 + 0)
+    4 -> spin(1 + 0 + 0 + 0 + 0)
+    5 -> spin(1 + 0 + 0 + 0 + 0 + 0)
+    6 -> spin(1 + 0 + 0 + 0 + 0 + 0 + 0)
+    7 -> spin(1 + 0 + 0 + 0 + 0 + 0 + 0 + 0)
+    _ -> spin(1 + 0 + 0 + 0 + 0 + 0 + 0 + 0 + 0)
+  }
+}
+
+fn total(n: Int) -> Int {
+  loop i = 0, acc = 0 {
+    match i < n {
+      true -> loop(i + 1, acc + i - 1)
+      false -> acc
+    }
+  }
+}
+
+fn main() {
+  let ended = loop k = 0, timeouts = 0 {
+    match k < 9 {
+      true -> match task.deadline(time.ms(0), { -> spins(k) }) {
+        Ok(_) -> loop(k + 1, timeouts)
+        Err(_) -> loop(k + 1, timeouts + 1)
+      }
+      false -> timeouts
+    }
+  }
+  let cancelled = loop k = 0 {
+    match k < 9 {
+      true -> {
+        let h = task.spawn({ -> spins(k) })
+        time.sleep(time.ms(1))
+        task.cancel(h)
+        loop(k + 1)
+      }
+      false -> k
+    }
+  }
+  println(\"{ended} {cancelled} {total(1000)}\")
+}
+";
+
+    /// The output of `source` run on `vm`, and whether it ran to its
+    /// end.
+    fn printed(vm: &mut Vm, out: &crate::Buffer, source: &str) -> (String, bool) {
+        let program =
+            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let ok = vm.run_program(&program).is_ok();
+        (out.take(), ok)
+    }
+
+    /// A task ended between the parts of a fused instruction, by its
+    /// deadline or by a cancel, leaves nothing behind (its own VM goes
+    /// with it), and neither does a program the step budget ends
+    /// there: the next program the VM runs computes what it computes
+    /// on a VM of its own.
+    #[test]
+    fn a_run_ended_between_the_parts_of_a_fused_instruction_leaves_nothing() {
+        let out = crate::Buffer::new();
+        let mut vm = Vm::new(crate::HostIo::buffer(&out));
+        vm.set_time_slice(1);
+        assert_eq!(
+            printed(&mut vm, &out, COUNTING),
+            ("9 9 498500\n".to_string(), true)
+        );
+        // The program's own code ended at every step of a stretch of
+        // rounds by the budget, then run to its end.
+        let counting = "fn main() {\n  let r = loop i = 0, acc = 0 {\n    match i < 50 {\n      true -> loop(i + 1, acc + i - 1)\n      false -> acc\n    }\n  }\n  println(r)\n}\n";
+        for steps in 1..40 {
+            vm.set_step_budget(steps);
+            assert_eq!(
+                printed(&mut vm, &out, counting),
+                (String::new(), false),
+                "{steps}"
+            );
+            vm.set_step_budget(u64::MAX);
+            assert_eq!(
+                printed(&mut vm, &out, counting),
+                ("1175\n".to_string(), true),
+                "{steps}"
+            );
+        }
+        assert_eq!(
+            printed(&mut vm, &out, COUNTING),
+            ("9 9 498500\n".to_string(), true)
+        );
+    }
 }

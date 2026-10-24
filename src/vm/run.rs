@@ -711,6 +711,12 @@ impl Vm {
                 }
             }
             budget -= 1;
+            // (A half-run instruction is finished before any other
+            // starts: at the entry above.)
+            debug_assert!(
+                self.half.is_none(),
+                "an instruction starts while one is half run"
+            );
             let (instr, next) = decode(code, ip).expect("verified code decodes");
             ip = next;
             match instr {
@@ -1551,6 +1557,10 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn first_part(&mut self) -> Result<Slice, VmError> {
+        debug_assert!(
+            self.half.is_none(),
+            "an instruction starts while one is half run"
+        );
         let Some(Frame::Code(frame)) = self.frames.last_mut() else {
             unreachable!("an instruction runs in a function's frame")
         };
