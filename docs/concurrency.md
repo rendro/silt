@@ -1034,6 +1034,54 @@ before touching `logs`"), check the high-priority channel first with
 `channel.try_receive` and fall back to `channel.select` only when it is
 empty. `select` itself gives you fairness, not ordering.
 
+### Receiving from channels of different types
+
+The operations of one `channel.select` are of one type, and so are the
+channels of one `stream.merge`. To receive from channels that carry
+different types, give them one: declare an enum with a variant for each,
+turn each channel into a channel of the enum with `stream.map`, and
+merge those. One `match` then handles every kind of message, and the
+merged channel closes when all of its inputs have.
+
+```silt
+import channel
+import stream
+import task
+
+type Event {
+  Key(String),
+  Tick(Int),
+}
+
+fn main() {
+  let keys = channel.new(4)
+  let ticks = channel.new(4)
+  let _ = task.spawn { ->
+    channel.send(keys, "q")
+    channel.close(keys)
+  }
+  let _ = task.spawn { ->
+    channel.send(ticks, 1)
+    channel.send(ticks, 2)
+    channel.close(ticks)
+  }
+  let from_keys = stream.map(keys) { k -> Key(k) }
+  let from_ticks = stream.map(ticks) { n -> Tick(n) }
+  let events = stream.merge([from_keys, from_ticks])
+  let count = stream.fold(events, 0) { seen, event ->
+    match event {
+      Key(k) -> println("key {k}")
+      Tick(n) -> println("tick {n}")
+    }
+    seen + 1
+  }
+  println("{count} events") -- 3 events
+}
+```
+
+The order of messages from different channels is the order they arrive
+in; the messages of one channel keep theirs.
+
 ### Graceful shutdown via channel.close
 
 Use `channel.close` to signal that a pipeline stage is done. Downstream stages

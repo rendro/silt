@@ -123,7 +123,3 @@ indices to the length, as `string.slice` does, and returns `Bytes` (empty if
   and `bytes.ends_with` return `true` for an empty prefix / suffix.
 - `bytes.split` with an empty `sep` is a runtime error (ambiguous). Splitting an empty
   `b` yields `[empty_bytes]` — one element — mirroring `string.split`.
-- A future silt release may promote `Bytes` to a language-level type with
-  literal syntax (e.g. `b"hello"`) and method-form access. Today's API
-  is forward-compatible: programs written against the current `bytes`
-  module surface will continue to behave identically.

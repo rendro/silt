@@ -166,9 +166,3 @@ fn main() {
 - **`stream.repeat` is infinite.** Always pair it with `take`,
   `take_while`, or another bounded sink — `collect` on an unbounded
   stream will hang.
-
-## Forward compatibility
-
-Function names mirror what method-form dispatch (`s.map(f)`) would look
-like once silt grows a `Stream` trait. Existing silt programs will
-continue to compile and behave identically when that trait lands.
