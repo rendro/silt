@@ -251,8 +251,8 @@ impl IntoValue for Vec<Value> {
 impl<T: IntoValue> IntoValue for Option<T> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
-            Some(v) => Value::variant(bv::SOME, vec![v.into_value()?]),
-            None => Value::variant(bv::NONE, vec![]),
+            Some(v) => Value::variant(bv::SOME, [v.into_value()?]),
+            None => Value::variant(bv::NONE, []),
         })
     }
 }
@@ -260,8 +260,8 @@ impl<T: IntoValue> IntoValue for Option<T> {
 impl<T: IntoValue> IntoValue for Result<T, String> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
-            Ok(v) => Value::variant(bv::OK, vec![v.into_value()?]),
-            Err(e) => Value::variant(bv::ERR, vec![Value::String(e.into())]),
+            Ok(v) => Value::variant(bv::OK, [v.into_value()?]),
+            Err(e) => Value::variant(bv::ERR, [Value::String(e.into())]),
         })
     }
 }

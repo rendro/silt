@@ -55,10 +55,10 @@ pub fn program_args() -> Vec<String> {
 /// before Linux 4.11 lack it even where the kernel supports it.
 fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Value {
     let Ok(t) = t else {
-        return Value::variant(bv::NONE, vec![]);
+        return Value::variant(bv::NONE, []);
     };
     let Ok(d) = t.duration_since(UNIX_EPOCH) else {
-        return Value::variant(bv::NONE, vec![]);
+        return Value::variant(bv::NONE, []);
     };
     // i64 seconds range ≈ ±292 billion years — the cast is never a
     // truncation in practice but we guard against negative→overflow
@@ -67,9 +67,9 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
     let secs = d.as_secs() as i64;
     let nanos = d.subsec_nanos();
     let Some(dt) = chrono::DateTime::from_timestamp(secs, nanos) else {
-        return Value::variant(bv::NONE, vec![]);
+        return Value::variant(bv::NONE, []);
     };
-    Value::variant(bv::SOME, vec![make_datetime(dt.naive_utc())])
+    Value::variant(bv::SOME, [make_datetime(dt.naive_utc())])
 }
 
 /// Maximum number of entries that may be materialized into a single
@@ -82,7 +82,7 @@ const MAX_FS_WALK_ENTRIES: usize = 1_000_000;
 
 /// Make an `Ok(inner)` variant value.
 fn fs_ok(inner: Value) -> Value {
-    Value::variant(bv::OK, vec![inner])
+    Value::variant(bv::OK, [inner])
 }
 
 /// What an operation on `path` gave, as a `Result(a, IoError)`.
@@ -99,7 +99,7 @@ fn unit<T>(_: T) -> Value {
 
 /// Wrap an `IoError` variant value inside an `Err(...)` outer Result.
 fn io_err(inner: Value) -> Value {
-    Value::variant(bv::ERR, vec![inner])
+    Value::variant(bv::ERR, [inner])
 }
 
 /// Classify a `std::io::Error` into one of the `IoError` enum variants.
@@ -124,8 +124,8 @@ pub(crate) fn io_error_to_variant(err: &std::io::Error, path: &str) -> Value {
         _ => (bv::IO_OTHER, Some(err.to_string())),
     };
     match arg {
-        Some(a) => Value::variant(variant, vec![Value::String(a.into())]),
-        None => Value::variant(variant, vec![]),
+        Some(a) => Value::variant(variant, [Value::String(a.into())]),
+        None => Value::variant(variant, []),
     }
 }
 
@@ -141,10 +141,7 @@ pub(crate) fn io_result_err(err: &std::io::Error, path: &str) -> Value {
 /// `fs.walk` entry-cap cutoff). Keeps the result type
 /// `Result(T, IoError)` uniform.
 pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
-    io_err(Value::variant(
-        bv::IO_OTHER,
-        vec![Value::String(msg.into())],
-    ))
+    io_err(Value::variant(bv::IO_OTHER, [Value::String(msg.into())]))
 }
 
 /// What `IoError`'s `message` says of the variant `tag` with `fields`:
@@ -171,7 +168,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
     io_err(Value::variant(
         bv::IO_OTHER,
-        vec![Value::String(failure.text().into())],
+        [Value::String(failure.text().into())],
     ))
 }
 
@@ -204,7 +201,7 @@ builtins! {
                 // Ok(0) means EOF — surface as Err(UnexpectedEof) so
                 // match-against-Err loops terminate cleanly instead of
                 // spinning on "".
-                Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, vec![])),
+                Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, [])),
                 Ok(_) => fs_ok(Value::String(line.trim_end().into())),
                 Err(e) => io_result_err(&e, ""),
             }
@@ -387,7 +384,7 @@ pub(crate) mod fs {
                 Err(e) => {
                     return io_err(Value::variant(
                         bv::IO_INVALID_INPUT,
-                        vec![Value::String(e.to_string().into())],
+                        [Value::String(e.to_string().into())],
                     ));
                 }
             };

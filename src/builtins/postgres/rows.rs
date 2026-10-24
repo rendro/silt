@@ -396,7 +396,7 @@ fn pg_name(ty: &PgType) -> String {
 fn type_mismatch(column: &str, expected: &str, actual: &str) -> Value {
     Value::variant(
         bv::PG_TYPE_MISMATCH,
-        vec![
+        [
             Value::String(column.into()),
             Value::String(expected.into()),
             Value::String(actual.into()),
@@ -406,7 +406,7 @@ fn type_mismatch(column: &str, expected: &str, actual: &str) -> Value {
 
 /// `NoSuchColumn(column)`.
 pub(super) fn no_such_column(column: &str) -> Value {
-    Value::variant(bv::PG_NO_SUCH_COLUMN, vec![Value::String(column.into())])
+    Value::variant(bv::PG_NO_SUCH_COLUMN, [Value::String(column.into())])
 }
 
 /// The error of a result with two columns of the name `column`, which
@@ -645,7 +645,7 @@ impl Plan {
                         .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
                     entries.push((Value::String(c.name.as_str().into()), value));
                 }
-                let json = Value::variant(bv::JSON_OBJECT, vec![Value::map(entries)]);
+                let json = Value::variant(bv::JSON_OBJECT, [Value::map(entries)]);
                 Ok(match decoded {
                     Some(slot) => Row::Partial(Partial::Decoded { slot: *slot, json }),
                     None => Row::Done(json),
@@ -990,8 +990,8 @@ fn cell(
     use FieldType as F;
     let Some(raw) = raw else {
         return match field {
-            F::Option(_) => Ok(Value::variant(bv::NONE, Vec::new())),
-            F::JsonValue => Ok(Value::variant(bv::JSON_NULL, Vec::new())),
+            F::Option(_) => Ok(Value::variant(bv::NONE, [])),
+            F::JsonValue => Ok(Value::variant(bv::JSON_NULL, [])),
             _ => Err(Mismatch::new(rt, field, "NULL")),
         };
     };
@@ -1003,9 +1003,7 @@ fn cell(
             let document = document(col, raw).map_err(|_| malformed_document(rt, c, field))?;
             of_document(rt, c, field, &document)?
         }
-        (_, F::Option(inner)) => {
-            Value::variant(bv::SOME, vec![cell(rt, c, col, inner, Some(raw))?])
-        }
+        (_, F::Option(inner)) => Value::variant(bv::SOME, [cell(rt, c, col, inner, Some(raw))?]),
         (_, F::JsonValue) => dynamic(rt, c, col, raw)?,
         (Col::Bool, F::Bool) => Value::Bool(wire::bool_from_sql(raw).map_err(malformed)?),
         (Col::Int2, F::Int) => Value::Int(wire::int2_from_sql(raw).map_err(malformed)?.into()),
@@ -1087,11 +1085,11 @@ const MALFORMED: &str = "a value the server sent malformed";
 fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value, Mismatch> {
     let field = FieldType::JsonValue;
     let malformed = |_| Mismatch::new(rt, &field, MALFORMED);
-    let string = |s: String| Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]);
+    let string = |s: String| Value::variant(bv::JSON_STRING, [Value::String(s.into())]);
     Ok(match col {
         Col::Bool => Value::variant(
             bv::JSON_BOOL,
-            vec![Value::Bool(wire::bool_from_sql(raw).map_err(malformed)?)],
+            [Value::Bool(wire::bool_from_sql(raw).map_err(malformed)?)],
         ),
         Col::Int2 | Col::Int4 | Col::Int8 => {
             let n = match col {
@@ -1099,12 +1097,12 @@ fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value,
                 Col::Int4 => wire::int4_from_sql(raw).map(i64::from),
                 _ => wire::int8_from_sql(raw),
             };
-            Value::variant(bv::JSON_INT, vec![Value::Int(n.map_err(malformed)?)])
+            Value::variant(bv::JSON_INT, [Value::Int(n.map_err(malformed)?)])
         }
         Col::Float4 | Col::Float8 => {
             let f = float(col, raw).map_err(malformed)?;
             let f = Float::new(f).ok_or_else(|| Mismatch::new(rt, &field, non_finite(f)))?;
-            Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)])
+            Value::variant(bv::JSON_FLOAT, [Value::Float(f)])
         }
         Col::Numeric => string(numeric(raw).map_err(malformed)?),
         Col::Text | Col::Char | Col::Uuid => string(text(col, raw).map_err(malformed)?),
@@ -1123,13 +1121,13 @@ fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value,
             let in_document = |_| Mismatch::new(rt, &field, of_a_document(c, MALFORMED.into()));
             decode::json_value(&document(col, raw).map_err(in_document)?)
         }
-        Col::Void => Value::variant(bv::JSON_NULL, Vec::new()),
+        Col::Void => Value::variant(bv::JSON_NULL, []),
         Col::Array(element) => {
             let (dimensions, values) = array(raw).map_err(malformed)?;
             let mut values = values.into_iter();
             let mut leaf = |raw: Option<&[u8]>| match raw {
                 Some(raw) => dynamic(rt, c, element, raw),
-                None => Ok(Value::variant(bv::JSON_NULL, Vec::new())),
+                None => Ok(Value::variant(bv::JSON_NULL, [])),
             };
             nest_dynamic(&dimensions, &mut values, &mut leaf)?
         }
@@ -1178,7 +1176,7 @@ fn nest_dynamic<'r>(
     values: &mut impl Iterator<Item = Option<&'r [u8]>>,
     leaf: &mut impl FnMut(Option<&'r [u8]>) -> Result<Value, Mismatch>,
 ) -> Result<Value, Mismatch> {
-    let array = |items| Value::variant(bv::JSON_ARRAY, vec![Value::list(items)]);
+    let array = |items| Value::variant(bv::JSON_ARRAY, [Value::list(items)]);
     let Some((&length, inner)) = dimensions.split_first() else {
         return Ok(array(Vec::new()));
     };
@@ -1436,8 +1434,8 @@ mod tests {
         let list = Value::list(vec![
             Value::String("a\"b".into()),
             Value::String("c\\d".into()),
-            Value::variant(bv::NONE, Vec::new()),
-            Value::variant(bv::SOME, vec![Value::Int(1)]),
+            Value::variant(bv::NONE, []),
+            Value::variant(bv::SOME, [Value::Int(1)]),
         ]);
         assert_eq!(
             array_literal("postgres.query", &pg(&list)).expect("written"),
@@ -1570,13 +1568,9 @@ mod tests {
             (float(2.0), Read::Text, "2.0"),
             (Value::Bool(true), Read::Text, "true"),
             (Value::String("a \"b\" ü".into()), Read::Text, "a \"b\" ü"),
+            (Value::variant(bv::SOME, [Value::Int(3)]), Read::Text, "3"),
             (
-                Value::variant(bv::SOME, vec![Value::Int(3)]),
-                Read::Text,
-                "3",
-            ),
-            (
-                Value::variant(bv::JSON_INT, vec![Value::Int(5)]),
+                Value::variant(bv::JSON_INT, [Value::Int(5)]),
                 Read::Text,
                 "5",
             ),

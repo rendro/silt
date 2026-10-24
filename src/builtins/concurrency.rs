@@ -25,24 +25,24 @@ fn closed_channel_send_err(id: usize) -> VmError {
 }
 
 fn message(value: Value) -> Value {
-    Value::variant(bv::MESSAGE, vec![value])
+    Value::variant(bv::MESSAGE, [value])
 }
 
 /// What `channel.receive` and a `Recv` arm of `channel.select` give:
 /// `Some(value)`, or `None` once the channel is closed and empty.
 fn received(value: Option<Value>) -> Value {
     match value {
-        Some(value) => Value::variant(bv::SOME, vec![value]),
-        None => Value::variant(bv::NONE, vec![]),
+        Some(value) => Value::variant(bv::SOME, [value]),
+        None => Value::variant(bv::NONE, []),
     }
 }
 
 fn closed() -> Value {
-    Value::variant(bv::CLOSED, vec![])
+    Value::variant(bv::CLOSED, [])
 }
 
 fn empty() -> Value {
-    Value::variant(bv::EMPTY, vec![])
+    Value::variant(bv::EMPTY, [])
 }
 
 /// The time a `Duration` argument of `name` is: an error if it is
@@ -210,15 +210,15 @@ pub(crate) mod channel {
                 let ch = Value::Channel(channel.clone());
                 Ok(Step::Done(match outcome {
                     Outcome::Received(value) => {
-                        Value::variant(bv::RECEIVED, vec![ch, received(Some(value))])
+                        Value::variant(bv::RECEIVED, [ch, received(Some(value))])
                     }
-                    Outcome::Sent => Value::variant(bv::SENT, vec![ch]),
+                    Outcome::Sent => Value::variant(bv::SENT, [ch]),
                     // The channel was closed while the arm waited to send.
                     Outcome::Closed(_) if *sends => {
                         return Err(closed_channel_send_err(channel.id()));
                     }
                     Outcome::Closed(_) | Outcome::Done => {
-                        Value::variant(bv::RECEIVED, vec![ch, received(None)])
+                        Value::variant(bv::RECEIVED, [ch, received(None)])
                     }
                 }))
             }))
@@ -483,8 +483,8 @@ impl Native for Deadline {
 
     fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
         let timeout = || {
-            let timeout = Value::variant(bv::TASK_TIMEOUT, vec![]);
-            Ok(Step::Done(Value::variant(bv::ERR, vec![timeout])))
+            let timeout = Value::variant(bv::TASK_TIMEOUT, []);
+            Ok(Step::Done(Value::variant(bv::ERR, [timeout])))
         };
         match self.state {
             DeadlineState::Started => {
@@ -526,7 +526,7 @@ impl Native for Deadline {
         // `task.deadline`. It is raised whatever the clock says.
         self.task.mark_joined();
         match result {
-            Ok(value) => Ok(Step::Done(Value::variant(bv::OK, vec![value]))),
+            Ok(value) => Ok(Step::Done(Value::variant(bv::OK, [value]))),
             Err(mut failure) => {
                 let here = vm.enrich_error(VmError::new(String::new()));
                 failure.call_stack.extend(here.call_stack);

@@ -1015,7 +1015,7 @@ fn test_e2e_variant_constructor() {
             }
         "#,
     );
-    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::SOME, [Value::Int(42)]));
 }
 
 #[test]
@@ -2550,7 +2550,7 @@ fn test_scheduler_channel_communication() {
             }
             "#,
     );
-    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(99)]));
+    assert_eq!(result, Value::variant(bv::SOME, [Value::Int(99)]));
 }
 
 #[test]
@@ -4541,7 +4541,7 @@ mod type_confusion {
             e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
         });
         confused("variant destructure: field index 1 out of bounds", |e| {
-            push(e, Value::variant(bv::SOME, vec![Value::Int(1)]));
+            push(e, Value::variant(bv::SOME, [Value::Int(1)]));
             e.emit(Asm::DestructVariant { index: 1 }, span()).unwrap();
         });
     }
@@ -4632,7 +4632,7 @@ mod type_confusion {
             e.emit(Asm::QuestionMark, span()).unwrap();
         });
         confused("`?` applies only to Result or Option; got variant", |e| {
-            push(e, Value::variant(bv::MESSAGE, vec![Value::Int(1)]));
+            push(e, Value::variant(bv::MESSAGE, [Value::Int(1)]));
             e.emit(Asm::QuestionMark, span()).unwrap();
         });
     }
@@ -5806,7 +5806,7 @@ mod parts_in_place {
             Value::String("text".into()),
             Value::list(vec![Value::Int(1), Value::Unit]),
             Value::anon_record([("x", Value::Int(1))]),
-            Value::variant(bv::SOME, vec![float(0.5)]),
+            Value::variant(bv::SOME, [float(0.5)]),
         ]
     }
 
@@ -5883,7 +5883,7 @@ mod parts_in_place {
     fn what_an_ok_or_a_some_holds_is_written_over_it() {
         for part in samples() {
             for tag in [bv::OK, bv::SOME] {
-                over(&part, Value::variant(tag, vec![part.clone()]), |e| {
+                over(&part, Value::variant(tag, [part.clone()]), |e| {
                     e.emit(Asm::QuestionMark, span()).unwrap();
                 });
             }
@@ -5906,7 +5906,7 @@ mod parts_in_place {
             above(&part, tuple, |e| {
                 e.emit(Asm::DestructTuple { index: 1 }, span()).unwrap();
             });
-            let variant = Value::variant(bv::ERR, vec![part.clone()]);
+            let variant = Value::variant(bv::ERR, [part.clone()]);
             above(&part, variant, |e| {
                 e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
             });
@@ -6547,7 +6547,7 @@ mod results_in_place {
     /// one it does not.
     fn tests(e: &mut Emitter) -> Vec<(Asm<'static>, Value, Value)> {
         let mut constant = |value: Value| e.constant(value, span()).unwrap();
-        let some = Value::variant(bv::SOME, vec![Value::Int(1)]);
+        let some = Value::variant(bv::SOME, [Value::Int(1)]);
         let record = Value::anon_record([("x", Value::Int(1))]);
         let Value::Record(fields) = &record else {
             unreachable!()
@@ -6562,7 +6562,7 @@ mod results_in_place {
                     tag: constant(Value::VariantConstructor(bv::SOME.tag())),
                 },
                 some.clone(),
-                Value::variant(bv::NONE, vec![]),
+                Value::variant(bv::NONE, []),
             ),
             (
                 Asm::TestEqual {

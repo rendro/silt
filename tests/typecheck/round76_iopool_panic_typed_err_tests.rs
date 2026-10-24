@@ -5,7 +5,7 @@
 //!
 //! Pre-fix (src/vm/runtime.rs:344): when the closure submitted to
 //! `IoPool::submit_with` panicked, the recovery branch unconditionally
-//! built `Value::variant(bv::ERR, vec![Value::String(msg)])` —
+//! built `Value::variant(bv::ERR, [Value::String(msg)])` —
 //! the legacy untyped shape. Module-specific completions (postgres,
 //! tcp, http) typecheck their callers as `Result(T, PostgresError)` /
 //! `Result(T, TcpError)` / `Result(T, IoError)` etc, so user `match`
@@ -56,7 +56,7 @@ fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
     let msg = failure.text();
     Value::variant(
         bv::ERR,
-        vec![Value::variant(
+        [Value::variant(
             silt::typeinfo::Tag::new(
                 silt::typeinfo::TypeInfo::new_enum(
                     silt::defs::TypeId(silt::defs::DefId(9000)),
@@ -65,7 +65,7 @@ fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
                 ),
                 0,
             ),
-            vec![Value::String(msg.into())],
+            [Value::String(msg.into())],
         )],
     )
 }

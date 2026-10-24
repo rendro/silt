@@ -285,7 +285,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
             ]))
         })
         .function("fn maybe() -> Option(String)", |_: &[Value]| {
-            Ok(Value::variant(bv::SOME, vec![Value::Int(1)]))
+            Ok(Value::variant(bv::SOME, [Value::Int(1)]))
         })
         .function("fn pair() -> (Int, Bool)", |_: &[Value]| {
             Ok(Value::tuple(vec![Value::Int(1), Value::Bool(true)]))

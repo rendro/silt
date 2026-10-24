@@ -60,12 +60,12 @@ use rows::{Fill, Filling, Plan, Row, RowType, Rows, TextParam, Unsendable};
 fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     use crate::vm::IoFailure;
     let error = match failure {
-        IoFailure::Timeout(_) => Value::variant(bv::PG_TIMEOUT, vec![]),
+        IoFailure::Timeout(_) => Value::variant(bv::PG_TIMEOUT, []),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::PG_OTHER, vec![Value::String(why.into())])
+            Value::variant(bv::PG_OTHER, [Value::String(why.into())])
         }
     };
-    Value::variant(bv::ERR, vec![error])
+    Value::variant(bv::ERR, [error])
 }
 
 // ── The pool and its connections ────────────────────────────────────
@@ -537,7 +537,7 @@ impl TxConn {
     fn commit(&mut self) -> Result<(), Value> {
         if self.conn.canceller.was_sent() {
             let _ = self.roll_back();
-            return Err(Value::variant(bv::PG_TXN_ABORTED, vec![]));
+            return Err(Value::variant(bv::PG_TXN_ABORTED, []));
         }
         self.ended = true;
         let committed = self
@@ -567,7 +567,7 @@ impl Drop for TxConn {
 /// The `PostgresError` of a statement on a transaction that has ended:
 /// `Closed`, as the connection is, for the transaction.
 fn tx_ended() -> Value {
-    Value::variant(bv::PG_CLOSED, vec![])
+    Value::variant(bv::PG_CLOSED, [])
 }
 
 /// The connection of the transaction of `cell`, for a statement or a
@@ -617,7 +617,7 @@ fn tx_conn<'a>(cell: &'a TxCell, wanted: Option<&Wanted>) -> Result<TxGuard<'a>,
     // statement in time.
     match conn.conn.canceller.was_sent() {
         false => Ok(conn),
-        true => Err(Value::variant(bv::PG_TXN_ABORTED, vec![])),
+        true => Err(Value::variant(bv::PG_TXN_ABORTED, [])),
     }
 }
 
@@ -856,7 +856,7 @@ fn close_tx_streams(tx_id: u64, wake: &dyn crate::runtime::sync::Wake) {
 // ── Result / error builders ─────────────────────────────────────────
 
 fn err(v: Value) -> Value {
-    Value::variant(bv::ERR, vec![v])
+    Value::variant(bv::ERR, [v])
 }
 
 /// Scrub a Postgres error message before it crosses the VM boundary
@@ -930,7 +930,7 @@ pub fn redact_pg_message(s: &str) -> String {
 fn pg_connect(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_CONNECT,
-        vec![Value::String(redact_pg_message(&msg.into()).into())],
+        [Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
@@ -938,7 +938,7 @@ fn pg_connect(msg: impl Into<String>) -> Value {
 fn pg_tls(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_TLS,
-        vec![Value::String(redact_pg_message(&msg.into()).into())],
+        [Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
@@ -946,7 +946,7 @@ fn pg_tls(msg: impl Into<String>) -> Value {
 fn pg_unknown(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_OTHER,
-        vec![Value::String(redact_pg_message(&msg.into()).into())],
+        [Value::String(redact_pg_message(&msg.into()).into())],
     )
 }
 
@@ -959,20 +959,20 @@ fn pg_error_to_variant(e: &tokio_postgres::Error) -> Value {
         let sqlstate = db.code().code().to_string();
         match sqlstate.as_str() {
             // 25P02: in_failed_sql_transaction.
-            "25P02" => Value::variant(bv::PG_TXN_ABORTED, vec![]),
+            "25P02" => Value::variant(bv::PG_TXN_ABORTED, []),
             // 57014: query_canceled (statement_timeout fires with this).
-            "57014" => Value::variant(bv::PG_TIMEOUT, vec![]),
+            "57014" => Value::variant(bv::PG_TIMEOUT, []),
             // 42703: undefined_column.
             "42703" => rows::no_such_column(column_named(&message)),
             code if code.starts_with("28") => {
-                Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message.into())])
+                Value::variant(bv::PG_AUTH_FAILED, [Value::String(message.into())])
             }
             code if code.starts_with("08") => {
-                Value::variant(bv::PG_CONNECT, vec![Value::String(message.into())])
+                Value::variant(bv::PG_CONNECT, [Value::String(message.into())])
             }
             code => Value::variant(
                 bv::PG_QUERY,
-                vec![Value::String(message.into()), Value::String(code.into())],
+                [Value::String(message.into()), Value::String(code.into())],
             ),
         }
     } else {
@@ -981,13 +981,13 @@ fn pg_error_to_variant(e: &tokio_postgres::Error) -> Value {
         let raw = format!("{e}");
         let lc = raw.to_ascii_lowercase();
         if lc.contains("timed out") || lc.contains("timeout") {
-            Value::variant(bv::PG_TIMEOUT, vec![])
+            Value::variant(bv::PG_TIMEOUT, [])
         } else if lc.contains("closed")
             || lc.contains("broken pipe")
             || lc.contains("eof")
             || lc.contains("reset by peer")
         {
-            Value::variant(bv::PG_CLOSED, vec![])
+            Value::variant(bv::PG_CLOSED, [])
         } else {
             // The error's text names its kind only ("error serializing
             // parameter 0"): its cause says what happened.
@@ -995,7 +995,7 @@ fn pg_error_to_variant(e: &tokio_postgres::Error) -> Value {
             let text = causes.fold(raw, |text, cause| format!("{text}: {cause}"));
             Value::variant(
                 bv::PG_OTHER,
-                vec![Value::String(redact_pg_message(&text).into())],
+                [Value::String(redact_pg_message(&text).into())],
             )
         }
     }
@@ -1024,7 +1024,7 @@ fn pool_error_value(e: &r2d2::Error) -> Value {
     let raw = format!("{e}");
     let lc = raw.to_ascii_lowercase();
     if lc.contains("timed out") || lc.contains("timeout") {
-        Value::variant(bv::PG_TIMEOUT, vec![])
+        Value::variant(bv::PG_TIMEOUT, [])
     } else {
         pg_connect(raw)
     }
@@ -1041,7 +1041,7 @@ fn connect_error_value(e: &tokio_postgres::Error) -> Value {
     if let Some(db) = e.as_db_error() {
         let message = redact_pg_message(db.message());
         return match db.code().code().starts_with("28") {
-            true => Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(message.into())]),
+            true => Value::variant(bv::PG_AUTH_FAILED, [Value::String(message.into())]),
             false => pg_connect(message),
         };
     }
@@ -1062,14 +1062,14 @@ fn connect_error_value(e: &tokio_postgres::Error) -> Value {
     if tls {
         pg_tls(text)
     } else if timed_out {
-        Value::variant(bv::PG_TIMEOUT, vec![])
+        Value::variant(bv::PG_TIMEOUT, [])
     } else if text.starts_with("authentication error") {
         // The exchange of the login failed on this side: a method of
         // the server's that the client does not have, channel binding
         // the server did not use, a SCRAM answer that does not check
         // out. (A password the server asks for and the URL does not
         // give is an error of the configuration: `Connect`.)
-        Value::variant(bv::PG_AUTH_FAILED, vec![Value::String(text.into())])
+        Value::variant(bv::PG_AUTH_FAILED, [Value::String(text.into())])
     } else {
         pg_connect(text)
     }
@@ -1104,15 +1104,15 @@ fn other_error(detail: impl Into<String>) -> Value {
 // ── Handle helpers ──────────────────────────────────────────────────
 
 fn make_pool_handle(id: u64) -> Value {
-    Value::variant(bv::PG_POOL, vec![Value::Int(id as i64)])
+    Value::variant(bv::PG_POOL, [Value::Int(id as i64)])
 }
 
 fn make_tx_handle(id: u64) -> Value {
-    Value::variant(bv::PG_TX, vec![Value::Int(id as i64)])
+    Value::variant(bv::PG_TX, [Value::Int(id as i64)])
 }
 
 fn make_cursor_handle(id: u64) -> Value {
-    Value::variant(bv::PG_CURSOR, vec![Value::Int(id as i64)])
+    Value::variant(bv::PG_CURSOR, [Value::Int(id as i64)])
 }
 
 // ── The arguments ───────────────────────────────────────────────────
@@ -1781,7 +1781,7 @@ impl ConnectFailure {
     fn value(&self) -> Value {
         match self {
             ConnectFailure::Failed(e) => connect_error_value(e),
-            ConnectFailure::NoAnswer => Value::variant(bv::PG_TIMEOUT, vec![]),
+            ConnectFailure::NoAnswer => Value::variant(bv::PG_TIMEOUT, []),
             ConnectFailure::Broke(why) => pg_unknown(why.as_str()),
         }
     }
@@ -2111,7 +2111,7 @@ impl Native for Finisher {
         }
         loop {
             while let Some(row) = self.ready.pop_front() {
-                let row = Value::variant(bv::OK, vec![row]);
+                let row = Value::variant(bv::OK, [row]);
                 match self.ch.try_send(row, vm.scheduler().wake()) {
                     TrySend::Sent => {}
                     TrySend::Closed(_) => return Ok(Step::Done(ok(Value::Unit))),
@@ -2206,7 +2206,7 @@ fn do_stream_worker(
         let (statement, plan) = match prepare(conn, &decoding, sql) {
             Ok(prepared) => prepared,
             Err(e) => {
-                let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                let _ = send_or_stop(Value::variant(bv::ERR, [e]));
                 return true;
             }
         };
@@ -2231,7 +2231,7 @@ fn do_stream_worker(
                         None => true,
                         // A row that cannot be decoded ends the stream.
                         Some(Ok(e)) => {
-                            let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                            let _ = send_or_stop(Value::variant(bv::ERR, [e]));
                             false
                         }
                         // An impl failed: the stream ends with its
@@ -2254,7 +2254,7 @@ fn do_stream_worker(
                     if rows.iter().all(|row| matches!(row, Row::Done(_))) {
                         for row in rows {
                             if let Row::Done(value) = row
-                                && !send_or_stop(Value::variant(bv::OK, vec![value]))
+                                && !send_or_stop(Value::variant(bv::OK, [value]))
                             {
                                 return false;
                             }
@@ -2310,7 +2310,7 @@ fn do_stream_worker(
                             // stream, after the rows before it.
                             Err(e) => {
                                 if flush(&mut batch, &mut running) && settle(&mut running) {
-                                    let _ = send_or_stop(Value::variant(bv::ERR, vec![e]));
+                                    let _ = send_or_stop(Value::variant(bv::ERR, [e]));
                                 }
                                 break false;
                             }
@@ -2321,8 +2321,7 @@ fn do_stream_worker(
                         }
                         Some(Err(e)) => {
                             if flush(&mut batch, &mut running) && settle(&mut running) {
-                                let wrapped =
-                                    Value::variant(bv::ERR, vec![pg_error_to_variant(&e)]);
+                                let wrapped = Value::variant(bv::ERR, [pg_error_to_variant(&e)]);
                                 let _ = send_or_stop(wrapped);
                             }
                             break true;
@@ -2339,7 +2338,7 @@ fn do_stream_worker(
                 // says why.
                 let why = unsendable.as_ref().and_then(Unsendable::take);
                 let error = why.map_or_else(|| pg_error_to_variant(&e), other_error);
-                let _ = send_or_stop(Value::variant(bv::ERR, vec![error]));
+                let _ = send_or_stop(Value::variant(bv::ERR, [error]));
                 true
             }
         }
@@ -2355,7 +2354,7 @@ fn do_stream_worker(
                 }
             }
             Err(e) => {
-                let wrapped = Value::variant(bv::ERR, vec![pool_error_value(&e)]);
+                let wrapped = Value::variant(bv::ERR, [pool_error_value(&e)]);
                 let _ = send_or_stop(wrapped);
             }
         },
@@ -2366,7 +2365,7 @@ fn do_stream_worker(
             // (Without the connection: nothing for a statement to fail
             // on while the error waits for room.)
             Err(e) => {
-                let _ = scheduler.send_wait(&ch, Value::variant(bv::ERR, vec![e]));
+                let _ = scheduler.send_wait(&ch, Value::variant(bv::ERR, [e]));
             }
         },
     }

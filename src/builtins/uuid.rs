@@ -71,9 +71,9 @@ builtins! {
             Ok(u) => ok(Value::String(u.hyphenated().to_string().into())),
             Err(e) => Value::variant(
                 bv::ERR,
-                vec![Value::variant(
+                [Value::variant(
                     bv::UUID_INVALID,
-                    vec![Value::String(e.to_string().into())],
+                    [Value::String(e.to_string().into())],
                 )],
             ),
         }
