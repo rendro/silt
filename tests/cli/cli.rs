@@ -764,5 +764,3 @@ fn test_lsp_unknown_flag() {
         "expected error mentioning the unknown flag, got: {stderr}"
     );
 }
-
-// ── Shorthand `silt file.silt` forwards flags to run handler ────────

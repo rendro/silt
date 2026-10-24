@@ -108,6 +108,38 @@ pub(crate) fn usage_text() -> String {
 /// noise. Keep in sync with the match arms in `run_main`.
 pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-h", "help"];
 
+/// What silt says when its first argument is no command but a file
+/// (`silt hello.silt`), and exits 1: `silt run` runs it, and the command
+/// to write keeps every argument (`args`, after the program's name) in
+/// its place, `silt -w hello.silt` as `silt run -w hello.silt`.
+pub(crate) fn file_is_no_command(file: &str, args: &[String]) -> ! {
+    let written: Vec<String> = args.iter().map(|arg| shell_word(arg)).collect();
+    eprintln!("Unknown command: '{file}'");
+    eprintln!("  Did you mean 'silt run {}'?", written.join(" "));
+    eprintln!("Run 'silt' with no arguments to see available commands.");
+    std::process::exit(1);
+}
+
+/// `arg` as a shell reads it back: as it is when it holds only
+/// characters a shell takes literally, else in double quotes, with `"`,
+/// `\`, `$` and `` ` `` escaped.
+fn shell_word(arg: &str) -> String {
+    let plain =
+        !arg.is_empty() && (arg.chars()).all(|c| c.is_alphanumeric() || "-_./=:,+@%^".contains(c));
+    if plain {
+        return arg.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in arg.chars() {
+        if matches!(c, '"' | '\\' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 /// Whether `--help` or `-h` is one of silt's own arguments in `args`:
 /// the ones before `--`, after which every argument is the program's
 /// (`silt run main.silt -- --help` runs the program with `--help`).
@@ -182,4 +214,22 @@ pub(crate) fn run_help_text() -> String {
     s.push_str("  silt run main.silt -- input.txt\n");
     s.push_str("  silt run --watch main.silt\n");
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The command a file argument is told to write reads back as the
+    /// arguments it was given: a word of plain characters as it is, any
+    /// other in double quotes with what a shell reads in them escaped.
+    #[test]
+    fn a_shell_word_reads_back_as_the_argument() {
+        assert_eq!(shell_word("hello.silt"), "hello.silt");
+        assert_eq!(shell_word("-w"), "-w");
+        assert_eq!(shell_word("my file.silt"), "\"my file.silt\"");
+        assert_eq!(shell_word(""), "\"\"");
+        assert_eq!(shell_word("a$b`c\"d\\e"), "\"a\\$b\\`c\\\"d\\\\e\"");
+        assert_eq!(shell_word("it's"), "\"it's\"");
+    }
 }
