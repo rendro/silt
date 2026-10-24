@@ -416,19 +416,16 @@ fn main() {
 `Greet.greet(Box("hello"))` is an error: type 'String' does not
 implement trait 'Greet'.
 
-Multi-trait bounds use `+` (or comma-separated clauses) — identical to
-fn-level `where`:
+Several bounds of one variable are joined by `+`, as in a function's
+`where`:
 
 ```silt
 trait Greet for Box(a) where a: Greet + Loud {
   fn greet(self) -> String {
-    match self { Box(inner) -> "{Greet.greet(inner)}-{Loud.loud(inner)}" }
+    match self {
+      Box(inner) -> "{Greet.greet(inner)}-{Loud.loud(inner)}"
+    }
   }
-}
-
--- equivalent:
-trait Greet for Box(a) where a: Greet, a: Loud {
-  fn greet(self) -> String { ... }
 }
 ```
 
@@ -991,7 +988,8 @@ fn f(x) where a: Display {
 The form `fn f(x) where a: Display` is an error because the compiler cannot
 determine which parameter `a` refers to.
 
-Multiple trait bounds use `+`:
+Multiple trait bounds of one variable are joined by `+`, and `,`
+separates variables:
 
 ```silt
 fn dedup(xs: List(a)) -> List(a) where a: Equal + Hash {
@@ -999,4 +997,5 @@ fn dedup(xs: List(a)) -> List(a) where a: Equal + Hash {
 }
 ```
 
-This is equivalent to `where a: Equal, a: Hash`.
+A variable is named once: `where a: Equal, a: Hash` is an error, whose
+help writes `where a: Equal + Hash`.

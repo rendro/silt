@@ -1722,9 +1722,11 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an optional `where` clause list. Consumes the `where` token
-    /// if present. Supports comma-separated clauses and `+`-separated
-    /// multi-trait bounds per clause (`where a: Equal + Hash, b: Show`).
-    /// Returns an empty Vec if no `where` token is present.
+    /// if present: comma-separated clauses, one for each type variable,
+    /// whose bounds `+` joins (`where a: Equal + Hash, b: Show`). A
+    /// variable that two clauses name is an error, with the clause the
+    /// two make as its help. Returns an empty Vec if no `where` token is
+    /// present.
     ///
     /// The list ends in front of the `{` of the body, or with its last
     /// clause where there is no body (a trait's method signature).
@@ -1735,21 +1737,63 @@ impl<'src> Parser<'src> {
         let open = self.advance().span;
         let end = ListEnd::BeforeOrNothing(&Token::LBrace);
         let clauses = self.comma_list("where clause", open, end, |p| {
-            let (type_param, _) = p.expect_ident()?;
+            let (type_param, param_span) = p.expect_ident()?;
             p.expect(&Token::Colon)?;
-            let mut bounds = vec![p.parse_trait_ref()?.bound_on(type_param)];
+            let mut written = Vec::new();
+            let mut bound = |p: &mut Self| -> Result<WhereClause> {
+                let start = p.pos;
+                let clause = p.parse_trait_ref()?.bound_on(type_param);
+                written.push(p.text_of(start..p.pos));
+                Ok(clause)
+            };
+            let mut bounds = vec![bound(p)?];
             // Multi-trait bounds: `where a: Equal + Hash`
             while p.at_on_line(&Token::Plus) {
                 p.advance();
-                bounds.push(p.parse_trait_ref()?.bound_on(type_param));
+                bounds.push(bound(p)?);
             }
-            Ok(bounds)
+            Ok((type_param, param_span, written, bounds))
         })?;
         if clauses.is_empty() {
             // `where {`: the first clause is missing.
             self.expect_ident()?;
         }
-        Ok(clauses.into_iter().flatten().collect())
+        for (k, (param, span, ..)) in clauses.iter().enumerate() {
+            if !clauses[..k].iter().any(|(earlier, ..)| earlier == param) {
+                continue;
+            }
+            let all: Vec<&str> = (clauses.iter())
+                .filter(|(p, ..)| p == param)
+                .flat_map(|(_, _, written, _)| written.iter().map(String::as_str))
+                .collect();
+            return Err(Diagnostic::error(
+                Code::InvalidDeclaration,
+                *span,
+                format!("type variable '{param}' is named twice in this where clause"),
+            )
+            .with_help(format!(
+                "join its bounds with '+': where {param}: {}",
+                all.join(" + ")
+            )));
+        }
+        Ok(clauses
+            .into_iter()
+            .flat_map(|(.., bounds)| bounds)
+            .collect())
+    }
+
+    /// The source text of the tokens `range` (indices), from the start of
+    /// the first to the end of the last.
+    fn text_of(&self, range: std::ops::Range<usize>) -> String {
+        match (
+            self.tokens.get(range.start),
+            range.end.checked_sub(1).and_then(|e| self.tokens.get(e)),
+        ) {
+            (Some(first), Some(last)) if range.start < range.end => {
+                self.source[first.span.start as usize..last.span.end as usize].to_string()
+            }
+            _ => String::new(),
+        }
     }
 
     /// Parse a name that may carry one module qualifier: `Shape` or

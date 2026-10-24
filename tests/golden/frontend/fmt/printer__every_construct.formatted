@@ -5,7 +5,7 @@
 import a.{}
 import b.{ x, y }
 
-pub trait T(a): m.S(a) + U where a: m.V + W(Int), a: X {
+pub trait T(a): m.S(a) + U where a: m.V + W(Int) + X {
   fn f(self) -> <a as m.Q>::Item
   type Item: A + m.B
 }
@@ -36,7 +36,7 @@ fn g(
   m.E.V,
   m.P {},
   type t,
-) -> Self::Item where t: D {}
+) -> Self::Item where t: D, u: E {}
 
 fn h() {
   let f = { x -> x }

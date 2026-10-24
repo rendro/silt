@@ -12,15 +12,15 @@ trait Sub(b): Conv(b) {
   fn sub(self) -> String
 }
 
-fn mixed(x: a) -> String where a: Sub(Int), a: Conv(String) {
+fn mixed(x: a) -> String where a: Sub(Int) + Conv(String) {
   Conv.show(x)
 }
 
-fn subs(x: a) -> String where a: Sub(Int), a: Sub(String) {
+fn subs(x: a) -> String where a: Sub(Int) + Sub(String) {
   Conv.show(x)
 }
 
-fn same(x: a) -> String where a: Sub(Int), a: Conv(Int) {
+fn same(x: a) -> String where a: Sub(Int) + Conv(Int) {
   Conv.show(x)
 }
 

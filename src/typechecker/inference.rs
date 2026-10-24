@@ -169,7 +169,7 @@ impl TypeChecker {
     /// `v: Super(Int)`.
     pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
         // (Two bounds of one trait at different arguments are two
-        // bounds: `where a: Conv(Int), a: Conv(String)`.)
+        // bounds: `where a: Conv(Int) + Conv(String)`.)
         let in_scope = self.bounds.entry(var).or_default();
         if in_scope.iter().any(|(t, a)| *t == trait_name && *a == args) {
             return;
@@ -299,7 +299,7 @@ impl TypeChecker {
     /// Report that the declaration being checked does not declare
     /// `r: trait_name(args)`, which the use `origin` in it needs, unless
     /// it does. Where it declares one bound for the trait, its arguments
-    /// are the ones needed; of several (`a: Conv(Int), a: Conv(String)`)
+    /// are the ones needed; of several (`a: Conv(Int) + Conv(String)`)
     /// the one at the arguments needed, if one is.
     pub(super) fn require_declared_bound(
         &mut self,
@@ -401,13 +401,35 @@ impl TypeChecker {
                 "add `where Self: {bound}`, or make `{bound}` a supertrait: `trait {}: {bound}`",
                 self.show_trait(own)
             ),
-            _ => format!("add `where {}: {bound}`", r.name),
+            // A variable with bounds of its own takes one more with `+`.
+            _ => match self.bounds.get(&r.var).filter(|bounds| !bounds.is_empty()) {
+                Some(bounds) => {
+                    // The bounds the clause writes: not those that are
+                    // in scope as another's supertrait at its arguments.
+                    let mut written: Vec<String> = (bounds.iter())
+                        .filter(|bound| {
+                            !(bounds.iter()).any(|other| {
+                                other != *bound && self.supers_at(other).contains(bound)
+                            })
+                        })
+                        .map(|(t, args)| self.show_bound(*t, args))
+                        .collect();
+                    written.push(bound.clone());
+                    format!(
+                        "add `+ {bound}` to the bounds of `{}`: `where {}: {}`",
+                        r.name,
+                        r.name,
+                        written.join(" + ")
+                    )
+                }
+                None => format!("add `where {}: {bound}`", r.name),
+            },
         });
         self.errors.push(diagnostic);
     }
 
     /// `require_declared_bound` where `r` has several bounds of
-    /// `trait_name` (`a: Conv(Int), a: Conv(String)`): the use needs the
+    /// `trait_name` (`a: Conv(Int) + Conv(String)`): the use needs the
     /// one at its arguments. Arguments still unknown wait for the end of
     /// the function's body (`settle`: `settle_open_bound_uses`), which
     /// may decide them; unknown then, the use does not say which bound.

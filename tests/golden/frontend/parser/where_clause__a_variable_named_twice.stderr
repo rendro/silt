@@ -1,0 +1,20 @@
+error[parse]: type variable 'a' is named twice in this where clause
+ --> where_clause__a_variable_named_twice.silt:10:56
+    |
+ 10 | fn f(x: a, y: b) -> String where a: Equal, b: Display, a: Conv(Int) + Hash {
+    |                                                        ^ type variable 'a' is named twice in this where clause
+  = help: join its bounds with '+': where a: Equal + Conv(Int) + Hash
+
+error[parse]: type variable 't' is named twice in this where clause
+ --> where_clause__a_variable_named_twice.silt:16:46
+    |
+ 16 | trait Conv(Int) for Box(t) where t: Display, t: Hash {
+    |                                              ^ type variable 't' is named twice in this where clause
+  = help: join its bounds with '+': where t: Display + Hash
+
+error[parse]: type variable 'a' is named twice in this where clause
+ --> where_clause__a_variable_named_twice.silt:23:52
+    |
+ 23 |   fn shout(self, x: a) -> String where a: Display, a: Equal
+    |                                                    ^ type variable 'a' is named twice in this where clause
+  = help: join its bounds with '+': where a: Display + Equal

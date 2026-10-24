@@ -16,7 +16,7 @@ trait Make(b) {
   fn make() -> Self
 }
 
-fn shown(x: a) -> String where a: Conv(Int), a: Conv(String) {
+fn shown(x: a) -> String where a: Conv(Int) + Conv(String) {
   Conv.show(x)
 }
 
@@ -24,7 +24,7 @@ fn converted(x: a) -> String where a: Conv(Int) + Conv(String) {
   Conv.conv(x)
 }
 
-fn made(type a) -> a where a: Make(Int), a: Make(String) {
+fn made(type a) -> a where a: Make(Int) + Make(String) {
   a.make()
 }
 
@@ -32,7 +32,7 @@ fn one(x: a) -> String where a: Conv(String) {
   Conv.show(x)
 }
 
-fn passes(x: a) -> String where a: Conv(Int), a: Conv(String) {
+fn passes(x: a) -> String where a: Conv(Int) + Conv(String) {
   one(x)
 }
 
@@ -40,7 +40,7 @@ fn other(x: a) -> String where a: Conv(Bool) {
   Conv.show(x)
 }
 
-fn wrong(x: a) -> String where a: Conv(Int), a: Conv(String) {
+fn wrong(x: a) -> String where a: Conv(Int) + Conv(String) {
   other(x)
 }
 
